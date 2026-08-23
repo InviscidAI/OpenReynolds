@@ -25,6 +25,7 @@ from .config import Config, config_path
 from .loop import Loop
 from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
+from .terminal import tolerant_stdout
 from .tools import ToolContext
 from .view import ConsoleView, View
 from .watch import NOTHING, LineReader, NullReader, situation, watch
@@ -33,25 +34,7 @@ TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
 TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
 RESULTS_PICKUP = f"{WORKSPACE_ROOT}/results.json"
 
-def _tolerant_stdout() -> None:
-    """Keep an undecodable character from killing the session.
-
-    A CFD conversation is full of Greek letters, superscripts and arrows, and stdout
-    is not always UTF-8 - a redirect to a file on Windows lands on cp1252, where a
-    single mu raises mid-stream.
-    """
-    for stream in (sys.stdout, sys.stderr):
-        # UTF-8 first so a redirected log keeps mu and y+ intact; replace as the
-        # fallback so an undecodable character can still never raise.
-        for attempt in ({"encoding": "utf-8", "errors": "replace"}, {"errors": "replace"}):
-            try:
-                stream.reconfigure(**attempt)
-                break
-            except (AttributeError, ValueError, OSError, LookupError):
-                continue
-
-
-_tolerant_stdout()
+tolerant_stdout()
 console = Console()
 
 

@@ -172,3 +172,73 @@ def test_a_clean_report_says_the_instance_is_idle():
 def test_an_escalation_is_visible_in_the_report():
     report = StopReport(escalated=["sweep"])
     assert "ignored the first signal" in " ".join(report.lines())
+
+
+# -- the force path itself ------------------------------------------------------
+
+
+def busy(backend, *names):
+    """The instance reports these solvers as running."""
+    backend.exec_result = ExecResult(0, "\n".join(names) + "\n", False, None)
+
+
+def test_force_kills_each_leftover_with_its_own_pkill(backend, store):
+    """pkill takes exactly one pattern. A second `-x name` makes it exit 2 having
+    killed nothing, which is how a stop that stops nothing reports success."""
+    busy(backend, "mpirun", "simpleFoam")
+    store.record_job("job-1", cmd="mpirun simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    stop_everything(backend, store, force=True)
+
+    pkills = [cmd for cmd in backend.execs if cmd.startswith("pkill")]
+    assert pkills == ["pkill -9 -x mpirun", "pkill -9 -x simpleFoam"]
+    for command in pkills:
+        assert command.count("-x") == 1, f"more than one pattern in {command!r}"
+
+
+def test_a_name_is_only_killed_once_however_many_copies_are_running(backend, store):
+    busy(backend, "simpleFoam", "simpleFoam", "simpleFoam")
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    stop_everything(backend, store, force=True)
+
+    assert [c for c in backend.execs if c.startswith("pkill")] == ["pkill -9 -x simpleFoam"]
+
+
+def test_pkill_finding_nothing_is_not_a_failure(backend, store):
+    """Exit 1 means it was already gone, which is the outcome that was wanted."""
+    busy(backend, "simpleFoam")
+    backend.exec_results["pkill -9 -x simpleFoam"] = ExecResult(1, "", False, None)
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    report = stop_everything(backend, store, force=True)
+
+    assert not report.failed
+
+
+def test_a_pkill_that_errors_is_reported_rather_than_swallowed(backend, store):
+    busy(backend, "simpleFoam")
+    backend.exec_results["pkill -9 -x simpleFoam"] = ExecResult(
+        2, "pkill: only one pattern can be provided\n", False, None
+    )
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    report = stop_everything(backend, store, force=True)
+
+    assert not report.clean
+    assert any("only one pattern" in why for _name, why in report.failed)
+    assert any("could not stop simpleFoam" in line for line in report.lines())
+
+
+def test_without_force_nothing_is_pkilled(backend, store):
+    busy(backend, "simpleFoam")
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    stop_everything(backend, store, force=False)
+
+    assert not [c for c in backend.execs if c.startswith("pkill")]

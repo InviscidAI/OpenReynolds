@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import anthropic  # noqa: E402
 
 from openreynolds.config import Config  # noqa: E402
+from openreynolds.terminal import tolerant_stdout  # noqa: E402
 from personas import ALL, SATISFIED, STUCK, Persona  # noqa: E402
 
 CODE_LIKE = re.compile(
@@ -48,6 +49,11 @@ CODE_LIKE = re.compile(
 
 INTERFACE_COMMAND = re.compile(r"^/(btw|status|files|help|open|ls)\b", re.IGNORECASE)
 """Typing `/status` is using the product, not writing code, so it survives the filter."""
+
+# The agent's output passes through here on its way to the screen, so the harness needs
+# the same protection the product has. Without it one sigma in one reply ends the whole
+# run, which is exactly what happened the first time this was pointed at a live session.
+tolerant_stdout()
 
 STUDY_ID = re.compile(r"\bstudy\s+(\d{8}-\d{6}-[0-9a-f]{4})\b")
 
@@ -289,7 +295,27 @@ def main() -> int:
     args.user_model = args.user_model or cfg.model
     repo = Path(__file__).resolve().parents[1]
 
-    results = [run_one(client, persona, args, repo) for persona in chosen]
+    results = []
+    for persona in chosen:
+        # One persona falling over must not take the other three with it. The first
+        # live run of this suite died on persona one, turn one, and the other three
+        # never ran -- so the crash cost four runs' worth of information, not one.
+        try:
+            results.append(run_one(client, persona, args, repo))
+        except Exception as exc:
+            import traceback
+
+            traceback.print_exc()
+            results.append(
+                {
+                    "persona": persona.name,
+                    "verdict": f"harness failed: {type(exc).__name__}",
+                    "turns": 0,
+                    "minutes": 0.0,
+                    "study": None,
+                    "log": "-",
+                }
+            )
 
     print(f"\n{'=' * 70}\nSUMMARY\n{'=' * 70}")
     for result in results:

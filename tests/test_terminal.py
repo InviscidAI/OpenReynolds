@@ -16,6 +16,7 @@ import pytest
 from rich.console import Console
 
 from openreynolds import cli
+from openreynolds.terminal import tolerant_stdout
 
 PACKAGE = pathlib.Path(cli.__file__).parent
 
@@ -50,7 +51,7 @@ def test_streams_are_made_tolerant_of_undecodable_output():
     original = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out, err
     try:
-        cli._tolerant_stdout()
+        tolerant_stdout()
     finally:
         sys.stdout, sys.stderr = original
 
@@ -64,7 +65,7 @@ def test_a_stream_that_cannot_be_reconfigured_is_left_alone():
     original = sys.stdout
     sys.stdout = io.StringIO()  # no reconfigure attribute
     try:
-        cli._tolerant_stdout()  # must not raise
+        tolerant_stdout()  # must not raise
     finally:
         sys.stdout = original
 

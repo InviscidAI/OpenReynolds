@@ -11,6 +11,7 @@ what is still there rather than what was requested.
 
 from __future__ import annotations
 
+import shlex
 import time
 from dataclasses import dataclass, field
 
@@ -71,6 +72,32 @@ def running_solvers(backend: Backend) -> list[str]:
     return [name for name in names if name in SOLVERS]
 
 
+PKILL_MATCHED = 0
+PKILL_NOTHING_MATCHED = 1
+"""`pkill` exits 1 when nothing matched, which here means it was already gone."""
+
+
+def _force_kill(backend: Backend, names: list[str], report: StopReport) -> None:
+    """Kill each leftover process by exact name, one call per name.
+
+    `pkill` takes exactly one pattern: a second `-x name` makes it exit 2 having killed
+    nothing at all. Sending that to /dev/null and following it with `true` is how a stop
+    that stops nothing reports success, which is worse than not having the flag -- the
+    user reads "done" and walks away from eight busy cores.
+    """
+    for name in dict.fromkeys(names):
+        try:
+            result = backend.exec(f"pkill -9 -x {shlex.quote(name)}", timeout_s=30)
+        except BackendError as exc:
+            report.failed.append((name, str(exc)))
+            continue
+        if result.exit_code not in (PKILL_MATCHED, PKILL_NOTHING_MATCHED):
+            detail = (result.output or "").strip().splitlines()
+            report.failed.append(
+                (name, detail[0] if detail else f"pkill exited {result.exit_code}")
+            )
+
+
 def stop_everything(backend: Backend, store: Store, force: bool = False) -> StopReport:
     """Stop every job this study started, and confirm the work actually ended."""
     report = StopReport()
@@ -100,11 +127,7 @@ def stop_everything(backend: Backend, store: Store, force: bool = False) -> Stop
             except BackendError:
                 pass
         if force:
-            names = " ".join(f"-x {name}" for name in dict.fromkeys(survivors))
-            try:
-                backend.exec(f"pkill -9 {names} 2>/dev/null; true", timeout_s=60)
-            except BackendError as exc:
-                report.failed.append(("leftover processes", str(exc)))
+            _force_kill(backend, survivors, report)
         time.sleep(SETTLE_S)
         survivors = running_solvers(backend)
 

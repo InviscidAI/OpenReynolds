@@ -30,6 +30,8 @@ class FakeBackend(Backend):
         self.files: dict[str, bytes] = {}
         self.dirs: dict[str, list[str]] = {}
         self.exec_result = ExecResult(0, "ok", False, None)
+        self.exec_results: dict[str, ExecResult] = {}
+        self.execs: list[str] = []
         self.jobs: dict[str, JobStatus] = {}
         self.logs: dict[str, bytes] = {}
         self.started: list[dict] = []
@@ -38,7 +40,8 @@ class FakeBackend(Backend):
 
     def exec(self, cmd, cwd=None, timeout_s=120):
         self.last_exec = (cmd, cwd, timeout_s)
-        return self.exec_result
+        self.execs.append(cmd)
+        return self.exec_results.get(cmd, self.exec_result)
 
     def put_file(self, path, data):
         self.files[path] = data
