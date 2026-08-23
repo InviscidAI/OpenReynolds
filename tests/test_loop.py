@@ -161,3 +161,42 @@ def test_every_turn_is_mirrored_locally(loop, store):
         for line in (store.dir / "messages.jsonl").read_text().strip().splitlines()
     ]
     assert roles == ["user", "assistant", "tool", "assistant"]
+
+
+def test_a_turn_cut_off_at_the_output_cap_says_so(loop, capsys):
+    """Otherwise a truncated answer is indistinguishable from a finished one."""
+    from rich.console import Console
+
+    loop.console = Console(force_terminal=False)
+    install(loop, [message([text_block("the pressure drop is ")], stop_reason="max_tokens")])
+    loop.say("report it")
+    loop.run()
+
+    assert "incomplete" in capsys.readouterr().out
+
+
+def test_settle_answers_a_tool_call_the_turn_never_got_to(loop):
+    """The API refuses a thread whose last turn asks for a tool and never gets an
+    answer, so an interrupted turn would otherwise be unresumable."""
+    install(loop, [message([tool_block("bash", {"cmd": "ls"}, "tu_x")], stop_reason="tool_use")])
+    loop.say("look around")
+    loop.messages.append({"role": "assistant", "content": [tool_block("bash", {"cmd": "ls"}, "tu_x")]})
+
+    loop.settle()
+
+    answer = loop.messages[-1]
+    assert answer["role"] == "user"
+    assert answer["content"][0]["tool_use_id"] == "tu_x"
+    assert answer["content"][0]["is_error"] is True
+    assert "did not run" in answer["content"][0]["content"]
+
+
+def test_settle_leaves_a_healthy_thread_alone(loop):
+    install(loop, [message([text_block("done")])])
+    loop.say("go")
+    loop.run()
+    before = list(loop.messages)
+
+    loop.settle()
+
+    assert loop.messages == before

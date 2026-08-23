@@ -269,3 +269,46 @@ def test_exit_works_while_a_job_is_running(loop, backend, store, quiet_console, 
 
     assert loop.messages == [], "the exit word never reached the model"
     assert store.live_jobs(), "the job is left running on the instance"
+
+
+def _api_error(status=429):
+    import anthropic
+    from types import SimpleNamespace
+
+    return anthropic.RateLimitError(
+        "rate limit exceeded",
+        response=SimpleNamespace(status_code=status, headers={}, request=None),
+        body=None,
+    )
+
+
+def test_a_rate_limit_does_not_end_the_session(loop, backend, store, quiet_console, monkeypatch):
+    """A long study meets one eventually; losing the thread to it is a poor trade."""
+    calls = []
+
+    def failing_run():
+        calls.append(1)
+        raise _api_error()
+
+    monkeypatch.setattr(loop, "run", failing_run)
+    monkeypatch.setattr(cli, "LineReader", lambda: ScriptedReader(["go", "/exit"]))
+
+    cli._run_interactive(loop, backend, store)
+
+    assert calls, "the turn was attempted"
+    assert loop.messages[0]["content"] == "go", "the thread survived"
+
+
+def test_a_failed_turn_does_not_trigger_a_context_refresh(loop, monkeypatch):
+    refreshed = []
+    monkeypatch.setattr(loop, "run", lambda: (_ for _ in ()).throw(_api_error()))
+    monkeypatch.setattr(loop, "refresh", lambda blurb: refreshed.append(blurb))
+    monkeypatch.setattr(type(loop), "needs_refresh", property(lambda self: True))
+
+    assert cli._run_turn(loop) is False
+    assert refreshed == []
+
+
+def test_one_shot_stops_when_the_model_api_fails(loop, backend, store, quiet_console, monkeypatch):
+    monkeypatch.setattr(loop, "run", lambda: (_ for _ in ()).throw(_api_error()))
+    cli._run_one_shot(loop, backend, store, "do it")  # returns rather than hanging

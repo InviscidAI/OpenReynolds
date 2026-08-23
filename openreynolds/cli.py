@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+import anthropic
 import click
 from rich.console import Console
 
@@ -185,6 +186,27 @@ def session(
 EXIT_WORDS = ("/exit", "/quit")
 
 
+def _run_turn(loop: Loop) -> bool:
+    """Run a turn, surviving a model-API failure. Returns whether it completed.
+
+    A long study will meet a rate limit or a dropped connection eventually, and
+    losing the whole session to one is a poor trade when the thread is still intact
+    and the jobs are still running on the instance.
+    """
+    try:
+        loop.run()
+        return True
+    except anthropic.APIStatusError as exc:
+        detail = getattr(exc, "message", None) or str(exc)
+        console.print(f"\n[red]The model API returned {exc.status_code}:[/] {detail}")
+    except anthropic.APIError as exc:
+        console.print(f"\n[red]Could not reach the model API:[/] {exc}")
+
+    loop.settle()
+    console.print("[dim]the thread is intact - say something to continue, or /exit[/]")
+    return False
+
+
 def _run_interactive(loop: Loop, backend: Backend, store: Store) -> None:
     reader = LineReader()
     while True:
@@ -214,8 +236,7 @@ def _run_interactive(loop: Loop, backend: Backend, store: Store) -> None:
                 return
             loop.say(text)
 
-        loop.run()
-        if loop.needs_refresh:
+        if _run_turn(loop) and loop.needs_refresh:
             loop.refresh(situation(store, backend))
 
 
@@ -223,13 +244,15 @@ def _run_one_shot(loop: Loop, backend: Backend, store: Store, prompt: str) -> No
     """Run until the model is done and no jobs remain."""
     reader = NullReader()
     loop.say(prompt)
-    loop.run()
+    if not _run_turn(loop):
+        return
     while store.live_jobs():
         wake = watch(backend, store, console, reader)
         if wake.kind != "job":
             break
         loop.inform(wake.text)
-        loop.run()
+        if not _run_turn(loop):
+            return
         if loop.needs_refresh:
             loop.refresh(situation(store, backend))
 

@@ -87,6 +87,15 @@ class Loop:
             self.messages.append({"role": "assistant", "content": response.content})
             self._record("assistant", _text_of(response))
 
+            if response.stop_reason == "max_tokens":
+                # Otherwise a turn cut off at the output cap is indistinguishable from
+                # a finished one. Say so; whether to carry on is the model's call and
+                # the user's, not the harness's.
+                self.console.print(
+                    f"\n[yellow]This turn stopped at the {MAX_TOKENS:,}-token output "
+                    "cap, so it is incomplete.[/]"
+                )
+
             tool_uses = [b for b in response.content if b.type == "tool_use"]
             if not tool_uses:
                 return response
@@ -193,6 +202,34 @@ class Loop:
         self.messages = []
         self.context_tokens = 0
         self.say(blurb)
+
+    def settle(self) -> None:
+        """Answer any tool call left dangling by an interrupted turn.
+
+        The API refuses a thread whose last assistant turn asks for a tool and never
+        gets an answer, so a turn cut short by a network failure would otherwise be
+        unresumable. What the model gets back is the fact: it did not run.
+        """
+        if not self.messages or self.messages[-1]["role"] != "assistant":
+            return
+        content = self.messages[-1]["content"]
+        pending = [b for b in content if getattr(b, "type", None) == "tool_use"]
+        if not pending:
+            return
+        self.messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": "This call did not run: the turn was interrupted.",
+                        "is_error": True,
+                    }
+                    for block in pending
+                ],
+            }
+        )
 
     def restart(self, blurb: str) -> None:
         """Begin a fresh thread from a factual situation blurb."""
