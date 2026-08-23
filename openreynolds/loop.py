@@ -56,6 +56,16 @@ class Loop:
         self.messages.append({"role": "user", "content": text})
         self._record("user", text)
 
+    def brief(self, text: str) -> None:
+        """Open a thread with harness-assembled facts.
+
+        Sent as a user turn because a thread cannot begin with anything else, but
+        recorded as an event: the user did not say this, and a transcript that
+        claims otherwise misleads whatever reads it later.
+        """
+        self.messages.append({"role": "user", "content": text})
+        self._record("event", text)
+
     def inform(self, text: str) -> None:
         """Add harness-authored facts.
 
@@ -137,7 +147,7 @@ class Loop:
             for event in stream:
                 if event.type == "content_block_start" and event.content_block.type == "thinking":
                     thinking_open = True
-                    self.console.print("\n[dim]thinking…[/]")
+                    self.console.print("\n[dim]thinking...[/]")
                 elif event.type == "content_block_delta":
                     if event.delta.type == "thinking_delta":
                         self.console.print(f"[dim]{event.delta.thinking}[/]", end="")
@@ -201,7 +211,7 @@ class Loop:
         self.run()
         self.messages = []
         self.context_tokens = 0
-        self.say(blurb)
+        self.brief(blurb)
 
     def settle(self) -> None:
         """Answer any tool call left dangling by an interrupted turn.
@@ -235,7 +245,7 @@ class Loop:
         """Begin a fresh thread from a factual situation blurb."""
         self.messages = []
         self.context_tokens = 0
-        self.say(blurb)
+        self.brief(blurb)
 
     # -- capture ---------------------------------------------------------------
 

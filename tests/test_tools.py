@@ -175,3 +175,16 @@ def test_job_start_output_is_parseable_by_the_smoke_script(ctx):
     content, _ = dispatch(ctx, "job_start", {"cmd": "simpleFoam", "name": "ticker"})
     assert content.split()[:2] == ["started", "job"]
     assert content.split()[2] == "job-1"
+
+
+def test_an_over_long_timeout_is_reported_not_silently_clamped(ctx, backend):
+    """A command cut off at a ceiling the caller did not know about reads as one
+    that finished."""
+    content, _ = dispatch(ctx, "bash", {"cmd": "simpleFoam", "timeout_s": 600})
+    assert "exceeds the 300s ceiling" in content
+    assert "job_start has no such limit" in content
+
+
+def test_an_ordinary_timeout_says_nothing(ctx):
+    content, _ = dispatch(ctx, "bash", {"cmd": "ls", "timeout_s": 60})
+    assert "ceiling" not in content

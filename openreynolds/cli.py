@@ -10,6 +10,7 @@ import anthropic
 import click
 from rich.console import Console
 
+from . import __version__
 from .backend import hosted
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT
 from .capture import Capture
@@ -43,6 +44,7 @@ console = Console()
 
 
 @click.group(invoke_without_command=True)
+@click.version_option(__version__, "-V", "--version")
 @click.option("-p", "--prompt", "one_shot", help="Run non-interactively and exit.")
 @click.option("--study", "study_id", help="Resume a local study by id.")
 @click.option("--instance", "instance_id", help="Use a specific workspace instance.")
@@ -166,7 +168,7 @@ def session(
     console.print(f"[dim]fetched files land in {store.dir}[/]\n")
 
     if resuming:
-        loop.say(situation(store, backend))
+        loop.brief(situation(store, backend))
 
     try:
         if one_shot:

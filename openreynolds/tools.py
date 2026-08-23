@@ -177,11 +177,17 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[s
 
 
 def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
-    result = ctx.backend.exec(
-        args["cmd"],
-        cwd=args.get("cwd"),
-        timeout_s=int(args.get("timeout_s") or 120),
-    )
+    asked = int(args.get("timeout_s") or 120)
+    result = ctx.backend.exec(args["cmd"], cwd=args.get("cwd"), timeout_s=asked)
+    notes = []
+    if asked > EXEC_MAX_TIMEOUT_S:
+        # Say so rather than clamping quietly: a command cut off at a ceiling the
+        # caller did not know about reads as a command that finished.
+        notes.append(
+            f"[timeout_s={asked} exceeds the {EXEC_MAX_TIMEOUT_S}s ceiling for a "
+            f"synchronous command; it ran with {EXEC_MAX_TIMEOUT_S}s. job_start has "
+            "no such limit.]"
+        )
     total = None
     if result.truncated and result.log_path:
         try:
@@ -191,6 +197,7 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
 
     body, clipped = _clip(result.output, ctx.max_output)
     lines = [f"exit_code: {result.exit_code}"]
+    lines.extend(notes)
     if result.truncated or clipped:
         lines.append(_truncation_marker(len(body.encode("utf-8")), total, result.log_path))
     lines.append("")
