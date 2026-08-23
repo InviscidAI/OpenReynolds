@@ -195,3 +195,19 @@ def test_blurb_offers_no_next_step(backend, store):
     blurb = situation(store, backend).lower()
     for suggestion in ("should", "you could", "recommend", "next step", "suggest"):
         assert suggestion not in blurb
+
+
+def test_the_blurb_refreshes_a_job_whose_status_could_not_be_read(backend, store):
+    """A resume after an outage starts from "unknown", and the blurb used to report
+    that word to the model instead of the real end reason."""
+    job_id = start_job(backend, store)
+    store.update_job(job_id, status="unknown")
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, name="solve", status="killed", end_reason="sandbox_expired"
+    )
+
+    blurb = situation(store, backend)
+
+    assert "sandbox_expired" in blurb
+    assert "unknown" not in blurb
+    assert store.session.jobs[job_id].end_reason == "sandbox_expired"

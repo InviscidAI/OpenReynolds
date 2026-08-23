@@ -103,3 +103,30 @@ def test_client_gives_up_after_repeated_failures(monkeypatch):
     with pytest.raises(BackendError) as excinfo:
         client.request("GET", "/v1/instances")
     assert excinfo.value.code == "unavailable"
+
+
+def test_a_bodyless_success_is_a_backend_error_not_a_json_traceback():
+    """A long synchronous exec can come back as a bodyless 200 from something between
+    here and the service. Seen live: JSONDecodeError escaped BackendError handling."""
+    from openreynolds.backend.hosted import _json
+
+    with pytest.raises(BackendError) as excinfo:
+        _json(response(200, text=""))
+
+    assert excinfo.value.code == "bad_response"
+    assert "not JSON" in excinfo.value.message
+    assert "body was empty" in excinfo.value.message
+
+
+def test_a_non_json_success_body_is_quoted_back():
+    from openreynolds.backend.hosted import _json
+
+    with pytest.raises(BackendError) as excinfo:
+        _json(response(200, text="<html>gateway timeout</html>"))
+    assert "gateway timeout" in excinfo.value.message
+
+
+def test_a_good_body_still_decodes():
+    from openreynolds.backend.hosted import _json
+
+    assert _json(response(200, {"exit_code": 0})) == {"exit_code": 0}

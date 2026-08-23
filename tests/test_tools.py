@@ -189,3 +189,19 @@ def test_an_over_long_timeout_is_reported_not_silently_clamped(ctx, backend):
 def test_an_ordinary_timeout_says_nothing(ctx):
     content, _ = dispatch(ctx, "bash", {"cmd": "ls", "timeout_s": 60})
     assert "ceiling" not in content
+
+
+def test_a_timed_out_command_explains_its_minus_one(ctx, backend):
+    """A bare `exit_code: -1` reads like a command that merely produced nothing.
+    Found by a live run, where the model had to re-issue the query to find out."""
+    backend.exec_result = ExecResult(-1, "", False, None)
+    content, _ = dispatch(ctx, "bash", {"cmd": "sleep 280", "timeout_s": 120})
+    assert "exit_code -1 means no exit status was reported" in content
+    assert "ran with 120s" in content
+    assert "job_start has no time limit" in content
+
+
+def test_an_ordinary_exit_says_nothing_about_timeouts(ctx, backend):
+    backend.exec_result = ExecResult(0, "fine", False, None)
+    content, _ = dispatch(ctx, "bash", {"cmd": "ls"})
+    assert "exit_code -1" not in content

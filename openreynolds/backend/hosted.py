@@ -66,6 +66,26 @@ def _decode_error(response: httpx.Response) -> BackendError:
     return BackendError(str(body), code="http_error", status=status)
 
 
+def _json(response: httpx.Response) -> Any:
+    """Decode a success body, which is not always JSON.
+
+    A long synchronous exec can come back as a bodyless 200 from something between
+    here and the service. Without this the JSONDecodeError escapes BackendError
+    handling entirely.
+    """
+    try:
+        return response.json()
+    except ValueError:
+        snippet = (response.text or "").strip()[:200]
+        detail = f": {snippet}" if snippet else " (the body was empty)"
+        raise BackendError(
+            f"the service answered {response.status_code} with a body that is not JSON"
+            f"{detail}",
+            code="bad_response",
+            status=response.status_code,
+        ) from None
+
+
 def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
     if response is not None:
         raw = response.headers.get("retry-after")
@@ -125,16 +145,16 @@ class FoamdClient:
     # -- instances -------------------------------------------------------------
 
     def list_instances(self) -> list[dict[str, Any]]:
-        return self.request("GET", "/v1/instances").json()
+        return _json(self.request("GET", "/v1/instances"))
 
     def create_instance(self, cpu: float = 8.0, mem_gb: int = 16) -> str:
-        body = self.request(
-            "POST", "/v1/instances", json={"cpu": cpu, "mem_gb": mem_gb}
-        ).json()
+        body = _json(
+            self.request("POST", "/v1/instances", json={"cpu": cpu, "mem_gb": mem_gb})
+        )
         return body["instance_id"]
 
     def start_instance(self, instance_id: str) -> dict[str, Any]:
-        return self.request("POST", f"/v1/instances/{instance_id}/start", timeout=180.0).json()
+        return _json(self.request("POST", f"/v1/instances/{instance_id}/start", timeout=180.0))
 
     # -- capture plane ---------------------------------------------------------
 
@@ -144,7 +164,7 @@ class FoamdClient:
             payload["title"] = title
         if instance_id:
             payload["instance_id"] = instance_id
-        return self.request("POST", "/v1/studies", json=payload).json()["study_id"]
+        return _json(self.request("POST", "/v1/studies", json=payload))["study_id"]
 
     def post_messages(self, study_id: str, messages: list[dict[str, Any]]) -> None:
         self.request("POST", f"/v1/studies/{study_id}/messages", json=messages)
@@ -186,9 +206,11 @@ class HostedBackend(Backend):
         payload: dict[str, Any] = {"cmd": cmd, "timeout_s": timeout_s}
         if cwd:
             payload["cwd"] = cwd
-        body = self._client.request(
-            "POST", self._instance_path("/exec"), json=payload, timeout=timeout_s + 60.0
-        ).json()
+        body = _json(
+            self._client.request(
+                "POST", self._instance_path("/exec"), json=payload, timeout=timeout_s + 60.0
+            )
+        )
         return ExecResult(
             exit_code=body.get("exit_code", -1),
             output=body.get("output", ""),
@@ -217,9 +239,11 @@ class HostedBackend(Backend):
         ).content
 
     def stat(self, path: str) -> Stat:
-        body = self._client.request(
-            "GET", self._instance_path("/files"), params={"path": path, "stat": 1}
-        ).json()
+        body = _json(
+            self._client.request(
+                "GET", self._instance_path("/files"), params={"path": path, "stat": 1}
+            )
+        )
         return Stat(
             path=body.get("path", path),
             type=body.get("type", ""),
@@ -268,25 +292,33 @@ class HostedBackend(Backend):
             payload["name"] = name
         if kill_on:
             payload["kill_on"] = kill_on
-        body = self._client.request(
-            "POST", self._instance_path("/jobs"), json=payload, timeout=180.0
-        ).json()
+        body = _json(
+            self._client.request(
+                "POST", self._instance_path("/jobs"), json=payload, timeout=180.0
+            )
+        )
         return body["job_id"]
 
     def job_status(self, job_id: str) -> JobStatus:
-        return _job_status(self._client.request("GET", f"/v1/jobs/{job_id}", timeout=180.0).json())
+        return _job_status(
+            _json(self._client.request("GET", f"/v1/jobs/{job_id}", timeout=180.0))
+        )
 
     def job_tail(self, job_id: str, offset: int = 0) -> tuple[str, int, bool]:
-        body = self._client.request(
-            "GET", f"/v1/jobs/{job_id}/log", params={"offset": offset}, timeout=180.0
-        ).json()
+        body = _json(
+            self._client.request(
+                "GET", f"/v1/jobs/{job_id}/log", params={"offset": offset}, timeout=180.0
+            )
+        )
         return body.get("data", ""), int(body.get("next_offset", offset)), bool(body.get("eof"))
 
     def job_kill(self, job_id: str) -> JobStatus:
         return _job_status(
-            self._client.request(
-                "POST", f"/v1/jobs/{job_id}/kill", json={"signal": "TERM"}, timeout=180.0
-            ).json()
+            _json(
+                self._client.request(
+                    "POST", f"/v1/jobs/{job_id}/kill", json={"signal": "TERM"}, timeout=180.0
+                )
+            )
         )
 
 

@@ -185,7 +185,10 @@ def situation(store: Store, backend: Backend | None = None) -> str:
 
     live, done = [], []
     for record in jobs:
-        if record.status == "running" and backend is not None:
+        # "unknown" is what a job gets when its status could not be read -- which is
+        # precisely the state a resume after an outage starts from, so it needs the
+        # refresh at least as much as a running one does.
+        if record.status in ("running", "unknown") and backend is not None:
             try:
                 status = backend.job_status(record.job_id)
             except BackendError:

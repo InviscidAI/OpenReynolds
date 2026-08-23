@@ -180,6 +180,7 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     asked = int(args.get("timeout_s") or 120)
     result = ctx.backend.exec(args["cmd"], cwd=args.get("cwd"), timeout_s=asked)
     notes = []
+    ran_with = min(asked, EXEC_MAX_TIMEOUT_S)
     if asked > EXEC_MAX_TIMEOUT_S:
         # Say so rather than clamping quietly: a command cut off at a ceiling the
         # caller did not know about reads as a command that finished.
@@ -187,6 +188,15 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
             f"[timeout_s={asked} exceeds the {EXEC_MAX_TIMEOUT_S}s ceiling for a "
             f"synchronous command; it ran with {EXEC_MAX_TIMEOUT_S}s. job_start has "
             "no such limit.]"
+        )
+    if result.exit_code == -1:
+        # The same trap one step further on: a command killed at its timeout reports
+        # no status, and a bare "exit_code: -1" reads like a command that merely
+        # produced nothing.
+        notes.append(
+            f"[exit_code -1 means no exit status was reported, which is what happens "
+            f"when a command outruns its timeout_s (this one ran with {ran_with}s). "
+            "job_start has no time limit.]"
         )
     total = None
     if result.truncated and result.log_path:
