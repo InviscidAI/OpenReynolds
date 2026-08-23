@@ -24,6 +24,9 @@ SOLVERS = ("simpleFoam", "pimpleFoam", "interFoam", "icoFoam", "buoyantSimpleFoa
 
 SETTLE_S = 3.0
 
+STOP_PASSES = 4
+"""How many times to look again before giving up and saying what is still there."""
+
 
 @dataclass
 class StopReport:
@@ -32,6 +35,8 @@ class StopReport:
     failed: list[tuple[str, str]] = field(default_factory=list)
     survivors: list[str] = field(default_factory=list)
     """Solver processes still running once every job was signalled."""
+    passes: int = 0
+    """Extra rounds needed, when something kept starting new work."""
 
     @property
     def clean(self) -> bool:
@@ -45,6 +50,10 @@ class StopReport:
             out.append(f"stopped {name} (it ignored the first signal)")
         for name, why in self.failed:
             out.append(f"could not stop {name}: {why}")
+        if self.passes and not self.survivors:
+            out.append(
+                f"took {self.passes + 1} passes - something kept starting new work"
+            )
         if self.survivors:
             out.append(
                 "still running after every job was signalled: "
@@ -126,10 +135,20 @@ def stop_everything(backend: Backend, store: Store, force: bool = False) -> Stop
                 report.escalated.append(record.name or record.job_id[:8])
             except BackendError:
                 pass
-        if force:
-            _force_kill(backend, survivors, report)
-        time.sleep(SETTLE_S)
-        survivors = running_solvers(backend)
+
+        # One pass is not enough. A study is usually driven by a script working
+        # through a mesh ladder, and killing the solver it is currently running just
+        # frees it to start the next one -- so the check three seconds later finds a
+        # brand new simpleFoam and reports failure while everything did in fact die.
+        # Keep going until the instance is actually quiet.
+        for _attempt in range(STOP_PASSES):
+            if force:
+                _force_kill(backend, survivors, report)
+            time.sleep(SETTLE_S)
+            survivors = running_solvers(backend)
+            if not survivors:
+                break
+            report.passes += 1
 
     report.survivors = survivors
     return report

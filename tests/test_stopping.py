@@ -192,7 +192,7 @@ def test_force_kills_each_leftover_with_its_own_pkill(backend, store):
     stop_everything(backend, store, force=True)
 
     pkills = [cmd for cmd in backend.execs if cmd.startswith("pkill")]
-    assert pkills == ["pkill -9 -x mpirun", "pkill -9 -x simpleFoam"]
+    assert set(pkills) == {"pkill -9 -x mpirun", "pkill -9 -x simpleFoam"}
     for command in pkills:
         assert command.count("-x") == 1, f"more than one pattern in {command!r}"
 
@@ -204,7 +204,7 @@ def test_a_name_is_only_killed_once_however_many_copies_are_running(backend, sto
 
     stop_everything(backend, store, force=True)
 
-    assert [c for c in backend.execs if c.startswith("pkill")] == ["pkill -9 -x simpleFoam"]
+    assert set(c for c in backend.execs if c.startswith("pkill")) == {"pkill -9 -x simpleFoam"}
 
 
 def test_pkill_finding_nothing_is_not_a_failure(backend, store):
@@ -242,3 +242,56 @@ def test_without_force_nothing_is_pkilled(backend, store):
     stop_everything(backend, store, force=False)
 
     assert not [c for c in backend.execs if c.startswith("pkill")]
+
+
+def quietening(backend, *names, after=1):
+    """Report these solvers as running, then report the instance quiet."""
+    calls = {"n": 0}
+
+    def looking(cmd, cwd=None, timeout_s=120):
+        backend.execs.append(cmd)
+        if not cmd.startswith("ps "):
+            return ExecResult(0, "", False, None)
+        calls["n"] += 1
+        running = "\n".join(names) if calls["n"] <= after else ""
+        return ExecResult(0, running, False, None)
+
+    backend.exec = looking
+
+
+def test_stopping_stops_looking_once_the_instance_is_quiet(backend, store):
+    quietening(backend, "simpleFoam", after=1)
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    report = stop_everything(backend, store, force=True)
+
+    assert report.clean
+    assert report.passes == 0, "it did not keep hammering a quiet instance"
+    assert len([c for c in backend.execs if c.startswith("pkill")]) == 1
+
+
+def test_a_ladder_that_starts_the_next_solve_is_still_stopped(backend, store):
+    """Killing the solver a driver script is running just frees it to start the next
+    one, so a single look three seconds later finds a brand new simpleFoam and calls
+    it a failure while everything did in fact die."""
+    quietening(backend, "simpleFoam", after=3)
+    store.record_job("job-1", cmd="./ladder.sh", name="ladder")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="ladder")
+
+    report = stop_everything(backend, store, force=True)
+
+    assert report.clean, "it kept going until the instance was actually quiet"
+    assert report.passes >= 1
+    assert any("passes" in line for line in report.lines())
+
+
+def test_something_that_never_dies_is_reported_rather_than_looped_on_forever(backend, store):
+    quietening(backend, "simpleFoam", after=999)
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    report = stop_everything(backend, store, force=True)
+
+    assert not report.clean
+    assert "simpleFoam" in " ".join(report.lines())
