@@ -183,7 +183,7 @@ class Loop:
         survives is the filesystem plus whatever notes it chose to write; nothing here
         summarizes its reasoning for it.
         """
-        self.console.print("\n[dim]— refreshing the thread —[/]")
+        self.console.print("\n[dim]- refreshing the thread -[/]")
         self.inform(
             "This conversation thread is being refreshed to free up context. The "
             "workspace is untouched and this session continues. Anything you want to "
@@ -230,7 +230,7 @@ def _summarize(tool_input: Any, width: int = 100) -> str:
     else:
         text = str(tool_input)
     text = " ".join(text.split())
-    return text if len(text) <= width else text[: width - 1] + "…"
+    return text if len(text) <= width else text[: width - 3] + "..."
 
 
 ToolFactory = Callable[[], ToolContext]

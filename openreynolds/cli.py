@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import click
@@ -11,6 +12,7 @@ from rich.console import Console
 from .backend import hosted
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT
 from .capture import Capture
+from . import images
 from .config import Config, config_path
 from .loop import Loop
 from .store import Store, list_studies, new_study_id
@@ -21,6 +23,21 @@ TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
 TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
 RESULTS_PICKUP = f"{WORKSPACE_ROOT}/results.json"
 
+def _tolerant_stdout() -> None:
+    """Keep an undecodable character from killing the session.
+
+    A CFD conversation is full of Greek letters, superscripts and arrows, and stdout
+    is not always UTF-8 - a redirect to a file on Windows lands on cp1252, where a
+    single mu raises mid-stream.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_tolerant_stdout()
 console = Console()
 
 
@@ -68,7 +85,7 @@ def studies_cmd() -> None:
         return
     for item in sessions:
         live = sum(1 for job in item.jobs.values() if job.status == "running")
-        suffix = f" — {live} job(s) running" if live else ""
+        suffix = f" - {live} job(s) running" if live else ""
         title = item.title or "(untitled)"
         console.print(f"[bold]{item.study_id}[/]  {title}  instance={item.instance_id}{suffix}")
 
@@ -137,7 +154,7 @@ def session(
         backend=backend,
         store=store,
         max_output=cfg.max_tool_output,
-        on_fetch=_fetch_hook(capture, cfg.studies_dir),
+        on_fetch=_fetch_hook(capture),
     )
     loop = Loop(cfg, ctx, store, console, capture=capture)
 
@@ -156,7 +173,7 @@ def session(
         else:
             _run_interactive(loop, backend, store)
     except KeyboardInterrupt:
-        console.print("\n[dim]interrupted — jobs keep running on the instance[/]")
+        console.print("\n[dim]interrupted - jobs keep running on the instance[/]")
     finally:
         _pickup_results(backend, capture)
         if capture:
@@ -179,7 +196,7 @@ def _run_interactive(loop: Loop, backend: Backend, store: Store) -> None:
             else:
                 continue
         else:
-            console.print("\n[bold green]›[/] ", end="")
+            console.print("\n[bold green]>[/] ", end="")
             line = reader.get()
             if line is None:
                 return
@@ -220,15 +237,16 @@ def _sync_toolbox(backend: Backend) -> None:
         console.print(f"[yellow]toolbox sync skipped:[/] {exc}")
 
 
-def _fetch_hook(capture: Capture | None, studies_dir: Path):
-    if capture is None:
-        return None
+def _fetch_hook(capture: Capture | None):
+    """Register fetched files as artifacts, and draw them if the terminal can."""
 
-    def register(paths: list[Path]) -> None:
+    def handle(paths: list[Path]) -> None:
         for path in paths:
-            capture.artifact(path)
+            if capture is not None:
+                capture.artifact(path)
+            images.show(path)
 
-    return register
+    return handle
 
 
 def _pickup_results(backend: Backend, capture: Capture | None) -> None:

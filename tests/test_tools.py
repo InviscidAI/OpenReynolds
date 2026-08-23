@@ -168,3 +168,10 @@ def test_fetch_of_nothing_is_not_an_error(ctx):
     content, is_error = dispatch(ctx, "fetch", {"paths": []})
     assert not is_error
     assert "nothing was copied" in content
+
+
+def test_job_start_output_is_parseable_by_the_smoke_script(ctx):
+    """scripts/smoke.py reads the id out of this line; pin the shape."""
+    content, _ = dispatch(ctx, "job_start", {"cmd": "simpleFoam", "name": "ticker"})
+    assert content.split()[:2] == ["started", "job"]
+    assert content.split()[2] == "job-1"

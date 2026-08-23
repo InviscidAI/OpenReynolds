@@ -114,3 +114,26 @@ python -m pytest
 ```
 
 The suite runs entirely against an in-memory workspace — no network, no credentials.
+It covers the parts that are easy to get quietly wrong: that the truncation marker
+points at the *tail* of a log whose head was kept, that a wake message carries an end
+reason and no advice, that job records survive a restart, that capture never blocks or
+raises, and that a `503` cold start is retried while a `404` is not.
+
+### Against a live service
+
+```bash
+FOAMD_URL=... FOAMD_API_KEY=... python scripts/smoke.py
+```
+
+Drives the real `Backend` with no model in the loop, so it checks this client against
+the actual contract rather than a fake of it: command execution with the OpenFOAM
+environment sourced, truncation and its pointer, windowed reads, toolbox sync, a job
+streaming its log, a `kill_on` regex firing and reporting the line that matched, a
+headless matplotlib render fetched back to disk. It reuses a workspace and never
+deletes one, so the persistent volume is safe.
+
+## Inline images
+
+On iTerm2, kitty or WezTerm, a fetched PNG is drawn in the terminal as well as saved.
+Anywhere else you get the path, which is what the model prints anyway. Set
+`OPENREYNOLDS_INLINE_IMAGES=off` to disable.

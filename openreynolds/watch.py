@@ -1,7 +1,7 @@
 """Watch mode: pure-code polling, and wake messages that are facts.
 
 While a job runs the model can end its turn. This module watches in plain Python and
-wakes it with what happened — a name, an exit code, an end reason, a tail of log. It
+wakes it with what happened - a name, an exit code, an end reason, a tail of log. It
 never suggests what to do about any of it.
 """
 
@@ -31,7 +31,7 @@ WAKE_TAIL_BYTES = 2_000
 class LineReader:
     """Reads stdin on a background thread so polling can stay responsive.
 
-    One reader serves the whole session — the interactive prompt and watch mode both
+    One reader serves the whole session - the interactive prompt and watch mode both
     take from this queue, so there is only ever one consumer of stdin.
     """
 
@@ -98,7 +98,7 @@ def watch(
         return Wake("idle")
 
     names = ", ".join(job.name or job.job_id[:8] for job in live)
-    console.print(f"[dim]watching {len(live)} job(s): {names} — type to interrupt[/]")
+    console.print(f"[dim]watching {len(live)} job(s): {names} - type to interrupt[/]")
 
     while True:
         typed = reader.poll()
@@ -146,7 +146,7 @@ def _collect_finished(backend: Backend, store: Store, console: Console) -> str:
             end_reason=status.end_reason,
             exit_code=status.exit_code,
         )
-        console.print(f"[dim]job {record.name or record.job_id[:8]} → {status.status}[/]")
+        console.print(f"[dim]job {record.name or record.job_id[:8]} -> {status.status}[/]")
         reports.append(_job_report(backend, status))
 
     return "\n\n".join(reports)
@@ -189,9 +189,16 @@ def situation(store: Store, backend: Backend | None = None) -> str:
     for record in jobs:
         if record.status == "running" and backend is not None:
             try:
-                record.status = backend.job_status(record.job_id).status
+                status = backend.job_status(record.job_id)
             except BackendError:
                 pass
+            else:
+                store.update_job(
+                    record.job_id,
+                    status=status.status,
+                    end_reason=status.end_reason,
+                    exit_code=status.exit_code,
+                )
         (live if record.status == "running" else done).append(record)
     store.save()
 
