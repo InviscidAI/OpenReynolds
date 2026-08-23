@@ -23,6 +23,8 @@ class ToolContext:
     backend: Backend
     store: Store
     max_output: int
+    view: Any = None
+    """Optional: told whenever job state changes, so a panel can stay current."""
     on_fetch: Callable[[list[Any]], None] | None = None
     """Called with the local paths `fetch` produced, for artifact capture."""
 
@@ -251,6 +253,7 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
         kill_on=args.get("kill_on") or None,
     )
     ctx.store.record_job(job_id, cmd=args["cmd"], name=args.get("name"))
+    _announce_jobs(ctx)
     label = f" ({args['name']})" if args.get("name") else ""
     return f"started job {job_id}{label}"
 
@@ -270,6 +273,7 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
         exit_code=status.exit_code,
         log_offset=next_offset,
     )
+    _announce_jobs(ctx)
 
     body, clipped = _clip(data, ctx.max_output)
     header = describe_job(status)
@@ -284,6 +288,7 @@ def _job_kill(ctx: ToolContext, args: dict[str, Any]) -> str:
     ctx.store.update_job(
         args["job_id"], status=status.status, end_reason=status.end_reason
     )
+    _announce_jobs(ctx)
     return describe_job(status)
 
 
@@ -310,6 +315,12 @@ _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], str]] = {
 
 
 # -- helpers -------------------------------------------------------------------
+
+
+def _announce_jobs(ctx: ToolContext) -> None:
+    """Job state changed; anything showing it should hear about it now."""
+    if ctx.view is not None:
+        ctx.view.jobs(list(ctx.store.session.jobs.values()))
 
 
 def describe_job(status: Any) -> str:

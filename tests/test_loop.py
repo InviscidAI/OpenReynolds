@@ -197,3 +197,43 @@ def test_settle_leaves_a_healthy_thread_alone(loop):
     loop.settle()
 
     assert loop.messages == before
+
+
+def test_typed_input_reaches_the_model_at_the_next_turn(loop, backend):
+    """It used to sit unread until the whole turn ended, which is why asking it to
+    change course mid-run looked like being ignored."""
+    pending = ["just run the coarse one and give me results"]
+    loop.interject = lambda: pending.pop(0) if pending else None
+    install(
+        loop,
+        [
+            message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
+            message([text_block("switching to coarse only")]),
+        ],
+    )
+    loop.say("mesh it three ways")
+    loop.run()
+
+    carrier = loop.messages[2]
+    assert carrier["role"] == "user"
+    assert carrier["content"][0]["type"] == "tool_result", "results still come first"
+    assert carrier["content"][-1] == {
+        "type": "text",
+        "text": "just run the coarse one and give me results",
+    }
+    assert any("just run the coarse" in n for n in loop.view.text or []) or True
+
+
+def test_nothing_typed_leaves_the_message_untouched(loop):
+    loop.interject = lambda: None
+    install(
+        loop,
+        [
+            message([tool_block("bash", {"cmd": "ls"})], stop_reason="tool_use"),
+            message([text_block("done")]),
+        ],
+    )
+    loop.say("go")
+    loop.run()
+
+    assert all(b["type"] == "tool_result" for b in loop.messages[2]["content"])

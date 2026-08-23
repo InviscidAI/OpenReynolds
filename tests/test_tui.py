@@ -59,7 +59,7 @@ async def test_the_session_bar_shows_what_the_session_is():
 async def test_the_jobs_pane_says_jobs_outlive_the_session():
     async with idle_app().run_test() as pilot:
         jobs = pilot.app.query_one("#jobs", JobsPane)
-        assert "no jobs running" in jobs.render()
+        assert "none yet" in jobs.render()
         jobs.names = ["miter_medium", "mesh"]
         rendered = jobs.render()
 
@@ -198,3 +198,72 @@ async def test_a_session_that_raises_is_shown_not_swallowed():
         await pilot.pause()
         await pilot.pause()
         assert app.query_one("#conversation").lines, "the failure was written somewhere visible"
+
+
+async def test_the_jobs_pane_shows_status_not_just_names():
+    """It used to update only while watching, so a job started mid-turn was invisible."""
+    app = idle_app()
+    async with app.run_test() as pilot:
+        await asyncio.to_thread(
+            TuiView(app).jobs,
+            [
+                {"name": "solve", "status": "running", "end_reason": None},
+                {"name": "mesh", "status": "killed", "end_reason": "sandbox_expired"},
+            ],
+        )
+        await pilot.pause()
+        rendered = app.query_one("#jobs", JobsPane).render()
+
+    assert "1 running" in rendered
+    assert "solve" in rendered and "mesh" in rendered
+    assert "sandbox_expired" in rendered
+
+
+async def test_thinking_stays_out_of_the_transcript_by_default():
+    """Streamed in full it is hundreds of grey lines that bury the answer."""
+    app = idle_app()
+    async with app.run_test() as pilot:
+        view = TuiView(app)
+        await asyncio.to_thread(view.thinking_begin)
+        await asyncio.to_thread(view.thinking_delta, "weighing snappyHexMesh against gmsh\n")
+        await pilot.pause()
+        conversation = app.query_one("#conversation")
+        stage = app.query_one("#stage")
+
+    assert not conversation.lines, "reasoning did not land in the conversation"
+    assert "thinking" in stage.text
+
+
+async def test_thinking_can_be_shown_on_request():
+    app = idle_app()
+    async with app.run_test() as pilot:
+        app.action_toggle_thinking()
+        view = TuiView(app)
+        await asyncio.to_thread(view.thinking_begin)
+        await asyncio.to_thread(view.thinking_delta, "weighing the options\n")
+        await pilot.pause()
+        assert app.query_one("#conversation").lines, "ctrl+t puts it in the log"
+
+
+async def test_the_stage_line_says_what_is_happening():
+    app = idle_app()
+    async with app.run_test() as pilot:
+        view = TuiView(app)
+        await asyncio.to_thread(view.tool, "bash", "blockMesh")
+        await pilot.pause()
+        assert "blockMesh" in app.query_one("#stage").text
+        await asyncio.to_thread(view.turn_end)
+        await pilot.pause()
+        assert app.query_one("#stage").text == "", "and clears when the turn ends"
+
+
+async def test_quitting_is_flagged_so_the_caller_can_force_the_exit():
+    """A worker thread inside a network call cannot be interrupted, and being unable
+    to close the program is worse than an untidy shutdown."""
+    app = idle_app()
+    async with app.run_test() as pilot:
+        assert app.quitting is False
+        app.action_quit()
+        await pilot.pause()
+    assert app.quitting is True
+    assert app.typed.get_nowait() is None

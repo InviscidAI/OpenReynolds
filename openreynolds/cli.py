@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -382,8 +383,7 @@ def session(
         """One session, against whichever interface is running it."""
         loop = Loop(cfg, ctx, store, view, capture=capture)
         view.header(store.session.study_id, resolved_instance, cfg.model, store.dir)
-        if resuming:
-            loop.brief(situation(store, backend))
+        loop.brief(_situation_brief(store, backend, resuming, interactive=not one_shot))
         try:
             if one_shot:
                 _run_one_shot(loop, backend, store, one_shot, view, reader, max_wait)
@@ -392,17 +392,50 @@ def session(
         except KeyboardInterrupt:
             view.info("interrupted - jobs keep running on the instance")
 
+    force_exit = False
     try:
         if one_shot or plain or not _tui_available():
             drive(ConsoleView(console), LineReader() if not one_shot else NullReader())
         else:
-            _run_tui(drive)
+            force_exit = bool(_run_tui(drive))
     finally:
         _pickup_results(backend, capture)
         if capture:
             capture.close()
+        _report_on_exit(backend, store)
         backend.close()
-        console.print(f"\n[dim]resume with: openreynolds --study {store.session.study_id}[/]")
+        if force_exit:
+            # The session thread is still inside a network call it cannot be pulled out
+            # of. Everything worth keeping is written; waiting for it would leave the
+            # user unable to close a program they asked to close.
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0)
+
+
+def _situation_brief(store: Store, backend: Backend, resuming: bool, interactive: bool) -> str:
+    """Facts about this session, assembled by the harness.
+
+    Whether anyone is at the terminal is one of them. It is the difference between a
+    question that gets answered and a turn that ends on a question nobody will ever
+    see, and the model has no other way to know which kind of session this is.
+    """
+    lines = []
+    if resuming:
+        lines.append(situation(store, backend))
+    else:
+        lines.append(f"study {store.session.study_id} on instance {store.session.instance_id}.")
+    if interactive:
+        lines.append(
+            "A person is at the terminal for this session and can answer you. Anything "
+            "they type while you are working reaches you at your next turn."
+        )
+    else:
+        lines.append(
+            "This is a non-interactive run. Nobody is at the terminal and no answer "
+            "can arrive, so a question asked here will not be seen."
+        )
+    return "\n".join(lines)
 
 
 def _report_on_exit(backend: Backend, store: Store) -> None:
@@ -448,6 +481,7 @@ def _run_tui(drive: Any) -> None:
 
     app = OpenReynoldsApp(lambda running: drive(TuiView(running), TuiReader(running)))
     app.run()
+    return app.quitting
 
 
 EXIT_WORDS = ("/exit", "/quit")

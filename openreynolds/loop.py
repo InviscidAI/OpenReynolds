@@ -30,12 +30,14 @@ class Loop:
         store: Store,
         view: View,
         capture: Any | None = None,
+        interject: Callable[[], str | None] | None = None,
     ):
         self.cfg = cfg
         self.ctx = ctx
         self.store = store
         self.view = view
         self.capture = capture
+        self.interject = interject
 
         headers = {"X-Study-Id": store.session.study_id}
         self.client = anthropic.Anthropic(
@@ -110,9 +112,20 @@ class Loop:
             if not tool_uses:
                 return response
 
-            results = []
+            results: list[Any] = []
             for block in tool_uses:
                 results.append(self._run_tool(block))
+
+            # Tool results have to come first in this message, but a text block may
+            # follow them. That is how something typed while the model is working
+            # reaches it at the next turn instead of sitting unread until the whole
+            # turn ends -- the difference between being heard and being ignored.
+            said = self.interject() if self.interject else None
+            if said:
+                results.append({"type": "text", "text": said})
+                self.view.interjection(said)
+                self._record("user", said)
+
             self.messages.append({"role": "user", "content": results})
 
     def _send(self) -> Any:

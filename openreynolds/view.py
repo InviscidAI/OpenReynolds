@@ -12,7 +12,7 @@ view can change what the user reads, never what the model does.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from rich.console import Console
 
@@ -46,6 +46,15 @@ class View(Protocol):
     def usage(self, tokens: int, fraction: float) -> None: ...
 
     def watching(self, names: list[str]) -> None: ...
+
+    def jobs(self, records: list[Any]) -> None:
+        """Current job state, whenever it changes -- not only while watching."""
+
+    def stage(self, text: str) -> None:
+        """What is happening right now, in a few words."""
+
+    def interjection(self, text: str) -> None:
+        """Something the user said that will reach the model without stopping it."""
 
     def prompt(self) -> None:
         """Signal that it is the user's turn. An always-present input box need not."""
