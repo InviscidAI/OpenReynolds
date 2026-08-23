@@ -214,23 +214,51 @@ Everything above tests the agent from the inside, by someone who knows what a
 `tool_result` is. `scripts/user_test.py` drives it from the outside instead:
 
 ```bash
-python scripts/user_test.py --goal "I need the pressure drop through a 90 degree elbow"
+python scripts/user_test.py --persona all --turns 8 --budget 12 --speak-after 150
 ```
 
-A persona holds up the user end of a real interactive session. It has physical intuition
-about air and water and opinions about whether a number smells right — and it cannot
-code. It never types a command, never names a piece of software, never suggests a fix,
-and sees nothing but what appears in the terminal. It pushes back the way a client does:
-*that seems too high for a duct that size*, *you said 1.2 earlier and now you're saying
-0.8*, *how confident are you?* Diagnosing any of it is the agent's job.
+A persona holds up the user end of a real interactive session. It cannot code: it never
+types a command, never names a piece of software, never suggests a fix, and sees nothing
+but what appears in the terminal. That constraint is enforced rather than requested — a
+line that looks like a command is dropped before it is sent, because a persona that
+quietly turns into an engineer stops testing what it claims to. `/status` and `/btw` are
+allowed through, since typing those is using the product, not writing code.
 
-The constraint is enforced rather than requested: a line that looks like a command is
-dropped before it reaches the agent, because a user who cannot code cannot paste one,
-and a persona that quietly turns into an engineer stops testing what it claims to.
+Four of them, because one persona finds one class of problem:
 
-It ends on its own — `[SATISFIED]` when it would accept the answer, `[STUCK]` when the
-conversation has stopped going anywhere — and writes the whole exchange to
-`user-test.log`.
+| Persona | Who | What it catches |
+|---|---|---|
+| `engineer` | Good physical intuition, in a hurry | A wrong number, and a number given without a confidence statement |
+| `controller` | Wants to be told before anything long starts | Whether `/status` works, and whether it can be stopped mid-flight |
+| `shifting` | Requirements arrive late — hot air, rough duct | Whether it says, unprompted, that an earlier answer no longer holds |
+| `novice` | No physical intuition at all | Whether it volunteers uncertainty when nobody is checking it |
+
+Each starts on a clean workspace (earlier work is moved to `/work/.attic/<stamp>`, never
+deleted), each has its own geometry so the second cannot answer from the first's files,
+and whatever is still running gets stopped before the next one starts.
+
+A run is bounded three ways — turns, seconds per reply, total minutes — because a test
+nobody will sit through is a test nobody runs. It ends on its own with `[SATISFIED]` or
+`[STUCK]`, and a turn that ends any other way is *labelled*: timed out, exited, said
+nothing, went quiet without asking for input.
+
+Two details that took a while to get right, and both matter more than they sound:
+
+- **Waiting for the prompt, not for silence.** Silence is a guess, and it guesses wrong
+  every time a command runs long: the reply gets cut mid-sentence and the next message
+  lands while the agent is still working. Seeing the prompt means reading bytes rather
+  than lines — it has no trailing newline, because nothing follows it until somebody
+  answers.
+- **Speaking over work in progress.** A turn can legitimately run ten minutes; the agent
+  polls its own solve with a blocking sleep, so there is neither a prompt nor a pause. A
+  real user would not sit through that, and anything they typed would be heard between
+  tool calls. `--speak-after` is that user, and it is the only thing that exercises
+  interrupting at all.
+
+Every defect in [docs/found-by-using-it.md](docs/found-by-using-it.md) was found this
+way, and none of them by the 392 unit tests. Most were invisible until something above
+them was fixed first, which is the argument for driving the whole product from outside
+rather than testing its parts.
 
 ## Seeing
 
