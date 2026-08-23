@@ -211,3 +211,14 @@ def test_the_blurb_refreshes_a_job_whose_status_could_not_be_read(backend, store
     assert "sandbox_expired" in blurb
     assert "unknown" not in blurb
     assert store.session.jobs[job_id].end_reason == "sandbox_expired"
+
+
+def test_watch_gives_up_at_a_deadline_without_killing_anything(backend, store, view):
+    """The bound ends the waiting, never the job -- it lives on the instance."""
+    import time as _time
+
+    start_job(backend, store)
+    wake = watch(backend, store, view, NullReader(), deadline=_time.monotonic() - 1)
+
+    assert wake.kind == "timeout"
+    assert store.live_jobs(), "the job was left alone"

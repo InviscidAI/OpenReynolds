@@ -90,8 +90,13 @@ def watch(
     store: Store,
     view: View,
     reader: LineReader,
+    deadline: float | None = None,
 ) -> Wake:
-    """Poll live jobs until something happens worth waking for."""
+    """Poll live jobs until something happens worth waking for.
+
+    `deadline` is a monotonic time past which waiting stops. Nothing is killed by it;
+    the jobs are on the instance and outlive this process either way.
+    """
     live = store.live_jobs()
     if not live:
         return Wake("idle")
@@ -99,6 +104,8 @@ def watch(
     view.watching([job.name or job.job_id[:8] for job in live])
 
     while True:
+        if deadline is not None and time.monotonic() > deadline:
+            return Wake("timeout")
         typed = reader.poll()
         if not isinstance(typed, _Nothing):
             if typed is None:

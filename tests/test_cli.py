@@ -514,3 +514,37 @@ def test_config_explains_when_a_shell_claims_a_terminal_then_sends_eof(monkeypat
     assert "could not prompt here" in result.output
     assert "--key-file" in result.output
     assert "Aborted" not in result.output.split("could not prompt")[0][-40:]
+
+
+def test_unattended_waiting_can_be_bounded(loop, backend, store, view, quiet_console):
+    """A -p run whose model ends its turn asking a question has nobody to answer it,
+    so it waits on the job -- for hours. Seen live: parked over an hour."""
+    backend.job_start("sleep 100000", name="sweep")
+    store.record_job("job-1", cmd="sleep 100000", name="sweep")
+    install_model(loop, [message([text_block("which outlet length do you want?")])])
+
+    started = __import__("time").monotonic()
+    cli._run_one_shot(loop, backend, store, "run it", view, NullReader(), max_wait_minutes=0.01)
+    elapsed = __import__("time").monotonic() - started
+
+    assert elapsed < 20, "it gave up rather than waiting on the job"
+    assert store.live_jobs(), "and left the job running on the instance"
+    assert any("stopped waiting" in i for i in view.infos)
+    assert any(store.session.study_id in i for i in view.infos), "it says how to resume"
+
+
+def test_without_a_bound_it_still_waits_for_the_job(loop, backend, store, view, quiet_console):
+    """The default is unchanged: closing the laptop on a long solve is the point."""
+    finishing_jobs(backend)
+    install_model(
+        loop,
+        [
+            message([tool_block("job_start", {"cmd": "simpleFoam"})], stop_reason="tool_use"),
+            message([text_block("waiting")]),
+            message([text_block("done")]),
+        ],
+    )
+
+    cli._run_one_shot(loop, backend, store, "solve", view, NullReader())
+
+    assert not store.live_jobs()

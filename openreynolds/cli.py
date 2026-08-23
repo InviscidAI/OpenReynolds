@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import anthropic
@@ -56,6 +57,12 @@ console = Console()
 @click.option("--model", help="Override the model for this session.")
 @click.option("--no-capture", is_flag=True, help="Do not send anything to the platform.")
 @click.option("--plain", is_flag=True, help="Plain streaming terminal instead of the interface.")
+@click.option(
+    "--max-wait",
+    type=float,
+    default=0.0,
+    help="With -p, stop waiting on jobs after this many minutes (0 = no limit).",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -65,6 +72,7 @@ def main(
     model: str | None,
     no_capture: bool,
     plain: bool,
+    max_wait: float,
 ) -> None:
     """A CFD agent with a real OpenFOAM workspace."""
     if ctx.invoked_subcommand is not None:
@@ -88,6 +96,7 @@ def main(
         instance_id=instance_id,
         one_shot=one_shot,
         plain=plain,
+        max_wait=max_wait,
     )
 
 
@@ -289,6 +298,7 @@ def session(
     instance_id: str | None,
     one_shot: str | None,
     plain: bool = False,
+    max_wait: float = 0.0,
 ) -> None:
     resuming = study_id is not None
     store = Store(cfg.studies_dir, study_id or new_study_id())
@@ -337,7 +347,7 @@ def session(
             loop.brief(situation(store, backend))
         try:
             if one_shot:
-                _run_one_shot(loop, backend, store, one_shot, view, reader)
+                _run_one_shot(loop, backend, store, one_shot, view, reader, max_wait)
             else:
                 _run_interactive(loop, backend, store, view, reader)
         except KeyboardInterrupt:
@@ -442,14 +452,34 @@ def _run_interactive(
 
 
 def _run_one_shot(
-    loop: Loop, backend: Backend, store: Store, prompt: str, view: View, reader: Any
+    loop: Loop,
+    backend: Backend,
+    store: Store,
+    prompt: str,
+    view: View,
+    reader: Any,
+    max_wait_minutes: float = 0.0,
 ) -> None:
-    """Run until the model is done and no jobs remain."""
+    """Run until the model is done and no jobs remain.
+
+    There is nobody here to answer a question, so if the model ends its turn wanting
+    one, this waits on the job instead -- possibly for hours. `--max-wait` bounds that.
+    Stopping only ends the waiting: the job carries on out on the instance and the
+    study resumes.
+    """
     loop.say(prompt)
     if not _run_turn(loop, view):
         return
+
+    deadline = time.monotonic() + max_wait_minutes * 60 if max_wait_minutes else None
     while store.live_jobs():
-        wake = watch(backend, store, view, reader)
+        wake = watch(backend, store, view, reader, deadline=deadline)
+        if wake.kind == "timeout":
+            view.info(
+                f"stopped waiting after {max_wait_minutes:g} min; the job is still "
+                f"running - resume with --study {store.session.study_id}"
+            )
+            return
         if wake.kind != "job":
             break
         loop.inform(wake.text)
