@@ -472,7 +472,7 @@ def test_config_without_a_terminal_explains_instead_of_aborting(monkeypatch, tmp
     monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
     result = CliRunner().invoke(cli.main, ["config"], input="")
     assert result.exit_code == 1
-    assert "needs a terminal" in result.output
+    assert "could not prompt here" in result.output
     assert "--key-file" in result.output
 
 
