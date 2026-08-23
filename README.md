@@ -173,6 +173,15 @@ streaming its log, a `kill_on` regex firing and reporting the line that matched,
 headless matplotlib render fetched back to disk. It reuses a workspace and never
 deletes one, so the persistent volume is safe.
 
+## Acceptance
+
+[`docs/a4-acceptance.md`](docs/a4-acceptance.md) is the record of the A4 milestone: an
+open-ended "simulate airflow through an L-shaped junction", run free-form against the
+live service. The negative check passed twice — two harness-authored messages in 212, no
+forced ordering, no refused tool call, no grading. The CFD came back as a time-averaged
+loss coefficient over a limit cycle, with the agent stating before it was asked that it
+had not converged. Seven harness defects surfaced there that no unit test had caught.
+
 ## Testing as a user
 
 Everything above tests the agent from the inside, by someone who knows what a
