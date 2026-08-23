@@ -142,4 +142,4 @@ Anywhere else you get the path, which is what the model prints anyway. Set
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

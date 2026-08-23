@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A UI-less CFD agent: an Anthropic tool-use loop over a real OpenFOAM workspace."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = { text = "MIT" }
 dependencies = [
     "anthropic>=1.0.0",
     "httpx2>=2.0.0",
