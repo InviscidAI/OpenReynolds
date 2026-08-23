@@ -74,9 +74,10 @@ class Persona:
 ENGINEER = Persona(
     name="engineer",
     goal=(
-        "I need the pressure drop through a sudden expansion in an air duct - it goes "
-        "from 50mm square to 100mm square. Nothing fancy, I just need a number I can "
-        "put in a schedule."
+        "I need the pressure drop through an L-shaped duct - 100mm square, one "
+        "right-angle bend, about half a metre of straight either side of it. Air at "
+        "normal room conditions. Nothing fancy, I need a number I can put in a "
+        "schedule today, so rough and quick beats perfect and tomorrow."
     ),
     character="""\
 You work in building services. You have good physical intuition about air and water -- \
@@ -95,10 +96,11 @@ defensible number, not a research project, and you will say so if this is draggi
 CONTROLLER = Persona(
     name="controller",
     goal=(
-        "I want the pressure drop across a sudden contraction in a small air duct, "
-        "100mm square narrowing to 50mm square. But I want to be kept in the loop - tell "
-        "me what you are doing before you do it, and don't go off for twenty minutes "
-        "without a word."
+        "I have a Y-shaped duct - one 100mm square inlet that splits into two 70mm "
+        "square branches at about 30 degrees each. I want to know how the air divides "
+        "between the two branches. But I want to be kept in the loop: tell me what you "
+        "are doing before you do it, and don't go off for twenty minutes without a "
+        "word."
     ),
     character="""\
 You are the kind of client who wants to know what is happening at all times. You have \
@@ -118,8 +120,8 @@ to be left in the dark.""",
 SHIFTING = Persona(
     name="shifting",
     goal=(
-        "I need to know how much air pressure I lose where a 75mm round pipe opens "
-        "out into a 150mm round pipe."
+        "I need the pressure drop through an L-shaped bend in an 80mm square duct - "
+        "one right angle, air, nothing exotic."
     ),
     character="""\
 You are a facilities manager working from half-remembered constraints, and the real \
@@ -141,9 +143,9 @@ what is still true.""",
 NOVICE = Persona(
     name="novice",
     goal=(
-        "My manager asked me to find out how much pressure we lose where a duct gets "
-        "wider - it goes from 80mm square to 160mm square. I have no idea if that is a "
-        "big deal or not."
+        "My manager asked me to find out whether the bend in our duct is a problem. "
+        "It is a square duct, about 120mm, and it turns a right angle. I do not really "
+        "know what to tell you beyond that - I have no idea if a bend is a big deal."
     ),
     character="""\
 You are an administrator who has been handed an engineering question. You have no \

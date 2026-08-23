@@ -123,6 +123,16 @@ class ConsoleView(View):
     def usage(self, tokens: int, fraction: float) -> None:
         """The plain view has nowhere to keep this, so it stays quiet."""
 
+    def stage(self, text: str) -> None:
+        """No pane to hold one line, so it becomes another line.
+
+        Worth the noise: a five-minute command that prints nothing after the line
+        announcing it is indistinguishable from a hang, and the honest fix is to keep
+        saying so rather than to hope nobody minds.
+        """
+        if text:
+            self.console.print(f"[dim]  {text}[/]")
+
     def watching(self, names: list[str]) -> None:
         self.console.print(
             f"[dim]watching {len(names)} job(s): {', '.join(names)} - type to interrupt[/]"

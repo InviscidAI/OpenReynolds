@@ -22,6 +22,7 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -248,10 +249,44 @@ class OpenReynoldsApp(App):
         try:
             self._run_session(self)
         except Exception as exc:  # surfaced, never swallowed
-            self.call_from_thread(
-                self.query_one("#conversation", RichLog).write,
-                f"[red]session ended: {type(exc).__name__}: {exc}[/red]",
-            )
+            self._announce(f"[red]session ended: {type(exc).__name__}: {exc}[/red]")
+        else:
+            self._announce("[yellow]the session has ended[/yellow]")
+
+    def _announce(self, markup: str) -> None:
+        """Report the end from the worker thread, if there is still an app to report to.
+
+        Quitting tears the app down while this thread is still unwinding, so the hop
+        across can arrive too late. Saying nothing is fine there -- the user is already
+        leaving -- but raising out of the worker is not, and neither is waiting on an
+        event loop that is busy shutting down.
+        """
+        if self.quitting:
+            return
+        try:
+            self.call_from_thread(self._session_ended, markup)
+        except RuntimeError:
+            pass
+
+    def _session_ended(self, markup: str) -> None:
+        """Say the session is over, and stop accepting things nobody will read.
+
+        A live-looking input box on a dead session is the worst kind of silent
+        failure: everything typed into it is accepted, echoed, and discarded.
+
+        The screen may already be coming down around this -- a session ending and an
+        app quitting are the same moment seen from two threads -- so a widget that is
+        no longer there means the message has no one left to reach, not an error.
+        """
+        if self.quitting:
+            return
+        try:
+            self.query_one("#conversation", RichLog).write(f"\n{markup}")
+            box = self.query_one("#prompt", Input)
+        except NoMatches:
+            return
+        box.disabled = True
+        box.placeholder = "the session has ended - ctrl+C to close"
 
     # -- input ----------------------------------------------------------------
 

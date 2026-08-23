@@ -7,6 +7,8 @@ worker thread are all exercised here without a terminal.
 from __future__ import annotations
 
 import asyncio
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from openreynolds.tui import JobsPane, OpenReynoldsApp, SessionBar, TuiReader, TuiView, _escape
@@ -14,8 +16,50 @@ from openreynolds.view import ConsoleView, View
 from openreynolds.watch import NOTHING
 
 
+_RELEASES: list[threading.Event] = []
+
+
+@asynccontextmanager
+async def running(app):
+    """Run an app, and let its held session go before the app comes down.
+
+    Textual waits for thread workers when it shuts down -- the same reason quitting a
+    real session needs a force exit -- so a session still holding on at that moment
+    hangs the test rather than failing it.
+    """
+    async with app.run_test() as pilot:
+        try:
+            yield pilot
+        finally:
+            # Quitting first, exactly as ctrl+C does: a session that ends because the
+            # app is going away has nobody to report to, and hopping across to an
+            # event loop mid-shutdown is how a test waits seconds for nothing.
+            app.quitting = True
+            for release in _RELEASES:
+                release.set()
+            _RELEASES.clear()
+
+
 def idle_app():
-    return OpenReynoldsApp(lambda app: None)
+    """An app with a session that is still running, as it is for almost all of one.
+
+    A session function that returns immediately is a session that has ended, and the
+    app is right to say so and stop taking input -- so a double that returns at once
+    would put every other test in a state no live session is ever in.
+    """
+    release = threading.Event()
+    _RELEASES.append(release)
+    return OpenReynoldsApp(lambda running: release.wait(30))
+
+
+def ending_app(fail: bool = False):
+    """An app whose session is over the moment it starts."""
+
+    def run(running):
+        if fail:
+            raise RuntimeError("the instance went away")
+
+    return OpenReynoldsApp(run)
 
 
 # -- the seam ------------------------------------------------------------------
@@ -43,7 +87,7 @@ def test_model_output_is_never_treated_as_markup():
 
 
 async def test_the_session_bar_shows_what_the_session_is():
-    async with idle_app().run_test() as pilot:
+    async with running(idle_app()) as pilot:
         bar = pilot.app.query_one("#bar", SessionBar)
         bar.study, bar.instance, bar.model = "20260823-x", "974f4406-11da", "claude-opus-5"
         bar.tokens, bar.fraction = 812_000, 0.812
@@ -57,7 +101,7 @@ async def test_the_session_bar_shows_what_the_session_is():
 
 
 async def test_the_jobs_pane_says_jobs_outlive_the_session():
-    async with idle_app().run_test() as pilot:
+    async with running(idle_app()) as pilot:
         jobs = pilot.app.query_one("#jobs", JobsPane)
         assert "none yet" in jobs.render()
         jobs.names = ["miter_medium", "mesh"]
@@ -68,7 +112,7 @@ async def test_the_jobs_pane_says_jobs_outlive_the_session():
 
 
 async def test_the_panes_exist_and_the_input_has_focus():
-    async with idle_app().run_test() as pilot:
+    async with running(idle_app()) as pilot:
         for pane in ("#conversation", "#activity", "#jobs", "#bar", "#prompt"):
             assert pilot.app.query_one(pane) is not None
         assert pilot.app.query_one("#prompt").has_focus
@@ -79,7 +123,7 @@ async def test_the_panes_exist_and_the_input_has_focus():
 
 async def test_typing_reaches_the_session_and_is_echoed():
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         await pilot.click("#prompt")
         await pilot.press(*"that looks wrong")
         await pilot.press("enter")
@@ -89,7 +133,7 @@ async def test_typing_reaches_the_session_and_is_echoed():
 
 async def test_an_empty_line_is_not_a_turn():
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         await pilot.click("#prompt")
         await pilot.press("enter")
     assert app.typed.empty()
@@ -111,7 +155,7 @@ async def test_the_reader_stands_in_for_stdin():
 async def test_quitting_releases_a_session_waiting_on_input():
     """Otherwise the worker thread blocks forever on a reader that never answers."""
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         app.action_quit()
         await pilot.pause()
     assert app.typed.get_nowait() is None
@@ -122,7 +166,7 @@ async def test_quitting_releases_a_session_waiting_on_input():
 
 async def test_streamed_text_reaches_the_conversation_pane():
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         view = TuiView(app)
         await asyncio.to_thread(view.header, "s1", "i1", "claude-opus-5", Path("/tmp/x"))
         await asyncio.to_thread(view.text_delta, "The pressure drop is 240 Pa.\n")
@@ -137,7 +181,7 @@ async def test_streamed_text_reaches_the_conversation_pane():
 async def test_partial_lines_are_held_until_the_turn_ends():
     """Deltas arrive mid-word; a log line per token would be unreadable."""
     app = idle_app()
-    async with app.run_test():
+    async with running(app):
         view = TuiView(app)
         await asyncio.to_thread(view.text_delta, "the loss ")
         assert view._pending == "the loss "
@@ -147,7 +191,7 @@ async def test_partial_lines_are_held_until_the_turn_ends():
 
 async def test_usage_updates_the_bar():
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         await asyncio.to_thread(TuiView(app).usage, 500_000, 0.5)
         await pilot.pause()
         bar = app.query_one("#bar", SessionBar)
@@ -157,7 +201,7 @@ async def test_usage_updates_the_bar():
 
 async def test_watching_fills_the_jobs_pane():
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         await asyncio.to_thread(TuiView(app).watching, ["miter_medium"])
         await pilot.pause()
         assert app.query_one("#jobs", JobsPane).names == ["miter_medium"]
@@ -166,7 +210,7 @@ async def test_watching_fills_the_jobs_pane():
 async def test_tool_activity_is_separated_from_the_conversation():
     """Tool calls in the transcript bury what the agent is actually saying."""
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         view = TuiView(app)
         await asyncio.to_thread(view.tool, "bash", "blockMesh")
         await asyncio.to_thread(view.tool_error, "not_found (404)")
@@ -194,7 +238,7 @@ async def test_a_session_that_raises_is_shown_not_swallowed():
         raise RuntimeError("backend went away")
 
     app = OpenReynoldsApp(explode)
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         await pilot.pause()
         await pilot.pause()
         assert app.query_one("#conversation").lines, "the failure was written somewhere visible"
@@ -203,7 +247,7 @@ async def test_a_session_that_raises_is_shown_not_swallowed():
 async def test_the_jobs_pane_shows_status_not_just_names():
     """It used to update only while watching, so a job started mid-turn was invisible."""
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         await asyncio.to_thread(
             TuiView(app).jobs,
             [
@@ -222,7 +266,7 @@ async def test_the_jobs_pane_shows_status_not_just_names():
 async def test_thinking_stays_out_of_the_transcript_by_default():
     """Streamed in full it is hundreds of grey lines that bury the answer."""
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         view = TuiView(app)
         await asyncio.to_thread(view.thinking_begin)
         await asyncio.to_thread(view.thinking_delta, "weighing snappyHexMesh against gmsh\n")
@@ -236,7 +280,7 @@ async def test_thinking_stays_out_of_the_transcript_by_default():
 
 async def test_thinking_can_be_shown_on_request():
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         app.action_toggle_thinking()
         view = TuiView(app)
         await asyncio.to_thread(view.thinking_begin)
@@ -247,7 +291,7 @@ async def test_thinking_can_be_shown_on_request():
 
 async def test_the_stage_line_says_what_is_happening():
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         view = TuiView(app)
         await asyncio.to_thread(view.tool, "bash", "blockMesh")
         await pilot.pause()
@@ -261,7 +305,7 @@ async def test_quitting_is_flagged_so_the_caller_can_force_the_exit():
     """A worker thread inside a network call cannot be interrupted, and being unable
     to close the program is worse than an untidy shutdown."""
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         assert app.quitting is False
         app.action_quit()
         await pilot.pause()
@@ -311,7 +355,7 @@ async def test_the_files_pane_shows_what_is_in_the_workspace():
             Entry(path="/work/notes.md", is_dir=False, size=12),
         ]
     )
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         app.load_files("/work")
         await pilot.pause()
         await asyncio.sleep(0.2)
@@ -335,7 +379,7 @@ async def test_a_nested_file_hangs_off_its_own_directory():
             Entry(path="/work/case/log.simpleFoam", is_dir=False, size=2048),
         ]
     )
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         app.load_files("/work")
         await pilot.pause()
         await asyncio.sleep(0.2)
@@ -351,7 +395,7 @@ async def test_an_empty_workspace_says_so_rather_than_showing_nothing():
 
     app = idle_app()
     app.browser = StubBrowser([])
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         app.load_files("/work")
         await pilot.pause()
         await asyncio.sleep(0.2)
@@ -368,7 +412,7 @@ async def test_a_listing_failure_is_reported_not_swallowed():
             raise RuntimeError("the instance went away")
 
     app.browser = Broken()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         app.load_files("/work")
         await pilot.pause()
         await asyncio.sleep(0.2)
@@ -383,7 +427,7 @@ async def test_opening_an_image_copies_it_out_because_it_cannot_be_drawn_here():
     somewhere the user can actually open it."""
     app = idle_app()
     app.browser = StubBrowser(pulled=[Path("/tmp/studies/x/files/mesh.png")])
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         app.open_path("/work/case/renders/mesh.png")
         await pilot.pause()
         await asyncio.sleep(0.2)
@@ -397,7 +441,7 @@ async def test_opening_an_image_copies_it_out_because_it_cannot_be_drawn_here():
 async def test_opening_a_text_file_shows_it():
     app = idle_app()
     app.browser = StubBrowser(text="Time = 1\nCourant Number mean: 0.2")
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         app.open_path("/work/case/log.simpleFoam")
         await pilot.pause()
         await asyncio.sleep(0.2)
@@ -409,7 +453,7 @@ async def test_opening_a_text_file_shows_it():
 async def test_the_files_view_asks_the_workspace_for_the_path_requested():
     app = idle_app()
     app.browser = StubBrowser([])
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         view = TuiView(app)
         await asyncio.to_thread(view.show_files, "/work/case")
         await pilot.pause()
@@ -422,7 +466,7 @@ async def test_the_files_view_asks_the_workspace_for_the_path_requested():
 async def test_a_local_command_is_not_echoed_as_something_the_agent_was_told():
     """`/status` never reaches the model; showing it as speech would claim it did."""
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         prompt = app.query_one("#prompt")
         prompt.value = "/status"
         await pilot.press("enter")
@@ -436,7 +480,7 @@ async def test_a_local_command_is_not_echoed_as_something_the_agent_was_told():
 
 async def test_a_message_is_echoed_as_speech():
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         prompt = app.query_one("#prompt")
         prompt.value = "run the coarse case"
         await pilot.press("enter")
@@ -449,7 +493,7 @@ async def test_a_message_is_echoed_as_speech():
 
 async def test_status_is_shown_in_the_conversation_where_it_was_asked():
     app = idle_app()
-    async with app.run_test() as pilot:
+    async with running(app) as pilot:
         view = TuiView(app)
         await asyncio.to_thread(view.status, ["study x on instance abcd1234", "1 job(s) running"])
         await pilot.pause()
@@ -464,3 +508,48 @@ async def test_a_reader_hands_back_what_it_could_not_use():
     reader = TuiReader(app)
     reader.putback(None)
     assert reader.poll() is None
+
+
+# -- a session that has ended ---------------------------------------------------
+
+
+async def test_an_ended_session_says_so_and_stops_taking_input():
+    """A live-looking input box on a dead session is the worst silent failure there
+    is: everything typed into it is accepted, echoed, and discarded."""
+    app = ending_app()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await asyncio.sleep(0.1)
+        await pilot.pause()
+
+        conversation = "".join(str(line) for line in app.query_one("#conversation").lines)
+        box = app.query_one("#prompt")
+        assert "ended" in conversation
+        assert box.disabled
+        assert "ended" in box.placeholder
+
+
+async def test_a_session_that_dies_says_why_and_stops_taking_input():
+    app = ending_app(fail=True)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await asyncio.sleep(0.1)
+        await pilot.pause()
+
+        conversation = "".join(str(line) for line in app.query_one("#conversation").lines)
+        assert "the instance went away" in conversation
+        assert app.query_one("#prompt").disabled
+
+
+async def test_quitting_is_not_reported_as_the_session_dying():
+    """Ctrl+C ends the session by design. Announcing it to someone already leaving,
+    across an event loop that is shutting down, is noise at best and a hang at worst."""
+    app = ending_app()
+    app.quitting = True
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await asyncio.sleep(0.1)
+        await pilot.pause()
+
+        conversation = "".join(str(line) for line in app.query_one("#conversation").lines)
+        assert "ended" not in conversation

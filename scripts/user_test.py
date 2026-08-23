@@ -30,6 +30,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -58,6 +59,30 @@ tolerant_stdout()
 STUDY_ID = re.compile(r"\bstudy\s+(\d{8}-\d{6}-[0-9a-f]{4})\b")
 
 
+HEARTBEAT_S = 30.0
+"""How often a long wait says it is still a wait and not a dead run."""
+
+
+@dataclass
+class Reply:
+    """One stretch of agent output, and how it came to an end."""
+
+    text: str
+    alive: bool = True
+    timed_out: bool = False
+
+    def note(self) -> str:
+        """What to write down about how this ended, when it did not end normally."""
+        marks = []
+        if self.timed_out:
+            marks.append("TIMED OUT -- it was still producing output when the cap ran out")
+        if not self.alive:
+            marks.append("THE AGENT EXITED")
+        if not self.text.strip():
+            marks.append("NOTHING WAS SAID")
+        return "  [" + "; ".join(marks) + "]" if marks else ""
+
+
 class AgentSession:
     """The product under test, as a subprocess, seen only through its terminal."""
 
@@ -83,25 +108,43 @@ class AgentSession:
             self._chunks.put(line)
         self._chunks.put(None)
 
-    def read_until_quiet(self, idle_s: float, hard_cap_s: float) -> tuple[str, bool]:
-        """Collect output until it stops for `idle_s`. Returns (text, still_running)."""
+    def read_until_quiet(self, idle_s: float, hard_cap_s: float) -> Reply:
+        """Collect output until it stops for `idle_s`, or the cap runs out.
+
+        The cap and the idle period mean different things and must not be reported the
+        same way. Going quiet is the agent finishing its turn; running out of cap is
+        the agent never finishing, and a run that treats the second as the first
+        carries on talking to something that has stopped listening.
+        """
         collected: list[str] = []
-        deadline = time.monotonic() + hard_cap_s
-        last = time.monotonic()
+        started = time.monotonic()
+        deadline = started + hard_cap_s
+        last = started
+        announced = started
 
         while time.monotonic() < deadline:
             try:
                 chunk = self._chunks.get(timeout=0.5)
             except queue.Empty:
-                if time.monotonic() - last >= self._idle_for(collected, idle_s):
-                    return "".join(collected), True
+                now = time.monotonic()
+                if now - last >= self._idle_for(collected, idle_s):
+                    return Reply("".join(collected), alive=True)
+                if now - announced >= HEARTBEAT_S:
+                    announced = now
+                    # Otherwise a seven-minute wait and a dead run look identical from
+                    # outside, and whoever is watching has no way to tell.
+                    print(
+                        f"    [waiting {now - started:.0f}s, "
+                        f"quiet for {now - last:.0f}s]",
+                        flush=True,
+                    )
                 continue
             if chunk is None:
-                return "".join(collected), False
+                return Reply("".join(collected), alive=False)
             collected.append(chunk)
             last = time.monotonic()
 
-        return "".join(collected), True
+        return Reply("".join(collected), alive=True, timed_out=True)
 
     @staticmethod
     def _idle_for(collected: list[str], idle_s: float) -> float:
@@ -170,6 +213,43 @@ def next_user_message(
     return "".join(b.text for b in reply.content if b.type == "text").strip()
 
 
+ATTIC = "/work/.attic"
+
+
+def clear_workspace() -> str:
+    """Move earlier work aside so a persona opens on an empty workspace.
+
+    The volume outlives every session, so without this the second persona finds the
+    first one's case and answers from it. That happened: a run inherited a velocity
+    from an abandoned case and carried it for several turns.
+
+    Moved, not deleted. A test that destroys work nobody asked it to destroy is a
+    worse problem than the one it set out to fix.
+    """
+    from openreynolds.backend import hosted
+
+    cfg = Config.load()
+    backend, _client, _iid = hosted.acquire(cfg.foamd_url, cfg.foamd_api_key, None)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    attic = f"{ATTIC}/{stamp}"
+    try:
+        result = backend.exec(
+            f"mkdir -p {attic}; "
+            f"find /work -maxdepth 1 -mindepth 1 ! -name '.*' -exec mv -t {attic} {{}} + "
+            f"2>/dev/null; "
+            f"ls -A {attic} | wc -l; rmdir {attic} 2>/dev/null; true",
+            timeout_s=120,
+        )
+    except Exception as exc:
+        return f"could not clear the workspace: {exc}"
+    finally:
+        backend.close()
+
+    counted = (result.output or "0").strip().splitlines()
+    moved = counted[-1].strip() if counted else "0"
+    return f"moved {moved} earlier item(s) aside to {attic}" if moved != "0" else "workspace was already empty"
+
+
 def quieten(repo: Path, study: str | None) -> str:
     """Stop whatever this run left running, so the next one starts on a quiet machine."""
     if not study:
@@ -212,14 +292,20 @@ def run_one(client, persona: Persona, args, repo: Path) -> dict:
     budget = started + args.budget * 60 if args.budget else None
 
     try:
-        opening, alive = session.read_until_quiet(args.idle, args.cap)
-        record("AGENT (startup)", opening)
-        found = STUDY_ID.search(opening)
+        opening = session.read_until_quiet(args.idle, args.cap)
+        record("AGENT (startup)" + opening.note(), opening.text)
+        found = STUDY_ID.search(opening.text)
         study = found.group(1) if found else None
+        reply = opening
 
         for turn in range(min(args.turns, persona.turns)):
-            if not alive:
+            if not reply.alive:
                 verdict = "the agent exited"
+                break
+            if reply.timed_out:
+                # Carrying on here means talking to something that has stopped
+                # listening, and calling the result a conversation.
+                verdict = f"stalled: still producing output after {args.cap:g}s"
                 break
             if budget and time.monotonic() > budget:
                 verdict = f"out of time after {args.budget:g} min"
@@ -234,9 +320,12 @@ def run_one(client, persona: Persona, args, repo: Path) -> dict:
                 break
 
             session.send(message)
-            reply, alive = session.read_until_quiet(args.idle, args.cap)
-            record(f"AGENT (turn {turn + 1})", reply)
-            exchanges.append((message, reply))
+            reply = session.read_until_quiet(args.idle, args.cap)
+            record(f"AGENT (turn {turn + 1})" + reply.note(), reply.text)
+            if not reply.text.strip():
+                verdict = "the agent said nothing"
+                break
+            exchanges.append((message, reply.text))
     finally:
         code = session.close()
 
@@ -273,6 +362,12 @@ def main() -> int:
     parser.add_argument("--model", default=None, help="Model for the agent under test.")
     parser.add_argument("--user-model", default=None, help="Model playing the user.")
     parser.add_argument("--log", type=Path, default=None, help="Where to write the transcript.")
+    parser.add_argument(
+        "--fresh",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Move earlier work aside first, so each persona starts on an empty workspace.",
+    )
     args = parser.parse_args()
 
     cfg = Config.load()

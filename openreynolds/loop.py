@@ -7,6 +7,9 @@ mid-conversation operator channel all want control the runner does not expose.
 from __future__ import annotations
 
 import json
+import threading
+import time
+from contextlib import contextmanager
 from typing import Any, Callable
 
 import anthropic
@@ -44,6 +47,10 @@ class Loop:
             api_key=cfg.anthropic_api_key or None,
             base_url=cfg.llm_base_url or None,
             default_headers=headers,
+            # Without a timeout a stalled connection is indistinguishable from a model
+            # thinking hard, and the session stops dead with nothing said. A failure is
+            # recoverable -- it is reported and the thread survives -- silence is not.
+            timeout=cfg.llm_timeout_s,
         )
         self.system = [
             {"type": "text", "text": system_prompt(), "cache_control": {"type": "ephemeral"}}
@@ -172,7 +179,8 @@ class Loop:
 
     def _run_tool(self, block: Any) -> dict[str, Any]:
         self.view.tool(block.name, _summarize(block.input))
-        content, is_error = dispatch(self.ctx, block.name, dict(block.input))
+        with _ticking(self.view, block.name):
+            content, is_error = dispatch(self.ctx, block.name, dict(block.input))
         # A tool result can be content blocks rather than text -- an image, for one --
         # and those go to the model as they are. What gets written down is a
         # description: a megabyte of base64 in the message log helps nobody read it.
@@ -266,6 +274,34 @@ class Loop:
         seq = self.store.append_message(role, content)
         if self.capture:
             self.capture.message(seq, role, content)
+
+
+TICK_EVERY_S = 15.0
+"""How often a running tool call says it is still running."""
+
+
+@contextmanager
+def _ticking(view: View, name: str, every: float = TICK_EVERY_S):
+    """Say that a slow tool call is still going, for as long as it goes on.
+
+    A command may take five minutes. One line when it starts and nothing after that is
+    indistinguishable from a hang: the user reaches for ctrl+C, and anything watching
+    the terminal concludes the turn ended and talks over it. The elapsed count is a
+    fact about the harness, not about the work, and nothing depends on it being read.
+    """
+    stop = threading.Event()
+    started = time.monotonic()
+
+    def tick() -> None:
+        while not stop.wait(every):
+            view.stage(f"{name} still running, {time.monotonic() - started:.0f}s")
+
+    thread = threading.Thread(target=tick, name=f"tick-{name}", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
 
 
 def _text_of(response: Any) -> str:

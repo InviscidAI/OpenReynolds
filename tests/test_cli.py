@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from conftest import ScriptedReader, install_model, message, text_block, tool_block
 from openreynolds import cli
-from openreynolds.backend.base import BackendError, JobStatus
+from openreynolds.backend.base import BackendError, ExecResult, JobStatus
 from openreynolds.browse import Browser
 from openreynolds.config import Config
 from openreynolds.loop import Loop
@@ -570,3 +570,66 @@ def test_a_real_workspace_path_is_left_exactly_as_it_is():
 
 def test_a_local_windows_path_that_is_not_a_workspace_path_is_untouched():
     assert cli.workspace_path("C:/Users/me/notes.md") == "C:/Users/me/notes.md"
+
+
+# -- what the session is told about the workspace -------------------------------
+
+
+def workspace_listing(backend, *paths):
+    """Make the workspace answer a listing with these directories in it."""
+    lines = "".join(f"d\t4096\t1700000000.0\t{path}\n" for path in paths)
+    backend.exec_result = ExecResult(0, lines, False, None)
+
+
+def test_the_brief_names_what_was_already_in_the_workspace(backend, store):
+    """A live run picked up a velocity from a case an earlier session had abandoned
+    and carried it for several turns before noticing whose it was."""
+    workspace_listing(backend, "/work/elbow", "/work/expansion")
+    store.session.instance_id = "inst-1"
+
+    brief = cli._situation_brief(
+        store, backend, resuming=False, interactive=True, browser=Browser(backend, store)
+    )
+
+    assert "elbow" in brief and "expansion" in brief
+    assert "left by earlier sessions" in brief
+    assert "none of it was made by this study" in brief
+
+
+def test_the_brief_says_so_when_the_workspace_is_empty(backend, store):
+    workspace_listing(backend)
+    brief = cli._situation_brief(
+        store, backend, resuming=False, interactive=True, browser=Browser(backend, store)
+    )
+    assert "nothing in it yet" in brief
+
+
+def test_a_resumed_session_is_told_the_workspace_is_its_own(backend, store):
+    workspace_listing(backend, "/work/elbow")
+    brief = cli._situation_brief(
+        store, backend, resuming=True, interactive=True, browser=Browser(backend, store)
+    )
+    assert "as this study left it" in brief
+    assert "none of it was made by this study" not in brief
+
+
+def test_infrastructure_directories_are_not_listed_as_someone_else_s_work(backend, store):
+    """`.toolbox` and the service's own directory are described in the prompt already;
+    listing them here would bury the two names that matter."""
+    workspace_listing(backend, "/work/.toolbox", "/work/.foamd", "/work/elbow")
+    brief = cli._situation_brief(
+        store, backend, resuming=False, interactive=True, browser=Browser(backend, store)
+    )
+    assert "toolbox" not in brief and "foamd" not in brief
+    assert "elbow" in brief
+
+
+def test_a_workspace_that_cannot_be_listed_does_not_stop_the_session(backend, store):
+    def broken(cmd, cwd=None, timeout_s=120):
+        raise BackendError("instance is not up", code="unavailable")
+
+    backend.exec = broken
+    brief = cli._situation_brief(
+        store, backend, resuming=False, interactive=True, browser=Browser(backend, store)
+    )
+    assert brief, "the rest of the brief still arrives"

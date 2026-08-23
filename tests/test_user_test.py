@@ -126,18 +126,21 @@ def spawn(ut, python_code: str):
 def test_it_reads_until_the_agent_goes_quiet(ut):
     session = spawn(ut, "import time,sys; print('hello'); sys.stdout.flush(); time.sleep(30)")
     try:
-        text, alive = session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
-        assert "hello" in text
-        assert alive is True
+        reply = session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
+        assert "hello" in reply.text
+        assert reply.alive is True
+        assert reply.timed_out is False
+        assert reply.note() == "", "a normal turn is not marked as anything"
     finally:
         session.process.kill()
 
 
 def test_it_notices_when_the_agent_exits(ut):
     session = spawn(ut, "print('done')")
-    text, alive = session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
-    assert "done" in text
-    assert alive is False
+    reply = session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
+    assert "done" in reply.text
+    assert reply.alive is False
+    assert "THE AGENT EXITED" in reply.note()
 
 
 def test_it_round_trips_a_message(ut):
@@ -151,8 +154,8 @@ def test_it_round_trips_a_message(ut):
     try:
         session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
         session.send("that looks wrong to me")
-        reply, _alive = session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
-        assert "you said: that looks wrong to me" in reply
+        reply = session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
+        assert "you said: that looks wrong to me" in reply.text
     finally:
         session.process.kill()
 
@@ -226,3 +229,42 @@ def test_a_very_long_agent_reply_is_trimmed_not_dropped(ut):
     shown = captured["messages"][2]["content"]
     assert "THE-ENDING" in shown, "the most recent part is what a user would have on screen"
     assert len(shown) < 7000
+
+
+# -- breaking loudly -----------------------------------------------------------
+
+
+def test_running_out_of_cap_is_not_reported_as_a_finished_turn(ut):
+    """Going quiet means the agent finished. Running out of cap means it never did,
+    and a run that confuses the two keeps talking to something that stopped listening."""
+    session = spawn(
+        ut,
+        "import sys, time\n"
+        "for _ in range(200):\n"
+        "    print('still working'); sys.stdout.flush(); time.sleep(0.05)\n",
+    )
+    try:
+        reply = session.read_until_quiet(idle_s=5.0, hard_cap_s=1.0)
+        assert reply.timed_out is True
+        assert "TIMED OUT" in reply.note()
+    finally:
+        session.process.kill()
+
+
+def test_an_agent_that_says_nothing_at_all_is_marked_as_such(ut):
+    assert "NOTHING WAS SAID" in ut.Reply("").note()
+    assert "NOTHING WAS SAID" in ut.Reply("   \n ").note()
+    assert "NOTHING WAS SAID" not in ut.Reply("a number").note()
+
+
+def test_a_long_wait_says_it_is_still_waiting(ut, capsys):
+    """A seven-minute wait and a dead run look identical from outside unless one of
+    them says something."""
+    session = spawn(ut, "import time; time.sleep(30)")
+    try:
+        ut.HEARTBEAT_S = 0.2
+        session.read_until_quiet(idle_s=1.0, hard_cap_s=1.2)
+        assert "waiting" in capsys.readouterr().out
+    finally:
+        ut.HEARTBEAT_S = 30.0
+        session.process.kill()

@@ -456,7 +456,11 @@ def session(
         loop = Loop(cfg, ctx, store, view, capture=capture)
         loop.interject = lambda: _typed_while_working(loop, view, browser, store, reader)
         view.header(store.session.study_id, resolved_instance, cfg.model, store.dir)
-        loop.brief(_situation_brief(store, backend, resuming, interactive=not one_shot))
+        loop.brief(
+            _situation_brief(
+                store, backend, resuming, interactive=not one_shot, browser=browser
+            )
+        )
         try:
             if one_shot:
                 _run_one_shot(loop, backend, store, one_shot, view, reader, max_wait)
@@ -486,7 +490,60 @@ def session(
             os._exit(0)
 
 
-def _situation_brief(store: Store, backend: Backend, resuming: bool, interactive: bool) -> str:
+WORKSPACE_LISTED = 40
+
+
+def _workspace_note(browser: Browser, resuming: bool) -> str:
+    """What is already in the workspace, and whose it is.
+
+    The volume outlives every session, so a new study opens in a directory full of
+    other studies' work. Left unsaid, that reads as its own: a live run picked up a
+    velocity from a case an earlier session had abandoned and carried it several turns
+    before noticing. Whose the directories are is a fact, and it costs one listing.
+    """
+    try:
+        entries = [
+            entry
+            for entry in browser.tree(WORKSPACE_ROOT, depth=1)
+            if not entry.name.startswith(".")
+        ]
+    except BackendError:
+        return ""
+    if not entries:
+        return "The workspace has nothing in it yet."
+
+    listed = "\n".join(
+        f"  {entry.name}{'/' if entry.is_dir else ''}"
+        f"   last written {_when(entry.mtime)}"
+        for entry in entries[:WORKSPACE_LISTED]
+    )
+    if len(entries) > WORKSPACE_LISTED:
+        listed += f"\n  ... and {len(entries) - WORKSPACE_LISTED} more"
+
+    if resuming:
+        head = "The workspace is as this study left it, and contains:"
+    else:
+        head = (
+            "The workspace already contains the following. They were left by earlier "
+            "sessions; none of it was made by this study, and nothing in it was "
+            "written for the request you are about to receive:"
+        )
+    return f"{head}\n{listed}"
+
+
+def _when(mtime: float) -> str:
+    if not mtime:
+        return "unknown"
+    return time.strftime("%Y-%m-%d %H:%M", time.gmtime(mtime)) + "Z"
+
+
+def _situation_brief(
+    store: Store,
+    backend: Backend,
+    resuming: bool,
+    interactive: bool,
+    browser: Browser | None = None,
+) -> str:
     """Facts about this session, assembled by the harness.
 
     Whether anyone is at the terminal is one of them. It is the difference between a
@@ -498,6 +555,10 @@ def _situation_brief(store: Store, backend: Backend, resuming: bool, interactive
         lines.append(situation(store, backend))
     else:
         lines.append(f"study {store.session.study_id} on instance {store.session.instance_id}.")
+    if browser is not None:
+        note = _workspace_note(browser, resuming)
+        if note:
+            lines.append(note)
     if interactive:
         lines.append(
             "A person is at the terminal for this session and can answer you. Anything "
