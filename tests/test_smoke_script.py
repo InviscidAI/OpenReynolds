@@ -52,8 +52,8 @@ class SimulatedWorkspace(FakeBackend):
             return ExecResult(0, "hello\n2512\n", False, None)
         if cmd.strip() == "exit 7":
             return ExecResult(7, "", False, None)
-        if "/dev/zero" in cmd:
-            return ExecResult(0, "A" * 200_000, True, self.BIG_LOG)
+        if "200000" in cmd.replace(" ", ""):
+            return ExecResult(0, "B" * 200_000, True, self.BIG_LOG)
         if "cells_estimate.py --help" in cmd:
             return ExecResult(0, "usage: cells_estimate.py", False, None)
         if "plot.py" in cmd:

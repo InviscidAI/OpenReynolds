@@ -95,7 +95,7 @@ def main() -> int:
         check("exit_code: 7" in out, "a non-zero exit code comes back intact")
 
         section("truncation")
-        out, _ = dispatch(ctx, "bash", {"cmd": "head -c 200000 /dev/zero | tr '\0' 'A'"})
+        out, _ = dispatch(ctx, "bash", {"cmd": "python3 -c \"print('B' * 200000)\""})
         check("[truncated" in out, "long output is marked, not silently cut")
         check("/work/" in out and "read_file" in out, "the marker points at the full log")
 
@@ -158,7 +158,8 @@ def main() -> int:
         check("PLOT_OK" in out, "matplotlib renders headlessly in the container", out[:300])
 
         out, err = dispatch(ctx, "fetch", {"paths": ["/work/.smoke/plot.png"]})
-        local = store.fetch_dir() / "plot.png"
+        # Members come back relative to the workspace root, so the shape is kept.
+        local = store.fetch_dir() / ".smoke" / "plot.png"
         check(not err and local.exists() and local.stat().st_size > 1000,
               f"fetch pulled the PNG to {local}", out[:300])
 

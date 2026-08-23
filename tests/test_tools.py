@@ -160,7 +160,8 @@ def test_fetch_writes_locally_and_notifies(ctx, backend, store):
 
     assert not is_error
     assert "copied 1 file" in content
-    assert (store.fetch_dir() / "u.png").read_bytes() == b"\x89PNG"
+    # The workspace shape is preserved, so two cases' renders cannot collide.
+    assert (store.fetch_dir() / "case" / "renders" / "u.png").read_bytes() == b"\x89PNG"
     assert len(seen) == 1
 
 

@@ -8,7 +8,14 @@ import anthropic
 import pytest
 from rich.console import Console
 
-from openreynolds.backend.base import Backend, BackendError, ExecResult, JobStatus, Stat
+from openreynolds.backend.base import (
+    WORKSPACE_ROOT,
+    Backend,
+    BackendError,
+    ExecResult,
+    JobStatus,
+    Stat,
+)
 from openreynolds.store import Store
 from openreynolds.tools import ToolContext
 
@@ -52,10 +59,15 @@ class FakeBackend(Backend):
         self.trees.append((local_dir, remote_dir))
 
     def get_tree(self, remote_paths, local_dir):
+        """Mirrors the service: archive members are relative to the workspace root,
+        so a fetched file keeps the shape it had in the workspace."""
         self.fetched.extend(remote_paths)
         written = []
         for remote in remote_paths:
-            target = local_dir / Path(remote).name
+            relative = remote[len(WORKSPACE_ROOT) + 1 :] if remote.startswith(
+                WORKSPACE_ROOT + "/"
+            ) else Path(remote).name
+            target = local_dir / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(self.files.get(remote, b"x"))
             written.append(target)
