@@ -16,3 +16,4 @@ dist/
 venv/
 .pytest_cache/
 .ruff_cache/
+user-test*.log
