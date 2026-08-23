@@ -2,84 +2,19 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-import anthropic
 import pytest
-from rich.console import Console
 
 from openreynolds.config import CONTEXT_WINDOW_TOKENS, Config
 from openreynolds.loop import Loop
 from openreynolds.tools import ToolContext
 
-
-def text_block(text: str):
-    return SimpleNamespace(type="text", text=text)
-
-
-def tool_block(name: str, tool_input: dict, block_id: str = "tu_1"):
-    return SimpleNamespace(type="tool_use", name=name, input=tool_input, id=block_id)
-
-
-def message(content, stop_reason="end_turn", input_tokens=100):
-    return SimpleNamespace(
-        content=content,
-        stop_reason=stop_reason,
-        stop_details=None,
-        usage=SimpleNamespace(
-            input_tokens=input_tokens,
-            output_tokens=10,
-            cache_read_input_tokens=0,
-            cache_creation_input_tokens=0,
-        ),
-    )
-
-
-class FakeStream:
-    def __init__(self, response):
-        self._response = response
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def __iter__(self):
-        return iter(())
-
-    def get_final_message(self):
-        return self._response
-
-
-class FakeMessages:
-    def __init__(self, responses, fail_on_system=False):
-        self._responses = list(responses)
-        self.calls: list[dict] = []
-        self.fail_on_system = fail_on_system
-
-    def stream(self, **kwargs):
-        self.calls.append(kwargs)
-        if self.fail_on_system and any(m["role"] == "system" for m in kwargs["messages"]):
-            raise anthropic.BadRequestError(
-                "role 'system' is not supported on this model",
-                response=SimpleNamespace(status_code=400, headers={}, request=None),
-                body=None,
-            )
-        return FakeStream(self._responses.pop(0))
+from conftest import install_model as install, message, text_block, tool_block
 
 
 @pytest.fixture
-def loop(ctx: ToolContext, store, monkeypatch):
+def loop(ctx: ToolContext, store, console):
     cfg = Config(anthropic_api_key="test-key", model="claude-opus-5")
-    console = Console(file=open(__import__("os").devnull, "w"), force_terminal=False)
     return Loop(cfg, ctx, store, console)
-
-
-def install(loop, responses, fail_on_system=False):
-    fake = FakeMessages(responses, fail_on_system=fail_on_system)
-    loop.client = SimpleNamespace(messages=fake)
-    return fake
 
 
 def test_a_plain_turn_ends(loop):

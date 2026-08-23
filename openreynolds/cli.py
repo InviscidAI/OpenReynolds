@@ -182,6 +182,9 @@ def session(
         console.print(f"\n[dim]resume with: openreynolds --study {store.session.study_id}[/]")
 
 
+EXIT_WORDS = ("/exit", "/quit")
+
+
 def _run_interactive(loop: Loop, backend: Backend, store: Store) -> None:
     reader = LineReader()
     while True:
@@ -192,6 +195,10 @@ def _run_interactive(loop: Loop, backend: Backend, store: Store) -> None:
             if wake.kind == "job":
                 loop.inform(wake.text)
             elif wake.kind == "user":
+                # Honoured here too: a long solve is exactly when someone wants out,
+                # and jobs keep running on the instance either way.
+                if wake.text.strip() in EXIT_WORDS:
+                    return
                 loop.say(wake.text)
             else:
                 continue
@@ -203,7 +210,7 @@ def _run_interactive(loop: Loop, backend: Backend, store: Store) -> None:
             text = line.strip()
             if not text:
                 continue
-            if text in ("/exit", "/quit"):
+            if text in EXIT_WORDS:
                 return
             loop.say(text)
 

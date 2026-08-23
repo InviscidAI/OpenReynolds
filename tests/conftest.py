@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
+import anthropic
 import pytest
+from rich.console import Console
 
 from openreynolds.backend.base import Backend, BackendError, ExecResult, JobStatus, Stat
 from openreynolds.store import Store
@@ -96,3 +100,99 @@ def store(tmp_path):
 @pytest.fixture
 def ctx(backend, store):
     return ToolContext(backend=backend, store=store, max_output=1000)
+
+
+# -- a fake model --------------------------------------------------------------
+
+
+def text_block(text: str):
+    return SimpleNamespace(type="text", text=text)
+
+
+def tool_block(name: str, tool_input: dict, block_id: str = "tu_1"):
+    return SimpleNamespace(type="tool_use", name=name, input=tool_input, id=block_id)
+
+
+def message(content, stop_reason="end_turn", input_tokens=100):
+    return SimpleNamespace(
+        content=content,
+        stop_reason=stop_reason,
+        stop_details=None,
+        usage=SimpleNamespace(
+            input_tokens=input_tokens,
+            output_tokens=10,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        ),
+    )
+
+
+class FakeStream:
+    def __init__(self, response):
+        self._response = response
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        return iter(())
+
+    def get_final_message(self):
+        return self._response
+
+
+class FakeMessages:
+    """Replays scripted turns; repeats the last one if the loop asks for more."""
+
+    def __init__(self, responses, fail_on_system=False):
+        self._responses = list(responses)
+        self.calls: list[dict] = []
+        self.fail_on_system = fail_on_system
+
+    def stream(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail_on_system and any(m["role"] == "system" for m in kwargs["messages"]):
+            raise anthropic.BadRequestError(
+                "role 'system' is not supported on this model",
+                response=SimpleNamespace(status_code=400, headers={}, request=None),
+                body=None,
+            )
+        if len(self._responses) > 1:
+            return FakeStream(self._responses.pop(0))
+        return FakeStream(self._responses[0])
+
+
+def install_model(loop, responses, fail_on_system=False):
+    fake = FakeMessages(responses, fail_on_system=fail_on_system)
+    loop.client = SimpleNamespace(messages=fake)
+    return fake
+
+
+@pytest.fixture
+def console():
+    return Console(file=open(os.devnull, "w"), force_terminal=False)
+
+
+class ScriptedReader:
+    """Stands in for stdin: hands back queued lines, then EOF."""
+
+    def __init__(self, lines):
+        self._lines = list(lines)
+
+    def poll(self):
+        from openreynolds.watch import NOTHING
+
+        return self._lines.pop(0) if self._lines else NOTHING
+
+    def get(self, timeout=None):
+        return self._lines.pop(0) if self._lines else None
+
+
+@pytest.fixture
+def fast_polling(monkeypatch):
+    monkeypatch.setattr("openreynolds.watch.POLL_MIN_S", 0.001)
+    monkeypatch.setattr("openreynolds.watch.POLL_MAX_S", 0.002)
+    monkeypatch.setattr("openreynolds.watch.TICK_S", 0.001)

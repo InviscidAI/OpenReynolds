@@ -16,33 +16,9 @@ from openreynolds.watch import (
 )
 
 
-@pytest.fixture
-def console():
-    import os
+from conftest import ScriptedReader  # noqa: E402
 
-    return Console(file=open(os.devnull, "w"), force_terminal=False)
-
-
-class ScriptedReader:
-    """Hands back queued lines, then nothing."""
-
-    def __init__(self, lines):
-        self._lines = list(lines)
-
-    def poll(self):
-        from openreynolds.watch import NOTHING
-
-        return self._lines.pop(0) if self._lines else NOTHING
-
-    def get(self, timeout=None):
-        return self._lines.pop(0) if self._lines else None
-
-
-@pytest.fixture(autouse=True)
-def fast_polling(monkeypatch):
-    monkeypatch.setattr("openreynolds.watch.POLL_MIN_S", 0.001)
-    monkeypatch.setattr("openreynolds.watch.POLL_MAX_S", 0.002)
-    monkeypatch.setattr("openreynolds.watch.TICK_S", 0.001)
+pytestmark = pytest.mark.usefixtures("fast_polling")
 
 
 def start_job(backend, store, name="solve", cmd="simpleFoam"):
