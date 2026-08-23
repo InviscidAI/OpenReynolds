@@ -94,9 +94,44 @@ def studies_cmd() -> None:
 
 
 @main.command("config")
-def config_cmd() -> None:
+@click.option(
+    "--from-env",
+    is_flag=True,
+    help="Take values from the environment instead of prompting.",
+)
+@click.option(
+    "--key-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Read the Anthropic key from this file (it is not echoed).",
+)
+def config_cmd(from_env: bool, key_file: Path | None) -> None:
     """Set credentials and defaults."""
     cfg = Config.load()
+
+    if from_env or key_file:
+        if key_file:
+            cfg.anthropic_api_key = key_file.read_text(encoding="utf-8").strip()
+        path = cfg.save()
+        console.print(f"[green]Saved[/] {path}")
+        for name, value in (
+            ("service url", cfg.foamd_url),
+            ("service key", _redact(cfg.foamd_api_key)),
+            ("anthropic key", _redact(cfg.anthropic_api_key)),
+            ("model", cfg.model),
+        ):
+            console.print(f"  {name:14} {value or '[red]not set[/]'}")
+        return
+
+    if not _can_prompt():
+        # Prompting needs a terminal. Say what to do instead of aborting cryptically.
+        console.print(
+            "[yellow]config needs a terminal to prompt in.[/] Either run it from a "
+            "normal terminal window, or set the values without prompts:\n\n"
+            "  openreynolds config --key-file <path to a file holding the key>\n"
+            "  ANTHROPIC_API_KEY=... openreynolds config --from-env\n"
+        )
+        raise SystemExit(1)
+
     console.print(f"Writing to [bold]{config_path()}[/]\n")
     cfg.foamd_url = click.prompt("Service URL", default=cfg.foamd_url or "").strip().rstrip("/")
     cfg.foamd_api_key = click.prompt(
@@ -140,6 +175,19 @@ def run_checks(cfg: Config) -> list[tuple[str, bool, str]]:
         _check_toolbox(),
         _check_terminal(),
     ]
+
+
+def _can_prompt() -> bool:
+    """Whether there is a terminal to prompt in.
+
+    `sys.stdin` is None when stdin is closed, which is not rare in an automation
+    channel, so this cannot simply call isatty().
+    """
+    stream = getattr(sys, "stdin", None)
+    try:
+        return bool(stream is not None and stream.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
 
 
 def _redact(secret: str) -> str:

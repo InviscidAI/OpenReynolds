@@ -241,6 +241,7 @@ def test_studies_with_none(tmp_path, monkeypatch):
 
 def test_config_writes_credentials_outside_the_repo(tmp_path, monkeypatch):
     target = tmp_path / "config.json"
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
     monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(target))
     monkeypatch.delenv("FOAMD_URL", raising=False)
     monkeypatch.delenv("FOAMD_API_KEY", raising=False)
@@ -463,3 +464,41 @@ def test_doctor_finds_the_toolbox_it_would_sync(monkeypatch):
     ok, detail = labels(cli.run_checks(full_config()))["toolbox"]
     assert ok
     assert "4 scripts" in detail and "3 notes" in detail
+
+
+def test_config_without_a_terminal_explains_instead_of_aborting(monkeypatch, tmp_path):
+    """Through a non-interactive channel click just says 'Aborted!', which tells
+    the user nothing."""
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    result = CliRunner().invoke(cli.main, ["config"], input="")
+    assert result.exit_code == 1
+    assert "needs a terminal" in result.output
+    assert "--key-file" in result.output
+
+
+def test_config_key_file_never_echoes_the_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    secret = tmp_path / "key.txt"
+    secret.write_text("sk-ant-super-secret-value\n")
+
+    result = CliRunner().invoke(cli.main, ["config", "--key-file", str(secret)])
+
+    assert result.exit_code == 0
+    assert "sk-ant-super-secret-value" not in result.output
+    saved = json.loads((tmp_path / "c.json").read_text())
+    assert saved["anthropic_api_key"] == "sk-ant-super-secret-value"
+
+
+def test_config_from_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
+    monkeypatch.setenv("FOAMD_URL", "https://svc.example")
+    monkeypatch.setenv("FOAMD_API_KEY", "of_live_env")
+
+    result = CliRunner().invoke(cli.main, ["config", "--from-env"])
+
+    assert result.exit_code == 0
+    saved = json.loads((tmp_path / "c.json").read_text())
+    assert saved["anthropic_api_key"] == "sk-ant-from-env"
+    assert saved["foamd_url"] == "https://svc.example"
