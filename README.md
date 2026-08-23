@@ -141,6 +141,30 @@ streaming its log, a `kill_on` regex firing and reporting the line that matched,
 headless matplotlib render fetched back to disk. It reuses a workspace and never
 deletes one, so the persistent volume is safe.
 
+## Testing as a user
+
+Everything above tests the agent from the inside, by someone who knows what a
+`tool_result` is. `scripts/user_test.py` drives it from the outside instead:
+
+```bash
+python scripts/user_test.py --goal "I need the pressure drop through a 90 degree elbow"
+```
+
+A persona holds up the user end of a real interactive session. It has physical intuition
+about air and water and opinions about whether a number smells right — and it cannot
+code. It never types a command, never names a piece of software, never suggests a fix,
+and sees nothing but what appears in the terminal. It pushes back the way a client does:
+*that seems too high for a duct that size*, *you said 1.2 earlier and now you're saying
+0.8*, *how confident are you?* Diagnosing any of it is the agent's job.
+
+The constraint is enforced rather than requested: a line that looks like a command is
+dropped before it reaches the agent, because a user who cannot code cannot paste one,
+and a persona that quietly turns into an engineer stops testing what it claims to.
+
+It ends on its own — `[SATISFIED]` when it would accept the answer, `[STUCK]` when the
+conversation has stopped going anywhere — and writes the whole exchange to
+`user-test.log`.
+
 ## Inline images
 
 On iTerm2, kitty or WezTerm, a fetched PNG is drawn in the terminal as well as saved.
