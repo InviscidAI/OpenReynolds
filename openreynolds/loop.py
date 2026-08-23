@@ -276,7 +276,7 @@ class Loop:
             self.capture.message(seq, role, content)
 
 
-TICK_EVERY_S = 15.0
+TICK_EVERY_S = 10.0
 """How often a running tool call says it is still running."""
 
 

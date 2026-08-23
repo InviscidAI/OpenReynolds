@@ -24,6 +24,8 @@ machine and nothing is left burning.
 from __future__ import annotations
 
 import argparse
+import codecs
+import os
 import queue
 import re
 import subprocess
@@ -59,6 +61,13 @@ tolerant_stdout()
 STUDY_ID = re.compile(r"\bstudy\s+(\d{8}-\d{6}-[0-9a-f]{4})\b")
 
 
+PROMPT = re.compile(r"\n> ?$")
+"""The product saying it is the user's turn.
+
+It carries no trailing newline -- nothing follows it until somebody answers -- which
+is exactly why the reader has to work in bytes rather than lines.
+"""
+
 HEARTBEAT_S = 30.0
 """How often a long wait says it is still a wait and not a dead run."""
 
@@ -70,6 +79,8 @@ class Reply:
     text: str
     alive: bool = True
     timed_out: bool = False
+    by_prompt: bool = False
+    """True when the agent asked for input, rather than merely going quiet."""
 
     def note(self) -> str:
         """What to write down about how this ended, when it did not end normally."""
@@ -80,6 +91,8 @@ class Reply:
             marks.append("THE AGENT EXITED")
         if not self.text.strip():
             marks.append("NOTHING WAS SAID")
+        elif not self.by_prompt and not self.timed_out and self.alive:
+            marks.append("went quiet without asking for input")
         return "  [" + "; ".join(marks) + "]" if marks else ""
 
 
@@ -93,30 +106,49 @@ class AgentSession:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
+            bufsize=0,
         )
         self._chunks: queue.Queue[str | None] = queue.Queue()
         self._reader = threading.Thread(target=self._pump, daemon=True)
         self._reader.start()
 
     def _pump(self) -> None:
+        """Read bytes, not lines.
+
+        The prompt that says "your turn" is written without a trailing newline, so a
+        line-oriented reader cannot see it until something else arrives -- which is
+        never, because nothing else will until somebody answers it. Reading bytes is
+        what makes waiting for the prompt possible at all.
+        """
         assert self.process.stdout is not None
-        for line in self.process.stdout:
-            self._chunks.put(line)
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        fileno = self.process.stdout.fileno()
+        while True:
+            try:
+                data = os.read(fileno, 65536)
+            except OSError:
+                break
+            if not data:
+                break
+            text = decoder.decode(data)
+            if text:
+                self._chunks.put(text)
         self._chunks.put(None)
 
-    def read_until_quiet(self, idle_s: float, hard_cap_s: float) -> Reply:
-        """Collect output until it stops for `idle_s`, or the cap runs out.
+    def read_until_turn(self, idle_s: float, hard_cap_s: float) -> Reply:
+        """Collect output until the agent asks for input, goes quiet, or runs out of cap.
 
-        The cap and the idle period mean different things and must not be reported the
-        same way. Going quiet is the agent finishing its turn; running out of cap is
-        the agent never finishing, and a run that treats the second as the first
-        carries on talking to something that has stopped listening.
+        Waiting for the prompt rather than for silence is the whole difference between
+        a conversation and two monologues. Silence is a guess, and it guesses wrong
+        every time a command takes longer than the threshold: the reply gets cut mid
+        sentence, the next message lands while the agent is still working, and two
+        turns are spent talking past each other.
+
+        Silence is still the fallback, because while a job is being watched there is
+        no prompt to wait for.
         """
         collected: list[str] = []
+        tail = ""
         started = time.monotonic()
         deadline = started + hard_cap_s
         last = started
@@ -142,7 +174,10 @@ class AgentSession:
             if chunk is None:
                 return Reply("".join(collected), alive=False)
             collected.append(chunk)
+            tail = (tail + chunk)[-32:]
             last = time.monotonic()
+            if PROMPT.search(tail):
+                return Reply("".join(collected), alive=True, by_prompt=True)
 
         return Reply("".join(collected), alive=True, timed_out=True)
 
@@ -153,8 +188,9 @@ class AgentSession:
         return idle_s * 6 if "watching" in tail else idle_s
 
     def send(self, text: str) -> None:
+        """The pipe is bytes now, because the reader had to be."""
         assert self.process.stdin is not None
-        self.process.stdin.write(text.rstrip("\n") + "\n")
+        self.process.stdin.write((text.rstrip("\n") + "\n").encode("utf-8"))
         self.process.stdin.flush()
 
     def close(self, timeout: float = 60.0) -> int | None:
@@ -292,7 +328,7 @@ def run_one(client, persona: Persona, args, repo: Path) -> dict:
     budget = started + args.budget * 60 if args.budget else None
 
     try:
-        opening = session.read_until_quiet(args.idle, args.cap)
+        opening = session.read_until_turn(args.idle, args.cap)
         record("AGENT (startup)" + opening.note(), opening.text)
         found = STUDY_ID.search(opening.text)
         study = found.group(1) if found else None
@@ -320,7 +356,7 @@ def run_one(client, persona: Persona, args, repo: Path) -> dict:
                 break
 
             session.send(message)
-            reply = session.read_until_quiet(args.idle, args.cap)
+            reply = session.read_until_turn(args.idle, args.cap)
             record(f"AGENT (turn {turn + 1})" + reply.note(), reply.text)
             if not reply.text.strip():
                 verdict = "the agent said nothing"
@@ -356,7 +392,12 @@ def main() -> int:
     )
     parser.add_argument("--goal", default=None, help="Override the persona's own goal.")
     parser.add_argument("--turns", type=int, default=8, help="Maximum user messages.")
-    parser.add_argument("--idle", type=float, default=15.0, help="Seconds of silence = its turn.")
+    parser.add_argument(
+        "--idle",
+        type=float,
+        default=45.0,
+        help="Fallback: seconds of silence taken as its turn when no prompt appears.",
+    )
     parser.add_argument("--cap", type=float, default=600.0, help="Seconds to wait per reply.")
     parser.add_argument("--budget", type=float, default=15.0, help="Minutes per persona, 0 = none.")
     parser.add_argument("--model", default=None, help="Model for the agent under test.")

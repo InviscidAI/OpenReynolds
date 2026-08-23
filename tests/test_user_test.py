@@ -126,18 +126,19 @@ def spawn(ut, python_code: str):
 def test_it_reads_until_the_agent_goes_quiet(ut):
     session = spawn(ut, "import time,sys; print('hello'); sys.stdout.flush(); time.sleep(30)")
     try:
-        reply = session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
+        reply = session.read_until_turn(idle_s=0.5, hard_cap_s=10)
         assert "hello" in reply.text
         assert reply.alive is True
         assert reply.timed_out is False
-        assert reply.note() == "", "a normal turn is not marked as anything"
+        assert reply.by_prompt is False
+        assert "went quiet without asking for input" in reply.note()
     finally:
         session.process.kill()
 
 
 def test_it_notices_when_the_agent_exits(ut):
     session = spawn(ut, "print('done')")
-    reply = session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
+    reply = session.read_until_turn(idle_s=0.5, hard_cap_s=10)
     assert "done" in reply.text
     assert reply.alive is False
     assert "THE AGENT EXITED" in reply.note()
@@ -152,9 +153,9 @@ def test_it_round_trips_a_message(ut):
         "print(f'you said: {line}'); sys.stdout.flush()\n",
     )
     try:
-        session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
+        session.read_until_turn(idle_s=0.5, hard_cap_s=10)
         session.send("that looks wrong to me")
-        reply = session.read_until_quiet(idle_s=0.5, hard_cap_s=10)
+        reply = session.read_until_turn(idle_s=0.5, hard_cap_s=10)
         assert "you said: that looks wrong to me" in reply.text
     finally:
         session.process.kill()
@@ -244,7 +245,7 @@ def test_running_out_of_cap_is_not_reported_as_a_finished_turn(ut):
         "    print('still working'); sys.stdout.flush(); time.sleep(0.05)\n",
     )
     try:
-        reply = session.read_until_quiet(idle_s=5.0, hard_cap_s=1.0)
+        reply = session.read_until_turn(idle_s=5.0, hard_cap_s=1.0)
         assert reply.timed_out is True
         assert "TIMED OUT" in reply.note()
     finally:
@@ -263,8 +264,77 @@ def test_a_long_wait_says_it_is_still_waiting(ut, capsys):
     session = spawn(ut, "import time; time.sleep(30)")
     try:
         ut.HEARTBEAT_S = 0.2
-        session.read_until_quiet(idle_s=1.0, hard_cap_s=1.2)
+        session.read_until_turn(idle_s=1.0, hard_cap_s=1.2)
         assert "waiting" in capsys.readouterr().out
     finally:
         ut.HEARTBEAT_S = 30.0
+        session.process.kill()
+
+
+# -- waiting for the turn, not for silence -------------------------------------
+
+PROMPTS = "import sys, time\nsys.stdout.write('\\n> ')\nsys.stdout.flush()\ntime.sleep(30)\n"
+
+
+def test_the_prompt_ends_a_turn_immediately(ut):
+    """The whole point: an agent that asks for input is done, whatever the clock says.
+
+    Waiting out an idle period instead wastes it, and guessing from silence cuts the
+    reply mid sentence and sends the next message while the agent is still working.
+    """
+    session = spawn(ut, "print('here is your number')\n" + PROMPTS)
+    try:
+        started = time.monotonic()
+        reply = session.read_until_turn(idle_s=20.0, hard_cap_s=25.0)
+        elapsed = time.monotonic() - started
+
+        assert reply.by_prompt is True
+        assert "here is your number" in reply.text
+        assert elapsed < 10, "it returned on the prompt, not after waiting out the idle"
+        assert reply.note() == "", "asking for input is a turn ending normally"
+    finally:
+        session.process.kill()
+
+
+def test_a_prompt_with_no_trailing_space_is_still_a_prompt(ut):
+    """Rich strips trailing whitespace on some streams, so both forms arrive."""
+    assert ut.PROMPT.search("all done\n>")
+    assert ut.PROMPT.search("all done\n> ")
+    assert not ut.PROMPT.search("the ratio is 3 > 2 here")
+    assert not ut.PROMPT.search("still working\n")
+
+
+def test_a_slow_command_does_not_end_the_turn(ut):
+    """The failure this replaced: output pausing while a command ran was read as the
+    agent finishing, so the next message landed mid-work and two turns were wasted."""
+    session = spawn(
+        ut,
+        "import sys, time\n"
+        "print('starting the mesh'); sys.stdout.flush()\n"
+        "time.sleep(1.2)\n"
+        "print('done'); sys.stdout.flush()\n" + PROMPTS,
+    )
+    try:
+        reply = session.read_until_turn(idle_s=3.0, hard_cap_s=20.0)
+        assert reply.by_prompt is True
+        assert "starting the mesh" in reply.text and "done" in reply.text
+    finally:
+        session.process.kill()
+
+
+def test_bytes_are_decoded_even_when_split_across_reads(ut):
+    """Reading raw bytes means a multi-byte character can straddle two reads."""
+    session = spawn(
+        ut,
+        "import sys, time\n"
+        "raw = 'sigma \\u03c3 and mu \\u00b5\\n'.encode('utf-8')\n"
+        "for byte in raw:\n"
+        "    sys.stdout.buffer.write(bytes([byte]))\n"
+        "    sys.stdout.buffer.flush()\n"
+        "    time.sleep(0.002)\n" + PROMPTS,
+    )
+    try:
+        reply = session.read_until_turn(idle_s=5.0, hard_cap_s=20.0)
+        assert "sigma σ and mu µ" in reply.text
+    finally:
         session.process.kill()
