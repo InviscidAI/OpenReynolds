@@ -80,6 +80,7 @@ class ConsoleView(View):
         self.console = console or Console()
         self._thinking = False
         self._browser: Any = None
+        self._watching: list[str] = []
 
     def header(self, study_id: str, instance_id: str, model: str, mirror: Path) -> None:
         self.console.print(
@@ -134,8 +135,14 @@ class ConsoleView(View):
             self.console.print(f"[dim]  {text}[/]")
 
     def watching(self, names: list[str]) -> None:
+        """Said once per set of jobs. Watch mode is re-entered after every local
+        command, and repeating the same line each time is how a screen fills up
+        with nothing."""
+        if names == self._watching:
+            return
+        self._watching = list(names)
         self.console.print(
-            f"[dim]watching {len(names)} job(s): {', '.join(names)} - type to interrupt[/]"
+            f"[dim]watching {len(names)} job(s): {', '.join(names)} - type any time[/]"
         )
 
     def interjection(self, text: str) -> None:

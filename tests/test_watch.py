@@ -20,6 +20,8 @@ from openreynolds.watch import (
 )
 
 
+from openreynolds.view import ConsoleView
+
 from conftest import ScriptedReader  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("fast_polling")
@@ -306,3 +308,41 @@ def test_polling_coalesces_the_same_way(monkeypatch):
 
     assert reader.poll() == "stop the fine one\ncoarse is enough"
     assert reader.poll() in (NOTHING, None)
+
+
+# -- waiting on a job is still waiting on the user ------------------------------
+
+
+def test_watch_mode_shows_a_prompt(backend, store, view, fast_polling):
+    """Waiting on a job is still waiting on the user - they can speak at any moment
+    and be heard. Without a prompt the screen looks locked, and a twenty-minute solve
+    reads as a session that has stopped responding."""
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    watch(backend, store, view, ScriptedReader(["how is it going?"]))
+
+    assert view.prompts == 1, "the user was shown it is their turn"
+
+
+def test_a_run_nobody_is_watching_is_not_invited_to_type(backend, store, view, fast_polling):
+    """A prompt in a one-shot run is a lie: there is nobody there and no way in."""
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(
+        job_id="job-1", status="exited", name="solve", end_reason="completed"
+    )
+
+    watch(backend, store, view, NullReader())
+
+    assert view.prompts == 0
+
+
+def test_the_watch_line_is_not_repeated_for_the_same_jobs(console):
+    """Watch mode is re-entered after every local command, and repeating the line
+    each time is how a screen fills up with nothing."""
+    plain = ConsoleView(console)
+    plain.watching(["solve"])
+    plain.watching(["solve"])
+    plain.watching(["solve", "mesh"])
+
+    assert plain._watching == ["solve", "mesh"]

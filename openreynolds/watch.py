@@ -42,12 +42,16 @@ class LineReader:
     One reader serves the whole session - the interactive prompt and watch mode both
     take from this queue, so there is only ever one consumer of stdin.
 
+    `accepts_input` is what distinguishes this from a session nobody is watching.
+
     Lines that arrive together are one message. A person pasting a paragraph sends
     several lines in a few milliseconds, and treating each as its own turn means the
     agent answers the first sentence while the rest of the paragraph lands on it as
     interruptions -- which is exactly what a live run did, splitting four messages
     into six turns and leaving the user's actual question unanswered.
     """
+
+    accepts_input = True
 
     def __init__(self) -> None:
         self._queue: queue.Queue[str | None] = queue.Queue()
@@ -112,6 +116,9 @@ NOTHING = _Nothing()
 class NullReader:
     """Stands in for stdin when there is no user to interrupt (one-shot runs)."""
 
+    accepts_input = False
+    """Nothing can be typed here, so nothing should invite it."""
+
     def get(self, timeout: float | None = None) -> str | None:
         return None
 
@@ -146,6 +153,11 @@ def watch(
         return Wake("idle")
 
     view.watching([job.name or job.job_id[:8] for job in live])
+    if getattr(reader, "accepts_input", True):
+        # Waiting on a job is still waiting on the user: they can say something at any
+        # moment and it will be heard. Without a prompt here the screen looks locked,
+        # and a twenty-minute solve reads as a session that has stopped responding.
+        view.prompt()
 
     while True:
         if deadline is not None and time.monotonic() > deadline:
