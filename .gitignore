@@ -1,0 +1,18 @@
+# credentials — never commit these
+.foamd_key
+.env
+*.key
+
+# local study mirror
+studies/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
