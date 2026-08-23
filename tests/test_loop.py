@@ -12,9 +12,9 @@ from conftest import install_model as install, message, text_block, tool_block
 
 
 @pytest.fixture
-def loop(ctx: ToolContext, store, console):
+def loop(ctx: ToolContext, store, view):
     cfg = Config(anthropic_api_key="test-key", model="claude-opus-5")
-    return Loop(cfg, ctx, store, console)
+    return Loop(cfg, ctx, store, view)
 
 
 def test_a_plain_turn_ends(loop):
@@ -163,16 +163,13 @@ def test_every_turn_is_mirrored_locally(loop, store):
     assert roles == ["user", "assistant", "tool", "assistant"]
 
 
-def test_a_turn_cut_off_at_the_output_cap_says_so(loop, capsys):
+def test_a_turn_cut_off_at_the_output_cap_says_so(loop):
     """Otherwise a truncated answer is indistinguishable from a finished one."""
-    from rich.console import Console
-
-    loop.console = Console(force_terminal=False)
     install(loop, [message([text_block("the pressure drop is ")], stop_reason="max_tokens")])
     loop.say("report it")
     loop.run()
 
-    assert "incomplete" in capsys.readouterr().out
+    assert any("incomplete" in n for n in loop.view.notices)
 
 
 def test_settle_answers_a_tool_call_the_turn_never_got_to(loop):

@@ -13,13 +13,14 @@ from openreynolds.backend.base import BackendError, JobStatus
 from openreynolds.config import Config
 from openreynolds.loop import Loop
 from openreynolds.store import Store
+from openreynolds.watch import NullReader
 
 pytestmark = pytest.mark.usefixtures("fast_polling")
 
 
 @pytest.fixture
-def loop(ctx, store, console):
-    return Loop(Config(anthropic_api_key="k", model="claude-opus-5"), ctx, store, console)
+def loop(ctx, store, view):
+    return Loop(Config(anthropic_api_key="k", model="claude-opus-5"), ctx, store, view)
 
 
 @pytest.fixture
@@ -51,7 +52,7 @@ def finishing_jobs(backend, end_reason="completed", exit_code=0):
 # -- one-shot ------------------------------------------------------------------
 
 
-def test_one_shot_waits_for_the_job_it_started(loop, backend, store, quiet_console):
+def test_one_shot_waits_for_the_job_it_started(loop, backend, store, view, quiet_console):
     finishing_jobs(backend)
     fake = install_model(
         loop,
@@ -65,7 +66,7 @@ def test_one_shot_waits_for_the_job_it_started(loop, backend, store, quiet_conso
         ],
     )
 
-    cli._run_one_shot(loop, backend, store, "run the elbow")
+    cli._run_one_shot(loop, backend, store, "run the elbow", view, NullReader())
 
     assert not store.live_jobs(), "one-shot returns only once no job is left running"
     informed = [m for m in loop.messages if "end_reason=completed" in str(m.get("content"))]
@@ -74,7 +75,7 @@ def test_one_shot_waits_for_the_job_it_started(loop, backend, store, quiet_conso
 
 
 def test_one_shot_reports_an_expired_sandbox_rather_than_a_clean_exit(
-    loop, backend, store, quiet_console
+    loop, backend, store, view, quiet_console
 ):
     """The volume survives this, so it is the model's call what to do about it."""
     finishing_jobs(backend, end_reason="sandbox_expired", exit_code=None)
@@ -87,7 +88,7 @@ def test_one_shot_reports_an_expired_sandbox_rather_than_a_clean_exit(
         ],
     )
 
-    cli._run_one_shot(loop, backend, store, "solve it")
+    cli._run_one_shot(loop, backend, store, "solve it", view, NullReader())
 
     assert any("sandbox_expired" in str(m.get("content")) for m in loop.messages)
 
@@ -95,31 +96,28 @@ def test_one_shot_reports_an_expired_sandbox_rather_than_a_clean_exit(
 # -- interactive ---------------------------------------------------------------
 
 
-def test_interactive_runs_a_turn_then_exits(loop, backend, store, quiet_console, monkeypatch):
-    monkeypatch.setattr(cli, "LineReader", lambda: ScriptedReader(["how many cells?", "/exit"]))
+def test_interactive_runs_a_turn_then_exits(loop, backend, store, view, quiet_console):
     install_model(loop, [message([text_block("94,321")])])
 
-    cli._run_interactive(loop, backend, store)
+    cli._run_interactive(loop, backend, store, view, ScriptedReader(["how many cells?", "/exit"]))
 
     assert loop.messages[0]["content"] == "how many cells?"
 
 
-def test_interactive_stops_on_eof(loop, backend, store, quiet_console, monkeypatch):
-    monkeypatch.setattr(cli, "LineReader", lambda: ScriptedReader([]))
+def test_interactive_stops_on_eof(loop, backend, store, view, quiet_console):
     install_model(loop, [message([text_block("unused")])])
 
-    cli._run_interactive(loop, backend, store)
+    cli._run_interactive(loop, backend, store, view, ScriptedReader([]))
 
     assert loop.messages == []
 
 
-def test_typing_during_a_job_reaches_the_model(loop, backend, store, quiet_console, monkeypatch):
+def test_typing_during_a_job_reaches_the_model(loop, backend, store, view, quiet_console):
     backend.job_start("sleep 600", name="solve")
     store.record_job("job-1", cmd="sleep 600", name="solve")
-    monkeypatch.setattr(cli, "LineReader", lambda: ScriptedReader(["stop", "/exit"]))
     install_model(loop, [message([text_block("stopping")])])
 
-    cli._run_interactive(loop, backend, store)
+    cli._run_interactive(loop, backend, store, view, ScriptedReader(["stop", "/exit"]))
 
     assert loop.messages[0] == {"role": "user", "content": "stop"}
 
@@ -258,15 +256,14 @@ def test_config_writes_credentials_outside_the_repo(tmp_path, monkeypatch):
     assert saved["model"] == "claude-opus-5"
 
 
-def test_exit_works_while_a_job_is_running(loop, backend, store, quiet_console, monkeypatch):
+def test_exit_works_while_a_job_is_running(loop, backend, store, view, quiet_console):
     """Regression: /exit was only honoured when nothing was running, so a user
     watching a long solve could not quit -- the word went to the model instead."""
     backend.job_start("sleep 600", name="solve")
     store.record_job("job-1", cmd="sleep 600", name="solve")
-    monkeypatch.setattr(cli, "LineReader", lambda: ScriptedReader(["/exit"]))
     install_model(loop, [message([text_block("should never be reached")])])
 
-    cli._run_interactive(loop, backend, store)
+    cli._run_interactive(loop, backend, store, view, ScriptedReader(["/exit"]))
 
     assert loop.messages == [], "the exit word never reached the model"
     assert store.live_jobs(), "the job is left running on the instance"
@@ -283,7 +280,7 @@ def _api_error(status=429):
     )
 
 
-def test_a_rate_limit_does_not_end_the_session(loop, backend, store, quiet_console, monkeypatch):
+def test_a_rate_limit_does_not_end_the_session(loop, backend, store, view, quiet_console, monkeypatch):
     """A long study meets one eventually; losing the thread to it is a poor trade."""
     calls = []
 
@@ -292,27 +289,25 @@ def test_a_rate_limit_does_not_end_the_session(loop, backend, store, quiet_conso
         raise _api_error()
 
     monkeypatch.setattr(loop, "run", failing_run)
-    monkeypatch.setattr(cli, "LineReader", lambda: ScriptedReader(["go", "/exit"]))
-
-    cli._run_interactive(loop, backend, store)
+    cli._run_interactive(loop, backend, store, view, ScriptedReader(["go", "/exit"]))
 
     assert calls, "the turn was attempted"
     assert loop.messages[0]["content"] == "go", "the thread survived"
 
 
-def test_a_failed_turn_does_not_trigger_a_context_refresh(loop, monkeypatch):
+def test_a_failed_turn_does_not_trigger_a_context_refresh(loop, view, monkeypatch):
     refreshed = []
     monkeypatch.setattr(loop, "run", lambda: (_ for _ in ()).throw(_api_error()))
     monkeypatch.setattr(loop, "refresh", lambda blurb: refreshed.append(blurb))
     monkeypatch.setattr(type(loop), "needs_refresh", property(lambda self: True))
 
-    assert cli._run_turn(loop) is False
+    assert cli._run_turn(loop, view) is False
     assert refreshed == []
 
 
-def test_one_shot_stops_when_the_model_api_fails(loop, backend, store, quiet_console, monkeypatch):
+def test_one_shot_stops_when_the_model_api_fails(loop, backend, store, view, quiet_console, monkeypatch):
     monkeypatch.setattr(loop, "run", lambda: (_ for _ in ()).throw(_api_error()))
-    cli._run_one_shot(loop, backend, store, "do it")  # returns rather than hanging
+    cli._run_one_shot(loop, backend, store, "do it", view, NullReader())  # returns rather than hanging
 
 
 # -- doctor --------------------------------------------------------------------

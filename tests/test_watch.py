@@ -93,44 +93,44 @@ def test_wake_report_carries_the_kill_on_line(backend):
     assert "Maximum number of iterations exceeded" in report
 
 
-def test_expired_sandbox_is_reported_as_such(backend, store):
+def test_expired_sandbox_is_reported_as_such(backend, store, view):
     """The volume survives this, so it is a fact the model needs, not a plain exit."""
     job_id = start_job(backend, store)
     backend.jobs[job_id] = JobStatus(
         job_id=job_id, name="solve", status="killed", end_reason="sandbox_expired", log_size=0
     )
-    report = _collect_finished(backend, store, Console(quiet=True))
+    report = _collect_finished(backend, store, view)
     assert "sandbox_expired" in report
 
 
 # -- the poll loop -------------------------------------------------------------
 
 
-def test_idle_when_nothing_is_running(backend, store, console):
-    assert watch(backend, store, console, NullReader()).kind == "idle"
+def test_idle_when_nothing_is_running(backend, store, view):
+    assert watch(backend, store, view, NullReader()).kind == "idle"
 
 
-def test_typed_input_interrupts_immediately(backend, store, console):
+def test_typed_input_interrupts_immediately(backend, store, view):
     start_job(backend, store)
-    wake = watch(backend, store, console, ScriptedReader(["stop what you are doing"]))
+    wake = watch(backend, store, view, ScriptedReader(["stop what you are doing"]))
     assert wake.kind == "user"
     assert wake.text == "stop what you are doing"
 
 
-def test_blank_input_does_not_count_as_an_interruption(backend, store, console):
+def test_blank_input_does_not_count_as_an_interruption(backend, store, view):
     job_id = start_job(backend, store)
     backend.jobs[job_id] = JobStatus(job_id=job_id, name="solve", status="exited", exit_code=0)
-    wake = watch(backend, store, console, ScriptedReader(["   "]))
+    wake = watch(backend, store, view, ScriptedReader(["   "]))
     assert wake.kind == "job"
 
 
-def test_eof_ends_the_session(backend, store, console):
+def test_eof_ends_the_session(backend, store, view):
     start_job(backend, store)
-    wake = watch(backend, store, console, ScriptedReader([None]))
+    wake = watch(backend, store, view, ScriptedReader([None]))
     assert wake.kind == "eof"
 
 
-def test_a_finished_job_wakes_with_its_outcome(backend, store, console):
+def test_a_finished_job_wakes_with_its_outcome(backend, store, view):
     job_id = start_job(backend, store)
     backend.logs[job_id] = b"time step continuity errors\nEnd\n"
     backend.jobs[job_id] = JobStatus(
@@ -142,7 +142,7 @@ def test_a_finished_job_wakes_with_its_outcome(backend, store, console):
         log_size=len(backend.logs[job_id]),
     )
 
-    wake = watch(backend, store, console, NullReader())
+    wake = watch(backend, store, view, NullReader())
 
     assert wake.kind == "job"
     assert "exit_code=0" in wake.text
@@ -150,14 +150,14 @@ def test_a_finished_job_wakes_with_its_outcome(backend, store, console):
     assert store.session.jobs[job_id].status == "exited"
 
 
-def test_an_unreadable_job_is_reported_rather_than_polled_forever(backend, store, console):
+def test_an_unreadable_job_is_reported_rather_than_polled_forever(backend, store, view):
     job_id = start_job(backend, store)
 
     def broken(_job_id):
         raise BackendError("instance is deleted", code="conflict", status=409)
 
     backend.job_status = broken
-    wake = watch(backend, store, console, NullReader())
+    wake = watch(backend, store, view, NullReader())
 
     assert wake.kind == "job"
     assert "could not be read" in wake.text

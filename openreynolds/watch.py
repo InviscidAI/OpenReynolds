@@ -14,11 +14,10 @@ import threading
 import time
 from dataclasses import dataclass
 
-from rich.console import Console
-
 from .backend.base import Backend, BackendError, JobStatus
 from .store import Store
 from .tools import describe_job
+from .view import View
 
 POLL_MIN_S = 15.0
 POLL_MAX_S = 30.0
@@ -89,7 +88,7 @@ class Wake:
 def watch(
     backend: Backend,
     store: Store,
-    console: Console,
+    view: View,
     reader: LineReader,
 ) -> Wake:
     """Poll live jobs until something happens worth waking for."""
@@ -97,8 +96,7 @@ def watch(
     if not live:
         return Wake("idle")
 
-    names = ", ".join(job.name or job.job_id[:8] for job in live)
-    console.print(f"[dim]watching {len(live)} job(s): {names} - type to interrupt[/]")
+    view.watching([job.name or job.job_id[:8] for job in live])
 
     while True:
         typed = reader.poll()
@@ -108,7 +106,7 @@ def watch(
             if typed.strip():
                 return Wake("user", typed)
 
-        finished = _collect_finished(backend, store, console)
+        finished = _collect_finished(backend, store, view)
         if finished:
             return Wake("job", finished)
 
@@ -126,7 +124,7 @@ def watch(
             time.sleep(TICK_S)
 
 
-def _collect_finished(backend: Backend, store: Store, console: Console) -> str:
+def _collect_finished(backend: Backend, store: Store, view: View) -> str:
     """Report on every job that stopped running since the last poll."""
     reports = []
     for record in store.live_jobs():
@@ -146,7 +144,7 @@ def _collect_finished(backend: Backend, store: Store, console: Console) -> str:
             end_reason=status.end_reason,
             exit_code=status.exit_code,
         )
-        console.print(f"[dim]job {record.name or record.job_id[:8]} -> {status.status}[/]")
+        view.info(f"job {record.name or record.job_id[:8]} -> {status.status}")
         reports.append(_job_report(backend, status))
 
     return "\n\n".join(reports)

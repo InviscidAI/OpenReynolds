@@ -18,6 +18,7 @@ from openreynolds.backend.base import (
 )
 from openreynolds.store import Store
 from openreynolds.tools import ToolContext
+from openreynolds.view import View
 
 
 class FakeBackend(Backend):
@@ -208,3 +209,68 @@ def fast_polling(monkeypatch):
     monkeypatch.setattr("openreynolds.watch.POLL_MIN_S", 0.001)
     monkeypatch.setattr("openreynolds.watch.POLL_MAX_S", 0.002)
     monkeypatch.setattr("openreynolds.watch.TICK_S", 0.001)
+
+
+class RecordingView(View):
+    """A view that keeps what it was told, so tests can assert on it."""
+
+    def __init__(self):
+        self.headers = []
+        self.text = []
+        self.thinking = []
+        self.tools = []
+        self.tool_errors = []
+        self.notices = []
+        self.warnings = []
+        self.infos = []
+        self.usages = []
+        self.watched = []
+        self.prompts = 0
+
+    def header(self, study_id, instance_id, model, mirror):
+        self.headers.append((study_id, instance_id, model, mirror))
+
+    def thinking_begin(self):
+        self.thinking.append("<begin>")
+
+    def thinking_delta(self, text):
+        self.thinking.append(text)
+
+    def text_delta(self, text):
+        self.text.append(text)
+
+    def turn_end(self):
+        self.text.append("<end>")
+
+    def tool(self, name, summary):
+        self.tools.append((name, summary))
+
+    def tool_error(self, message):
+        self.tool_errors.append(message)
+
+    def notice(self, message):
+        self.notices.append(message)
+
+    def warn(self, message):
+        self.warnings.append(message)
+
+    def info(self, message):
+        self.infos.append(message)
+
+    def usage(self, tokens, fraction):
+        self.usages.append((tokens, fraction))
+
+    def watching(self, names):
+        self.watched.append(list(names))
+
+    def prompt(self):
+        self.prompts += 1
+
+    @property
+    def said(self) -> str:
+        return "".join(t for t in self.text if not t.startswith("<"))
+
+
+@pytest.fixture
+def view():
+    return RecordingView()

@@ -14,12 +14,19 @@ dependencies = [
     "httpx2>=2.0.0",
     "rich>=13.0.0",
     "click>=8.1.0",
+    "textual>=8.0",
 ]
 
 [project.optional-dependencies]
 # numpy/matplotlib/pandas are what the container provides; the toolbox tests
 # exercise the same parsing locally, so CI needs them too.
-dev = ["pytest>=8.0.0", "numpy>=1.24", "matplotlib>=3.7", "pandas>=2.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "pandas>=2.0",
+]
 
 [project.scripts]
 openreynolds = "openreynolds.cli:main"
@@ -31,3 +38,4 @@ packages = ["openreynolds"]
 testpaths = ["tests"]
 # matplotlib's vendored pyparsing is noisy on import; keep real warnings visible.
 filterwarnings = ["ignore::pyparsing.PyparsingDeprecationWarning"]
+asyncio_mode = "auto"

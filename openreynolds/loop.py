@@ -10,12 +10,12 @@ import json
 from typing import Any, Callable
 
 import anthropic
-from rich.console import Console
 
 from .config import CONTEXT_REFRESH_FRACTION, CONTEXT_WINDOW_TOKENS, Config
 from .prompt import system_prompt
 from .store import Store
 from .tools import TOOLS, ToolContext, dispatch
+from .view import View
 
 MAX_TOKENS = 64_000
 
@@ -28,13 +28,13 @@ class Loop:
         cfg: Config,
         ctx: ToolContext,
         store: Store,
-        console: Console,
+        view: View,
         capture: Any | None = None,
     ):
         self.cfg = cfg
         self.ctx = ctx
         self.store = store
-        self.console = console
+        self.view = view
         self.capture = capture
 
         headers = {"X-Study-Id": store.session.study_id}
@@ -91,7 +91,7 @@ class Loop:
             if response.stop_reason == "refusal":
                 detail = getattr(response, "stop_details", None)
                 reason = getattr(detail, "explanation", None) or "no explanation given"
-                self.console.print(f"\n[yellow]The model declined this request: {reason}[/]")
+                self.view.notice(f"The model declined this request: {reason}")
                 return response
 
             self.messages.append({"role": "assistant", "content": response.content})
@@ -101,9 +101,9 @@ class Loop:
                 # Otherwise a turn cut off at the output cap is indistinguishable from
                 # a finished one. Say so; whether to carry on is the model's call and
                 # the user's, not the harness's.
-                self.console.print(
-                    f"\n[yellow]This turn stopped at the {MAX_TOKENS:,}-token output "
-                    "cap, so it is incomplete.[/]"
+                self.view.notice(
+                    f"This turn stopped at the {MAX_TOKENS:,}-token output cap, "
+                    "so it is incomplete."
                 )
 
             tool_uses = [b for b in response.content if b.type == "tool_use"]
@@ -133,7 +133,6 @@ class Loop:
             return self._stream()
 
     def _stream(self) -> Any:
-        thinking_open = False
         with self.client.messages.stream(
             model=self.cfg.model,
             max_tokens=MAX_TOKENS,
@@ -146,31 +145,27 @@ class Loop:
         ) as stream:
             for event in stream:
                 if event.type == "content_block_start" and event.content_block.type == "thinking":
-                    thinking_open = True
-                    self.console.print("\n[dim]thinking...[/]")
+                    self.view.thinking_begin()
                 elif event.type == "content_block_delta":
                     if event.delta.type == "thinking_delta":
-                        self.console.print(f"[dim]{event.delta.thinking}[/]", end="")
+                        self.view.thinking_delta(event.delta.thinking)
                     elif event.delta.type == "text_delta":
-                        if thinking_open:
-                            thinking_open = False
-                            self.console.print()
-                        self.console.print(event.delta.text, end="", highlight=False)
+                        self.view.text_delta(event.delta.text)
             response = stream.get_final_message()
 
-        self.console.print()
+        self.view.turn_end()
         self._account(response)
         return response
 
     def _run_tool(self, block: Any) -> dict[str, Any]:
-        self.console.print(f"[cyan]{block.name}[/] {_summarize(block.input)}")
+        self.view.tool(block.name, _summarize(block.input))
         content, is_error = dispatch(self.ctx, block.name, dict(block.input))
         self._record(
             "tool",
             {"tool": block.name, "input": dict(block.input), "output": content, "error": is_error},
         )
         if is_error:
-            self.console.print(f"  [red]{content.splitlines()[0] if content else 'failed'}[/]")
+            self.view.tool_error(content.splitlines()[0] if content else "failed")
         return {
             "type": "tool_result",
             "tool_use_id": block.id,
@@ -190,6 +185,7 @@ class Loop:
             + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
             + (usage.output_tokens or 0)
         )
+        self.view.usage(self.context_tokens, self.context_tokens / CONTEXT_WINDOW_TOKENS)
 
     @property
     def needs_refresh(self) -> bool:
@@ -202,7 +198,7 @@ class Loop:
         survives is the filesystem plus whatever notes it chose to write; nothing here
         summarizes its reasoning for it.
         """
-        self.console.print("\n[dim]- refreshing the thread -[/]")
+        self.view.info("- refreshing the thread -")
         self.inform(
             "This conversation thread is being refreshed to free up context. The "
             "workspace is untouched and this session continues. Anything you want to "

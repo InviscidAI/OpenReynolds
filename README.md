@@ -11,6 +11,38 @@ openreynolds doctor          # check it can all be reached, before spending anyt
 openreynolds                 # start a study
 ```
 
+## The interface
+
+```
+ study 20260823-213712-babc   instance 974f4406   model claude-opus-5
+ 412,355 tokens  (41% of the window)
++------------------------------------------------------+ running
+| I'll build a mitred 90 degree elbow, 100mm square.    |   * miter_medium
+| Starting with the coarse rung so the ladder is cheap. |
+|                                                       | jobs keep running
++------------------------------------------------------+ if you leave
++------------------------------------------------------+
+| job_start   ./run_case.sh miter_medium                |
+| watching 1 job(s) - type to interrupt                 |
++------------------------------------------------------+
+  Ask for something, or say what looks wrong...
+```
+
+A session has three things worth watching at once, and a single scrolling log shows one
+of them while burying the other two. So what the agent *says* gets the main pane, what
+it *does* to the workspace goes to its own activity pane, and what is still **running
+out on the instance** — the part that outlives the session — gets a panel that says so.
+The bar keeps the study, the instance, the model, and how full the thread is, because
+context filling up is the thing that changes what happens next.
+
+`--plain` gives the old streaming terminal, and `-p` still implies it. If the interface
+cannot start — no terminal, missing library — the session falls back rather than
+failing: an interface problem should cost the look of the thing, not the work.
+
+Presentation is a seam (`openreynolds/view.py`). Both interfaces implement the same
+`View`, and the loop cannot tell which one it has, so **adding an interface can change
+what the user reads and never what the model does.**
+
 `doctor` checks each piece separately and says which one is wrong: whether the settings
 are present, whether the workspace service answers and what instances you have, whether
 the model API accepts your key and knows the model id (one free token count, nothing

@@ -19,6 +19,7 @@ from .config import Config, config_path
 from .loop import Loop
 from .store import Store, list_studies, new_study_id
 from .tools import ToolContext
+from .view import ConsoleView, View
 from .watch import LineReader, NullReader, situation, watch
 
 TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
@@ -54,6 +55,7 @@ console = Console()
 @click.option("--instance", "instance_id", help="Use a specific workspace instance.")
 @click.option("--model", help="Override the model for this session.")
 @click.option("--no-capture", is_flag=True, help="Do not send anything to the platform.")
+@click.option("--plain", is_flag=True, help="Plain streaming terminal instead of the interface.")
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -62,6 +64,7 @@ def main(
     instance_id: str | None,
     model: str | None,
     no_capture: bool,
+    plain: bool,
 ) -> None:
     """A CFD agent with a real OpenFOAM workspace."""
     if ctx.invoked_subcommand is not None:
@@ -79,7 +82,13 @@ def main(
         console.print(f"Set them in the environment, or run [bold]openreynolds config[/].")
         raise SystemExit(1)
 
-    session(cfg, study_id=study_id, instance_id=instance_id, one_shot=one_shot)
+    session(
+        cfg,
+        study_id=study_id,
+        instance_id=instance_id,
+        one_shot=one_shot,
+        plain=plain,
+    )
 
 
 @main.command("studies")
@@ -279,6 +288,7 @@ def session(
     study_id: str | None,
     instance_id: str | None,
     one_shot: str | None,
+    plain: bool = False,
 ) -> None:
     resuming = study_id is not None
     store = Store(cfg.studies_dir, study_id or new_study_id())
@@ -319,24 +329,25 @@ def session(
         max_output=cfg.max_tool_output,
         on_fetch=_fetch_hook(capture),
     )
-    loop = Loop(cfg, ctx, store, console, capture=capture)
-
-    console.print(
-        f"[bold]study[/] {store.session.study_id}   "
-        f"[bold]instance[/] {resolved_instance}   [bold]model[/] {cfg.model}"
-    )
-    console.print(f"[dim]fetched files land in {store.dir}[/]\n")
-
-    if resuming:
-        loop.brief(situation(store, backend))
+    def drive(view: View, reader: Any) -> None:
+        """One session, against whichever interface is running it."""
+        loop = Loop(cfg, ctx, store, view, capture=capture)
+        view.header(store.session.study_id, resolved_instance, cfg.model, store.dir)
+        if resuming:
+            loop.brief(situation(store, backend))
+        try:
+            if one_shot:
+                _run_one_shot(loop, backend, store, one_shot, view, reader)
+            else:
+                _run_interactive(loop, backend, store, view, reader)
+        except KeyboardInterrupt:
+            view.info("interrupted - jobs keep running on the instance")
 
     try:
-        if one_shot:
-            _run_one_shot(loop, backend, store, one_shot)
+        if one_shot or plain or not _tui_available():
+            drive(ConsoleView(console), LineReader() if not one_shot else NullReader())
         else:
-            _run_interactive(loop, backend, store)
-    except KeyboardInterrupt:
-        console.print("\n[dim]interrupted - jobs keep running on the instance[/]")
+            _run_tui(drive)
     finally:
         _pickup_results(backend, capture)
         if capture:
@@ -345,10 +356,37 @@ def session(
         console.print(f"\n[dim]resume with: openreynolds --study {store.session.study_id}[/]")
 
 
+def _tui_available() -> bool:
+    """The interface needs a real terminal and the library that draws it."""
+    if not _can_prompt():
+        return False
+    try:
+        import textual  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _run_tui(drive: Any) -> None:
+    """Hand the session to the interface, falling back if it cannot start.
+
+    An interface failure should cost the look of the thing, not the session.
+    """
+    try:
+        from .tui import OpenReynoldsApp, TuiReader, TuiView
+    except Exception as exc:  # pragma: no cover - import-time only
+        console.print(f"[yellow]interface unavailable ({exc}); using the plain terminal[/]")
+        drive(ConsoleView(console), LineReader())
+        return
+
+    app = OpenReynoldsApp(lambda running: drive(TuiView(running), TuiReader(running)))
+    app.run()
+
+
 EXIT_WORDS = ("/exit", "/quit")
 
 
-def _run_turn(loop: Loop) -> bool:
+def _run_turn(loop: Loop, view: View) -> bool:
     """Run a turn, surviving a model-API failure. Returns whether it completed.
 
     A long study will meet a rate limit or a dropped connection eventually, and
@@ -365,15 +403,16 @@ def _run_turn(loop: Loop) -> bool:
         console.print(f"\n[red]Could not reach the model API:[/] {exc}")
 
     loop.settle()
-    console.print("[dim]the thread is intact - say something to continue, or /exit[/]")
+    view.info("the thread is intact - say something to continue, or /exit")
     return False
 
 
-def _run_interactive(loop: Loop, backend: Backend, store: Store) -> None:
-    reader = LineReader()
+def _run_interactive(
+    loop: Loop, backend: Backend, store: Store, view: View, reader: Any
+) -> None:
     while True:
         if store.live_jobs():
-            wake = watch(backend, store, console, reader)
+            wake = watch(backend, store, view, reader)
             if wake.kind == "eof":
                 return
             if wake.kind == "job":
@@ -398,22 +437,23 @@ def _run_interactive(loop: Loop, backend: Backend, store: Store) -> None:
                 return
             loop.say(text)
 
-        if _run_turn(loop) and loop.needs_refresh:
+        if _run_turn(loop, view) and loop.needs_refresh:
             loop.refresh(situation(store, backend))
 
 
-def _run_one_shot(loop: Loop, backend: Backend, store: Store, prompt: str) -> None:
+def _run_one_shot(
+    loop: Loop, backend: Backend, store: Store, prompt: str, view: View, reader: Any
+) -> None:
     """Run until the model is done and no jobs remain."""
-    reader = NullReader()
     loop.say(prompt)
-    if not _run_turn(loop):
+    if not _run_turn(loop, view):
         return
     while store.live_jobs():
-        wake = watch(backend, store, console, reader)
+        wake = watch(backend, store, view, reader)
         if wake.kind != "job":
             break
         loop.inform(wake.text)
-        if not _run_turn(loop):
+        if not _run_turn(loop, view):
             return
         if loop.needs_refresh:
             loop.refresh(situation(store, backend))
