@@ -7,8 +7,15 @@ the plumbing that lets it.
 ```bash
 pip install -e .
 openreynolds config          # service URL + keys, stored outside the repo
+openreynolds doctor          # check it can all be reached, before spending anything
 openreynolds                 # start a study
 ```
+
+`doctor` checks each piece separately and says which one is wrong: whether the settings
+are present, whether the workspace service answers and what instances you have, whether
+the model API accepts your key and knows the model id (one free token count, nothing
+generated), whether the toolbox is where it will be synced from, and whether this
+terminal can draw a render inline.
 
 ## What it is
 

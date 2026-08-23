@@ -312,3 +312,154 @@ def test_a_failed_turn_does_not_trigger_a_context_refresh(loop, monkeypatch):
 def test_one_shot_stops_when_the_model_api_fails(loop, backend, store, quiet_console, monkeypatch):
     monkeypatch.setattr(loop, "run", lambda: (_ for _ in ()).throw(_api_error()))
     cli._run_one_shot(loop, backend, store, "do it")  # returns rather than hanging
+
+
+# -- doctor --------------------------------------------------------------------
+
+
+def full_config(**over):
+    values = dict(
+        foamd_url="https://svc.example",
+        foamd_api_key="of_live_abcdefghijklmnop",
+        anthropic_api_key="sk-ant-secret-value",
+        model="claude-opus-5",
+    )
+    values.update(over)
+    return Config(**values)
+
+
+def stub_service(monkeypatch, instances=None, error=None):
+    class Client:
+        def list_instances(self):
+            if error:
+                raise error
+            return instances or []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cli.hosted, "FoamdClient", lambda url, key: Client())
+
+
+def stub_model(monkeypatch, tokens=8, error=None):
+    from types import SimpleNamespace
+
+    class Messages:
+        def count_tokens(self, **kwargs):
+            if error:
+                raise error
+            return SimpleNamespace(input_tokens=tokens)
+
+    monkeypatch.setattr(
+        cli.anthropic, "Anthropic", lambda **kw: SimpleNamespace(messages=Messages())
+    )
+
+
+def labels(results):
+    return {label: (ok, detail) for label, ok, detail in results}
+
+
+def test_doctor_reports_every_check(monkeypatch):
+    stub_service(monkeypatch, instances=[{"id": "abcdefgh1234", "status": "running"}])
+    stub_model(monkeypatch)
+
+    results = labels(cli.run_checks(full_config()))
+
+    assert all(ok for ok, _ in results.values())
+    assert set(results) == {"settings", "workspace service", "model API", "toolbox", "terminal"}
+    assert "1 instance(s)" in results["workspace service"][1]
+    assert "claude-opus-5 reachable" in results["model API"][1]
+
+
+def test_doctor_never_prints_a_key_in_full(monkeypatch):
+    stub_service(monkeypatch)
+    stub_model(monkeypatch)
+    cfg = full_config()
+
+    rendered = " ".join(f"{label} {detail}" for label, _, detail in cli.run_checks(cfg))
+
+    assert cfg.foamd_api_key not in rendered
+    assert cfg.anthropic_api_key not in rendered
+    assert "of_live_abcd" in rendered, "enough of the prefix to identify which key"
+
+
+def test_doctor_names_a_bad_service_key(monkeypatch):
+    stub_service(monkeypatch, error=BackendError("invalid key", code="unauthorized", status=401))
+    stub_model(monkeypatch)
+
+    ok, detail = labels(cli.run_checks(full_config()))["workspace service"]
+
+    assert ok is False
+    assert "unauthorized" in detail
+
+
+def test_doctor_names_a_bad_model_key(monkeypatch):
+    import anthropic
+    from types import SimpleNamespace
+
+    stub_service(monkeypatch)
+    stub_model(
+        monkeypatch,
+        error=anthropic.AuthenticationError(
+            "invalid x-api-key",
+            response=SimpleNamespace(status_code=401, headers={}, request=None),
+            body=None,
+        ),
+    )
+
+    ok, detail = labels(cli.run_checks(full_config()))["model API"]
+
+    assert ok is False
+    assert "401" in detail
+
+
+def test_doctor_reports_an_empty_but_reachable_service(monkeypatch):
+    stub_service(monkeypatch, instances=[])
+    stub_model(monkeypatch)
+    ok, detail = labels(cli.run_checks(full_config()))["workspace service"]
+    assert ok and "no instance yet" in detail
+
+
+def test_doctor_ignores_deleted_instances(monkeypatch):
+    stub_service(monkeypatch, instances=[{"id": "x", "status": "deleted"}])
+    stub_model(monkeypatch)
+    assert "no instance yet" in labels(cli.run_checks(full_config()))["workspace service"][1]
+
+
+def test_doctor_flags_missing_settings(monkeypatch):
+    stub_service(monkeypatch)
+    stub_model(monkeypatch)
+    results = cli.run_checks(Config())
+    settings = results[0]
+    assert settings[1] is False
+    assert "FOAMD_URL" in settings[0]
+
+
+def test_doctor_exits_nonzero_when_something_is_wrong(monkeypatch):
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: Config()))
+    stub_service(monkeypatch)
+    stub_model(monkeypatch)
+
+    result = CliRunner().invoke(cli.main, ["doctor"])
+
+    assert result.exit_code == 1
+    assert "check(s) failed" in result.output
+
+
+def test_doctor_exits_zero_when_ready(monkeypatch):
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: full_config()))
+    stub_service(monkeypatch, instances=[{"id": "abcdefgh", "status": "stopped"}])
+    stub_model(monkeypatch)
+
+    result = CliRunner().invoke(cli.main, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "Ready" in result.output
+
+
+def test_doctor_finds_the_toolbox_it_would_sync(monkeypatch):
+    stub_service(monkeypatch)
+    stub_model(monkeypatch)
+    ok, detail = labels(cli.run_checks(full_config()))["toolbox"]
+    assert ok
+    assert "4 scripts" in detail and "3 notes" in detail

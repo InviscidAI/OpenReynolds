@@ -110,6 +110,102 @@ def config_cmd() -> None:
     console.print(f"\n[green]Saved[/] {path}")
 
 
+@main.command("doctor")
+def doctor_cmd() -> None:
+    """Check configuration, connectivity and credentials."""
+    cfg = Config.load()
+    console.print(f"config file: [bold]{config_path()}[/]"
+                  f"{'' if config_path().exists() else '  (absent; using the environment)'}\n")
+
+    failures = 0
+    for label, ok, detail in run_checks(cfg):
+        mark = "[green]ok  [/]" if ok else "[red]FAIL[/]"
+        console.print(f"  {mark}  {label}")
+        if detail:
+            console.print(f"        [dim]{detail}[/]")
+        failures += 0 if ok else 1
+
+    if failures:
+        console.print(f"\n[red]{failures} check(s) failed.[/] Run [bold]openreynolds config[/].")
+        raise SystemExit(1)
+    console.print("\n[green]Ready.[/]")
+
+
+def run_checks(cfg: Config) -> list[tuple[str, bool, str]]:
+    """Each check reports a fact. Nothing here changes anything."""
+    return [
+        _check_settings(cfg),
+        _check_service(cfg),
+        _check_model(cfg),
+        _check_toolbox(),
+        _check_terminal(),
+    ]
+
+
+def _redact(secret: str) -> str:
+    return f"{secret[:12]}..." if len(secret) > 12 else "set"
+
+
+def _check_settings(cfg: Config) -> tuple[str, bool, str]:
+    missing = cfg.missing()
+    if missing:
+        return f"settings: missing {', '.join(missing)}", False, ""
+    return (
+        "settings",
+        True,
+        f"service {cfg.foamd_url}, key {_redact(cfg.foamd_api_key)}, model {cfg.model}",
+    )
+
+
+def _check_service(cfg: Config) -> tuple[str, bool, str]:
+    if not (cfg.foamd_url and cfg.foamd_api_key):
+        return "workspace service: not configured", False, ""
+    client = hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key)
+    try:
+        instances = [i for i in client.list_instances() if i.get("status") != "deleted"]
+    except BackendError as exc:
+        return "workspace service", False, str(exc)
+    finally:
+        client.close()
+
+    if not instances:
+        return "workspace service", True, "reachable; no instance yet (one is made on demand)"
+    described = ", ".join(f"{i.get('id', '?')[:8]} {i.get('status', '?')}" for i in instances[:3])
+    return "workspace service", True, f"reachable; {len(instances)} instance(s): {described}"
+
+
+def _check_model(cfg: Config) -> tuple[str, bool, str]:
+    """Validates the key, the base URL and the model id in one free call."""
+    if not (cfg.anthropic_api_key or cfg.llm_base_url):
+        return "model API: no key", False, ""
+    try:
+        client = anthropic.Anthropic(
+            api_key=cfg.anthropic_api_key or None, base_url=cfg.llm_base_url or None
+        )
+        counted = client.messages.count_tokens(
+            model=cfg.model, messages=[{"role": "user", "content": "ping"}]
+        )
+    except anthropic.APIStatusError as exc:
+        return "model API", False, f"{exc.status_code}: {getattr(exc, 'message', exc)}"
+    except anthropic.APIError as exc:
+        return "model API", False, str(exc)
+    return "model API", True, f"{cfg.model} reachable ({counted.input_tokens} tokens for a ping)"
+
+
+def _check_toolbox() -> tuple[str, bool, str]:
+    if not TOOLBOX_SOURCE.is_dir():
+        return "toolbox: not found in the installed package", False, ""
+    scripts = sorted(p.name for p in TOOLBOX_SOURCE.glob("*.py"))
+    notes = sorted(p.name for p in (TOOLBOX_SOURCE / "notes").glob("*.md"))
+    return "toolbox", True, f"{len(scripts)} scripts, {len(notes)} notes -> {TOOLBOX_DEST}"
+
+
+def _check_terminal() -> tuple[str, bool, str]:
+    kind = images.protocol()
+    detail = f"{kind} graphics: renders show inline" if kind else "renders print their path"
+    return "terminal", True, detail
+
+
 # -- the session ---------------------------------------------------------------
 
 
