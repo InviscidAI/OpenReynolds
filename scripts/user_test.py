@@ -81,6 +81,8 @@ class Reply:
     timed_out: bool = False
     by_prompt: bool = False
     """True when the agent asked for input, rather than merely going quiet."""
+    mid_turn: bool = False
+    """True when the user got tired of waiting and spoke over work in progress."""
 
     def note(self) -> str:
         """What to write down about how this ended, when it did not end normally."""
@@ -91,6 +93,8 @@ class Reply:
             marks.append("THE AGENT EXITED")
         if not self.text.strip():
             marks.append("NOTHING WAS SAID")
+        elif self.mid_turn:
+            marks.append("STILL WORKING -- the user spoke over it")
         elif not self.by_prompt and not self.timed_out and self.alive:
             marks.append("went quiet without asking for input")
         return "  [" + "; ".join(marks) + "]" if marks else ""
@@ -135,7 +139,9 @@ class AgentSession:
                 self._chunks.put(text)
         self._chunks.put(None)
 
-    def read_until_turn(self, idle_s: float, hard_cap_s: float) -> Reply:
+    def read_until_turn(
+        self, idle_s: float, hard_cap_s: float, speak_after: float = 0.0
+    ) -> Reply:
         """Collect output until the agent asks for input, goes quiet, or runs out of cap.
 
         Waiting for the prompt rather than for silence is the whole difference between
@@ -146,6 +152,13 @@ class AgentSession:
 
         Silence is still the fallback, because while a job is being watched there is
         no prompt to wait for.
+
+        `speak_after` is the impatient user. A turn can legitimately run for ten
+        minutes -- the agent polls its own solve with a blocking sleep, so there is no
+        prompt and no silence -- and a person watching that would not sit through it.
+        They would say something, and it would be heard, because anything typed while
+        the agent works reaches it between tool calls. A harness that only ever speaks
+        at a prompt never tests that path at all.
         """
         collected: list[str] = []
         tail = ""
@@ -161,6 +174,8 @@ class AgentSession:
                 now = time.monotonic()
                 if now - last >= self._idle_for(collected, idle_s):
                     return Reply("".join(collected), alive=True)
+                if speak_after and now - started >= speak_after and collected:
+                    return Reply("".join(collected), alive=True, mid_turn=True)
                 if now - announced >= HEARTBEAT_S:
                     announced = now
                     # Otherwise a seven-minute wait and a dead run look identical from
@@ -178,6 +193,8 @@ class AgentSession:
             last = time.monotonic()
             if PROMPT.search(tail):
                 return Reply("".join(collected), alive=True, by_prompt=True)
+            if speak_after and last - started >= speak_after:
+                return Reply("".join(collected), alive=True, mid_turn=True)
 
         return Reply("".join(collected), alive=True, timed_out=True)
 
@@ -225,7 +242,7 @@ def sanitize(message: str) -> str:
 
 
 def next_user_message(
-    client, model: str, persona: Persona, exchanges: list[tuple[str, str]], goal: str
+    client, model: str, persona: Persona, exchanges: list[tuple[str, str, bool]], goal: str
 ) -> str:
     """Ask the persona what it says next, given everything it has been shown."""
     conversation: list[dict] = [
@@ -234,11 +251,17 @@ def next_user_message(
             "content": f"Your goal, in your own words: {goal}\n\nOpen the conversation.",
         }
     ]
-    for said, seen in exchanges:
+    for said, seen, interrupted in exchanges:
         conversation.append({"role": "assistant", "content": said})
-        conversation.append(
-            {"role": "user", "content": f"The consultant replied:\n\n{seen[-6000:]}"}
+        # A persona that thinks it was answered writes as though it was. Saying which
+        # of the two happened is the difference between "that number looks wrong" and
+        # "are you still going?", and only one of those is in character here.
+        heading = (
+            "The consultant is still working. This is what you can see so far"
+            if interrupted
+            else "The consultant replied"
         )
+        conversation.append({"role": "user", "content": f"{heading}:\n\n{seen[-6000:]}"})
 
     reply = client.messages.create(
         model=model,
@@ -321,14 +344,14 @@ def run_one(client, persona: Persona, args, repo: Path) -> dict:
     record("PERSONA", f"{persona.name}\n\ngoal: {goal}")
 
     session = AgentSession(argv, repo)
-    exchanges: list[tuple[str, str]] = []
+    exchanges: list[tuple[str, str, bool]] = []
     verdict = "ran out of turns"
     study: str | None = None
     started = time.monotonic()
     budget = started + args.budget * 60 if args.budget else None
 
     try:
-        opening = session.read_until_turn(args.idle, args.cap)
+        opening = session.read_until_turn(args.idle, args.cap, args.speak_after)
         record("AGENT (startup)" + opening.note(), opening.text)
         found = STUDY_ID.search(opening.text)
         study = found.group(1) if found else None
@@ -356,12 +379,12 @@ def run_one(client, persona: Persona, args, repo: Path) -> dict:
                 break
 
             session.send(message)
-            reply = session.read_until_turn(args.idle, args.cap)
+            reply = session.read_until_turn(args.idle, args.cap, args.speak_after)
             record(f"AGENT (turn {turn + 1})" + reply.note(), reply.text)
             if not reply.text.strip():
                 verdict = "the agent said nothing"
                 break
-            exchanges.append((message, reply.text))
+            exchanges.append((message, reply.text, reply.mid_turn))
     finally:
         code = session.close()
 
@@ -399,6 +422,12 @@ def main() -> int:
         help="Fallback: seconds of silence taken as its turn when no prompt appears.",
     )
     parser.add_argument("--cap", type=float, default=600.0, help="Seconds to wait per reply.")
+    parser.add_argument(
+        "--speak-after",
+        type=float,
+        default=180.0,
+        help="Seconds of work before the user speaks over it anyway. 0 = wait forever.",
+    )
     parser.add_argument("--budget", type=float, default=15.0, help="Minutes per persona, 0 = none.")
     parser.add_argument("--model", default=None, help="Model for the agent under test.")
     parser.add_argument("--user-model", default=None, help="Model playing the user.")

@@ -196,7 +196,7 @@ def test_the_persona_sees_only_what_the_terminal_showed(ut):
     from types import SimpleNamespace
 
     client = SimpleNamespace(messages=FakeMessages())
-    exchanges = [("what's the pressure drop?", "About 240 Pa.")]
+    exchanges = [("what's the pressure drop?", "About 240 Pa.", False)]
 
     persona = ut.ALL["engineer"]
     reply = ut.next_user_message(
@@ -225,7 +225,7 @@ def test_a_very_long_agent_reply_is_trimmed_not_dropped(ut):
 
     huge = "x" * 20_000 + "THE-ENDING"
     ut.next_user_message(
-        SimpleNamespace(messages=FakeMessages()), "m", ut.ALL["engineer"], [("hi", huge)], "goal"
+        SimpleNamespace(messages=FakeMessages()), "m", ut.ALL["engineer"], [("hi", huge, False)], "goal"
     )
     shown = captured["messages"][2]["content"]
     assert "THE-ENDING" in shown, "the most recent part is what a user would have on screen"
@@ -338,3 +338,75 @@ def test_bytes_are_decoded_even_when_split_across_reads(ut):
         assert "sigma σ and mu µ" in reply.text
     finally:
         session.process.kill()
+
+
+# -- the impatient user --------------------------------------------------------
+
+
+def test_a_long_turn_gets_spoken_over_rather_than_waited_out(ut):
+    """A turn can legitimately run ten minutes: the agent polls its own solve with a
+    blocking sleep, so there is no prompt and no silence. A person would not sit
+    through that, and anything they typed would be heard between tool calls -- a
+    harness that only speaks at a prompt never exercises that path."""
+    session = spawn(
+        ut,
+        "import sys, time\n"
+        "print('meshing'); sys.stdout.flush()\n"
+        "for _ in range(100):\n"
+        "    print('  bash still running'); sys.stdout.flush(); time.sleep(0.1)\n",
+    )
+    try:
+        reply = session.read_until_turn(idle_s=30.0, hard_cap_s=30.0, speak_after=1.0)
+
+        assert reply.mid_turn is True
+        assert reply.by_prompt is False
+        assert reply.timed_out is False
+        assert "meshing" in reply.text
+        assert "STILL WORKING" in reply.note()
+    finally:
+        session.process.kill()
+
+
+def test_a_prompt_still_wins_over_impatience(ut):
+    """If the agent finishes first, that is a finished turn, not an interruption."""
+    session = spawn(ut, "print('done, over to you')\n" + PROMPTS)
+    try:
+        reply = session.read_until_turn(idle_s=30.0, hard_cap_s=30.0, speak_after=10.0)
+        assert reply.by_prompt is True
+        assert reply.mid_turn is False
+    finally:
+        session.process.kill()
+
+
+def test_waiting_forever_is_still_available(ut):
+    """speak_after=0 keeps the old behaviour, for anyone who wants it."""
+    session = spawn(ut, "print('working')\n" + PROMPTS)
+    try:
+        reply = session.read_until_turn(idle_s=30.0, hard_cap_s=20.0, speak_after=0.0)
+        assert reply.by_prompt is True
+    finally:
+        session.process.kill()
+
+
+def test_the_persona_is_told_whether_it_was_answered_or_is_interrupting(ut):
+    """A persona that thinks it was answered writes as though it was, and asks about
+    a number nobody gave it."""
+    captured = {}
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            from types import SimpleNamespace
+
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text="ok")])
+
+    from types import SimpleNamespace
+
+    client = SimpleNamespace(messages=FakeMessages())
+    persona = ut.ALL["controller"]
+
+    ut.next_user_message(client, "m", persona, [("go", "meshing now", True)], "goal")
+    assert "still working" in captured["messages"][2]["content"]
+
+    ut.next_user_message(client, "m", persona, [("go", "it is 22 Pa", False)], "goal")
+    assert "consultant replied" in captured["messages"][2]["content"]
