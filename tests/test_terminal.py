@@ -40,9 +40,11 @@ def test_streams_are_made_tolerant_of_undecodable_output():
     class Recorder:
         def __init__(self):
             self.errors = None
+            self.encoding = None
 
         def reconfigure(self, **kwargs):
             self.errors = kwargs.get("errors")
+            self.encoding = kwargs.get("encoding")
 
     out, err = Recorder(), Recorder()
     original = sys.stdout, sys.stderr
@@ -54,6 +56,7 @@ def test_streams_are_made_tolerant_of_undecodable_output():
 
     assert out.errors == "replace"
     assert err.errors == "replace"
+    assert out.encoding == "utf-8", "a redirected log should keep mu and y+ intact"
 
 
 def test_a_stream_that_cannot_be_reconfigured_is_left_alone():

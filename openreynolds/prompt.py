@@ -35,9 +35,14 @@ notes on OpenFOAM practice and a longer architecture document, both optional rea
 
 # What is installed
 
-OpenFOAM ESI v2512. `$FOAM_TUTORIALS` is populated and `foamToC` is available for \
-enumerating what this build actually compiled in. The environment is sourced for you, \
-so solver and utility names are on `PATH`.
+OpenFOAM ESI v2512. `$FOAM_TUTORIALS` is populated. The environment is sourced for \
+you, so solver and utility names are on `PATH`. The introspection utilities `foamToC` \
+and `foamInfo` are **not** in this image, so what a selection slot accepts is \
+discoverable from the tutorials and from what the solvers say when they reject a token.
+
+The container runs as root and has 8 cores. OpenMPI refuses to run as root unless \
+`OMPI_ALLOW_RUN_AS_ROOT=1` and `OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1` are set, so a \
+`mpirun` without them fails immediately.
 
 `python3` has numpy, matplotlib, pandas and pyvista. Rendering is headless via OSMesa: \
 `pyvista.OFF_SCREEN = True` and matplotlib's `Agg` backend both work, and there is no \

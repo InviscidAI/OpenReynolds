@@ -86,8 +86,7 @@ def main() -> int:
 
     try:
         section("bash")
-        out, err = dispatch(ctx, "bash", {"cmd": "echo hello && foamToC -help >/dev/null 2>&1; "
-                                                 "echo $WM_PROJECT_VERSION"})
+        out, err = dispatch(ctx, "bash", {"cmd": "echo hello; echo $WM_PROJECT_VERSION"})
         check(not err and "hello" in out, "a command runs with the OpenFOAM env sourced", out[:200])
         check("2512" in out, "OpenFOAM v2512 is on PATH", out[:200])
 

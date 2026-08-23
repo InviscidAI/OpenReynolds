@@ -58,3 +58,14 @@ def test_prompt_states_the_environment_facts_the_model_needs():
 
 def test_prompt_says_where_honesty_is_expected():
     assert "did not verify" in SYSTEM_PROMPT
+
+
+def test_prompt_does_not_promise_tools_the_image_lacks():
+    """The A4 run wasted a detour on foamToC, which the prompt claimed was there."""
+    assert "`foamToC` is available" not in SYSTEM_PROMPT
+    assert "not** in this image" in SYSTEM_PROMPT or "not in this image" in SYSTEM_PROMPT
+
+
+def test_prompt_states_the_mpi_root_requirement():
+    """mpirun fails outright without these, and the container runs as root."""
+    assert "OMPI_ALLOW_RUN_AS_ROOT" in SYSTEM_PROMPT

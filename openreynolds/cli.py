@@ -33,10 +33,14 @@ def _tolerant_stdout() -> None:
     single mu raises mid-stream.
     """
     for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(errors="replace")
-        except (AttributeError, ValueError, OSError):
-            pass
+        # UTF-8 first so a redirected log keeps mu and y+ intact; replace as the
+        # fallback so an undecodable character can still never raise.
+        for attempt in ({"encoding": "utf-8", "errors": "replace"}, {"errors": "replace"}):
+            try:
+                stream.reconfigure(**attempt)
+                break
+            except (AttributeError, ValueError, OSError, LookupError):
+                continue
 
 
 _tolerant_stdout()

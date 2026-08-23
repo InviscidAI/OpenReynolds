@@ -31,9 +31,11 @@ of you.
 
 - `foamDictionary -expand <file>` resolves includes and variables. Good for reading; do not
   write the expanded form back, since it flattens exactly what you wanted to keep.
-- `foamToC -functionObjects`, `foamToC -table <name>` enumerate the selection tables this
-  build has — schemes, boundary-condition types, turbulence models, function objects. The
-  answer is specific to this build *and* to the `libs` entries in the case.
+- `foamToC -functionObjects` / `foamToC -table <name>` enumerate the selection tables a
+  build has — schemes, boundary-condition types, turbulence models, function objects —
+  and the answer is specific to that build *and* to the `libs` entries in the case.
+  **It is not installed in the hosted image**, so there the tutorials and the solver's own
+  rejection messages are what is left.
 - A deliberately invalid token in a selection slot produces a fatal error listing the valid
   options. It works everywhere, but it is fatal by construction (one enumeration per run)
   and serially dependent (the error only reaches the slot you care about if everything
