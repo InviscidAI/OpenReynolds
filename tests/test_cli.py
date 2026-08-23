@@ -502,3 +502,20 @@ def test_config_from_env(monkeypatch, tmp_path):
     saved = json.loads((tmp_path / "c.json").read_text())
     assert saved["anthropic_api_key"] == "sk-ant-from-env"
     assert saved["foamd_url"] == "https://svc.example"
+
+
+def test_config_explains_when_a_shell_claims_a_terminal_then_sends_eof(monkeypatch, tmp_path):
+    """Git Bash reports isatty() true for a redirected stdin and then delivers EOF,
+    so the pre-check passes and click aborts. The abort has to explain itself."""
+    import click as _click
+
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    monkeypatch.setattr(cli.click, "prompt", lambda *a, **k: (_ for _ in ()).throw(_click.Abort()))
+
+    result = CliRunner().invoke(cli.main, ["config"])
+
+    assert result.exit_code == 1
+    assert "could not prompt here" in result.output
+    assert "--key-file" in result.output
+    assert "Aborted" not in result.output.split("could not prompt")[0][-40:]

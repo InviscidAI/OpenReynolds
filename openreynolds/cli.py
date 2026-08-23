@@ -123,24 +123,27 @@ def config_cmd(from_env: bool, key_file: Path | None) -> None:
         return
 
     if not _can_prompt():
-        # Prompting needs a terminal. Say what to do instead of aborting cryptically.
-        console.print(
-            "[yellow]config needs a terminal to prompt in.[/] Either run it from a "
-            "normal terminal window, or set the values without prompts:\n\n"
-            "  openreynolds config --key-file <path to a file holding the key>\n"
-            "  ANTHROPIC_API_KEY=... openreynolds config --from-env\n"
-        )
+        console.print(NO_TERMINAL_HELP)
         raise SystemExit(1)
 
     console.print(f"Writing to [bold]{config_path()}[/]\n")
-    cfg.foamd_url = click.prompt("Service URL", default=cfg.foamd_url or "").strip().rstrip("/")
-    cfg.foamd_api_key = click.prompt(
-        "Service API key", default=cfg.foamd_api_key or "", hide_input=True
-    ).strip()
-    cfg.anthropic_api_key = click.prompt(
-        "Anthropic API key", default=cfg.anthropic_api_key or "", hide_input=True
-    ).strip()
-    cfg.model = click.prompt("Model", default=cfg.model).strip()
+    try:
+        cfg.foamd_url = (
+            click.prompt("Service URL", default=cfg.foamd_url or "").strip().rstrip("/")
+        )
+        cfg.foamd_api_key = click.prompt(
+            "Service API key", default=cfg.foamd_api_key or "", hide_input=True
+        ).strip()
+        cfg.anthropic_api_key = click.prompt(
+            "Anthropic API key", default=cfg.anthropic_api_key or "", hide_input=True
+        ).strip()
+        cfg.model = click.prompt("Model", default=cfg.model).strip()
+    except (click.Abort, EOFError):
+        # Some shells report a terminal and then deliver EOF, so isatty() alone cannot
+        # tell whether prompting will work. Explain rather than dying on "Aborted!".
+        console.print(f"\n{NO_TERMINAL_HELP}")
+        raise SystemExit(1) from None
+
     path = cfg.save()
     console.print(f"\n[green]Saved[/] {path}")
 
@@ -175,6 +178,15 @@ def run_checks(cfg: Config) -> list[tuple[str, bool, str]]:
         _check_toolbox(),
         _check_terminal(),
     ]
+
+
+NO_TERMINAL_HELP = (
+    "[yellow]config could not prompt here[/] - this channel has no usable terminal.\n"
+    "Set the values without prompts instead:\n\n"
+    "  openreynolds config --key-file <path to a file holding the key>\n"
+    "  ANTHROPIC_API_KEY=... openreynolds config --from-env\n\n"
+    "or run [bold]openreynolds config[/] from an ordinary terminal window."
+)
 
 
 def _can_prompt() -> bool:
