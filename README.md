@@ -117,7 +117,9 @@ The suite runs entirely against an in-memory workspace — no network, no creden
 It covers the parts that are easy to get quietly wrong: that the truncation marker
 points at the *tail* of a log whose head was kept, that a wake message carries an end
 reason and no advice, that job records survive a restart, that capture never blocks or
-raises, and that a `503` cold start is retried while a `404` is not.
+raises, that a `503` cold start is retried while a `404` is not, and that the toolbox
+parsers still read a real `checkMesh` table. CI runs it on 3.10 and 3.12 and checks the
+toolbox actually ships inside the wheel.
 
 ### Against a live service
 
@@ -137,3 +139,7 @@ deletes one, so the persistent volume is safe.
 On iTerm2, kitty or WezTerm, a fetched PNG is drawn in the terminal as well as saved.
 Anywhere else you get the path, which is what the model prints anyway. Set
 `OPENREYNOLDS_INLINE_IMAGES=off` to disable.
+
+## License
+
+Apache 2.0. See [LICENSE](LICENSE).
