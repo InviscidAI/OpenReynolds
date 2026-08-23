@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import anthropic
 import click
@@ -15,15 +18,16 @@ from rich.console import Console
 from . import __version__
 from .backend import hosted
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT
+from .browse import Browser
 from .capture import Capture
-from . import images
+from . import commands, images
 from .config import Config, config_path
 from .loop import Loop
 from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .tools import ToolContext
 from .view import ConsoleView, View
-from .watch import LineReader, NullReader, situation, watch
+from .watch import NOTHING, LineReader, NullReader, situation, watch
 
 TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
 TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
@@ -210,6 +214,85 @@ def stop_cmd(study_id: str | None, force: bool) -> None:
     raise SystemExit(0 if report.clean else 1)
 
 
+@main.command("files")
+@click.argument("path", default="")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+@click.option("--depth", default=4, show_default=True, help="How far down to list.")
+@click.option("--cat", "cat_path", default=None, help="Print one file instead of listing.")
+@click.option("--pull", "pull_path", default=None, help="Copy something out to this machine.")
+@click.option("--open", "open_dir", is_flag=True, help="Open the study folder here.")
+def files_cmd(
+    path: str,
+    study_id: str | None,
+    depth: int,
+    cat_path: str | None,
+    pull_path: str | None,
+    open_dir: bool,
+) -> None:
+    """Look at the workspace: what is in it, and what has been copied out.
+
+    Read-only, and nothing here starts a session or costs a token. The model is not
+    involved and is not told.
+    """
+    cfg = Config.load()
+    studies = list_studies(cfg.studies_dir)
+    if not studies:
+        console.print(f"No studies under {cfg.studies_dir}")
+        raise SystemExit(1)
+    chosen = study_id or studies[0].study_id
+    store = Store(cfg.studies_dir, chosen)
+
+    if open_dir:
+        _open_folder(store.dir, ConsoleView(console))
+        return
+
+    path = workspace_path(path)
+    cat_path = workspace_path(cat_path) if cat_path else None
+    pull_path = workspace_path(pull_path) if pull_path else None
+
+    # No instance recorded is not a reason to refuse to show anything: the workspace
+    # is a volume that outlives instances, and someone asking to see their files does
+    # not want a lecture about bookkeeping. Reuse whatever is already up.
+    try:
+        backend, _client, instance = hosted.acquire(
+            cfg.foamd_url, cfg.foamd_api_key, store.session.instance_id or None
+        )
+    except BackendError as exc:
+        console.print(f"[red]Could not reach the workspace service:[/] {exc}")
+        raise SystemExit(1) from exc
+
+    browser = Browser(backend, store)
+    try:
+        if cat_path:
+            text, _is_text = browser.read(cat_path)
+            console.print(text, highlight=False, markup=False)
+            return
+        if pull_path:
+            written = browser.pull(pull_path)
+            for local in written:
+                console.print(f"[green]{local}[/]")
+            if not written:
+                console.print("[yellow]nothing was copied[/]")
+            return
+
+        console.print(f"[bold]{chosen}[/] on {instance[:8]}\n")
+        view = ConsoleView(console)
+        view.workspace(browser)
+        view.show_files(path or WORKSPACE_ROOT)
+
+        local = browser.local()
+        console.print(f"\n[bold]already on this machine[/] ({store.dir})")
+        for local_path in local[-20:] if local else []:
+            console.print(f"  {local_path}")
+        if not local:
+            console.print("  [dim]nothing pulled out yet - openreynolds files --pull <path>[/]")
+    except BackendError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(1) from exc
+    finally:
+        backend.close()
+
+
 @main.command("doctor")
 def doctor_cmd() -> None:
     """Check configuration, connectivity and credentials."""
@@ -379,16 +462,23 @@ def session(
         max_output=cfg.max_tool_output,
         on_fetch=_fetch_hook(capture),
     )
+    browser = Browser(backend, store)
+
     def drive(view: View, reader: Any) -> None:
         """One session, against whichever interface is running it."""
+        # The tools report job state through the view, so a panel showing what is
+        # running is current the moment it changes rather than only while polling.
+        ctx.view = view
+        view.workspace(browser)
         loop = Loop(cfg, ctx, store, view, capture=capture)
+        loop.interject = lambda: _typed_while_working(loop, view, browser, store, reader)
         view.header(store.session.study_id, resolved_instance, cfg.model, store.dir)
         loop.brief(_situation_brief(store, backend, resuming, interactive=not one_shot))
         try:
             if one_shot:
                 _run_one_shot(loop, backend, store, one_shot, view, reader, max_wait)
             else:
-                _run_interactive(loop, backend, store, view, reader)
+                _run_interactive(loop, backend, store, view, browser, reader)
         except KeyboardInterrupt:
             view.info("interrupted - jobs keep running on the instance")
 
@@ -448,6 +538,7 @@ def _report_on_exit(backend: Backend, store: Store) -> None:
     live = store.live_jobs()
     if not live:
         console.print(f"\n[dim]resume with: openreynolds --study {study}[/]")
+        console.print(f"[dim]workspace:   openreynolds files --study {study}[/]")
         return
     names = ", ".join(job.name or job.job_id[:8] for job in live)
     console.print(f"\n[yellow]{len(live)} job(s) still running on the instance:[/] {names}")
@@ -484,7 +575,115 @@ def _run_tui(drive: Any) -> None:
     return app.quitting
 
 
-EXIT_WORDS = ("/exit", "/quit")
+QUIT = object()
+"""Returned by the command handler when the user asked to leave."""
+
+
+def _apply(
+    command: commands.Command, loop: Loop, view: View, browser: Browser, store: Store
+) -> Any:
+    """Act on one typed line. Returns what goes to the model, or None, or QUIT."""
+    if command.kind == commands.EXIT:
+        return QUIT
+    if command.kind in (commands.SAY, commands.ASIDE):
+        if not command.text:
+            return None
+        loop.say(command.text)
+        return command.text
+    _local(command, view, browser, store, loop)
+    return None
+
+
+def _local(
+    command: commands.Command,
+    view: View,
+    browser: Browser,
+    store: Store,
+    loop: Loop | None = None,
+) -> None:
+    """Commands answered here, out of what the harness already knows.
+
+    None of these reach the model. That is the whole point of them: a question that
+    costs a turn and derails the work is a question people stop asking, and then they
+    have no idea what is going on.
+    """
+    if command.kind == commands.STATUS:
+        view.status(
+            commands.status_lines(
+                store,
+                tokens=getattr(loop, "context_tokens", 0) or 0,
+                local_files=len(browser.local()),
+            )
+        )
+    elif command.kind == commands.FILES:
+        view.show_files(command.text)
+    elif command.kind == commands.OPEN:
+        _open_folder(store.dir, view)
+    elif command.kind == commands.HELP:
+        view.status(commands.HELP_TEXT.splitlines())
+
+
+def _typed_while_working(
+    loop: Loop, view: View, browser: Browser, store: Store, reader: Any
+) -> str | None:
+    """Drain what was typed mid-turn, and hand back only what was meant for the model.
+
+    `/status` and `/files` are answered here and now, without a turn. Everything else
+    rides along with the next tool result, so it lands at the model's next turn rather
+    than sitting unread until the whole turn is over.
+    """
+    for_model: list[str] = []
+    while True:
+        typed = reader.poll()
+        if typed is NOTHING:
+            break
+        if typed is None:
+            # EOF belongs to whoever waits at the prompt; swallowing it here would
+            # leave the session unendable.
+            reader.putback(None)
+            break
+        command = commands.parse(typed)
+        if command.kind == commands.EXIT:
+            reader.putback(typed)
+            break
+        if command.kind in (commands.SAY, commands.ASIDE) and command.text:
+            for_model.append(command.text)
+        else:
+            _local(command, view, browser, store, loop)
+    return "\n".join(for_model) or None
+
+
+def workspace_path(value: str) -> str:
+    """Undo the translation a POSIX-emulating shell applies to a workspace path.
+
+    Git Bash on Windows rewrites a leading `/work` into `C:/Program Files/Git/work`
+    before this process ever sees the argument, so a perfectly correct command comes
+    back as a 404 naming a path the user never typed. Every path taken here is a
+    workspace path, which makes recovering it unambiguous.
+    """
+    if not value or value.startswith(WORKSPACE_ROOT):
+        return value
+    text = value.replace("\\", "/")
+    if not re.match(r"^[A-Za-z]:/", text):
+        return value
+    index = text.find(WORKSPACE_ROOT + "/")
+    if index > 0:
+        return text[index:]
+    return WORKSPACE_ROOT if text.endswith(WORKSPACE_ROOT) else value
+
+
+def _open_folder(path: Path, view: View) -> None:
+    """Show a directory in whatever the platform calls a file browser."""
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(path))  # noqa: S606 - the platform's own opener
+        else:
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([opener, str(path)])
+    except (OSError, AttributeError) as exc:
+        view.warn(f"could not open {path}: {exc}")
+        return
+    view.info(f"opened {path}")
 
 
 def _run_turn(loop: Loop, view: View) -> bool:
@@ -509,7 +708,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
 
 
 def _run_interactive(
-    loop: Loop, backend: Backend, store: Store, view: View, reader: Any
+    loop: Loop, backend: Backend, store: Store, view: View, browser: Browser, reader: Any
 ) -> None:
     while True:
         if store.live_jobs():
@@ -519,24 +718,25 @@ def _run_interactive(
             if wake.kind == "job":
                 loop.inform(wake.text)
             elif wake.kind == "user":
-                # Honoured here too: a long solve is exactly when someone wants out,
-                # and jobs keep running on the instance either way.
-                if wake.text.strip() in EXIT_WORDS:
+                # A long solve is exactly when someone wants to leave, or to ask what
+                # is happening without setting the whole thing off again.
+                spoken = _apply(commands.parse(wake.text), loop, view, browser, store)
+                if spoken is QUIT:
                     return
-                loop.say(wake.text)
+                if spoken is None:
+                    continue
             else:
                 continue
         else:
-            console.print("\n[bold green]>[/] ", end="")
+            view.prompt()
             line = reader.get()
             if line is None:
                 return
-            text = line.strip()
-            if not text:
-                continue
-            if text in EXIT_WORDS:
+            spoken = _apply(commands.parse(line), loop, view, browser, store)
+            if spoken is QUIT:
                 return
-            loop.say(text)
+            if spoken is None:
+                continue
 
         if _run_turn(loop, view) and loop.needs_refresh:
             loop.refresh(situation(store, backend))

@@ -14,7 +14,7 @@ import anthropic
 from .config import CONTEXT_REFRESH_FRACTION, CONTEXT_WINDOW_TOKENS, Config
 from .prompt import system_prompt
 from .store import Store
-from .tools import TOOLS, ToolContext, dispatch
+from .tools import TOOLS, ToolContext, describe, dispatch
 from .view import View
 
 MAX_TOKENS = 64_000
@@ -173,12 +173,16 @@ class Loop:
     def _run_tool(self, block: Any) -> dict[str, Any]:
         self.view.tool(block.name, _summarize(block.input))
         content, is_error = dispatch(self.ctx, block.name, dict(block.input))
+        # A tool result can be content blocks rather than text -- an image, for one --
+        # and those go to the model as they are. What gets written down is a
+        # description: a megabyte of base64 in the message log helps nobody read it.
+        written = describe(content)
         self._record(
             "tool",
-            {"tool": block.name, "input": dict(block.input), "output": content, "error": is_error},
+            {"tool": block.name, "input": dict(block.input), "output": written, "error": is_error},
         )
         if is_error:
-            self.view.tool_error(content.splitlines()[0] if content else "failed")
+            self.view.tool_error(written.splitlines()[0] if written else "failed")
         return {
             "type": "tool_result",
             "tool_use_id": block.id,

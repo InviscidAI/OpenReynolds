@@ -205,6 +205,9 @@ class ScriptedReader:
     def get(self, timeout=None):
         return self._lines.pop(0) if self._lines else None
 
+    def putback(self, line):
+        self._lines.insert(0, line)
+
 
 @pytest.fixture
 def fast_polling(monkeypatch):
@@ -228,6 +231,12 @@ class RecordingView(View):
         self.usages = []
         self.watched = []
         self.prompts = 0
+        self.job_reports = []
+        self.stages = []
+        self.interjections = []
+        self.statuses = []
+        self.listings = []
+        self.browser = None
 
     def header(self, study_id, instance_id, model, mirror):
         self.headers.append((study_id, instance_id, model, mirror))
@@ -264,6 +273,24 @@ class RecordingView(View):
 
     def watching(self, names):
         self.watched.append(list(names))
+
+    def jobs(self, records):
+        self.job_reports.append(list(records))
+
+    def stage(self, text):
+        self.stages.append(text)
+
+    def interjection(self, text):
+        self.interjections.append(text)
+
+    def workspace(self, browser):
+        self.browser = browser
+
+    def show_files(self, path=""):
+        self.listings.append(path)
+
+    def status(self, lines):
+        self.statuses.append(list(lines))
 
     def prompt(self):
         self.prompts += 1

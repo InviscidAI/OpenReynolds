@@ -53,6 +53,11 @@ of you.
 Each of these takes seconds against the STL and dictionaries alone, and each catches
 something you would otherwise discover an hour later:
 
+- **Look at the surface** — `geometry_view.py` in this directory draws every STL from four
+  fixed views with the facet edges and the bounding-box ticks on, and prints open edges,
+  non-manifold edges, connected bodies, extents and face-area range. Wrong units, a stray
+  solid, a hole, and geometry that does not sit where you thought it did are all obvious
+  in the picture and invisible in a directory listing.
 - **`locationInMesh`** — is the point actually inside the fluid region, not inside a wall,
   and not so close to a surface that it lands in a cell that gets removed? This is the
   classic cause of an empty or inverted mesh.

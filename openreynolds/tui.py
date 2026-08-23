@@ -1,13 +1,15 @@
 """The terminal interface.
 
-A session has three things worth seeing at once: what the agent is saying, what it is
-doing to the workspace, and what is still running out on the instance. A scrolling log
-shows the first and buries the other two, so they get their own panes.
+A session has four things worth seeing at once: what the agent is saying, what it is
+doing to the workspace, what is still running out on the instance, and what is in the
+workspace at all. A scrolling log shows the first and buries the rest, so they get
+their own panes.
 
 The agent loop is synchronous and blocking, so it runs on a worker thread and reports
 through `TuiView`, which is the same `View` the plain terminal implements. Nothing in
 here can influence the model -- it is presentation, and the loop cannot tell which view
-it has.
+it has. The files pane reads the workspace directly for the same reason: looking at
+something must not require asking the agent to fetch it.
 """
 
 from __future__ import annotations
@@ -16,12 +18,26 @@ import queue
 from pathlib import Path
 from typing import Any, Callable
 
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, Input, RichLog, Static
+from textual.screen import ModalScreen
+from textual.widgets import (
+    Footer,
+    Header,
+    Input,
+    RichLog,
+    Static,
+    TabbedContent,
+    TabPane,
+    TextArea,
+    Tree,
+)
 
+from . import commands, images
+from .browse import Entry, human
 from .view import View
 
 TOOL_STYLE = {
@@ -99,6 +115,72 @@ class StagePane(Static):
         return f"[dim italic]{self.text}[/dim italic]" if self.text else ""
 
 
+class FilesTree(Tree):
+    """The workspace as it actually is, not as it was described.
+
+    Built from one listing rather than a call per directory: a case directory has
+    hundreds of them, and a pane that takes a minute to fill is not a pane.
+    """
+
+    def __init__(self, root_path: str, **kwargs: Any) -> None:
+        super().__init__(root_path, data=root_path, **kwargs)
+        self.root_path = root_path
+        self.show_root = True
+        self.guide_depth = 2
+
+    def load(self, entries: list[Entry]) -> None:
+        """Replace the tree. Entries arrive parents-first, so one pass is enough."""
+        self.reset(self.root_path, data=self.root_path)
+        nodes = {self.root_path: self.root}
+        for entry in entries:
+            parent = nodes.get(entry.path.rpartition("/")[0])
+            if parent is None:
+                continue
+            if entry.is_dir:
+                nodes[entry.path] = parent.add(
+                    Text(entry.name + "/", style="bold"), data=entry.path
+                )
+            else:
+                label = Text(entry.name)
+                label.append(f"  {human(entry.size)}", style="dim")
+                parent.add_leaf(label, data=entry.path)
+        self.root.expand()
+        if not entries:
+            self.root.add_leaf(Text("(nothing here yet)", style="dim"))
+
+
+class FileScreen(ModalScreen):
+    """One file, full screen, read-only."""
+
+    BINDINGS = [
+        ("escape", "dismiss", "Close"),
+        ("q", "dismiss", "Close"),
+        ("ctrl+p", "pull", "Copy out"),
+    ]
+
+    CSS = """
+    FileScreen { align: center middle; }
+    #sheet { width: 90%; height: 90%; border: round $primary; background: $surface; }
+    #sheet-title { height: 1; padding: 0 1; background: $panel; }
+    """
+
+    def __init__(self, path: str, body: str):
+        super().__init__()
+        self.path = path
+        self.body = body
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="sheet"):
+            yield Static(f"[b]{self.path}[/b]  [dim]esc to close[/dim]", id="sheet-title")
+            yield TextArea(self.body, read_only=True, soft_wrap=False, show_line_numbers=True)
+
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
+
+    def action_pull(self) -> None:
+        self.app.pull_path(self.path)
+
+
 class OpenReynoldsApp(App):
     """The session, as a product."""
 
@@ -106,10 +188,10 @@ class OpenReynoldsApp(App):
     Screen { layout: vertical; }
     #body { height: 1fr; }
     #left { width: 3fr; }
-    #right { width: 1fr; }
+    #right { width: 42; }
     SessionBar { height: 2; padding: 0 1; background: $panel; }
     StagePane { height: 1; padding: 0 1; }
-    JobsPane { padding: 0 1; background: $panel; height: 1fr; }
+    JobsPane { padding: 0 1; height: 1fr; }
     #conversation { height: 3fr; border: round $primary; padding: 0 1; }
     #activity { height: 1fr; border: round $secondary; padding: 0 1; }
     Input { dock: bottom; }
@@ -119,6 +201,8 @@ class OpenReynoldsApp(App):
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+l", "clear", "Clear"),
         ("ctrl+t", "toggle_thinking", "Thinking"),
+        ("ctrl+f", "files", "Files"),
+        ("ctrl+r", "refresh_files", "Refresh"),
     ]
 
     show_thinking = reactive(False)
@@ -129,6 +213,7 @@ class OpenReynoldsApp(App):
         self.typed: queue.Queue[str | None] = queue.Queue()
         self._streaming = False
         self.quitting = False
+        self.browser: Any = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -139,17 +224,25 @@ class OpenReynoldsApp(App):
                 yield RichLog(id="conversation", wrap=True, markup=True, highlight=False)
                 yield RichLog(id="activity", wrap=True, markup=True, highlight=False)
             with Vertical(id="right"):
-                yield JobsPane(id="jobs")
-        yield Input(placeholder="Ask for something, or say what looks wrong...", id="prompt")
+                with TabbedContent(id="panes"):
+                    with TabPane("jobs", id="tab-jobs"):
+                        yield JobsPane(id="jobs")
+                    with TabPane("files", id="tab-files"):
+                        yield FilesTree("/work", id="filestree")
+        yield Input(placeholder="Ask for something, or /btw to speak without interrupting", id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
         self.title = "OpenReynolds"
         self.sub_title = "CFD agent"
+        self.query_one("#activity", RichLog).write(
+            "[dim]/help for what you can type - /btw says something without asking it "
+            "to stop, /status says what is happening[/dim]"
+        )
         self.query_one("#prompt", Input).focus()
         self.start_session()
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group="session")
     def start_session(self) -> None:
         """The agent loop is blocking, so it lives off the UI thread."""
         try:
@@ -167,7 +260,14 @@ class OpenReynoldsApp(App):
         event.input.value = ""
         if not text:
             return
-        self.query_one("#conversation", RichLog).write(f"\n[bold green]you[/bold green]  {text}")
+        log = self.query_one("#conversation", RichLog)
+        command = commands.parse(text)
+        if command.kind in (commands.SAY, commands.ASIDE):
+            log.write(f"\n[bold green]you[/bold green]  {_escape(text)}")
+        else:
+            # It is answered here and never reaches the model; echoing it as speech
+            # would claim otherwise.
+            log.write(f"[dim]{_escape(text)}[/dim]")
         self.typed.put(text)
 
     def action_clear(self) -> None:
@@ -192,6 +292,79 @@ class OpenReynoldsApp(App):
         self.quitting = True
         self.typed.put(None)
         self.exit()
+
+    # -- files ----------------------------------------------------------------
+
+    def action_files(self) -> None:
+        self.show_files_tab()
+
+    def action_refresh_files(self) -> None:
+        self.load_files(self.query_one("#filestree", FilesTree).root_path)
+
+    def show_files_tab(self, path: str = "") -> None:
+        tree = self.query_one("#filestree", FilesTree)
+        if path:
+            tree.root_path = path
+        self.query_one("#panes", TabbedContent).active = "tab-files"
+        self.load_files(tree.root_path)
+
+    @work(thread=True, group="files")
+    def load_files(self, path: str) -> None:
+        """Listing the workspace is a network call, so it never runs on the UI thread."""
+        if self.browser is None:
+            return
+        self.call_from_thread(self._set_stage, f"listing {path}")
+        try:
+            entries = self.browser.tree(path)
+        except Exception as exc:
+            self.call_from_thread(self._note, f"[red]could not list {path}: {exc}[/red]")
+            return
+        tree = self.query_one("#filestree", FilesTree)
+        self.call_from_thread(tree.load, entries)
+        self.call_from_thread(self._set_stage, "")
+
+    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        """A leaf is a file. Directories expand themselves; opening one shows nothing."""
+        path = event.node.data
+        if path and not event.node.allow_expand:
+            self.open_path(str(path))
+
+    @work(thread=True, group="files")
+    def open_path(self, path: str) -> None:
+        """Read one file for viewing. An image is copied out instead: the terminal
+        cannot draw it here, but the file browser can."""
+        if self.browser is None:
+            return
+        self.call_from_thread(self._set_stage, f"opening {path}")
+        try:
+            if images.media_type(path):
+                written = self.browser.pull(path)
+                where = "\n".join(str(p) for p in written) or "(nothing was copied)"
+                body = f"{path}\n\nAn image. Copied to your machine, open it from:\n\n{where}"
+            else:
+                body, _is_text = self.browser.read(path)
+        except Exception as exc:
+            body = f"{path}\n\ncould not be read: {exc}"
+        self.call_from_thread(self.push_screen, FileScreen(path, body))
+        self.call_from_thread(self._set_stage, "")
+
+    @work(thread=True, group="files")
+    def pull_path(self, path: str) -> None:
+        if self.browser is None:
+            return
+        try:
+            written = self.browser.pull(path)
+        except Exception as exc:
+            self.call_from_thread(self._note, f"[red]could not copy {path}: {exc}[/red]")
+            return
+        for local in written:
+            self.call_from_thread(self._note, f"[green]copied to[/green] {local}")
+
+    def _note(self, markup: str) -> None:
+        self.query_one("#activity", RichLog).write(markup)
+
+    def _set_stage(self, text: str) -> None:
+        self.query_one("#stage", StagePane).text = text
 
 
 class TuiView(View):
@@ -283,7 +456,20 @@ class TuiView(View):
         self._set("stage", text=text)
 
     def interjection(self, text: str) -> None:
-        self._to("conversation", f"[green]you[/green]  {_escape(text)} [dim](sent)[/dim]")
+        """The input box already showed what was typed; this confirms it was carried."""
+        self._to("conversation", "[dim](sent - it reads this at its next step)[/dim]")
+
+    def workspace(self, browser: Any) -> None:
+        """Hand the interface a way to look at the workspace, and fill the pane once."""
+        self.app.browser = browser
+        self.app.call_from_thread(self.app.load_files, "/work")
+
+    def show_files(self, path: str = "") -> None:
+        self.app.call_from_thread(self.app.show_files_tab, path)
+
+    def status(self, lines: list[str]) -> None:
+        body = "\n".join(f"[cyan]{_escape(line)}[/cyan]" for line in lines)
+        self._to("conversation", f"{body}\n")
 
     def watching(self, names: list[str]) -> None:
         self._set("jobs", names=list(names))
@@ -310,6 +496,9 @@ class TuiReader:
             return self.app.typed.get_nowait()
         except queue.Empty:
             return NOTHING
+
+    def putback(self, line: str | None) -> None:
+        self.app.typed.put(line)
 
 
 def _escape(text: str) -> str:

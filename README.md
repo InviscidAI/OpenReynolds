@@ -28,12 +28,16 @@ openreynolds                 # start a study
   Ask for something, or say what looks wrong...
 ```
 
-A session has three things worth watching at once, and a single scrolling log shows one
-of them while burying the other two. So what the agent *says* gets the main pane, what
-it *does* to the workspace goes to its own activity pane, and what is still **running
-out on the instance** — the part that outlives the session — gets a panel that says so.
-The bar keeps the study, the instance, the model, and how full the thread is, because
-context filling up is the thing that changes what happens next.
+A session has four things worth watching at once, and a single scrolling log shows one
+of them while burying the rest. So what the agent *says* gets the main pane, what it
+*does* to the workspace goes to its own activity pane, what is still **running out on
+the instance** — the part that outlives the session — gets a panel that says so, and
+what is actually **in the workspace** gets a file tree you can open things from. The bar
+keeps the study, the instance, the model, and how full the thread is, because context
+filling up is the thing that changes what happens next.
+
+Reasoning is one summary line on the stage indicator rather than hundreds of grey lines
+in the transcript; ctrl+T puts it back in full.
 
 `--plain` gives the old streaming terminal, and `-p` still implies it. If the interface
 cannot start — no terminal, missing library — the session falls back rather than
@@ -125,6 +129,7 @@ never imposed — the model can use, edit, replace or ignore any of it.
 | `log_digest.py` | Residual plot, last-iteration table, continuity and bounding summary |
 | `mesh_digest.py` | `checkMesh` output as a metric table — numbers, no verdicts |
 | `render.py` | Fixed pyvista scenes: mesh cuts and field slices, as PNGs |
+| `geometry_view.py` | Surfaces drawn from four views with every facet edge, plus open edges, bodies and extents |
 | `cells_estimate.py` | Cell-count prediction from the STL and dicts, before a snappy build |
 
 `notes/openfoam-field-notes.md` is distilled OpenFOAM practice written as field notes
@@ -153,6 +158,9 @@ LLM proxy, pointing at it is a config change rather than a code change.
 openreynolds/
   cli.py       loop.py      tools.py     prompt.py
   watch.py     store.py     capture.py   config.py
+  view.py      tui.py       images.py    stopping.py
+  browse.py    # read-only window onto the workspace
+  commands.py  # /btw, /status - what the user types that is not a message
   backend/
     base.py    # the protocol — no transport, no vendor
     hosted.py  # the only module that knows the service contract
@@ -224,11 +232,61 @@ It ends on its own — `[SATISFIED]` when it would accept the answer, `[STUCK]` 
 conversation has stopped going anywhere — and writes the whole exchange to
 `user-test.log`.
 
-## Inline images
+## Seeing
 
-On iTerm2, kitty or WezTerm, a fetched PNG is drawn in the terminal as well as saved.
-Anywhere else you get the path, which is what the model prints anyway. Set
-`OPENREYNOLDS_INLINE_IMAGES=off` to disable.
+Two different eyes, and they need separate plumbing.
+
+**The agent's.** `read_file` on a `.png`, `.jpg`, `.gif` or `.webp` returns the picture
+itself as an image block, not bytes. Without that, an agent can render a mesh and then
+only ever read its own description of what it meant to draw — geometry with the units
+wrong, a surface with a hole in it and a perfectly good one are indistinguishable from
+a directory listing. Anything over 3.5 MB is reported as a size instead of vanishing.
+Base64 never reaches `messages.jsonl`; the log keeps a description.
+
+**Yours.** On iTerm2, kitty or WezTerm a fetched PNG is drawn in the terminal as well as
+saved (`OPENREYNOLDS_INLINE_IMAGES=off` disables it). In the interface a full-screen app
+cannot use those protocols, so opening an image in the files pane copies it to the study
+directory and tells you where — the file browser can draw what the terminal cannot.
+
+## Looking at the workspace
+
+The agent decides what it copies out. You should not have to negotiate with it to find
+out what is there, so the workspace is readable directly, and none of it involves the
+model or costs a token:
+
+```
+openreynolds files                       # the tree under /work
+openreynolds files /work/case            # a subtree
+openreynolds files --cat /work/case/log.simpleFoam
+openreynolds files --pull /work/case/renders   # copy it to this machine
+openreynolds files --open                # the study folder in your file browser
+```
+
+In the interface the **files** tab is the same thing live: ctrl+F to open it, ctrl+R to
+refresh, enter on a file to read it, ctrl+P to copy it out.
+
+## Saying something without stopping the work
+
+Anything typed while the agent is working used to sit unread until the whole turn
+ended, so "just run the coarse one" arrived minutes late and read as a contradiction.
+It now rides along with the next tool result and lands at the agent's very next step.
+
+```
+/btw <anything>   say it without asking the agent to stop
+/btw   or /status what is happening right now - answered locally, no turn, no interruption
+/files [path]     the workspace
+/open             the study folder
+/help             all of it
+/exit             leave (jobs keep running on the instance)
+```
+
+`/status` is the one that matters most: a question that costs a turn and derails the
+work is a question people stop asking, and then they have no idea what is going on. It
+is answered from what the harness already knows — running jobs, current stage, thread
+size, files pulled — and the model is never told it was asked.
+
+Anything else beginning with `/` is treated as a message, because `/work/case/log looks
+wrong` is a sentence, not a typo.
 
 ## License
 

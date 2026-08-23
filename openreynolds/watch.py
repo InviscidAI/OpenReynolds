@@ -57,6 +57,15 @@ class LineReader:
         except queue.Empty:
             return NOTHING
 
+    def putback(self, line: str | None) -> None:
+        """Return something taken but not used.
+
+        Whoever polls between tool calls will read the EOF meant for whoever waits at
+        the prompt, and an EOF that gets read by the wrong reader is a session that
+        cannot be ended.
+        """
+        self._queue.put(line)
+
 
 class _Nothing:
     """Distinguishes 'nothing typed' from an EOF `None`."""
@@ -76,6 +85,9 @@ class NullReader:
 
     def poll(self) -> str | None | _Nothing:
         return NOTHING
+
+    def putback(self, line: str | None) -> None:
+        """Nothing was ever taken."""
 
 
 @dataclass

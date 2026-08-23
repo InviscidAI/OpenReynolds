@@ -10,6 +10,7 @@ from click.testing import CliRunner
 from conftest import ScriptedReader, install_model, message, text_block, tool_block
 from openreynolds import cli
 from openreynolds.backend.base import BackendError, JobStatus
+from openreynolds.browse import Browser
 from openreynolds.config import Config
 from openreynolds.loop import Loop
 from openreynolds.store import Store
@@ -99,7 +100,7 @@ def test_one_shot_reports_an_expired_sandbox_rather_than_a_clean_exit(
 def test_interactive_runs_a_turn_then_exits(loop, backend, store, view, quiet_console):
     install_model(loop, [message([text_block("94,321")])])
 
-    cli._run_interactive(loop, backend, store, view, ScriptedReader(["how many cells?", "/exit"]))
+    cli._run_interactive(loop, backend, store, view, Browser(backend, store), ScriptedReader(["how many cells?", "/exit"]))
 
     assert loop.messages[0]["content"] == "how many cells?"
 
@@ -107,7 +108,7 @@ def test_interactive_runs_a_turn_then_exits(loop, backend, store, view, quiet_co
 def test_interactive_stops_on_eof(loop, backend, store, view, quiet_console):
     install_model(loop, [message([text_block("unused")])])
 
-    cli._run_interactive(loop, backend, store, view, ScriptedReader([]))
+    cli._run_interactive(loop, backend, store, view, Browser(backend, store), ScriptedReader([]))
 
     assert loop.messages == []
 
@@ -117,7 +118,7 @@ def test_typing_during_a_job_reaches_the_model(loop, backend, store, view, quiet
     store.record_job("job-1", cmd="sleep 600", name="solve")
     install_model(loop, [message([text_block("stopping")])])
 
-    cli._run_interactive(loop, backend, store, view, ScriptedReader(["stop", "/exit"]))
+    cli._run_interactive(loop, backend, store, view, Browser(backend, store), ScriptedReader(["stop", "/exit"]))
 
     assert loop.messages[0] == {"role": "user", "content": "stop"}
 
@@ -263,7 +264,7 @@ def test_exit_works_while_a_job_is_running(loop, backend, store, view, quiet_con
     store.record_job("job-1", cmd="sleep 600", name="solve")
     install_model(loop, [message([text_block("should never be reached")])])
 
-    cli._run_interactive(loop, backend, store, view, ScriptedReader(["/exit"]))
+    cli._run_interactive(loop, backend, store, view, Browser(backend, store), ScriptedReader(["/exit"]))
 
     assert loop.messages == [], "the exit word never reached the model"
     assert store.live_jobs(), "the job is left running on the instance"
@@ -289,7 +290,7 @@ def test_a_rate_limit_does_not_end_the_session(loop, backend, store, view, quiet
         raise _api_error()
 
     monkeypatch.setattr(loop, "run", failing_run)
-    cli._run_interactive(loop, backend, store, view, ScriptedReader(["go", "/exit"]))
+    cli._run_interactive(loop, backend, store, view, Browser(backend, store), ScriptedReader(["go", "/exit"]))
 
     assert calls, "the turn was attempted"
     assert loop.messages[0]["content"] == "go", "the thread survived"
@@ -458,7 +459,8 @@ def test_doctor_finds_the_toolbox_it_would_sync(monkeypatch):
     stub_model(monkeypatch)
     ok, detail = labels(cli.run_checks(full_config()))["toolbox"]
     assert ok
-    assert "4 scripts" in detail and "3 notes" in detail
+    scripts = len(list(cli.TOOLBOX_SOURCE.glob("*.py")))
+    assert f"{scripts} scripts" in detail and "3 notes" in detail
 
 
 def test_config_without_a_terminal_explains_instead_of_aborting(monkeypatch, tmp_path):
@@ -548,3 +550,23 @@ def test_without_a_bound_it_still_waits_for_the_job(loop, backend, store, view, 
     cli._run_one_shot(loop, backend, store, "solve", view, NullReader())
 
     assert not store.live_jobs()
+
+
+# -- looking at the workspace --------------------------------------------------
+
+
+def test_a_workspace_path_survives_a_posix_emulating_shell():
+    """Git Bash rewrites a leading /work before this process sees the argument, so a
+    correct command comes back as a 404 naming a path nobody typed."""
+    assert cli.workspace_path("C:/Program Files/Git/work/case/log") == "/work/case/log"
+    assert cli.workspace_path(r"C:\Program Files\Git\work\case") == "/work/case"
+    assert cli.workspace_path("C:/Program Files/Git/work") == "/work"
+
+
+def test_a_real_workspace_path_is_left_exactly_as_it_is():
+    for path in ("/work", "/work/case/log", "", "constant/triSurface"):
+        assert cli.workspace_path(path) == path
+
+
+def test_a_local_windows_path_that_is_not_a_workspace_path_is_untouched():
+    assert cli.workspace_path("C:/Users/me/notes.md") == "C:/Users/me/notes.md"

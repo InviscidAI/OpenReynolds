@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from . import images
 from .backend.base import Backend, BackendError, EXEC_MAX_TIMEOUT_S, WORKSPACE_ROOT
 from .store import Store
 
@@ -133,7 +134,9 @@ TOOLS: list[dict[str, Any]] = [
         "name": "read_file",
         "description": (
             "Read a window of a file as text, or list a directory. Byte offsets, so "
-            "arbitrarily large files are readable a piece at a time."
+            "arbitrarily large files are readable a piece at a time. A path ending in "
+            ".png, .jpg, .gif or .webp comes back as the picture itself, so anything "
+            "you render you can also look at."
         ),
         "input_schema": {
             "type": "object",
@@ -162,7 +165,11 @@ TOOLS: list[dict[str, Any]] = [
 TOOL_NAMES = frozenset(tool["name"] for tool in TOOLS)
 
 
-def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
+ToolResult = str | list[dict[str, Any]]
+"""What a handler gives back: text, or content blocks when text cannot carry it."""
+
+
+def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[ToolResult, bool]:
     """Run one tool call. Returns (content, is_error)."""
     handler = _HANDLERS.get(name)
     if handler is None:
@@ -223,12 +230,16 @@ def _write_file(ctx: ToolContext, args: dict[str, Any]) -> str:
     return f"wrote {len(data)} bytes to {args['path']}"
 
 
-def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str:
+def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, Any]]:
     path = args["path"]
     info = ctx.backend.stat(path)
     if info.is_dir:
         listing = "\n".join(info.entries) if info.entries else "(empty)"
         return f"{path} — directory, {len(info.entries)} entries\n\n{listing}"
+
+    media = images.media_type(path)
+    if media is not None and not (args.get("offset") or args.get("limit")):
+        return _read_image(ctx, path, info, media)
 
     offset = max(0, int(args.get("offset") or 0))
     limit = int(args.get("limit") or ctx.max_output)
@@ -243,6 +254,27 @@ def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str:
     elif end < info.size:
         header += f"; {info.size - end} bytes remain past this window"
     return f"{header}\n\n{body}"
+
+
+def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | list[dict[str, Any]]:
+    """Hand back a render as a picture rather than as a description of one.
+
+    An oversized one is reported as a size, not silently dropped: a picture that never
+    arrives and a picture of nothing look identical from the inside.
+    """
+    if info.size > images.MAX_ATTACH_BYTES:
+        return (
+            f"{path} — {media}, {info.size} bytes. Images are returned as pictures up "
+            f"to {images.MAX_ATTACH_BYTES} bytes; this one is larger, so only its size "
+            "is reported here."
+        )
+    data = ctx.backend.get_file(path)
+    shape = images.dimensions(data)
+    described = f"{shape[0]}x{shape[1]} " if shape else ""
+    return [
+        images.attachment(data, media),
+        {"type": "text", "text": f"{path} — {described}{media}, {len(data)} bytes"},
+    ]
 
 
 def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
@@ -303,7 +335,7 @@ def _fetch(ctx: ToolContext, args: dict[str, Any]) -> str:
     return f"copied {len(written)} file(s) to the user's machine:\n{listing}"
 
 
-_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], str]] = {
+_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "bash": _bash,
     "fetch": _fetch,
     "job_check": _job_check,
@@ -321,6 +353,25 @@ def _announce_jobs(ctx: ToolContext) -> None:
     """Job state changed; anything showing it should hear about it now."""
     if ctx.view is not None:
         ctx.view.jobs(list(ctx.store.session.jobs.values()))
+
+
+def describe(content: ToolResult) -> str:
+    """A text rendering of a tool result, for anything that has to store or print one.
+
+    Base64 image data belongs in the request and nowhere else -- a megabyte of it in
+    the message log makes the log unreadable and unsearchable for no gain.
+    """
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content:
+        if block.get("type") == "text":
+            parts.append(block.get("text", ""))
+        elif block.get("type") == "image":
+            source = block.get("source", {})
+            size = len(source.get("data", "")) * 3 // 4
+            parts.append(f"[{source.get('media_type', 'image')}, {size} bytes]")
+    return "\n".join(parts)
 
 
 def describe_job(status: Any) -> str:

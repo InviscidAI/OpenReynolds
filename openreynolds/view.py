@@ -56,8 +56,21 @@ class View(Protocol):
     def interjection(self, text: str) -> None:
         """Something the user said that will reach the model without stopping it."""
 
+    def workspace(self, browser: Any) -> None:
+        """A read-only way to look at the workspace, for views that can show one."""
+
+    def show_files(self, path: str = "") -> None:
+        """Show what is in the workspace. Answered locally; the model is not told."""
+
+    def status(self, lines: list[str]) -> None:
+        """Answer 'what is going on' from what the harness knows. Costs no turn."""
+
     def prompt(self) -> None:
         """Signal that it is the user's turn. An always-present input box need not."""
+
+
+MAX_LISTED = 300
+"""A scrolling terminal cannot show more than this usefully; the pane can."""
 
 
 class ConsoleView(View):
@@ -66,6 +79,7 @@ class ConsoleView(View):
     def __init__(self, console: Console | None = None):
         self.console = console or Console()
         self._thinking = False
+        self._browser: Any = None
 
     def header(self, study_id: str, instance_id: str, model: str, mirror: Path) -> None:
         self.console.print(
@@ -113,6 +127,35 @@ class ConsoleView(View):
         self.console.print(
             f"[dim]watching {len(names)} job(s): {', '.join(names)} - type to interrupt[/]"
         )
+
+    def interjection(self, text: str) -> None:
+        self.console.print(f"[green]sent:[/] {text}")
+
+    def workspace(self, browser: Any) -> None:
+        self._browser = browser
+
+    def show_files(self, path: str = "") -> None:
+        if self._browser is None:
+            self.console.print("[yellow]no workspace to look at[/]")
+            return
+        target = path or self._browser.backend.workspace_root
+        try:
+            entries = self._browser.tree(target)
+        except Exception as exc:
+            self.console.print(f"[red]could not list {target}:[/] {exc}")
+            return
+        if not entries:
+            self.console.print(f"[dim]{target} is empty[/]")
+            return
+        for entry in entries[:MAX_LISTED]:
+            style = "bold blue" if entry.is_dir else ""
+            self.console.print(f"[{style}]{entry.line()}[/]" if style else entry.line())
+        if len(entries) > MAX_LISTED:
+            self.console.print(f"[dim]... {len(entries) - MAX_LISTED} more[/]")
+
+    def status(self, lines: list[str]) -> None:
+        for index, line in enumerate(lines):
+            self.console.print(f"[cyan]{line}[/]" if index == 0 else f"[dim]{line}[/]")
 
     def prompt(self) -> None:
         self.console.print("\n[bold green]>[/] ", end="")

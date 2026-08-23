@@ -1,7 +1,14 @@
-"""Show a fetched render in the terminal, where the terminal can do that.
+"""Pictures: for the user's terminal, and for the model.
 
-Pure convenience. Terminals that speak neither protocol get the local path, which is
-what the model already prints, so nothing depends on this working.
+Two unrelated jobs happen to share a file-type question. `show` draws a fetched render
+inline where the terminal speaks a graphics protocol -- pure convenience, and terminals
+that speak neither get the local path instead.
+
+`attachment` is the other one, and it is not convenience. A render nobody looks at is
+a file; the model can generate a picture of a mesh, and unless the picture comes back
+as a picture it can only ever read its own description of what it meant to draw. This
+turns image bytes into a content block, so `read_file` on a PNG returns the thing
+itself and looking is possible.
 """
 
 from __future__ import annotations
@@ -74,3 +81,49 @@ def _kitty(payload: bytes, stream) -> None:
         control = "a=T,f=100," if index == 0 else ""
         stream.write(f"\033_G{control}m={0 if last else 1};{chunk.decode('ascii')}\033\\")
     stream.write("\n")
+
+
+# -- pictures for the model ----------------------------------------------------
+
+MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+"""The four formats the model API accepts. Anything else is bytes to it."""
+
+MAX_ATTACH_BYTES = 3_500_000
+"""Under the API's per-image ceiling with room for base64 expansion."""
+
+
+def media_type(name: str) -> str | None:
+    """The media type for a path, or None if this is not a picture."""
+    suffix = Path(name).suffix.lower()
+    return MEDIA_TYPES.get(suffix)
+
+
+def attachment(data: bytes, media: str) -> dict:
+    """One image content block."""
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": media,
+            "data": base64.b64encode(data).decode("ascii"),
+        },
+    }
+
+
+def dimensions(data: bytes) -> tuple[int, int] | None:
+    """Width and height straight out of a PNG header, or None for anything else.
+
+    Enough to report the shape of a render without a decoder: no image library is a
+    runtime dependency here, and the answer only ever appears next to the picture.
+    """
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        return None
+    width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
+    return (width, height) if width and height else None

@@ -267,3 +267,200 @@ async def test_quitting_is_flagged_so_the_caller_can_force_the_exit():
         await pilot.pause()
     assert app.quitting is True
     assert app.typed.get_nowait() is None
+
+
+# -- the files pane ------------------------------------------------------------
+
+
+class StubBrowser:
+    """A workspace without a workspace."""
+
+    def __init__(self, entries=(), text="Time = 1", pulled=()):
+        self.entries = list(entries)
+        self.text = text
+        self.pulled = list(pulled)
+        self.asked = []
+        self.reads = []
+        self.pulls = []
+
+    def tree(self, path="/work", depth=4):
+        self.asked.append(path)
+        return self.entries
+
+    def read(self, path, limit=None):
+        self.reads.append(path)
+        return self.text, True
+
+    def pull(self, path):
+        self.pulls.append(path)
+        return list(self.pulled)
+
+    def local(self):
+        return []
+
+
+async def test_the_files_pane_shows_what_is_in_the_workspace():
+    from openreynolds.browse import Entry
+    from openreynolds.tui import FilesTree
+
+    app = idle_app()
+    app.browser = StubBrowser(
+        [
+            Entry(path="/work/case", is_dir=True),
+            Entry(path="/work/case/log.simpleFoam", is_dir=False, size=2048),
+            Entry(path="/work/notes.md", is_dir=False, size=12),
+        ]
+    )
+    async with app.run_test() as pilot:
+        app.load_files("/work")
+        await pilot.pause()
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+
+        tree = app.query_one("#filestree", FilesTree)
+        labels = [str(node.label) for node in tree.root.children]
+
+    assert "case/" in labels
+    assert any("notes.md" in label for label in labels)
+
+
+async def test_a_nested_file_hangs_off_its_own_directory():
+    from openreynolds.browse import Entry
+    from openreynolds.tui import FilesTree
+
+    app = idle_app()
+    app.browser = StubBrowser(
+        [
+            Entry(path="/work/case", is_dir=True),
+            Entry(path="/work/case/log.simpleFoam", is_dir=False, size=2048),
+        ]
+    )
+    async with app.run_test() as pilot:
+        app.load_files("/work")
+        await pilot.pause()
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+
+        tree = app.query_one("#filestree", FilesTree)
+        case = tree.root.children[0]
+        assert [str(child.label).split()[0] for child in case.children] == ["log.simpleFoam"]
+
+
+async def test_an_empty_workspace_says_so_rather_than_showing_nothing():
+    from openreynolds.tui import FilesTree
+
+    app = idle_app()
+    app.browser = StubBrowser([])
+    async with app.run_test() as pilot:
+        app.load_files("/work")
+        await pilot.pause()
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+        tree = app.query_one("#filestree", FilesTree)
+        assert "nothing here yet" in str(tree.root.children[0].label)
+
+
+async def test_a_listing_failure_is_reported_not_swallowed():
+    app = idle_app()
+
+    class Broken(StubBrowser):
+        def tree(self, path="/work", depth=4):
+            raise RuntimeError("the instance went away")
+
+    app.browser = Broken()
+    async with app.run_test() as pilot:
+        app.load_files("/work")
+        await pilot.pause()
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+        written = "".join(str(line) for line in app.query_one("#activity").lines)
+
+    assert "went away" in written
+
+
+async def test_opening_an_image_copies_it_out_because_it_cannot_be_drawn_here():
+    """The terminal cannot show it, but the file browser can - so it has to land
+    somewhere the user can actually open it."""
+    app = idle_app()
+    app.browser = StubBrowser(pulled=[Path("/tmp/studies/x/files/mesh.png")])
+    async with app.run_test() as pilot:
+        app.open_path("/work/case/renders/mesh.png")
+        await pilot.pause()
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+
+        assert app.browser.pulls == ["/work/case/renders/mesh.png"]
+        assert "mesh.png" in app.screen.body
+        assert "Copied to your machine" in app.screen.body
+
+
+async def test_opening_a_text_file_shows_it():
+    app = idle_app()
+    app.browser = StubBrowser(text="Time = 1\nCourant Number mean: 0.2")
+    async with app.run_test() as pilot:
+        app.open_path("/work/case/log.simpleFoam")
+        await pilot.pause()
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+
+        assert "Courant" in app.screen.body
+
+
+async def test_the_files_view_asks_the_workspace_for_the_path_requested():
+    app = idle_app()
+    app.browser = StubBrowser([])
+    async with app.run_test() as pilot:
+        view = TuiView(app)
+        await asyncio.to_thread(view.show_files, "/work/case")
+        await pilot.pause()
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+
+    assert app.browser.asked[-1] == "/work/case"
+
+
+async def test_a_local_command_is_not_echoed_as_something_the_agent_was_told():
+    """`/status` never reaches the model; showing it as speech would claim it did."""
+    app = idle_app()
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/status"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        written = "".join(str(line) for line in app.query_one("#conversation").lines)
+
+    assert "you" not in written
+    assert app.typed.get_nowait() == "/status"
+
+
+async def test_a_message_is_echoed_as_speech():
+    app = idle_app()
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "run the coarse case"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        written = "".join(str(line) for line in app.query_one("#conversation").lines)
+
+    assert "you" in written and "coarse" in written
+
+
+async def test_status_is_shown_in_the_conversation_where_it_was_asked():
+    app = idle_app()
+    async with app.run_test() as pilot:
+        view = TuiView(app)
+        await asyncio.to_thread(view.status, ["study x on instance abcd1234", "1 job(s) running"])
+        await pilot.pause()
+
+        written = "".join(str(line) for line in app.query_one("#conversation").lines)
+
+    assert "1 job(s) running" in written
+
+
+async def test_a_reader_hands_back_what_it_could_not_use():
+    app = idle_app()
+    reader = TuiReader(app)
+    reader.putback(None)
+    assert reader.poll() is None
