@@ -7,13 +7,18 @@ only writes prose, only sees what appears in the terminal, and reacts the way a 
 would -- "that number looks wrong", "you said something different earlier", "would that
 really separate there?". Diagnosing any of it is the agent's job, not the user's.
 
-    python scripts/user_test.py --goal "I need the pressure drop through a 90 degree
-                                        elbow in a 100mm square duct"
+    python scripts/user_test.py --persona engineer
+    python scripts/user_test.py --persona all --budget 12
     python scripts/user_test.py --goal "..." --turns 8 --user-model claude-sonnet-5
-    python scripts/user_test.py --study 20260823-213712-babc --goal "check this for me"
 
+Personas live in `scripts/personas.py`; `--goal` overrides whichever one is chosen.
 Nothing here inspects the workspace, reads a log, or touches a file. If the persona
 needs to know something, it has to ask the agent, exactly like a real user.
+
+A run is bounded three ways -- turns, seconds per reply, and total minutes -- because a
+test nobody will sit through is a test nobody runs. Whatever is still going on the
+instance when a persona finishes gets stopped, so the next one starts on a quiet
+machine and nothing is left burning.
 """
 
 from __future__ import annotations
@@ -28,64 +33,23 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import anthropic  # noqa: E402
 
 from openreynolds.config import Config  # noqa: E402
-
-SATISFIED = "[SATISFIED]"
-STUCK = "[STUCK]"
-
-PERSONA_SYSTEM = f"""\
-You are playing a person who has hired an engineering consultant. You are testing the \
-consultant by talking to them. Stay in character at all times.
-
-Who you are: you work in a building-services or mechanical role. You have good physical \
-intuition about air and water -- you know roughly how fast air moves in a duct, that a \
-sharp bend costs more than a gentle one, that a pressure drop of several kilopascals \
-across one fitting would be absurd, that a fan curve has to meet a system curve. You \
-have opinions about whether a number smells right.
-
-What you cannot do: you do not code. You have never written a script. You do not know \
-what OpenFOAM is, what a mesh is in any technical sense, what a boundary condition is \
-called, or what any command does. You would not know a residual from a radiator. You \
-never type commands, never paste code, never name a piece of software, and never \
-suggest a technical fix. If the consultant shows you something technical, you react to \
-what it means, not to how it was done.
-
-How you behave:
-- Write one short message at a time, the way someone types in a chat. One to three \
-sentences, occasionally a single line. Plain language.
-- React to what you are actually told. If a number seems too big, too small, or does \
-not square with something said earlier, say so and ask about it. Quote the bit that \
-bothers you.
-- Hold the consultant to their own words. If they said one thing and later say \
-another, point at the difference. If they gave you a number without saying how sure \
-they are, ask how confident they are.
-- Be suspicious of confidence without evidence, and of a result that arrives suspiciously \
-fast.
-- If they ask you a question, answer it as this person would -- with judgement about the \
-application, never with technical settings. It is fine to say "I don't know, you're the \
-expert, use your judgement."
-- If they are clearly working -- something is running, they said it will take a while -- \
-it is fine to say so briefly and let them get on with it.
-- Do not be a pushover and do not be a jerk. You are a client who wants a defensible \
-answer.
-
-Ending: when you have an answer you would actually accept -- a number, with some sense \
-of how much to trust it -- reply with your closing remark and then, on its own final \
-line, exactly {SATISFIED}. If the consultant is stuck in a loop, has given up, or the \
-conversation has clearly stopped going anywhere, reply and then put {STUCK} on its own \
-final line. Do not use either marker before then.
-
-Write only your message. No preamble, no stage directions, no quotation marks around it.
-"""
+from personas import ALL, SATISFIED, STUCK, Persona  # noqa: E402
 
 CODE_LIKE = re.compile(
     r"```|\bsudo\b|\bpython3?\s+\S+\.py\b|\bblockMesh\b|\bsimpleFoam\b|\bcheckMesh\b"
     r"|\bsnappyHexMesh\b|\bfoamDictionary\b|\bcd\s+/|\bls\s+-|/work/",
     re.IGNORECASE,
 )
+
+INTERFACE_COMMAND = re.compile(r"^/(btw|status|files|help|open|ls)\b", re.IGNORECASE)
+"""Typing `/status` is using the product, not writing code, so it survives the filter."""
+
+STUDY_ID = re.compile(r"\bstudy\s+(\d{8}-\d{6}-[0-9a-f]{4})\b")
 
 
 class AgentSession:
@@ -166,15 +130,24 @@ def sanitize(message: str) -> str:
     engineer the line is dropped rather than sent. Better a shorter message than a test
     that quietly stops testing what it claims to.
     """
-    kept = [line for line in message.splitlines() if not CODE_LIKE.search(line)]
+    kept = [
+        line
+        for line in message.splitlines()
+        if INTERFACE_COMMAND.match(line.strip()) or not CODE_LIKE.search(line)
+    ]
     cleaned = "\n".join(kept).strip()
     return cleaned or "Sorry, could you explain that in plain terms?"
 
 
-def next_user_message(client, model: str, exchanges: list[tuple[str, str]], goal: str) -> str:
+def next_user_message(
+    client, model: str, persona: Persona, exchanges: list[tuple[str, str]], goal: str
+) -> str:
     """Ask the persona what it says next, given everything it has been shown."""
     conversation: list[dict] = [
-        {"role": "user", "content": f"Your goal, in your own words: {goal}\n\nOpen the conversation."}
+        {
+            "role": "user",
+            "content": f"Your goal, in your own words: {goal}\n\nOpen the conversation.",
+        }
     ]
     for said, seen in exchanges:
         conversation.append({"role": "assistant", "content": said})
@@ -185,43 +158,36 @@ def next_user_message(client, model: str, exchanges: list[tuple[str, str]], goal
     reply = client.messages.create(
         model=model,
         max_tokens=1000,
-        system=PERSONA_SYSTEM,
+        system=persona.system,
         messages=conversation,
     )
     return "".join(b.text for b in reply.content if b.type == "text").strip()
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--goal", required=True, help="What the simulated user wants.")
-    parser.add_argument("--turns", type=int, default=10, help="Maximum user messages.")
-    parser.add_argument("--idle", type=float, default=20.0, help="Seconds of silence = its turn.")
-    parser.add_argument("--cap", type=float, default=1800.0, help="Seconds to wait per reply.")
-    parser.add_argument("--study", default=None, help="Resume an existing study.")
-    parser.add_argument("--model", default=None, help="Model for the agent under test.")
-    parser.add_argument("--user-model", default=None, help="Model playing the user.")
-    parser.add_argument("--log", type=Path, default=None, help="Where to write the transcript.")
-    args = parser.parse_args()
-
-    cfg = Config.load()
-    missing = cfg.missing()
-    if missing:
-        print(f"missing configuration: {', '.join(missing)}")
-        return 2
-
-    client = anthropic.Anthropic(
-        api_key=cfg.anthropic_api_key or None, base_url=cfg.llm_base_url or None
+def quieten(repo: Path, study: str | None) -> str:
+    """Stop whatever this run left running, so the next one starts on a quiet machine."""
+    if not study:
+        return "no study id was seen, so nothing could be stopped"
+    result = subprocess.run(
+        [sys.executable, "-m", "openreynolds.cli", "stop", "--study", study, "--force"],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
     )
-    user_model = args.user_model or cfg.model
+    return (result.stdout or result.stderr or "").strip() or "nothing to stop"
 
+
+def run_one(client, persona: Persona, args, repo: Path) -> dict:
+    """One persona, one session, bounded three ways."""
     argv = [sys.executable, "-u", "-m", "openreynolds.cli"]
-    if args.study:
-        argv += ["--study", args.study]
     if args.model:
         argv += ["--model", args.model]
 
-    repo = Path(__file__).resolve().parents[1]
-    log = args.log or repo / "user-test.log"
+    log = args.log or repo / f"user-test-{persona.name}.log"
+    goal = args.goal or persona.goal
     transcript: list[str] = []
 
     def record(who: str, text: str) -> None:
@@ -230,25 +196,32 @@ def main() -> int:
         print(block, flush=True)
         log.write_text("".join(transcript), encoding="utf-8")
 
+    record("PERSONA", f"{persona.name}\n\ngoal: {goal}")
+
     session = AgentSession(argv, repo)
     exchanges: list[tuple[str, str]] = []
     verdict = "ran out of turns"
+    study: str | None = None
     started = time.monotonic()
+    budget = started + args.budget * 60 if args.budget else None
 
     try:
         opening, alive = session.read_until_quiet(args.idle, args.cap)
         record("AGENT (startup)", opening)
+        found = STUDY_ID.search(opening)
+        study = found.group(1) if found else None
 
-        for turn in range(args.turns):
+        for turn in range(min(args.turns, persona.turns)):
             if not alive:
                 verdict = "the agent exited"
                 break
+            if budget and time.monotonic() > budget:
+                verdict = f"out of time after {args.budget:g} min"
+                break
 
-            raw = next_user_message(client, user_model, exchanges, args.goal)
+            raw = next_user_message(client, args.user_model, persona, exchanges, goal)
             done = SATISFIED in raw or STUCK in raw
-            verdict = (
-                "satisfied" if SATISFIED in raw else "stuck" if STUCK in raw else verdict
-            )
+            verdict = "satisfied" if SATISFIED in raw else "stuck" if STUCK in raw else verdict
             message = sanitize(raw.replace(SATISFIED, "").replace(STUCK, "").strip())
             record(f"USER (turn {turn + 1})", message)
             if done:
@@ -262,12 +235,69 @@ def main() -> int:
         code = session.close()
 
     elapsed = time.monotonic() - started
+    record("CLEANUP", quieten(repo, study))
     record(
         "RESULT",
-        f"verdict: {verdict}\nturns used: {len(exchanges)}\n"
-        f"wall clock: {elapsed / 60:.1f} min\nagent exit code: {code}\ntranscript: {log}",
+        f"persona: {persona.name}\nverdict: {verdict}\nturns used: {len(exchanges)}\n"
+        f"wall clock: {elapsed / 60:.1f} min\nstudy: {study}\n"
+        f"agent exit code: {code}\ntranscript: {log}",
     )
-    return 0 if verdict == "satisfied" else 1
+    return {
+        "persona": persona.name,
+        "verdict": verdict,
+        "turns": len(exchanges),
+        "minutes": elapsed / 60,
+        "study": study,
+        "log": str(log),
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--persona",
+        default="engineer",
+        help=f"One of {', '.join(sorted(ALL))}, or 'all' to run each in turn.",
+    )
+    parser.add_argument("--goal", default=None, help="Override the persona's own goal.")
+    parser.add_argument("--turns", type=int, default=8, help="Maximum user messages.")
+    parser.add_argument("--idle", type=float, default=15.0, help="Seconds of silence = its turn.")
+    parser.add_argument("--cap", type=float, default=600.0, help="Seconds to wait per reply.")
+    parser.add_argument("--budget", type=float, default=15.0, help="Minutes per persona, 0 = none.")
+    parser.add_argument("--model", default=None, help="Model for the agent under test.")
+    parser.add_argument("--user-model", default=None, help="Model playing the user.")
+    parser.add_argument("--log", type=Path, default=None, help="Where to write the transcript.")
+    args = parser.parse_args()
+
+    cfg = Config.load()
+    missing = cfg.missing()
+    if missing:
+        print(f"missing configuration: {', '.join(missing)}")
+        return 2
+
+    chosen = list(ALL.values()) if args.persona == "all" else [ALL.get(args.persona)]
+    if chosen == [None]:
+        print(f"no such persona: {args.persona}. Try one of {', '.join(sorted(ALL))}, or all.")
+        return 2
+    if args.persona == "all" and args.goal:
+        print("--goal with --persona all would give every persona the same words; pick one.")
+        return 2
+
+    client = anthropic.Anthropic(
+        api_key=cfg.anthropic_api_key or None, base_url=cfg.llm_base_url or None
+    )
+    args.user_model = args.user_model or cfg.model
+    repo = Path(__file__).resolve().parents[1]
+
+    results = [run_one(client, persona, args, repo) for persona in chosen]
+
+    print(f"\n{'=' * 70}\nSUMMARY\n{'=' * 70}")
+    for result in results:
+        print(
+            f"  {result['persona']:<12} {result['verdict']:<28} "
+            f"{result['turns']} turns  {result['minutes']:.1f} min  {result['log']}"
+        )
+    return 0 if all(r["verdict"] == "satisfied" for r in results) else 1
 
 
 if __name__ == "__main__":

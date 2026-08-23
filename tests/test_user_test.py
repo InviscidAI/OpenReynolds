@@ -78,21 +78,42 @@ def test_mixed_message_keeps_only_the_human_part(ut):
     assert "checkMesh" not in cleaned
 
 
-def test_the_persona_is_told_what_it_cannot_do(ut):
-    for constraint in ("you do not code", "never type commands", "never paste code"):
-        assert constraint in ut.PERSONA_SYSTEM.lower()
+def test_every_persona_is_told_what_it_cannot_do(ut):
+    for persona in ut.ALL.values():
+        lowered = persona.system.lower()
+        for constraint in ("you do not code", "never type commands", "never paste code"):
+            assert constraint in lowered, f"{persona.name} was not told: {constraint}"
 
 
-def test_the_persona_is_told_to_push_back(ut):
-    lowered = ut.PERSONA_SYSTEM.lower()
-    assert "does not square with something said earlier" in lowered
-    assert "how confident" in lowered
-    assert "suspicious of confidence without evidence" in lowered
+def test_every_persona_can_end_the_conversation(ut):
+    for persona in ut.ALL.values():
+        assert ut.SATISFIED in persona.system
+        assert ut.STUCK in persona.system
 
 
-def test_the_persona_can_end_the_conversation(ut):
-    assert ut.SATISFIED in ut.PERSONA_SYSTEM
-    assert ut.STUCK in ut.PERSONA_SYSTEM
+def test_every_persona_has_a_goal_of_its_own(ut):
+    for persona in ut.ALL.values():
+        assert len(persona.goal.split()) > 8, f"{persona.name} has no real goal"
+
+
+def test_the_personas_push_on_different_things(ut):
+    """One persona finds one class of problem. A suite of identical ones finds one
+    class of problem four times."""
+    characters = {persona.name: persona.character for persona in ut.ALL.values()}
+    assert len(set(characters.values())) == len(characters)
+    assert "intuition" in characters["engineer"]
+    assert "no physical intuition at all" in characters["novice"]
+    assert "visibility" in characters["controller"]
+    assert "no longer holds" in characters["shifting"]
+
+
+def test_only_the_persona_who_would_use_them_is_told_about_the_commands(ut):
+    """Someone who has read the help knows about /status. Telling every persona would
+    test the feature and nothing else."""
+    assert ut.ALL["controller"].knows_interface
+    assert not ut.ALL["novice"].knows_interface
+    assert "/status" in ut.ALL["controller"].system
+    assert "/status" not in ut.ALL["engineer"].system
 
 
 # -- driving the subprocess ----------------------------------------------------
@@ -173,10 +194,13 @@ def test_the_persona_sees_only_what_the_terminal_showed(ut):
     client = SimpleNamespace(messages=FakeMessages())
     exchanges = [("what's the pressure drop?", "About 240 Pa.")]
 
-    reply = ut.next_user_message(client, "claude-opus-5", exchanges, "I need a pressure drop")
+    persona = ut.ALL["engineer"]
+    reply = ut.next_user_message(
+        client, "claude-opus-5", persona, exchanges, "I need a pressure drop"
+    )
 
     assert reply == "Why is it that high?"
-    assert captured["system"] is ut.PERSONA_SYSTEM
+    assert captured["system"] == persona.system
     roles = [m["role"] for m in captured["messages"]]
     assert roles == ["user", "assistant", "user"]
     assert "I need a pressure drop" in captured["messages"][0]["content"]
@@ -197,7 +221,7 @@ def test_a_very_long_agent_reply_is_trimmed_not_dropped(ut):
 
     huge = "x" * 20_000 + "THE-ENDING"
     ut.next_user_message(
-        SimpleNamespace(messages=FakeMessages()), "m", [("hi", huge)], "goal"
+        SimpleNamespace(messages=FakeMessages()), "m", ut.ALL["engineer"], [("hi", huge)], "goal"
     )
     shown = captured["messages"][2]["content"]
     assert "THE-ENDING" in shown, "the most recent part is what a user would have on screen"
