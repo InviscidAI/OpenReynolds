@@ -89,7 +89,9 @@ class FakeBackend(Backend):
         chunk = data[offset:]
         return chunk.decode("utf-8", "replace"), offset + len(chunk), True
 
-    def job_kill(self, job_id):
+    def job_kill(self, job_id, signal="TERM"):
+        self.kill_signals = getattr(self, "kill_signals", [])
+        self.kill_signals.append(signal)
         current = self.jobs[job_id]
         self.jobs[job_id] = JobStatus(
             job_id=job_id, status="killed", name=current.name, end_reason="killed_by_client"

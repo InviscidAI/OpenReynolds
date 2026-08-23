@@ -80,6 +80,24 @@ fails the build if imperative workflow language appears in the system prompt.
 Meshing, checking, rendering and post-processing are all `bash`. There is no `run_gate`,
 no `amend_spec`, and no `ask_user` — asking is just talking.
 
+## Stopping
+
+```bash
+openreynolds stop --study <id>          # stop this study's jobs
+openreynolds stop --study <id> --force  # and anything that outlived them
+```
+
+Jobs outliving the session is the design — closing the laptop on a long solve is the
+point. Leaving *without being told* is not. On exit the session says what is still
+running, that it is still costing, and how to stop it.
+
+`stop` does not trust the acknowledgement. The service marks a job killed whether or not
+the signal reached anything, and a solver launched through `mpirun` puts its ranks
+outside the job's process group — so the wrapper dies, the record says killed, and eight
+cores keep going. That happened here, and the first sign of it was the bill. So stopping
+signals, looks, escalates to a signal that cannot be ignored, looks again, and reports
+what is *still there* rather than what was requested.
+
 ## Long runs
 
 The model starts a job and ends its turn. The CLI polls in plain code and wakes it when

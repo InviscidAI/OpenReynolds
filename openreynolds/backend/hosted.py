@@ -312,11 +312,20 @@ class HostedBackend(Backend):
         )
         return body.get("data", ""), int(body.get("next_offset", offset)), bool(body.get("eof"))
 
-    def job_kill(self, job_id: str) -> JobStatus:
+    def job_kill(self, job_id: str, signal: str = "TERM") -> JobStatus:
+        """Signal a job's process group.
+
+        The service marks the job killed whether or not the signal reached anything,
+        so a returned status of `killed` is a record of the request, not proof that
+        the work stopped. Confirming that is `stop`'s job.
+        """
         return _job_status(
             _json(
                 self._client.request(
-                    "POST", f"/v1/jobs/{job_id}/kill", json={"signal": "TERM"}, timeout=180.0
+                    "POST",
+                    f"/v1/jobs/{job_id}/kill",
+                    json={"signal": signal},
+                    timeout=180.0,
                 )
             )
         )

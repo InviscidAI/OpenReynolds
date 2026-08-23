@@ -18,6 +18,7 @@ from .capture import Capture
 from . import images
 from .config import Config, config_path
 from .loop import Loop
+from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .tools import ToolContext
 from .view import ConsoleView, View
@@ -168,6 +169,44 @@ def config_cmd(from_env: bool, key_file: Path | None) -> None:
 
     path = cfg.save()
     console.print(f"\n[green]Saved[/] {path}")
+
+
+@main.command("stop")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+@click.option("--force", is_flag=True, help="Also kill solver processes that outlived their job.")
+def stop_cmd(study_id: str | None, force: bool) -> None:
+    """Stop this study's jobs, and confirm the work actually stopped."""
+    cfg = Config.load()
+    studies = list_studies(cfg.studies_dir)
+    if not studies:
+        console.print(f"No studies under {cfg.studies_dir}")
+        raise SystemExit(1)
+    chosen = study_id or studies[0].study_id
+    store = Store(cfg.studies_dir, chosen)
+    if not store.session.instance_id:
+        console.print(f"[red]{chosen} has no instance recorded.[/]")
+        raise SystemExit(1)
+
+    console.print(f"stopping [bold]{chosen}[/] on {store.session.instance_id[:8]}\n")
+    try:
+        backend, _client, _iid = hosted.acquire(
+            cfg.foamd_url, cfg.foamd_api_key, store.session.instance_id
+        )
+    except BackendError as exc:
+        console.print(f"[red]Could not reach the workspace service:[/] {exc}")
+        raise SystemExit(1) from exc
+
+    try:
+        report = stop_everything(backend, store, force=force)
+    finally:
+        backend.close()
+
+    for line in report.lines():
+        style = "green" if report.clean else "yellow"
+        console.print(f"  [{style}]{line}[/]")
+    if not report.clean and not force:
+        console.print("\n[dim]openreynolds stop --force also kills the leftover processes[/]")
+    raise SystemExit(0 if report.clean else 1)
 
 
 @main.command("doctor")
@@ -364,6 +403,24 @@ def session(
             capture.close()
         backend.close()
         console.print(f"\n[dim]resume with: openreynolds --study {store.session.study_id}[/]")
+
+
+def _report_on_exit(backend: Backend, store: Store) -> None:
+    """Say what is still running, because it is still being paid for.
+
+    Jobs outliving the session is the design, not an accident -- but leaving without
+    being told is how an idle laptop keeps eight cores busy overnight.
+    """
+    study = store.session.study_id
+    live = store.live_jobs()
+    if not live:
+        console.print(f"\n[dim]resume with: openreynolds --study {study}[/]")
+        return
+    names = ", ".join(job.name or job.job_id[:8] for job in live)
+    console.print(f"\n[yellow]{len(live)} job(s) still running on the instance:[/] {names}")
+    console.print("[dim]they keep going, and keep costing, until they finish[/]")
+    console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+    console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
 
 
 def _tui_available() -> bool:
