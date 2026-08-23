@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from rich.console import Console
 
 from openreynolds.backend.base import BackendError, JobStatus
 from openreynolds.watch import (
+    NOTHING,
+    LineReader,
     NullReader,
     _collect_finished,
     _job_report,
@@ -222,3 +226,83 @@ def test_watch_gives_up_at_a_deadline_without_killing_anything(backend, store, v
 
     assert wake.kind == "timeout"
     assert store.live_jobs(), "the job was left alone"
+
+
+# -- one message, however many lines it has ------------------------------------
+
+
+class FakeStdin:
+    """Hands lines to the reader thread the way a terminal or a paste would."""
+
+    def __init__(self, script):
+        self._script = list(script)
+
+    def readline(self):
+        if not self._script:
+            time.sleep(0.05)
+            return ""
+        delay, line = self._script.pop(0)
+        if delay:
+            time.sleep(delay)
+        return line
+
+
+def reader_over(monkeypatch, script):
+    monkeypatch.setattr("openreynolds.watch.sys.stdin", FakeStdin(script))
+    return LineReader()
+
+
+def test_a_pasted_paragraph_is_one_message(monkeypatch):
+    """A live run split four messages into six turns this way: the agent answered the
+    first sentence while the rest of the paragraph landed on it as interruptions, and
+    the user's actual question went unanswered."""
+    reader = reader_over(
+        monkeypatch,
+        [
+            (0, "Whoa - hang on, that is not what I asked for.\n"),
+            (0, "\n"),
+            (0, "Let's keep it simple: say 5 m/s, sharp mitre.\n"),
+        ],
+    )
+
+    message = reader.get(timeout=5)
+
+    assert message is not None
+    assert "Whoa - hang on" in message
+    assert "5 m/s" in message, "the second paragraph is part of the same message"
+    assert message.count("\n") == 2, "and the blank line between them is kept"
+
+
+def test_messages_typed_apart_stay_apart(monkeypatch):
+    reader = reader_over(
+        monkeypatch,
+        [(0, "how many cells?\n"), (0.6, "actually, never mind\n")],
+    )
+
+    assert reader.get(timeout=5) == "how many cells?"
+    assert reader.get(timeout=5) == "actually, never mind"
+
+
+def test_end_of_input_is_still_end_of_input(monkeypatch):
+    reader = reader_over(monkeypatch, [(0, "one last thing\n")])
+
+    assert reader.get(timeout=5) == "one last thing"
+    assert reader.get(timeout=5) is None
+
+
+def test_an_end_of_input_arriving_mid_paste_is_kept_for_the_next_read(monkeypatch):
+    """EOF ends the session, not the message that happened to be in flight."""
+    reader = reader_over(monkeypatch, [(0, "first line\n"), (0, "second line\n")])
+
+    assert reader.get(timeout=5) == "first line\nsecond line"
+    assert reader.get(timeout=5) is None
+
+
+def test_polling_coalesces_the_same_way(monkeypatch):
+    """Between tool calls the reader is polled, not waited on -- a paste must not be
+    half-delivered there either."""
+    reader = reader_over(monkeypatch, [(0, "stop the fine one\n"), (0, "coarse is enough\n")])
+    time.sleep(0.3)
+
+    assert reader.poll() == "stop the fine one\ncoarse is enough"
+    assert reader.poll() in (NOTHING, None)

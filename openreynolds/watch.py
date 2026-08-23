@@ -27,11 +27,26 @@ TICK_S = 0.5
 WAKE_TAIL_BYTES = 2_000
 
 
+PASTE_WINDOW_S = 0.2
+"""How long after a line to keep listening for the rest of the same message.
+
+Nobody types a whole second line this fast, and a pasted paragraph arrives all at
+once. The cost of guessing wrong is two quick messages read as one; the cost of not
+guessing is a pasted paragraph read as four separate turns, which is far worse.
+"""
+
+
 class LineReader:
     """Reads stdin on a background thread so polling can stay responsive.
 
     One reader serves the whole session - the interactive prompt and watch mode both
     take from this queue, so there is only ever one consumer of stdin.
+
+    Lines that arrive together are one message. A person pasting a paragraph sends
+    several lines in a few milliseconds, and treating each as its own turn means the
+    agent answers the first sentence while the rest of the paragraph lands on it as
+    interruptions -- which is exactly what a live run did, splitting four messages
+    into six turns and leaving the user's actual question unanswered.
     """
 
     def __init__(self) -> None:
@@ -48,14 +63,31 @@ class LineReader:
             self._queue.put(line.rstrip("\n"))
 
     def get(self, timeout: float | None = None) -> str | None:
-        """Next line, or None on EOF. Raises `queue.Empty` on timeout."""
-        return self._queue.get(timeout=timeout)
+        """Next message, or None on EOF. Raises `queue.Empty` on timeout."""
+        first = self._queue.get(timeout=timeout)
+        return None if first is None else self._rest_of_it(first)
 
     def poll(self) -> str | None | _Nothing:
         try:
-            return self._queue.get_nowait()
+            first = self._queue.get_nowait()
         except queue.Empty:
             return NOTHING
+        return None if first is None else self._rest_of_it(first)
+
+    def _rest_of_it(self, first: str) -> str:
+        """Gather the lines that came with this one."""
+        lines = [first]
+        while True:
+            try:
+                more = self._queue.get(timeout=PASTE_WINDOW_S)
+            except queue.Empty:
+                break
+            if more is None:
+                # EOF ends the session, not this message. Whoever reads next needs it.
+                self._queue.put(None)
+                break
+            lines.append(more)
+        return "\n".join(lines)
 
     def putback(self, line: str | None) -> None:
         """Return something taken but not used.
