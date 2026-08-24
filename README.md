@@ -50,8 +50,12 @@ what the user reads and never what the model does.**
 `doctor` checks each piece separately and says which one is wrong: whether the settings
 are present, whether the workspace service answers and what instances you have, whether
 the model API accepts your key and knows the model id (one free token count, nothing
-generated), whether the toolbox is where it will be synced from, and whether this
-terminal can draw a render inline.
+generated), whether transcripts are still reaching the platform, whether the toolbox is
+where it will be synced from, and whether this terminal can draw a render inline.
+
+Capture is the one worth having in there: it is on by default and fails quietly by
+design, because it must never delay or break a study. The cost of that is there being
+no moment at which anyone finds out it stopped. This is that moment.
 
 ## What it is
 

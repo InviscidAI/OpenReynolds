@@ -304,6 +304,7 @@ def run_checks(cfg: Config) -> list[tuple[str, bool, str]]:
         _check_settings(cfg),
         _check_service(cfg),
         _check_model(cfg),
+        _check_capture(cfg),
         _check_toolbox(),
         _check_terminal(),
     ]
@@ -379,6 +380,30 @@ def _check_model(cfg: Config) -> tuple[str, bool, str]:
     except anthropic.APIError as exc:
         return "model API", False, str(exc)
     return "model API", True, f"{cfg.model} reachable ({counted.input_tokens} tokens for a ping)"
+
+
+def _check_capture(cfg: Config) -> tuple[str, bool, str]:
+    """Whether transcripts are reaching the platform.
+
+    Capture is on by default and fails quietly on purpose -- it must never delay or
+    break a study. The cost of that is there being no moment at which anyone finds
+    out it stopped working, so this is the moment.
+    """
+    if not cfg.capture:
+        return "capture", True, "off for this configuration; nothing is uploaded"
+    if not (cfg.foamd_url and cfg.foamd_api_key):
+        return "capture: not configured", False, ""
+
+    client = hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key)
+    try:
+        study_id = client.create_study("openreynolds doctor", None)
+    except BackendError as exc:
+        return "capture", False, f"a study could not be opened: {exc}"
+    except Exception as exc:  # the platform is optional; naming the failure is not
+        return "capture", False, f"{type(exc).__name__}: {exc}"
+    finally:
+        client.close()
+    return "capture", True, f"transcripts are being kept (opened study {study_id[:8]})"
 
 
 def _check_toolbox() -> tuple[str, bool, str]:

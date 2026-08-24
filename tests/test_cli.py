@@ -339,12 +339,17 @@ def full_config(**over):
     return Config(**values)
 
 
-def stub_service(monkeypatch, instances=None, error=None):
+def stub_service(monkeypatch, instances=None, error=None, study_error=None):
     class Client:
         def list_instances(self):
             if error:
                 raise error
             return instances or []
+
+        def create_study(self, title, instance_id):
+            if study_error:
+                raise study_error
+            return "stud-1234abcd"
 
         def close(self):
             pass
@@ -377,7 +382,14 @@ def test_doctor_reports_every_check(monkeypatch):
     results = labels(cli.run_checks(full_config()))
 
     assert all(ok for ok, _ in results.values())
-    assert set(results) == {"settings", "workspace service", "model API", "toolbox", "terminal"}
+    assert set(results) == {
+        "settings",
+        "workspace service",
+        "model API",
+        "capture",
+        "toolbox",
+        "terminal",
+    }
     assert "1 instance(s)" in results["workspace service"][1]
     assert "claude-opus-5 reachable" in results["model API"][1]
 
@@ -701,3 +713,47 @@ def test_leaving_says_where_the_study_s_files_are(store, backend, monkeypatch):
     cli._report_on_exit(backend, store)
 
     assert "/work/20260824-120000-abcd" in written.getvalue()
+
+
+# -- doctor tells you when capture has quietly stopped --------------------------
+
+
+def test_doctor_reports_capture_reaching_the_platform(monkeypatch):
+    """Capture fails quietly on purpose, so nothing else would ever tell you."""
+    stub_service(monkeypatch)
+    stub_model(monkeypatch)
+
+    ok, detail = labels(cli.run_checks(full_config()))["capture"]
+
+    assert ok
+    assert "transcripts are being kept" in detail
+
+
+def test_doctor_says_when_capture_is_broken(monkeypatch):
+    stub_service(
+        monkeypatch,
+        study_error=BackendError("study quota reached", code="quota", status=402),
+    )
+    stub_model(monkeypatch)
+
+    ok, detail = labels(cli.run_checks(full_config()))["capture"]
+
+    assert not ok
+    assert "quota reached" in detail
+
+
+def test_doctor_does_not_call_the_platform_when_capture_is_off(monkeypatch):
+    """Checking a thing that is switched off would report it broken for doing what
+    it was told."""
+    stub_service(
+        monkeypatch,
+        study_error=AssertionError("capture is off; nothing should have been opened"),
+    )
+    stub_model(monkeypatch)
+    cfg = full_config()
+    cfg.capture = False
+
+    ok, detail = labels(cli.run_checks(cfg))["capture"]
+
+    assert ok
+    assert "off for this configuration" in detail
