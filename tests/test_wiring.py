@@ -239,3 +239,31 @@ def test_every_script_says_how_to_run_it(script):
     if script.name == "personas.py":
         return  # imported, never invoked
     assert "python" in doc, f"{script.name} does not show how to run it"
+
+
+def cli_command_names() -> list[str]:
+    """Every subcommand click will register, from the decorators themselves."""
+    names = []
+    for node in parsed(CLI).body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for decorator in node.decorator_list:
+            if (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr == "command"
+                and decorator.args
+                and isinstance(decorator.args[0], ast.Constant)
+            ):
+                names.append(decorator.args[0].value)
+    return names
+
+
+@pytest.mark.parametrize("command", cli_command_names())
+def test_every_command_is_in_the_readme(command):
+    """`studies` shipped undocumented. A command nobody is told about is a command
+    nobody uses, which is the same outcome as not having written it."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"openreynolds {command}" in readme, (
+        f"`openreynolds {command}` exists and the README never mentions it"
+    )

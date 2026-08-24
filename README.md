@@ -293,6 +293,7 @@ out what is there, so the workspace is readable directly, and none of it involve
 model or costs a token:
 
 ```
+openreynolds studies                     # every study on this machine
 openreynolds files                       # your study's own directory
 openreynolds files /work                 # or the whole volume
 openreynolds files --cat /work/case/log.simpleFoam
