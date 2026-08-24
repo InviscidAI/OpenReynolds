@@ -286,7 +286,15 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
             f"to {images.MAX_ATTACH_BYTES} bytes; this one is larger, so only its size "
             "is reported here."
         )
-    data = ctx.backend.get_file(path)
+    # Ask for the whole thing by name. A backend answering an unbounded read with its
+    # own page size is the normal case, and a picture cut off at that boundary is not
+    # a smaller picture -- it is a corrupt one that still passes every check here.
+    data = ctx.backend.get_file(path, limit=info.size)
+    if len(data) < info.size:
+        return (
+            f"{path} — {media}, {info.size} bytes, but only {len(data)} came back. "
+            "A part of an image is not a smaller image, so it is not attached."
+        )
     shape = images.dimensions(data)
     described = f"{shape[0]}x{shape[1]} " if shape else ""
     return [

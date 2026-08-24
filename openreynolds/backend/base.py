@@ -103,7 +103,18 @@ class Backend(Protocol):
 
     def put_file(self, path: str, data: bytes) -> None: ...
 
-    def get_file(self, path: str, offset: int = 0, limit: int | None = None) -> bytes: ...
+    def get_file(self, path: str, offset: int = 0, limit: int | None = None) -> bytes:
+        """Bytes from `path`, starting at `offset`.
+
+        `limit` is not optional in the way it looks. A backend is free to answer with
+        less than everything, and the hosted one does: asked for a file with no limit
+        it returns its own page size and says nothing about the rest. A caller that
+        wants a whole file has to `stat` it and ask for that many bytes. Leaving this
+        unwritten cost a live bug -- renders between the page size and the attachment
+        ceiling reached the model truncated, and a truncated PNG is not a smaller
+        picture, it is a broken one.
+        """
+        ...
 
     def stat(self, path: str) -> Stat: ...
 

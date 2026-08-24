@@ -122,3 +122,52 @@ def test_the_model_is_sent_the_image_and_the_log_keeps_the_description(ctx, view
     assert "image/png" in logged
     for line in logged.splitlines():
         json.loads(line)  # the log stays parseable
+
+
+# -- a part of a picture is not a picture ---------------------------------------
+
+
+class Paged(dict):
+    """A backend that answers an unbounded read with a page, as the hosted one does."""
+
+
+def paging_backend(ctx, size=2_200_000, page=1_000_000):
+    ctx.backend.files["/work/big.png"] = b"\x89PNG\r\n\x1a\n" + b"\x00" * (size - 8)
+    original = ctx.backend.get_file
+
+    def get_file(path, offset=0, limit=None):
+        return original(path, offset=offset, limit=limit if limit is not None else page)
+
+    ctx.backend.get_file = get_file
+    return ctx
+
+
+def test_a_whole_image_is_asked_for_by_name(ctx):
+    """Asked for a file with no limit, the hosted service returns its page size and
+    says nothing about the rest. A render between that page and the attachment
+    ceiling reached the model truncated, and passed every check on the way."""
+    paging_backend(ctx)
+
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/big.png"})
+
+    assert not is_error
+    assert isinstance(content, list), "the whole picture came back and was attached"
+    image = next(b for b in content if b["type"] == "image")
+    assert len(base64.b64decode(image["source"]["data"])) == 2_200_000
+
+
+def test_a_short_read_is_refused_rather_than_attached(ctx):
+    """If it still comes back short, saying so beats handing over a broken PNG."""
+    ctx.backend.files["/work/short.png"] = b"\x89PNG\r\n\x1a\n" + b"\x00" * 500_000
+
+    def stingy(path, offset=0, limit=None):
+        return ctx.backend.files[path][:1000]
+
+    ctx.backend.get_file = stingy
+
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/short.png"})
+
+    assert not is_error
+    assert isinstance(content, str)
+    assert "only 1000 came back" in content
+    assert "not a smaller image" in content
