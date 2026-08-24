@@ -1,0 +1,101 @@
+"""The other place workflow could leak in.
+
+`tests/test_prompt.py` guards the system prompt, which is frozen and reviewed. The
+briefing is neither: it is assembled fresh every session, it has grown every time
+something turned out to be worth saying, and it is the natural place for "and then you
+should..." to appear one day without anyone noticing.
+
+It carries facts -- which directory is yours, whether anyone is at the terminal, what is
+still running. Every one of those is something the model cannot find out for itself and
+would otherwise get wrong. None of them tells it what to do about any of it, and these
+tests are what keeps that true.
+"""
+
+from __future__ import annotations
+
+import re
+
+import pytest
+
+from conftest import ScriptedReader  # noqa: F401  (keeps conftest importable)
+from openreynolds import cli
+from openreynolds.backend.base import ExecResult, JobStatus
+from openreynolds.browse import Browser
+from openreynolds.store import JobRecord
+from test_prompt import IMPERATIVE_PATTERNS
+
+
+def brief_for(backend, store, **kwargs) -> str:
+    defaults = dict(resuming=False, interactive=True, browser=Browser(backend, store))
+    defaults.update(kwargs)
+    return cli._situation_brief(store, backend, **defaults)
+
+
+def a_workspace(backend, *paths):
+    lines = "".join(f"d\t4096\t1700000000.0\t{path}\n" for path in paths)
+    backend.exec_result = ExecResult(0, lines, False, None)
+
+
+def every_shape_of_briefing(backend, store):
+    """The briefing is assembled from parts; each combination is a thing a user sees."""
+    store.session.home = "/work/20260824-120000-abcd"
+    store.session.instance_id = "inst-1"
+
+    a_workspace(backend)
+    yield "new, empty", brief_for(backend, store)
+    yield "new, empty, nobody watching", brief_for(backend, store, interactive=False)
+
+    a_workspace(backend, "/work/20260824-120000-abcd/elbow")
+    yield "new, inherited files", brief_for(backend, store)
+    yield "resumed", brief_for(backend, store, resuming=True)
+
+    store.session.jobs["job-1"] = JobRecord(
+        job_id="job-1", name="solve", cmd="simpleFoam", status="running"
+    )
+    # A resume re-reads every running job's status, so the backend has to know it too.
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+    yield "resumed with a job running", brief_for(backend, store, resuming=True)
+
+
+@pytest.mark.parametrize("pattern", IMPERATIVE_PATTERNS)
+def test_no_shape_of_the_briefing_tells_the_model_what_to_do(pattern, backend, store):
+    """Same rule as the system prompt, applied to the text that actually varies."""
+    for shape, brief in every_shape_of_briefing(backend, store):
+        match = re.search(pattern, brief, re.IGNORECASE)
+        assert match is None, f"imperative language in the {shape} briefing: {match!r}"
+
+
+def test_the_briefing_says_the_things_only_the_harness_knows(backend, store):
+    """Each of these is something the model cannot find out for itself, and gets
+    wrong when it is left unsaid. That is the whole test for whether a fact belongs."""
+    a_workspace(backend)
+    store.session.home = "/work/20260824-120000-abcd"
+    store.session.instance_id = "inst-1"
+
+    brief = brief_for(backend, store)
+
+    assert "20260824-120000-abcd" in brief, "which study this is"
+    assert "Your directory is" in brief, "and which directory is its own"
+    assert "person is at the terminal" in brief, "whether an answer can arrive"
+
+
+def test_a_run_with_nobody_watching_is_told_so(backend, store):
+    """A question asked into a one-shot run is a turn ending on something nobody will
+    ever read, and the model has no other way to tell which kind of session it is in."""
+    a_workspace(backend)
+    brief = brief_for(backend, store, interactive=False)
+
+    assert "non-interactive" in brief
+    assert "will not be seen" in brief
+
+
+def test_the_briefing_stays_short(backend, store):
+    """It is prepended to every session. Things that turned out to be worth saying
+    accumulate, and the point at which nobody reads it is a real point."""
+    a_workspace(backend, *[f"/work/s/case{n}" for n in range(60)])
+    store.session.home = "/work/s"
+
+    brief = brief_for(backend, store)
+
+    assert len(brief) < 4000, "the briefing has grown past a screenful"
+    assert "and 20 more" in brief, "a long listing is summarised rather than dumped"
