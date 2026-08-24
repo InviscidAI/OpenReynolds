@@ -115,7 +115,7 @@ That is the entire surface. No `run_gate`, no `amend_spec`, no `ask_user` tool �
 Short and environmental — roughly one page:
 
 - who you are (a CFD engineer-agent with full control of a Linux workspace with OpenFOAM ESI v2512 — the version pinned in Plan 1);
-- what exists: the tools above and their semantics; `/work` persists across sessions (so notes-to-self on disk are useful — stated as information, not instruction); `/work/.toolbox/` holds optional scripts and reference notes, usable, editable, replaceable, or ignorable;
+- what exists: the tools above and their semantics; `/work` persists across sessions (so notes-to-self on disk are useful — stated as information, not instruction); each study works in `/work/<study-id>`, named in the briefing, which commands default to and which a new study finds empty, with the rest of the volume holding other studies' work; `/work/.toolbox/` holds optional scripts and reference notes, usable, editable, replaceable, or ignorable;
 - long-running things go in jobs; while a job runs you can end your turn and you'll be woken with the outcome;
 - it's a conversation — ask the user whenever *you* want their input;
 - you decide how to work: what to check, when, and whether. Honesty about what was and wasn't verified is the only standing expectation.
@@ -132,7 +132,7 @@ Standard Anthropic tool-use loop: stream text to the terminal, dispatch `tool_us
 
 > **Amended.** This section originally defaulted to a platform LLM proxy at `<FOAMD_URL>/v1/llm` billed against a master key. Plan 1 subsequently dropped that proxy — its F5 shipped as "BYOK + attribution ledger", the published `openapi.yaml` states there is no `/v1/llm`, and there is no `llm_usage` table. **A hosted proxy is future work, tracked as a TODO in `openreynolds/config.py`**; nothing proxy-specific is built. If one ever ships, `llm_base_url` points at it and the key changes — a config change, not a code change.
 
-**Context strategy — resume doubles as compaction.** A resumed session (`--study X`) is a fresh thread: system prompt + a machine-assembled factual blurb (instance id, running jobs + statuses, study id) + the user's message. The model reorients itself from `/work` — supported, never scripted. When a live session approaches the context window, the harness uses the same move: tells the model the thread is being refreshed (so it can jot anything to disk it wants to keep), then rebuilds as a resume. The model's memory is the filesystem plus whatever notes it chose to keep — which is the free-will version of the architecture doc's "state must outlive context."
+**Context strategy — resume doubles as compaction.** A resumed session (`--study X`) is a fresh thread: system prompt + a machine-assembled factual blurb (instance id, running jobs + statuses, study id, its own directory and what is in it, and whether anyone is at the terminal to answer) + the user's message. The model reorients itself from `/work` — supported, never scripted. When a live session approaches the context window, the harness uses the same move: tells the model the thread is being refreshed (so it can jot anything to disk it wants to keep), then rebuilds as a resume. The model's memory is the filesystem plus whatever notes it chose to keep — which is the free-will version of the architecture doc's "state must outlive context."
 
 ---
 

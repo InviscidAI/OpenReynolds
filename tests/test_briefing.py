@@ -14,6 +14,7 @@ tests are what keeps that true.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -99,3 +100,11 @@ def test_the_briefing_stays_short(backend, store):
 
     assert len(brief) < 4000, "the briefing has grown past a screenful"
     assert "and 20 more" in brief, "a long listing is summarised rather than dumped"
+
+
+def test_the_design_document_describes_the_workspace_the_code_builds():
+    """A plan that contradicts the code is worse than no plan: it is the document
+    someone reads first, and it will be believed."""
+    plan = (Path(__file__).resolve().parents[1] / "plan-2-agent.md").read_text(encoding="utf-8")
+    assert "/work/<study-id>" in plan, "the plan still describes one shared workspace"
+    assert "whether anyone is at the terminal" in plan
