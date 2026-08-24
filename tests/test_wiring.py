@@ -14,6 +14,7 @@ structural check: whatever is declared has to be read somewhere.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -116,3 +117,68 @@ def test_the_check_would_have_caught_the_one_that_got_through():
         if isinstance(n, ast.FunctionDef)
     )
     assert [p for p in params if p not in names_used(body)] == ["study_id"]
+
+
+# -- surfaces that nothing calls -----------------------------------------------
+
+
+PACKAGE = ROOT / "openreynolds"
+
+
+def protocol_methods(name: str) -> list[str]:
+    module = parsed(PACKAGE / "view.py")
+    for node in ast.walk(module):
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            return [n.name for n in node.body if isinstance(n, ast.FunctionDef)]
+    raise AssertionError(f"no class named {name}")
+
+
+def package_source(*skip: str) -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(PACKAGE.rglob("*.py"))
+        if path.name not in skip
+    )
+
+
+@pytest.mark.parametrize("method", protocol_methods("View"))
+def test_every_view_method_is_called_by_something(method):
+    """A view method nothing calls is a thing the interface can draw and the session
+    never asks for -- and both implementations still have to carry it."""
+    callers = package_source("view.py", "tui.py")
+    assert re.search(rf"\.view\.{method}\(|\bview\.{method}\(", callers), (
+        f"View.{method} is declared and never called"
+    )
+
+
+def dataclass_fields(path: Path, class_name: str) -> list[str]:
+    """Annotated attributes on a class, and not the annotated locals in its methods."""
+    for node in ast.walk(parsed(path)):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return [
+                item.target.id
+                for item in node.body
+                if isinstance(item, ast.AnnAssign)
+                and isinstance(item.target, ast.Name)
+                and not item.target.id.startswith("_")
+            ]
+    raise AssertionError(f"no class named {class_name}")
+
+
+@pytest.mark.parametrize("field", dataclass_fields(PACKAGE / "config.py", "Config"))
+def test_every_config_setting_is_read(field):
+    """A setting nobody reads is a promise to the user that nothing keeps."""
+    readers = package_source("config.py")
+    assert re.search(rf"\bcfg\.{field}\b|\bconfig\.{field}\b|\bself\.cfg\.{field}\b", readers), (
+        f"Config.{field} is declared and never read"
+    )
+
+
+@pytest.mark.parametrize("field", dataclass_fields(PACKAGE / "tools.py", "ToolContext"))
+def test_every_tool_context_field_is_read(field):
+    """`ToolContext.view` was added, wired into the tools, and then not passed in by
+    the session for a whole release -- so the jobs panel never updated."""
+    readers = package_source()
+    assert re.search(rf"\bctx\.{field}\b", readers), (
+        f"ToolContext.{field} is declared and never read"
+    )
