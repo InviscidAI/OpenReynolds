@@ -51,6 +51,22 @@ def section(title: str) -> None:
     print(f"\n== {title}")
 
 
+def cli_home(store, backend) -> str:
+    """The session's own answer to "which directory is this study's"."""
+    from openreynolds import cli
+
+    return cli._home_for(store, backend, resuming=True)
+
+
+def situation_brief(store, backend, browser) -> str:
+    """The briefing a resumed session would actually be given."""
+    from openreynolds import cli
+
+    return cli._situation_brief(
+        store, backend, resuming=True, interactive=True, browser=browser
+    )
+
+
 SURFACE_SCRIPT = '''\
 import pyvista as pv
 
@@ -243,6 +259,33 @@ def main() -> int:
         check(report.clean, "stop --force actually stops it", "; ".join(report.lines()))
         check("simpleFoam" not in running_solvers(backend), "and it is gone afterwards")
         backend.exec("rm -f /tmp/simpleFoam", timeout_s=60)
+
+        section("a study comes back to its own directory")
+        # Only matters the second time somebody opens something, which is why it is
+        # the path most likely to break unnoticed.
+        home = f"/work/{study_id}"
+        backend.exec(f"mkdir -p {home}", timeout_s=60)
+        backend.put_file(f"{home}/notes.md", b"# left here by the smoke run\n")
+        store.session.home = home
+        store.save()
+
+        reopened = Store(cfg.studies_dir, study_id)
+        check(reopened.session.home == home, "the directory is remembered across a restart")
+
+        resumed = cli_home(reopened, backend)
+        check(resumed == home, f"and resume returns to it ({resumed})")
+
+        where = backend.exec("pwd", cwd=resumed, timeout_s=60)
+        check(where.output.strip().endswith(study_id), "commands run there", where.output)
+
+        browser = Browser(backend, reopened, home=resumed)
+        names = {entry.name for entry in browser.tree(depth=1)}
+        check("notes.md" in names, "with the work it left still in it", ", ".join(sorted(names)))
+
+        brief = situation_brief(reopened, backend, browser)
+        check("as this study left it" in brief, "and the briefing says so rather than "
+              "describing it as somebody else's", brief[:300])
+        backend.exec(f"rm -rf {home}", timeout_s=60)
 
         section("job records survive a restart")
         reopened = Store(cfg.studies_dir, study_id)

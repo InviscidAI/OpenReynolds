@@ -88,7 +88,16 @@ r/geometry.png
             return ExecResult(0, "usage: cells_estimate.py", False, None)
         if "plot.py" in cmd:
             return ExecResult(0, "PLOT_OK\n", False, None)
+        if cmd.strip() == "pwd":
+            return ExecResult(0, f"{cwd}\n", False, None)
         if cmd.startswith("find "):
+            # A listing is of somewhere in particular: answering every path with the
+            # same contents would let a check pass while looking in the wrong place.
+            target = cmd.split()[1].strip("'\"")
+            if target.startswith("/work/smoke-"):
+                return ExecResult(
+                    0, f"-\t28\t1700000005.0\t{target}/notes.md\n", False, None
+                )
             return ExecResult(0, self.LISTING, False, None)
         if "geo.py" in cmd:
             return ExecResult(0, "SURFACES_OK\n", False, None)
