@@ -490,6 +490,11 @@ class TuiView(View):
     def stage(self, text: str) -> None:
         self._set("stage", text=text)
 
+    def step(self, number: int, seconds: float, tool_calls: int) -> None:
+        """A rule across the activity pane, so the loop has visible joints."""
+        calls = f"{tool_calls} call{'' if tool_calls == 1 else 's'}"
+        self._to("activity", f"[dim]{'-' * 8} step {number}  {calls}  {seconds:.0f}s[/dim]")
+
     def interjection(self, text: str) -> None:
         """The input box already showed what was typed; this confirms it was carried."""
         self._to("conversation", "[dim](sent - it reads this at its next step)[/dim]")

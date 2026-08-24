@@ -53,6 +53,13 @@ class View(Protocol):
     def stage(self, text: str) -> None:
         """What is happening right now, in a few words."""
 
+    def step(self, number: int, seconds: float, tool_calls: int) -> None:
+        """One round of think-then-act finished.
+
+        Without a mark between them the activity pane is an undivided column of
+        tool calls, and a turn that took three rounds looks like one that took
+        thirty. Facts only: which round, how long, how many calls."""
+
     def interjection(self, text: str) -> None:
         """Something the user said that will reach the model without stopping it."""
 
@@ -133,6 +140,10 @@ class ConsoleView(View):
         """
         if text:
             self.console.print(f"[dim]  {text}[/]")
+
+    def step(self, number: int, seconds: float, tool_calls: int) -> None:
+        calls = f"{tool_calls} tool call{'' if tool_calls == 1 else 's'}"
+        self.console.print(f"[dim]  -- step {number}: {calls}, {seconds:.0f}s --[/]")
 
     def watching(self, names: list[str]) -> None:
         """Said once per set of jobs. Watch mode is re-entered after every local

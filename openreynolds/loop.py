@@ -94,7 +94,10 @@ class Loop:
 
     def run(self) -> Any:
         """Stream turns and dispatch tools until the model ends its turn."""
+        step = 0
         while True:
+            step += 1
+            started = time.monotonic()
             response = self._send()
 
             if response.stop_reason == "refusal":
@@ -117,11 +120,18 @@ class Loop:
 
             tool_uses = [b for b in response.content if b.type == "tool_use"]
             if not tool_uses:
+                self.view.step(step, time.monotonic() - started, 0)
                 return response
 
             results: list[Any] = []
             for block in tool_uses:
                 results.append(self._run_tool(block))
+
+            # One round of think-then-act is over. Marking where each ends is what
+            # makes the loop legible: without it the activity pane is an undivided
+            # column of tool calls, and there is no telling a turn that took three
+            # rounds from one that took thirty.
+            self.view.step(step, time.monotonic() - started, len(tool_uses))
 
             # Tool results have to come first in this message, but a text block may
             # follow them. That is how something typed while the model is working

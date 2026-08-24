@@ -236,6 +236,7 @@ class RecordingView(View):
         self.prompts = 0
         self.job_reports = []
         self.stages = []
+        self.steps = []
         self.interjections = []
         self.statuses = []
         self.listings = []
@@ -282,6 +283,9 @@ class RecordingView(View):
 
     def stage(self, text):
         self.stages.append(text)
+
+    def step(self, number, seconds, tool_calls):
+        self.steps.append((number, tool_calls))
 
     def interjection(self, text):
         self.interjections.append(text)

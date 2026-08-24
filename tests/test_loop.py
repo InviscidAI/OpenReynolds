@@ -237,3 +237,37 @@ def test_nothing_typed_leaves_the_message_untouched(loop):
     loop.run()
 
     assert all(b["type"] == "tool_result" for b in loop.messages[2]["content"])
+
+
+# -- the loop has visible joints ------------------------------------------------
+
+
+def test_each_round_of_think_then_act_is_marked(loop, backend, view):
+    """Without a mark between them the activity pane is an undivided column of tool
+    calls, and a turn that took three rounds looks like one that took thirty."""
+    backend.files["/work/log"] = b"Time = 1\n"
+    install(
+        loop,
+        [
+            message(
+                [
+                    tool_block("read_file", {"path": "/work/log"}, "tu_1"),
+                    tool_block("read_file", {"path": "/work/log"}, "tu_2"),
+                ],
+                stop_reason="tool_use",
+            ),
+            message([text_block("two cells")]),
+        ],
+    )
+    loop.say("how many cells?")
+    loop.run()
+
+    assert view.steps == [(1, 2), (2, 0)], "one mark per round, with what it did"
+
+
+def test_a_turn_with_no_tools_is_still_one_round(loop, view):
+    install(loop, [message([text_block("22 Pa")])])
+    loop.say("what is the pressure drop?")
+    loop.run()
+
+    assert view.steps == [(1, 0)]
