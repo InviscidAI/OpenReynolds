@@ -153,6 +153,12 @@ class FoamdClient:
         )
         return body["instance_id"]
 
+    def stop_instance(self, instance_id: str) -> dict[str, Any]:
+        """Put the container down. The volume, and everything on it, stays."""
+        return _json(
+            self.request("POST", f"/v1/instances/{instance_id}/stop", timeout=120.0)
+        )
+
     def start_instance(self, instance_id: str) -> dict[str, Any]:
         return _json(self.request("POST", f"/v1/instances/{instance_id}/start", timeout=180.0))
 
@@ -192,6 +198,12 @@ class HostedBackend(Backend):
     def __init__(self, client: FoamdClient, instance_id: str):
         self._client = client
         self.instance_id = instance_id
+        self.was_already_running = False
+        """Whether somebody else's session had it up before this one asked."""
+
+    def shutdown(self) -> None:
+        """Put the container down. The volume is untouched, so nothing is lost."""
+        self._client.stop_instance(self.instance_id)
 
     def close(self) -> None:
         self._client.close()
@@ -404,13 +416,23 @@ def acquire(
     """
     client = FoamdClient(base_url, api_key)
     try:
+        was_running = False
         if instance_id is None:
             existing = [
                 inst for inst in client.list_instances() if inst.get("status") != "deleted"
             ]
-            instance_id = existing[0]["id"] if existing else client.create_instance()
+            if existing:
+                instance_id = existing[0]["id"]
+                was_running = existing[0].get("status") == "running"
+            else:
+                instance_id = client.create_instance()
         client.start_instance(instance_id)
     except BaseException:
         client.close()
         raise
-    return HostedBackend(client, instance_id), client, instance_id
+    backend = HostedBackend(client, instance_id)
+    # Whether it was already up decides whether whoever asked for it should put it
+    # back down again. A command that borrows a container ought to leave the machine
+    # as it found it; a session is what containers are for.
+    backend.was_already_running = was_running
+    return backend, client, instance_id

@@ -9,11 +9,12 @@ out on the volume, reachable only by asking for it a path at a time.
 So the session mirrors, without being asked. Two things make that safe to do
 automatically:
 
-**It is selective.** A CFD case is not a document; a single one can be tens of
-gigabytes of reconstructed time directories, `processor*/` decompositions and VTK. So
-what comes down by default is the part a person reads -- images, reports, logs, and the
-case *dictionaries* under `system/`, `constant/` and `0/`, which are the setup itself
-and weigh kilobytes. `--all` is there for when that judgement is wrong.
+**Everything comes over.** That is the instruction, and it is the right one: a
+selective mirror is a filter deciding on somebody's behalf what they wanted, and the
+complaint that produced this file was exactly that -- work done and not delivered. So
+the default is all of it, and the only limits left are two caps that exist so an
+automatic background copy can never be the reason a laptop runs out of disk.
+`--readable-only` is there for anyone who wants the small version on purpose.
 
 **Nothing is skipped quietly.** A silent filter and an empty workspace look identical
 from here, and the whole complaint that produced this file was somebody not being able
@@ -34,17 +35,21 @@ from pathlib import Path
 from .backend.base import WORKSPACE_ROOT, BackendError
 from .browse import MAX_ENTRIES, Browser, Entry, human
 
-MAX_FILE_BYTES = 25 * 1024 * 1024
-"""No single file may be bigger than this. A render is a hundred kilobytes and a case
-dictionary is a few; anything at this size is data, and data is what the instance is
-for."""
+MAX_FILE_BYTES = 500 * 1024 * 1024
+"""No single file may be bigger than this.
 
-MAX_TOTAL_BYTES = 200 * 1024 * 1024
-"""And no single sync may pull more than this in total, whatever the filter said.
+Not a filter -- a stop. Everything comes home by default now, so the only job left
+for a cap is to make sure an automatic background copy can never be the reason a
+laptop runs out of disk. Anything it catches is named and counted, never dropped in
+silence, and `openreynolds pull` will still fetch it on request."""
 
-The per-file cap alone does not bound anything: ten thousand files under the limit
-still fill a disk. This is the number that means an automatic background copy can
-never be the reason somebody's laptop stops working."""
+MAX_TOTAL_BYTES = 5 * 1024 * 1024 * 1024
+"""And no single sync may pull more than this in total.
+
+The per-file cap alone bounds nothing: ten thousand files under the limit still fill
+a disk. Deliberately generous, because the instruction is that everything comes
+over -- this is the line past which "everything" would start costing somebody their
+machine, not a judgement about what is worth having."""
 
 DEPTH = 12
 """How deep to look. A case sits a few directories down inside a study, and
@@ -160,7 +165,7 @@ class MirrorReport:
     def _hint(self) -> str:
         if not self.study_id:
             return ""
-        return f"  (openreynolds pull --study {self.study_id} --all takes them anyway)"
+        return f"  (openreynolds pull --study {self.study_id} tries them again)"
 
 
 LISTED_SKIPS = 40

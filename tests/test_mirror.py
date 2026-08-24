@@ -138,20 +138,20 @@ def test_a_path_can_be_asked_for_on_its_own(backend, store):
 def test_one_huge_file_is_left_and_named(backend, store):
     workspace(
         backend,
-        (f"{HOME}/case/log.simpleFoam", 400 * 1024 * 1024),
+        (f"{HOME}/case/log.simpleFoam", mirror.MAX_FILE_BYTES + 1),
         (f"{HOME}/notes.md", 100),
     )
 
     report = mirror.sync(browser_for(backend, store))
 
     assert [Path(p).name for p in report.pulled] == ["notes.md"]
-    assert "over the 25M limit for one file" in report.skipped[0].reason
+    assert "limit for one file" in report.skipped[0].reason
 
 
-def test_the_per_file_cap_holds_even_under_all(backend, store):
-    """`--all` is a statement about which files are interesting, not about how much
-    disk to fill."""
-    workspace(backend, (f"{HOME}/case/processor0/mesh.bin", 400 * 1024 * 1024))
+def test_the_per_file_cap_holds_even_when_taking_everything(backend, store):
+    """"Everything" is a statement about which files are wanted, not about how much
+    disk to fill. The cap is the one thing that stays a stop."""
+    workspace(backend, (f"{HOME}/case/processor0/mesh.bin", mirror.MAX_FILE_BYTES + 1))
 
     report = mirror.sync(browser_for(backend, store), everything=True)
 
@@ -208,7 +208,7 @@ def test_every_skip_carries_a_reason_and_the_reasons_are_reported(backend, store
     assert all(skip.reason for skip in report.skipped)
     assert "3 file(s)" in brief
     assert "2 processor decomposition data" in brief
-    assert "openreynolds pull --study study-test --all" in brief
+    assert "openreynolds pull --study study-test tries them again" in brief
 
 
 def test_a_full_report_names_the_files_it_left(backend, store):
@@ -406,7 +406,9 @@ def as_the_only_study(monkeypatch, backend, store):
     store.save()
 
 
-def test_pull_brings_the_study_down_and_names_what_it_left(backend, store, monkeypatch):
+def test_pull_brings_everything_down(backend, store, monkeypatch):
+    """Everything, by default. The instruction was "all the files ... including every
+    visualization and everything has to be brought over. Always"."""
     wide_console(monkeypatch)
     as_the_only_study(monkeypatch, backend, store)
     workspace(backend, (f"{HOME}/notes.md", 40), (f"{HOME}/case/VTK/a.vtu", 40))
@@ -415,19 +417,25 @@ def test_pull_brings_the_study_down_and_names_what_it_left(backend, store, monke
 
     assert result.exit_code == 0, result.output
     assert (store.files_dir / "study-test" / "notes.md").is_file()
-    assert "a.vtu" in result.output
+    assert (store.files_dir / "study-test" / "case" / "VTK" / "a.vtu").is_file()
     assert str(store.files_dir) in result.output
 
 
-def test_pull_all_takes_the_files_the_filter_refused(backend, store, monkeypatch):
+def test_readable_only_is_the_thing_you_opt_into(backend, store, monkeypatch):
+    """The filter still exists for anyone who wants a small copy, but nobody gets it
+    by accident."""
     wide_console(monkeypatch)
     as_the_only_study(monkeypatch, backend, store)
-    workspace(backend, (f"{HOME}/case/VTK/a.vtu", 40))
+    workspace(backend, (f"{HOME}/notes.md", 40), (f"{HOME}/case/VTK/a.vtu", 40))
 
-    result = CliRunner().invoke(cli.main, ["pull", "--study", "study-test", "--all"])
+    result = CliRunner().invoke(
+        cli.main, ["pull", "--study", "study-test", "--readable-only"]
+    )
 
     assert result.exit_code == 0, result.output
-    assert (store.files_dir / "study-test" / "case" / "VTK" / "a.vtu").is_file()
+    assert (store.files_dir / "study-test" / "notes.md").is_file()
+    assert not (store.files_dir / "study-test" / "case" / "VTK" / "a.vtu").exists()
+    assert "a.vtu" in result.output, "and it says what it left"
 
 
 def test_pull_can_be_pointed_at_one_directory(backend, store, monkeypatch):

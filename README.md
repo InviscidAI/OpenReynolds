@@ -88,6 +88,20 @@ fails the build if imperative workflow language appears in the system prompt.
 Meshing, checking, rendering and post-processing are all `bash`. There is no `run_gate`,
 no `amend_spec`, and no `ask_user` — asking is just talking.
 
+## What the instance costs you
+
+The instance starts when you run `openreynolds` and stops when the session ends --
+`/exit`, end of input, ctrl+C, or a `-p` run finishing. Jobs are stopped first, the
+study is mirrored down first of all, and stopping an instance leaves its volume
+untouched, so nothing is lost by it.
+
+`--keep-alive` leaves it up, which is the right choice when you are stepping away from
+a long solve and mean to come back. It says what it is choosing when you use it.
+
+Everything else -- `files`, `pull`, `stop` -- borrows the instance to answer a question
+and puts it back down afterwards. If it was already running, it belongs to whoever
+started it and is left alone. `doctor` never starts one at all.
+
 ## Stopping
 
 ```bash

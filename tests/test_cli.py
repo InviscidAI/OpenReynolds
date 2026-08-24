@@ -7,7 +7,7 @@ import json
 import pytest
 from click.testing import CliRunner
 
-from conftest import ScriptedReader, install_model, message, text_block, tool_block
+from conftest import FakeBackend, ScriptedReader, install_model, message, text_block, tool_block
 from openreynolds import cli
 from openreynolds.backend.base import BackendError, ExecResult, JobStatus
 from openreynolds.browse import Browser
@@ -761,3 +761,76 @@ def test_doctor_does_not_call_the_platform_when_capture_is_off(monkeypatch):
 
     assert ok
     assert "off for this configuration" in detail
+
+
+# -- the instance lives exactly as long as the session --------------------------
+
+
+class Stoppable(FakeBackend):
+    """A backend that records being put down, the way the hosted one is."""
+
+    def __init__(self, already_running=False):
+        super().__init__()
+        self.was_already_running = already_running
+        self.stopped = 0
+
+    def shutdown(self):
+        self.stopped += 1
+
+
+def test_ending_a_session_stops_the_jobs_and_the_instance(store, quiet_console):
+    """A container left running is a container being paid for, and the only thing
+    that knows the session is over is the session."""
+    backend = Stoppable()
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    cli._close_down(backend, store)
+
+    assert backend.stopped == 1, "the instance was put down"
+    assert not store.live_jobs(), "and the work was stopped first"
+
+
+def test_keep_alive_leaves_it_up_and_says_what_it_is_choosing(store, quiet_console, capsys):
+    backend = Stoppable()
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    cli._close_down(backend, store, keep_alive=True)
+
+    assert backend.stopped == 0
+    assert store.live_jobs(), "the job is still going, which is the point of the flag"
+
+
+def test_a_borrowed_instance_is_handed_back(quiet_console):
+    """Listing files lazy-starts a container as a side effect of asking a question.
+    Leaving it up afterwards is fifteen minutes of somebody's bill per question."""
+    backend = Stoppable(already_running=False)
+    cli._release(backend)
+    assert backend.stopped == 1
+
+
+def test_an_instance_somebody_else_started_is_left_alone(quiet_console):
+    """It belongs to whoever is using it, and a session may well be running on it."""
+    backend = Stoppable(already_running=True)
+    cli._release(backend)
+    assert backend.stopped == 0
+
+
+def test_a_backend_that_cannot_be_stopped_does_not_break_the_exit(store, quiet_console):
+    class Stubborn(Stoppable):
+        def shutdown(self):
+            raise BackendError("instance already gone", code="not_found", status=404)
+
+    cli._close_down(Stubborn(), store)  # must not raise
+
+
+def test_the_files_come_home_before_anything_is_stopped(store):
+    """Order matters more than either step: stopping first would mean mirroring from
+    a container that is no longer there."""
+    import inspect
+
+    source = inspect.getsource(cli.session)
+    assert source.index("_mirror(") < source.index("_close_down("), (
+        "the study is mirrored before the instance is put down"
+    )

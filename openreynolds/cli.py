@@ -49,6 +49,11 @@ console = Console()
 @click.option("--no-capture", is_flag=True, help="Do not send anything to the platform.")
 @click.option("--plain", is_flag=True, help="Plain streaming terminal instead of the interface.")
 @click.option(
+    "--keep-alive",
+    is_flag=True,
+    help="Leave the instance and its jobs running after this session ends.",
+)
+@click.option(
     "--max-wait",
     type=float,
     default=0.0,
@@ -63,6 +68,7 @@ def main(
     model: str | None,
     no_capture: bool,
     plain: bool,
+    keep_alive: bool,
     max_wait: float,
 ) -> None:
     """A CFD agent with a real OpenFOAM workspace."""
@@ -87,6 +93,7 @@ def main(
         instance_id=instance_id,
         one_shot=one_shot,
         plain=plain,
+        keep_alive=keep_alive,
         max_wait=max_wait,
     )
 
@@ -188,6 +195,7 @@ def stop_cmd(study_id: str | None, force: bool) -> None:
 
     try:
         report = stop_everything(backend, store, force=force)
+        _release(backend)
     finally:
         backend.close()
 
@@ -277,6 +285,7 @@ def files_cmd(
         console.print(f"[red]{exc}[/]")
         raise SystemExit(1) from exc
     finally:
+        _release(backend)
         backend.close()
 
 
@@ -284,12 +293,12 @@ def files_cmd(
 @click.argument("path", default="")
 @click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
 @click.option(
-    "--all",
-    "everything",
+    "--readable-only",
+    "selective",
     is_flag=True,
-    help="Take every file, not just the readable ones. The size caps still apply.",
+    help="Only images, reports, logs and case dictionaries, instead of everything.",
 )
-def pull_cmd(path: str, study_id: str | None, everything: bool) -> None:
+def pull_cmd(path: str, study_id: str | None, selective: bool) -> None:
     """Copy this study's files down to this machine.
 
     A session already does this at the end of every turn, so this is for asking
@@ -315,8 +324,11 @@ def pull_cmd(path: str, study_id: str | None, everything: bool) -> None:
     browser = Browser(backend, store, home=store.session.home)
     console.print(f"[bold]{chosen}[/] on {instance[:8]}\n")
     try:
-        report = mirror_sync(browser, path=workspace_path(path), everything=everything)
+        report = mirror_sync(
+            browser, path=workspace_path(path), everything=not selective
+        )
     finally:
+        _release(backend)
         backend.close()
 
     for line in report.lines():
@@ -480,6 +492,7 @@ def session(
     instance_id: str | None,
     one_shot: str | None,
     plain: bool = False,
+    keep_alive: bool = False,
     max_wait: float = 0.0,
 ) -> None:
     resuming = study_id is not None
@@ -557,10 +570,11 @@ def session(
         _pickup_results(backend, capture, store.session.home or WORKSPACE_ROOT)
         # The interface is gone by now, so this reports to the plain console. A
         # one-shot run never had turn ends to sync at, which makes this its only one.
-        _mirror(browser, ConsoleView(console))
+        # It runs before anything is stopped: the work comes home first.
+        _mirror(browser, ConsoleView(console), everything=True)
         if capture:
             capture.close()
-        _report_on_exit(backend, store)
+        _close_down(backend, store, keep_alive=keep_alive)
         backend.close()
         if force_exit:
             # The session thread is still inside a network call it cannot be pulled out
@@ -721,7 +735,7 @@ def _situation_brief(
     return "\n".join(lines)
 
 
-def _mirror(browser: Browser, view: View) -> None:
+def _mirror(browser: Browser, view: View, everything: bool = True) -> None:
     """Copy this study's files down, and say briefly what came.
 
     Nobody asks for this. That is the point of it: what shipped before was a study
@@ -733,12 +747,78 @@ def _mirror(browser: Browser, view: View) -> None:
     wrong here becomes a line of text instead of an exception.
     """
     try:
-        report = mirror_sync(browser)
+        report = mirror_sync(browser, everything=everything)
     except Exception as exc:  # noqa: BLE001 - a convenience may not end a session
         view.warn(f"could not mirror this study's files: {exc}")
         return
     for line in report.brief():
         view.info(line)
+
+
+def _release(backend: Backend) -> None:
+    """Put a borrowed instance back down.
+
+    Only a session is a reason for a container to be running. Everything else here --
+    listing files, pulling them, checking the plumbing -- lazy-starts one as a side
+    effect of asking a question, and every one of those routes was leaving it up
+    afterwards to idle for fifteen minutes on somebody's bill. If it was already
+    running, it belongs to whoever started it and is left alone.
+    """
+    if getattr(backend, "was_already_running", False):
+        return
+    shutdown = getattr(backend, "shutdown", None)
+    if shutdown is None:
+        return
+    try:
+        shutdown()
+    except BackendError as exc:
+        console.print(f"[dim]could not stop the instance ({exc}); it will idle out[/]")
+
+
+def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> None:
+    """End the session: stop the work, then put the container down.
+
+    A container left running is a container being paid for, and the only thing that
+    knows the session is over is the session. The earlier design left jobs running on
+    purpose -- closing a laptop on a long solve is a real thing to want -- but the
+    default it produced was worse: an idle machine burning eight cores until a reaper
+    noticed, and a bill arriving before anyone did.
+
+    So the default is now the other way round, and it is safe to be: the study's files
+    have already come home, and stopping an instance leaves its volume untouched.
+    `--keep-alive` is there for the laptop case, and says what it is choosing.
+    """
+    study = store.session.study_id
+    home = store.session.home or WORKSPACE_ROOT
+    console.print(f"\n[dim]this study's files are in {store.dir}[/]")
+    console.print(f"[dim]on the instance they are at {home}[/]")
+
+    live = store.live_jobs()
+    if keep_alive:
+        if live:
+            names = ", ".join(job.name or job.job_id[:8] for job in live)
+            console.print(f"[yellow]{len(live)} job(s) still running:[/] {names}")
+            console.print("[dim]they keep going, and keep costing, until they finish[/]")
+            console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
+        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        return
+
+    if live:
+        names = ", ".join(job.name or job.job_id[:8] for job in live)
+        console.print(f"[dim]stopping {len(live)} running job(s): {names}[/]")
+    report = stop_everything(backend, store, force=True)
+    for line in report.lines():
+        console.print(f"  [{'green' if report.clean else 'yellow'}]{line}[/]")
+
+    try:
+        shutdown = getattr(backend, "shutdown", None)
+        if shutdown is not None:
+            shutdown()
+            console.print("[dim]instance stopped; the workspace volume is untouched[/]")
+    except BackendError as exc:
+        console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")
+
+    console.print(f"[dim]  resume: openreynolds --study {study}[/]")
 
 
 def _report_on_exit(backend: Backend, store: Store) -> None:
