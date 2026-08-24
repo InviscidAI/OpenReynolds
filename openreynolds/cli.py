@@ -23,6 +23,7 @@ from .capture import Capture
 from . import commands, images
 from .config import Config, config_path
 from .loop import Loop
+from .mirror import sync as mirror_sync
 from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
@@ -265,16 +266,65 @@ def files_cmd(
         view.show_files(path, depth)
 
         local = browser.local()
-        console.print(f"\n[bold]already on this machine[/] ({store.dir})")
+        console.print(f"\n[bold]already on this machine[/] ({store.files_dir})")
         for local_path in local[-20:] if local else []:
             console.print(f"  {local_path}")
         if not local:
-            console.print("  [dim]nothing pulled out yet - openreynolds files --pull <path>[/]")
+            console.print(
+                f"  [dim]nothing here yet - openreynolds pull --study {chosen}[/]"
+            )
     except BackendError as exc:
         console.print(f"[red]{exc}[/]")
         raise SystemExit(1) from exc
     finally:
         backend.close()
+
+
+@main.command("pull")
+@click.argument("path", default="")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+@click.option(
+    "--all",
+    "everything",
+    is_flag=True,
+    help="Take every file, not just the readable ones. The size caps still apply.",
+)
+def pull_cmd(path: str, study_id: str | None, everything: bool) -> None:
+    """Copy this study's files down to this machine.
+
+    A session already does this at the end of every turn, so this is for asking
+    again, for asking about one directory, or for `--all` when the default judgement
+    about what is worth keeping is the wrong one for this study.
+    """
+    cfg = Config.load()
+    studies = list_studies(cfg.studies_dir)
+    if not studies:
+        console.print(f"No studies under {cfg.studies_dir}")
+        raise SystemExit(1)
+    chosen = study_id or studies[0].study_id
+    store = Store(cfg.studies_dir, chosen)
+
+    try:
+        backend, _client, instance = hosted.acquire(
+            cfg.foamd_url, cfg.foamd_api_key, store.session.instance_id or None
+        )
+    except BackendError as exc:
+        console.print(f"[red]Could not reach the workspace service:[/] {exc}")
+        raise SystemExit(1) from exc
+
+    browser = Browser(backend, store, home=store.session.home)
+    console.print(f"[bold]{chosen}[/] on {instance[:8]}\n")
+    try:
+        report = mirror_sync(browser, path=workspace_path(path), everything=everything)
+    finally:
+        backend.close()
+
+    for line in report.lines():
+        console.print(line, highlight=False, markup=False)
+    console.print(f"\n[dim]your copy of this study is in {store.files_dir}[/]")
+    # A sync that reached nothing and had something to complain about is a failure,
+    # and someone who put this in a script needs to be able to tell.
+    raise SystemExit(1 if report.warnings and not report.pulled else 0)
 
 
 @main.command("doctor")
@@ -505,6 +555,9 @@ def session(
             force_exit = bool(_run_tui(drive))
     finally:
         _pickup_results(backend, capture, store.session.home or WORKSPACE_ROOT)
+        # The interface is gone by now, so this reports to the plain console. A
+        # one-shot run never had turn ends to sync at, which makes this its only one.
+        _mirror(browser, ConsoleView(console))
         if capture:
             capture.close()
         _report_on_exit(backend, store)
@@ -668,6 +721,26 @@ def _situation_brief(
     return "\n".join(lines)
 
 
+def _mirror(browser: Browser, view: View) -> None:
+    """Copy this study's files down, and say briefly what came.
+
+    Nobody asks for this. That is the point of it: what shipped before was a study
+    that ran for half an hour on the instance and left two files on the machine of
+    the person who commissioned it, and there is no version of that which is what
+    they wanted.
+
+    It is never allowed to be the reason a session ends, so everything that can go
+    wrong here becomes a line of text instead of an exception.
+    """
+    try:
+        report = mirror_sync(browser)
+    except Exception as exc:  # noqa: BLE001 - a convenience may not end a session
+        view.warn(f"could not mirror this study's files: {exc}")
+        return
+    for line in report.brief():
+        view.info(line)
+
+
 def _report_on_exit(backend: Backend, store: Store) -> None:
     """Say what is still running, because it is still being paid for.
 
@@ -681,12 +754,15 @@ def _report_on_exit(backend: Backend, store: Store) -> None:
         # Knowing a study has a directory of its own is no use without being told
         # which one it is.
         console.print(f"\n[dim]this study's files are in {home} on the instance[/]")
+        console.print(f"[dim]your copy of them: {store.files_dir}[/]")
         console.print(f"[dim]resume with:  openreynolds --study {study}[/]")
         console.print(f"[dim]look at them: openreynolds files --study {study}[/]")
+        console.print(f"[dim]bring more:   openreynolds pull --study {study} --all[/]")
         return
     names = ", ".join(job.name or job.job_id[:8] for job in live)
     console.print(f"\n[yellow]{len(live)} job(s) still running on the instance:[/] {names}")
     console.print("[dim]they keep going, and keep costing, until they finish[/]")
+    console.print(f"[dim]  your copy of this study so far: {store.files_dir}[/]")
     console.print(f"[dim]  resume: openreynolds --study {study}[/]")
     console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
 
@@ -882,7 +958,12 @@ def _run_interactive(
             if spoken is None:
                 continue
 
-        if _run_turn(loop, view) and loop.needs_refresh:
+        completed = _run_turn(loop, view)
+        # After the turn rather than before it: whatever the agent just made is the
+        # thing worth having, and a turn that failed still leaves whatever its jobs
+        # wrote. Unchanged files are not asked for again, so this is cheap.
+        _mirror(browser, view)
+        if completed and loop.needs_refresh:
             loop.refresh(situation(store, backend))
 
 

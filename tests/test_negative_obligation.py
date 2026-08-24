@@ -13,7 +13,15 @@ import pytest
 
 PACKAGE = Path(__file__).resolve().parents[1] / "openreynolds"
 
-ABOVE_THE_PROTOCOL = ["tools.py", "loop.py", "prompt.py", "store.py", "watch.py"]
+ABOVE_THE_PROTOCOL = [
+    "tools.py",
+    "loop.py",
+    "prompt.py",
+    "store.py",
+    "watch.py",
+    "browse.py",
+    "mirror.py",
+]
 
 FORBIDDEN = ["httpx", "http://", "https://", "/v1/", "modal", "foamd", "Bearer"]
 

@@ -164,6 +164,7 @@ openreynolds/
   watch.py     store.py     capture.py   config.py
   view.py      tui.py       images.py    stopping.py
   browse.py    # read-only window onto the workspace
+  mirror.py    # the local copy of the study, kept without being asked
   commands.py  # /btw, /status - what the user types that is not a message
   backend/
     base.py    # the protocol — no transport, no vendor
@@ -310,6 +311,38 @@ openreynolds files --open                # the study folder in your file browser
 
 In the interface the **files** tab is the same thing live: ctrl+F to open it, ctrl+R to
 refresh, enter on a file to read it, ctrl+P to copy it out.
+
+### It comes down on its own
+
+Reading the workspace over the wire is not the same as having the study. For a while
+that was all there was: a run that took half an hour left two files on the machine that
+commissioned it, its transcript and its session record, and everything it had actually
+made stayed out on the volume. So the session mirrors `/work/<study-id>` into
+`studies/<id>/files/` at the end of every turn and once more on the way out.
+
+Selectively, because a case is not a document. One can be tens of gigabytes of
+reconstructed time directories, `processor*/` decompositions and VTK, and a tool that
+copied all of it by default would be a tool nobody could leave running. What comes down
+is the part a person reads — images, reports, notes, logs, `postProcessing/`, and the
+case *dictionaries* under `system/`, `constant/` and `0/`, which are the setup itself
+and weigh kilobytes. What stays: `processor*/`, every written time directory after the
+initial one, `polyMesh/`, VTK, `__pycache__`, anything over 25 MB, and anything past a
+200 MB budget for one sync.
+
+Every file left behind is named, with the reason it was left, because a silent filter
+and an empty workspace look identical from this end — and telling those two apart is
+the entire reason this exists.
+
+```bash
+openreynolds pull                            # again, now
+openreynolds pull /work/<study-id>/case      # or one directory of it
+openreynolds pull --all                      # when that judgement is wrong for this study
+```
+
+Only what changed is asked for — remote size and mtime against what is already here —
+so once a study settles the per-turn sync costs one directory listing and nothing else.
+A failure warns and the session carries on; a mirror that ends a study would be worse
+than one that misses a file.
 
 ## Saying something without stopping the work
 
