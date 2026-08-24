@@ -208,3 +208,12 @@ def test_every_backend_method_is_used(method):
     assert re.search(rf"backend\.{method}\(", callers), (
         f"Backend.{method} is on the protocol and nothing above it calls it"
     )
+
+
+def test_the_documents_do_not_carry_a_test_count():
+    """A number that has to be edited by hand goes stale, and a stale count in a
+    document about verification is worse than no count at all."""
+    for document in [ROOT / "README.md", *(ROOT / "docs").glob("*.md")]:
+        text = document.read_text(encoding="utf-8")
+        stale = re.findall(r"\b\d{3,4} (?:unit )?tests\b", text)
+        assert not stale, f"{document.name} claims {stale}, which nothing keeps true"

@@ -256,7 +256,7 @@ Two details that took a while to get right, and both matter more than they sound
   interrupting at all.
 
 Every defect in [docs/found-by-using-it.md](docs/found-by-using-it.md) was found this
-way, and none of them by the 392 unit tests. Most were invisible until something above
+way, and none of them by the unit suite. Most were invisible until something above
 them was fixed first, which is the argument for driving the whole product from outside
 rather than testing its parts.
 
