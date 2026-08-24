@@ -174,3 +174,61 @@ found two defects a test never would have:
 A third came from looking again after fixing those: a sphere rendered as a black blob,
 because its facets were smaller than the lines outlining them. Edge visibility is now
 decided per part from how many pixels a facet actually gets.
+
+## Things that were true and nothing kept true
+
+A different shape of the same problem. Not code that does nothing — prose that says
+something the code stopped doing.
+
+- **The design document** still described one shared `/work` after studies got
+  directories of their own. It is the document someone reads first, and it will be
+  believed.
+- **`openreynolds studies`** existed from the first commit and the README never
+  mentioned it. A command nobody is told about is a command nobody uses, which is the
+  same outcome as not having written it.
+- **A test count in the README** was already wrong by 112 the moment it was written. A
+  stale count in a document about verification is worse than none: it is a claim
+  nothing keeps true, sitting next to claims that are.
+
+All three are now checked. The command list is read out of the click decorators, so it
+cannot fall behind them.
+
+## What only shows up with a model in the loop
+
+- **Capture fails quietly on purpose** — it must never delay or break a study — so
+  nothing ever announced that it had stopped. `doctor` opens a study and says. It was
+  working, but establishing that meant reading eight `session.json` files by hand, which
+  is archaeology rather than a check.
+- **Nothing said how long anything took.** A command that ran four minutes and one that
+  ran two seconds came back as the same line. A job going two hours read like one
+  started a minute ago.
+- **The loop had no visible joints.** The activity pane coloured tool calls but never
+  marked where one round of think-then-act ended, so a turn of three rounds looked like
+  one of thirty. A live run then showed seven rounds inside a single turn at roughly
+  twenty seconds each — which is also why anyone watching reaches for the keyboard.
+
+## A test case that was the problem
+
+The controller persona ran out of time twice, and nothing was broken. Its goal asked how
+air divides between two branches of a symmetric wye. A symmetric wye fed symmetrically
+splits 50/50 by symmetry; the real question is what breaks the symmetry — the fan
+upstream, the resistance downstream — and none of that is in the geometry.
+
+The agent said exactly that on its second turn and was right, then spent twenty-eight
+minutes on a research question wearing the clothes of a simple one.
+
+Worth recording because the failure looked identical to a product failure from the
+outside: a run that does not finish. The persona exists to test whether the agent can
+keep you informed while it works, not whether it can close an open problem. Goals now
+name a geometry, a flow rate, and one number to produce, and a test holds them to it.
+
+## What the runs say about the toolbox
+
+Across every persona run: `geometry_view.py` was used zero times, and `read_file` on a
+PNG was used constantly — the agent renders its own figures and then looks at them,
+including one it named `WHAT_TO_LOOK_FOR.png` and read back twice.
+
+That is the design working rather than failing. The capability — being able to see what
+you drew — gets used every session. The pre-built script does not, because the agent
+would rather write the render its own case needs. It also says which half was worth
+building: the image plumbing is load-bearing, the script is a convenience.
