@@ -93,6 +93,39 @@ everything typed into it accepted, echoed, and discarded.
 more: reporting the end crashed on a torn-down screen, and hopping to an event loop
 mid-shutdown blocked for seconds.
 
+## Every study opened into everybody else's files
+
+The volume outlives every session, and a new study opened straight into it, among
+every other study's cases. That is not a clean slate by any reading of the words.
+
+One run inherited a velocity from a case an earlier session had abandoned and carried
+it several turns before noticing. A later one opened by finding somebody else's
+simulations, rebuilding one from scratch and re-running it to check they were real
+before it would use them -- which is exactly right, and is also several minutes spent
+on a problem that should not have existed.
+
+**Fix:** a study gets `/work/<study-id>`, made at session start, and it is the default
+working directory for `bash` and `job_start`. Starting a new project starts somewhere
+empty. Nothing to clear, no flag to remember. The volume still persists; studies made
+before this keep the whole workspace, because moving their files out from under them
+would be worse.
+
+## Three things that were defined and never called
+
+Each looked done from the outside -- named, documented, visible in `--help` -- and did
+nothing.
+
+- **`--fresh`** moved earlier work aside so personas could not contaminate each other.
+  It was never invoked. Four runs shared one workspace because of it. Found by reading
+  an agent's own words in a transcript: *"the old simulations in this workspace were
+  done by someone else."*
+- **`--turns`** was clipped by `min()` against the persona's own default, so asking for
+  14 silently gave 8 -- and the run then reported "ran out of turns" as though the
+  conversation had run its course.
+- **`args.turns or persona.turns`** treated an explicit `--turns 0` as "unset".
+
+The lesson is the same each time: a flag that is not exercised by a test is a comment.
+
 ## Smaller ones, same origin
 
 - **A stalled model connection hung forever.** No timeout meant a dead socket was
@@ -101,10 +134,6 @@ mid-shutdown blocked for seconds.
 - **A five-minute command looked like a hang.** One line when it starts and nothing
   after. Slow calls now report elapsed time every 10 s — which also stops anything
   watching the terminal from concluding the turn ended.
-- **Workspace contamination.** The volume outlives every session, so a new study opens
-  in a directory full of other studies' work. A live run picked up a velocity from an
-  abandoned case and carried it for several turns. The session brief now says what is
-  there and whose it is.
 - **cp1252 stdout killed the test harness** on the first sigma in the first reply — the
   exact failure the product already defended against, in a script that didn't. The
   defence moved to one module so the two cannot be fixed separately again.

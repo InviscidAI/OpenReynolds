@@ -278,13 +278,19 @@ directory and tells you where — the file browser can draw what the terminal ca
 
 ## Looking at the workspace
 
+Each study works in `/work/<study-id>`, made when the session starts. A new project
+starts in an empty directory -- there is nothing to clear and no flag to remember -- and
+commands run there unless the model says otherwise. The volume still persists, so the
+rest of it holds other studies' work: readable if wanted, and written for somebody
+else's question.
+
 The agent decides what it copies out. You should not have to negotiate with it to find
 out what is there, so the workspace is readable directly, and none of it involves the
 model or costs a token:
 
 ```
-openreynolds files                       # the tree under /work
-openreynolds files /work/case            # a subtree
+openreynolds files                       # your study's own directory
+openreynolds files /work                 # or the whole volume
 openreynolds files --cat /work/case/log.simpleFoam
 openreynolds files --pull /work/case/renders   # copy it to this machine
 openreynolds files --open                # the study folder in your file browser
