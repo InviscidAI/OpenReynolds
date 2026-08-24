@@ -217,3 +217,25 @@ def test_the_documents_do_not_carry_a_test_count():
         text = document.read_text(encoding="utf-8")
         stale = re.findall(r"\b\d{3,4} (?:unit )?tests\b", text)
         assert not stale, f"{document.name} claims {stale}, which nothing keeps true"
+
+
+# -- the scripts nobody runs until they matter ---------------------------------
+
+
+SCRIPTS = sorted((ROOT / "scripts").glob("*.py"))
+
+
+@pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
+def test_every_script_parses(script):
+    """These only run when someone has credentials, which is the worst moment to
+    discover a typo in one."""
+    ast.parse(script.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
+def test_every_script_says_how_to_run_it(script):
+    doc = ast.get_docstring(ast.parse(script.read_text(encoding="utf-8")))
+    assert doc, f"{script.name} has no docstring"
+    if script.name == "personas.py":
+        return  # imported, never invoked
+    assert "python" in doc, f"{script.name} does not show how to run it"
