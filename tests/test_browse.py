@@ -27,7 +27,7 @@ def test_the_tree_comes_back_in_one_call(backend):
     listing_backend(backend)
     entries = Browser(backend).tree()
 
-    assert backend.last_exec[0].startswith("find /work")
+    assert backend.last_exec[0].startswith("find -H /work")
     assert [e.path for e in entries][0] == "/work/case"
     assert len(entries) == 5
 
@@ -137,19 +137,19 @@ def test_looking_starts_in_the_study_s_own_directory(backend):
     listing_backend(backend)
     Browser(backend, home="/work/20260824-120000-abcd").tree()
 
-    assert "find /work/20260824-120000-abcd" in backend.last_exec[0]
+    assert "find -H /work/20260824-120000-abcd" in backend.last_exec[0]
 
 
 def test_an_explicit_path_still_wins(backend):
     listing_backend(backend)
     Browser(backend, home="/work/mine").tree("/work")
-    assert "find /work " in backend.last_exec[0]
+    assert "find -H /work " in backend.last_exec[0]
 
 
 def test_a_browser_without_a_home_looks_at_the_whole_workspace(backend):
     listing_backend(backend)
     Browser(backend).tree()
-    assert "find /work " in backend.last_exec[0]
+    assert "find -H /work " in backend.last_exec[0]
 
 
 def test_a_depth_is_honoured(backend):
@@ -157,3 +157,13 @@ def test_a_depth_is_honoured(backend):
     listing_backend(backend)
     Browser(backend, home="/work/mine").tree(depth=1)
     assert "-maxdepth 1" in backend.last_exec[0]
+
+
+def test_the_workspace_root_is_listed_through_its_symlink(backend):
+    """`/work` is a symlink to the volume, and `find` will not descend into a symlink
+    named as the final path component. Without -H, listing the workspace returns
+    nothing at all -- not an error, an empty workspace, which is the most convincing
+    wrong answer available."""
+    listing_backend(backend)
+    Browser(backend).tree("/work")
+    assert backend.last_exec[0].startswith("find -H /work")

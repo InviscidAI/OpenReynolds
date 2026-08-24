@@ -77,8 +77,13 @@ class Browser:
         directories, and a listing that takes a minute to draw is not a listing.
         """
         path = path or self.home
+        # `-H` follows a symlink named on the command line, and only that one. The
+        # workspace root is a symlink to the volume, so without this, listing it
+        # returns nothing at all -- not an error, just an empty workspace, which is
+        # the most convincing wrong answer available. Deeper symlinks are still left
+        # alone, so no loop can be walked into.
         cmd = (
-            f"find {shlex.quote(path)} -maxdepth {int(depth)} -mindepth 1 "
+            f"find -H {shlex.quote(path)} -maxdepth {int(depth)} -mindepth 1 "
             f"-printf '{FIND_FORMAT}' 2>/dev/null | head -n {MAX_ENTRIES}"
         )
         result = self.backend.exec(cmd, timeout_s=60)

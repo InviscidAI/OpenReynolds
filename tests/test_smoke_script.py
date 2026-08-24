@@ -93,7 +93,12 @@ r/geometry.png
         if cmd.startswith("find "):
             # A listing is of somewhere in particular: answering every path with the
             # same contents would let a check pass while looking in the wrong place.
-            target = cmd.split()[1].strip("'\"")
+            # `-H` sits before the path, so the target is the first non-flag word.
+            target = next(
+                word.strip("'\"")
+                for word in cmd.split()[1:]
+                if not word.startswith("-")
+            )
             if target.startswith("/work/smoke-"):
                 return ExecResult(
                     0, f"-\t28\t1700000005.0\t{target}/notes.md\n", False, None

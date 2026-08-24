@@ -117,7 +117,9 @@ def volume_with(backend, *paths):
     """`find` answers for whichever path it is asked about."""
 
     def looking(cmd, cwd=None, timeout_s=120):
-        target = cmd.split()[1].strip("'\"")
+        target = next(
+            word.strip("'\"") for word in cmd.split()[1:] if not word.startswith("-")
+        )
         rows = [p for p in paths if p.rsplit("/", 1)[0] == target.rstrip("/")]
         return ExecResult(0, "".join(f"d\t0\t1700000000.0\t{p}\n" for p in rows), False, None)
 
@@ -134,8 +136,8 @@ def test_the_briefing_says_what_the_other_directories_are(backend, store):
 
     brief = brief_for(backend, store)
 
-    assert "2 other directories of this tool's own earlier sessions" in brief
-    assert "named after its study id" in brief
+    assert "2 other directories from this tool's own earlier sessions" in brief
+    assert "one per study id" in brief
 
 
 def test_one_neighbour_is_described_in_the_singular(backend, store):
@@ -144,14 +146,14 @@ def test_one_neighbour_is_described_in_the_singular(backend, store):
 
     brief = brief_for(backend, store)
 
-    assert "one other directory of this tool's own earlier sessions" in brief
+    assert "one other directory from this tool's own earlier sessions" in brief
 
 
 def test_an_empty_volume_says_there_are_none(backend, store):
     store.session.home = "/work/mine"
     volume_with(backend, "/work/mine")
 
-    assert "holds no directories" in brief_for(backend, store)
+    assert "yours is the first" in brief_for(backend, store)
 
 
 def test_a_study_that_owns_the_whole_workspace_is_told_nothing_about_neighbours(

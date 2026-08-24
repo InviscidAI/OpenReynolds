@@ -573,16 +573,7 @@ def _workspace_note(browser: Browser, home: str, resuming: bool) -> str:
         # made minutes apart by a user who did not remember commissioning them, and
         # worked through whether that meant an intruder. The answer is dull and the
         # harness has always known it -- they are this same tool's other sessions.
-        others = _other_studies(browser, home)
-        neighbours = (
-            f"\n{WORKSPACE_ROOT} also holds {others} directory of this tool's own "
-            "earlier sessions on this instance, each named after its study id. They "
-            "are readable, and none of them was written for this request."
-            if others == "one other"
-            else f"\n{WORKSPACE_ROOT} also holds {others} directories of this tool's "
-            "own earlier sessions on this instance, each named after its study id. "
-            "They are readable, and none of them was written for this request."
-        )
+        neighbours = _neighbours(browser, home)
 
     if not entries:
         return f"Your directory is {home}. It is empty.{neighbours}"
@@ -605,8 +596,15 @@ def _workspace_note(browser: Browser, home: str, resuming: bool) -> str:
     return f"{head}\n{listed}{neighbours}"
 
 
-def _other_studies(browser: Browser, home: str) -> str:
-    """How many other session directories share the volume."""
+def _neighbours(browser: Browser, home: str) -> str:
+    """One sentence about the other session directories, or nothing when there are none.
+
+    Saying whose the work is without saying what those sessions are leaves a real
+    question open, and a live run spent turns on it: it found several near-identical
+    studies made minutes apart by a user who did not remember commissioning them, and
+    worked through whether that meant an intruder. The answer is dull and the harness
+    has always known it -- they are this same tool's other sessions.
+    """
     try:
         siblings = [
             entry
@@ -614,10 +612,19 @@ def _other_studies(browser: Browser, home: str) -> str:
             if entry.is_dir and not entry.name.startswith(".") and entry.path != home
         ]
     except BackendError:
-        return "some"
+        return ""
     if not siblings:
-        return "no"
-    return "one other" if len(siblings) == 1 else f"{len(siblings)} other"
+        return f"\nNothing else of this tool's is on {WORKSPACE_ROOT}; yours is the first."
+    count = (
+        "one other directory"
+        if len(siblings) == 1
+        else f"{len(siblings)} other directories"
+    )
+    return (
+        f"\n{WORKSPACE_ROOT} also holds {count} from this tool's own earlier sessions "
+        "on this instance, one per study id. They are readable, and none of them was "
+        "written for this request."
+    )
 
 
 def _when(mtime: float) -> str:

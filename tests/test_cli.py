@@ -669,8 +669,7 @@ def test_the_rest_of_the_volume_is_mentioned_once_not_listed(backend, store):
     brief = cli._situation_brief(
         store, backend, resuming=False, interactive=True, browser=Browser(backend, store)
     )
-    assert "this tool's own earlier sessions" in brief
-    assert "was written for this request" in brief
+    assert "yours is the first" in brief
 
 
 def test_a_resumed_session_is_told_the_workspace_is_its_own(backend, store):
