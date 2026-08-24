@@ -150,3 +150,10 @@ def test_a_browser_without_a_home_looks_at_the_whole_workspace(backend):
     listing_backend(backend)
     Browser(backend).tree()
     assert "find /work " in backend.last_exec[0]
+
+
+def test_a_depth_is_honoured(backend):
+    """`files --depth` was declared, documented, and did nothing for a while."""
+    listing_backend(backend)
+    Browser(backend, home="/work/mine").tree(depth=1)
+    assert "-maxdepth 1" in backend.last_exec[0]

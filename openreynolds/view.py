@@ -59,7 +59,7 @@ class View(Protocol):
     def workspace(self, browser: Any) -> None:
         """A read-only way to look at the workspace, for views that can show one."""
 
-    def show_files(self, path: str = "") -> None:
+    def show_files(self, path: str = "", depth: int = 0) -> None:
         """Show what is in the workspace. Answered locally; the model is not told."""
 
     def status(self, lines: list[str]) -> None:
@@ -151,13 +151,13 @@ class ConsoleView(View):
     def workspace(self, browser: Any) -> None:
         self._browser = browser
 
-    def show_files(self, path: str = "") -> None:
+    def show_files(self, path: str = "", depth: int = 0) -> None:
         if self._browser is None:
             self.console.print("[yellow]no workspace to look at[/]")
             return
         target = path or self._browser.home
         try:
-            entries = self._browser.tree(target)
+            entries = self._browser.tree(target, depth) if depth else self._browser.tree(target)
         except Exception as exc:
             self.console.print(f"[red]could not list {target}:[/] {exc}")
             return

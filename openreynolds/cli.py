@@ -262,7 +262,7 @@ def files_cmd(
         console.print(f"[bold]{chosen}[/] on {instance[:8]}\n")
         view = ConsoleView(console)
         view.workspace(browser)
-        view.show_files(path)
+        view.show_files(path, depth)
 
         local = browser.local()
         console.print(f"\n[bold]already on this machine[/] ({store.dir})")

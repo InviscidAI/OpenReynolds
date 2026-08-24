@@ -499,7 +499,8 @@ class TuiView(View):
         self.app.browser = browser
         self.app.call_from_thread(self.app.show_files_tab, browser.home)
 
-    def show_files(self, path: str = "") -> None:
+    def show_files(self, path: str = "", depth: int = 0) -> None:
+        """Depth is the flat listing's concern; the tree loads what it needs."""
         self.app.call_from_thread(self.app.show_files_tab, path)
 
     def status(self, lines: list[str]) -> None:
