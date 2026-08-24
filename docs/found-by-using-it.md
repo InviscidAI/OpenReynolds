@@ -123,8 +123,26 @@ nothing.
   14 silently gave 8 -- and the run then reported "ran out of turns" as though the
   conversation had run its course.
 - **`args.turns or persona.turns`** treated an explicit `--turns 0` as "unset".
+- **The line telling the user where their files are.** The edit silently failed, the
+  shell chain hid it, and it was reported as done. The test written for it would have
+  passed against a no-op, because its own fixture routed the output to `/dev/null`.
 
 The lesson is the same each time: a flag that is not exercised by a test is a comment.
+
+So `tests/test_wiring.py` checks the structure rather than the instances. Every click
+option arrives as a function parameter, and a parameter nothing reads is an option that
+does nothing while `--help` still advertises it. Every argparse destination has to be
+read. Every `View` method has to be called, every `Config` setting read, every
+`ToolContext` field used, every `Backend` method exercised by something above the
+protocol.
+
+It found a fifth on its first run: `files --depth` was declared, documented, given a
+`show_default`, and threaded nowhere. Fixed rather than exempted.
+
+`ToolContext.view` is the case that justifies the whole file. It was added, wired into
+the tools so job state would reach a panel, and then not passed in by the session. The
+panel never updated for a release, and every test stayed green, because they built the
+context themselves and never went through the session that was failing to.
 
 ## Smaller ones, same origin
 

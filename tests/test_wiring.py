@@ -182,3 +182,29 @@ def test_every_tool_context_field_is_read(field):
     assert re.search(rf"\bctx\.{field}\b", readers), (
         f"ToolContext.{field} is declared and never read"
     )
+
+
+def backend_methods() -> list[str]:
+    module = parsed(PACKAGE / "backend" / "base.py")
+    for node in ast.walk(module):
+        if isinstance(node, ast.ClassDef) and node.name == "Backend":
+            return [
+                n.name
+                for n in node.body
+                if isinstance(n, ast.FunctionDef) and not n.name.startswith("_")
+            ]
+    raise AssertionError("no Backend protocol")
+
+
+@pytest.mark.parametrize("method", backend_methods())
+def test_every_backend_method_is_used(method):
+    """The protocol is the whole independence story: every method on it is a promise
+    a future local backend has to keep. One nothing calls is a promise for nothing."""
+    callers = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(PACKAGE.rglob("*.py"))
+        if "backend" not in path.parts
+    )
+    assert re.search(rf"backend\.{method}\(", callers), (
+        f"Backend.{method} is on the protocol and nothing above it calls it"
+    )
