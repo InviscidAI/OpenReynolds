@@ -358,3 +358,21 @@ def test_the_toolbox_sticks_to_what_the_image_provides():
                 continue
             for root in roots:
                 assert root in allowed, f"{script.name} imports {root}, absent from the image"
+
+
+def test_the_toolbox_index_names_every_script_in_it():
+    """The scripts are discoverable by listing the directory, which tells you their
+    filenames and nothing else. An index costs one file and says what each is for."""
+    index = (TOOLBOX / "README.md").read_text(encoding="utf-8")
+    for script in sorted(TOOLBOX.glob("*.py")):
+        assert script.name in index, f"{script.name} is in the toolbox and not in its index"
+
+
+def test_the_index_offers_rather_than_instructs():
+    """The toolbox is offered, not imposed. An index that told the model when to run
+    things would be the workflow injection the whole design exists to avoid."""
+    # Normalised, because where a sentence happens to wrap is not the point.
+    index = " ".join((TOOLBOX / "README.md").read_text(encoding="utf-8").lower().split())
+    for imperative in ("you must", "always run", "before you", "step 1", "first,"):
+        assert imperative not in index
+    assert "ignore them" in index
