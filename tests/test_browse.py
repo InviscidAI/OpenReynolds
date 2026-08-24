@@ -127,3 +127,26 @@ class _FakeExec:
 
     def stat(self, path):
         return SimpleNamespace(path=path, is_dir=True, entries=[], size=0, mtime=0)
+
+
+# -- looking starts in the study's own directory --------------------------------
+
+
+def test_looking_starts_in_the_study_s_own_directory(backend):
+    """"Show me my files" means this study's, not every study that ever ran here."""
+    listing_backend(backend)
+    Browser(backend, home="/work/20260824-120000-abcd").tree()
+
+    assert "find /work/20260824-120000-abcd" in backend.last_exec[0]
+
+
+def test_an_explicit_path_still_wins(backend):
+    listing_backend(backend)
+    Browser(backend, home="/work/mine").tree("/work")
+    assert "find /work " in backend.last_exec[0]
+
+
+def test_a_browser_without_a_home_looks_at_the_whole_workspace(backend):
+    listing_backend(backend)
+    Browser(backend).tree()
+    assert "find /work " in backend.last_exec[0]

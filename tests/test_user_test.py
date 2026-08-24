@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from types import SimpleNamespace
 import time
 from pathlib import Path
 
@@ -410,3 +411,58 @@ def test_the_persona_is_told_whether_it_was_answered_or_is_interrupting(ut):
 
     ut.next_user_message(client, "m", persona, [("go", "it is 22 Pa", False)], "goal")
     assert "consultant replied" in captured["messages"][2]["content"]
+
+
+def test_a_fresh_run_actually_clears_the_workspace(ut, monkeypatch):
+    """The flag existed, was documented, appeared in --help, and was never read. Four
+    persona runs shared a workspace because of it, and one of them opened by finding
+    another study's cases and having to verify them before it could start."""
+    from types import SimpleNamespace
+
+    cleared = []
+    monkeypatch.setattr(ut, "clear_workspace", lambda: cleared.append(True) or "cleared")
+    monkeypatch.setattr(ut, "AgentSession", _NoSession)
+    monkeypatch.setattr(ut, "quieten", lambda repo, study: "nothing to stop")
+
+    args = SimpleNamespace(
+        fresh=True, goal=None, log=None, model=None, turns=0, idle=1.0, cap=1.0,
+        speak_after=0.0, budget=0.0, user_model="m",
+    )
+    ut.run_one(None, ut.ALL["engineer"], args, Path("."))
+
+    assert cleared, "the workspace was cleared before the persona started"
+
+
+def test_no_fresh_leaves_the_workspace_alone(ut, monkeypatch):
+    from types import SimpleNamespace
+
+    cleared = []
+    monkeypatch.setattr(ut, "clear_workspace", lambda: cleared.append(True) or "cleared")
+    monkeypatch.setattr(ut, "AgentSession", _NoSession)
+    monkeypatch.setattr(ut, "quieten", lambda repo, study: "nothing to stop")
+
+    args = SimpleNamespace(
+        fresh=False, goal=None, log=None, model=None, turns=0, idle=1.0, cap=1.0,
+        speak_after=0.0, budget=0.0, user_model="m",
+    )
+    ut.run_one(None, ut.ALL["engineer"], args, Path("."))
+
+    assert not cleared
+
+
+class _NoSession:
+    """An agent that starts, says nothing, and closes."""
+
+    def __init__(self, argv, cwd):
+        self.process = SimpleNamespace(poll=lambda: 0, wait=lambda timeout=None: 0)
+
+    def read_until_turn(self, *a, **k):
+        import user_test_under_test as module
+
+        return module.Reply("study 20260824-000000-abcd on instance x\n> ", by_prompt=True)
+
+    def send(self, text):
+        raise AssertionError("no turns were requested")
+
+    def close(self, timeout=60.0):
+        return 0

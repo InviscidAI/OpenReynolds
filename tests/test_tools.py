@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from openreynolds.backend.base import ExecResult, JobStatus
+from openreynolds.backend.base import WORKSPACE_ROOT
 from openreynolds.tools import TOOLS, dispatch
 
 
@@ -205,3 +206,33 @@ def test_an_ordinary_exit_says_nothing_about_timeouts(ctx, backend):
     backend.exec_result = ExecResult(0, "fine", False, None)
     content, _ = dispatch(ctx, "bash", {"cmd": "ls"})
     assert "exit_code -1" not in content
+
+
+# -- a study works in its own directory ----------------------------------------
+
+
+def test_a_command_runs_in_the_study_s_own_directory(ctx):
+    """Otherwise every study's relative paths land in the same shared heap."""
+    ctx.home = "/work/20260824-120000-abcd"
+
+    dispatch(ctx, "bash", {"cmd": "ls"})
+
+    assert ctx.backend.last_exec[1] == "/work/20260824-120000-abcd"
+
+
+def test_an_explicit_directory_still_wins(ctx):
+    ctx.home = "/work/mine"
+    dispatch(ctx, "bash", {"cmd": "ls", "cwd": "/work/somewhere-else"})
+    assert ctx.backend.last_exec[1] == "/work/somewhere-else"
+
+
+def test_a_job_starts_in_the_study_s_own_directory_too(ctx):
+    ctx.home = "/work/mine"
+    dispatch(ctx, "job_start", {"cmd": "simpleFoam", "name": "solve"})
+    assert ctx.backend.started[-1]["cwd"] == "/work/mine"
+
+
+def test_the_default_is_the_whole_workspace_when_no_home_is_set(ctx):
+    """Studies made before studies had a directory of their own keep what they had."""
+    dispatch(ctx, "bash", {"cmd": "ls"})
+    assert ctx.backend.last_exec[1] == WORKSPACE_ROOT

@@ -138,31 +138,45 @@ class RecordingCapture:
         self.artifacts.append(path)
 
 
-def test_results_are_picked_up_when_the_model_happened_to_leave_some(backend):
-    backend.files[cli.RESULTS_PICKUP] = json.dumps({"dp": 29.2, "units": "Pa"}).encode()
+HOME = "/work/20260824-120000-abcd"
+
+
+def test_results_are_picked_up_from_the_study_s_own_directory(backend):
+    backend.files[f"{HOME}/{cli.RESULTS_FILE}"] = json.dumps({"dp": 29.2, "units": "Pa"}).encode()
     capture = RecordingCapture()
 
-    cli._pickup_results(backend, capture)
+    cli._pickup_results(backend, capture, HOME)
 
     assert capture.results == [{"dp": 29.2, "units": "Pa"}]
 
 
+def test_another_study_s_results_are_not_picked_up_as_this_one_s(backend):
+    """Every study used to write to the same path, so the last one to leave a file
+    got credited with whatever the previous one had left there."""
+    backend.files["/work/somebody-else/results.json"] = json.dumps({"dp": 1.0}).encode()
+    capture = RecordingCapture()
+
+    cli._pickup_results(backend, capture, HOME)
+
+    assert capture.results == []
+
+
 def test_no_results_file_is_normal(backend):
     capture = RecordingCapture()
-    cli._pickup_results(backend, capture)
+    cli._pickup_results(backend, capture, HOME)
     assert capture.results == []
 
 
 def test_unparseable_results_are_skipped_quietly(backend):
-    backend.files[cli.RESULTS_PICKUP] = b"not json at all"
+    backend.files[f"{HOME}/{cli.RESULTS_FILE}"] = b"not json at all"
     capture = RecordingCapture()
-    cli._pickup_results(backend, capture)
+    cli._pickup_results(backend, capture, HOME)
     assert capture.results == []
 
 
 def test_pickup_without_capture_is_a_no_op(backend):
-    backend.files[cli.RESULTS_PICKUP] = b"{}"
-    cli._pickup_results(backend, None)  # must not raise
+    backend.files[f"{HOME}/{cli.RESULTS_FILE}"] = b"{}"
+    cli._pickup_results(backend, None, HOME)  # must not raise
 
 
 # -- toolbox and fetch ---------------------------------------------------------
@@ -581,27 +595,65 @@ def workspace_listing(backend, *paths):
     backend.exec_result = ExecResult(0, lines, False, None)
 
 
-def test_the_brief_names_what_was_already_in_the_workspace(backend, store):
-    """A live run picked up a velocity from a case an earlier session had abandoned
-    and carried it for several turns before noticing whose it was."""
-    workspace_listing(backend, "/work/elbow", "/work/expansion")
-    store.session.instance_id = "inst-1"
+def test_a_new_study_gets_its_own_directory(backend, store):
+    """Opening a new study straight into the shared volume, among every other study's
+    cases, is not a clean slate by any reading of the words."""
+    home = cli._home_for(store, backend, resuming=False)
+
+    assert home == f"/work/{store.session.study_id}"
+    assert backend.last_exec[0] == f"mkdir -p {home}", "and it is made before use"
+
+
+def test_a_study_keeps_the_directory_it_was_given(backend, store):
+    store.session.home = "/work/20260101-000000-aaaa"
+    assert cli._home_for(store, backend, resuming=True) == "/work/20260101-000000-aaaa"
+
+
+def test_a_study_from_before_homes_existed_keeps_the_whole_workspace(backend, store):
+    """Moving their files out from under them would be worse than the untidiness."""
+    assert cli._home_for(store, backend, resuming=True) == "/work"
+
+
+def test_a_directory_that_cannot_be_made_falls_back_rather_than_failing(
+    backend, store, quiet_console
+):
+    def refuse(cmd, cwd=None, timeout_s=120):
+        raise BackendError("read-only volume", code="bad_request")
+
+    backend.exec = refuse
+    assert cli._home_for(store, backend, resuming=False) == "/work"
+
+
+def test_the_brief_names_the_study_s_own_directory(backend, store):
+    workspace_listing(backend, "/work/s1/elbow")
+    store.session.home = "/work/s1"
 
     brief = cli._situation_brief(
         store, backend, resuming=False, interactive=True, browser=Browser(backend, store)
     )
 
-    assert "elbow" in brief and "expansion" in brief
-    assert "left by earlier sessions" in brief
-    assert "none of it was made by this study" in brief
+    assert "Your directory is /work/s1" in brief
+    assert "elbow" in brief
+    assert "not written for this request" in brief
 
 
-def test_the_brief_says_so_when_the_workspace_is_empty(backend, store):
+def test_the_brief_says_so_when_the_study_directory_is_empty(backend, store):
     workspace_listing(backend)
+    store.session.home = "/work/s1"
     brief = cli._situation_brief(
         store, backend, resuming=False, interactive=True, browser=Browser(backend, store)
     )
-    assert "nothing in it yet" in brief
+    assert "It is empty" in brief
+
+
+def test_the_rest_of_the_volume_is_mentioned_once_not_listed(backend, store):
+    """Other studies' work is readable if wanted, and not this study's business."""
+    workspace_listing(backend)
+    store.session.home = "/work/s1"
+    brief = cli._situation_brief(
+        store, backend, resuming=False, interactive=True, browser=Browser(backend, store)
+    )
+    assert "holds other studies' work" in brief
 
 
 def test_a_resumed_session_is_told_the_workspace_is_its_own(backend, store):

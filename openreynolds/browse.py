@@ -62,18 +62,21 @@ def human(size: int) -> str:
 class Browser:
     """Read-only access to a workspace and to what has been pulled out of it."""
 
-    def __init__(self, backend: Backend, store: Store | None = None):
+    def __init__(self, backend: Backend, store: Store | None = None, home: str = WORKSPACE_ROOT):
         self.backend = backend
         self.store = store
+        self.home = home or WORKSPACE_ROOT
+        """Where looking starts: this study's own directory, not everyone else's."""
 
     # -- listing ---------------------------------------------------------------
 
-    def tree(self, path: str = WORKSPACE_ROOT, depth: int = DEFAULT_DEPTH) -> list[Entry]:
+    def tree(self, path: str = "", depth: int = DEFAULT_DEPTH) -> list[Entry]:
         """Everything under `path`, to a depth, in one round trip.
 
         One command beats one call per directory: a workspace has hundreds of
         directories, and a listing that takes a minute to draw is not a listing.
         """
+        path = path or self.home
         cmd = (
             f"find {shlex.quote(path)} -maxdepth {int(depth)} -mindepth 1 "
             f"-printf '{FIND_FORMAT}' 2>/dev/null | head -n {MAX_ENTRIES}"
@@ -84,9 +87,9 @@ class Browser:
             return sorted(entries, key=_order)
         return sorted(self.list_dir(path), key=_order)
 
-    def list_dir(self, path: str = WORKSPACE_ROOT) -> list[Entry]:
+    def list_dir(self, path: str = "") -> list[Entry]:
         """One directory's immediate children. Sizes would need a stat each, so are 0."""
-        info = self.backend.stat(path)
+        info = self.backend.stat(path or self.home)
         if not info.is_dir:
             return [Entry(path=info.path, is_dir=False, size=info.size, mtime=info.mtime)]
         base = path.rstrip("/")

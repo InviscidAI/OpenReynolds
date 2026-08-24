@@ -32,7 +32,8 @@ from .watch import NOTHING, LineReader, NullReader, situation, watch
 
 TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
 TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
-RESULTS_PICKUP = f"{WORKSPACE_ROOT}/results.json"
+RESULTS_FILE = "results.json"
+"""Picked up from the study's own directory if it happens to be there."""
 
 tolerant_stdout()
 console = Console()
@@ -244,7 +245,7 @@ def files_cmd(
         console.print(f"[red]Could not reach the workspace service:[/] {exc}")
         raise SystemExit(1) from exc
 
-    browser = Browser(backend, store)
+    browser = Browser(backend, store, home=store.session.home)
     try:
         if cat_path:
             text, _is_text = browser.read(cat_path)
@@ -261,7 +262,7 @@ def files_cmd(
         console.print(f"[bold]{chosen}[/] on {instance[:8]}\n")
         view = ConsoleView(console)
         view.workspace(browser)
-        view.show_files(path or WORKSPACE_ROOT)
+        view.show_files(path)
 
         local = browser.local()
         console.print(f"\n[bold]already on this machine[/] ({store.dir})")
@@ -421,6 +422,7 @@ def session(
 
     store.session.instance_id = resolved_instance
     store.session.model = cfg.model
+    store.session.home = _home_for(store, backend, resuming)
     if not store.session.title and one_shot:
         store.session.title = one_shot[:80]
     store.save()
@@ -443,9 +445,10 @@ def session(
         backend=backend,
         store=store,
         max_output=cfg.max_tool_output,
+        home=store.session.home,
         on_fetch=_fetch_hook(capture),
     )
-    browser = Browser(backend, store)
+    browser = Browser(backend, store, home=store.session.home)
 
     def drive(view: View, reader: Any) -> None:
         """One session, against whichever interface is running it."""
@@ -476,7 +479,7 @@ def session(
         else:
             force_exit = bool(_run_tui(drive))
     finally:
-        _pickup_results(backend, capture)
+        _pickup_results(backend, capture, store.session.home or WORKSPACE_ROOT)
         if capture:
             capture.close()
         _report_on_exit(backend, store)
@@ -493,24 +496,60 @@ def session(
 WORKSPACE_LISTED = 40
 
 
-def _workspace_note(browser: Browser, resuming: bool) -> str:
-    """What is already in the workspace, and whose it is.
+def _home_for(store: Store, backend: Backend, resuming: bool) -> str:
+    """This study's own directory, made if it is not there.
 
-    The volume outlives every session, so a new study opens in a directory full of
-    other studies' work. Left unsaid, that reads as its own: a live run picked up a
-    velocity from a case an earlier session had abandoned and carried it several turns
-    before noticing. Whose the directories are is a fact, and it costs one listing.
+    A new study used to open straight into the shared volume, among every other
+    study's cases. That is not a clean slate by any reading of the words, and it cost
+    real work: one run inherited a velocity from a case an earlier session had
+    abandoned, another opened by having to verify somebody else's results before it
+    could start on its own.
+
+    So a study gets a directory named after it. The volume still persists -- that is
+    the whole point of it -- but starting a new study now starts somewhere empty.
+    Studies made before this have no home recorded and keep the whole workspace,
+    because moving their files out from under them would be worse.
+    """
+    if store.session.home:
+        home = store.session.home
+    elif resuming:
+        home = WORKSPACE_ROOT
+    else:
+        home = f"{WORKSPACE_ROOT}/{store.session.study_id}"
+
+    if home != WORKSPACE_ROOT:
+        try:
+            backend.exec(f"mkdir -p {home}", timeout_s=60)
+        except BackendError as exc:
+            console.print(f"[yellow]could not make {home} ({exc}); using {WORKSPACE_ROOT}[/]")
+            return WORKSPACE_ROOT
+    return home
+
+
+def _workspace_note(browser: Browser, home: str, resuming: bool) -> str:
+    """What is in this study's directory, and what else is on the volume.
+
+    The listing is of the study's own directory, because that is the one whose
+    contents are its business. The rest of the volume gets a single line: it exists,
+    it belongs to other studies, and nothing in it was written for this request.
     """
     try:
         entries = [
-            entry
-            for entry in browser.tree(WORKSPACE_ROOT, depth=1)
-            if not entry.name.startswith(".")
+            entry for entry in browser.tree(home, depth=1) if not entry.name.startswith(".")
         ]
     except BackendError:
         return ""
+
+    if home == WORKSPACE_ROOT:
+        neighbours = ""
+    else:
+        neighbours = (
+            f"\nThe rest of {WORKSPACE_ROOT} holds other studies' work. It is readable if "
+            "you ever want it, but none of it was written for this request."
+        )
+
     if not entries:
-        return "The workspace has nothing in it yet."
+        return f"Your directory is {home}. It is empty.{neighbours}"
 
     listed = "\n".join(
         f"  {entry.name}{'/' if entry.is_dir else ''}"
@@ -521,14 +560,13 @@ def _workspace_note(browser: Browser, resuming: bool) -> str:
         listed += f"\n  ... and {len(entries) - WORKSPACE_LISTED} more"
 
     if resuming:
-        head = "The workspace is as this study left it, and contains:"
+        head = f"Your directory is {home}, as this study left it:"
     else:
         head = (
-            "The workspace already contains the following. They were left by earlier "
-            "sessions; none of it was made by this study, and nothing in it was "
-            "written for the request you are about to receive:"
+            f"Your directory is {home}. It already contains the following, which was "
+            "left by earlier sessions and not written for this request:"
         )
-    return f"{head}\n{listed}"
+    return f"{head}\n{listed}{neighbours}"
 
 
 def _when(mtime: float) -> str:
@@ -556,7 +594,7 @@ def _situation_brief(
     else:
         lines.append(f"study {store.session.study_id} on instance {store.session.instance_id}.")
     if browser is not None:
-        note = _workspace_note(browser, resuming)
+        note = _workspace_note(browser, store.session.home or WORKSPACE_ROOT, resuming)
         if note:
             lines.append(note)
     if interactive:
@@ -846,12 +884,12 @@ def _fetch_hook(capture: Capture | None):
     return handle
 
 
-def _pickup_results(backend: Backend, capture: Capture | None) -> None:
+def _pickup_results(backend: Backend, capture: Capture | None, home: str) -> None:
     """If a results file happens to be there, capture it. Nothing requires one."""
     if capture is None:
         return
     try:
-        raw = backend.get_file(RESULTS_PICKUP)
+        raw = backend.get_file(f"{home.rstrip('/')}/{RESULTS_FILE}")
     except BackendError:
         return
     try:

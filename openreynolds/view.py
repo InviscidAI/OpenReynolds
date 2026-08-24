@@ -155,7 +155,7 @@ class ConsoleView(View):
         if self._browser is None:
             self.console.print("[yellow]no workspace to look at[/]")
             return
-        target = path or self._browser.backend.workspace_root
+        target = path or self._browser.home
         try:
             entries = self._browser.tree(target)
         except Exception as exc:

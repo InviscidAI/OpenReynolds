@@ -497,7 +497,7 @@ class TuiView(View):
     def workspace(self, browser: Any) -> None:
         """Hand the interface a way to look at the workspace, and fill the pane once."""
         self.app.browser = browser
-        self.app.call_from_thread(self.app.load_files, "/work")
+        self.app.call_from_thread(self.app.show_files_tab, browser.home)
 
     def show_files(self, path: str = "") -> None:
         self.app.call_from_thread(self.app.show_files_tab, path)

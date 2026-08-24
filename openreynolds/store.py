@@ -40,6 +40,11 @@ class Session:
     remote_study_id: str = ""
     """Id assigned by the capture plane, when capture is on."""
     model: str = ""
+    home: str = ""
+    """This study's own directory in the workspace.
+
+    Empty on studies made before studies had one, which means the whole workspace.
+    """
     created_at: str = ""
     title: str = ""
     capture_seq: int = 0

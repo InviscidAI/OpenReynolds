@@ -28,6 +28,11 @@ to yourself — will be there next time. A dotted directory under it belongs to 
 infrastructure: complete job and command logs are kept there, and the paths handed \
 back to you point into it, so it is worth reading and pointless to write to.
 
+Each study works in its own directory under the volume, and your briefing names \
+yours. Commands run there unless you say otherwise, and a new study starts with an \
+empty one. The rest of the volume holds other studies' work: readable if you ever \
+want it, and written for somebody else's question rather than yours.
+
 `{TOOLBOX_DIR}/` holds a handful of small scripts and some reference notes, refreshed \
 from the distribution at the start of each session. They are offered, not imposed: use \
 them, edit them, replace them, or ignore them. `{TOOLBOX_DIR}/notes/` includes field \

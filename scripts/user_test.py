@@ -342,6 +342,8 @@ def run_one(client, persona: Persona, args, repo: Path) -> dict:
         log.write_text("".join(transcript), encoding="utf-8")
 
     record("PERSONA", f"{persona.name}\n\ngoal: {goal}")
+    if args.fresh:
+        record("WORKSPACE", clear_workspace())
 
     session = AgentSession(argv, repo)
     exchanges: list[tuple[str, str, bool]] = []
@@ -357,7 +359,11 @@ def run_one(client, persona: Persona, args, repo: Path) -> dict:
         study = found.group(1) if found else None
         reply = opening
 
-        for turn in range(min(args.turns, persona.turns)):
+        # An explicit --turns is an instruction, not a ceiling to be clipped by the
+        # persona's own default: asking for more and silently getting fewer is how a
+        # conversation gets cut off and reported as having run its course.
+        wanted = persona.turns if args.turns is None else args.turns
+        for turn in range(wanted):
             if not reply.alive:
                 verdict = "the agent exited"
                 break
@@ -414,7 +420,12 @@ def main() -> int:
         help=f"One of {', '.join(sorted(ALL))}, or 'all' to run each in turn.",
     )
     parser.add_argument("--goal", default=None, help="Override the persona's own goal.")
-    parser.add_argument("--turns", type=int, default=8, help="Maximum user messages.")
+    parser.add_argument(
+        "--turns",
+        type=int,
+        default=None,
+        help="Maximum user messages. Defaults to whatever the persona asks for.",
+    )
     parser.add_argument(
         "--idle",
         type=float,
@@ -435,8 +446,11 @@ def main() -> int:
     parser.add_argument(
         "--fresh",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Move earlier work aside first, so each persona starts on an empty workspace.",
+        default=False,
+        help=(
+            "Move every earlier study aside first. Rarely needed: a study now gets "
+            "its own directory, so personas no longer land in each other's work."
+        ),
     )
     args = parser.parse_args()
 

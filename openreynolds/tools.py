@@ -24,6 +24,8 @@ class ToolContext:
     backend: Backend
     store: Store
     max_output: int
+    home: str = WORKSPACE_ROOT
+    """Where a command runs unless told otherwise: this study's own directory."""
     view: Any = None
     """Optional: told whenever job state changes, so a panel can stay current."""
     on_fetch: Callable[[list[Any]], None] | None = None
@@ -45,7 +47,10 @@ TOOLS: list[dict[str, Any]] = [
                 "cmd": {"type": "string", "description": "The command to run."},
                 "cwd": {
                     "type": "string",
-                    "description": f"Directory to run in. Defaults to {WORKSPACE_ROOT}.",
+                    "description": (
+                        "Directory to run in. Defaults to this study's own "
+                        "directory, which your briefing names."
+                    ),
                 },
                 "timeout_s": {
                     "type": "integer",
@@ -115,7 +120,10 @@ TOOLS: list[dict[str, Any]] = [
                 "cmd": {"type": "string"},
                 "cwd": {
                     "type": "string",
-                    "description": f"Directory to run in. Defaults to {WORKSPACE_ROOT}.",
+                    "description": (
+                        "Directory to run in. Defaults to this study's own "
+                        "directory, which your briefing names."
+                    ),
                 },
                 "name": {"type": "string", "description": "A label for your own reference."},
                 "kill_on": {
@@ -187,7 +195,7 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[T
 
 def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     asked = int(args.get("timeout_s") or 120)
-    result = ctx.backend.exec(args["cmd"], cwd=args.get("cwd"), timeout_s=asked)
+    result = ctx.backend.exec(args["cmd"], cwd=args.get("cwd") or ctx.home, timeout_s=asked)
     notes = []
     ran_with = min(asked, EXEC_MAX_TIMEOUT_S)
     if asked > EXEC_MAX_TIMEOUT_S:
@@ -280,7 +288,7 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
 def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
     job_id = ctx.backend.job_start(
         args["cmd"],
-        cwd=args.get("cwd"),
+        cwd=args.get("cwd") or ctx.home,
         name=args.get("name"),
         kill_on=args.get("kill_on") or None,
     )
