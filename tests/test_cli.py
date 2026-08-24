@@ -659,13 +659,18 @@ def test_the_brief_says_so_when_the_study_directory_is_empty(backend, store):
 
 
 def test_the_rest_of_the_volume_is_mentioned_once_not_listed(backend, store):
-    """Other studies' work is readable if wanted, and not this study's business."""
+    """Other sessions' work is readable if wanted, and not this study's business.
+
+    Named and counted rather than listed: what those directories are is worth one
+    sentence, and their contents are somebody else's question.
+    """
     workspace_listing(backend)
     store.session.home = "/work/s1"
     brief = cli._situation_brief(
         store, backend, resuming=False, interactive=True, browser=Browser(backend, store)
     )
-    assert "holds other studies' work" in brief
+    assert "this tool's own earlier sessions" in brief
+    assert "was written for this request" in brief
 
 
 def test_a_resumed_session_is_told_the_workspace_is_its_own(backend, store):
