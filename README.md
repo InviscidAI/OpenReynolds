@@ -178,6 +178,13 @@ URL, or a hosting service.
 
 ## Tests
 
+The repository carries a pre-commit hook that runs the suite and refuses a red
+commit. Turn it on once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ```bash
 python -m pytest
 ```

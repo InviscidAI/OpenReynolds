@@ -1,0 +1,30 @@
+#!/bin/sh
+# Run the suite before a commit is allowed.
+#
+# Twice in one session a commit went out red, both times for the same reason:
+# committing on the strength of the tests just written rather than the whole suite.
+# That is a discipline problem, and discipline had already failed twice, so it stops
+# being discipline here.
+#
+# Takes about half a minute. `git commit --no-verify` skips it when you genuinely mean
+# to, which is rarer than it feels.
+
+set -e
+
+if ! command -v python >/dev/null 2>&1; then
+    echo "pre-commit: no python on PATH; skipping the suite" >&2
+    exit 0
+fi
+
+echo "pre-commit: running the suite..."
+if ! python -m pytest -q --no-header -x >/tmp/openreynolds-precommit.log 2>&1; then
+    echo >&2
+    echo "pre-commit: the suite is red, so this commit is not going out." >&2
+    echo >&2
+    tail -n 25 /tmp/openreynolds-precommit.log >&2
+    echo >&2
+    echo "(fix it, or --no-verify if you truly mean to)" >&2
+    exit 1
+fi
+
+echo "pre-commit: green."
