@@ -14,6 +14,7 @@ It never deletes an instance, so the persistent volume is safe.
 from __future__ import annotations
 
 import argparse
+import base64
 import shutil
 import sys
 import time
@@ -23,7 +24,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from openreynolds.backend import hosted  # noqa: E402
 from openreynolds.backend.base import BackendError  # noqa: E402
+from openreynolds.browse import Browser  # noqa: E402
 from openreynolds.config import Config  # noqa: E402
+from openreynolds.stopping import running_solvers, stop_everything  # noqa: E402
 from openreynolds.store import Store, new_study_id  # noqa: E402
 from openreynolds.tools import ToolContext, dispatch  # noqa: E402
 
@@ -46,6 +49,18 @@ def check(condition: bool, label: str, detail: str = "") -> bool:
 
 def section(title: str) -> None:
     print(f"\n== {title}")
+
+
+SURFACE_SCRIPT = '''\
+import pyvista as pv
+
+pv.OFF_SCREEN = True
+pv.Box(bounds=(0, 0.06, 0, 0.02, 0, 0.01)).triangulate().save("/work/.smoke/box.stl")
+pv.Plane(center=(0.05, 0.01, 0.005), i_size=0.01, j_size=0.01).triangulate().save(
+    "/work/.smoke/lid.stl"
+)
+print("SURFACES_OK")
+'''
 
 
 PLOT_SCRIPT = """\
@@ -161,6 +176,73 @@ def main() -> int:
         local = store.fetch_dir() / ".smoke" / "plot.png"
         check(not err and local.exists() and local.stat().st_size > 1000,
               f"fetch pulled the PNG to {local}", out[:300])
+
+
+        section("seeing")
+        # The picture has to come back as a picture. Everything else about a render is
+        # indistinguishable from a render of nothing.
+        content, err = dispatch(ctx, "read_file", {"path": "/work/.smoke/plot.png"})
+        blocks = content if isinstance(content, list) else []
+        image = next((b for b in blocks if b.get("type") == "image"), None)
+        check(not err and image is not None, "read_file on a PNG returns an image block",
+              str(content)[:300])
+        if image:
+            raw = base64.b64decode(image["source"]["data"])
+            check(raw[:8] == b"\x89PNG\r\n\x1a\n",
+                  "and the bytes are the PNG the container wrote")
+            caption = next((b["text"] for b in blocks if b.get("type") == "text"), "")
+            check("x" in caption and "image/png" in caption,
+                  "with its size and shape stated alongside", caption)
+
+        content, _ = dispatch(ctx, "read_file", {"path": "/work/.smoke/plot.py"})
+        check(isinstance(content, str), "an ordinary file still comes back as text")
+
+        section("looking at the workspace")
+        browser = Browser(backend, store)
+        entries = browser.tree("/work/.smoke")
+        names = {entry.name for entry in entries}
+        check("plot.png" in names and "plot.py" in names,
+              "the tree lists what is there", ", ".join(sorted(names)))
+        check(any(e.size > 1000 for e in entries if e.name == "plot.png"),
+              "with real sizes on it")
+
+        text, is_text = browser.read("/work/.smoke/plot.py")
+        check(is_text and "matplotlib" in text, "a text file reads back")
+        _, is_text = browser.read("/work/.smoke/plot.png")
+        check(not is_text, "and a binary one is described rather than dumped")
+
+        section("geometry")
+        dispatch(ctx, "write_file", {"path": "/work/.smoke/geo.py", "content": SURFACE_SCRIPT})
+        out, _ = dispatch(ctx, "bash", {"cmd": "python3 /work/.smoke/geo.py", "timeout_s": 280})
+        check("SURFACES_OK" in out, "pyvista writes an STL headlessly", out[-400:])
+
+        out, _ = dispatch(ctx, "bash", {
+            "cmd": "cd /work/.smoke && python3 /work/.toolbox/geometry_view.py . --out r",
+            "timeout_s": 280,
+        })
+        check("open edges 0" in out, "geometry_view reports a closed surface as closed",
+              out[-600:])
+        check("not closed, so no volume" in out,
+              "and an open one as open, with no volume quoted for it")
+        check("OpenFOAM reads these as metres" in out,
+              "extents are stated in the units OpenFOAM will read them in")
+
+        content, err = dispatch(ctx, "read_file", {"path": "/work/.smoke/r/geometry.png"})
+        check(not err and isinstance(content, list),
+              "and the drawing it produced can be looked at", str(content)[:200])
+
+        section("stopping what outlived its job")
+        backend.exec("cp /bin/sleep /tmp/simpleFoam", timeout_s=60)
+        loose = backend.job_start("/tmp/simpleFoam 600", name="smoke-loose")
+        store.record_job(loose, cmd="/tmp/simpleFoam 600", name="smoke-loose")
+        time.sleep(4)
+        check("simpleFoam" in running_solvers(backend),
+              "a solver outside the job's process group is seen")
+
+        report = stop_everything(backend, store, force=True)
+        check(report.clean, "stop --force actually stops it", "; ".join(report.lines()))
+        check("simpleFoam" not in running_solvers(backend), "and it is gone afterwards")
+        backend.exec("rm -f /tmp/simpleFoam", timeout_s=60)
 
         section("job records survive a restart")
         reopened = Store(cfg.studies_dir, study_id)
