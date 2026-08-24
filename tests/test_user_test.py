@@ -466,3 +466,15 @@ class _NoSession:
 
     def close(self, timeout=60.0):
         return 0
+
+
+def test_every_persona_goal_names_a_geometry_and_asks_for_one_thing(ut):
+    """A goal has to be answerable inside the run's budget. The first controller goal
+    asked how the air divides between two branches of a symmetric wye -- which is set
+    by what breaks the symmetry, none of it in the geometry -- and it burned
+    twenty-eight minutes being right about that instead of producing a number."""
+    for persona in ut.ALL.values():
+        goal = persona.goal.lower()
+        assert "mm" in goal, f"{persona.name} does not say how big anything is"
+        wants = ("pressure drop", "pressure we lose", "how much pressure", "problem")
+        assert any(w in goal for w in wants), f"{persona.name} does not ask for a number"

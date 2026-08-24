@@ -9,6 +9,16 @@ wrong number; someone with none catches an agent that only volunteers its uncert
 when challenged. Someone who wants to be kept informed finds out whether the status
 channel actually works, and someone whose requirements move finds out whether the agent
 says which of its earlier answers just became invalid.
+
+A goal has to be answerable, which is a harder bar than it sounds. The first version of
+the controller's asked how the air divides between two branches of a symmetric wye. A
+symmetric wye fed symmetrically splits 50/50 by symmetry, so the real question is what
+breaks the symmetry -- the fan upstream, the resistance downstream -- none of which is
+in the geometry. The agent said exactly that on its second turn and was right, and then
+spent twenty-eight minutes on a research question wearing the clothes of a simple one.
+
+The persona is testing whether it can keep you informed, not whether it can solve an
+open problem. So the goal names the geometry, the flow rate, and one number to produce.
 """
 
 from __future__ import annotations
@@ -96,11 +106,12 @@ defensible number, not a research project, and you will say so if this is draggi
 CONTROLLER = Persona(
     name="controller",
     goal=(
-        "I have a Y-shaped duct - one 100mm square inlet that splits into two 70mm "
-        "square branches at about 30 degrees each. I want to know how the air divides "
-        "between the two branches. But I want to be kept in the loop: tell me what you "
-        "are doing before you do it, and don't go off for twenty minutes without a "
-        "word."
+        "I have a Y-piece - 100mm square inlet, splitting into two 70mm square "
+        "branches at 30 degrees each side, both branches identical with about 300mm "
+        "of straight duct after the split. Air at 8 m/s in the inlet. I want the "
+        "pressure drop from the inlet to the branch outlets. But I want to be kept in "
+        "the loop: tell me what you are doing before you do it, and don't go off for "
+        "twenty minutes without a word."
     ),
     character="""\
 You are the kind of client who wants to know what is happening at all times. You have \
