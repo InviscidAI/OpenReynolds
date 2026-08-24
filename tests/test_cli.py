@@ -685,3 +685,19 @@ def test_a_workspace_that_cannot_be_listed_does_not_stop_the_session(backend, st
         store, backend, resuming=False, interactive=True, browser=Browser(backend, store)
     )
     assert brief, "the rest of the brief still arrives"
+
+
+def test_leaving_says_where_the_study_s_files_are(store, backend, monkeypatch):
+    """Knowing a study has a directory of its own is no use without being told which
+    one it is."""
+    import io
+
+    from rich.console import Console
+
+    written = io.StringIO()
+    monkeypatch.setattr(cli, "console", Console(file=written, width=200))
+    store.session.home = "/work/20260824-120000-abcd"
+
+    cli._report_on_exit(backend, store)
+
+    assert "/work/20260824-120000-abcd" in written.getvalue()

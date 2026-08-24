@@ -617,10 +617,14 @@ def _report_on_exit(backend: Backend, store: Store) -> None:
     being told is how an idle laptop keeps eight cores busy overnight.
     """
     study = store.session.study_id
+    home = store.session.home or WORKSPACE_ROOT
     live = store.live_jobs()
     if not live:
-        console.print(f"\n[dim]resume with: openreynolds --study {study}[/]")
-        console.print(f"[dim]workspace:   openreynolds files --study {study}[/]")
+        # Knowing a study has a directory of its own is no use without being told
+        # which one it is.
+        console.print(f"\n[dim]this study's files are in {home} on the instance[/]")
+        console.print(f"[dim]resume with:  openreynolds --study {study}[/]")
+        console.print(f"[dim]look at them: openreynolds files --study {study}[/]")
         return
     names = ", ".join(job.name or job.job_id[:8] for job in live)
     console.print(f"\n[yellow]{len(live)} job(s) still running on the instance:[/] {names}")
