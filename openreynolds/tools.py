@@ -7,12 +7,16 @@ output and report facts; that is the whole job.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from . import images
 from .backend.base import Backend, BackendError, EXEC_MAX_TIMEOUT_S, WORKSPACE_ROOT
 from .store import Store
+
+SLOW_COMMAND_S = 10.0
+"""Past this, how long a command took is worth saying."""
 
 TAIL_HINT_BYTES = 4_000
 """How far back from the end a truncation marker points, so the offered offset lands on
@@ -195,8 +199,14 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[T
 
 def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     asked = int(args.get("timeout_s") or 120)
+    started = time.monotonic()
     result = ctx.backend.exec(args["cmd"], cwd=args.get("cwd") or ctx.home, timeout_s=asked)
+    elapsed = time.monotonic() - started
     notes = []
+    if elapsed >= SLOW_COMMAND_S:
+        # A four-minute command and a two-second one read identically otherwise, so
+        # the cost of what was just done is invisible to whoever chose to do it.
+        notes.append(f"[took {elapsed:.0f}s]")
     ran_with = min(asked, EXEC_MAX_TIMEOUT_S)
     if asked > EXEC_MAX_TIMEOUT_S:
         # Say so rather than clamping quietly: a command cut off at a ceiling the
@@ -394,10 +404,49 @@ def describe_job(status: Any) -> str:
         parts.append(f"end_reason={status.end_reason}")
     if status.log_size is not None:
         parts.append(f"log_size={status.log_size}")
+    running_for = _running_for(status)
+    if running_for:
+        parts.append(running_for)
     line = " ".join(parts)
     if status.killed_by:
         line += f"\nmatched kill_on line: {status.killed_by.strip()}"
     return line
+
+
+def _running_for(status: Any) -> str:
+    """How long a job has been going, when the service says enough to work it out.
+
+    Two hours in and one minute in are the same line otherwise, and which of those it
+    is changes what anyone would do about it.
+    """
+    start = _moment(getattr(status, "started_at", None))
+    if start is None:
+        return ""
+    end = _moment(getattr(status, "ended_at", None))
+    if end is None:
+        if not status.running:
+            return ""
+        end = time.time()
+    seconds = end - start
+    if seconds < 0:
+        return ""
+    verb = "running_for" if status.running else "ran_for"
+    return f"{verb}={seconds / 60:.1f}min" if seconds >= 60 else f"{verb}={seconds:.0f}s"
+
+
+def _moment(value: Any) -> float | None:
+    """Seconds since the epoch, from whatever shape the service used."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace("Z", "+00:00")
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
 
 
 def _clip(text: str, limit: int) -> tuple[str, bool]:

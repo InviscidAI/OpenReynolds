@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from openreynolds.backend.base import ExecResult, JobStatus
@@ -236,3 +238,68 @@ def test_the_default_is_the_whole_workspace_when_no_home_is_set(ctx):
     """Studies made before studies had a directory of their own keep what they had."""
     dispatch(ctx, "bash", {"cmd": "ls"})
     assert ctx.backend.last_exec[1] == WORKSPACE_ROOT
+
+
+# -- how long things took ------------------------------------------------------
+
+
+def test_a_slow_command_says_how_long_it_took(ctx, monkeypatch):
+    """A four-minute command and a two-second one read identically otherwise, so the
+    cost of what was just done is invisible to whoever chose to do it."""
+    clock = iter([0.0, 42.0])
+    monkeypatch.setattr("openreynolds.tools.time.monotonic", lambda: next(clock))
+
+    out, _ = dispatch(ctx, "bash", {"cmd": "blockMesh"})
+
+    assert "[took 42s]" in out
+
+
+def test_a_quick_command_is_not_cluttered_with_a_duration(ctx, monkeypatch):
+    clock = iter([0.0, 0.3])
+    monkeypatch.setattr("openreynolds.tools.time.monotonic", lambda: next(clock))
+
+    out, _ = dispatch(ctx, "bash", {"cmd": "ls"})
+
+    assert "took" not in out
+
+
+def test_a_running_job_says_how_long_it_has_been_running(ctx):
+    """Two hours in and one minute in are the same line otherwise, and which of those
+    it is changes what anyone would do about it."""
+    ctx.backend.jobs["job-1"] = JobStatus(
+        job_id="job-1",
+        status="running",
+        name="solve",
+        started_at=time.time() - 3600,
+    )
+    ctx.store.record_job("job-1", cmd="simpleFoam", name="solve")
+
+    out, _ = dispatch(ctx, "job_check", {"job_id": "job-1"})
+
+    assert "running_for=60." in out
+
+
+def test_a_finished_job_says_how_long_it_ran(ctx):
+    ctx.backend.jobs["job-1"] = JobStatus(
+        job_id="job-1",
+        status="exited",
+        name="solve",
+        exit_code=0,
+        started_at="2026-08-24T10:00:00Z",
+        ended_at="2026-08-24T10:03:00Z",
+    )
+    ctx.store.record_job("job-1", cmd="simpleFoam", name="solve")
+
+    out, _ = dispatch(ctx, "job_check", {"job_id": "job-1"})
+
+    assert "ran_for=3.0min" in out
+
+
+def test_a_job_with_no_timestamps_says_nothing_about_duration(ctx):
+    """The service does not always send them, and a made-up number is worse than none."""
+    ctx.backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+    ctx.store.record_job("job-1", cmd="simpleFoam", name="solve")
+
+    out, _ = dispatch(ctx, "job_check", {"job_id": "job-1"})
+
+    assert "running_for" not in out and "ran_for" not in out
