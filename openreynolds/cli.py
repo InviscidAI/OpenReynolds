@@ -568,9 +568,20 @@ def _workspace_note(browser: Browser, home: str, resuming: bool) -> str:
     if home == WORKSPACE_ROOT:
         neighbours = ""
     else:
+        # Saying whose it is without saying what they are leaves a real question open,
+        # and a live run spent turns on it: it found several near-identical studies
+        # made minutes apart by a user who did not remember commissioning them, and
+        # worked through whether that meant an intruder. The answer is dull and the
+        # harness has always known it -- they are this same tool's other sessions.
+        others = _other_studies(browser, home)
         neighbours = (
-            f"\nThe rest of {WORKSPACE_ROOT} holds other studies' work. It is readable if "
-            "you ever want it, but none of it was written for this request."
+            f"\n{WORKSPACE_ROOT} also holds {others} directory of this tool's own "
+            "earlier sessions on this instance, each named after its study id. They "
+            "are readable, and none of them was written for this request."
+            if others == "one other"
+            else f"\n{WORKSPACE_ROOT} also holds {others} directories of this tool's "
+            "own earlier sessions on this instance, each named after its study id. "
+            "They are readable, and none of them was written for this request."
         )
 
     if not entries:
@@ -592,6 +603,21 @@ def _workspace_note(browser: Browser, home: str, resuming: bool) -> str:
             "left by earlier sessions and not written for this request:"
         )
     return f"{head}\n{listed}{neighbours}"
+
+
+def _other_studies(browser: Browser, home: str) -> str:
+    """How many other session directories share the volume."""
+    try:
+        siblings = [
+            entry
+            for entry in browser.tree(WORKSPACE_ROOT, depth=1)
+            if entry.is_dir and not entry.name.startswith(".") and entry.path != home
+        ]
+    except BackendError:
+        return "some"
+    if not siblings:
+        return "no"
+    return "one other" if len(siblings) == 1 else f"{len(siblings)} other"
 
 
 def _when(mtime: float) -> str:

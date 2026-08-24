@@ -108,3 +108,56 @@ def test_the_design_document_describes_the_workspace_the_code_builds():
     plan = (Path(__file__).resolve().parents[1] / "plan-2-agent.md").read_text(encoding="utf-8")
     assert "/work/<study-id>" in plan, "the plan still describes one shared workspace"
     assert "whether anyone is at the terminal" in plan
+
+
+# -- what the other directories on the volume are ------------------------------
+
+
+def volume_with(backend, *paths):
+    """`find` answers for whichever path it is asked about."""
+
+    def looking(cmd, cwd=None, timeout_s=120):
+        target = cmd.split()[1].strip("'\"")
+        rows = [p for p in paths if p.rsplit("/", 1)[0] == target.rstrip("/")]
+        return ExecResult(0, "".join(f"d\t0\t1700000000.0\t{p}\n" for p in rows), False, None)
+
+    backend.exec = looking
+
+
+def test_the_briefing_says_what_the_other_directories_are(backend, store):
+    """A live run found several near-identical studies made minutes apart by a user
+    who did not remember commissioning them, and spent turns working through whether
+    that meant an intruder. Saying whose the work is without saying what those
+    sessions are leaves exactly that question open."""
+    store.session.home = "/work/mine"
+    volume_with(backend, "/work/mine", "/work/s1", "/work/s2")
+
+    brief = brief_for(backend, store)
+
+    assert "2 other directories of this tool's own earlier sessions" in brief
+    assert "named after its study id" in brief
+
+
+def test_one_neighbour_is_described_in_the_singular(backend, store):
+    store.session.home = "/work/mine"
+    volume_with(backend, "/work/mine", "/work/s1")
+
+    brief = brief_for(backend, store)
+
+    assert "one other directory of this tool's own earlier sessions" in brief
+
+
+def test_an_empty_volume_says_there_are_none(backend, store):
+    store.session.home = "/work/mine"
+    volume_with(backend, "/work/mine")
+
+    assert "holds no directories" in brief_for(backend, store)
+
+
+def test_a_study_that_owns_the_whole_workspace_is_told_nothing_about_neighbours(
+    backend, store
+):
+    """There are none to describe, and inventing a sentence about it would be noise."""
+    volume_with(backend)
+    brief = brief_for(backend, store)
+    assert "earlier sessions" not in brief
