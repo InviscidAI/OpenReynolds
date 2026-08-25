@@ -319,10 +319,14 @@ async def test_quitting_is_flagged_so_the_caller_can_force_the_exit():
 class StubBrowser:
     """A workspace without a workspace."""
 
-    def __init__(self, entries=(), text="Time = 1", pulled=()):
+    store = None
+    """No local mirror either, so nothing is answered from disk."""
+
+    def __init__(self, entries=(), text="Time = 1", pulled=(), cache=None):
         self.entries = list(entries)
         self.text = text
         self.pulled = list(pulled)
+        self.cache = cache
         self.asked = []
         self.reads = []
         self.pulls = []
@@ -330,6 +334,12 @@ class StubBrowser:
     def tree(self, path="/work", depth=4):
         self.asked.append(path)
         return self.entries
+
+    def cached(self, path=""):
+        return list(self.cache) if self.cache is not None else None
+
+    def cache_age(self):
+        return 0.0 if self.cache is not None else None
 
     def read(self, path, limit=None):
         self.reads.append(path)
@@ -402,6 +412,80 @@ async def test_an_empty_workspace_says_so_rather_than_showing_nothing():
         await pilot.pause()
         tree = app.query_one("#filestree", FilesTree)
         assert "nothing here yet" in str(tree.root.children[0].label)
+
+
+async def test_the_files_pane_is_answered_from_the_mirror_without_a_round_trip():
+    """The background mirror already took a listing; drawing the pane must not cost
+    the network another one."""
+    from openreynolds.browse import Entry
+    from openreynolds.tui import FilesTree
+
+    app = idle_app()
+    app.browser = StubBrowser(
+        cache=[Entry(path="/work/case", is_dir=True),
+               Entry(path="/work/case/log.simpleFoam", is_dir=False, size=64)]
+    )
+    async with running(app) as pilot:
+        app.load_files("/work")
+        await pilot.pause()
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+
+        tree = app.query_one("#filestree", FilesTree)
+        labels = [str(node.label) for node in tree.root.children]
+
+    assert "case/" in labels
+    assert app.browser.asked == [], "the cache answered; the network was not asked"
+
+
+async def test_a_refresh_goes_to_the_workspace_itself():
+    """Ctrl+R exists to bypass the cache, not to redraw it."""
+    from openreynolds.browse import Entry
+
+    app = idle_app()
+    app.browser = StubBrowser(
+        entries=[Entry(path="/work/notes.md", is_dir=False, size=9)],
+        cache=[Entry(path="/work/stale.md", is_dir=False, size=1)],
+    )
+    async with running(app) as pilot:
+        app.load_files("/work", force_remote=True)
+        await pilot.pause()
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+
+    assert app.browser.asked == ["/work"]
+
+
+async def test_a_mirror_cycle_redraws_the_pane_when_the_workspace_changed():
+    from openreynolds.browse import Entry
+    from openreynolds.mirror import MirrorReport
+    from openreynolds.tui import FilesTree
+
+    app = idle_app()
+    app.browser = StubBrowser(cache=[Entry(path="/work/new.md", is_dir=False, size=5)])
+    async with running(app) as pilot:
+        report = MirrorReport(local_dir=Path("/tmp/x"))
+        app.files_synced(report)
+        await pilot.pause()
+
+        tree = app.query_one("#filestree", FilesTree)
+        labels = [str(node.label) for node in tree.root.children]
+
+    assert any("new.md" in label for label in labels)
+
+
+async def test_a_mirror_cycle_says_what_arrived():
+    from openreynolds.mirror import MirrorReport
+
+    app = idle_app()
+    app.browser = StubBrowser()
+    async with running(app) as pilot:
+        report = MirrorReport(local_dir=Path("/tmp/x"), pulled=[Path("/tmp/x/a.png")])
+        app.files_synced(report)
+        await pilot.pause()
+        written = "".join(str(line) for line in app.query_one("#activity").lines)
+
+    assert "mirrored 1 file(s)" in written
 
 
 async def test_a_listing_failure_is_reported_not_swallowed():
@@ -553,3 +637,93 @@ async def test_quitting_is_not_reported_as_the_session_dying():
 
         conversation = "".join(str(line) for line in app.query_one("#conversation").lines)
         assert "ended" not in conversation
+
+
+# -- the bar -------------------------------------------------------------------
+
+
+async def test_progress_lands_on_its_own_pane():
+    from openreynolds.progress import Progress
+    from openreynolds.tui import ProgressPane
+
+    app = idle_app()
+    async with running(app) as pilot:
+        snap = Progress("solving", "solving solve · Time 3 / 6 s · 14 min", "p 1.0e-03", 0.5, True, 7)
+        await asyncio.to_thread(TuiView(app).progress, snap)
+        await pilot.pause()
+        pane = app.query_one("#progress", ProgressPane)
+        drawn = pane.render()
+
+    assert pane.snapshot is snap
+    assert "50%" in drawn
+    assert "solving solve" in drawn
+    assert "p 1.0e-03" in drawn
+    assert "█" in drawn and "░" in drawn
+
+
+async def test_the_stage_line_keeps_a_clock_on_thinking():
+    app = idle_app()
+    async with running(app) as pilot:
+        view = TuiView(app)
+        await asyncio.to_thread(view.thinking_begin)
+        await asyncio.to_thread(view.thinking_delta, "the mesh is coarse")
+        await pilot.pause()
+        text = app.query_one("#stage").text
+
+    assert text.startswith("thinking ")
+    assert "s: the mesh is coarse" in text
+
+
+# -- the front desk and the now line -------------------------------------------
+
+
+async def test_the_bar_pane_hides_when_there_is_nothing_to_show():
+    from openreynolds.progress import Progress
+    from openreynolds.tui import ProgressPane
+
+    app = idle_app()
+    async with running(app) as pilot:
+        pane = app.query_one("#progress", ProgressPane)
+        await asyncio.to_thread(TuiView(app).progress, Progress("waiting", "waiting for you", "", None, False, 0))
+        await pilot.pause()
+        assert pane.display is False
+        await asyncio.to_thread(TuiView(app).progress, Progress("solving", "solving x", "p 1e-3", 0.4, True, 1))
+        await pilot.pause()
+        assert pane.display is True
+
+
+async def test_the_now_line_shows_the_desks_narration():
+    from openreynolds.tui import NowPane
+
+    app = idle_app()
+    async with running(app) as pilot:
+        await asyncio.to_thread(TuiView(app).narration, "reworking the near-wake mesh before the solve")
+        await pilot.pause()
+        assert "near-wake mesh" in app.query_one("#now", NowPane).text
+
+
+async def test_a_desk_reply_lands_in_the_conversation_labelled():
+    app = idle_app()
+    async with running(app) as pilot:
+        view = TuiView(app)
+        await asyncio.to_thread(view.desk, "the agent is 20% through the solve, about 19 min left")
+        await pilot.pause()
+    # It reached the conversation pane (no exception); attribution is in the markup.
+
+
+async def test_the_renders_tab_lists_delivered_pictures(tmp_path):
+    from types import SimpleNamespace
+    from openreynolds.tui import RendersPane
+
+    renders = tmp_path / "renders"
+    renders.mkdir()
+    (renders / "field_speed.png").write_bytes(b"\x89PNG")
+
+    app = idle_app()
+    async with running(app) as pilot:
+        app.browser = SimpleNamespace(store=SimpleNamespace(renders_dir=renders), home="/work")
+        await asyncio.to_thread(TuiView(app).delivered, SimpleNamespace(lines=lambda: ["1 new render"]))
+        await pilot.pause()
+        pane = app.query_one("#renders", RendersPane)
+        assert any(p.name == "field_speed.png" for p in pane.paths)
+        assert "field_speed.png" in pane.render()

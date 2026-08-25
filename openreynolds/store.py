@@ -30,6 +30,9 @@ class JobRecord:
     end_reason: str | None = None
     exit_code: int | None = None
     log_offset: int = 0
+    cwd: str = ""
+    """Where the command ran. The progress line finds the case's controlDict from it;
+    records written before it existed load with it empty and are shown without an end."""
     """How far the model has already read this job's log."""
 
 
@@ -58,6 +61,11 @@ class Store:
         self.dir = root / study_id
         self.dir.mkdir(parents=True, exist_ok=True)
         self.files_dir = self.dir / "files"
+        self.renders_dir = self.dir / "renders"
+        """The flat, obvious home for pictures. The mirror copies every render and
+        assembled animation here, newest-first, so "where is the image?" has a
+        one-word answer that does not involve the nested `files/<id>/.../renders`
+        path the workspace happens to use."""
         self.session = Session(study_id=study_id, created_at=_now())
         self._load()
 
@@ -104,8 +112,29 @@ class Store:
 
     # -- jobs ------------------------------------------------------------------
 
-    def record_job(self, job_id: str, cmd: str, name: str | None) -> JobRecord:
-        record = JobRecord(job_id=job_id, name=name, cmd=cmd, launched_at=_now())
+    def recent_messages(self, limit: int = 30) -> list[dict[str, Any]]:
+        """The last few transcript rows, oldest-first.
+
+        The concierge reads these to answer the user without a turn from the main
+        thread. Append-only, so reading the tail never races an appending writer:
+        a half-written final line is dropped rather than raised on."""
+        path = self._messages_path
+        if not path.exists():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        rows = []
+        for line in lines[-limit:]:
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return rows
+
+    def record_job(self, job_id: str, cmd: str, name: str | None, cwd: str = "") -> JobRecord:
+        record = JobRecord(job_id=job_id, name=name, cmd=cmd, launched_at=_now(), cwd=cwd)
         self.session.jobs[job_id] = record
         self.save()
         return record

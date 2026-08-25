@@ -14,7 +14,11 @@ something must not require asking the agent to fetch it.
 
 from __future__ import annotations
 
+import os
 import queue
+import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -39,6 +43,9 @@ from textual.widgets import (
 
 from . import commands, images
 from .browse import Entry, human
+from .mirror import local_for
+from .progress import BAR_WIDTH, Progress
+from .progress import bar as draw_bar
 from .view import View
 
 TOOL_STYLE = {
@@ -107,6 +114,84 @@ class JobsPane(Static):
         return "\n".join(out)
 
 
+def _bar_worth_showing(snap: Progress) -> bool:
+    """Whether the bar earns its two lines right now.
+
+    The complaint was a bar that is always on: a pulsing strip that says "busy"
+    tells you nothing you did not know. It earns its place when it carries a
+    number or names a real job -- a solve, a mesh, a sync -- and not merely because
+    a turn is in progress. Thinking and writing are the front desk's to narrate and
+    the stream's to show; the bar stays out of it."""
+    return snap.phase in ("solving", "meshing", "decomposing", "reconstructing",
+                          "checking the mesh", "post-processing", "syncing")
+
+
+class ProgressPane(Static):
+    """The bar and its line: what is running and how far along it is.
+
+    Kept separate from the stage line on purpose. The stage line is whatever
+    happened last -- a thought, a tool name -- and it is overwritten by the next
+    thing. This pane is the picture: a solve stays on it while the model thinks,
+    with its percentage, its clock and its residuals, until the solve is over. When
+    nothing is running it takes no room at all rather than pulsing at nothing.
+    """
+
+    snapshot: reactive[Progress] = reactive(Progress())
+
+    def watch_snapshot(self, snap: Progress) -> None:
+        show = _bar_worth_showing(snap)
+        self.display = show
+        self.styles.height = 2 if show else 0
+
+    def render(self) -> str:
+        snap = self.snapshot
+        colour = "green" if snap.fraction is not None else "cyan"
+        head = _escape(snap.headline)
+        first = f"[{colour}]{draw_bar(snap)}[/{colour}] {snap.percent()}  [b]{head}[/b]"
+        if not snap.detail:
+            return first
+        # Two lines is the pane; a detail that wraps into a third is clipped, so it
+        # is cut where the pane ends instead of where the terminal does.
+        room = max(20, (self.size.width or 120) - BAR_WIDTH - 9)
+        detail = snap.detail if len(snap.detail) <= room else snap.detail[: room - 1] + "…"
+        return f"{first}\n{'':{BAR_WIDTH + 7}}[dim]{_escape(detail)}[/dim]"
+
+
+class NowPane(Static):
+    """One plain-language line on what the agent is doing right now.
+
+    This is the "what is happening?" the user kept asking for. It is written by the
+    front desk (`desk.py`) from the transcript and the live job facts -- prose, not
+    the mechanical phase labels the bar carries -- and it stays put until the desk
+    replaces it, so it reads as a status and not as a flicker."""
+
+    text = reactive("")
+
+    def render(self) -> str:
+        return f"[cyan]›[/cyan] [italic]{_escape(self.text)}[/italic]" if self.text else ""
+
+
+class RendersPane(Static):
+    """The pictures, newest first, in one place.
+
+    The mirror copies every render and assembled gif into a flat folder; this lists
+    it so "where is the image?" is answered by a tab that is always current, and
+    `enter` opens the newest in the machine's own viewer. No hunting through the
+    workspace tree, and nothing the agent had to remember to hand over."""
+
+    paths: reactive[list] = reactive(list)
+    folder: reactive[str] = reactive("")
+
+    def render(self) -> str:
+        if not self.paths:
+            return "[b]renders[/b]\n[dim]none yet - they appear here as they are made[/dim]"
+        out = [f"[b]renders[/b]  [dim]{len(self.paths)}, newest first[/dim]", ""]
+        for path in self.paths[:16]:
+            out.append(f" {_escape(path.name)}")
+        out.append("\n[dim]ctrl+G opens the newest[/dim]")
+        return "\n".join(out)
+
+
 class StagePane(Static):
     """One line on what is happening right now, so the screen is never silent."""
 
@@ -114,6 +199,13 @@ class StagePane(Static):
 
     def render(self) -> str:
         return f"[dim italic]{self.text}[/dim italic]" if self.text else ""
+
+
+def _files_signature(entries: list[Entry]) -> tuple:
+    """What the pane actually draws. mtimes are left out on purpose: a growing log
+    changes its mtime every cycle, and redrawing the tree over a difference nobody
+    can see costs the user their cursor position for nothing."""
+    return tuple((entry.path, entry.size, entry.is_dir) for entry in entries)
 
 
 class FilesTree(Tree):
@@ -191,6 +283,8 @@ class OpenReynoldsApp(App):
     #left { width: 3fr; }
     #right { width: 42; }
     SessionBar { height: 2; padding: 0 1; background: $panel; }
+    ProgressPane { height: 2; padding: 0 1; }
+    NowPane { height: 1; padding: 0 1; }
     StagePane { height: 1; padding: 0 1; }
     JobsPane { padding: 0 1; height: 1fr; }
     #conversation { height: 3fr; border: round $primary; padding: 0 1; }
@@ -203,6 +297,7 @@ class OpenReynoldsApp(App):
         ("ctrl+l", "clear", "Clear"),
         ("ctrl+t", "toggle_thinking", "Thinking"),
         ("ctrl+f", "files", "Files"),
+        ("ctrl+g", "renders", "Renders"),
         ("ctrl+r", "refresh_files", "Refresh"),
     ]
 
@@ -215,12 +310,15 @@ class OpenReynoldsApp(App):
         self._streaming = False
         self.quitting = False
         self.browser: Any = None
+        self._files_sig: tuple | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield SessionBar(id="bar")
         with Horizontal(id="body"):
             with Vertical(id="left"):
+                yield ProgressPane(id="progress")
+                yield NowPane(id="now")
                 yield StagePane(id="stage")
                 yield RichLog(id="conversation", wrap=True, markup=True, highlight=False)
                 yield RichLog(id="activity", wrap=True, markup=True, highlight=False)
@@ -228,6 +326,8 @@ class OpenReynoldsApp(App):
                 with TabbedContent(id="panes"):
                     with TabPane("jobs", id="tab-jobs"):
                         yield JobsPane(id="jobs")
+                    with TabPane("renders", id="tab-renders"):
+                        yield RendersPane(id="renders")
                     with TabPane("files", id="tab-files"):
                         yield FilesTree("/work", id="filestree")
         yield Input(placeholder="Ask for something, or /btw to speak without interrupting", id="prompt")
@@ -333,8 +433,38 @@ class OpenReynoldsApp(App):
     def action_files(self) -> None:
         self.show_files_tab()
 
+    def action_renders(self) -> None:
+        """Open the renders tab and the newest picture in the machine's viewer."""
+        self.show_renders_tab()
+        pics = self._render_paths()
+        if pics:
+            _open_path(pics[0])
+
+    def _render_paths(self) -> list[Path]:
+        store = getattr(self.browser, "store", None) if self.browser else None
+        folder = getattr(store, "renders_dir", None)
+        if folder is None or not Path(folder).is_dir():
+            return []
+        pics = [p for p in Path(folder).iterdir() if p.is_file()]
+        return sorted(pics, key=lambda p: p.stat().st_mtime, reverse=True)
+
+    def refresh_renders(self) -> None:
+        """Redraw the renders list from the flat folder. Runs on the UI thread."""
+        try:
+            pane = self.query_one("#renders", RendersPane)
+        except NoMatches:
+            return
+        pane.paths = self._render_paths()
+
+    def show_renders_tab(self) -> None:
+        self.query_one("#panes", TabbedContent).active = "tab-renders"
+        self.refresh_renders()
+
     def action_refresh_files(self) -> None:
-        self.load_files(self.query_one("#filestree", FilesTree).root_path)
+        """An explicit refresh means "go and look", not "show me the cache"."""
+        self.load_files(
+            self.query_one("#filestree", FilesTree).root_path, force_remote=True
+        )
 
     def show_files_tab(self, path: str = "") -> None:
         tree = self.query_one("#filestree", FilesTree)
@@ -344,19 +474,51 @@ class OpenReynoldsApp(App):
         self.load_files(tree.root_path)
 
     @work(thread=True, group="files")
-    def load_files(self, path: str) -> None:
-        """Listing the workspace is a network call, so it never runs on the UI thread."""
+    def load_files(self, path: str, force_remote: bool = False) -> None:
+        """Fill the files pane, from the mirror's listing when it has one.
+
+        The background mirror lists the workspace every cycle anyway, so most loads
+        are answered instantly from that; the network round trip is only paid when
+        nothing has looked yet, when the path is outside what the mirror watches,
+        or when a refresh explicitly asks for the workspace itself.
+        """
         if self.browser is None:
             return
-        self.call_from_thread(self._set_stage, f"listing {path}")
-        try:
-            entries = self.browser.tree(path)
-        except Exception as exc:
-            self.call_from_thread(self._note, f"[red]could not list {path}: {exc}[/red]")
-            return
+        entries = None if force_remote else self.browser.cached(path)
+        if entries is None:
+            self.call_from_thread(self._set_stage, f"listing {path}")
+            try:
+                entries = self.browser.tree(path)
+            except Exception as exc:
+                self.call_from_thread(
+                    self._note, f"[red]could not list {path}: {exc}[/red]"
+                )
+                return
+        self._files_sig = _files_signature(entries)
         tree = self.query_one("#filestree", FilesTree)
         self.call_from_thread(tree.load, entries)
         self.call_from_thread(self._set_stage, "")
+
+    def files_synced(self, report: Any) -> None:
+        """A mirror cycle finished: say what arrived, and redraw the pane if the
+        workspace actually changed. Runs on the UI thread."""
+        pulled = getattr(report, "pulled", None)
+        if pulled:
+            self._note(f"[dim]mirrored {len(pulled)} file(s)[/dim]")
+        if self.browser is None:
+            return
+        try:
+            tree = self.query_one("#filestree", FilesTree)
+        except NoMatches:
+            return
+        entries = self.browser.cached(tree.root_path)
+        if entries is None:
+            return
+        sig = _files_signature(entries)
+        if sig == self._files_sig:
+            return
+        self._files_sig = sig
+        tree.load(entries)
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         """A leaf is a file. Directories expand themselves; opening one shows nothing."""
@@ -366,22 +528,63 @@ class OpenReynoldsApp(App):
 
     @work(thread=True, group="files")
     def open_path(self, path: str) -> None:
-        """Read one file for viewing. An image is copied out instead: the terminal
-        cannot draw it here, but the file browser can."""
+        """Read one file for viewing. The mirrored local copy answers when it is
+        current -- opening a file should not cost a network round trip when the
+        file is already on this machine. An image is handed over as a local path
+        either way: the terminal cannot draw it here, but the file browser can."""
         if self.browser is None:
             return
-        self.call_from_thread(self._set_stage, f"opening {path}")
-        try:
-            if images.media_type(path):
-                written = self.browser.pull(path)
-                where = "\n".join(str(p) for p in written) or "(nothing was copied)"
-                body = f"{path}\n\nAn image. Copied to your machine, open it from:\n\n{where}"
-            else:
-                body, _is_text = self.browser.read(path)
-        except Exception as exc:
-            body = f"{path}\n\ncould not be read: {exc}"
+        body = self._open_local(path)
+        if body is None:
+            self.call_from_thread(self._set_stage, f"opening {path}")
+            try:
+                if images.media_type(path):
+                    written = self.browser.pull(path)
+                    where = "\n".join(str(p) for p in written) or "(nothing was copied)"
+                    body = f"{path}\n\nAn image. Copied to your machine, open it from:\n\n{where}"
+                else:
+                    body, _is_text = self.browser.read(path)
+            except Exception as exc:
+                body = f"{path}\n\ncould not be read: {exc}"
         self.call_from_thread(self.push_screen, FileScreen(path, body))
         self.call_from_thread(self._set_stage, "")
+
+    def _open_local(self, path: str) -> str | None:
+        """The file, from the mirror, or None when the instance has to answer.
+
+        Current means the local size matches what the last listing saw. A file the
+        listing says has moved on is read from the instance -- showing a stale copy
+        without saying so would be the pane lying about the workspace."""
+        local = self._local_copy(path)
+        if local is None:
+            return None
+        if images.media_type(path):
+            return (
+                f"{path}\n\nAn image, already on your machine:\n\n{local}"
+            )
+        try:
+            raw = local.read_bytes()
+        except OSError:
+            return None
+        if b"\x00" in raw[:8_000]:
+            return None  # binary: the remote path describes it rather than dumping it
+        return raw.decode("utf-8", errors="replace")
+
+    def _local_copy(self, path: str) -> Path | None:
+        store = getattr(self.browser, "store", None)
+        if store is None:
+            return None
+        target = local_for(store.fetch_dir(), path)
+        try:
+            size = target.stat().st_size
+        except OSError:
+            return None
+        entries = self.browser.cached(path)
+        if entries:
+            entry = next((e for e in entries if e.path == path.rstrip("/")), None)
+            if entry is not None and (entry.is_dir or entry.size != size):
+                return None
+        return target
 
     @work(thread=True, group="files")
     def pull_path(self, path: str) -> None:
@@ -409,6 +612,7 @@ class TuiView(View):
         self.app = app
         self._pending = ""
         self._thought = ""
+        self._thinking_since = 0.0
 
     # Every call arrives off the UI thread, so all of them hop across.
     def _to(self, widget_id: str, markup: str) -> None:
@@ -431,6 +635,7 @@ class TuiView(View):
 
     def thinking_begin(self) -> None:
         self._thought = ""
+        self._thinking_since = time.monotonic()
         self._set("stage", text="thinking...")
 
     def thinking_delta(self, text: str) -> None:
@@ -446,7 +651,10 @@ class TuiView(View):
                 self._to("conversation", f"[dim italic]{_escape(line)}[/dim italic]")
         latest = " ".join(self._thought.split())
         if latest:
-            self._set("stage", text=f"thinking: {latest[-110:]}")
+            # With a clock on it: two minutes of reasoning and a stalled connection
+            # look the same without one.
+            elapsed = time.monotonic() - self._thinking_since
+            self._set("stage", text=f"thinking {elapsed:.0f}s: {latest[-100:]}")
 
     def text_delta(self, text: str) -> None:
         self._pending += text
@@ -512,10 +720,51 @@ class TuiView(View):
         body = "\n".join(f"[cyan]{_escape(line)}[/cyan]" for line in lines)
         self._to("conversation", f"{body}\n")
 
+    def mirrored(self, report: Any) -> None:
+        """Arrivals land in the activity pane and the files pane redraws itself.
+
+        The mirror outlives moments the interface does not: a teardown race is
+        answered with silence rather than a crash, because the files are already
+        home either way and only the telling would be lost."""
+        try:
+            self.app.call_from_thread(self.app.files_synced, report)
+        except RuntimeError:
+            pass
+
     def watching(self, names: list[str]) -> None:
         self._set("jobs", names=list(names))
         self._set("stage", text=f"watching {len(names)} job(s) - type any time")
         self._to("activity", f"[dim]watching {len(names)} job(s)[/dim]")
+
+    def progress(self, snapshot: Any) -> None:
+        """Once a second from the tracker's thread; the pane compares and redraws."""
+        try:
+            self._set("progress", snapshot=snapshot)
+        except RuntimeError:
+            pass  # the app is coming down; the next tick has nowhere to go either
+
+    def narration(self, text: str) -> None:
+        """The front desk's 'what's happening now' line."""
+        try:
+            self._set("now", text=text)
+        except RuntimeError:
+            pass
+
+    def desk(self, text: str) -> None:
+        """A front-desk reply, in the conversation pane, clearly the desk and not
+        the agent -- so nobody reads it as the agent having answered."""
+        self._to("conversation", f"\n[bold cyan]desk[/bold cyan]  {_escape(text)}")
+
+    def delivered(self, event: Any) -> None:
+        """New renders arrived from the mirror: say so and refresh the renders tab.
+        No auto-open -- a viewer window opening itself mid-solve is startling; the
+        line says a picture is ready and the tab holds it."""
+        for line in event.lines():
+            self._to("activity", f"[green]{_escape(line)}[/green]")
+        self.app.call_from_thread(self.app.refresh_renders)
+
+    def show_renders(self, renders_dir: Any) -> None:
+        self.app.call_from_thread(self.app.show_renders_tab)
 
 
 class TuiReader:
@@ -540,6 +789,23 @@ class TuiReader:
 
     def putback(self, line: str | None) -> None:
         self.app.typed.put(line)
+
+    def pending(self) -> bool:
+        """Whether something is waiting, without taking it."""
+        return not self.app.typed.empty()
+
+
+def _open_path(path: Path) -> None:
+    """Open a file with the machine's own viewer. Best-effort: a picture that will
+    not open is not worth an exception into the UI thread."""
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(path))  # noqa: S606 - the platform's own opener
+        else:
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([opener, str(path)])
+    except (OSError, AttributeError):
+        pass
 
 
 def _escape(text: str) -> str:

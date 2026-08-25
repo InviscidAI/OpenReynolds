@@ -130,3 +130,29 @@ def test_a_good_body_still_decodes():
     from openreynolds.backend.hosted import _json
 
     assert _json(response(200, {"exit_code": 0})) == {"exit_code": 0}
+
+
+def test_extraction_is_atomic_per_file(tmp_path):
+    """Files land whole or not at all: temp-then-rename, no .part leftovers.
+
+    Two syncs of the same study can overlap (a cycle outliving a bounded join,
+    `openreynolds pull` in another terminal), and a reader must never see the
+    middle of a write."""
+    import io as _io
+    import tarfile as _tarfile
+
+    from openreynolds.backend.hosted import _extract_tar_gz
+
+    buf = _io.BytesIO()
+    with _tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        payload = b"x" * 4096
+        info = _tarfile.TarInfo("case/log.simpleFoam")
+        info.size = len(payload)
+        tar.addfile(info, _io.BytesIO(payload))
+
+    written = _extract_tar_gz(buf.getvalue(), tmp_path)
+
+    assert [p.name for p in written] == ["log.simpleFoam"]
+    assert (tmp_path / "case" / "log.simpleFoam").read_bytes() == b"x" * 4096
+    leftovers = [p for p in tmp_path.rglob("*") if ".part" in p.name]
+    assert leftovers == []

@@ -230,6 +230,69 @@ def test_watch_gives_up_at_a_deadline_without_killing_anything(backend, store, v
     assert store.live_jobs(), "the job was left alone"
 
 
+# -- a long solve is not a silent one ------------------------------------------
+
+
+def test_watch_narrates_progress_facts_on_an_interval(backend, store, view):
+    job_id = start_job(backend, store)
+    backend.logs[job_id] = b"Time = 41\nTime = 42\n"
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, name="solve", status="running",
+        log_size=len(backend.logs[job_id]),
+    )
+
+    wake = watch(backend, store, view, NullReader(), narrate_every_s=0.001)
+
+    assert wake.kind == "narrate"
+    assert "solve" in wake.text
+    assert "Time = 42" in wake.text
+    assert "nothing has ended" in wake.text
+    assert store.session.jobs[job_id].status == "running", "narrating ended nothing"
+
+
+def test_a_narration_offers_no_next_step(backend, store, view):
+    job_id = start_job(backend, store)
+    backend.logs[job_id] = b"Time = 7\n"
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, name="solve", status="running", log_size=9
+    )
+
+    wake = watch(backend, store, view, NullReader(), narrate_every_s=0.001)
+
+    lowered = wake.text.lower()
+    for suggestion in ("you should", "try ", "recommend", "next step", "consider"):
+        assert suggestion not in lowered
+
+
+def test_progress_facts_reach_the_stage_line_every_poll(backend, store, view):
+    import time as _time
+
+    job_id = start_job(backend, store)
+    backend.logs[job_id] = b"Time = 7\n"
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, name="solve", status="running", log_size=9
+    )
+
+    watch(backend, store, view, NullReader(), deadline=_time.monotonic() + 0.2)
+
+    shown = " ".join(view.stages)
+    assert "solve" in shown
+    assert "Time = 7" in shown
+
+
+def test_the_watch_deadline_is_not_replaced_by_the_poll_pause(backend, store, view):
+    """--max-wait 60 used to become a thirty-second wait: the poll pause reused the
+    deadline variable and clobbered the caller's bound."""
+    import time as _time
+
+    start_job(backend, store)
+    began = _time.monotonic()
+    wake = watch(backend, store, view, NullReader(), deadline=began + 0.35)
+
+    assert wake.kind == "timeout"
+    assert _time.monotonic() - began >= 0.3, "it waited to the caller's bound"
+
+
 # -- one message, however many lines it has ------------------------------------
 
 

@@ -386,6 +386,164 @@ def test_leaving_says_where_the_local_copy_is(backend, store, monkeypatch):
     assert str(store.files_dir) in written.getvalue()
 
 
+# -- the live mirror -----------------------------------------------------------
+
+
+def test_a_cycle_brings_files_home_without_a_turn_ending(backend, store, view):
+    """The point of the live mirror: a job writing while the model's turn is over
+    still reaches the user's machine."""
+    workspace(backend, (f"{HOME}/case/postProcessing/forces/0/force.dat", 600))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=0)
+    live.view = view
+
+    report = live.sync_now()
+
+    assert report.pulled, "the job's output came home"
+    assert view.mirrors and view.mirrors[-1] is report
+    assert (
+        store.files_dir / "study-test" / "case" / "postProcessing" / "0" / "force.dat"
+    ).parent.parent.is_dir()
+
+
+def test_the_background_thread_cycles_on_its_own(backend, store, view):
+    import time as _time
+
+    workspace(backend, (f"{HOME}/notes.md", 40))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=0.01)
+    live.view = view
+    live.start()
+    try:
+        deadline = _time.time() + 5.0
+        while not view.mirrors and _time.time() < deadline:
+            _time.sleep(0.01)
+    finally:
+        live.stop()
+
+    assert view.mirrors, "a cycle ran without anyone asking"
+    assert (store.files_dir / "study-test" / "notes.md").is_file()
+
+
+def test_a_poke_syncs_now_rather_than_at_the_next_interval(backend, store, view):
+    """The model just looked at a render; the user should not be an interval behind
+    a picture that already exists."""
+    import time as _time
+
+    workspace(backend, (f"{HOME}/renders/mesh.png", 900))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=3600)
+    live.view = view
+    live.start()
+    try:
+        live.poke()
+        deadline = _time.time() + 5.0
+        while not view.mirrors and _time.time() < deadline:
+            _time.sleep(0.01)
+    finally:
+        live.stop()
+
+    assert view.mirrors, "the poke ran a cycle; the hour-long interval did not gate it"
+    assert (store.files_dir / "study-test" / "renders" / "mesh.png").is_file()
+
+
+def test_a_poke_with_no_thread_is_quietly_nothing(backend, store):
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=0)
+    live.start()
+    live.poke()  # must not raise, must not block
+    live.stop()
+
+
+def test_an_interval_of_zero_means_no_thread(backend, store):
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=0)
+    live.start()
+    assert live._thread is None
+    live.stop()  # idempotent, and must not raise
+
+
+def test_a_cycle_that_blows_up_becomes_a_report_not_an_end(backend, store, view, monkeypatch):
+    """Nothing about a convenience may end a session with jobs in flight."""
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("nobody foresaw this")
+
+    monkeypatch.setattr(mirror, "sync", explode)
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=0)
+    live.view = view
+
+    report = live.sync_now()
+
+    assert any("nobody foresaw this" in warning for warning in report.warnings)
+    assert view.mirrors, "the failure was still reported to the view"
+
+
+def test_a_view_that_dies_mid_telling_does_not_take_the_mirror_down(backend, store):
+    workspace(backend, (f"{HOME}/notes.md", 40))
+
+    class DyingView:
+        def mirrored(self, report):
+            raise RuntimeError("the interface is tearing down")
+
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=0)
+    live.view = DyingView()
+
+    report = live.sync_now()  # must not raise
+
+    assert report.pulled
+
+
+def test_the_final_sync_waits_for_a_cycle_that_outlived_stop(backend, store, monkeypatch):
+    """stop()'s join is bounded, so a slow cycle can survive it. The close-down
+    sync must queue behind that cycle on the same lock, or the two interleave
+    over the same files."""
+    import threading
+    import time as _time
+
+    order = []
+    cycle_started = threading.Event()
+    release_cycle = threading.Event()
+
+    def slow_sync(browser, everything=True, **kwargs):
+        order.append("cycle-start")
+        cycle_started.set()
+        release_cycle.wait(5)
+        order.append("cycle-end")
+        return mirror.MirrorReport(local_dir=store.fetch_dir())
+
+    monkeypatch.setattr(mirror, "sync", slow_sync)
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=0.01)
+    live.start()
+    assert cycle_started.wait(5)
+    live.stop(timeout=0.01)  # returns with the cycle still inside sync()
+
+    def final():
+        order.append("final-ask")
+        live.sync_now()
+        order.append("final-done")
+
+    asker = threading.Thread(target=final)
+    asker.start()
+    _time.sleep(0.05)
+    release_cycle.set()
+    asker.join(5)
+
+    assert not asker.is_alive()
+    assert order.index("cycle-end") < order.index("final-done"), (
+        "the final sync ran concurrently with the surviving cycle"
+    )
+
+
+def test_a_sync_remembers_its_listing_for_whoever_draws_the_workspace(backend, store):
+    """The files pane reads the cache the mirror keeps; a sync that forgot its own
+    listing would put the pane back on the network."""
+    workspace(backend, (f"{HOME}/notes.md", 40))
+    browser = browser_for(backend, store)
+
+    mirror.sync(browser)
+
+    cached = browser.cached(HOME)
+    assert cached is not None
+    assert any(entry.path == f"{HOME}/notes.md" for entry in cached)
+    assert browser.cache_age() is not None
+
+
 # -- asking for it by hand -----------------------------------------------------
 
 
@@ -558,3 +716,76 @@ def test_a_failed_batch_is_retried_one_at_a_time(backend, store, tmp_path):
     assert len(report.pulled) == 2, "the two good files came down anyway"
     assert any("plot.png" in s.path for s in report.skipped)
     assert max(len(a) for a in attempts) > 1 and min(len(a) for a in attempts) == 1
+
+
+def test_catching_up_does_not_wait_when_the_thread_is_running(backend, store, view):
+    """The turn-end sync blocked the session thread for twenty-five minutes while a
+    transient solve's per-processor fields came home, and two typed messages sat
+    unread behind it. With the thread running, catching up is a poke and a return."""
+    import time as _time
+
+    workspace(backend, (f"{HOME}/renders/mesh.png", 900))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=3600)
+    live.view = view
+    live.start()
+    try:
+        began = _time.monotonic()
+        result = live.catch_up()
+        took = _time.monotonic() - began
+        deadline = _time.time() + 5.0
+        while not view.mirrors and _time.time() < deadline:
+            _time.sleep(0.01)
+    finally:
+        live.stop()
+
+    assert result is None, "nothing to hand back: the cycle ran on the other thread"
+    assert took < 1.0
+    assert view.mirrors, "and it did run"
+
+
+def test_catching_up_syncs_here_when_there_is_no_thread(backend, store, view):
+    """Interval 0 means the turn-end syncs are the only ones; they still happen."""
+    workspace(backend, (f"{HOME}/notes.md", 40))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=0)
+    live.view = view
+
+    report = live.catch_up()
+
+    assert report is not None and report.pulled
+
+
+def test_the_tracker_hears_every_cycle(backend, store, view):
+    class Ears:
+        def __init__(self):
+            self.events = []
+
+        def sync_begin(self):
+            self.events.append("begin")
+
+        def sync_end(self, report):
+            self.events.append(("end", bool(report.pulled)))
+
+    workspace(backend, (f"{HOME}/notes.md", 40))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=0)
+    live.progress = Ears()
+
+    live.sync_now()
+
+    assert live.progress.events == ["begin", ("end", True)]
+
+
+def test_the_mirror_delivers_renders_it_pulls(backend, store, view):
+    """Delivery rides on the sync: a render pulled home is surfaced without the agent."""
+    from openreynolds.delivery import Gallery
+
+    workspace(backend, (f"{HOME}/case/renders/p.png", 400))
+    backend.files[f"{HOME}/case/renders/p.png"] = b"\x89PNG" + b"x" * 396
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=0)
+    live.view = view
+    live.gallery = Gallery(store.files_dir, store.renders_dir,
+                           assemble=lambda *a, **k: None, encoder=lambda: None)
+
+    live.sync_now()
+
+    assert view.deliveries, "a delivered() event reached the view"
+    assert (store.renders_dir / "p.png").exists()

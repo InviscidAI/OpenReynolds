@@ -34,6 +34,7 @@ class Loop:
         view: View,
         capture: Any | None = None,
         interject: Callable[[], str | None] | None = None,
+        progress: Any | None = None,
     ):
         self.cfg = cfg
         self.ctx = ctx
@@ -41,6 +42,9 @@ class Loop:
         self.view = view
         self.capture = capture
         self.interject = interject
+        self.progress = progress
+        """Told what this thread is doing -- thinking, writing, in a tool -- so the
+        bar can say so with a clock on it. Presentation; it hears, never speaks."""
 
         headers = {"X-Study-Id": store.session.study_id}
         self.client = anthropic.Anthropic(
@@ -162,7 +166,20 @@ class Loop:
             ]
             return self._stream()
 
+    def _busy(self, kind: str, label: str = "", **facts: Any) -> None:
+        if self.progress is not None:
+            self.progress.begin(kind, label, **facts)
+
+    def _unbusy(self) -> None:
+        if self.progress is not None:
+            self.progress.idle()
+
     def _stream(self) -> Any:
+        # The round trip before the first event is thinking as far as anyone
+        # watching can tell, and a clock on it is what tells a slow model from a
+        # dead connection.
+        self._busy("thinking")
+        writing = False
         with self.client.messages.stream(
             model=self.cfg.model,
             max_tokens=MAX_TOKENS,
@@ -180,17 +197,31 @@ class Loop:
                     if event.delta.type == "thinking_delta":
                         self.view.thinking_delta(event.delta.thinking)
                     elif event.delta.type == "text_delta":
+                        if not writing:
+                            writing = True
+                            self._busy("writing")
                         self.view.text_delta(event.delta.text)
             response = stream.get_final_message()
 
         self.view.turn_end()
+        self._unbusy()
         self._account(response)
         return response
 
     def _run_tool(self, block: Any) -> dict[str, Any]:
         self.view.tool(block.name, _summarize(block.input))
-        with _ticking(self.view, block.name):
-            content, is_error = dispatch(self.ctx, block.name, dict(block.input))
+        tool_input = dict(block.input)
+        self._busy(
+            "tool",
+            block.name,
+            cmd=str(tool_input.get("cmd") or ""),
+            cwd=str(tool_input.get("cwd") or self.ctx.home or ""),
+        )
+        try:
+            with _ticking(self.view, block.name):
+                content, is_error = dispatch(self.ctx, block.name, tool_input)
+        finally:
+            self._unbusy()
         # A tool result can be content blocks rather than text -- an image, for one --
         # and those go to the model as they are. What gets written down is a
         # description: a megabyte of base64 in the message log helps nobody read it.

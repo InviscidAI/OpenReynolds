@@ -211,6 +211,9 @@ class ScriptedReader:
     def putback(self, line):
         self._lines.insert(0, line)
 
+    def pending(self):
+        return bool(self._lines)
+
 
 @pytest.fixture
 def fast_polling(monkeypatch):
@@ -240,6 +243,12 @@ class RecordingView(View):
         self.interjections = []
         self.statuses = []
         self.listings = []
+        self.mirrors = []
+        self.progresses = []
+        self.narrations = []
+        self.desk_replies = []
+        self.deliveries = []
+        self.rendered = []
         self.browser = None
 
     def header(self, study_id, instance_id, model, mirror):
@@ -296,11 +305,29 @@ class RecordingView(View):
     def show_files(self, path=""):
         self.listings.append(path)
 
+    def show_renders(self, renders_dir):
+        self.rendered.append(renders_dir)
+
+    def delivered(self, event):
+        self.deliveries.append(event)
+
     def status(self, lines):
         self.statuses.append(list(lines))
 
+    def mirrored(self, report):
+        self.mirrors.append(report)
+
     def prompt(self):
         self.prompts += 1
+
+    def progress(self, snapshot):
+        self.progresses.append(snapshot)
+
+    def narration(self, text):
+        self.narrations.append(text)
+
+    def desk(self, text):
+        self.desk_replies.append(text)
 
     @property
     def said(self) -> str:

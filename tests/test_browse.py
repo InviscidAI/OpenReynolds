@@ -167,3 +167,45 @@ def test_the_workspace_root_is_listed_through_its_symlink(backend):
     listing_backend(backend)
     Browser(backend).tree("/work")
     assert backend.last_exec[0].startswith("find -H /work")
+
+
+# -- the remembered listing ------------------------------------------------------
+
+
+def test_nothing_remembered_is_a_miss_not_an_empty_directory(backend):
+    """None means "go and look"; an empty list would claim the workspace is empty."""
+    browser = Browser(backend, home="/work/mine")
+    assert browser.cached() is None
+    assert browser.cache_age() is None
+
+
+def test_a_remembered_listing_answers_for_its_root_and_below(backend):
+    from openreynolds.browse import Entry
+
+    browser = Browser(backend, home="/work/mine")
+    browser.remember(
+        "/work/mine",
+        [
+            Entry(path="/work/mine/case", is_dir=True),
+            Entry(path="/work/mine/case/log.simpleFoam", is_dir=False, size=10),
+            Entry(path="/work/mine/notes.md", is_dir=False, size=5),
+        ],
+    )
+
+    assert len(browser.cached()) == 3
+    under_case = browser.cached("/work/mine/case")
+    assert [e.path for e in under_case] == [
+        "/work/mine/case",
+        "/work/mine/case/log.simpleFoam",
+    ]
+    assert browser.cache_age() is not None and browser.cache_age() < 5
+
+
+def test_a_path_outside_the_remembered_root_is_a_miss(backend):
+    from openreynolds.browse import Entry
+
+    browser = Browser(backend, home="/work/mine")
+    browser.remember("/work/mine", [Entry(path="/work/mine/a", is_dir=False, size=1)])
+
+    assert browser.cached("/work/other-study") is None
+    assert browser.cached("/work") is None

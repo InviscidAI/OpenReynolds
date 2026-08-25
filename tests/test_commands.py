@@ -89,3 +89,10 @@ def test_the_help_lists_every_verb_it_accepts():
     """A command nobody can discover is a command nobody uses."""
     for verb in ("/btw", "/status", "/files", "/open", "/help", "/exit"):
         assert verb in commands.HELP_TEXT
+
+
+def test_renders_verbs_parse():
+    from openreynolds import commands
+
+    for verb in ("/renders", "/pics", "/images"):
+        assert commands.parse(verb).kind == commands.RENDERS

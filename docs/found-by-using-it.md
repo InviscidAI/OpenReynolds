@@ -207,6 +207,59 @@ cannot fall behind them.
   one of thirty. A live run then showed seven rounds inside a single turn at roughly
   twenty seconds each — which is also why anyone watching reaches for the keyboard.
 
+## Two messages sat unread for twenty-five minutes
+
+A transient `pimpleFoam` run on six ranks, t = 1.19 s of 6 s. The model ended its turn
+with a question — "anything you want added while it runs?" — and the user answered it,
+twice: *I want a gif, how far along is the sim?* and, a while later, *yo?* Neither was
+answered. The screenshot showed a finished turn, two echoed messages, and nothing else.
+
+Neither message had reached the model. The transcript ended at the model's question;
+the mirror's local copy was still receiving `processor1/0.35/U_0.gz` when the screenshot
+was taken. The turn-end sync ran on the session thread, the session thread is the one
+that reads what was typed, and with `everything=True` a six-rank transient case gives a
+sync an unbounded amount to do — hundreds of small per-processor field files in batches,
+each batch a round trip, each failure retried a file at a time. The messages waited in
+the queue behind all of it.
+
+Two things were wrong and they compounded. The block itself: fixed by asking the
+background thread to sync (`LiveMirror.catch_up`) instead of doing it in line. And the
+silence: the screen had no way to show that anything was happening, so a busy session
+and a dead one looked identical. The one grey stage line had been overwritten by the
+last event and then cleared at the turn's end. That is what the bar is for: a running
+solve stays on it with a percentage while the model thinks or the mirror copies, and
+the thinking has a clock on it. A session that is doing something should look like it.
+
+## "It keeps doing its own work and doesn't respond"
+
+The next screenshot after the mirror fix: the agent 134 seconds into a single `bash`
+step (step 34, one call), a solve running, and the user's "how long will this simulation
+take?" sitting under a dim "(sent - it reads this at its next step)" with no answer for
+minutes. The user's words: "it still doesn't stop and respond, it keeps doing its own
+work, and it's especially problematic when the task takes a lot of time."
+
+This one is not a bug to fix in place — it is structural, and worth writing down as a
+limit rather than a defect. The agent runs on one thread. A `bash` call holds that
+thread for up to 300 seconds and cannot be interrupted; a thinking phase holds it for
+minutes. The interject mechanism delivers a typed message when the *next* tool result is
+assembled — which, mid-`bash`, is 134 seconds away. Nothing on that thread can answer
+sooner, and the free-will contract forbids the harness from forcing the model to answer
+at all.
+
+So the fix is a *second* thread with a *second*, cheap agent: the front desk (`desk.py`).
+It is read-only, it never touches the main agent's thread or tools, and it answers the
+user from the transcript and the live job facts within seconds — labelled `desk` so it
+is never mistaken for the agent. The main agent still gets the message unchanged and
+answers in its own time. Two things this is careful about: the desk speaks in the third
+person and never promises on the agent's behalf (it is a narrator, not an impersonator),
+and it only speaks when the agent is actually busy (an idle session answers for itself).
+The same desk writes the plain-language "now" line the user also asked for — "what am I
+doing right now?" — which the mechanical phase labels on the bar were not.
+
+The companion complaint in the same message: the bar was always on. A progress strip
+that only pulses "busy" is noise. It now appears only when real compute is running — a
+solve, a mesh, a decomposition, a sync — and takes no room otherwise.
+
 ## A test case that was the problem
 
 The controller persona ran out of time twice, and nothing was broken. Its goal asked how

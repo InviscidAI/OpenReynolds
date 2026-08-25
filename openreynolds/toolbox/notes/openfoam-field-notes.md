@@ -148,6 +148,15 @@ wants non-orthogonal correctors and limited gradients; high skewness wants limit
 divergence schemes. Accepting a warn-tier mesh and *not* adjusting the schemes is the
 combination that bites.
 
+The numbers summarize; a picture localizes. `render.py --scene mesh` draws fixed-camera
+cuts through the built mesh, and `read_file` on the PNG hands the picture back to look
+at — refinement bands that did not reach the surface, layers that collapsed on one
+patch, a snap that shredded a sharp feature, all show up in a cut and vanish into a
+max/average in `checkMesh`. The same holds for geometry before the build
+(`geometry_view.py`) and for fields after the solve. Renders left in the workspace are
+mirrored to the user's machine within moments, so the picture that convinced you is
+also the picture they see.
+
 y⁺ is not a 30–100 band to be tested over a histogram. Modern `kOmegaSST` in OpenFOAM uses
 blended wall treatments that are deliberately y⁺-insensitive across the buffer layer, and
 every real geometry has stagnation points and separation lines where y⁺ → 0 no matter how
@@ -169,6 +178,68 @@ Solver names are ESI. These are places to start, not defaults to defend.
 | external aero, steady | `simpleFoam` | `kOmegaSST` | ~10D upstream, 20D downstream, 10D sides | vary the schemes; bluff or post-stall bodies are shedding candidates |
 | indoor / buoyant | `buoyantSimpleFoam` | `kEpsilon` | room plus plenum | |
 | transient shedding | `pimpleFoam` | `kOmegaSST` | per class | a short-window check before the long run pays for itself |
+
+## When a steady solve will not converge
+
+Residuals that fall a few orders and then sit flat are the commonest shape of "not
+converging", and the plateau has a small number of causes worth telling apart before
+anything is re-run harder:
+
+- **A limit cycle.** Separated regions, bluff bodies and sharp corners shed; steady
+  SIMPLE damps the shedding into a small residual oscillation, typically plateauing
+  around 1e-4 to 1e-5. The residual is then reporting the flow, not the numerics.
+  The useful instrument is the quantity of interest, not the residual: a force, flux
+  or pressure-drop monitor over the last few hundred iterations that is flat to
+  within its own noise is usually a usable answer with an honest caveat; one that
+  drifts or oscillates at growing amplitude is the unsteady-flow trap described
+  above, and a steady formulation is the wrong tool for it.
+- **Numerics fighting the mesh.** A warn-tier mesh on default schemes plateaus or
+  bounds. Non-orthogonality wants `nonOrthogonalCorrectors` and limited gradient
+  schemes (`cellLimited Gauss linear 1`); skewness wants limited divergence schemes
+  (`bounded Gauss linearUpwind`, `limitedLinear`). Accepting the mesh and not
+  adjusting the schemes is the combination that bites.
+- **Under-relaxation.** The classic stable pair is `p 0.3 / U 0.7`. Lowering buys
+  stability at a linear cost in iterations; `SIMPLEC` (`consistent yes;` in
+  `SIMPLE`) usually tolerates `p 0.7 / U 0.9` on decent meshes and converges in a
+  fraction of the iterations. If a solve only holds together far below the classic
+  values, that is evidence about the case — the mesh, the boundary conditions or
+  genuine unsteadiness — not a knob to keep turning.
+- **Boundary conditions that cannot be jointly satisfied.** A fixed-value inlet
+  facing a fixed-value outlet, `zeroGradient` pressure everywhere with no reference
+  (`pRefCell`/`pRefValue` on closed domains), backflow at an outlet with no
+  `inletOutlet` — each shows up as residuals that refuse to fall from the first
+  hundred iterations rather than plateauing later.
+- **A bad start.** `potentialFoam` before the segregated solver, or a first-order
+  run continued (`startFrom latestTime`) on second-order schemes, routinely turns a
+  diverging case into a converging one for seconds of extra cost.
+
+Turbulence quantities (`k`, `omega`, `epsilon`) plateauing one to two orders above
+`U` and `p` is normal near walls and rarely worth chasing on its own.
+
+## Where rendering happens
+
+Stills render on the instance, next to the data. A field render reads hundreds of
+megabytes of mesh and fields to make a 100 KB PNG, so moving the data to the
+renderer is the wrong direction; pyvista + OSMesa are in the image for exactly
+this, and every picture left on disk mirrors to the user's machine within moments.
+
+Video is the opposite case. Encoding needs no case data -- only the frames -- and
+the image ships no encoder (no ffmpeg), so assembling a video on the instance
+fails. The route that works: write the frames with a fixed camera into a directory
+whose name ends in `_frames` (or is called `frames/`), and that is the whole of it.
+The frames mirror home as they are written, and the harness assembles them into a
+gif on the user's machine on its own -- no `fetch`, and nobody has to be told the
+pictures exist. Because the frames come home one at a time, the harness will
+assemble a partial gif from the frames-so-far while the rest still render, which is
+what someone means by "a gif of what you have so far." `animate.py` in the toolbox
+writes frames this way and is built to run as a job (rendering fifty frames outlives
+a synchronous `bash` call's ceiling). The same logic fits any artifact: work that
+needs the data runs where the data is; work that only needs the results comes home.
+
+Stills are delivered the same way -- every `.png` written anywhere in the case
+lands in the user's flat `renders/` folder as it mirrors, so a render is something
+the user has, not something they have to be handed. There is nothing to remember to
+send.
 
 ## Long solves
 
@@ -196,3 +267,45 @@ simulation should land near. Reasons to simulate anyway are real and easy to sta
 field information, geometry off the correlation's envelope, evidence that needs a
 distribution rather than a bulk number, a design sweep that runs out of correlation
 coverage.
+
+## Waiting on a job without paying for it
+
+A running solve invites the reflex of pacing with `sleep` inside `bash` -- `sleep 200;
+grep "^Time" log` -- and it is a trap twice over. A synchronous command is capped
+(300 s), so a long sleep is cut off and reads back as an error rather than a wait; and
+even a short one burns the cap on doing nothing. The tool built for this is
+`job_check` with `wait_s`: it holds its answer until the job ends or the wait runs out,
+up to 300 s, and that wait is the harness's own -- it does not count against any command
+timeout, and it ends early the moment the user says something. Calling it again is free.
+So a wait is `job_check(job_id, wait_s=300)`, not `sleep` in a shell. The harness is
+also watching every running job on its own and can show progress without being asked, so
+polling by hand mostly is not needed at all.
+
+## Steady or transient is a physics decision, not a default
+
+A steady solver (simpleFoam) looks for a time-independent state, and for a great many
+flows there is one. But a bluff body above its shedding onset -- a cylinder past
+Re ~ 50, a square or an L or any vehicle-like shape in the hundreds and up -- has no
+steady state: the wake sheds vortices forever. A steady RANS run on such a case does not
+fail loudly; it converges to a damped, symmetric, time-averaged-looking answer that
+quietly omits the shedding, the unsteady loads, and the Strouhal number -- often the
+very things the study was about. The tell is a lift/side-force coefficient that wants to
+oscillate and a residual that plateaus instead of falling. Deciding steady vs transient
+from the regime before solving, and saying which was chosen and why, saves the redo that
+otherwise arrives when someone looks at the result and asks for "the transient one." A
+transient run (pimpleFoam) costs more but is the honest instrument for a shedding flow;
+a steady run is right for an attached, genuinely steady one.
+
+## Keeping a study 2D
+
+A "2D" case in OpenFOAM is a 3D mesh one cell thick in the third direction with the two
+faces normal to it patched `empty`. The pieces that make it actually 2D, all of which
+have to agree: one cell in z in `blockMesh` (or a single-layer extrude), a front and a
+back patch both of type `empty` in `constant/polyMesh/boundary`, and no z-velocity
+anywhere in the setup. `checkMesh` reporting the empty patches and a cell count that is
+the 2D count (not multiplied by a z-resolution) is the confirmation; a geometry or mesh
+render viewed edge-on confirms it to the eye before any solver time is spent. The common
+way it goes wrong is a mesh built with several cells in z, or side patches left as
+`patch`/`wall` instead of `empty` -- which runs, slowly, as a thin 3D case and reads as
+3D to anyone looking at the result. When the request says 2D, the geometry render is the
+cheap place to catch it, not the finished solve.

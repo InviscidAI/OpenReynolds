@@ -17,6 +17,7 @@ SAY = "say"
 ASIDE = "aside"
 STATUS = "status"
 FILES = "files"
+RENDERS = "renders"
 OPEN = "open"
 HELP = "help"
 EXIT = "exit"
@@ -26,6 +27,7 @@ HELP_TEXT = """\
   /btw               what is happening right now, answered here - the agent is not told
   /status            the same thing
   /files [path]      look at the workspace
+  /renders           open the pictures folder and show the newest
   /open              open this study's folder in the file browser
   /help              this
   /exit              leave (jobs keep running on the instance)"""
@@ -46,6 +48,9 @@ _VERBS = {
     "/what": STATUS,
     "/files": FILES,
     "/ls": FILES,
+    "/renders": RENDERS,
+    "/pics": RENDERS,
+    "/images": RENDERS,
     "/open": OPEN,
     "/help": HELP,
     "/?": HELP,
@@ -85,7 +90,13 @@ def aside(text: str) -> str:
     return f"By the way, no need to stop what you are doing: {text}"
 
 
-def status_lines(store: Any, stage: str = "", tokens: int = 0, local_files: int = 0) -> list[str]:
+def status_lines(
+    store: Any,
+    stage: str = "",
+    tokens: int = 0,
+    local_files: int = 0,
+    sync_age: float | None = None,
+) -> list[str]:
     """A picture of the session assembled from what the harness already knows.
 
     No model call: asking what is happening should not cost a turn, and a question
@@ -111,5 +122,9 @@ def status_lines(store: Any, stage: str = "", tokens: int = 0, local_files: int 
     else:
         lines.append("no jobs started yet")
 
-    lines.append(f"{local_files} file(s) pulled to {store.dir}")
+    pulled = f"{local_files} file(s) pulled to {store.dir}"
+    if sync_age is not None:
+        # "Are my files here?" deserves a when, not just a count.
+        pulled += f" (workspace synced {int(sync_age)}s ago)"
+    lines.append(pulled)
     return lines

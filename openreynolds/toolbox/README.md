@@ -13,6 +13,7 @@ Each takes `--help`.
 | `cells_estimate.py` | Cell count predicted from the STL and the snappy dictionaries, before the build rather than after it. |
 | `log_digest.py` | Solver log to a residual plot, a last-iteration table, and the continuity and bounding summary. |
 | `render.py` | Fixed pyvista scenes for a case: mesh cuts and field slices, as PNGs, with cameras that do not move between runs so two of them are a visual diff. |
+| `animate.py` | One PNG per write time into a `*_frames/` directory, fixed camera. Designed to run as a job and to flush each frame as it lands, so the frames mirror home while they render and the harness assembles the gif on your machine — including a partial one from the frames so far. |
 
 Anything that writes a PNG is worth knowing about twice over, because `read_file` on an
 image path hands the picture back to you rather than its bytes — so a render is

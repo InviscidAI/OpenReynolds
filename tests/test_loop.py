@@ -271,3 +271,52 @@ def test_a_turn_with_no_tools_is_still_one_round(loop, view):
     loop.run()
 
     assert view.steps == [(1, 0)]
+
+
+# -- what the loop tells the bar -----------------------------------------------
+
+
+class Bar:
+    def __init__(self):
+        self.events = []
+
+    def begin(self, kind, label="", **facts):
+        self.events.append((kind, label, facts.get("cmd", "")))
+
+    def idle(self):
+        self.events.append(("idle", "", ""))
+
+
+def test_the_loop_says_when_it_thinks_and_when_it_runs_a_tool(ctx, store, view):
+    loop = Loop(Config(anthropic_api_key="k", model="claude-opus-5"), ctx, store, view)
+    loop.progress = Bar()
+    install(
+        loop,
+        [
+            message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
+            message([text_block("meshed")]),
+        ],
+    )
+
+    loop.run()
+
+    kinds = [e[0] for e in loop.progress.events]
+    assert kinds == ["thinking", "idle", "tool", "idle", "thinking", "idle"]
+    assert ("tool", "bash", "blockMesh") in loop.progress.events
+
+
+def test_a_tool_that_raises_still_leaves_the_bar_idle(ctx, store, view, monkeypatch):
+    loop = Loop(Config(anthropic_api_key="k", model="claude-opus-5"), ctx, store, view)
+    loop.progress = Bar()
+    install(loop, [message([tool_block("bash", {"cmd": "x"})], stop_reason="tool_use")])
+
+    def explode(ctx, name, args):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("openreynolds.loop.dispatch", explode)
+    try:
+        loop.run()
+    except RuntimeError:
+        pass
+
+    assert loop.progress.events[-1][0] == "idle"

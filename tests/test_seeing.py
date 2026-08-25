@@ -42,6 +42,32 @@ def test_the_picture_arrives_with_a_line_saying_what_it_is(ctx):
     assert "1x1" in caption, "the shape of a render is worth knowing without decoding it"
 
 
+def test_looking_at_a_picture_nudges_the_mirror(ctx):
+    """A render the model just examined is exactly the file the user wants on their
+    machine now, not at the next cycle."""
+    ctx.backend.files["/work/case/renders/mesh.png"] = PNG
+    poked = []
+    ctx.on_render = poked.append
+
+    dispatch(ctx, "read_file", {"path": "/work/case/renders/mesh.png"})
+
+    assert poked == ["/work/case/renders/mesh.png"]
+
+
+def test_a_nudge_that_fails_does_not_cost_the_model_its_picture(ctx):
+    ctx.backend.files["/work/case/renders/mesh.png"] = PNG
+
+    def explode(_path):
+        raise RuntimeError("the mirror is mid-teardown")
+
+    ctx.on_render = explode
+
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/case/renders/mesh.png"})
+
+    assert not is_error
+    assert any(block.get("type") == "image" for block in content)
+
+
 def test_the_suffix_is_matched_whatever_its_case(ctx):
     ctx.backend.files["/work/A.PNG"] = PNG
     content, _ = dispatch(ctx, "read_file", {"path": "/work/A.PNG"})

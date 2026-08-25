@@ -22,8 +22,12 @@ from .browse import Browser
 from .capture import Capture
 from . import commands, images
 from .config import Config, config_path
+from .delivery import Gallery
 from .loop import Loop
-from .mirror import sync as mirror_sync
+from . import video as video_mod
+from .desk import Concierge
+from .mirror import LiveMirror, local_for, sync as mirror_sync
+from .progress import Tracker
 from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
@@ -339,6 +343,78 @@ def pull_cmd(path: str, study_id: str | None, selective: bool) -> None:
     raise SystemExit(1 if report.warnings and not report.pulled else 0)
 
 
+@main.command("renders")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+@click.option("--open", "open_it", is_flag=True, help="Open the folder in the file browser.")
+def renders_cmd(study_id: str | None, open_it: bool) -> None:
+    """Show this study's pictures: every render and assembled gif, newest first.
+
+    A session copies them into one flat folder as they are made -- no `fetch`, no
+    hunting through the workspace tree. This lists that folder and, on a graphics
+    terminal, draws the newest. Purely local: no instance is started.
+    """
+    cfg = Config.load()
+    studies = list_studies(cfg.studies_dir)
+    if not studies:
+        console.print(f"No studies under {cfg.studies_dir}")
+        raise SystemExit(1)
+    chosen = study_id or studies[0].study_id
+    store = Store(cfg.studies_dir, chosen)
+    store.renders_dir.mkdir(parents=True, exist_ok=True)
+    view = ConsoleView(console)
+    view.show_renders(store.renders_dir)
+    if open_it:
+        _open_folder(store.renders_dir, view)
+
+
+@main.command("video")
+@click.argument("frames", default="")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+@click.option("--fps", default=video_mod.DEFAULT_FPS, show_default=True, help="Frames per second.")
+@click.option("--out", "out_path", default=None, help="Where to write the video. Defaults beside the frames.")
+def video_cmd(frames: str, study_id: str | None, fps: float, out_path: str | None) -> None:
+    """Assemble mirrored render frames into a video, on this machine.
+
+    Stills render on the instance, next to the data; encoding happens here, next
+    to the player, with the ffmpeg (or imageio) this machine already has. Give it
+    a directory of frames -- a workspace path is mapped to your local mirror -- or
+    let it find the study's biggest frame set. Purely local: no instance is
+    started and no token is spent.
+    """
+    cfg = Config.load()
+    studies = list_studies(cfg.studies_dir)
+    if not studies:
+        console.print(f"No studies under {cfg.studies_dir}")
+        raise SystemExit(1)
+    chosen = study_id or studies[0].study_id
+    store = Store(cfg.studies_dir, chosen)
+
+    if frames:
+        mapped = workspace_path(frames)
+        if mapped.startswith(WORKSPACE_ROOT):
+            directory = local_for(store.files_dir, mapped)
+        else:
+            directory = Path(frames)
+    else:
+        found = video_mod.best_frame_dir(store.files_dir)
+        if found is None:
+            console.print(
+                f"[yellow]no directory under {store.files_dir} holds two or more "
+                "frames[/] - point me at one: openreynolds video <dir>"
+            )
+            raise SystemExit(1)
+        directory = found
+
+    sequence = video_mod.frames_in(directory)
+    target = Path(out_path) if out_path else directory.parent / f"{directory.name}.mp4"
+    try:
+        tool = video_mod.assemble(sequence, target, fps=fps)
+    except video_mod.VideoError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(1) from exc
+    console.print(f"[green]{target}[/]  ({len(sequence)} frames at {fps:g} fps, via {tool})")
+
+
 @main.command("doctor")
 def doctor_cmd() -> None:
     """Check configuration, connectivity and credentials."""
@@ -369,6 +445,7 @@ def run_checks(cfg: Config) -> list[tuple[str, bool, str]]:
         _check_capture(cfg),
         _check_toolbox(),
         _check_terminal(),
+        _check_video(),
     ]
 
 
@@ -476,6 +553,25 @@ def _check_toolbox() -> tuple[str, bool, str]:
     return "toolbox", True, f"{len(scripts)} scripts, {len(notes)} notes -> {TOOLBOX_DEST}"
 
 
+def _check_video() -> tuple[str, bool, str]:
+    """Which encoder `openreynolds video` would use on this machine.
+
+    Not having one is not a failure -- videos are optional -- but finding that out
+    at the moment the frames are ready is the wrong moment."""
+    tool = video_mod.encoder()
+    if tool == "ffmpeg":
+        import shutil as _shutil
+
+        return "video assembly", True, f"ffmpeg at {_shutil.which('ffmpeg')}"
+    if tool == "imageio":
+        return "video assembly", True, "imageio will encode (ffmpeg not on PATH)"
+    return (
+        "video assembly",
+        True,
+        "no encoder found; openreynolds video needs ffmpeg or `pip install imageio`",
+    )
+
+
 def _check_terminal() -> tuple[str, bool, str]:
     kind = images.protocol()
     detail = f"{kind} graphics: renders show inline" if kind else "renders print their path"
@@ -494,7 +590,17 @@ def session(
     plain: bool = False,
     keep_alive: bool = False,
     max_wait: float = 0.0,
+    interface: Any = None,
 ) -> None:
+    """Run one study to its end.
+
+    `interface`, when given, is a callable that takes `drive` -- the one-session
+    function below, `drive(view, reader)` -- and runs it against an interface of its
+    own: a web page, a test harness, anything that implements `View` and the reader
+    protocol. It is the same seam the terminal interface uses (`_run_tui`), so
+    supplying one can change what the user reads and never what the model does.
+    Its return value says whether the process has to be force-exited afterwards.
+    """
     resuming = study_id is not None
     store = Store(cfg.studies_dir, study_id or new_study_id())
 
@@ -537,41 +643,102 @@ def session(
         on_fetch=_fetch_hook(capture),
     )
     browser = Browser(backend, store, home=store.session.home)
+    live_mirror = LiveMirror(browser, interval_s=cfg.mirror_interval_s)
+    # Delivery rides on the mirror: every render that arrives is surfaced into one
+    # flat folder and a directory of frames is assembled into a gif on this machine,
+    # so the pictures reach the user without the agent ever running `fetch`.
+    live_mirror.gallery = Gallery(store.files_dir, store.renders_dir)
+    # A render the model just looked at should be on the user's machine now, not at
+    # the next cycle. poke() is non-blocking, so looking costs the model nothing.
+    ctx.on_render = lambda _path: live_mirror.poke()
 
     def drive(view: View, reader: Any) -> None:
         """One session, against whichever interface is running it."""
         # The tools report job state through the view, so a panel showing what is
         # running is current the moment it changes rather than only while polling.
         ctx.view = view
+        # A held job_check ends early the moment the user speaks; the peek takes
+        # nothing, so the message still arrives through the usual channel.
+        ctx.on_wait_input = getattr(reader, "pending", None)
+        # The mirror runs for the whole session -- through turns, and through the
+        # hours a solve spends writing while the model's turn is over -- so the
+        # user's copy of the study is never more than one interval behind.
+        live_mirror.view = view
+        # The bar. It reads job logs on its own thread and is told what this thread
+        # is doing, so a solve stays on screen with a percentage while the model
+        # thinks, and a thought has a clock on it while the solve runs.
+        tracker = Tracker(
+            view,
+            backend=backend,
+            store=store,
+            home=store.session.home,
+            local_dir=store.fetch_dir(),
+        )
+        live_mirror.progress = tracker
+        # The front desk: a second cheap agent that answers the user while this one
+        # is mid-turn. Off without a key (BYOK) or when disabled. One-shot runs have
+        # nobody at the keyboard, so it does not run there.
+        concierge = None
+        if cfg.desk and cfg.anthropic_api_key and getattr(reader, "accepts_input", True):
+            concierge = Concierge(cfg, store, view, tracker)
+            tracker.concierge = concierge
+            concierge.start()
+        tracker.start()
+        live_mirror.start()
         view.workspace(browser)
-        loop = Loop(cfg, ctx, store, view, capture=capture)
-        loop.interject = lambda: _typed_while_working(loop, view, browser, store, reader)
+        loop = Loop(cfg, ctx, store, view, capture=capture, progress=tracker)
+        loop.interject = lambda: _typed_while_working(
+            loop, view, browser, store, reader, progress=tracker, concierge=concierge
+        )
         view.header(store.session.study_id, resolved_instance, cfg.model, store.dir)
         loop.brief(
             _situation_brief(
-                store, backend, resuming, interactive=not one_shot, browser=browser
+                store,
+                backend,
+                resuming,
+                interactive=not one_shot,
+                browser=browser,
+                preferences=cfg.preferences,
             )
         )
         try:
             if one_shot:
-                _run_one_shot(loop, backend, store, one_shot, view, reader, max_wait)
+                _run_one_shot(
+                    loop, backend, store, one_shot, view, reader, max_wait,
+                    live=live_mirror, progress=tracker,
+                )
             else:
-                _run_interactive(loop, backend, store, view, browser, reader)
+                _run_interactive(
+                    loop, backend, store, view, browser, reader,
+                    live=live_mirror, progress=tracker, concierge=concierge,
+                )
         except KeyboardInterrupt:
-            view.info("interrupted - jobs keep running on the instance")
+            view.info(_interrupt_note(keep_alive))
+        finally:
+            tracker.stop()
+            if concierge is not None:
+                concierge.stop()
 
     force_exit = False
     try:
-        if one_shot or plain or not _tui_available():
+        if interface is not None:
+            force_exit = bool(interface(drive))
+        elif one_shot or plain or not _tui_available():
             drive(ConsoleView(console), LineReader() if not one_shot else NullReader())
         else:
             force_exit = bool(_run_tui(drive))
     finally:
+        live_mirror.stop()
         _pickup_results(backend, capture, store.session.home or WORKSPACE_ROOT)
         # The interface is gone by now, so this reports to the plain console. A
         # one-shot run never had turn ends to sync at, which makes this its only one.
-        # It runs before anything is stopped: the work comes home first.
-        _mirror(browser, ConsoleView(console), everything=True)
+        # It runs before anything is stopped: the work comes home first — and it
+        # goes through the mirror's own lock, because stop()'s join is bounded: a
+        # cycle that outlived it is still writing these same files, and two syncs
+        # interleaving over one path is how a local copy ends up a hybrid of two
+        # versions of the file.
+        live_mirror.view = None
+        _final_sync(live_mirror, ConsoleView(console))
         if capture:
             capture.close()
         _close_down(backend, store, keep_alive=keep_alive)
@@ -706,6 +873,7 @@ def _situation_brief(
     resuming: bool,
     interactive: bool,
     browser: Browser | None = None,
+    preferences: str = "",
 ) -> str:
     """Facts about this session, assembled by the harness.
 
@@ -722,6 +890,15 @@ def _situation_brief(
         note = _workspace_note(browser, store.session.home or WORKSPACE_ROOT, resuming)
         if note:
             lines.append(note)
+    if preferences:
+        # The user's standing note, in the user's voice. The harness relays it
+        # verbatim and adds nothing: what to do about it stays the model's call,
+        # like anything else the user says.
+        lines.append(
+            "The user keeps a standing note that they ask to have passed on at the "
+            "start of every session. In their own words:"
+        )
+        lines.append(preferences.strip())
     if interactive:
         lines.append(
             "A person is at the terminal for this session and can answer you. Anything "
@@ -733,6 +910,20 @@ def _situation_brief(
             "can arrive, so a question asked here will not be seen."
         )
     return "\n".join(lines)
+
+
+def _final_sync(live: LiveMirror, view: View) -> None:
+    """The close-down sync, serialized with any cycle that outlived stop().
+
+    Same reporting contract as _mirror: everything that can go wrong becomes a
+    line of text, never an exception -- a convenience may not end a session."""
+    try:
+        report = live.sync_now()
+    except Exception as exc:  # noqa: BLE001
+        view.warn(f"could not mirror this study's files: {exc}")
+        return
+    for line in report.brief():
+        view.info(line)
 
 
 def _mirror(browser: Browser, view: View, everything: bool = True) -> None:
@@ -773,6 +964,20 @@ def _release(backend: Backend) -> None:
         shutdown()
     except BackendError as exc:
         console.print(f"[dim]could not stop the instance ({exc}); it will idle out[/]")
+
+
+def _interrupt_note(keep_alive: bool) -> str:
+    """What Ctrl+C actually does, said at the moment it is done.
+
+    The old line promised "jobs keep running on the instance" and then the
+    close-down stopped every one of them -- exactly the kind of claim nothing kept
+    true. The note now states what the teardown that follows will do."""
+    if keep_alive:
+        return "interrupted - jobs keep running on the instance (--keep-alive)"
+    return (
+        "interrupted - stopping jobs and the instance; the volume and your local "
+        "copy of the study stay"
+    )
 
 
 def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> None:
@@ -880,7 +1085,12 @@ QUIT = object()
 
 
 def _apply(
-    command: commands.Command, loop: Loop, view: View, browser: Browser, store: Store
+    command: commands.Command,
+    loop: Loop,
+    view: View,
+    browser: Browser,
+    store: Store,
+    progress: Any = None,
 ) -> Any:
     """Act on one typed line. Returns what goes to the model, or None, or QUIT."""
     if command.kind == commands.EXIT:
@@ -890,7 +1100,7 @@ def _apply(
             return None
         loop.say(command.text)
         return command.text
-    _local(command, view, browser, store, loop)
+    _local(command, view, browser, store, loop, progress)
     return None
 
 
@@ -900,6 +1110,7 @@ def _local(
     browser: Browser,
     store: Store,
     loop: Loop | None = None,
+    progress: Any = None,
 ) -> None:
     """Commands answered here, out of what the harness already knows.
 
@@ -908,15 +1119,22 @@ def _local(
     have no idea what is going on.
     """
     if command.kind == commands.STATUS:
+        # The same picture the bar shows, so /status and the bar cannot disagree.
+        stage = progress.snapshot().headline if progress is not None else ""
         view.status(
             commands.status_lines(
                 store,
+                stage=stage,
                 tokens=getattr(loop, "context_tokens", 0) or 0,
                 local_files=len(browser.local()),
+                sync_age=browser.cache_age(),
             )
         )
     elif command.kind == commands.FILES:
         view.show_files(command.text)
+    elif command.kind == commands.RENDERS:
+        store.renders_dir.mkdir(parents=True, exist_ok=True)
+        view.show_renders(store.renders_dir)
     elif command.kind == commands.OPEN:
         _open_folder(store.dir, view)
     elif command.kind == commands.HELP:
@@ -924,13 +1142,21 @@ def _local(
 
 
 def _typed_while_working(
-    loop: Loop, view: View, browser: Browser, store: Store, reader: Any
+    loop: Loop,
+    view: View,
+    browser: Browser,
+    store: Store,
+    reader: Any,
+    progress: Any = None,
+    concierge: Any = None,
 ) -> str | None:
     """Drain what was typed mid-turn, and hand back only what was meant for the model.
 
     `/status` and `/files` are answered here and now, without a turn. Everything else
     rides along with the next tool result, so it lands at the model's next turn rather
-    than sitting unread until the whole turn is over.
+    than sitting unread until the whole turn is over -- and, because "the next turn"
+    can be five minutes away when the agent is deep in a solve, the same text is handed
+    to the front desk, which answers within seconds without waiting on the main thread.
     """
     for_model: list[str] = []
     while True:
@@ -948,8 +1174,10 @@ def _typed_while_working(
             break
         if command.kind in (commands.SAY, commands.ASIDE) and command.text:
             for_model.append(command.text)
+            if concierge is not None:
+                concierge.ask(command.text)
         else:
-            _local(command, view, browser, store, loop)
+            _local(command, view, browser, store, loop, progress)
     return "\n".join(for_model) or None
 
 
@@ -1008,19 +1236,40 @@ def _run_turn(loop: Loop, view: View) -> bool:
 
 
 def _run_interactive(
-    loop: Loop, backend: Backend, store: Store, view: View, browser: Browser, reader: Any
+    loop: Loop,
+    backend: Backend,
+    store: Store,
+    view: View,
+    browser: Browser,
+    reader: Any,
+    live: LiveMirror | None = None,
+    progress: Any = None,
+    concierge: Any = None,
 ) -> None:
     while True:
         if store.live_jobs():
-            wake = watch(backend, store, view, reader)
+            if progress is not None:
+                progress.idle()
+            wake = watch(
+                backend, store, view, reader,
+                narrate_every_s=loop.cfg.narrate_every_s,
+                progress=progress,
+            )
             if wake.kind == "eof":
                 return
-            if wake.kind == "job":
+            if wake.kind in ("job", "narrate"):
                 loop.inform(wake.text)
             elif wake.kind == "user":
                 # A long solve is exactly when someone wants to leave, or to ask what
-                # is happening without setting the whole thing off again.
-                spoken = _apply(commands.parse(wake.text), loop, view, browser, store)
+                # is happening without setting the whole thing off again. The desk
+                # answers the question now; the model still hears it at the next wake.
+                if concierge is not None and commands.parse(wake.text).kind in (
+                    commands.SAY, commands.ASIDE
+                ):
+                    concierge.ask(commands.parse(wake.text).text)
+                spoken = _apply(
+                    commands.parse(wake.text), loop, view, browser, store, progress
+                )
                 if spoken is QUIT:
                     return
                 if spoken is None:
@@ -1028,11 +1277,13 @@ def _run_interactive(
             else:
                 continue
         else:
+            if progress is not None:
+                progress.begin("waiting")
             view.prompt()
             line = reader.get()
             if line is None:
                 return
-            spoken = _apply(commands.parse(line), loop, view, browser, store)
+            spoken = _apply(commands.parse(line), loop, view, browser, store, progress)
             if spoken is QUIT:
                 return
             if spoken is None:
@@ -1041,8 +1292,14 @@ def _run_interactive(
         completed = _run_turn(loop, view)
         # After the turn rather than before it: whatever the agent just made is the
         # thing worth having, and a turn that failed still leaves whatever its jobs
-        # wrote. Unchanged files are not asked for again, so this is cheap.
-        _mirror(browser, view)
+        # wrote. Unchanged files are not asked for again, so this is cheap -- and it
+        # is asked for, not waited for: the next thing this thread does is read what
+        # the user typed, and a sync that takes twenty minutes must not stand in
+        # front of that (see LiveMirror.catch_up).
+        if live is not None:
+            live.catch_up()
+        else:
+            _mirror(browser, view)
         if completed and loop.needs_refresh:
             loop.refresh(situation(store, backend))
 
@@ -1055,6 +1312,8 @@ def _run_one_shot(
     view: View,
     reader: Any,
     max_wait_minutes: float = 0.0,
+    live: LiveMirror | None = None,
+    progress: Any = None,
 ) -> None:
     """Run until the model is done and no jobs remain.
 
@@ -1066,10 +1325,14 @@ def _run_one_shot(
     loop.say(prompt)
     if not _run_turn(loop, view):
         return
+    if live is not None:
+        live.catch_up()
 
     deadline = time.monotonic() + max_wait_minutes * 60 if max_wait_minutes else None
     while store.live_jobs():
-        wake = watch(backend, store, view, reader, deadline=deadline)
+        if progress is not None:
+            progress.idle()
+        wake = watch(backend, store, view, reader, deadline=deadline, progress=progress)
         if wake.kind == "timeout":
             view.info(
                 f"stopped waiting after {max_wait_minutes:g} min; the job is still "
@@ -1081,6 +1344,8 @@ def _run_one_shot(
         loop.inform(wake.text)
         if not _run_turn(loop, view):
             return
+        if live is not None:
+            live.catch_up()
         if loop.needs_refresh:
             loop.refresh(situation(store, backend))
 

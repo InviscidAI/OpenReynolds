@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import tarfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -398,8 +399,19 @@ def _extract_tar_gz(data: bytes, local_dir: Path) -> list[Path]:
             source = tar.extractfile(member)
             if source is None:
                 continue
-            with source, target.open("wb") as out:
-                out.write(source.read())
+            # Temp-then-rename: os.replace is atomic, so whatever anyone reads at
+            # `target` is a complete version of the file, never the middle of one.
+            # The temp name carries the thread id because two syncs of the same
+            # study can legitimately overlap (a background cycle that outlived a
+            # bounded join, `openreynolds pull` from another terminal).
+            partial = target.with_name(f"{target.name}.part-{threading.get_ident()}")
+            try:
+                with source, partial.open("wb") as out:
+                    out.write(source.read())
+                partial.replace(target)
+            except OSError:
+                partial.unlink(missing_ok=True)
+                raise
             written.append(target)
     return written
 

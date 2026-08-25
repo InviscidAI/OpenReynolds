@@ -16,6 +16,9 @@ openreynolds                 # start a study
 ```
  study 20260823-213712-babc   instance 974f4406   model claude-opus-5
  412,355 tokens  (41% of the window)
+ ██████████░░░░░░░░░░░░░░  41%  solving miter_medium · Time 820 / 2000 s · 14 min · ~19 min left
+                                Ux 3.1e-04  Uy 2.0e-04  p 8.7e-03 · Co max 0.50 · continuity 2.1e-06
+ thinking 12s: the residual plateau at 1e-4 is the mesh, not the solver
 +------------------------------------------------------+ running
 | I'll build a mitred 90 degree elbow, 100mm square.    |   * miter_medium
 | Starting with the coarse rung so the ladder is cheap. |
@@ -36,8 +39,34 @@ what is actually **in the workspace** gets a file tree you can open things from.
 keeps the study, the instance, the model, and how full the thread is, because context
 filling up is the thing that changes what happens next.
 
-Reasoning is one summary line on the stage indicator rather than hundreds of grey lines
-in the transcript; ctrl+T puts it back in full.
+Above all of that sits a three-line status stack, each line earning its place only when
+it has something to say:
+
+- **The bar** appears when real compute is running — a solve, a mesh, a decomposition,
+  a sync — and takes no room otherwise (a pulsing strip that only says "busy" is worse
+  than nothing). A solve shows its solver time against the case's `endTime`, a
+  percentage, how long it has run, a `~` estimate of what is left, and the last
+  residuals; a `snappyHexMesh` shows which phase and iteration it is in; a `bash`
+  command that redirects to a log is read while it runs.
+- **The now line** is one plain-language sentence on what the agent is doing *right
+  now* — "reworking the near-wake mesh before spending solver time" — written by the
+  front desk (below) from the transcript and the live facts, not a mechanical phase
+  label.
+- **The stage line** is the model's own reasoning, one summary line at a time rather
+  than hundreds of grey lines; ctrl+T puts it back in full.
+
+`/status` reads from the same picture as the bar, so the two cannot disagree.
+
+**The front desk.** The agent runs one thing at a time on one thread: a `bash` call can
+hold it for minutes, and until the current step returns nothing on that thread can read
+what you typed, let alone answer. So a second, cheap agent (Claude Haiku, same BYOK key)
+runs on its own thread, read-only. When you type while the agent is mid-turn, the desk
+answers within seconds from what it can see — the transcript and the live job facts —
+shown as `desk` so it is never mistaken for the agent itself; your message still reaches
+the agent unchanged and it replies in its own time. The desk also writes the now line
+above. It cannot act, steer, or speak for the agent — it is a narrator with a phone, and
+it says so when a real answer needs the agent. `OPENREYNOLDS_DESK=0` turns it off;
+`OPENREYNOLDS_DESK_MODEL` picks the model.
 
 `--plain` gives the old streaming terminal, and `-p` still implies it. If the interface
 cannot start — no terminal, missing library — the session falls back rather than
@@ -94,6 +123,41 @@ The instance starts when you run `openreynolds` and stops when the session ends 
 `/exit`, end of input, ctrl+C, or a `-p` run finishing. Jobs are stopped first, the
 study is mirrored down first of all, and stopping an instance leaves its volume
 untouched, so nothing is lost by it.
+
+A standing note travels with you. If `preferences.md` exists next to `config.json`
+(the path `openreynolds config` prints), its contents are relayed at the start of
+every session's briefing, verbatim, in your own words — the place for durable
+preferences like "when meshing, render the geometry and the mesh and look at the
+images before running anything expensive." The harness adds nothing to it and
+enforces nothing about it: it is you talking, and what to do about it stays the
+agent's call.
+
+The study also comes home *while* it runs. A background mirror syncs the study's
+directory on the instance down to `./studies/<id>/files/` on a short cycle — meshes,
+renders, postProcessing data, logs, everything under the caps — for the whole
+session, including the hours a solve spends writing while no turn is in flight. The
+files pane draws from the same sync, so it shows the workspace as of the last cycle
+and refreshes itself; opening a file that is already here costs no round trip, and
+`/status` says when the last sync ran. `OPENREYNOLDS_MIRROR_INTERVAL_S` tunes the
+cadence; `0` turns the background sync off (turn-end syncs still run).
+
+A long solve is not a silent one. While jobs run, the bar shows where each one is —
+solver time against `endTime`, residuals, elapsed and estimated remaining, read
+from the log every twenty seconds on the bar's own thread — and, by default once a
+minute, the agent itself is woken with the same facts (never the estimate) so it
+can say where things stand (or say nothing; that stays its call). `OPENREYNOLDS_NARRATE_EVERY_S` adjusts the cadence; `0` turns
+narration off. Each narration is a model turn and is priced like one. The agent
+also has a quieter way to pace itself than `sleep` in `bash`: `job_check` takes
+`wait_s` and holds its answer until the job ends or the user speaks.
+
+Video assembly is local by design. Stills render on the instance, next to the
+data — moving gigabytes of fields to make a 100 KB PNG would be the wrong
+direction — but a video needs only the frames, which are already mirrored home,
+and the instance image deliberately ships no encoder. `openreynolds video
+[frames-dir]` builds an `.mp4` from a mirrored frame directory using the ffmpeg
+this machine has (imageio as the fallback); with no argument it picks the
+study's biggest frame set, and `openreynolds doctor` says which encoder it
+would use. Purely local — no instance starts and no token is spent.
 
 `--keep-alive` leaves it up, which is the right choice when you are stepping away from
 a long solve and mean to come back. It says what it is choosing when you use it.
@@ -321,10 +385,24 @@ openreynolds files /work                 # or the whole volume
 openreynolds files --cat /work/case/log.simpleFoam
 openreynolds files --pull /work/case/renders   # copy it to this machine
 openreynolds files --open                # the study folder in your file browser
+openreynolds renders                     # every picture this study made, newest first
+openreynolds renders --open              # and open the folder
 ```
 
 In the interface the **files** tab is the same thing live: ctrl+F to open it, ctrl+R to
 refresh, enter on a file to read it, ctrl+P to copy it out.
+
+### The pictures come to you
+
+A render is the point of the run, and for five sessions the agent made thirty of them
+and the answer to "where is the image?" was still "buried three directories down, if
+you go looking." So delivery stopped being the agent's job. As the mirror brings files
+home, every render is copied into one flat `studies/<id>/renders/` folder and a
+directory of animation frames is assembled into a gif **on this machine** — the
+instance renders the frames next to the data, the encoder lives here. New pictures are
+announced as they land, the **renders** tab (ctrl+G, or `/renders`) always holds the
+newest, and `openreynolds renders` shows them after the fact. None of it asks the agent
+to run `fetch`; the agent produces, the harness delivers.
 
 ### It comes down on its own
 

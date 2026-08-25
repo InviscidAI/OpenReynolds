@@ -18,6 +18,12 @@ from .store import Store
 SLOW_COMMAND_S = 10.0
 """Past this, how long a command took is worth saying."""
 
+JOB_WAIT_MAX_S = 300
+"""Longest one `job_check` call will hold its answer. Waiting again is free."""
+
+JOB_WAIT_POLL_S = 5.0
+"""How often a waiting `job_check` looks at the job."""
+
 TAIL_HINT_BYTES = 4_000
 """How far back from the end a truncation marker points, so the offered offset lands on
 the tail rather than another copy of the head."""
@@ -34,6 +40,17 @@ class ToolContext:
     """Optional: told whenever job state changes, so a panel can stay current."""
     on_fetch: Callable[[list[Any]], None] | None = None
     """Called with the local paths `fetch` produced, for artifact capture."""
+    on_wait_input: Callable[[], bool] | None = None
+    """Whether the user has said something not yet delivered, without taking it.
+
+    A waiting `job_check` ends early on it, so a person who speaks during a held
+    call is heard in seconds rather than when the wait runs out."""
+    on_render: Callable[[str], None] | None = None
+    """Called with the workspace path whenever the model looks at an image.
+
+    A render the model just examined is exactly the file the user wants on their
+    machine right now, not at the next mirror cycle. The hook must not block and
+    must not fail the read -- it is a nudge, and the picture matters more."""
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -86,12 +103,23 @@ TOOLS: list[dict[str, Any]] = [
         "name": "job_check",
         "description": (
             "Get a job's status together with whatever log has appeared since "
-            "log_offset. Cheap to call repeatedly."
+            "log_offset. Cheap to call repeatedly. With wait_s it holds the answer "
+            "until the job ends or the wait runs out, ending early if the user says "
+            "something - quieter than pacing with sleep in bash, which counts "
+            "against the bash time cap."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "job_id": {"type": "string"},
+                "wait_s": {
+                    "type": "integer",
+                    "description": (
+                        f"Seconds to hold the answer, up to {JOB_WAIT_MAX_S}, waiting "
+                        "for the job to end. The wait is the harness's own and does "
+                        "not count against any command timeout."
+                    ),
+                },
                 "log_offset": {
                     "type": "integer",
                     "description": (
@@ -295,6 +323,11 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
             f"{path} — {media}, {info.size} bytes, but only {len(data)} came back. "
             "A part of an image is not a smaller image, so it is not attached."
         )
+    if ctx.on_render is not None:
+        try:
+            ctx.on_render(path)
+        except Exception:  # noqa: BLE001 - a nudge may not cost the model its picture
+            pass
     shape = images.dimensions(data)
     described = f"{shape[0]}x{shape[1]} " if shape else ""
     return [
@@ -310,7 +343,9 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
         name=args.get("name"),
         kill_on=args.get("kill_on") or None,
     )
-    ctx.store.record_job(job_id, cmd=args["cmd"], name=args.get("name"))
+    ctx.store.record_job(
+        job_id, cmd=args["cmd"], name=args.get("name"), cwd=args.get("cwd") or ctx.home
+    )
     _announce_jobs(ctx)
     label = f" ({args['name']})" if args.get("name") else ""
     return f"started job {job_id}{label}"
@@ -323,6 +358,25 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
     offset = int(offset) if offset is not None else (record.log_offset if record else 0)
 
     status = ctx.backend.job_status(job_id)
+    asked_wait = int(args.get("wait_s") or 0)
+    wait_s = min(asked_wait, JOB_WAIT_MAX_S)
+    waited_note = ""
+    if wait_s > 0 and status.running:
+        began = time.monotonic()
+        while status.running and time.monotonic() - began < wait_s:
+            if ctx.on_wait_input is not None and ctx.on_wait_input():
+                break
+            remaining = wait_s - (time.monotonic() - began)
+            time.sleep(max(0.0, min(JOB_WAIT_POLL_S, remaining)))
+            status = ctx.backend.job_status(job_id)
+        waited_note = f"[waited {time.monotonic() - began:.0f}s]"
+        if asked_wait > JOB_WAIT_MAX_S:
+            waited_note += (
+                f" [wait_s={asked_wait} exceeds the {JOB_WAIT_MAX_S}s ceiling for "
+                "one call; waiting again is free]"
+            )
+        if status.running and ctx.on_wait_input is not None and ctx.on_wait_input():
+            waited_note += " [the user said something, so this answered early]"
     data, next_offset, eof = ctx.backend.job_tail(job_id, offset=offset)
     ctx.store.update_job(
         job_id,
@@ -335,6 +389,8 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
 
     body, clipped = _clip(data, ctx.max_output)
     header = describe_job(status)
+    if waited_note:
+        header += " " + waited_note
     header += f"\nlog: bytes {offset}–{next_offset}, eof={eof}"
     if clipped:
         header += f" (this window clipped at {ctx.max_output} bytes; call again from {offset + len(body.encode('utf-8'))})"

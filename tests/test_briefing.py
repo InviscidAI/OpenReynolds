@@ -110,6 +110,29 @@ def test_the_design_document_describes_the_workspace_the_code_builds():
     assert "whether anyone is at the terminal" in plan
 
 
+# -- the user's standing note ----------------------------------------------------
+
+
+def test_a_standing_note_is_relayed_verbatim_in_the_users_voice(backend, store):
+    """The user wrote it; the harness passes it on and adds nothing. What to do
+    about it stays the model's call, which is what keeps this inside the contract."""
+    a_workspace(backend)
+    store.session.home = "/work/mine"
+
+    brief = brief_for(
+        backend, store, preferences="When meshing, render the mesh and look at it."
+    )
+
+    assert "In their own words:" in brief
+    assert "When meshing, render the mesh and look at it." in brief
+
+
+def test_no_note_means_no_mention_of_one(backend, store):
+    a_workspace(backend)
+    brief = brief_for(backend, store)
+    assert "standing note" not in brief
+
+
 # -- what the other directories on the volume are ------------------------------
 
 

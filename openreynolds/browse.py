@@ -9,6 +9,7 @@ nothing the model does depends on whether anyone is looking.
 from __future__ import annotations
 
 import shlex
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -67,6 +68,9 @@ class Browser:
         self.store = store
         self.home = home or WORKSPACE_ROOT
         """Where looking starts: this study's own directory, not everyone else's."""
+        self._cached_entries: list[Entry] | None = None
+        self._cached_root: str = ""
+        self._cached_at: float = 0.0
 
     # -- listing ---------------------------------------------------------------
 
@@ -91,6 +95,42 @@ class Browser:
         if entries or result.exit_code == 0:
             return sorted(entries, key=_order)
         return sorted(self.list_dir(path), key=_order)
+
+    def remember(self, root: str, entries: list[Entry]) -> None:
+        """Keep the last full listing, and when it was taken.
+
+        The background mirror lists the workspace every cycle anyway; keeping the
+        answer means anything that wants to *show* the workspace can do so without
+        paying a network round trip for a listing somebody just took."""
+        self._cached_root = root.rstrip("/") or WORKSPACE_ROOT
+        self._cached_entries = list(entries)
+        self._cached_at = time.time()
+
+    def cached(self, path: str = "") -> list[Entry] | None:
+        """The remembered listing under `path`, or None when it does not cover it.
+
+        None means "go and look", never "there is nothing there" -- a cache miss and
+        an empty directory are different answers and only one of them is this one's
+        to give."""
+        if self._cached_entries is None:
+            return None
+        target = (path or self.home).rstrip("/") or WORKSPACE_ROOT
+        if target == self._cached_root:
+            return list(self._cached_entries)
+        if not target.startswith(self._cached_root + "/"):
+            return None
+        prefix = target + "/"
+        return [
+            entry
+            for entry in self._cached_entries
+            if entry.path == target or entry.path.startswith(prefix)
+        ]
+
+    def cache_age(self) -> float | None:
+        """Seconds since the remembered listing was taken, or None if there is none."""
+        if self._cached_entries is None:
+            return None
+        return max(0.0, time.time() - self._cached_at)
 
     def list_dir(self, path: str = "") -> list[Entry]:
         """One directory's immediate children. Sizes would need a stat each, so are 0."""

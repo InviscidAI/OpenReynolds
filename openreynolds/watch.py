@@ -7,14 +7,17 @@ never suggests what to do about any of it.
 
 from __future__ import annotations
 
+import calendar
 import queue
 import random
 import sys
 import threading
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from .backend.base import Backend, BackendError, JobStatus
+from .browse import human
 from .store import Store
 from .tools import describe_job
 from .view import View
@@ -102,6 +105,10 @@ class LineReader:
         """
         self._queue.put(line)
 
+    def pending(self) -> bool:
+        """Whether something is waiting to be heard, without taking it."""
+        return not self._queue.empty()
+
 
 class _Nothing:
     """Distinguishes 'nothing typed' from an EOF `None`."""
@@ -128,6 +135,9 @@ class NullReader:
     def putback(self, line: str | None) -> None:
         """Nothing was ever taken."""
 
+    def pending(self) -> bool:
+        return False
+
 
 @dataclass
 class Wake:
@@ -142,11 +152,16 @@ def watch(
     view: View,
     reader: LineReader,
     deadline: float | None = None,
+    narrate_every_s: float = 0.0,
+    progress: Any = None,
 ) -> Wake:
     """Poll live jobs until something happens worth waking for.
 
     `deadline` is a monotonic time past which waiting stops. Nothing is killed by it;
     the jobs are on the instance and outlive this process either way.
+
+    With a `progress` tracker the per-poll facts go to the bar through it; without
+    one they go to the stage line as a sentence, as they did before there was a bar.
     """
     live = store.live_jobs()
     if not live:
@@ -159,6 +174,7 @@ def watch(
         # and a twenty-minute solve reads as a session that has stopped responding.
         view.prompt()
 
+    last_narrated = time.monotonic()
     while True:
         if deadline is not None and time.monotonic() > deadline:
             return Wake("timeout")
@@ -173,11 +189,30 @@ def watch(
         if finished:
             return Wake("job", finished)
 
-        if not store.live_jobs():
+        running = store.live_jobs()
+        if not running:
             return Wake("idle")
 
-        deadline = time.monotonic() + random.uniform(POLL_MIN_S, POLL_MAX_S)
-        while time.monotonic() < deadline:
+        # A twenty-minute solve with a static "watching 1 job(s)" on screen reads
+        # as a session that has stopped responding. Every poll, the stage line says
+        # what is actually moving: elapsed time, log size, the last line written.
+        pairs: list = []
+        if progress is not None:
+            # Not forced: the tracker looks on its own clock, and this poll already
+            # asked every job's status once to see whether it had finished.
+            progress.refresh_jobs()
+        else:
+            pairs = _running_pairs(backend, running)
+            if pairs:
+                view.stage(_stage_line(backend, pairs))
+        if narrate_every_s > 0 and time.monotonic() - last_narrated >= narrate_every_s:
+            pairs = pairs or _running_pairs(backend, running)
+            return Wake("narrate", _progress_report(backend, pairs, progress))
+
+        # The poll pause has its own clock. Reusing `deadline` for it silently
+        # replaced a --max-wait bound with a thirty-second one.
+        pause_until = time.monotonic() + random.uniform(POLL_MIN_S, POLL_MAX_S)
+        while time.monotonic() < pause_until:
             typed = reader.poll()
             if not isinstance(typed, _Nothing):
                 if typed is None:
@@ -185,6 +220,80 @@ def watch(
                 if typed.strip():
                     return Wake("user", typed)
             time.sleep(TICK_S)
+
+
+def _running_pairs(backend: Backend, records: list) -> list:
+    """Each still-running record with its live status; unreadable ones are skipped.
+
+    The poll that could not read a status has nothing to show, and the finished
+    collector already turns persistent failures into a wake."""
+    pairs = []
+    for record in records[:3]:
+        try:
+            status = backend.job_status(record.job_id)
+        except BackendError:
+            continue
+        pairs.append((record, status))
+    return pairs
+
+
+def _describe_progress(record, status: JobStatus) -> str:
+    mins = _minutes_since(record.launched_at)
+    age = f"{mins:.0f}m" if mins is not None else "?"
+    return f"{record.name or record.job_id[:8]}: {age}, log {human(status.log_size or 0)}"
+
+
+def _stage_line(backend: Backend, pairs: list) -> str:
+    """One line of live fact for the stage indicator, every poll."""
+    line = " | ".join(_describe_progress(record, status) for record, status in pairs)
+    last = _last_line(backend, pairs[0][1]) if pairs else ""
+    if last:
+        line += f"   {last}"
+    return line[:160]
+
+
+def _last_line(backend: Backend, status: JobStatus) -> str:
+    """The most recent line of a job's log - a solver's own progress bar."""
+    size = status.log_size or 0
+    if size <= 0:
+        return ""
+    try:
+        data, _next, _eof = backend.job_tail(status.job_id, offset=max(0, size - 400))
+    except BackendError:
+        return ""
+    lines = [ln.strip() for ln in data.splitlines() if ln.strip()]
+    return lines[-1] if lines else ""
+
+
+def _minutes_since(stamp: str) -> float | None:
+    try:
+        began = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, (time.time() - began) / 60.0)
+
+
+def _progress_report(backend: Backend, pairs: list, progress: Any = None) -> str:
+    """Facts for a mid-run wake: what is running, for how long, what its log says.
+
+    No outcome and no advice. Whether to say anything to the user, and what,
+    stays the model's, like everything else. The tracker's facts are the same ones
+    the user is looking at -- solver time, the controlDict's end -- so the two
+    never disagree; its estimate of time left is the user's and stays there."""
+    lines = ["Progress facts; nothing has ended:"]
+    for record, status in pairs:
+        lines.append(_describe_progress(record, status))
+        tail = _tail(backend, status)
+        if tail.strip():
+            lines.append("recent log:")
+            lines.append(tail.strip()[-1200:])
+    if progress is not None:
+        lines.extend(progress.facts_for_wake())
+    lines.append(
+        "A person is watching the session. Saying where things stand, or saying "
+        "nothing, is your call."
+    )
+    return "\n".join(lines)
 
 
 def _collect_finished(backend: Backend, store: Store, view: View) -> str:

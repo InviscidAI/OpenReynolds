@@ -303,3 +303,89 @@ def test_a_job_with_no_timestamps_says_nothing_about_duration(ctx):
     out, _ = dispatch(ctx, "job_check", {"job_id": "job-1"})
 
     assert "running_for" not in out and "ran_for" not in out
+
+
+# -- job_check can wait ---------------------------------------------------------
+
+
+def test_job_check_waits_for_the_job_to_end(ctx, monkeypatch):
+    """The model paced itself with `sleep` in bash, which tripped the bash cap and
+    filled the transcript with timeout noise. Waiting is the harness's job."""
+    import time as _time
+
+    from openreynolds import tools as tools_mod
+    from openreynolds.backend.base import JobStatus
+    from openreynolds.tools import dispatch as _dispatch
+
+    monkeypatch.setattr(tools_mod, "JOB_WAIT_POLL_S", 0.01)
+    job_id = ctx.backend.job_start("simpleFoam", name="solve")
+    ctx.store.record_job(job_id, cmd="simpleFoam", name="solve")
+    calls = {"n": 0}
+    real = ctx.backend.job_status
+
+    def finishing(jid):
+        calls["n"] += 1
+        if calls["n"] >= 3:
+            ctx.backend.jobs[jid] = JobStatus(
+                job_id=jid, name="solve", status="exited", exit_code=0,
+                end_reason="completed", log_size=0,
+            )
+        return real(jid)
+
+    ctx.backend.job_status = finishing
+
+    out, is_error = _dispatch(ctx, "job_check", {"job_id": job_id, "wait_s": 5})
+
+    assert not is_error
+    assert "exited" in out
+    assert "waited" in out
+
+
+def test_the_wait_ends_early_when_the_user_speaks(ctx, monkeypatch):
+    import time as _time
+
+    from openreynolds import tools as tools_mod
+    from openreynolds.tools import dispatch as _dispatch
+
+    monkeypatch.setattr(tools_mod, "JOB_WAIT_POLL_S", 0.01)
+    job_id = ctx.backend.job_start("simpleFoam", name="solve")
+    ctx.store.record_job(job_id, cmd="simpleFoam", name="solve")
+    ctx.on_wait_input = lambda: True
+
+    began = _time.monotonic()
+    out, is_error = _dispatch(ctx, "job_check", {"job_id": job_id, "wait_s": 30})
+
+    assert not is_error
+    assert _time.monotonic() - began < 5, "it did not sit out the full wait"
+    assert "the user said something" in out
+
+
+def test_an_over_long_wait_is_clamped_and_says_so(ctx, monkeypatch):
+    from openreynolds import tools as tools_mod
+    from openreynolds.tools import dispatch as _dispatch
+
+    monkeypatch.setattr(tools_mod, "JOB_WAIT_POLL_S", 0.01)
+    monkeypatch.setattr(tools_mod, "JOB_WAIT_MAX_S", 0.05)
+    job_id = ctx.backend.job_start("simpleFoam", name="solve")
+    ctx.store.record_job(job_id, cmd="simpleFoam", name="solve")
+
+    out, is_error = _dispatch(ctx, "job_check", {"job_id": job_id, "wait_s": 9999})
+
+    assert not is_error
+    assert "ceiling" in out
+
+
+def test_no_wait_asked_means_no_waiting(ctx):
+    import time as _time
+
+    from openreynolds.tools import dispatch as _dispatch
+
+    job_id = ctx.backend.job_start("simpleFoam", name="solve")
+    ctx.store.record_job(job_id, cmd="simpleFoam", name="solve")
+
+    began = _time.monotonic()
+    out, is_error = _dispatch(ctx, "job_check", {"job_id": job_id})
+
+    assert not is_error
+    assert _time.monotonic() - began < 1
+    assert "waited" not in out

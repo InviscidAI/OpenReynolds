@@ -28,6 +28,7 @@ mirror that ends a session is worse than one that misses a file.
 from __future__ import annotations
 
 import re
+import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -265,6 +266,10 @@ def sync(
         report.warnings.append(f"could not look at {root}: {exc}")
         return report
 
+    # The listing is the expensive part of a sync, and it is also exactly what a
+    # files pane wants to draw. Remember it so showing the workspace is free.
+    browser.remember(root, entries)
+
     if len(entries) >= MAX_ENTRIES:
         # `find` output is capped, so the tail of a very large workspace was never
         # examined at all. That is a different thing from there being nothing there.
@@ -455,3 +460,130 @@ def _suffix(name: str) -> str:
 def _relative(path: str, root: str) -> str:
     base = root.rstrip("/") + "/"
     return path[len(base) :] if path.startswith(base) else path.lstrip("/")
+
+
+# -- keeping it home while it happens ------------------------------------------
+
+
+class LiveMirror:
+    """A background thread that runs `sync` for as long as the session lives.
+
+    The turn-end sync arrives exactly when nothing is happening. A two-hour solve
+    writes its fields, its logs and its renders while the model's turn is over and
+    the session is just watching -- and none of it reached the user's machine until
+    the session wound down. So the mirror runs on its own clock: every `interval_s`
+    the study's directory is listed, whatever changed comes down, and whatever is
+    showing the workspace is told. The user's copy is at most one interval behind
+    the instance, all session long.
+
+    One sync at a time, wherever it is asked from: the turn-end path and the timer
+    share a lock, so two syncs can never race each other over the same files.
+    Nothing here may end a session -- a cycle that fails becomes a report with a
+    warning in it, and the next cycle tries again.
+    """
+
+    def __init__(self, browser: Browser, interval_s: float = 20.0):
+        self.browser = browser
+        self.interval_s = float(interval_s)
+        self.view = None
+        """Told about every cycle via `mirrored(report)`. Set once the session
+        knows which interface it is running."""
+        self.progress = None
+        """Told when a cycle begins and ends, so the bar can say files are moving."""
+        self.gallery = None
+        """Surfaces and assembles renders from each cycle's arrivals (`delivery.py`).
+        Set by the session; may be None. Runs on this thread, never raises."""
+        self.last_report: MirrorReport | None = None
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Begin the background cycles. An interval of zero or less means the
+        feature is off, and only the explicit `sync_now` calls run."""
+        if self.interval_s <= 0 or self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, name="mirror", daemon=True)
+        self._thread.start()
+
+    def poke(self) -> None:
+        """Ask for a cycle now, without waiting for one and without blocking.
+
+        For the moments the interval is too slow for: the model just rendered
+        something and looked at it, and the user should not be twenty seconds
+        behind a picture that already exists. A poke with no thread running is
+        quietly nothing -- the turn-end syncs still cover that configuration."""
+        self._wake.set()
+
+    def stop(self, timeout: float = 30.0) -> None:
+        """Stop the cycles and wait for any sync in flight to finish.
+
+        Bounded, because an exit that hangs on a convenience is worse than a sync
+        that gets cut off -- the session's own final sync still runs after this."""
+        self._stop.set()
+        self._wake.set()
+        if self._thread is not None:
+            self._thread.join(timeout=timeout)
+            self._thread = None
+
+    def sync_now(self) -> MirrorReport:
+        """One sync, immediately, on the caller's thread. Serialized with the
+        background cycles by the same lock."""
+        return self._cycle()
+
+    def catch_up(self) -> MirrorReport | None:
+        """A sync soon, without holding up whoever asked.
+
+        The turn-end sync used to run on the session thread, and the session thread
+        is the one that reads what the user types. During a six-rank transient solve
+        the cycle was pulling every per-processor field file the solver wrote -- an
+        unbounded amount of work -- and for twenty-five minutes two typed messages
+        sat in the queue behind it, unread, while the screen showed a finished turn.
+        The user's word for it was that the model "just does not respond".
+
+        So when the background thread is running, this only pokes it: the files come
+        home on its clock, and the reply comes now. Without a thread (interval 0)
+        the caller's sync is the only one, and it runs here as before."""
+        if self._thread is not None and self._thread.is_alive():
+            self.poke()
+            return None
+        return self.sync_now()
+
+    def _run(self) -> None:
+        while True:
+            self._wake.wait(self.interval_s)
+            self._wake.clear()
+            if self._stop.is_set():
+                return
+            self._cycle()
+
+    def _cycle(self) -> MirrorReport:
+        progress = self.progress
+        with self._lock:
+            if progress is not None:
+                progress.sync_begin()
+            try:
+                report = sync(self.browser, everything=True)
+            except Exception as exc:  # noqa: BLE001 - a convenience may not end a session
+                report = MirrorReport(
+                    local_dir=Path.cwd(), warnings=[f"could not mirror: {exc}"]
+                )
+            if progress is not None:
+                progress.sync_end(report)
+            # Surface and assemble the pictures this cycle brought home. Inside the
+            # lock is deliberate: it reads the same files the sync just wrote, and a
+            # second sync must not move them mid-assembly.
+            event = None
+            if self.gallery is not None:
+                event = self.gallery.ingest(report)
+        self.last_report = report
+        view = self.view
+        if view is not None:
+            try:
+                view.mirrored(report)
+                if event:
+                    view.delivered(event)
+            except Exception:  # noqa: BLE001 - presentation may be tearing down
+                pass  # the files are already home; only the telling failed
+        return report

@@ -389,6 +389,7 @@ def test_doctor_reports_every_check(monkeypatch):
         "capture",
         "toolbox",
         "terminal",
+        "video assembly",
     }
     assert "1 instance(s)" in results["workspace service"][1]
     assert "claude-opus-5 reachable" in results["model API"][1]
@@ -831,6 +832,136 @@ def test_the_files_come_home_before_anything_is_stopped(store):
     import inspect
 
     source = inspect.getsource(cli.session)
-    assert source.index("_mirror(") < source.index("_close_down("), (
+    assert source.index("_final_sync(") < source.index("_close_down("), (
         "the study is mirrored before the instance is put down"
     )
+
+
+# -- the bar and the reply -----------------------------------------------------
+
+
+def test_the_turn_end_sync_never_stands_between_the_user_and_the_model(
+    loop, backend, store, view, quiet_console
+):
+    """A sync that blocks the session thread blocks the reading of what was typed.
+    The interactive loop asks the mirror to catch up and moves on."""
+
+    class Live:
+        def __init__(self):
+            self.caught_up = 0
+
+        def catch_up(self):
+            self.caught_up += 1
+
+        def sync_now(self):
+            raise AssertionError("the session thread must not wait on a sync")
+
+    live = Live()
+    install_model(loop, [message([text_block("done")])])
+
+    cli._run_interactive(
+        loop, backend, store, view, Browser(backend, store),
+        ScriptedReader(["hi", "/exit"]), live=live,
+    )
+
+    assert live.caught_up == 1
+
+
+def test_status_shows_the_same_headline_as_the_bar(loop, backend, store, view, quiet_console):
+    from openreynolds import commands
+    from openreynolds.progress import Tracker
+
+    tracker = Tracker(view)
+    tracker.begin("tool", "bash", cmd="snappyHexMesh", cwd="/work/study-test")
+
+    cli._local(commands.parse("/status"), view, Browser(backend, store), store, loop, tracker)
+
+    joined = "\n".join(view.statuses[-1])
+    assert "right now: bash: snappyHexMesh" in joined
+
+
+def test_the_interactive_loop_tells_the_bar_when_it_is_waiting(
+    loop, backend, store, view, quiet_console
+):
+    class Bar:
+        def __init__(self):
+            self.kinds = []
+
+        def begin(self, kind, label="", **facts):
+            self.kinds.append(kind)
+
+        def idle(self):
+            self.kinds.append("idle")
+
+        def snapshot(self):
+            from openreynolds.progress import Progress
+
+            return Progress()
+
+        def refresh_jobs(self, force=False):
+            return []
+
+        def facts_for_wake(self):
+            return []
+
+    bar = Bar()
+    install_model(loop, [message([text_block("done")])])
+
+    cli._run_interactive(
+        loop, backend, store, view, Browser(backend, store),
+        ScriptedReader(["hi", "/exit"]), progress=bar,
+    )
+
+    assert bar.kinds[0] == "waiting"
+
+
+# -- the front desk ------------------------------------------------------------
+
+
+class FakeDesk:
+    def __init__(self):
+        self.asked = []
+        self.working_states = []
+
+    def ask(self, text):
+        self.asked.append(text)
+
+    def working(self, yes=True):
+        self.working_states.append(yes)
+
+
+def test_a_message_typed_mid_turn_goes_to_both_the_model_and_the_desk(
+    loop, backend, store, view
+):
+    """The screenshot bug: mid-turn text reached the model (eventually) but nothing
+    answered now. It must now also reach the desk."""
+    desk = FakeDesk()
+    reader = ScriptedReader(["how long will this take?"])
+
+    handed = cli._typed_while_working(loop, view, Browser(backend, store), store, reader, concierge=desk)
+
+    assert handed == "how long will this take?"  # still goes to the model
+    assert desk.asked == ["how long will this take?"]  # and to the desk, now
+
+
+def test_a_local_command_mid_turn_does_not_reach_the_desk(loop, backend, store, view):
+    desk = FakeDesk()
+    reader = ScriptedReader(["/status"])
+
+    cli._typed_while_working(loop, view, Browser(backend, store), store, reader, concierge=desk)
+
+    assert desk.asked == []  # /status is answered locally; the desk is for questions
+
+
+def test_typing_during_a_job_reaches_the_desk_too(loop, backend, store, view, quiet_console):
+    backend.job_start("sleep 600", name="solve")
+    store.record_job("job-1", cmd="sleep 600", name="solve")
+    install_model(loop, [message([text_block("stopping")])])
+    desk = FakeDesk()
+
+    cli._run_interactive(
+        loop, backend, store, view, Browser(backend, store),
+        ScriptedReader(["what is it doing?", "/exit"]), concierge=desk,
+    )
+
+    assert "what is it doing?" in desk.asked

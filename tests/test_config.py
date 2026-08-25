@@ -17,6 +17,8 @@ ENV_KEYS = (
     "OPENREYNOLDS_EFFORT",
     "OPENREYNOLDS_LLM_BASE_URL",
     "OPENREYNOLDS_MAX_TOOL_OUTPUT",
+    "OPENREYNOLDS_MIRROR_INTERVAL_S",
+    "OPENREYNOLDS_NARRATE_EVERY_S",
 )
 
 
@@ -72,6 +74,20 @@ def test_trailing_slash_is_trimmed_from_the_service_url(clean_env, monkeypatch):
 def test_tool_output_budget_is_tunable(clean_env, monkeypatch):
     monkeypatch.setenv("OPENREYNOLDS_MAX_TOOL_OUTPUT", "1234")
     assert Config.load().max_tool_output == 1234
+
+
+def test_narration_cadence_is_tunable(clean_env, monkeypatch):
+    monkeypatch.setenv("OPENREYNOLDS_NARRATE_EVERY_S", "30")
+    assert Config.load().narrate_every_s == 30.0
+
+
+def test_a_preferences_file_beside_the_config_is_loaded(clean_env):
+    (clean_env.parent / "preferences.md").write_text("render the mesh", encoding="utf-8")
+    assert Config.load().preferences == "render the mesh"
+
+
+def test_no_preferences_file_means_an_empty_note(clean_env):
+    assert Config.load().preferences == ""
 
 
 # -- what counts as configured -------------------------------------------------
