@@ -482,6 +482,13 @@ size, files pulled — and the model is never told it was asked.
 Anything else beginning with `/` is treated as a message, because `/work/case/log looks
 wrong` is a sentence, not a typo.
 
+## Security
+
+The agent runs an unsandboxed shell on your hosted instance with no approval gate; that
+is the design, not an oversight. [SECURITY.md](SECURITY.md) says what follows from it —
+what the model can see on the instance, what leaves your machine and when, and where to
+report a problem (security@inviscidai.com).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
