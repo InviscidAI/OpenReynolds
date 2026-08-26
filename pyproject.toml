@@ -72,6 +72,7 @@ packages = ["openreynolds"]
 # Local study mirrors, user-test transcripts and the engineering scaffolding are
 # not part of what someone installs.
 exclude = [
+    "launcher/",
     "studies/",
     "user-test*.log",
     "scripts/",

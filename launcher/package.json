@@ -1,0 +1,41 @@
+{
+  "name": "openreynolds",
+  "version": "0.1.0",
+  "description": "Agentic OpenFOAM CFD: describe a flow problem, get an evidence-backed answer. Launcher for the openreynolds Python package.",
+  "license": "MIT",
+  "author": "InviscidAI <kabir@inviscidai.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/InviscidAI/OpenReynolds",
+    "directory": "launcher"
+  },
+  "homepage": "https://tryreynolds.com",
+  "bugs": {
+    "url": "https://github.com/InviscidAI/OpenReynolds/issues"
+  },
+  "keywords": [
+    "cfd",
+    "openfoam",
+    "agent",
+    "llm",
+    "simulation",
+    "fluid-dynamics",
+    "cli"
+  ],
+  "bin": {
+    "openreynolds": "bin/openreynolds.js"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

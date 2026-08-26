@@ -8,6 +8,9 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- An npm launcher (`launcher/`, published as `openreynolds`): `npm install -g
+  openreynolds` finds or installs `uv`, installs the Python package from PyPI once,
+  and runs it. No Python source ships in the npm tarball.
 - `openreynolds login`: sign in from the terminal by approving a short code in the
   browser; the service key lands in the config file. The service has a default address
   now (`https://api.tryreynolds.com`), so a fresh install needs no URL.
