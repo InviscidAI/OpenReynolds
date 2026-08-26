@@ -4,18 +4,38 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openreynolds"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A UI-less CFD agent: an Anthropic tool-use loop over a real OpenFOAM workspace."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "InviscidAI", email = "kabir@inviscidai.com" }]
+keywords = ["cfd", "openfoam", "agent", "llm", "simulation", "fluid-dynamics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Operating System :: OS Independent",
+]
 dependencies = [
-    "anthropic>=1.0.0",
+    "anthropic>=1.0,<2",
     "httpx2>=2.0.0",
     "rich>=13.0.0",
     "click>=8.1.0",
     "textual>=8.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/InviscidAI/OpenReynolds"
+Repository = "https://github.com/InviscidAI/OpenReynolds"
+Issues = "https://github.com/InviscidAI/OpenReynolds/issues"
 
 [project.optional-dependencies]
 # numpy/matplotlib/pandas are what the container provides; the toolbox tests
@@ -27,12 +47,39 @@ dev = [
     "matplotlib>=3.7",
     "pandas>=2.0",
 ]
+# `openreynolds video` prefers a real ffmpeg on PATH; imageio is the fallback encoder.
+video = ["imageio>=2.31"]
+# The toolbox scripts run on the instance, where these are already installed. This
+# extra is for running them on the user's own machine.
+toolbox = [
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "pandas>=2.0",
+    "pyvista>=0.43",
+]
 
 [project.scripts]
 openreynolds = "openreynolds.cli:main"
 
+[tool.hatch.version]
+path = "openreynolds/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["openreynolds"]
+
+[tool.hatch.build.targets.sdist]
+# Local study mirrors, user-test transcripts and the engineering scaffolding are
+# not part of what someone installs.
+exclude = [
+    "studies/",
+    "user-test*.log",
+    "scripts/",
+    ".github/",
+    ".githooks/",
+    "docs/",
+    ".claude/",
+    "*.log",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
