@@ -322,7 +322,8 @@ def test_a_failed_turn_does_not_trigger_a_context_refresh(loop, view, monkeypatc
 
 def test_one_shot_stops_when_the_model_api_fails(loop, backend, store, view, quiet_console, monkeypatch):
     monkeypatch.setattr(loop, "run", lambda: (_ for _ in ()).throw(_api_error()))
-    cli._run_one_shot(loop, backend, store, "do it", view, NullReader())  # returns rather than hanging
+    outcome = cli._run_one_shot(loop, backend, store, "do it", view, NullReader())
+    assert outcome == "failed"  # and it returned rather than hanging
 
 
 # -- doctor --------------------------------------------------------------------
@@ -561,10 +562,13 @@ def test_unattended_waiting_can_be_bounded(loop, backend, store, view, quiet_con
     install_model(loop, [message([text_block("which outlet length do you want?")])])
 
     started = __import__("time").monotonic()
-    cli._run_one_shot(loop, backend, store, "run it", view, NullReader(), max_wait_minutes=0.01)
+    outcome = cli._run_one_shot(
+        loop, backend, store, "run it", view, NullReader(), max_wait_minutes=0.01
+    )
     elapsed = __import__("time").monotonic() - started
 
     assert elapsed < 20, "it gave up rather than waiting on the job"
+    assert outcome == "timeout"
     assert store.live_jobs(), "and left the job running on the instance"
     assert any("stopped waiting" in i for i in view.infos)
     assert any(store.session.study_id in i for i in view.infos), "it says how to resume"
@@ -582,9 +586,51 @@ def test_without_a_bound_it_still_waits_for_the_job(loop, backend, store, view, 
         ],
     )
 
-    cli._run_one_shot(loop, backend, store, "solve", view, NullReader())
+    outcome = cli._run_one_shot(loop, backend, store, "solve", view, NullReader())
 
     assert not store.live_jobs()
+    assert outcome == "ok"
+
+
+# -- what a -p run tells the shell that started it -----------------------------
+
+
+def _headless(monkeypatch, outcome):
+    """A `-p` invocation whose session ended the given way, and nothing else."""
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: full_config()))
+    seen = {}
+
+    def session(cfg, **kwargs):
+        seen.update(kwargs)
+        return outcome
+
+    monkeypatch.setattr(cli, "session", session)
+    return seen
+
+
+@pytest.mark.parametrize(
+    "outcome,code",
+    [("ok", 0), ("failed", 1), ("timeout", 2)],
+)
+def test_a_headless_run_s_exit_code_says_how_it_ended(monkeypatch, outcome, code):
+    """Every ending used to exit 0, so a scheduled run whose every turn was refused
+    by a rate limit looked, to whatever started it, like one that had finished."""
+    seen = _headless(monkeypatch, outcome)
+
+    result = CliRunner().invoke(cli.main, ["-p", "run the elbow", "--max-wait", "5"])
+
+    assert result.exit_code == code, result.output
+    assert seen["one_shot"] == "run the elbow"
+    assert seen["max_wait"] == 5.0
+
+
+def test_an_interactive_session_still_exits_zero(monkeypatch):
+    """Whatever happened in it was said on screen to someone."""
+    _headless(monkeypatch, None)
+
+    result = CliRunner().invoke(cli.main, ["--plain"])
+
+    assert result.exit_code == 0, result.output
 
 
 # -- looking at the workspace --------------------------------------------------

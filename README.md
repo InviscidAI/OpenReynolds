@@ -201,6 +201,22 @@ put anything it wants to keep on disk first.
 Its memory is the filesystem plus whatever notes it chose to write. Nothing summarizes its
 reasoning on its behalf.
 
+### Running unattended
+
+`openreynolds -p "..."` runs one study with nobody at the keyboard: the plain terminal,
+the model's turn, then the wait on whatever jobs it started — for hours, if that is how
+long the solve takes. `--max-wait <minutes>` bounds the wait; the job carries on out on
+the instance either way, and `--study <id>` picks it up. The exit code says how it went,
+because a script has nothing else to go on:
+
+| Code | Meaning |
+|---|---|
+| `0` | the model finished and no jobs remain |
+| `1` | the model API would not complete a turn — a rate limit, a bad key, a dropped connection; the study is intact and resumes with `--study` |
+| `2` | `--max-wait` ran out with a job still running |
+
+Interactive sessions exit `0`; whatever happened in them was said on screen.
+
 ## The toolbox
 
 `openreynolds/toolbox/` is synced to `/work/.toolbox/` at session start. It is offered,

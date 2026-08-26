@@ -91,7 +91,7 @@ def main(
         console.print(f"Set them in the environment, or run [bold]openreynolds config[/].")
         raise SystemExit(1)
 
-    session(
+    outcome = session(
         cfg,
         study_id=study_id,
         instance_id=instance_id,
@@ -100,6 +100,9 @@ def main(
         keep_alive=keep_alive,
         max_wait=max_wait,
     )
+    code = ONE_SHOT_EXIT_CODES.get(outcome or "ok", 0)
+    if code:
+        raise SystemExit(code)
 
 
 @main.command("studies")
@@ -662,7 +665,7 @@ def session(
     keep_alive: bool = False,
     max_wait: float = 0.0,
     interface: Any = None,
-) -> None:
+) -> str | None:
     """Run one study to its end.
 
     `interface`, when given, is a callable that takes `drive` -- the one-session
@@ -671,7 +674,11 @@ def session(
     protocol. It is the same seam the terminal interface uses (`_run_tui`), so
     supplying one can change what the user reads and never what the model does.
     Its return value says whether the process has to be force-exited afterwards.
+
+    Returns how a one-shot run ended (see `_run_one_shot`), and None for an
+    interactive session, where whatever happened was said on screen to someone.
     """
+    outcome: str | None = None
     resuming = study_id is not None
     store = Store(cfg.studies_dir, study_id or new_study_id())
 
@@ -725,6 +732,7 @@ def session(
 
     def drive(view: View, reader: Any) -> None:
         """One session, against whichever interface is running it."""
+        nonlocal outcome
         # The tools report job state through the view, so a panel showing what is
         # running is current the moment it changes rather than only while polling.
         ctx.view = view
@@ -774,7 +782,7 @@ def session(
         )
         try:
             if one_shot:
-                _run_one_shot(
+                outcome = _run_one_shot(
                     loop, backend, store, one_shot, view, reader, max_wait,
                     live=live_mirror, progress=tracker,
                 )
@@ -821,7 +829,13 @@ def session(
             sys.stdout.flush()
             sys.stderr.flush()
             os._exit(0)
+    return outcome
 
+
+ONE_SHOT_EXIT_CODES = {"ok": 0, "failed": 1, "timeout": 2}
+"""What a `-p` run's ending means to the shell that started it. Documented in the
+README, so a script can tell "the model could not be reached" from "the solve is
+still going" without parsing the output."""
 
 WORKSPACE_LISTED = 40
 
@@ -1409,17 +1423,23 @@ def _run_one_shot(
     max_wait_minutes: float = 0.0,
     live: LiveMirror | None = None,
     progress: Any = None,
-) -> None:
-    """Run until the model is done and no jobs remain.
+) -> str:
+    """Run until the model is done and no jobs remain, and say how it went.
 
     There is nobody here to answer a question, so if the model ends its turn wanting
     one, this waits on the job instead -- possibly for hours. `--max-wait` bounds that.
     Stopping only ends the waiting: the job carries on out on the instance and the
     study resumes.
+
+    The answer is one of "ok", "failed" (the model API would not complete a turn)
+    and "timeout" (`--max-wait` ran out with a job still running). A script driving
+    `-p` has nothing but the exit code to go on, and for a long while all three
+    exited 0 -- so a scheduled run whose every turn was refused by a rate limit
+    looked, to the scheduler, exactly like one that had finished.
     """
     loop.say(prompt)
     if not _run_turn(loop, view):
-        return
+        return "failed"
     if live is not None:
         live.catch_up()
 
@@ -1433,16 +1453,17 @@ def _run_one_shot(
                 f"stopped waiting after {max_wait_minutes:g} min; the job is still "
                 f"running - resume with --study {store.session.study_id}"
             )
-            return
+            return "timeout"
         if wake.kind != "job":
             break
         loop.inform(wake.text)
         if not _run_turn(loop, view):
-            return
+            return "failed"
         if live is not None:
             live.catch_up()
         if loop.needs_refresh:
             loop.refresh(situation(store, backend))
+    return "ok"
 
 
 def _sync_toolbox(backend: Backend) -> None:
