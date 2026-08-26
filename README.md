@@ -1,6 +1,6 @@
 # OpenReynolds
 
-A UI-less CFD agent. It is an Anthropic tool-use loop with seven tools pointed at a real
+A UI-less CFD agent. It is a tool-use loop with seven tools pointed at a real
 Linux workspace that has OpenFOAM in it. The agent decides how to work; this repository is
 the plumbing that lets it.
 
@@ -247,13 +247,26 @@ written with restrictive permissions.
 | Setting | Meaning |
 |---|---|
 | `FOAMD_URL`, `FOAMD_API_KEY` | The workspace service |
-| `ANTHROPIC_API_KEY` | Bring your own key — the service is BYOK and does not proxy LLM calls |
-| `OPENREYNOLDS_MODEL` | Default `claude-opus-5` |
+| `OPENREYNOLDS_PROVIDER` | Whose model: `anthropic` (default), `openai`, `zai`, `deepseek`, `moonshot`, `minimax`, `openrouter`, `ollama` — or a bare API family with `OPENREYNOLDS_LLM_BASE_URL` |
+| `OPENREYNOLDS_LLM_API_KEY` | Bring your own key — the service never proxies a model call. The vendor's own name works too: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ZAI_API_KEY`, … |
+| `OPENREYNOLDS_LLM_BASE_URL` | Any endpoint that speaks the Messages API or Chat Completions; a gateway, a local server |
+| `OPENREYNOLDS_MODEL` | Default from the provider preset (`claude-opus-5` for Anthropic) |
+| `OPENREYNOLDS_CONTEXT_WINDOW` | Tokens the model holds in one thread; the preset's number unless set |
 | `OPENREYNOLDS_MAX_TOOL_OUTPUT` | Inline tool-output budget, default 48000 bytes |
 | `OPENREYNOLDS_CAPTURE` | `0`, `false`, `no` or `off` keeps transcripts on this machine only; the per-session form is `--no-capture` |
 
-The Anthropic client is built from `base_url` plus a key, so if the service ever grows an
-LLM proxy, pointing at it is a config change rather than a code change.
+**Bring your own model.** The loop is written against two API dialects, not one
+vendor: the Messages API (Anthropic, and the compatible endpoints Z.ai, DeepSeek,
+Moonshot and MiniMax expose) and Chat Completions (OpenAI, OpenRouter, Ollama, vLLM,
+most gateways). `openreynolds config --provider zai` points the settings at a vendor —
+endpoint, model ids, context window — and asks only for the key; anything not in the
+preset table is a family plus `OPENREYNOLDS_LLM_BASE_URL`. Claude-only request fields
+(adaptive thinking, effort, prompt caching) are dropped for the session the first time
+an endpoint refuses them, so a compatible vendor costs one failed request, not a flag.
+A vendor that streams its reasoning shows it in the stage line like Claude's; one that
+does not simply thinks in silence. The front desk uses the same provider and its own
+cheaper model from the preset. Model ids in the presets are the ones that existed when
+the table was written; `doctor` says whether yours still answers.
 
 ## Layout
 

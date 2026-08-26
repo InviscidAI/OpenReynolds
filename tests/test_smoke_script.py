@@ -171,7 +171,7 @@ def wired(smoke, monkeypatch, tmp_path):
             lambda cls: smoke.Config(
                 foamd_url="https://svc",
                 foamd_api_key="of_live_x",
-                anthropic_api_key="",
+                llm_api_key="",
                 studies_dir=tmp_path / "studies",
             )
         ),
@@ -267,7 +267,7 @@ def test_it_does_not_need_a_model_key(smoke, monkeypatch, tmp_path):
         smoke.Config,
         "load",
         classmethod(
-            lambda cls: smoke.Config(foamd_url="u", foamd_api_key="k", anthropic_api_key="")
+            lambda cls: smoke.Config(foamd_url="u", foamd_api_key="k", llm_api_key="")
         ),
     )
     monkeypatch.setattr(sys, "argv", ["smoke.py"])

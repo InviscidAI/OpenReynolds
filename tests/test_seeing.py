@@ -122,7 +122,7 @@ def test_the_model_is_sent_the_image_and_the_log_keeps_the_description(ctx, view
     """Both halves matter: the picture has to reach the request, and a megabyte of
     base64 must not end up in the message log, which is what people read afterwards."""
     ctx.backend.files["/work/a.png"] = PNG
-    cfg = Config(anthropic_api_key='test-key', model='claude-opus-5')
+    cfg = Config(llm_api_key='test-key', model='claude-opus-5')
     loop = Loop(cfg, ctx, ctx.store, view)
     fake = install_model(
         loop,

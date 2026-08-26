@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import anthropic
 import click
 from rich.console import Console
 
@@ -23,6 +22,7 @@ from .capture import Capture
 from . import commands, images
 from .config import Config, config_path
 from .delivery import Gallery
+from .llm import PRESETS, ProviderError, make_provider, preset_for
 from .loop import Loop
 from . import video as video_mod
 from .desk import Concierge
@@ -129,24 +129,26 @@ def studies_cmd() -> None:
 @click.option(
     "--key-file",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Read the Anthropic key from this file (it is not echoed).",
+    help="Read the model API key from this file (it is not echoed).",
 )
-def config_cmd(from_env: bool, key_file: Path | None) -> None:
+@click.option(
+    "--provider",
+    "provider",
+    type=click.Choice(sorted(PRESETS), case_sensitive=False),
+    help="Whose model: a preset that fills in the endpoint and a model id.",
+)
+def config_cmd(from_env: bool, key_file: Path | None, provider: str | None) -> None:
     """Set credentials and defaults."""
     cfg = Config.load()
+    if provider:
+        _apply_preset(cfg, provider)
 
-    if from_env or key_file:
+    if from_env or key_file or (provider and not _can_prompt()):
         if key_file:
-            cfg.anthropic_api_key = key_file.read_text(encoding="utf-8").strip()
+            cfg.llm_api_key = key_file.read_text(encoding="utf-8").strip()
         path = cfg.save()
         console.print(f"[green]Saved[/] {path}")
-        for name, value in (
-            ("service url", cfg.foamd_url),
-            ("service key", _redact(cfg.foamd_api_key)),
-            ("anthropic key", _redact(cfg.anthropic_api_key)),
-            ("model", cfg.model),
-        ):
-            console.print(f"  {name:14} {value or '[red]not set[/]'}")
+        _print_settings(cfg)
         return
 
     if not _can_prompt():
@@ -161,9 +163,19 @@ def config_cmd(from_env: bool, key_file: Path | None) -> None:
         cfg.foamd_api_key = click.prompt(
             "Service API key", default=cfg.foamd_api_key or "", hide_input=True
         ).strip()
-        cfg.anthropic_api_key = click.prompt(
-            "Anthropic API key", default=cfg.anthropic_api_key or "", hide_input=True
-        ).strip()
+        if not provider:
+            console.print("Model providers: " + ", ".join(sorted(PRESETS)))
+            chosen = click.prompt(
+                "Provider", default=cfg.provider, type=click.Choice(sorted(PRESETS), case_sensitive=False)
+            )
+            if chosen.lower() != cfg.provider:
+                _apply_preset(cfg, chosen)
+        if key_file:
+            cfg.llm_api_key = key_file.read_text(encoding="utf-8").strip()
+        else:
+            cfg.llm_api_key = click.prompt(
+                "Model API key", default=cfg.llm_api_key or "", hide_input=True
+            ).strip()
         cfg.model = click.prompt("Model", default=cfg.model).strip()
     except (click.Abort, EOFError):
         # Some shells report a terminal and then deliver EOF, so isatty() alone cannot
@@ -173,6 +185,35 @@ def config_cmd(from_env: bool, key_file: Path | None) -> None:
 
     path = cfg.save()
     console.print(f"\n[green]Saved[/] {path}")
+    _print_settings(cfg)
+
+
+def _apply_preset(cfg: Config, name: str) -> None:
+    """Point the settings at a vendor: its family, endpoint, model ids and window.
+
+    The key is left alone -- it is the one thing a preset cannot know -- and so is
+    anything the person already set explicitly for this same provider."""
+    preset = preset_for(name)
+    if preset is None:
+        raise click.BadParameter(f"unknown provider {name!r}", param_hint="--provider")
+    if cfg.provider != preset.name:
+        cfg.llm_api_key = ""
+    cfg.provider = preset.name
+    cfg.llm_base_url = None
+    cfg.model = preset.model
+    cfg.desk_model = preset.desk_model
+    cfg.context_window = preset.context_window
+
+
+def _print_settings(cfg: Config) -> None:
+    for name, value in (
+        ("service url", cfg.foamd_url),
+        ("service key", _redact(cfg.foamd_api_key)),
+        ("provider", cfg.provider),
+        ("model key", _redact(cfg.llm_api_key)),
+        ("model", cfg.model),
+    ):
+        console.print(f"  {name:14} {value or '[red]not set[/]'}")
 
 
 @main.command("stop")
@@ -540,6 +581,10 @@ def _can_prompt() -> bool:
 
 
 def _redact(secret: str) -> str:
+    """Enough of a key to tell which one it is, never the whole thing -- and nothing
+    at all for an empty one, so "not set" is what a missing key reads as."""
+    if not secret:
+        return ""
     return f"{secret[:12]}..." if len(secret) > 12 else "set"
 
 
@@ -572,21 +617,19 @@ def _check_service(cfg: Config) -> tuple[str, bool, str]:
 
 
 def _check_model(cfg: Config) -> tuple[str, bool, str]:
-    """Validates the key, the base URL and the model id in one free call."""
-    if not (cfg.anthropic_api_key or cfg.llm_base_url):
+    """Validates the key, the endpoint and the model id together, as cheaply as the
+    provider allows."""
+    if cfg.model_key_missing():
         return "model API: no key", False, ""
     try:
-        client = anthropic.Anthropic(
-            api_key=cfg.anthropic_api_key or None, base_url=cfg.llm_base_url or None
-        )
-        counted = client.messages.count_tokens(
-            model=cfg.model, messages=[{"role": "user", "content": "ping"}]
-        )
-    except anthropic.APIStatusError as exc:
-        return "model API", False, f"{exc.status_code}: {getattr(exc, 'message', exc)}"
-    except anthropic.APIError as exc:
+        detail = make_provider(cfg).probe(cfg.model)
+    except ValueError as exc:
         return "model API", False, str(exc)
-    return "model API", True, f"{cfg.model} reachable ({counted.input_tokens} tokens for a ping)"
+    except ProviderError as exc:
+        if exc.status_code:
+            return "model API", False, f"{exc.status_code}: {exc.message}"
+        return "model API", False, exc.message
+    return "model API", True, f"{detail} via {cfg.provider}"
 
 
 def _check_capture(cfg: Config) -> tuple[str, bool, str]:
@@ -758,7 +801,7 @@ def session(
         # is mid-turn. Off without a key (BYOK) or when disabled. One-shot runs have
         # nobody at the keyboard, so it does not run there.
         concierge = None
-        if cfg.desk and cfg.anthropic_api_key and getattr(reader, "accepts_input", True):
+        if cfg.desk and not cfg.model_key_missing() and getattr(reader, "accepts_input", True):
             concierge = Concierge(cfg, store, view, tracker)
             tracker.concierge = concierge
             concierge.start()
@@ -1310,13 +1353,12 @@ def _run_turn(loop: Loop, view: View) -> bool:
         loop.run()
         loop.api_failures = 0
         return True
-    except anthropic.APIStatusError as exc:
+    except ProviderError as exc:
         loop.api_failures += 1
-        detail = getattr(exc, "message", None) or str(exc)
-        console.print(f"\n[red]The model API returned {exc.status_code}:[/] {detail}")
-    except anthropic.APIError as exc:
-        loop.api_failures += 1
-        console.print(f"\n[red]Could not reach the model API:[/] {exc}")
+        if exc.status_code:
+            console.print(f"\n[red]The model API returned {exc.status_code}:[/] {exc.message}")
+        else:
+            console.print(f"\n[red]Could not reach the model API:[/] {exc.message}")
 
     loop.settle()
     if loop.api_failures >= 2:
@@ -1326,7 +1368,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
         study = loop.store.session.study_id
         console.print(
             f"[yellow]The model API has failed {loop.api_failures} times in a row. "
-            "The usual cause is a rate limit or usage cap on your Anthropic key, not "
+            "The usual cause is a rate limit or usage cap on your model API key, not "
             "your work -- every job and file is safe on the instance and mirrored "
             "here.[/]\n[yellow]Wait a minute and try again, or leave with /exit and "
             f"resume in a fresh, smaller thread: [bold]openreynolds --study {study}[/][/]"

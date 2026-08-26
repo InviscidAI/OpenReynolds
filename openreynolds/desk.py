@@ -34,7 +34,7 @@ import threading
 import time
 from typing import Any
 
-import anthropic
+from .llm import ProviderError, make_provider
 
 DESK_SYSTEM = """\
 You are the front desk of a CFD assistant running a long OpenFOAM job on a remote \
@@ -87,20 +87,23 @@ class Concierge:
         self.view = view
         self.tracker = tracker
         self.model = cfg.desk_model or "claude-haiku-4-5"
-        self._client = anthropic.Anthropic(
-            api_key=cfg.anthropic_api_key or None,
-            base_url=cfg.llm_base_url or None,
-            # Short calls, but a stalled one must not wedge the desk thread forever.
-            timeout=min(60.0, cfg.llm_timeout_s or 60.0),
-        )
-        self._system = [
-            {"type": "text", "text": DESK_SYSTEM, "cache_control": {"type": "ephemeral"}}
-        ]
+        # Short calls, but a stalled one must not wedge the desk thread forever.
+        self._provider = make_provider(cfg, timeout=min(60.0, cfg.llm_timeout_s or 60.0))
+        self._system = DESK_SYSTEM
         self._q: queue.Queue[tuple[str, str] | None] = queue.Queue()
         self._busy = threading.Event()
         self._stop = threading.Event()
         self._last_now = 0.0
         self._thread: threading.Thread | None = None
+
+    @property
+    def _client(self):
+        """The provider's SDK client -- what a test replaces with a scripted one."""
+        return self._provider.client
+
+    @_client.setter
+    def _client(self, value) -> None:
+        self._provider.client = value
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -166,25 +169,19 @@ class Concierge:
         if now - self._last_now < NOW_MIN_GAP_S:
             return
         self._last_now = now
-        line = self._call(
-            [{"type": "text", "text": NOW_SYSTEM}], self._prompt(user=None), MAX_NOW_TOKENS
-        )
+        line = self._call(NOW_SYSTEM, self._prompt(user=None), MAX_NOW_TOKENS)
         if line:
             self.view.narration(_one_line(line))
 
     # -- talking to the model --------------------------------------------------
 
-    def _call(self, system: list, prompt: str, max_tokens: int) -> str:
+    def _call(self, system: str, prompt: str, max_tokens: int) -> str:
         try:
-            response = self._client.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": prompt}],
+            return self._provider.complete(
+                model=self.model, system=system, prompt=prompt, max_tokens=max_tokens
             )
-        except anthropic.APIError:
+        except ProviderError:
             return ""
-        return "".join(b.text for b in response.content if b.type == "text").strip()
 
     def _prompt(self, user: str | None) -> str:
         parts = ["Recent activity (oldest first):", self._transcript()]

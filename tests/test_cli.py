@@ -21,7 +21,7 @@ pytestmark = pytest.mark.usefixtures("fast_polling")
 
 @pytest.fixture
 def loop(ctx, store, view):
-    return Loop(Config(anthropic_api_key="k", model="claude-opus-5"), ctx, store, view)
+    return Loop(Config(llm_api_key="k", model="claude-opus-5"), ctx, store, view)
 
 
 @pytest.fixture
@@ -261,14 +261,17 @@ def test_config_writes_credentials_outside_the_repo(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     result = CliRunner().invoke(
-        cli.main, ["config"], input="https://svc.example/\nof_live_x\nsk-ant-y\nclaude-opus-5\n"
+        cli.main, ["config"], input="https://svc.example/\nof_live_x\nzai\nsk-zai-y\nglm-4.6\n"
     )
 
     assert result.exit_code == 0
     saved = json.loads(target.read_text())
     assert saved["foamd_url"] == "https://svc.example"
     assert saved["foamd_api_key"] == "of_live_x"
-    assert saved["model"] == "claude-opus-5"
+    assert saved["model"] == "glm-4.6"
+    assert saved["provider"] == "zai"
+    assert saved["llm_api_key"] == "sk-zai-y"
+    assert saved["context_window"] == 200_000
 
 
 def test_exit_works_while_a_job_is_running(loop, backend, store, view, quiet_console):
@@ -285,14 +288,9 @@ def test_exit_works_while_a_job_is_running(loop, backend, store, view, quiet_con
 
 
 def _api_error(status=429):
-    import anthropic
-    from types import SimpleNamespace
+    from openreynolds.llm import ProviderError
 
-    return anthropic.RateLimitError(
-        "rate limit exceeded",
-        response=SimpleNamespace(status_code=status, headers={}, request=None),
-        body=None,
-    )
+    return ProviderError("rate limit exceeded", status)
 
 
 def test_a_rate_limit_does_not_end_the_session(loop, backend, store, view, quiet_console, monkeypatch):
@@ -333,7 +331,7 @@ def full_config(**over):
     values = dict(
         foamd_url="https://svc.example",
         foamd_api_key="of_live_abcdefghijklmnop",
-        anthropic_api_key="sk-ant-secret-value",
+        llm_api_key="sk-ant-secret-value",
         model="claude-opus-5",
     )
     values.update(over)
@@ -375,8 +373,10 @@ def stub_model(monkeypatch, tokens=8, error=None):
                 raise error
             return SimpleNamespace(input_tokens=tokens)
 
+    from openreynolds.llm import anthropic_api
+
     monkeypatch.setattr(
-        cli.anthropic, "Anthropic", lambda **kw: SimpleNamespace(messages=Messages())
+        anthropic_api.anthropic, "Anthropic", lambda **kw: SimpleNamespace(messages=Messages())
     )
 
 
@@ -412,7 +412,7 @@ def test_doctor_never_prints_a_key_in_full(monkeypatch):
     rendered = " ".join(f"{label} {detail}" for label, _, detail in cli.run_checks(cfg))
 
     assert cfg.foamd_api_key not in rendered
-    assert cfg.anthropic_api_key not in rendered
+    assert cfg.llm_api_key not in rendered
     assert "of_live_abcd" in rendered, "enough of the prefix to identify which key"
 
 
@@ -520,7 +520,7 @@ def test_config_key_file_never_echoes_the_key(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert "sk-ant-super-secret-value" not in result.output
     saved = json.loads((tmp_path / "c.json").read_text())
-    assert saved["anthropic_api_key"] == "sk-ant-super-secret-value"
+    assert saved["llm_api_key"] == "sk-ant-super-secret-value"
 
 
 def test_config_from_env(monkeypatch, tmp_path):
@@ -533,7 +533,7 @@ def test_config_from_env(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     saved = json.loads((tmp_path / "c.json").read_text())
-    assert saved["anthropic_api_key"] == "sk-ant-from-env"
+    assert saved["llm_api_key"] == "sk-ant-from-env"
     assert saved["foamd_url"] == "https://svc.example"
 
 
@@ -1144,3 +1144,9 @@ def test_a_failed_prompt_turn_reaches_the_desk(loop, backend, store, view, quiet
     )
 
     assert "are you still working?" in desk.asked
+
+
+def test_an_empty_key_is_not_reported_as_set():
+    assert cli._redact("") == ""
+    assert cli._redact("short") == "set"
+    assert cli._redact("of_live_abcdefghijklmnop") == "of_live_abcd..."

@@ -469,7 +469,7 @@ def main() -> int:
         return 2
 
     client = anthropic.Anthropic(
-        api_key=cfg.anthropic_api_key or None, base_url=cfg.llm_base_url or None
+        api_key=cfg.llm_api_key or None, base_url=cfg.llm_base_url or None
     )
     args.user_model = args.user_model or cfg.model
     repo = Path(__file__).resolve().parents[1]

@@ -13,6 +13,11 @@ ENV_KEYS = (
     "FOAMD_URL",
     "FOAMD_API_KEY",
     "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "ZAI_API_KEY",
+    "OPENREYNOLDS_PROVIDER",
+    "OPENREYNOLDS_LLM_API_KEY",
+    "OPENREYNOLDS_CONTEXT_WINDOW",
     "OPENREYNOLDS_MODEL",
     "OPENREYNOLDS_EFFORT",
     "OPENREYNOLDS_LLM_BASE_URL",
@@ -114,7 +119,7 @@ def test_a_key_is_needed_for_each_of_compute_and_the_model(clean_env):
 
 
 def test_fully_configured(clean_env):
-    cfg = Config(foamd_url="https://svc", foamd_api_key="k", anthropic_api_key="a")
+    cfg = Config(foamd_url="https://svc", foamd_api_key="k", llm_api_key="a")
     assert cfg.missing() == []
 
 
@@ -128,23 +133,26 @@ def test_a_proxy_stands_in_for_the_model_key(clean_env):
 
 
 def test_save_writes_only_the_settings_that_have_values(clean_env):
-    cfg = Config(foamd_url="https://svc", foamd_api_key="k", anthropic_api_key="a")
+    cfg = Config(foamd_url="https://svc", foamd_api_key="k", llm_api_key="a")
     path = cfg.save()
 
     saved = json.loads(path.read_text())
     assert saved == {
         "foamd_url": "https://svc",
         "foamd_api_key": "k",
-        "anthropic_api_key": "a",
+        "provider": "anthropic",
+        "llm_api_key": "a",
         "model": "claude-opus-5",
+        "desk_model": "claude-haiku-4-5",
         "effort": "high",
+        "context_window": 1_000_000,
     }
     assert "studies_dir" not in saved
     assert "capture" not in saved
 
 
 def test_save_round_trips(clean_env):
-    Config(foamd_url="https://svc", foamd_api_key="k", anthropic_api_key="a").save()
+    Config(foamd_url="https://svc", foamd_api_key="k", llm_api_key="a").save()
     reloaded = Config.load()
     assert (reloaded.foamd_url, reloaded.foamd_api_key) == ("https://svc", "k")
 
@@ -164,3 +172,53 @@ def test_credentials_live_outside_the_working_directory(monkeypatch, tmp_path):
     assert tmp_path not in target.parents, "config must not land in the repository"
     assert target.name == "config.json"
     assert target.parent.name == "openreynolds"
+
+
+# -- bring your own model -------------------------------------------------------
+
+
+def test_a_preset_fills_in_endpoint_model_and_window(clean_env):
+    cfg = Config(provider="zai", llm_api_key="k")
+    assert cfg.model == "glm-4.6"
+    assert cfg.desk_model == "glm-4.5-air"
+    assert cfg.context_window == 200_000
+    assert cfg.llm_base_url is None, "the preset's endpoint is applied by the provider, not stored"
+
+
+def test_explicit_choices_survive_a_preset(clean_env):
+    cfg = Config(provider="openai", llm_api_key="k", model="gpt-5-pro", context_window=123)
+    assert (cfg.model, cfg.context_window) == ("gpt-5-pro", 123)
+
+
+def test_an_unknown_endpoint_gets_the_conservative_window(clean_env):
+    cfg = Config(provider="openai", llm_api_key="k", llm_base_url="https://gateway.example/v1")
+    assert cfg.context_window == 200_000
+
+
+def test_the_provider_and_its_vendor_key_come_from_the_environment(clean_env, monkeypatch):
+    monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "zai")
+    monkeypatch.setenv("ZAI_API_KEY", "zk")
+    cfg = Config.load()
+    assert (cfg.provider, cfg.llm_api_key, cfg.model) == ("zai", "zk", "glm-4.6")
+
+
+def test_the_general_key_name_beats_the_vendor_one(clean_env, monkeypatch):
+    monkeypatch.setenv("OPENREYNOLDS_LLM_API_KEY", "general")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "vendor")
+    assert Config.load().llm_api_key == "general"
+
+
+def test_an_older_config_file_still_supplies_the_key(clean_env):
+    config_path().write_text(json.dumps({"anthropic_api_key": "old"}), encoding="utf-8")
+    cfg = Config.load()
+    assert cfg.llm_api_key == "old" and cfg.provider == "anthropic"
+
+
+def test_a_local_model_needs_no_key(clean_env):
+    cfg = Config(foamd_url="https://svc", foamd_api_key="k", provider="ollama")
+    assert cfg.missing() == []
+
+
+def test_the_missing_key_is_named_in_the_vendors_words(clean_env):
+    assert Config(foamd_url="u", foamd_api_key="k", provider="openai").missing() == ["OPENAI_API_KEY"]
+    assert Config(foamd_url="u", foamd_api_key="k", provider="deepseek").missing() == ["DEEPSEEK_API_KEY"]

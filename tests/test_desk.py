@@ -12,7 +12,7 @@ from openreynolds.desk import Concierge, _render
 
 
 def cfg():
-    return Config(anthropic_api_key="k", desk_model="claude-haiku-4-5")
+    return Config(llm_api_key="k", desk_model="claude-haiku-4-5")
 
 
 class FakeModel:

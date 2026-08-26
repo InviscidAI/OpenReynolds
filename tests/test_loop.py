@@ -13,7 +13,7 @@ from conftest import install_model as install, message, text_block, tool_block
 
 @pytest.fixture
 def loop(ctx: ToolContext, store, view):
-    cfg = Config(anthropic_api_key="test-key", model="claude-opus-5")
+    cfg = Config(llm_api_key="test-key", model="claude-opus-5")
     return Loop(cfg, ctx, store, view)
 
 
@@ -288,7 +288,7 @@ class Bar:
 
 
 def test_the_loop_says_when_it_thinks_and_when_it_runs_a_tool(ctx, store, view):
-    loop = Loop(Config(anthropic_api_key="k", model="claude-opus-5"), ctx, store, view)
+    loop = Loop(Config(llm_api_key="k", model="claude-opus-5"), ctx, store, view)
     loop.progress = Bar()
     install(
         loop,
@@ -306,7 +306,7 @@ def test_the_loop_says_when_it_thinks_and_when_it_runs_a_tool(ctx, store, view):
 
 
 def test_a_tool_that_raises_still_leaves_the_bar_idle(ctx, store, view, monkeypatch):
-    loop = Loop(Config(anthropic_api_key="k", model="claude-opus-5"), ctx, store, view)
+    loop = Loop(Config(llm_api_key="k", model="claude-opus-5"), ctx, store, view)
     loop.progress = Bar()
     install(loop, [message([tool_block("bash", {"cmd": "x"})], stop_reason="tool_use")])
 
@@ -337,7 +337,7 @@ def _img_result(tool_id, path, size):
 
 
 def test_old_images_lose_their_pixels_but_keep_their_description(ctx, store, view):
-    loop = Loop(Config(anthropic_api_key="k"), ctx, store, view)
+    loop = Loop(Config(llm_api_key="k"), ctx, store, view)
     for i in range(5):
         loop.messages.append({"role": "assistant", "content": []})
         loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/work/r{i}.png", 2000)]})
@@ -355,7 +355,7 @@ def test_old_images_lose_their_pixels_but_keep_their_description(ctx, store, vie
 
 
 def test_eviction_is_idempotent(ctx, store, view):
-    loop = Loop(Config(anthropic_api_key="k"), ctx, store, view)
+    loop = Loop(Config(llm_api_key="k"), ctx, store, view)
     for i in range(4):
         loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/r{i}.png", 1000)]})
     loop._evict_old_images(keep=1)
@@ -365,7 +365,7 @@ def test_eviction_is_idempotent(ctx, store, view):
 
 
 def test_eviction_runs_before_a_send(ctx, store, view):
-    loop = Loop(Config(anthropic_api_key="k"), ctx, store, view)
+    loop = Loop(Config(llm_api_key="k"), ctx, store, view)
     for i in range(4):
         loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/r{i}.png", 5000)]})
     install(loop, [message([text_block("looked")])])

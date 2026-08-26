@@ -337,7 +337,7 @@ def test_a_turn_ending_leaves_the_study_on_this_machine(
     monkeypatch.setattr(cli, "console", console)
     workspace(backend, (f"{HOME}/case/renders/velocity.png", 900))
     loop = Loop(
-        Config(anthropic_api_key="k", model="claude-opus-5"),
+        Config(llm_api_key="k", model="claude-opus-5"),
         ToolContext(backend=backend, store=store, max_output=1000),
         store,
         view,

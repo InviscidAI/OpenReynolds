@@ -8,6 +8,11 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- Bring your own model, not just your own key: `OPENREYNOLDS_PROVIDER` /
+  `openreynolds config --provider` pick Anthropic, OpenAI, Z.ai, DeepSeek, Moonshot,
+  MiniMax, OpenRouter or a local Ollama, or any endpoint speaking the Messages API or
+  Chat Completions (`openreynolds/llm/`). `ANTHROPIC_API_KEY` still works; the general
+  name is `OPENREYNOLDS_LLM_API_KEY`, and older config files are read as before.
 - A live mirror: the study's files are synced to `./studies/<id>/files/` in the
   background for the whole session, and a render the model just looked at arrives at
   once. The interface's files pane reads from it.

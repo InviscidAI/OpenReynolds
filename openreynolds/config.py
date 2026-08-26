@@ -12,6 +12,8 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .llm.presets import FALLBACK_CONTEXT_WINDOW, preset_for
+
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_EFFORT = "high"
 DEFAULT_MAX_TOOL_OUTPUT = 48_000
@@ -55,10 +57,13 @@ CONTEXT_REFRESH_FRACTION = 0.8
 _CONFIG_KEYS = (
     "foamd_url",
     "foamd_api_key",
-    "anthropic_api_key",
+    "provider",
+    "llm_api_key",
     "llm_base_url",
     "model",
+    "desk_model",
     "effort",
+    "context_window",
 )
 
 
@@ -87,15 +92,27 @@ def config_path() -> Path:
 class Config:
     foamd_url: str = ""
     foamd_api_key: str = ""
-    anthropic_api_key: str = ""
+
+    provider: str = "anthropic"
+    """Whose model, as a preset name (`openreynolds config` lists them) or a bare API
+    family, `anthropic` or `openai`, with `llm_base_url` saying where. Bring your own
+    key: the service never proxies a model call, so any vendor that speaks one of the
+    two dialects works, local ones included."""
+    llm_api_key: str = ""
+    """Older config files call this `anthropic_api_key`; `load()` still reads that."""
 
     llm_base_url: str | None = None
-    """Where the Anthropic client points. `None` means the API directly.
+    """Where the model client points. `None` means the preset's endpoint, or the
+    vendor's default for a bare family.
 
     TODO (future): the hosted service dropped its LLM proxy when it moved to
     bring-your-own-key. If a `/v1/llm` endpoint ever ships, set this to
     `<foamd_url>/v1/llm` and use the service key — a config change, not a code change.
     """
+    context_window: int = 0
+    """Tokens the model can hold in one thread; the loop refreshes at a fraction of it.
+    Zero means "whatever the preset says", or a conservative default for a vendor the
+    presets do not know."""
 
     model: str = DEFAULT_MODEL
     effort: str = DEFAULT_EFFORT
@@ -119,6 +136,30 @@ class Config:
     preferences: str = ""
     """The standing note from `preferences_path()`, or empty when there is none."""
 
+    def __post_init__(self) -> None:
+        preset = preset_for(self.provider)
+        # A preset's numbers apply when its endpoint is the one in use; an explicit
+        # base URL pointing elsewhere is a vendor the table knows nothing about.
+        at_preset = preset is not None and (not self.llm_base_url or self.llm_base_url == preset.base_url)
+        if not self.context_window:
+            self.context_window = preset.context_window if at_preset else FALLBACK_CONTEXT_WINDOW
+        if preset is not None and preset.name != "anthropic":
+            if self.model == DEFAULT_MODEL:
+                self.model = preset.model
+            if self.desk_model == DEFAULT_DESK_MODEL:
+                self.desk_model = preset.desk_model
+
+    def model_key_missing(self) -> str | None:
+        """The name of the model-key setting that is absent, or `None` when the model
+        can be reached: a key is present, an explicit endpoint stands in for one, or
+        the preset (a local model) needs none."""
+        preset = preset_for(self.provider)
+        if self.llm_api_key or self.llm_base_url:
+            return None
+        if preset is not None and not preset.needs_key:
+            return None
+        return preset.key_env if preset is not None else "OPENREYNOLDS_LLM_API_KEY"
+
     @classmethod
     def load(cls) -> Config:
         stored: dict[str, object] = {}
@@ -132,7 +173,18 @@ class Config:
         def pick(env: str, key: str, default: str = "") -> str:
             return os.environ.get(env) or str(stored.get(key) or "") or default
 
+        provider = pick("OPENREYNOLDS_PROVIDER", "provider", "anthropic").strip().lower()
+        preset = preset_for(provider)
+        # The vendor's own variable name works too (ANTHROPIC_API_KEY, OPENAI_API_KEY...),
+        # because that is what people already have exported.
+        llm_api_key = (
+            os.environ.get("OPENREYNOLDS_LLM_API_KEY")
+            or (os.environ.get(preset.key_env) if preset else "")
+            or str(stored.get("llm_api_key") or "")
+            or str(stored.get("anthropic_api_key") or "")
+        )
         llm_base_url = pick("OPENREYNOLDS_LLM_BASE_URL", "llm_base_url") or None
+        window = pick("OPENREYNOLDS_CONTEXT_WINDOW", "context_window")
         max_output = os.environ.get("OPENREYNOLDS_MAX_TOOL_OUTPUT")
         timeout = os.environ.get("OPENREYNOLDS_LLM_TIMEOUT_S")
         mirror_every = os.environ.get("OPENREYNOLDS_MIRROR_INTERVAL_S")
@@ -150,12 +202,17 @@ class Config:
             preferences=preferences,
             capture=not switched_off("OPENREYNOLDS_CAPTURE"),
             desk=not switched_off("OPENREYNOLDS_DESK"),
-            desk_model=pick("OPENREYNOLDS_DESK_MODEL", "desk_model", DEFAULT_DESK_MODEL),
+            desk_model=pick(
+                "OPENREYNOLDS_DESK_MODEL", "desk_model",
+                preset.desk_model if preset else DEFAULT_DESK_MODEL,
+            ),
             foamd_url=pick("FOAMD_URL", "foamd_url").rstrip("/"),
             foamd_api_key=pick("FOAMD_API_KEY", "foamd_api_key"),
-            anthropic_api_key=pick("ANTHROPIC_API_KEY", "anthropic_api_key"),
+            provider=provider,
+            llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,
-            model=pick("OPENREYNOLDS_MODEL", "model", DEFAULT_MODEL),
+            context_window=int(window) if window else 0,
+            model=pick("OPENREYNOLDS_MODEL", "model", preset.model if preset else DEFAULT_MODEL),
             effort=pick("OPENREYNOLDS_EFFORT", "effort", DEFAULT_EFFORT),
             max_tool_output=int(max_output) if max_output else DEFAULT_MAX_TOOL_OUTPUT,
             llm_timeout_s=float(timeout) if timeout else DEFAULT_LLM_TIMEOUT_S,
@@ -184,6 +241,7 @@ class Config:
             gaps.append("FOAMD_URL")
         if not self.foamd_api_key:
             gaps.append("FOAMD_API_KEY")
-        if not self.anthropic_api_key and not self.llm_base_url:
-            gaps.append("ANTHROPIC_API_KEY")
+        key = self.model_key_missing()
+        if key:
+            gaps.append(key)
         return gaps

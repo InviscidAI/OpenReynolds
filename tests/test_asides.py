@@ -17,7 +17,7 @@ from openreynolds.watch import NOTHING
 
 
 def make_loop(ctx, store, view):
-    cfg = Config(anthropic_api_key="test-key", model="claude-opus-5")
+    cfg = Config(llm_api_key="test-key", model="claude-opus-5")
     return Loop(cfg, ctx, store, view)
 
 

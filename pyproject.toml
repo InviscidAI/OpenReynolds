@@ -26,6 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "anthropic>=1.0,<2",
+    "openai>=1.50,<4",
     "httpx2>=2.0.0",
     "rich>=13.0.0",
     "click>=8.1.0",

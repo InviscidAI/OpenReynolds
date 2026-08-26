@@ -1,7 +1,9 @@
-"""The Anthropic tool-use loop.
+"""The tool-use loop.
 
-A manual loop rather than the SDK's tool runner: watch mode, capture hooks and the
-mid-conversation operator channel all want control the runner does not expose.
+A manual loop rather than any SDK's tool runner: watch mode, capture hooks and the
+mid-conversation operator channel all want control a runner does not expose. Which
+model answers is the provider's business (`llm/`); the loop sees turns, blocks and
+stop reasons and nothing about whose API produced them.
 """
 
 from __future__ import annotations
@@ -12,9 +14,8 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable
 
-import anthropic
-
 from .config import CONTEXT_REFRESH_FRACTION, CONTEXT_WINDOW_TOKENS, Config
+from .llm import BadRequest, Listener, Turn, make_provider
 from .prompt import system_prompt
 from .store import Store
 from .tools import TOOLS, ToolContext, describe, dispatch
@@ -53,24 +54,27 @@ class Loop:
         bar can say so with a clock on it. Presentation; it hears, never speaks."""
 
         headers = {"X-Study-Id": store.session.study_id}
-        self.client = anthropic.Anthropic(
-            api_key=cfg.anthropic_api_key or None,
-            base_url=cfg.llm_base_url or None,
-            default_headers=headers,
-            # Without a timeout a stalled connection is indistinguishable from a model
-            # thinking hard, and the session stops dead with nothing said. A failure is
-            # recoverable -- it is reported and the thread survives -- silence is not.
-            timeout=cfg.llm_timeout_s,
-        )
-        self.system = [
-            {"type": "text", "text": system_prompt(), "cache_control": {"type": "ephemeral"}}
-        ]
+        # Without a timeout a stalled connection is indistinguishable from a model
+        # thinking hard, and the session stops dead with nothing said. A failure is
+        # recoverable -- it is reported and the thread survives -- silence is not.
+        self.provider = make_provider(cfg, timeout=cfg.llm_timeout_s, default_headers=headers)
+        self.window = cfg.context_window or CONTEXT_WINDOW_TOKENS
+        """How much thread this model can hold; a refresh is due at a fraction of it."""
         self.messages: list[dict[str, Any]] = []
         self.context_tokens = 0
         self.api_failures = 0
         """Consecutive model-API failures. Reset on any turn that completes; used to
         escalate from "the thread is intact" to a plain explanation once it is clearly
         not a one-off (a rate limit, a usage cap) rather than a blip."""
+
+    @property
+    def client(self) -> Any:
+        """The provider's SDK client -- what a test replaces with a scripted one."""
+        return self.provider.client
+
+    @client.setter
+    def client(self, value: Any) -> None:
+        self.provider.client = value
 
     # -- inbound ---------------------------------------------------------------
 
@@ -106,7 +110,7 @@ class Loop:
 
     # -- the turn --------------------------------------------------------------
 
-    def run(self) -> Any:
+    def run(self) -> Turn:
         """Stream turns and dispatch tools until the model ends its turn."""
         step = 0
         while True:
@@ -115,13 +119,12 @@ class Loop:
             response = self._send()
 
             if response.stop_reason == "refusal":
-                detail = getattr(response, "stop_details", None)
-                reason = getattr(detail, "explanation", None) or "no explanation given"
+                reason = response.stop_explanation or "no explanation given"
                 self.view.notice(f"The model declined this request: {reason}")
                 return response
 
-            self.messages.append({"role": "assistant", "content": response.content})
-            self._record("assistant", _text_of(response))
+            self.messages.append(response.as_message())
+            self._record("assistant", response.text)
 
             if response.stop_reason == "max_tokens":
                 # Otherwise a turn cut off at the output cap is indistinguishable from
@@ -132,7 +135,7 @@ class Loop:
                     "so it is incomplete."
                 )
 
-            tool_uses = [b for b in response.content if b.type == "tool_use"]
+            tool_uses = response.tool_calls
             if not tool_uses:
                 self.view.step(step, time.monotonic() - started, 0)
                 return response
@@ -159,11 +162,11 @@ class Loop:
 
             self.messages.append({"role": "user", "content": results})
 
-    def _send(self) -> Any:
+    def _send(self) -> Turn:
         """One streamed request, printing as it arrives."""
         try:
             return self._stream()
-        except anthropic.BadRequestError as exc:
+        except BadRequest as exc:
             if "system" not in str(exc).lower():
                 raise
             # This model has no mid-conversation system role — fold those turns into
@@ -225,7 +228,7 @@ class Loop:
         if self.progress is not None:
             self.progress.idle()
 
-    def _stream(self) -> Any:
+    def _stream(self) -> Turn:
         # Shed the pixels of images already looked at before building the request,
         # so the thread does not grow without bound and the requests stay a size the
         # API will accept.
@@ -235,28 +238,27 @@ class Loop:
         # dead connection.
         self._busy("thinking")
         writing = False
-        with self.client.messages.stream(
+
+        def text(delta: str) -> None:
+            nonlocal writing
+            if not writing:
+                writing = True
+                self._busy("writing")
+            self.view.text_delta(delta)
+
+        response = self.provider.stream(
             model=self.cfg.model,
-            max_tokens=MAX_TOKENS,
-            system=self.system,
+            system=system_prompt(),
             messages=self.messages,
             tools=TOOLS,
-            thinking={"type": "adaptive", "display": "summarized"},
-            output_config={"effort": self.cfg.effort},
-            cache_control={"type": "ephemeral"},
-        ) as stream:
-            for event in stream:
-                if event.type == "content_block_start" and event.content_block.type == "thinking":
-                    self.view.thinking_begin()
-                elif event.type == "content_block_delta":
-                    if event.delta.type == "thinking_delta":
-                        self.view.thinking_delta(event.delta.thinking)
-                    elif event.delta.type == "text_delta":
-                        if not writing:
-                            writing = True
-                            self._busy("writing")
-                        self.view.text_delta(event.delta.text)
-            response = stream.get_final_message()
+            effort=self.cfg.effort,
+            max_tokens=MAX_TOKENS,
+            listener=Listener(
+                thinking_begin=lambda: self.view.thinking_begin(),
+                thinking=lambda delta: self.view.thinking_delta(delta),
+                text=text,
+            ),
+        )
 
         self.view.turn_end()
         self._unbusy()
@@ -296,21 +298,15 @@ class Loop:
 
     # -- context ---------------------------------------------------------------
 
-    def _account(self, response: Any) -> None:
-        usage = getattr(response, "usage", None)
-        if usage is None:
+    def _account(self, response: Turn) -> None:
+        if not response.context_tokens:
             return
-        self.context_tokens = (
-            (usage.input_tokens or 0)
-            + (getattr(usage, "cache_read_input_tokens", 0) or 0)
-            + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
-            + (usage.output_tokens or 0)
-        )
-        self.view.usage(self.context_tokens, self.context_tokens / CONTEXT_WINDOW_TOKENS)
+        self.context_tokens = response.context_tokens
+        self.view.usage(self.context_tokens, self.context_tokens / self.window)
 
     @property
     def needs_refresh(self) -> bool:
-        return self.context_tokens > CONTEXT_WINDOW_TOKENS * CONTEXT_REFRESH_FRACTION
+        return self.context_tokens > self.window * CONTEXT_REFRESH_FRACTION
 
     def refresh(self, blurb: str) -> None:
         """Rebuild the thread — the same move a resume makes.
@@ -398,10 +394,6 @@ def _ticking(view: View, name: str, every: float = TICK_EVERY_S):
         yield
     finally:
         stop.set()
-
-
-def _text_of(response: Any) -> str:
-    return "".join(b.text for b in response.content if b.type == "text")
 
 
 def _as_operator_text(text: Any) -> str:
