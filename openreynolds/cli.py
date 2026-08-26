@@ -343,6 +343,71 @@ def pull_cmd(path: str, study_id: str | None, selective: bool) -> None:
     raise SystemExit(1 if report.warnings and not report.pulled else 0)
 
 
+@main.command("push")
+@click.argument("local", type=click.Path(exists=True, path_type=Path))
+@click.option("--to", "dest", default=None, help="Where on the instance to put it. Defaults under the study's own directory.")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+def push_cmd(local: Path, dest: str | None, study_id: str | None) -> None:
+    """Upload local files to this study's workspace on the instance.
+
+    The sync only runs one way -- the instance's work comes home on its own, but
+    nothing carries your files up, and the agent's tools reach the instance, not your
+    disk. This is the other direction: a local file or directory goes to the instance,
+    where the agent can then read it. A directory keeps its name (`push ./case` lands
+    at `/work/<id>/case/`); a file lands in the study's own directory unless `--to`
+    says otherwise. Purely an upload -- it starts the instance if it is asleep and
+    spends no tokens.
+    """
+    cfg = Config.load()
+    studies = list_studies(cfg.studies_dir)
+    if not studies:
+        console.print(f"No studies under {cfg.studies_dir}")
+        raise SystemExit(1)
+    chosen = study_id or studies[0].study_id
+    store = Store(cfg.studies_dir, chosen)
+    home = store.session.home or f"{WORKSPACE_ROOT}/{chosen}"
+
+    # A --to is a workspace path (undo any Git-Bash mangling); a bare name hangs off
+    # the study's own directory so "push into inputs" does not have to be spelled out.
+    if dest:
+        target = workspace_path(dest)
+        if not target.startswith(WORKSPACE_ROOT):
+            target = f"{home}/{target.lstrip('/')}"
+    else:
+        target = home
+
+    try:
+        backend, _client, instance = hosted.acquire(
+            cfg.foamd_url, cfg.foamd_api_key, store.session.instance_id or None
+        )
+    except BackendError as exc:
+        console.print(f"[red]Could not reach the workspace service:[/] {exc}")
+        raise SystemExit(1) from exc
+
+    console.print(f"[bold]{chosen}[/] on {instance[:8]}")
+    try:
+        if local.is_dir():
+            remote = target if dest else f"{home}/{local.name}"
+            backend.put_tree(local, remote)
+            count = sum(1 for _ in local.rglob("*") if _.is_file())
+            console.print(f"[green]uploaded[/] {count} file(s) from {local} -> {remote}")
+        else:
+            remote = target if (dest and _looks_like_file(target)) else f"{target}/{local.name}"
+            backend.put_file(remote, local.read_bytes())
+            console.print(f"[green]uploaded[/] {local.name} -> {remote}")
+    except (BackendError, OSError) as exc:
+        console.print(f"[red]upload failed:[/] {exc}")
+        raise SystemExit(1) from exc
+    finally:
+        _release(backend)
+        backend.close()
+
+
+def _looks_like_file(remote: str) -> bool:
+    """A --to that names a file (has a suffix on its last segment) rather than a dir."""
+    return "." in remote.rsplit("/", 1)[-1]
+
+
 @main.command("renders")
 @click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
 @click.option("--open", "open_it", is_flag=True, help="Open the folder in the file browser.")
@@ -1223,15 +1288,31 @@ def _run_turn(loop: Loop, view: View) -> bool:
     """
     try:
         loop.run()
+        loop.api_failures = 0
         return True
     except anthropic.APIStatusError as exc:
+        loop.api_failures += 1
         detail = getattr(exc, "message", None) or str(exc)
         console.print(f"\n[red]The model API returned {exc.status_code}:[/] {detail}")
     except anthropic.APIError as exc:
+        loop.api_failures += 1
         console.print(f"\n[red]Could not reach the model API:[/] {exc}")
 
     loop.settle()
-    view.info("the thread is intact - say something to continue, or /exit")
+    if loop.api_failures >= 2:
+        # Twice in a row is not a blip. Say plainly what is happening and what to do,
+        # rather than repeating "the thread is intact" while nothing gets through --
+        # which is exactly what a live session did, to a very frustrated user.
+        study = loop.store.session.study_id
+        console.print(
+            f"[yellow]The model API has failed {loop.api_failures} times in a row. "
+            "The usual cause is a rate limit or usage cap on your Anthropic key, not "
+            "your work -- every job and file is safe on the instance and mirrored "
+            "here.[/]\n[yellow]Wait a minute and try again, or leave with /exit and "
+            f"resume in a fresh, smaller thread: [bold]openreynolds --study {study}[/][/]"
+        )
+    else:
+        view.info("the thread is intact - say something to continue, or /exit")
     return False
 
 
@@ -1276,6 +1357,7 @@ def _run_interactive(
                     continue
             else:
                 continue
+            from_prompt = False
         else:
             if progress is not None:
                 progress.begin("waiting")
@@ -1288,8 +1370,15 @@ def _run_interactive(
                 return
             if spoken is None:
                 continue
+            from_prompt = True
 
         completed = _run_turn(loop, view)
+        # If a turn typed at the prompt failed, the desk still answers -- the reason
+        # someone asks "are you still working?" is usually that the agent went quiet,
+        # and a failing turn is exactly that. (Mid-solve messages already reach the
+        # desk above; this covers the idle prompt, which did not.)
+        if not completed and from_prompt and concierge is not None and isinstance(spoken, str):
+            concierge.ask(spoken)
         # After the turn rather than before it: whatever the agent just made is the
         # thing worth having, and a turn that failed still leaves whatever its jobs
         # wrote. Unchanged files are not asked for again, so this is cheap -- and it

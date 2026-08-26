@@ -22,6 +22,12 @@ from .view import View
 
 MAX_TOKENS = 64_000
 
+KEEP_LIVE_IMAGES = 2
+"""How many of the most recently read images keep their pixels in the thread. Older
+ones are reduced to their text description; the model has already reasoned on them and
+re-sending megabytes of base64 every turn is what made requests large enough to be
+refused. The path survives, so a picture can be re-read deliberately if it matters."""
+
 
 class Loop:
     """One conversation thread against one workspace."""
@@ -61,6 +67,10 @@ class Loop:
         ]
         self.messages: list[dict[str, Any]] = []
         self.context_tokens = 0
+        self.api_failures = 0
+        """Consecutive model-API failures. Reset on any turn that completes; used to
+        escalate from "the thread is intact" to a plain explanation once it is clearly
+        not a one-off (a rate limit, a usage cap) rather than a blip."""
 
     # -- inbound ---------------------------------------------------------------
 
@@ -166,6 +176,47 @@ class Loop:
             ]
             return self._stream()
 
+    def _evict_old_images(self, keep: int = KEEP_LIVE_IMAGES) -> None:
+        """Drop the pixels of images the model has already looked at.
+
+        A `read_file` on a render comes back as an image block, and it stays in the
+        thread and is re-sent, in full, on every turn after it — a two-megabyte PNG
+        looked at once becomes two megabytes re-uploaded fifty times. One live run
+        ended up carrying twenty-one images, five megabytes of them, in every
+        request; the requests got large enough that the model API began refusing
+        them and the session stopped answering entirely.
+
+        The picture only has to be in the thread while the model is reasoning about
+        it. After that its own words about it are what carry forward, so the base64
+        is replaced with the one-line description that rode alongside it — the path
+        stays, so it can be looked at again deliberately if it ever matters. The most
+        recent `keep` images are left whole, because those are the ones a turn in
+        flight is most likely still working from. Idempotent: an evicted result is
+        text and is not found again.
+        """
+        image_results = []
+        for message in self.messages:
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not (isinstance(block, dict) and block.get("type") == "tool_result"):
+                    continue
+                inner = block.get("content")
+                if isinstance(inner, list) and any(
+                    isinstance(b, dict) and b.get("type") == "image" for b in inner
+                ):
+                    image_results.append(block)
+        for block in image_results[: max(0, len(image_results) - keep)]:
+            inner = block["content"]
+            note = next(
+                (b.get("text", "") for b in inner if isinstance(b, dict) and b.get("type") == "text"),
+                "",
+            )
+            block["content"] = f"[image no longer in context to save space] {note}".strip()
+
     def _busy(self, kind: str, label: str = "", **facts: Any) -> None:
         if self.progress is not None:
             self.progress.begin(kind, label, **facts)
@@ -175,6 +226,10 @@ class Loop:
             self.progress.idle()
 
     def _stream(self) -> Any:
+        # Shed the pixels of images already looked at before building the request,
+        # so the thread does not grow without bound and the requests stay a size the
+        # API will accept.
+        self._evict_old_images()
         # The round trip before the first event is thinking as far as anyone
         # watching can tell, and a clock on it is what tells a slow model from a
         # dead connection.

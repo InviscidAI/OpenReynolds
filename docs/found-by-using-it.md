@@ -260,6 +260,38 @@ The companion complaint in the same message: the bar was always on. A progress s
 that only pulses "busy" is noise. It now appears only when real compute is running — a
 solve, a mesh, a decomposition, a sync — and takes no room otherwise.
 
+## The session stopped answering because it kept re-uploading its own pictures
+
+A four-scenario container study, hours in, rendering a large visual set. The user
+typed "are you still working? / hello? / yo?" and got nothing. The activity pane told
+the story if you knew to read it: "the thread is intact — say something to continue"
+printed over and over, which is what prints when a *model request fails*. Every turn was
+failing, so nothing could answer.
+
+The cause was in the thread. A `read_file` on a render returns the image to the model as
+an image block, and that block stays in the conversation and is re-sent on every
+subsequent turn. Over a long render-and-look session the thread had accumulated
+**twenty-one images, five megabytes of them, one a single 1.9 MB PNG** — and all of it
+was re-uploaded, as ~7 MB of base64, in every request, on top of a 298k-token context.
+The requests got large enough that the model API began refusing them, and once it was
+refusing them the session was simply stuck: each new message started a turn that failed
+the same way.
+
+Nothing was actually broken with the work — every job had finished and all forty-six
+renders were already on the user's disk. It was pure context bloat. Three fixes: the
+thread now **sheds the pixels of images the model has already looked at** (keeps the
+one-line description and the path, drops the base64; the two most recent stay whole), so
+requests stay a size the API will accept. After two failures in a row the harness stops
+repeating "the thread is intact" and **says plainly** that the API is failing, that the
+work is safe, and to resume in a fresh thread with `--study`. And a message typed at the
+prompt now reaches the front desk even when the main turn is failing — the reason someone
+asks "are you still working?" is that the agent went quiet, which is exactly a failing
+turn.
+
+The lesson is the same one the delivery fix taught from the other side: an image is
+cheap to look at once and ruinous to carry forever. Looking is a moment; the thread is
+forever, and the two must not be the same thing.
+
 ## A test case that was the problem
 
 The controller persona ran out of time twice, and nothing was broken. Its goal asked how

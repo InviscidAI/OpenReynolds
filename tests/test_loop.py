@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from openreynolds.config import CONTEXT_WINDOW_TOKENS, Config
-from openreynolds.loop import Loop
+from openreynolds.loop import KEEP_LIVE_IMAGES, Loop
 from openreynolds.tools import ToolContext
 
 from conftest import install_model as install, message, text_block, tool_block
@@ -320,3 +320,57 @@ def test_a_tool_that_raises_still_leaves_the_bar_idle(ctx, store, view, monkeypa
         pass
 
     assert loop.progress.events[-1][0] == "idle"
+
+
+# -- image eviction ------------------------------------------------------------
+
+
+def _img_result(tool_id, path, size):
+    return {
+        "type": "tool_result",
+        "tool_use_id": tool_id,
+        "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "X" * size}},
+            {"type": "text", "text": f"{path} - 1100x990 image/png, {size} bytes"},
+        ],
+    }
+
+
+def test_old_images_lose_their_pixels_but_keep_their_description(ctx, store, view):
+    loop = Loop(Config(anthropic_api_key="k"), ctx, store, view)
+    for i in range(5):
+        loop.messages.append({"role": "assistant", "content": []})
+        loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/work/r{i}.png", 2000)]})
+
+    loop._evict_old_images(keep=2)
+
+    kept = [m for m in loop.messages if m["role"] == "user"]
+    # The three oldest are now text; the two newest keep their image block.
+    stripped = [m for m in kept if isinstance(m["content"][0]["content"], str)]
+    live = [m for m in kept if isinstance(m["content"][0]["content"], list)]
+    assert len(stripped) == 3 and len(live) == 2
+    assert "no longer in context" in stripped[0]["content"][0]["content"]
+    assert "/work/r0.png" in stripped[0]["content"][0]["content"], "the path survives"
+    assert live[-1]["content"][0]["content"][0]["type"] == "image", "newest stays whole"
+
+
+def test_eviction_is_idempotent(ctx, store, view):
+    loop = Loop(Config(anthropic_api_key="k"), ctx, store, view)
+    for i in range(4):
+        loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/r{i}.png", 1000)]})
+    loop._evict_old_images(keep=1)
+    snapshot = [str(m) for m in loop.messages]
+    loop._evict_old_images(keep=1)
+    assert [str(m) for m in loop.messages] == snapshot, "a second pass changes nothing"
+
+
+def test_eviction_runs_before_a_send(ctx, store, view):
+    loop = Loop(Config(anthropic_api_key="k"), ctx, store, view)
+    for i in range(4):
+        loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/r{i}.png", 5000)]})
+    install(loop, [message([text_block("looked")])])
+
+    loop._send()
+
+    live = [m for m in loop.messages if isinstance(m["content"][0]["content"], list)]
+    assert len(live) == KEEP_LIVE_IMAGES, "the send shed all but the most recent images"

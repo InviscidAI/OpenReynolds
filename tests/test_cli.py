@@ -965,3 +965,118 @@ def test_typing_during_a_job_reaches_the_desk_too(loop, backend, store, view, qu
     )
 
     assert "what is it doing?" in desk.asked
+
+
+# -- push (upload) -------------------------------------------------------------
+
+
+def _study_for_push(tmp_path):
+    studies = tmp_path / "studies"
+    st = Store(studies, "study-x")
+    st.session.instance_id = "iid-1"
+    st.session.home = "/work/study-x"
+    st.save()
+    return studies
+
+
+def _wire_push(monkeypatch, studies, backend):
+    monkeypatch.setattr(cli.hosted, "acquire", lambda url, key, iid: (backend, None, "iid-1"))
+    monkeypatch.setattr(
+        cli.Config, "load",
+        classmethod(lambda cls: Config(foamd_url="u", foamd_api_key="k", studies_dir=studies)),
+    )
+
+
+def test_push_uploads_a_directory_keeping_its_name(tmp_path, monkeypatch):
+    studies = _study_for_push(tmp_path)
+    backend = FakeBackend()
+    _wire_push(monkeypatch, studies, backend)
+    local = tmp_path / "mycase"
+    (local / "system").mkdir(parents=True)
+    (local / "system" / "controlDict").write_text("x")
+
+    result = CliRunner().invoke(cli.main, ["push", str(local), "--study", "study-x"])
+
+    assert result.exit_code == 0, result.output
+    assert backend.trees, "put_tree was called"
+    _local_dir, remote = backend.trees[-1]
+    assert remote == "/work/study-x/mycase", "a directory keeps its name under the study home"
+
+
+def test_push_uploads_a_single_file_into_the_study_home(tmp_path, monkeypatch):
+    studies = _study_for_push(tmp_path)
+    backend = FakeBackend()
+    _wire_push(monkeypatch, studies, backend)
+    geom = tmp_path / "geom.stl"
+    geom.write_text("solid")
+
+    result = CliRunner().invoke(cli.main, ["push", str(geom), "--study", "study-x"])
+
+    assert result.exit_code == 0, result.output
+    assert "/work/study-x/geom.stl" in backend.files
+
+
+def test_push_honours_an_explicit_destination(tmp_path, monkeypatch):
+    studies = _study_for_push(tmp_path)
+    backend = FakeBackend()
+    _wire_push(monkeypatch, studies, backend)
+    geom = tmp_path / "geom.stl"
+    geom.write_text("solid")
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["push", str(geom), "--to", "/work/study-x/constant/triSurface", "--study", "study-x"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "/work/study-x/constant/triSurface/geom.stl" in backend.files
+
+
+def test_push_needs_a_path_that_exists(tmp_path, monkeypatch):
+    studies = _study_for_push(tmp_path)
+    _wire_push(monkeypatch, studies, FakeBackend())
+
+    result = CliRunner().invoke(cli.main, ["push", str(tmp_path / "nope"), "--study", "study-x"])
+
+    assert result.exit_code != 0
+
+
+def test_repeated_api_failures_escalate_to_a_plain_explanation(loop, view, monkeypatch):
+    """After two failures in a row, stop repeating 'the thread is intact' and say
+    what is happening and how to recover -- the frustration a live session hit."""
+    import io as _io
+    from rich.console import Console
+
+    buf = _io.StringIO()
+    monkeypatch.setattr(cli, "console", Console(file=buf, width=200))
+    monkeypatch.setattr(loop, "run", lambda: (_ for _ in ()).throw(_api_error()))
+
+    assert cli._run_turn(loop, view) is False
+    assert loop.api_failures == 1
+    assert cli._run_turn(loop, view) is False
+    assert loop.api_failures == 2
+
+    out = buf.getvalue()
+    assert "failed 2 times" in out
+    assert f"--study {loop.store.session.study_id}" in out
+
+
+def test_a_completed_turn_resets_the_failure_count(loop, view, monkeypatch):
+    loop.api_failures = 3
+    monkeypatch.setattr(loop, "run", lambda: None)
+    assert cli._run_turn(loop, view) is True
+    assert loop.api_failures == 0
+
+
+def test_a_failed_prompt_turn_reaches_the_desk(loop, backend, store, view, quiet_console, monkeypatch):
+    """When a turn typed at the prompt fails, the desk still answers -- the reason
+    someone types 'are you still working?' is that the agent went quiet."""
+    monkeypatch.setattr(loop, "run", lambda: (_ for _ in ()).throw(_api_error()))
+    desk = FakeDesk()
+
+    cli._run_interactive(
+        loop, backend, store, view, Browser(backend, store),
+        ScriptedReader(["are you still working?", "/exit"]), concierge=desk,
+    )
+
+    assert "are you still working?" in desk.asked

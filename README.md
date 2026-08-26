@@ -428,6 +428,8 @@ the entire reason this exists.
 ```bash
 openreynolds pull                            # again, now
 openreynolds pull /work/<study-id>/case      # or one directory of it
+openreynolds push ./mycase                   # the other direction: local -> instance
+openreynolds push geom.stl --to /work/<id>/constant/triSurface
 openreynolds pull --all                      # when that judgement is wrong for this study
 ```
 
