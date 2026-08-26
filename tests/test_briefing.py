@@ -105,7 +105,7 @@ def test_the_briefing_stays_short(backend, store):
 def test_the_design_document_describes_the_workspace_the_code_builds():
     """A plan that contradicts the code is worse than no plan: it is the document
     someone reads first, and it will be believed."""
-    plan = (Path(__file__).resolve().parents[1] / "plan-2-agent.md").read_text(encoding="utf-8")
+    plan = (Path(__file__).resolve().parents[1] / "docs" / "design.md").read_text(encoding="utf-8")
     assert "/work/<study-id>" in plan, "the plan still describes one shared workspace"
     assert "whether anyone is at the terminal" in plan
 

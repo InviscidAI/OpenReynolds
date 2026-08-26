@@ -88,7 +88,7 @@ no moment at which anyone finds out it stopped. This is that moment.
 
 ## What it is
 
-The design is in [`plan-2-agent.md`](plan-2-agent.md). The short version is a contract
+The design is in [`docs/design.md`](docs/design.md). The short version is a contract
 about who decides what:
 
 **The harness may** cap tool output (always saying where the rest lives), sync a toolbox
