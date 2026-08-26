@@ -339,7 +339,7 @@ def full_config(**over):
     return Config(**values)
 
 
-def stub_service(monkeypatch, instances=None, error=None, study_error=None):
+def stub_service(monkeypatch, instances=None, error=None):
     class Client:
         def list_instances(self):
             if error:
@@ -347,14 +347,22 @@ def stub_service(monkeypatch, instances=None, error=None, study_error=None):
             return instances or []
 
         def create_study(self, title, instance_id):
-            if study_error:
-                raise study_error
-            return "stud-1234abcd"
+            raise AssertionError("doctor opened a study; it is meant to change nothing")
+
+        def post_messages(self, study_id, messages):
+            raise AssertionError("doctor posted a message; it is meant to change nothing")
 
         def close(self):
             pass
 
-    monkeypatch.setattr(cli.hosted, "FoamdClient", lambda url, key: Client())
+    made = []
+
+    def make(url, key):
+        made.append(Client())
+        return made[-1]
+
+    monkeypatch.setattr(cli.hosted, "FoamdClient", make)
+    return made
 
 
 def stub_model(monkeypatch, tokens=8, error=None):
@@ -731,29 +739,38 @@ def test_doctor_reports_capture_reaching_the_platform(monkeypatch):
     ok, detail = labels(cli.run_checks(full_config()))["capture"]
 
     assert ok
-    assert "transcripts are being kept" in detail
+    assert "transcripts will be kept" in detail
+
+
+def test_doctor_opens_nothing_to_check_capture(monkeypatch):
+    """Every `doctor` run used to leave a study called "openreynolds doctor" on the
+    platform -- the one command sold as changing nothing, changing something each
+    time it ran. The stub raises on any write, so a check that writes fails here."""
+    stub_service(monkeypatch, instances=[{"id": "abcdefgh1234", "status": "stopped"}])
+    stub_model(monkeypatch)
+
+    ok, detail = labels(cli.run_checks(full_config()))["capture"]
+
+    assert ok, detail  # a write would have raised, and been reported as a failure
 
 
 def test_doctor_says_when_capture_is_broken(monkeypatch):
     stub_service(
         monkeypatch,
-        study_error=BackendError("study quota reached", code="quota", status=402),
+        error=BackendError("key revoked", code="unauthorized", status=401),
     )
     stub_model(monkeypatch)
 
     ok, detail = labels(cli.run_checks(full_config()))["capture"]
 
     assert not ok
-    assert "quota reached" in detail
+    assert "key revoked" in detail
 
 
 def test_doctor_does_not_call_the_platform_when_capture_is_off(monkeypatch):
     """Checking a thing that is switched off would report it broken for doing what
     it was told."""
-    stub_service(
-        monkeypatch,
-        study_error=AssertionError("capture is off; nothing should have been opened"),
-    )
+    made = stub_service(monkeypatch)
     stub_model(monkeypatch)
     cfg = full_config()
     cfg.capture = False
@@ -762,6 +779,7 @@ def test_doctor_does_not_call_the_platform_when_capture_is_off(monkeypatch):
 
     assert ok
     assert "off for this configuration" in detail
+    assert len(made) == 1, "only the service check spoke to the platform"
 
 
 # -- the instance lives exactly as long as the session --------------------------

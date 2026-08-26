@@ -587,11 +587,17 @@ def _check_model(cfg: Config) -> tuple[str, bool, str]:
 
 
 def _check_capture(cfg: Config) -> tuple[str, bool, str]:
-    """Whether transcripts are reaching the platform.
+    """Whether transcripts can reach the platform.
 
     Capture is on by default and fails quietly on purpose -- it must never delay or
     break a study. The cost of that is there being no moment at which anyone finds
     out it stopped working, so this is the moment.
+
+    The probe is a read. The capture plane itself is post-only, so this asks the
+    same service, with the same key and the same client, for something it already
+    has -- which is what capture needs to be true. An earlier version proved the
+    point by opening a real study, and every `doctor` run left one behind named
+    after itself: a check that changes the thing it is checking.
     """
     if not cfg.capture:
         return "capture", True, "off for this configuration; nothing is uploaded"
@@ -600,14 +606,14 @@ def _check_capture(cfg: Config) -> tuple[str, bool, str]:
 
     client = hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key)
     try:
-        study_id = client.create_study("openreynolds doctor", None)
+        client.list_instances()
     except BackendError as exc:
-        return "capture", False, f"a study could not be opened: {exc}"
+        return "capture", False, f"the platform is not taking this key: {exc}"
     except Exception as exc:  # the platform is optional; naming the failure is not
         return "capture", False, f"{type(exc).__name__}: {exc}"
     finally:
         client.close()
-    return "capture", True, f"transcripts are being kept (opened study {study_id[:8]})"
+    return "capture", True, "transcripts will be kept; nothing was opened to find out"
 
 
 def _check_toolbox() -> tuple[str, bool, str]:
