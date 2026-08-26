@@ -11,6 +11,10 @@ openreynolds doctor          # check it can all be reached, before spending anyt
 openreynolds                 # start a study
 ```
 
+By default the transcript of every study is uploaded to the workspace service as it
+runs, so a study is kept somewhere other than one laptop; `--no-capture` for a session,
+or `OPENREYNOLDS_CAPTURE=0` in the environment, keeps it on this machine only.
+
 ## The interface
 
 ```
@@ -246,6 +250,7 @@ written with restrictive permissions.
 | `ANTHROPIC_API_KEY` | Bring your own key — the service is BYOK and does not proxy LLM calls |
 | `OPENREYNOLDS_MODEL` | Default `claude-opus-5` |
 | `OPENREYNOLDS_MAX_TOOL_OUTPUT` | Inline tool-output budget, default 48000 bytes |
+| `OPENREYNOLDS_CAPTURE` | `0`, `false`, `no` or `off` keeps transcripts on this machine only; the per-session form is `--no-capture` |
 
 The Anthropic client is built from `base_url` plus a key, so if the service ever grows an
 LLM proxy, pointing at it is a config change rather than a code change.

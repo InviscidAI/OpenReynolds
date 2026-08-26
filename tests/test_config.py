@@ -19,6 +19,8 @@ ENV_KEYS = (
     "OPENREYNOLDS_MAX_TOOL_OUTPUT",
     "OPENREYNOLDS_MIRROR_INTERVAL_S",
     "OPENREYNOLDS_NARRATE_EVERY_S",
+    "OPENREYNOLDS_CAPTURE",
+    "OPENREYNOLDS_DESK",
 )
 
 
@@ -79,6 +81,20 @@ def test_tool_output_budget_is_tunable(clean_env, monkeypatch):
 def test_narration_cadence_is_tunable(clean_env, monkeypatch):
     monkeypatch.setenv("OPENREYNOLDS_NARRATE_EVERY_S", "30")
     assert Config.load().narrate_every_s == 30.0
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", " No "])
+def test_capture_can_be_switched_off_from_the_environment(clean_env, monkeypatch, value):
+    """`--no-capture` has to be remembered every time; an environment is set once,
+    which is what the scheduled run nobody is watching needs."""
+    monkeypatch.setenv("OPENREYNOLDS_CAPTURE", value)
+    assert Config.load().capture is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "", "anything else"])
+def test_anything_but_a_no_leaves_capture_on(clean_env, monkeypatch, value):
+    monkeypatch.setenv("OPENREYNOLDS_CAPTURE", value)
+    assert Config.load().capture is True
 
 
 def test_a_preferences_file_beside_the_config_is_loaded(clean_env):

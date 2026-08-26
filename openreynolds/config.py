@@ -104,6 +104,12 @@ class Config:
     mirror_interval_s: float = DEFAULT_MIRROR_INTERVAL_S
     narrate_every_s: float = DEFAULT_NARRATE_EVERY_S
     capture: bool = True
+    """Whether transcripts are uploaded to the workspace service as the study runs.
+
+    On by default, so a study is kept somewhere other than one laptop. Off with
+    `--no-capture` for a session or `OPENREYNOLDS_CAPTURE=0` for an environment --
+    a flag has to be remembered every time, and the place it is most likely to be
+    forgotten is the scheduled run nobody is watching."""
     desk: bool = True
     """Whether the front-desk agent runs. It answers the user while the main agent is
     mid-turn -- the difference between a message heard in seconds and one that waits
@@ -137,13 +143,13 @@ class Config:
         except OSError:
             preferences = ""
 
-        desk_off = (os.environ.get("OPENREYNOLDS_DESK") or "").strip().lower() in (
-            "0", "false", "no", "off",
-        )
+        def switched_off(env: str) -> bool:
+            return (os.environ.get(env) or "").strip().lower() in ("0", "false", "no", "off")
 
         return cls(
             preferences=preferences,
-            desk=not desk_off,
+            capture=not switched_off("OPENREYNOLDS_CAPTURE"),
+            desk=not switched_off("OPENREYNOLDS_DESK"),
             desk_model=pick("OPENREYNOLDS_DESK_MODEL", "desk_model", DEFAULT_DESK_MODEL),
             foamd_url=pick("FOAMD_URL", "foamd_url").rstrip("/"),
             foamd_api_key=pick("FOAMD_API_KEY", "foamd_api_key"),
