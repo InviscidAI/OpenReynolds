@@ -156,3 +156,36 @@ def test_extraction_is_atomic_per_file(tmp_path):
     assert (tmp_path / "case" / "log.simpleFoam").read_bytes() == b"x" * 4096
     leftovers = [p for p in tmp_path.rglob("*") if ".part" in p.name]
     assert leftovers == []
+
+
+# -- signing in ---------------------------------------------------------------------
+
+
+def test_device_code_and_token_speak_the_published_shapes():
+    from openreynolds.backend.hosted import device_code, device_token
+
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.read()))
+        if request.url.path == "/v1/device/code":
+            return httpx.Response(200, json={"device_code": "dc", "user_code": "AB12-CD34", "interval": 5, "expires_in": 600})
+        if len(seen) == 2:
+            return httpx.Response(428, json={"error": "authorization_pending", "message": "not yet"})
+        return httpx.Response(200, json={"api_key": "of_live_x", "key_id": "k", "name": "laptop"})
+
+    transport = httpx.MockTransport(handler)
+    offer = device_code("https://svc.example/", "laptop", transport=transport)
+    assert offer["user_code"] == "AB12-CD34"
+    assert b"laptop" in seen[0][1]
+    assert device_token("https://svc.example", "dc", transport=transport) is None
+    assert device_token("https://svc.example", "dc", transport=transport)["api_key"] == "of_live_x"
+
+
+def test_a_refused_device_code_is_an_error_with_the_service_message():
+    from openreynolds.backend.hosted import device_token
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(410, json={"error": "gone", "message": "already claimed"}))
+    with pytest.raises(BackendError) as caught:
+        device_token("https://svc.example", "dc", transport=transport)
+    assert caught.value.code == "gone"

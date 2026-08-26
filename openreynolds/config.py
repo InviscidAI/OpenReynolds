@@ -14,6 +14,11 @@ from pathlib import Path
 
 from .llm.presets import FALLBACK_CONTEXT_WINDOW, preset_for
 
+DEFAULT_FOAMD_URL = "https://api.tryreynolds.com"
+"""Where the workspace service lives unless told otherwise. A key from
+`openreynolds login` belongs to whichever service issued it, so the two are saved
+together."""
+
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_EFFORT = "high"
 DEFAULT_MAX_TOOL_OUTPUT = 48_000
@@ -90,7 +95,7 @@ def config_path() -> Path:
 
 @dataclass
 class Config:
-    foamd_url: str = ""
+    foamd_url: str = DEFAULT_FOAMD_URL
     foamd_api_key: str = ""
 
     provider: str = "anthropic"
@@ -206,7 +211,7 @@ class Config:
                 "OPENREYNOLDS_DESK_MODEL", "desk_model",
                 preset.desk_model if preset else DEFAULT_DESK_MODEL,
             ),
-            foamd_url=pick("FOAMD_URL", "foamd_url").rstrip("/"),
+            foamd_url=pick("FOAMD_URL", "foamd_url", DEFAULT_FOAMD_URL).rstrip("/"),
             foamd_api_key=pick("FOAMD_API_KEY", "foamd_api_key"),
             provider=provider,
             llm_api_key=llm_api_key,

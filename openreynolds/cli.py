@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -88,7 +90,10 @@ def main(
     missing = cfg.missing()
     if missing:
         console.print(f"[red]Missing configuration:[/] {', '.join(missing)}")
-        console.print(f"Set them in the environment, or run [bold]openreynolds config[/].")
+        console.print(
+            "[bold]openreynolds login[/] gets a service key; [bold]openreynolds config[/] "
+            "sets the model key. Or set them in the environment."
+        )
         raise SystemExit(1)
 
     outcome = session(
@@ -186,6 +191,68 @@ def config_cmd(from_env: bool, key_file: Path | None, provider: str | None) -> N
     path = cfg.save()
     console.print(f"\n[green]Saved[/] {path}")
     _print_settings(cfg)
+
+
+LOGIN_POLL_CAP_S = 15.0
+"""The service says how often to ask; this is how often is too often to be polite."""
+
+
+@main.command("login")
+@click.option("--service", default=None, help="The service to sign in to (default: the configured one).")
+@click.option("--name", default=None, help="What to call this key (default: this machine's name).")
+@click.option("--no-browser", is_flag=True, help="Print the address instead of opening it.")
+def login_cmd(service: str | None, name: str | None, no_browser: bool) -> None:
+    """Get a service key by approving this terminal in a browser."""
+    cfg = Config.load()
+    url = (service or cfg.foamd_url).rstrip("/")
+    label = name or socket.gethostname() or "openreynolds"
+    try:
+        offer = hosted.device_code(url, label)
+    except BackendError as exc:
+        console.print(f"[red]Could not start signing in at {url}:[/] {exc.message}")
+        raise SystemExit(1) from None
+
+    code = str(offer.get("user_code", ""))
+    where = str(offer.get("verification_url", url))
+    console.print(f"\nYour code: [bold]{code}[/]")
+    console.print(f"Approve it at [bold]{where}[/]")
+    opened = False
+    if not no_browser:
+        try:
+            opened = bool(webbrowser.open(where))
+        except Exception:  # noqa: BLE001 - a browser that will not open is not an error here
+            opened = False
+    console.print("Waiting for the approval..." if opened else "Open that address, then come back here.")
+
+    # The service's numbers are taken literally: a zero lifetime is an expired code,
+    # not a request for the default.
+    interval = min(max(float(offer.get("interval", 5)), 0.5), LOGIN_POLL_CAP_S)
+    deadline = time.monotonic() + float(offer.get("expires_in", 600))
+    device = str(offer.get("device_code", ""))
+    token: dict[str, Any] | None = None
+    while token is None:
+        if time.monotonic() > deadline:
+            console.print("[red]The code expired before it was approved.[/] Run login again.")
+            raise SystemExit(1)
+        time.sleep(interval)
+        try:
+            token = hosted.device_token(url, device)
+        except BackendError as exc:
+            console.print(f"[red]Signing in failed:[/] {exc.message}")
+            raise SystemExit(1) from None
+
+    cfg.foamd_url = str(token.get("base_url") or url).rstrip("/")
+    cfg.foamd_api_key = str(token["api_key"])
+    path = cfg.save()
+    console.print(f"\n[green]Signed in.[/] Key [bold]{token.get('name') or label}[/] saved to {path}")
+    still = cfg.model_key_missing()
+    if still:
+        console.print(
+            f"The model key is still needed: set [bold]{still}[/] or run "
+            "[bold]openreynolds config[/]. Then [bold]openreynolds doctor[/]."
+        )
+    else:
+        console.print("Next: [bold]openreynolds doctor[/], then [bold]openreynolds[/].")
 
 
 def _apply_preset(cfg: Config, name: str) -> None:

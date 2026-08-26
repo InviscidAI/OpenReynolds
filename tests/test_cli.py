@@ -225,8 +225,9 @@ def test_missing_configuration_names_what_is_missing(monkeypatch):
     monkeypatch.setattr(Config, "load", classmethod(lambda cls: Config()))
     result = CliRunner().invoke(cli.main, [])
     assert result.exit_code == 1
-    assert "FOAMD_URL" in result.output
+    assert "FOAMD_API_KEY" in result.output
     assert "ANTHROPIC_API_KEY" in result.output
+    assert "openreynolds login" in result.output
 
 
 def test_studies_lists_local_studies(tmp_path, monkeypatch):
@@ -465,7 +466,7 @@ def test_doctor_flags_missing_settings(monkeypatch):
     results = cli.run_checks(Config())
     settings = results[0]
     assert settings[1] is False
-    assert "FOAMD_URL" in settings[0]
+    assert "FOAMD_API_KEY" in settings[0]
 
 
 def test_doctor_exits_nonzero_when_something_is_wrong(monkeypatch):
@@ -1150,3 +1151,62 @@ def test_an_empty_key_is_not_reported_as_set():
     assert cli._redact("") == ""
     assert cli._redact("short") == "set"
     assert cli._redact("of_live_abcdefghijklmnop") == "of_live_abcd..."
+
+
+# -- login -------------------------------------------------------------------------
+
+
+def test_login_waits_for_approval_then_saves_the_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.delenv("FOAMD_API_KEY", raising=False)
+    monkeypatch.delenv("FOAMD_URL", raising=False)
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    polls = []
+
+    def code(url, name):
+        assert url == "https://api.tryreynolds.com"
+        return {"device_code": "dc", "user_code": "K7QF-M2ZR", "verification_url": "https://app.tryreynolds.com/cli", "expires_in": 600, "interval": 1}
+
+    def token(url, device):
+        polls.append(device)
+        if len(polls) < 3:
+            return None
+        return {"api_key": "of_live_newkey", "name": "laptop", "base_url": "https://api.tryreynolds.com"}
+
+    monkeypatch.setattr(cli.hosted, "device_code", code)
+    monkeypatch.setattr(cli.hosted, "device_token", token)
+
+    result = CliRunner().invoke(cli.main, ["login", "--no-browser", "--name", "laptop"])
+
+    assert result.exit_code == 0, result.output
+    assert "K7QF-M2ZR" in result.output and "app.tryreynolds.com/cli" in result.output
+    assert polls == ["dc", "dc", "dc"]
+    saved = json.loads((tmp_path / "c.json").read_text())
+    assert saved["foamd_api_key"] == "of_live_newkey"
+    assert saved["foamd_url"] == "https://api.tryreynolds.com"
+    assert "of_live_newkey" not in result.output
+
+
+def test_login_gives_up_when_the_code_expires(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    monkeypatch.setattr(cli.hosted, "device_code", lambda url, name: {"device_code": "dc", "user_code": "X", "expires_in": 0, "interval": 1})
+    monkeypatch.setattr(cli.hosted, "device_token", lambda url, device: None)
+
+    result = CliRunner().invoke(cli.main, ["login", "--no-browser"])
+
+    assert result.exit_code == 1
+    assert "expired" in result.output
+    assert not (tmp_path / "c.json").exists()
+
+
+def test_login_reports_a_service_that_cannot_be_reached(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+
+    def down(url, name):
+        raise BackendError("cannot reach the service: refused", code="unreachable")
+
+    monkeypatch.setattr(cli.hosted, "device_code", down)
+    result = CliRunner().invoke(cli.main, ["login", "--no-browser", "--service", "https://nowhere.example"])
+    assert result.exit_code == 1
+    assert "nowhere.example" in result.output

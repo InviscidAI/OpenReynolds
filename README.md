@@ -5,11 +5,18 @@ Linux workspace that has OpenFOAM in it. The agent decides how to work; this rep
 the plumbing that lets it.
 
 ```bash
-pip install -e .
-openreynolds config          # service URL + keys, stored outside the repo
+pip install openreynolds     # or: uvx openreynolds · pipx install openreynolds · npm i -g openreynolds
+openreynolds login           # approve this terminal in a browser; the service key is saved
+openreynolds config          # which model, and its key -- bring your own, any vendor
 openreynolds doctor          # check it can all be reached, before spending anything
 openreynolds                 # start a study
 ```
+
+`login` shows a short code and opens the account page at tryreynolds.com; approving
+the code there hands this terminal its own service key, stored outside the repository
+(`--no-browser` prints the address instead; `--service` points at another deployment).
+Everything the agent does on the hosted workspace is billed to that key; everything
+the model does is billed to yours.
 
 By default the transcript of every study is uploaded to the workspace service as it
 runs, so a study is kept somewhere other than one laptop; `--no-capture` for a session,

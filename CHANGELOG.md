@@ -8,6 +8,9 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- `openreynolds login`: sign in from the terminal by approving a short code in the
+  browser; the service key lands in the config file. The service has a default address
+  now (`https://api.tryreynolds.com`), so a fresh install needs no URL.
 - Bring your own model, not just your own key: `OPENREYNOLDS_PROVIDER` /
   `openreynolds config --provider` pick Anthropic, OpenAI, Z.ai, DeepSeek, Moonshot,
   MiniMax, OpenRouter or a local Ollama, or any endpoint speaking the Messages API or

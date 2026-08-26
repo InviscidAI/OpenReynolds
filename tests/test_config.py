@@ -115,7 +115,11 @@ def test_no_preferences_file_means_an_empty_note(clean_env):
 
 
 def test_a_key_is_needed_for_each_of_compute_and_the_model(clean_env):
-    assert Config.load().missing() == ["FOAMD_URL", "FOAMD_API_KEY", "ANTHROPIC_API_KEY"]
+    assert Config.load().missing() == ["FOAMD_API_KEY", "ANTHROPIC_API_KEY"]
+
+
+def test_the_service_has_a_home_unless_told_otherwise(clean_env):
+    assert Config.load().foamd_url == "https://api.tryreynolds.com"
 
 
 def test_fully_configured(clean_env):

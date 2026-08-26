@@ -100,6 +100,41 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
     return min(2.0**attempt, 30.0)
 
 
+# -- signing in from a terminal --------------------------------------------------------
+
+
+def device_code(base_url: str, name: str | None = None, *, transport: Any = None) -> dict[str, Any]:
+    """Ask the service for a code a person can approve in a browser.
+
+    The one request made with no key at all: the answer carries the code to show, the
+    address to approve it at, and how patiently to poll. `transport` is for tests."""
+    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport) as client:
+        try:
+            response = client.post("/v1/device/code", json={"name": name} if name else {})
+        except httpx.HTTPError as exc:
+            raise BackendError(f"cannot reach the service: {exc}", code="unreachable") from exc
+    if response.status_code >= 400:
+        raise _decode_error(response)
+    return _json(response)
+
+
+def device_token(base_url: str, code: str, *, transport: Any = None) -> dict[str, Any] | None:
+    """Collect the key once the code has been approved; `None` while it has not.
+
+    The service hands the plaintext over exactly once, so a caller that gets a dict
+    must save it then and there."""
+    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport) as client:
+        try:
+            response = client.post("/v1/device/token", json={"device_code": code})
+        except httpx.HTTPError as exc:
+            raise BackendError(f"cannot reach the service: {exc}", code="unreachable") from exc
+    if response.status_code == 428:
+        return None
+    if response.status_code >= 400:
+        raise _decode_error(response)
+    return _json(response)
+
+
 class FoamdClient:
     """Low-level transport: auth, retries, error decoding, instance lifecycle."""
 
