@@ -60,9 +60,11 @@ def make_provider(
     api_key = cfg.llm_api_key
     if preset is not None and preset.name == REYNOLDS:
         # The workspace service fronts the model: same address, same key, and the
-        # tokens land on the account's ledger next to the compute.
-        base_url = base_url or f"{cfg.foamd_url.rstrip('/')}/v1/llm"
-        api_key = api_key or cfg.foamd_api_key
+        # tokens land on the account's ledger next to the compute. Always -- a model
+        # key left in the config from a bring-your-own setup must not be sent to the
+        # service, which would (rightly) refuse it.
+        base_url = f"{cfg.foamd_url.rstrip('/')}/v1/llm"
+        api_key = cfg.foamd_api_key
     seconds = timeout if timeout is not None else getattr(cfg, "llm_timeout_s", None)
     if family == "openai":
         from .openai_api import OpenAIProvider

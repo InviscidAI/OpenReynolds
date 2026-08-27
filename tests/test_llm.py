@@ -431,3 +431,11 @@ def test_openai_probe_with_vision_uses_a_data_uri_and_reads_the_refusal():
     with pytest.raises(llm.ProviderError) as refused:
         blind.probe("text-only", vision=True)
     assert "cannot see images" in str(refused.value)
+
+
+def test_a_stray_model_key_never_reaches_the_service_under_reynolds():
+    p = llm.make_provider(cfg(provider="reynolds", llm_api_key="sk-ant-left-over", llm_base_url="https://elsewhere.example",
+                             foamd_url="https://api.example", foamd_api_key="of_live_k"))
+    assert p.client.api_key == "of_live_k"
+    assert str(p.client.base_url).rstrip("/") == "https://api.example/v1/llm"
+
