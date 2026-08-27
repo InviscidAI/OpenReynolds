@@ -150,10 +150,31 @@ class Provider:
         """One short, unstreamed answer -- what the front desk needs."""
         raise NotImplementedError
 
-    def probe(self, model: str) -> str:
+    def probe(self, model: str, vision: bool = False) -> str:
         """Confirm the key, the endpoint and the model id together, as cheaply as the
-        API allows. Returns a one-line description; raises `ProviderError`."""
+        API allows. With `vision`, also that the model accepts an image: the agent
+        looks at geometry and mesh renders, and a model that cannot see them works
+        blind without saying so. Returns a one-line description; raises
+        `ProviderError` -- with `CANNOT_SEE` in the message when it is the image that
+        was refused."""
         raise NotImplementedError
+
+
+CANNOT_SEE = "cannot see images"
+
+PROBE_PNG = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
+"""A 1x1 PNG: the smallest thing that is unmistakably an image."""
+
+
+def cannot_see(model: str, detail: str = "") -> "ProviderError":
+    why = f" ({detail})" if detail else ""
+    return ProviderError(
+        f"{model} {CANNOT_SEE}{why}. Reynolds looks at geometry and mesh renders, so it "
+        "needs a model that can -- Claude, GPT-5, or another vision model.",
+        400,
+    )
 
 
 def _kind(block: Any) -> str:

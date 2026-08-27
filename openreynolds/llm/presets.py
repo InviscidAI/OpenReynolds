@@ -34,9 +34,20 @@ class Preset:
     needs_key: bool = True
 
 
+REYNOLDS = "reynolds"
+"""The preset that needs no key of its own: the workspace service proxies Claude and
+meters the tokens to the account, so the service key is the model key. The endpoint is
+derived from the service URL at run time (`make_provider`), never stored."""
+
 PRESETS: dict[str, Preset] = {
     p.name: p
     for p in (
+        Preset(
+            REYNOLDS, "anthropic", None,
+            "claude-opus-5", "claude-haiku-4-5", 1_000_000,
+            "", "Reynolds' model: Claude through the workspace service, metered to your account.",
+            needs_key=False,
+        ),
         Preset(
             "anthropic", "anthropic", None,
             "claude-opus-5", "claude-haiku-4-5", 1_000_000,

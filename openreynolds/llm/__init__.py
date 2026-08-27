@@ -20,7 +20,7 @@ from .base import (
     ToolUseBlock,
     Turn,
 )
-from .presets import FALLBACK_CONTEXT_WINDOW, FAMILIES, PRESETS, Preset, family_of, preset_for
+from .presets import FALLBACK_CONTEXT_WINDOW, FAMILIES, PRESETS, REYNOLDS, Preset, family_of, preset_for
 
 __all__ = [
     "BadRequest",
@@ -28,6 +28,7 @@ __all__ = [
     "FAMILIES",
     "Listener",
     "PRESETS",
+    "REYNOLDS",
     "Preset",
     "Provider",
     "ProviderError",
@@ -56,11 +57,17 @@ def make_provider(
     family = family_of(cfg.provider)
     preset = preset_for(cfg.provider)
     base_url = cfg.llm_base_url or (preset.base_url if preset else None)
+    api_key = cfg.llm_api_key
+    if preset is not None and preset.name == REYNOLDS:
+        # The workspace service fronts the model: same address, same key, and the
+        # tokens land on the account's ledger next to the compute.
+        base_url = base_url or f"{cfg.foamd_url.rstrip('/')}/v1/llm"
+        api_key = api_key or cfg.foamd_api_key
     seconds = timeout if timeout is not None else getattr(cfg, "llm_timeout_s", None)
     if family == "openai":
         from .openai_api import OpenAIProvider
 
-        return OpenAIProvider(cfg.llm_api_key, base_url, seconds, default_headers)
+        return OpenAIProvider(api_key, base_url, seconds, default_headers)
     from .anthropic_api import AnthropicProvider
 
-    return AnthropicProvider(cfg.llm_api_key, base_url, seconds, default_headers)
+    return AnthropicProvider(api_key, base_url, seconds, default_headers)

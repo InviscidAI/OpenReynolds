@@ -376,3 +376,58 @@ def test_openai_wraps_status_errors():
     with pytest.raises(llm.ProviderError) as caught:
         provider.complete(model="m", system="s", prompt="p", max_tokens=5)
     assert caught.value.status_code == 401
+
+
+# -- sight, and Reynolds' own model ----------------------------------------------------------------
+
+
+def test_the_reynolds_preset_borrows_the_services_address_and_key():
+    p = llm.make_provider(cfg(provider="reynolds", llm_api_key="", foamd_url="https://api.example/", foamd_api_key="of_live_k"))
+    assert isinstance(p, AnthropicProvider)
+    assert str(p.client.base_url).rstrip("/") == "https://api.example/v1/llm"
+    assert p.client.api_key == "of_live_k"
+    assert llm.PRESETS["reynolds"].needs_key is False
+
+
+def test_anthropic_probe_with_vision_sends_an_image_and_reads_the_refusal():
+    class Counting:
+        def __init__(self, reject):
+            self.reject = reject
+            self.calls = []
+
+        def count_tokens(self, **kwargs):
+            self.calls.append(kwargs)
+            if self.reject:
+                raise anthropic.BadRequestError(
+                    "This model does not support image input",
+                    response=SimpleNamespace(status_code=400, headers={}, request=None), body=None,
+                )
+            return SimpleNamespace(input_tokens=9)
+
+    provider = AnthropicProvider("k")
+    provider.client = SimpleNamespace(messages=Counting(reject=False))
+    assert "can see images" in provider.probe("m", vision=True)
+    sent = provider.client.messages.calls[0]["messages"][0]["content"]
+    assert sent[0]["type"] == "image" and sent[0]["source"]["media_type"] == "image/png"
+
+    provider.client = SimpleNamespace(messages=Counting(reject=True))
+    with pytest.raises(llm.ProviderError) as refused:
+        provider.probe("text-only", vision=True)
+    assert "cannot see images" in str(refused.value)
+    assert "text-only" in str(refused.value)
+
+
+def test_openai_probe_with_vision_uses_a_data_uri_and_reads_the_refusal():
+    seeing = openai_provider([SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])])
+    assert "can see images" in seeing.probe("gpt-5", vision=True)
+    content = seeing.client.chat.completions.calls[0]["messages"][0]["content"]
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+    blind = openai_provider([
+        openai.BadRequestError("Invalid content type. image_url is only supported by certain models.",
+                               response=SimpleNamespace(status_code=400, headers={}, request=None),
+                               body={"error": {"message": "Invalid content type. image_url is only supported by certain models."}})
+    ])
+    with pytest.raises(llm.ProviderError) as refused:
+        blind.probe("text-only", vision=True)
+    assert "cannot see images" in str(refused.value)

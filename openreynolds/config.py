@@ -159,6 +159,9 @@ class Config:
         can be reached: a key is present, an explicit endpoint stands in for one, or
         the preset (a local model) needs none."""
         preset = preset_for(self.provider)
+        if preset is not None and preset.name == "reynolds":
+            # The service key is the model key; `missing()` already asks for it.
+            return None
         if self.llm_api_key or self.llm_base_url:
             return None
         if preset is not None and not preset.needs_key:

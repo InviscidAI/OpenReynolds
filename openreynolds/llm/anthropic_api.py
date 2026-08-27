@@ -13,11 +13,13 @@ from typing import Any
 import anthropic
 
 from .base import (
+    PROBE_PNG,
     BadRequest,
     Listener,
     Provider,
     ProviderError,
     Turn,
+    cannot_see,
     neutral_blocks,
 )
 
@@ -148,23 +150,54 @@ class AnthropicProvider(Provider):
             raise ProviderError(str(exc)) from exc
         return "".join(b.text for b in response.content if b.type == "text").strip()
 
-    def probe(self, model: str) -> str:
+    def probe(self, model: str, vision: bool = False) -> str:
         """Counting tokens validates the key, the endpoint and the model id in one
-        free call -- on Anthropic. A compatible vendor may not have the endpoint, in
+        free call -- on Anthropic, and with an image in the count it also proves the
+        model accepts pictures. A compatible vendor may not have the endpoint, in
         which case the cheapest real request stands in."""
+        messages = [{"role": "user", "content": _probe_content(vision)}]
         try:
-            counted = self.client.messages.count_tokens(
-                model=model, messages=[{"role": "user", "content": "ping"}]
-            )
-            return f"{model} reachable ({counted.input_tokens} tokens for a ping)"
+            counted = self.client.messages.count_tokens(model=model, messages=messages)
+            sees = " and can see images" if vision else ""
+            return f"{model} reachable ({counted.input_tokens} tokens for a ping){sees}"
         except anthropic.NotFoundError:
             pass
+        except anthropic.BadRequestError as exc:
+            if vision and _about_images(_message(exc)):
+                raise cannot_see(model, _message(exc)) from exc
+            raise ProviderError(_message(exc), exc.status_code) from exc
         except anthropic.APIStatusError as exc:
             raise ProviderError(_message(exc), exc.status_code) from exc
         except anthropic.APIError as exc:
             raise ProviderError(str(exc)) from exc
-        self.complete(model=model, system="Reply with one word.", prompt="ping", max_tokens=5)
-        return f"{model} reachable (answered a ping)"
+        try:
+            self.client.messages.create(
+                model=model, max_tokens=5, system=self._system("Reply with one word."), messages=messages
+            )
+        except anthropic.BadRequestError as exc:
+            if vision and _about_images(_message(exc)):
+                raise cannot_see(model, _message(exc)) from exc
+            raise ProviderError(_message(exc), exc.status_code) from exc
+        except anthropic.APIStatusError as exc:
+            raise ProviderError(_message(exc), exc.status_code) from exc
+        except anthropic.APIError as exc:
+            raise ProviderError(str(exc)) from exc
+        sees = " and can see images" if vision else ""
+        return f"{model} reachable (answered a ping){sees}"
+
+
+def _probe_content(vision: bool) -> Any:
+    if not vision:
+        return "ping"
+    return [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": PROBE_PNG}},
+        {"type": "text", "text": "Reply with one word."},
+    ]
+
+
+def _about_images(text: str) -> bool:
+    lowered = text.lower()
+    return any(word in lowered for word in ("image", "vision", "multimodal", "content type", "unsupported"))
 
 
 def _context_tokens(usage: Any) -> int:

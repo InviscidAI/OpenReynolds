@@ -226,3 +226,8 @@ def test_a_local_model_needs_no_key(clean_env):
 def test_the_missing_key_is_named_in_the_vendors_words(clean_env):
     assert Config(foamd_url="u", foamd_api_key="k", provider="openai").missing() == ["OPENAI_API_KEY"]
     assert Config(foamd_url="u", foamd_api_key="k", provider="deepseek").missing() == ["DEEPSEEK_API_KEY"]
+
+
+def test_reynolds_needs_only_the_service_key(clean_env):
+    assert Config(foamd_url="https://svc", foamd_api_key="k", provider="reynolds").missing() == []
+    assert Config(foamd_url="https://svc", provider="reynolds").missing() == ["FOAMD_API_KEY"]

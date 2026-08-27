@@ -16,6 +16,7 @@ from typing import Any
 import openai
 
 from .base import (
+    PROBE_PNG,
     BadRequest,
     Listener,
     Provider,
@@ -24,6 +25,7 @@ from .base import (
     ThinkingBlock,
     ToolUseBlock,
     Turn,
+    cannot_see,
     neutral_blocks,
     split_result,
 )
@@ -280,20 +282,41 @@ class OpenAIProvider(Provider):
         message = getattr(choice, "message", None)
         return (getattr(message, "content", None) or "").strip()
 
-    def probe(self, model: str) -> str:
+    def probe(self, model: str, vision: bool = False) -> str:
         """Looking the model up is free where the endpoint has a model list; where it
-        does not, the smallest real request answers the same question."""
+        does not -- or when the question is whether it can see -- the smallest real
+        request answers."""
+        if not vision:
+            try:
+                self.client.models.retrieve(model)
+                return f"{model} reachable"
+            except openai.NotFoundError:
+                pass
+            except openai.APIStatusError as exc:
+                raise ProviderError(_message(exc), exc.status_code) from exc
+            except openai.APIError as exc:
+                raise ProviderError(str(exc)) from exc
+            self.complete(model=model, system="Reply with one word.", prompt="ping", max_tokens=5)
+            return f"{model} reachable (answered a ping)"
+        content = [
+            {"type": "text", "text": "Reply with one word."},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PROBE_PNG}"}},
+        ]
         try:
-            self.client.models.retrieve(model)
-            return f"{model} reachable"
-        except openai.NotFoundError:
-            pass
+            self.client.chat.completions.create(
+                model=model, messages=[{"role": "user", "content": content}], **self._limit(5)
+            )
+        except openai.BadRequestError as exc:
+            text = _message(exc)
+            if "max_completion_tokens" in text.lower() and not self.legacy_max_tokens:
+                self.legacy_max_tokens = True
+                return self.probe(model, vision=True)
+            raise cannot_see(model, text) from exc
         except openai.APIStatusError as exc:
             raise ProviderError(_message(exc), exc.status_code) from exc
         except openai.APIError as exc:
             raise ProviderError(str(exc)) from exc
-        self.complete(model=model, system="Reply with one word.", prompt="ping", max_tokens=5)
-        return f"{model} reachable (answered a ping)"
+        return f"{model} reachable and can see images"
 
 
 def _tool_call(call_id: str, name: str, arguments: Any, raw: bool = False) -> dict[str, Any]:

@@ -255,7 +255,7 @@ written with restrictive permissions.
 | Setting | Meaning |
 |---|---|
 | `FOAMD_URL`, `FOAMD_API_KEY` | The workspace service |
-| `OPENREYNOLDS_PROVIDER` | Whose model: `anthropic` (default), `openai`, `zai`, `deepseek`, `moonshot`, `minimax`, `openrouter`, `ollama` — or a bare API family with `OPENREYNOLDS_LLM_BASE_URL` |
+| `OPENREYNOLDS_PROVIDER` | Whose model: `anthropic` (default), `reynolds` (Claude through the workspace service, metered to your account — no key of its own), `openai`, `zai`, `deepseek`, `moonshot`, `minimax`, `openrouter`, `ollama` — or a bare API family with `OPENREYNOLDS_LLM_BASE_URL` |
 | `OPENREYNOLDS_LLM_API_KEY` | Bring your own key — the service never proxies a model call. The vendor's own name works too: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ZAI_API_KEY`, … |
 | `OPENREYNOLDS_LLM_BASE_URL` | Any endpoint that speaks the Messages API or Chat Completions; a gateway, a local server |
 | `OPENREYNOLDS_MODEL` | Default from the provider preset (`claude-opus-5` for Anthropic) |
@@ -275,6 +275,11 @@ A vendor that streams its reasoning shows it in the stage line like Claude's; on
 does not simply thinks in silence. The front desk uses the same provider and its own
 cheaper model from the preset. Model ids in the presets are the ones that existed when
 the table was written; `doctor` says whether yours still answers.
+
+**The model has to be able to see.** The agent reads geometry and mesh renders through
+`read_file`; a text-only model works blind and never says so. `doctor` therefore probes
+the model with a one-pixel image and fails plainly when it is refused. `reynolds` is
+always Claude; a bring-your-own key needs a vision model.
 
 ## Layout
 

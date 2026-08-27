@@ -175,8 +175,11 @@ def config_cmd(from_env: bool, key_file: Path | None, provider: str | None) -> N
             )
             if chosen.lower() != cfg.provider:
                 _apply_preset(cfg, chosen)
+        chosen_preset = preset_for(cfg.provider)
         if key_file:
             cfg.llm_api_key = key_file.read_text(encoding="utf-8").strip()
+        elif chosen_preset is not None and not chosen_preset.needs_key:
+            console.print(f"  ({chosen_preset.note})")
         else:
             cfg.llm_api_key = click.prompt(
                 "Model API key", default=cfg.llm_api_key or "", hide_input=True
@@ -364,7 +367,7 @@ def _print_settings(cfg: Config) -> None:
         ("service url", cfg.foamd_url),
         ("service key", _redact(cfg.foamd_api_key)),
         ("provider", cfg.provider),
-        ("model key", _redact(cfg.llm_api_key)),
+        ("model key", "via the service key" if cfg.provider == "reynolds" else _redact(cfg.llm_api_key)),
         ("model", cfg.model),
     ):
         console.print(f"  {name:14} {value or '[red]not set[/]'}")
@@ -776,7 +779,9 @@ def _check_model(cfg: Config) -> tuple[str, bool, str]:
     if cfg.model_key_missing():
         return "model API: no key", False, ""
     try:
-        detail = make_provider(cfg).probe(cfg.model)
+        # With an image in the probe: the agent reads renders, and a model that
+        # cannot is the wrong model, however well it answers text.
+        detail = make_provider(cfg).probe(cfg.model, vision=True)
     except ValueError as exc:
         return "model API", False, str(exc)
     except ProviderError as exc:
