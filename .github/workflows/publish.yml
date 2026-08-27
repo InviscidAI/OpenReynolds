@@ -1,0 +1,72 @@
+# Publish to PyPI on a version tag, with no long-lived secret anywhere.
+#
+# PyPI "trusted publishing": the project on pypi.org names this repository and this
+# workflow file, and PyPI accepts the short-lived OIDC token GitHub mints for the run.
+# One-time setup on pypi.org (Account → Publishing → Add a pending publisher):
+#   PyPI project name: openreynolds     Owner: InviscidAI     Repository: OpenReynolds
+#   Workflow name:     publish.yml      Environment: pypi
+# Then `git tag v0.1.0 && git push origin v0.1.0` publishes; the tag must match the
+# version in openreynolds/__init__.py or the release step refuses.
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tag names the version the package says it is
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(python -c 'import re,pathlib;print(re.search(r"__version__\s*=\s*\"([^\"]+)\"", pathlib.Path("openreynolds/__init__.py").read_text()).group(1))')"
+          test "$tag" = "$version" || { echo "tag v$tag != __version__ $version"; exit 1; }
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+      - name: The wheel carries the toolbox
+        run: |
+          python - <<'EOF'
+          import glob, zipfile
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          for path in ("openreynolds/toolbox/notes/openfoam-field-notes.md", "openreynolds/llm/presets.py"):
+              assert path in names, path
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # the OIDC token PyPI trusts
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: A GitHub release with the artifacts attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes "See CHANGELOG.md."
