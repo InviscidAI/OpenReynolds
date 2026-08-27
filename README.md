@@ -12,11 +12,12 @@ openreynolds doctor          # check it can all be reached, before spending anyt
 openreynolds                 # start a study
 ```
 
-`login` shows a short code and opens the account page at tryreynolds.com; approving
-the code there hands this terminal its own service key, stored outside the repository
-(`--no-browser` prints the address instead; `--service` points at another deployment).
-Everything the agent does on the hosted workspace is billed to that key; everything
-the model does is billed to yours.
+`login` asks for your email and password -- the same account as app.tryreynolds.com,
+and it offers to create one if there is none -- and hands this machine its own service
+key, stored outside the repository. `--browser` approves a short code in a browser
+instead, for a terminal with no keyboard of its own. `--service` points at another
+deployment. Everything the agent does on the hosted workspace is billed to that key;
+everything the model does is billed to yours.
 
 By default the transcript of every study is uploaded to the workspace service as it
 runs, so a study is kept somewhere other than one laptop; `--no-capture` for a session,

@@ -1176,7 +1176,7 @@ def test_login_waits_for_approval_then_saves_the_key(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.hosted, "device_code", code)
     monkeypatch.setattr(cli.hosted, "device_token", token)
 
-    result = CliRunner().invoke(cli.main, ["login", "--no-browser", "--name", "laptop"])
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser", "--name", "laptop"])
 
     assert result.exit_code == 0, result.output
     assert "K7QF-M2ZR" in result.output and "app.tryreynolds.com/cli" in result.output
@@ -1193,7 +1193,7 @@ def test_login_gives_up_when_the_code_expires(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.hosted, "device_code", lambda url, name: {"device_code": "dc", "user_code": "X", "expires_in": 0, "interval": 1})
     monkeypatch.setattr(cli.hosted, "device_token", lambda url, device: None)
 
-    result = CliRunner().invoke(cli.main, ["login", "--no-browser"])
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
 
     assert result.exit_code == 1
     assert "expired" in result.output
@@ -1207,6 +1207,102 @@ def test_login_reports_a_service_that_cannot_be_reached(monkeypatch, tmp_path):
         raise BackendError("cannot reach the service: refused", code="unreachable")
 
     monkeypatch.setattr(cli.hosted, "device_code", down)
-    result = CliRunner().invoke(cli.main, ["login", "--no-browser", "--service", "https://nowhere.example"])
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser", "--service", "https://nowhere.example"])
     assert result.exit_code == 1
     assert "nowhere.example" in result.output
+
+
+def _auth_stubs(monkeypatch, *, sessions, signups=None, minted=None, terms=None):
+    """The service and its identity provider, scripted."""
+    calls = {"terms": [], "mint": [], "signup": []}
+    monkeypatch.setattr(cli.hosted, "auth_config", lambda url: {"supabase_url": "https://sb.example", "publishable_key": "pk"})
+
+    def password_session(sb, key, email, password):
+        answer = sessions.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def sign_up(sb, key, email, password):
+        calls["signup"].append((email, password))
+        if isinstance(signups, Exception):
+            raise signups
+        return signups
+
+    monkeypatch.setattr(cli.hosted, "password_session", password_session)
+    monkeypatch.setattr(cli.hosted, "sign_up", sign_up)
+    monkeypatch.setattr(cli.hosted, "accept_terms", lambda url, jwt: calls["terms"].append(jwt) or {"tos_accepted_at": "now"})
+    monkeypatch.setattr(cli.hosted, "mint_key", lambda url, jwt, name: calls["mint"].append((jwt, name)) or (minted or {"key": "of_live_pw", "name": name}))
+    return calls
+
+
+def test_login_with_a_password_saves_this_machines_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.delenv("FOAMD_API_KEY", raising=False)
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    calls = _auth_stubs(monkeypatch, sessions=[{"access_token": "jwt-1"}])
+
+    result = CliRunner().invoke(cli.main, ["login", "--name", "laptop"], input="kabir@example.com\nhunter22\n")
+
+    assert result.exit_code == 0, result.output
+    assert calls["terms"] == ["jwt-1"] and calls["mint"] == [("jwt-1", "laptop")]
+    saved = json.loads((tmp_path / "c.json").read_text())
+    assert saved["foamd_api_key"] == "of_live_pw"
+    assert "hunter22" not in result.output and "of_live_pw" not in result.output
+    assert "Signed in as kabir@example.com" in result.output
+
+
+def test_login_offers_to_create_the_account_when_credentials_are_refused(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    refused = BackendError("Invalid login credentials", code="invalid_credentials", status=400)
+    calls = _auth_stubs(monkeypatch, sessions=[refused], signups={"access_token": "jwt-new"})
+
+    result = CliRunner().invoke(cli.main, ["login"], input="new@example.com\npw-pw-pw-pw\ny\ny\n")
+
+    assert result.exit_code == 0, result.output
+    assert calls["signup"] == [("new@example.com", "pw-pw-pw-pw")]
+    assert calls["terms"] == ["jwt-new"] and calls["mint"][0][0] == "jwt-new"
+    assert "/terms" in result.output
+
+
+def test_login_says_to_confirm_the_address_when_the_provider_wants_that(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    refused = BackendError("Invalid login credentials", code="invalid_credentials", status=400)
+    calls = _auth_stubs(monkeypatch, sessions=[refused], signups=None)
+
+    result = CliRunner().invoke(cli.main, ["login"], input="new@example.com\npw-pw-pw-pw\ny\ny\n")
+
+    assert result.exit_code == 0
+    assert "Confirm the address" in result.output
+    assert calls["mint"] == [] and not (tmp_path / "c.json").exists()
+
+
+def test_login_declining_to_create_an_account_changes_nothing(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    refused = BackendError("Invalid login credentials", code="invalid_credentials", status=400)
+    _auth_stubs(monkeypatch, sessions=[refused])
+
+    result = CliRunner().invoke(cli.main, ["login"], input="x@example.com\nnope\nn\n")
+
+    assert result.exit_code == 1
+    assert not (tmp_path / "c.json").exists()
+
+
+def test_login_without_a_terminal_needs_the_flags(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: False)
+    result = CliRunner().invoke(cli.main, ["login"])
+    assert result.exit_code == 1
+    assert "--password-stdin" in result.output
+
+
+def test_login_reads_the_password_from_stdin_for_scripts(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: False)
+    calls = _auth_stubs(monkeypatch, sessions=[{"access_token": "jwt-ci"}])
+    result = CliRunner().invoke(cli.main, ["login", "--email", "ci@example.com", "--password-stdin"], input="secret\n")
+    assert result.exit_code == 0, result.output
+    assert calls["mint"][0][0] == "jwt-ci"

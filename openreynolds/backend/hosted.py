@@ -103,6 +103,89 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
 # -- signing in from a terminal --------------------------------------------------------
 
 
+def _post_json(base_url: str, path: str, body: dict[str, Any], *, headers: dict[str, str] | None = None,
+               transport: Any = None) -> httpx.Response:
+    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport) as client:
+        try:
+            return client.post(path, json=body, headers=headers or {})
+        except httpx.HTTPError as exc:
+            raise BackendError(f"cannot reach {base_url}: {exc}", code="unreachable") from exc
+
+
+def auth_config(base_url: str, *, transport: Any = None) -> dict[str, Any]:
+    """Where the service's identity provider is. Public by design: it is what the
+    service's own sign-in page fetches, so a terminal can sign in the same way."""
+    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport) as client:
+        try:
+            response = client.get("/dashboard/config.json")
+        except httpx.HTTPError as exc:
+            raise BackendError(f"cannot reach the service: {exc}", code="unreachable") from exc
+    if response.status_code >= 400:
+        raise _decode_error(response)
+    body = _json(response)
+    if not body.get("supabase_url") or not body.get("publishable_key"):
+        raise BackendError("the service did not say where to sign in", code="no_auth_config")
+    return body
+
+
+def _auth_error(response: httpx.Response) -> BackendError:
+    """The identity provider's two error shapes, reduced to a code and a sentence."""
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    code = str(body.get("error_code") or body.get("error") or "auth_error")
+    message = str(body.get("msg") or body.get("error_description") or body.get("message") or response.text or code)
+    if "invalid login credentials" in message.lower() or code == "invalid_grant":
+        code = "invalid_credentials"
+    return BackendError(message, code=code, status=response.status_code)
+
+
+def password_session(supabase_url: str, publishable_key: str, email: str, password: str,
+                     *, transport: Any = None) -> dict[str, Any]:
+    """Sign in with email and password; the answer carries `access_token`."""
+    response = _post_json(
+        supabase_url, "/auth/v1/token?grant_type=password",
+        {"email": email, "password": password},
+        headers={"apikey": publishable_key}, transport=transport,
+    )
+    if response.status_code >= 400:
+        raise _auth_error(response)
+    return _json(response)
+
+
+def sign_up(supabase_url: str, publishable_key: str, email: str, password: str,
+            *, transport: Any = None) -> dict[str, Any] | None:
+    """Create the account. Returns the session when the provider signs the new
+    user straight in, `None` when it wants the address confirmed by email first."""
+    response = _post_json(
+        supabase_url, "/auth/v1/signup", {"email": email, "password": password},
+        headers={"apikey": publishable_key}, transport=transport,
+    )
+    if response.status_code >= 400:
+        raise _auth_error(response)
+    body = _json(response)
+    return body if body.get("access_token") else None
+
+
+def accept_terms(base_url: str, jwt: str, *, transport: Any = None) -> dict[str, Any]:
+    response = _post_json(base_url, "/v1/account/accept-terms", {},
+                          headers={"Authorization": f"Bearer {jwt}"}, transport=transport)
+    if response.status_code >= 400:
+        raise _decode_error(response)
+    return _json(response)
+
+
+def mint_key(base_url: str, jwt: str, name: str, *, transport: Any = None) -> dict[str, Any]:
+    """A service key for this machine, in exchange for a signed-in session. The
+    plaintext comes back exactly once."""
+    response = _post_json(base_url, "/v1/keys", {"name": name},
+                          headers={"Authorization": f"Bearer {jwt}"}, transport=transport)
+    if response.status_code >= 400:
+        raise _decode_error(response)
+    return _json(response)
+
+
 def device_code(base_url: str, name: str | None = None, *, transport: Any = None) -> dict[str, Any]:
     """Ask the service for a code a person can approve in a browser.
 

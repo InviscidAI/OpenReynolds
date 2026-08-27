@@ -199,13 +199,107 @@ LOGIN_POLL_CAP_S = 15.0
 
 @main.command("login")
 @click.option("--service", default=None, help="The service to sign in to (default: the configured one).")
-@click.option("--name", default=None, help="What to call this key (default: this machine's name).")
-@click.option("--no-browser", is_flag=True, help="Print the address instead of opening it.")
-def login_cmd(service: str | None, name: str | None, no_browser: bool) -> None:
-    """Get a service key by approving this terminal in a browser."""
+@click.option("--name", default=None, help="What to call this machine's key (default: its hostname).")
+@click.option("--email", default=None, help="Sign in as this address without being asked.")
+@click.option("--password-stdin", is_flag=True, help="Read the password from standard input.")
+@click.option("--browser", is_flag=True, help="Approve a short code in the browser instead of typing a password.")
+@click.option("--no-browser", is_flag=True, help="With --browser: print the address instead of opening it.")
+def login_cmd(
+    service: str | None, name: str | None, email: str | None, password_stdin: bool,
+    browser: bool, no_browser: bool,
+) -> None:
+    """Sign in with your email and password; this machine gets its own service key."""
     cfg = Config.load()
     url = (service or cfg.foamd_url).rstrip("/")
     label = name or socket.gethostname() or "openreynolds"
+    if browser:
+        _login_browser(cfg, url, label, no_browser)
+        return
+
+    if password_stdin:
+        password = sys.stdin.readline().rstrip("\r\n")
+        if not email:
+            console.print("[red]--password-stdin needs --email.[/]")
+            raise SystemExit(2)
+    elif not _can_prompt():
+        console.print("Nothing to type into here. Use [bold]--email[/] with [bold]--password-stdin[/], or [bold]--browser[/].")
+        raise SystemExit(1)
+    else:
+        email = (email or click.prompt("Email")).strip()
+        password = click.prompt("Password", hide_input=True)
+
+    try:
+        auth = hosted.auth_config(url)
+    except BackendError as exc:
+        console.print(f"[red]Could not reach {url}:[/] {exc.message}")
+        raise SystemExit(1) from None
+
+    session: dict[str, Any] | None
+    try:
+        session = hosted.password_session(auth["supabase_url"], auth["publishable_key"], email, password)
+    except BackendError as exc:
+        if exc.code != "invalid_credentials":
+            console.print(f"[red]Sign-in failed:[/] {exc.message}")
+            raise SystemExit(1) from None
+        session = _offer_account(auth, url, email, password)
+        if session is None:
+            raise SystemExit(1)
+
+    jwt = str(session.get("access_token") or "")
+    try:
+        hosted.accept_terms(url, jwt)
+        token = hosted.mint_key(url, jwt, label)
+    except BackendError as exc:
+        console.print(f"[red]Signed in, but the service would not issue a key:[/] {exc.message}")
+        raise SystemExit(1) from None
+
+    cfg.foamd_url = url
+    cfg.foamd_api_key = str(token["key"])
+    path = cfg.save()
+    console.print(f"\n[green]Signed in as {email}.[/] This machine's key ([bold]{token.get('name') or label}[/]) is saved to {path}")
+    _say_what_is_next(cfg)
+
+
+def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) -> dict[str, Any] | None:
+    """Wrong password, or no account yet -- the service cannot tell which, so ask."""
+    console.print("Wrong password, or no account with that address yet.")
+    if not _can_prompt() or not click.confirm(f"Create an account for {email} with this password?", default=False):
+        return None
+    console.print(f"The terms are at {url}/terms and the privacy note at {url}/privacy.")
+    if not click.confirm("Accept them?", default=False):
+        return None
+    try:
+        session = hosted.sign_up(auth["supabase_url"], auth["publishable_key"], email, password)
+    except BackendError as exc:
+        console.print(f"[red]Could not create the account:[/] {exc.message}")
+        return None
+    if session is None:
+        console.print(
+            f"[green]Account created.[/] Confirm the address from the email sent to {email}, "
+            "then run [bold]openreynolds login[/] again."
+        )
+        raise SystemExit(0)
+    return session
+
+
+def _say_what_is_next(cfg: Config) -> None:
+    still = cfg.model_key_missing()
+    if still:
+        console.print(
+            f"The model key is still needed: set [bold]{still}[/] or run "
+            "[bold]openreynolds config[/]. Then [bold]openreynolds doctor[/]."
+        )
+    else:
+        console.print("Next: [bold]openreynolds doctor[/], then [bold]openreynolds[/].")
+
+
+LOGIN_POLL_CAP_S = 15.0
+"""The service says how often to ask; this is how often is too often to be polite."""
+
+
+def _login_browser(cfg: Config, url: str, label: str, no_browser: bool) -> None:
+    """The code flow: for a terminal with no keyboard of its own (a remote box, a CI
+    runner) that still has a person with a browser somewhere."""
     try:
         offer = hosted.device_code(url, label)
     except BackendError as exc:
@@ -245,14 +339,7 @@ def login_cmd(service: str | None, name: str | None, no_browser: bool) -> None:
     cfg.foamd_api_key = str(token["api_key"])
     path = cfg.save()
     console.print(f"\n[green]Signed in.[/] Key [bold]{token.get('name') or label}[/] saved to {path}")
-    still = cfg.model_key_missing()
-    if still:
-        console.print(
-            f"The model key is still needed: set [bold]{still}[/] or run "
-            "[bold]openreynolds config[/]. Then [bold]openreynolds doctor[/]."
-        )
-    else:
-        console.print("Next: [bold]openreynolds doctor[/], then [bold]openreynolds[/].")
+    _say_what_is_next(cfg)
 
 
 def _apply_preset(cfg: Config, name: str) -> None:

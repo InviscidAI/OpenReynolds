@@ -189,3 +189,65 @@ def test_a_refused_device_code_is_an_error_with_the_service_message():
     with pytest.raises(BackendError) as caught:
         device_token("https://svc.example", "dc", transport=transport)
     assert caught.value.code == "gone"
+
+
+def test_password_sign_in_and_sign_up_against_the_identity_provider():
+    from openreynolds.backend.hosted import auth_config, password_session, sign_up
+
+    def handler(request):
+        if request.url.path == "/dashboard/config.json":
+            return httpx.Response(200, json={"supabase_url": "https://sb.example", "publishable_key": "pk"})
+        assert request.headers["apikey"] == "pk"
+        body = request.read()
+        if request.url.path == "/auth/v1/token":
+            assert request.url.params["grant_type"] == "password"
+            if b"wrong" in body:
+                return httpx.Response(400, json={"code": 400, "error_code": "invalid_credentials", "msg": "Invalid login credentials"})
+            return httpx.Response(200, json={"access_token": "jwt", "user": {"email": "a@b.c"}})
+        if request.url.path == "/auth/v1/signup":
+            if b"taken" in body:
+                return httpx.Response(422, json={"code": 422, "error_code": "user_already_exists", "msg": "User already registered"})
+            if b"confirm" in body:
+                return httpx.Response(200, json={"id": "u", "email": "a@b.c"})
+            return httpx.Response(200, json={"access_token": "jwt-new"})
+        return httpx.Response(404, json={"error": "not_found", "message": "?"})
+
+    transport = httpx.MockTransport(handler)
+    auth = auth_config("https://svc.example", transport=transport)
+    assert auth["publishable_key"] == "pk"
+    assert password_session("https://sb.example", "pk", "a@b.c", "right", transport=transport)["access_token"] == "jwt"
+    with pytest.raises(BackendError) as refused:
+        password_session("https://sb.example", "pk", "a@b.c", "wrong", transport=transport)
+    assert refused.value.code == "invalid_credentials"
+    assert sign_up("https://sb.example", "pk", "a@b.c", "pw", transport=transport)["access_token"] == "jwt-new"
+    assert sign_up("https://sb.example", "pk", "a@b.c", "confirm-me", transport=transport) is None
+    with pytest.raises(BackendError) as taken:
+        sign_up("https://sb.example", "pk", "taken@b.c", "pw", transport=transport)
+    assert taken.value.code == "user_already_exists"
+
+
+def test_the_older_error_shape_is_also_read_as_bad_credentials():
+    from openreynolds.backend.hosted import password_session
+
+    transport = httpx.MockTransport(lambda r: httpx.Response(400, json={"error": "invalid_grant", "error_description": "Invalid login credentials"}))
+    with pytest.raises(BackendError) as caught:
+        password_session("https://sb.example", "pk", "a@b.c", "x", transport=transport)
+    assert caught.value.code == "invalid_credentials"
+
+
+def test_terms_and_mint_carry_the_session():
+    from openreynolds.backend.hosted import accept_terms, mint_key
+
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.headers.get("authorization"), request.read()))
+        if request.url.path == "/v1/account/accept-terms":
+            return httpx.Response(200, json={"user_id": "u", "tos_accepted_at": "now"})
+        return httpx.Response(201, json={"key": "of_live_x", "prefix": "of_live_x", "key_id": "k", "name": "laptop"})
+
+    transport = httpx.MockTransport(handler)
+    accept_terms("https://svc.example", "jwt", transport=transport)
+    assert mint_key("https://svc.example", "jwt", "laptop", transport=transport)["key"] == "of_live_x"
+    assert all(auth == "Bearer jwt" for _, auth, _ in seen)
+    assert b"laptop" in seen[1][2]
