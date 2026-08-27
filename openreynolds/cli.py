@@ -241,6 +241,13 @@ def login_cmd(
     try:
         session = hosted.password_session(auth["supabase_url"], auth["publishable_key"], email, password)
     except BackendError as exc:
+        if "captcha" in exc.message.lower():
+            # The identity provider wants proof of a person, which a terminal cannot
+            # give. The browser can: hand over to the code flow without making the
+            # person type anything again.
+            console.print("Sign-in needs a quick check in the browser (it proves you are a person).")
+            _login_browser(cfg, url, label, no_browser)
+            return
         if exc.code != "invalid_credentials":
             console.print(f"[red]Sign-in failed:[/] {exc.message}")
             raise SystemExit(1) from None

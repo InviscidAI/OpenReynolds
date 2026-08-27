@@ -1306,3 +1306,21 @@ def test_login_reads_the_password_from_stdin_for_scripts(monkeypatch, tmp_path):
     result = CliRunner().invoke(cli.main, ["login", "--email", "ci@example.com", "--password-stdin"], input="secret\n")
     assert result.exit_code == 0, result.output
     assert calls["mint"][0][0] == "jwt-ci"
+
+
+def test_login_hands_over_to_the_browser_when_the_provider_wants_a_captcha(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    refused = BackendError("captcha verification process failed", code="captcha_failed", status=400)
+    calls = _auth_stubs(monkeypatch, sessions=[refused])
+    monkeypatch.setattr(cli.hosted, "device_code", lambda url, name: {"device_code": "dc", "user_code": "AB12-CD34", "verification_url": "https://app.tryreynolds.com/cli?code=AB12-CD34", "expires_in": 600, "interval": 1})
+    monkeypatch.setattr(cli.hosted, "device_token", lambda url, device: {"api_key": "of_live_browser", "name": "laptop"})
+
+    result = CliRunner().invoke(cli.main, ["login", "--no-browser"], input="me@example.com\npw-pw-pw-pw\n")
+
+    assert result.exit_code == 0, result.output
+    assert "AB12-CD34" in result.output and "app.tryreynolds.com/cli" in result.output
+    assert calls["mint"] == [], "no password mint happened"
+    assert json.loads((tmp_path / "c.json").read_text())["foamd_api_key"] == "of_live_browser"
+
