@@ -43,8 +43,11 @@ PRESETS: dict[str, Preset] = {
     p.name: p
     for p in (
         Preset(
+            # Sonnet 5 by default: a study is mostly tool calls and re-read context,
+            # where Sonnet's 2.5x lower price buys the same work; Opus 5 is a choice
+            # (`OPENREYNOLDS_MODEL=claude-opus-5`) for the hard, ambiguous ones.
             REYNOLDS, "anthropic", None,
-            "claude-opus-5", "claude-haiku-4-5", 1_000_000,
+            "claude-sonnet-5", "claude-haiku-4-5", 1_000_000,
             "", "Reynolds' model: Claude through the workspace service, metered to your account.",
             needs_key=False,
         ),
