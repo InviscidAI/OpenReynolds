@@ -6,6 +6,13 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-27
+
+The first release: the tool-use loop over a hosted OpenFOAM workspace, seven tools, the
+terminal interface, watch mode with factual wakes, the local study mirror, capture,
+stopping that verifies, the toolbox and the field notes -- and, since the first cut
+on 2026-08-24:
+
 ### Added
 
 - An npm launcher (`launcher/`, published as `openreynolds`): `npm install -g
@@ -69,11 +76,5 @@ All notable changes to this project are recorded here. The format follows
 - A duplicate copy of the architecture notes at the repository root is gone; the one
   under the toolbox notes is the one that ships.
 
-## [0.1.0] - 2026-08-24
-
-The first cut: the tool-use loop over a hosted OpenFOAM workspace, seven tools, the
-terminal interface, watch mode with factual wakes, the local study mirror, capture,
-stopping that verifies, the toolbox and the field notes.
-
-[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/0c50b8a...HEAD
-[0.1.0]: https://github.com/InviscidAI/OpenReynolds/commits/0c50b8a
+[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/InviscidAI/OpenReynolds/releases/tag/v0.1.0
