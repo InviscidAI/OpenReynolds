@@ -155,10 +155,12 @@ cadence; `0` turns the background sync off (turn-end syncs still run).
 
 A long solve is not a silent one. While jobs run, the bar shows where each one is —
 solver time against `endTime`, residuals, elapsed and estimated remaining, read
-from the log every twenty seconds on the bar's own thread — and, by default once a
-minute, the agent itself is woken with the same facts (never the estimate) so it
-can say where things stand (or say nothing; that stays its call). `OPENREYNOLDS_NARRATE_EVERY_S` adjusts the cadence; `0` turns
-narration off. Each narration is a model turn and is priced like one. The agent
+from the log every twenty seconds on the bar's own thread — and, by default every
+ten minutes, the agent itself is woken with the same facts (never the estimate) so
+it can say where things stand (or say nothing; that stays its call).
+`OPENREYNOLDS_NARRATE_EVERY_S` adjusts the cadence; `0` turns narration off. Each
+narration is a model turn and is priced like one — a re-read of the whole thread —
+which is why the cadence is minutes, not seconds. The agent
 also has a quieter way to pace itself than `sleep` in `bash`: `job_check` takes
 `wait_s` and holds its answer until the job ends or the user speaks.
 

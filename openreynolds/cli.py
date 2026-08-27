@@ -1522,9 +1522,14 @@ def _run_turn(loop: Loop, view: View) -> bool:
     except ProviderError as exc:
         loop.api_failures += 1
         if exc.status_code:
-            console.print(f"\n[red]The model API returned {exc.status_code}:[/] {exc.message}")
+            said = f"The model API returned {exc.status_code}: {exc.message}"
         else:
-            console.print(f"\n[red]Could not reach the model API:[/] {exc.message}")
+            said = f"Could not reach the model API: {exc.message}"
+        console.print(f"\n[red]{said}[/]")
+        # The terminal sees the console; a web page sees the view. A refused call
+        # that only reached the console looked, on the page, like an agent that
+        # had gone quiet -- for ten minutes, to a person typing "what's going on?".
+        view.notice(said)
 
     loop.settle()
     if loop.api_failures >= 2:

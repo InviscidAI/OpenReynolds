@@ -41,14 +41,17 @@ turn is over, and none of it reached the user's machine until the session wound
 down. A live study should be on the user's disk while it is live. Zero or a
 negative value turns the background sync off (turn-end syncs still run)."""
 
-DEFAULT_NARRATE_EVERY_S = 60.0
+DEFAULT_NARRATE_EVERY_S = 600.0
 """Seconds between mid-run progress wakes while jobs are being watched.
 
 A long solve used to be a silent one: the model was woken only when the job
 ended, so twenty minutes of "watching 1 job(s)" was all a person saw. At this
 cadence the model is woken with progress facts (elapsed time, log growth, the
 last lines) and can say where things stand. Each wake is a model turn and is
-priced like one; zero turns narration off."""
+priced like one -- a whole context re-read, every time. At sixty seconds that
+was the single largest cost of a study (thirty-odd wakes across one solve, for
+nothing the progress bar was not already showing); ten minutes keeps the
+narration and drops that bill by an order of magnitude. Zero turns it off."""
 
 DEFAULT_DESK_MODEL = "claude-haiku-4-5"
 """The front-desk model: a second, cheap agent that answers the user while the main

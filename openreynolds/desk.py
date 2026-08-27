@@ -64,12 +64,12 @@ Describe what is happening now, not what already finished. No preamble."""
 MAX_REPLY_TOKENS = 400
 MAX_NOW_TOKENS = 60
 TRANSCRIPT_ROWS = 24
-NOW_EVERY_S = 20.0
+NOW_EVERY_S = 120.0  # was 20: each refresh re-sends the transcript to the desk model
 """How often the desk refreshes its one-line 'what's happening now', while the agent
 is busy. Each refresh is one cheap Haiku call; when nothing is happening there are
 none."""
 
-NOW_MIN_GAP_S = 8.0
+NOW_MIN_GAP_S = 60.0
 """Never two 'now' calls closer than this, however often events nudge it."""
 
 

@@ -266,7 +266,7 @@ class FoamdClient:
     def list_instances(self) -> list[dict[str, Any]]:
         return _json(self.request("GET", "/v1/instances"))
 
-    def create_instance(self, cpu: float = 8.0, mem_gb: int = 16) -> str:
+    def create_instance(self, cpu: float = 4.0, mem_gb: int = 8) -> str:
         body = _json(
             self.request("POST", "/v1/instances", json={"cpu": cpu, "mem_gb": mem_gb})
         )
