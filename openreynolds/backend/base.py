@@ -72,6 +72,16 @@ class JobStatus:
         return self.status == "running"
 
 
+@dataclass(frozen=True)
+class ResizeResult:
+    """Outcome of a workspace resize request."""
+    success: bool
+    """True if resize succeeded."""
+    new_cost_per_hour: int | None = None
+    """New cost in cents/hour, when success=True."""
+    error: str | None = None
+    """Error message, when success=False."""
+
 class BackendError(Exception):
     """Any failure reaching or acting on the workspace.
 
@@ -137,5 +147,30 @@ class Backend(Protocol):
         ...
 
     def job_kill(self, job_id: str, signal: str = "TERM") -> JobStatus: ...
+
+    
+    def current_workspace_size(self) -> tuple[float, int]:
+        """Return (cpu, mem_gb) of the current instance."""
+        ...
+
+    def estimate_resize_cost(
+        self, from_cpu: float, from_mem_gb: int, to_cpu: float, to_mem_gb: int
+    ) -> int:
+        """Estimate cost delta in cents/hour for a resize.
+
+        Returns the difference in cost between current and requested size.
+        """
+        ...
+
+    def can_afford(self, cost_delta_cents: int) -> bool:
+        """Check if a cost delta fits within monthly budget."""
+        ...
+
+    def resize_workspace(self, cpu: float, mem_gb: int, reason: str | None) -> ResizeResult:
+        """Request a workspace resize.
+
+        Returns ResizeResult with success status and cost or error message.
+        """
+        ...    
 
     def close(self) -> None: ...

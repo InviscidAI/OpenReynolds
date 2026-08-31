@@ -20,6 +20,7 @@ def test_tool_list_is_deterministic():
         "job_kill",
         "job_start",
         "read_file",
+        "request_workspace_size",
         "write_file",
     ]
     for tool in TOOLS:
