@@ -80,9 +80,22 @@ def test_prompt_does_not_promise_tools_the_image_lacks():
     assert "not** in this image" in SYSTEM_PROMPT or "not in this image" in SYSTEM_PROMPT
 
 
-def test_prompt_states_the_mpi_root_requirement():
-    """mpirun fails outright without these, and the container runs as root."""
+def test_prompt_says_mpi_is_already_arranged():
+    """The container runs as root and has no outbound network, and both of those
+    stop OpenMPI from launching unless the environment says otherwise. foamd now
+    sets all three (config.SANDBOX_ENV_DEFAULTS), so the fact the model needs is
+    that it does not have to arrange anything -- the prompt used to say the
+    opposite, and a study spent five minutes proving the prompt wrong."""
     assert "OMPI_ALLOW_RUN_AS_ROOT" in SYSTEM_PROMPT
+    assert "PMIX_MCA_gds" in SYSTEM_PROMPT
+    assert "fails immediately" not in SYSTEM_PROMPT
+
+
+def test_prompt_does_not_promise_a_core_count():
+    """It said "8 cores" while the default shape was four. A number that changes
+    with the instance does not belong in a prompt that is the same for every one."""
+    assert "8 cores" not in SYSTEM_PROMPT
+    assert "nproc" in SYSTEM_PROMPT
 
 
 def test_the_prompt_says_a_study_has_a_directory_of_its_own():

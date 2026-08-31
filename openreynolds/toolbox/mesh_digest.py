@@ -34,7 +34,12 @@ DETERMINANT = re.compile(rf"Minimum face determinant = ({NUM})")
 BOUNDING_BOX = re.compile(r"Overall domain bounding box \((.+?)\) \((.+?)\)")
 PATCH_ROW = re.compile(r"^\s{4}(\w[\w.\-]*)\s+(\d+)\s+(\d+)\s+(.*)$")
 FAILED = re.compile(r"\*\*\*(.+)$")
-WARNING = re.compile(r"^\s*\*\*\*?\s*(.+)$")
+WARNING = re.compile(r"^\s*\*+\s*(.+)$")
+"""checkMesh's advisories, which carry ONE star -- `*Number of severely non-orthogonal
+(> 70 degrees) faces: 74.` -- not the two this pattern used to require. Between a regex
+that could not match them and a call site that never ran it, a mesh with 74 faces at
+86.3 degrees was summarised as "Mesh OK". Three-star failures are matched by `FAILED`
+first and never reach here."""
 
 
 def parse(text: str) -> dict:
@@ -76,7 +81,17 @@ def parse(text: str) -> dict:
         match = FAILED.search(line)
         if match:
             data["failures"].append(match.group(1).strip())
-        elif "Mesh OK" in line:
+            continue
+        match = WARNING.match(line)
+        if match:
+            # checkMesh emits its severe-non-orthogonality and high-skewness advisories
+            # with ONE star, and only its hard failures with three. This regex existed
+            # and was never called, so a mesh with 74 severely non-orthogonal faces at
+            # 86.3 degrees was reported as "Mesh OK" -- which it is, in checkMesh's own
+            # words, and which is not the same as fit to solve on.
+            data.setdefault("warnings", []).append(match.group(1).strip())
+            continue
+        if "Mesh OK" in line:
             data["mesh_ok_line"] = line.strip()
 
     return data
@@ -120,8 +135,21 @@ def report(data: dict) -> str:
         lines.append("\n## lines checkMesh flagged with ***")
         for item in data["failures"]:
             lines.append(f"  {item}")
-    elif data.get("mesh_ok_line"):
+
+    if data.get("warnings"):
+        lines.append("\n## lines checkMesh flagged with * (advisory)")
+        for item in data["warnings"]:
+            lines.append(f"  {item}")
+
+    if data.get("mesh_ok_line"):
+        # Printed alongside the advisories rather than instead of them. "Mesh OK" is
+        # checkMesh's verdict on its own hard checks, and a mesh can carry it while
+        # reporting 74 severely non-orthogonal faces -- which is what a reader takes
+        # "Mesh OK" to have ruled out.
         lines.append(f"\n{data['mesh_ok_line']}")
+        if data.get("warnings"):
+            lines.append("  (checkMesh's own hard checks passed; the advisories above "
+                         "are what it still wants looked at)")
 
     return "\n".join(lines)
 

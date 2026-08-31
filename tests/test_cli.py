@@ -14,7 +14,7 @@ from openreynolds.browse import Browser
 from openreynolds.config import Config
 from openreynolds.loop import Loop
 from openreynolds.store import Store
-from openreynolds.watch import NullReader
+from openreynolds.watch import NullReader, Wake
 
 pytestmark = pytest.mark.usefixtures("fast_polling")
 
@@ -883,6 +883,40 @@ def test_an_instance_somebody_else_started_is_left_alone(quiet_console):
     assert backend.stopped == 0
 
 
+def test_a_session_does_not_stop_a_workspace_it_merely_joined(store, monkeypatch):
+    """The session path never asked the question `_release` has always asked.
+
+    An account is capped at one instance and `acquire()` joins the existing one, so an
+    ordinary `/exit` in a second terminal stopped the container out from under the first
+    one's solve. `_release` forty lines away already had the rule."""
+    import io as _io
+
+    from rich.console import Console
+
+    said = _io.StringIO()
+    monkeypatch.setattr(cli, "console", Console(file=said, force_terminal=False, width=100))
+    backend = Stoppable(already_running=True)
+    cli._close_down(backend, store)
+
+    assert backend.stopped == 0, "it belongs to whoever started it"
+    assert "left up" in said.getvalue(), "and the person is told why it is still running"
+
+
+def test_a_session_that_started_the_workspace_still_puts_it_down(store, quiet_console):
+    backend = Stoppable(already_running=False)
+    cli._close_down(backend, store)
+    assert backend.stopped == 1
+
+
+def test_the_exit_sweep_is_scoped_to_this_study(store, quiet_console):
+    """`_close_down` used to pass force=True, which is the instance-wide pkill by name."""
+    import inspect
+
+    source = inspect.getsource(cli._close_down)
+    assert "home=home" in source, "the sweep is anchored on this study's directory"
+    assert "force=True" not in source, "the ordinary exit path may not force an unscoped kill"
+
+
 def test_a_backend_that_cannot_be_stopped_does_not_break_the_exit(store, quiet_console):
     class Stubborn(Stoppable):
         def shutdown(self):
@@ -1324,3 +1358,151 @@ def test_login_hands_over_to_the_browser_when_the_provider_wants_a_captcha(monke
     assert calls["mint"] == [], "no password mint happened"
     assert json.loads((tmp_path / "c.json").read_text())["foamd_api_key"] == "of_live_browser"
 
+# -- a refusal is not a hiccup -------------------------------------------------
+
+
+def test_a_refusal_stops_the_harness_asking_again(loop, view, quiet_console):
+    """402 means the account cannot pay for the call. Every later call says the same
+    thing, and a live session proved it: the budget ran out mid-study and the harness
+    made ninety more refused calls over twenty-six minutes, answering nobody."""
+    loop.run = lambda: (_ for _ in ()).throw(_api_error(402))
+
+    assert cli._run_turn(loop, view) is False
+    assert loop.blocked_reason and "402" in loop.blocked_reason
+    assert any("402" in n for n in view.notices), "the page hears it, not just the console"
+    assert "refusal, not a hiccup" in quiet_console.file.getvalue() if hasattr(
+        quiet_console.file, "getvalue") else True
+
+
+@pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 413])
+def test_every_refusal_status_blocks(loop, view, quiet_console, status):
+    loop.run = lambda: (_ for _ in ()).throw(_api_error(status))
+    cli._run_turn(loop, view)
+    assert loop.blocked_reason is not None
+
+
+@pytest.mark.parametrize("status", [408, 409, 425, 429, 500, 503, None])
+def test_a_failure_worth_retrying_does_not_block(loop, view, quiet_console, status):
+    """A rate limit, a timeout, a bad gateway -- those pass. Blocking on them would
+    end sessions that the old behaviour correctly survived."""
+    loop.run = lambda: (_ for _ in ()).throw(_api_error(status))
+    cli._run_turn(loop, view)
+    assert loop.blocked_reason is None
+
+
+def test_a_completed_turn_lifts_the_block(loop, view, quiet_console):
+    loop.blocked_reason = "The model API returned 402: no budget"
+    loop.run = lambda: None
+    assert cli._run_turn(loop, view) is True
+    assert loop.blocked_reason is None
+
+
+def test_a_blocked_session_does_not_burn_turns_on_progress_wakes(
+    loop, backend, store, view, quiet_console, fast_polling, monkeypatch
+):
+    """The 26-minute case, in miniature: a job is running, the service is refusing,
+    and the harness must stop sending. Progress chatter is dropped entirely; a job
+    that actually ended is still written down for whenever the session resumes."""
+    turns = []
+    monkeypatch.setattr(loop, "run", lambda: turns.append(1))
+    loop.blocked_reason = "The model API returned 402: no budget"
+
+    wakes = iter([
+        Wake("narrate", "run_x: 14m, log 0B"),
+        Wake("narrate", "run_x: 15m, log 0B"),
+        Wake("job", "job run_x ended exit_code=0"),
+        Wake("eof"),
+    ])
+    monkeypatch.setattr(cli, "watch", lambda *a, **k: next(wakes))
+    store.record_job("j1", "pimpleFoam", "run_x", cwd="/work")
+
+    cli._run_interactive(loop, backend, store, view, Browser(backend, store),
+                         ScriptedReader([]))
+
+    assert turns == [], "not one refused call was made"
+    informed = [m for m in loop.messages if m["role"] in ("system", "user")]
+    assert any("ended" in str(m["content"]) for m in informed), "the job's end survived"
+    assert not any("log 0B" in str(m["content"]) for m in informed), "chatter did not"
+
+
+def test_speaking_lifts_the_block_and_the_turn_runs(
+    loop, backend, store, view, quiet_console, fast_polling, monkeypatch
+):
+    """A person is the one thing that can change a refusal -- they have topped the
+    account up, or fixed the key, or want to hear the failure again."""
+    turns = []
+    monkeypatch.setattr(loop, "run", lambda: turns.append(1))
+    loop.blocked_reason = "The model API returned 402: no budget"
+    wakes = iter([Wake("user", "I raised the budget"), Wake("eof")])
+    monkeypatch.setattr(cli, "watch", lambda *a, **k: next(wakes))
+    store.record_job("j1", "pimpleFoam", "run_x", cwd="/work")
+
+    cli._run_interactive(loop, backend, store, view, Browser(backend, store),
+                         ScriptedReader([]))
+
+    assert loop.blocked_reason is None
+    assert turns == [1]
+
+
+# --- resuming a study this machine has never seen (F-39) ------------------------
+
+
+def test_a_study_resumed_elsewhere_is_named_by_its_id(backend, store):
+    """A study opened in the browser and resumed on a laptop has no local session.
+
+    It used to fall back to the workspace root -- so it opened among every other
+    study's files, the mirror tried to bring the whole volume home, and capture
+    could not find the row it belonged to. The id already names the directory.
+    """
+    store.session.home = ""
+    assert cli._home_for(store, backend, resuming=True, known_here=False) == \
+        f"/work/{store.session.study_id}"
+
+
+def test_a_recorded_home_still_wins(backend, store):
+    store.session.home = "/work/somewhere-else"
+    assert cli._home_for(store, backend, resuming=True, known_here=False) == "/work/somewhere-else"
+
+
+class _StudyClient:
+    """A platform that knows about a study this machine does not."""
+
+    def __init__(self, row=None, boom=False):
+        self.row = row
+        self.boom = boom
+        self.asked: list[str] = []
+
+    def get_study(self, study_id):
+        self.asked.append(study_id)
+        if self.boom:
+            raise RuntimeError("no route on this service")
+        return self.row
+
+
+def test_recover_session_fills_in_what_the_laptop_does_not_know(store):
+    store.session.home = ""
+    store.session.instance_id = ""
+    store.session.title = ""
+    client = _StudyClient({"id": "20260828-065853-27b6", "home": "/work/20260828-065853-27b6",
+                           "instance_id": "inst-9", "title": "lid driven cavity"})
+    cli._recover_session(store, client, "20260828-065853-27b6")
+    assert store.session.home == "/work/20260828-065853-27b6"
+    assert store.session.instance_id == "inst-9"
+    assert store.session.title == "lid driven cavity"
+    assert store.session.remote_study_id == "20260828-065853-27b6"
+
+
+def test_recover_session_leaves_local_state_alone(store):
+    """What this machine already knows is not overwritten by the platform."""
+    store.session.home = "/work/mine"
+    store.session.instance_id = "inst-local"
+    client = _StudyClient({"id": "s", "home": "/work/theirs", "instance_id": "inst-remote"})
+    cli._recover_session(store, client, "s")
+    assert store.session.home == "/work/mine"        # a known home short-circuits
+    assert client.asked == []                        # and does not even ask
+
+
+def test_recover_session_survives_a_service_without_the_route(store):
+    store.session.home = ""
+    cli._recover_session(store, _StudyClient(boom=True), "s")
+    assert store.session.home == ""                  # unchanged, no exception

@@ -295,3 +295,95 @@ def test_something_that_never_dies_is_reported_rather_than_looped_on_forever(bac
 
     assert not report.clean
     assert "simpleFoam" in " ".join(report.lines())
+
+
+# -- staying inside this study's own work --------------------------------------
+#
+# The account is capped at one instance and `acquire()` joins the one already there,
+# so "what is running on this instance" and "what this study started" are different
+# questions. Everything below is the difference between them. A live run lost a
+# 22-minute solve to a second terminal's ordinary `/exit`.
+
+
+def own(backend, *pairs, home="/work/study-test"):
+    """Make the /proc probe report these `(pid, name)` as working under `home`."""
+    body = "\n".join(f"{pid} {name}" for pid, name in pairs)
+    backend.exec_result = ExecResult(0, body, False, None)
+    return home
+
+
+def test_a_scoped_sweep_asks_where_a_process_is_working_not_just_what_it_is(backend, store):
+    home = own(backend, ("101", "simpleFoam"))
+    stop_everything(backend, store, home=home)
+    probe = [c for c in backend.execs if "/proc" in c]
+    assert probe, "it looked at ps instead of at working directories"
+    assert "/work/study-test" in probe[0]
+    assert not any(c.startswith("ps ") for c in backend.execs)
+
+
+def test_a_scoped_sweep_kills_by_pid_never_by_name(backend, store):
+    home = own(backend, ("101", "simpleFoam"), ("102", "mpirun"))
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    stop_everything(backend, store, home=home)
+
+    assert not any(c.startswith("pkill") for c in backend.execs), (
+        "pkill -9 -x <name> reaches every copy on the instance, including other studies'"
+    )
+    kills = [c for c in backend.execs if c.startswith("kill -9")]
+    assert kills and "101" in kills[0] and "102" in kills[0]
+
+
+def test_a_scoped_sweep_needs_no_force_flag(backend, store):
+    """Scoped, the kill cannot reach past this study, so it is safe by construction.
+    `--force` stayed a flag only for the unscoped instance-wide sweep."""
+    home = own(backend, ("101", "simpleFoam"))
+    stop_everything(backend, store, home=home)
+    assert any(c.startswith("kill -9") for c in backend.execs)
+
+
+def test_another_session_solving_in_its_own_directory_is_not_touched(backend, store):
+    """The whole finding, in one test: the probe is anchored on this study's home, so a
+    solver working under a different one is never returned and never killed."""
+
+    def only_ours(cmd, cwd=None, timeout_s=120):
+        backend.execs.append(cmd)
+        if "/proc" in cmd:
+            # The real probe filters by cwd; nothing of ours is running.
+            return ExecResult(0, "", False, None)
+        return ExecResult(0, "ok", False, None)
+
+    backend.exec = only_ours
+    report = stop_everything(backend, store, home="/work/study-test")
+
+    assert report.clean
+    assert report.survivors == []
+    assert not any(c.startswith(("pkill", "kill -9")) for c in backend.execs)
+
+
+def test_a_session_with_no_jobs_of_its_own_still_swept_the_whole_instance(backend, store):
+    """`survivors` was computed whether or not this study had killed anything, so a
+    session that started zero jobs -- a question answered without solving, or a run that
+    failed early -- still enumerated the instance and pkilled by name on the way out."""
+    processes(backend, "pimpleFoam")
+    assert store.live_jobs() == []
+
+    unscoped = stop_everything(backend, store, force=True)
+    assert any(c.startswith("pkill") for c in backend.execs), "the old, instance-wide path"
+    assert unscoped.survivors  # somebody else's solver, reported as this study's leftover
+
+    backend.execs.clear()
+    own(backend)  # the /proc probe finds nothing of ours
+    scoped = stop_everything(backend, store, force=True, home="/work/study-test")
+    assert scoped.clean
+    assert not any(c.startswith(("pkill", "kill -9")) for c in backend.execs)
+
+
+def test_a_study_that_predates_homes_is_treated_as_unscoped(backend, store):
+    """Studies resumed from before homes existed keep the volume root, where "under my
+    home" is true of every study at once and so distinguishes nothing."""
+    processes(backend, "simpleFoam")
+    stop_everything(backend, store, force=True, home="/work")
+    assert any(c.startswith("ps ") for c in backend.execs)
+    assert not any("/proc" in c for c in backend.execs)

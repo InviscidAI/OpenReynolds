@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import struct
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -341,12 +342,19 @@ def test_every_toolbox_script_has_a_usage_docstring():
 
 
 def test_the_toolbox_sticks_to_what_the_image_provides():
-    """numpy, matplotlib, pandas and pyvista are installed; scipy is not."""
-    allowed = {
-        "argparse", "ast", "collections", "io", "json", "math", "os", "pathlib", "re",
-        "struct", "subprocess", "sys", "textwrap", "numpy", "matplotlib", "pandas",
-        "pyvista", "__future__", "typing", "dataclasses",
-    }
+    """numpy, matplotlib, pandas and pyvista are installed; scipy is not.
+
+    The rule being kept is "nothing the image does not have". It used to be spelled
+    as a hand-written list of module names, which meant every script that reached
+    for another corner of the standard library -- `time`, `shutil`, `itertools` --
+    read as a violation and the list grew by one more line that said nothing. The
+    standard library is on the image by definition, so it is asked for by name
+    rather than enumerated, and what is left to police is the third-party set and
+    the scripts' own siblings.
+    """
+    third_party = {"numpy", "matplotlib", "pandas", "pyvista"}
+    siblings = {script.stem for script in TOOLBOX.glob("*.py")}
+    allowed = set(sys.stdlib_module_names) | third_party | siblings | {"__future__"}
     for script in sorted(TOOLBOX.glob("*.py")):
         tree = ast.parse(script.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -376,3 +384,181 @@ def test_the_index_offers_rather_than_instructs():
     for imperative in ("you must", "always run", "before you", "step 1", "first,"):
         assert imperative not in index
     assert "ignore them" in index
+
+
+# -- the camera actually points where the caption says -------------------------
+#
+# `render.py --scene mesh` is what the standing note tells every session to use, and
+# for a long time it produced a picture rotated a quarter turn -- a 28x16 domain drawn
+# as a portrait column with the flow running bottom to top. Three studies in one run
+# worked around it by hand-writing eight pyvista scripts and reading thirteen images,
+# every one a paid turn. `results.py` and `animate.py` had the fix all along.
+
+
+class FakePlotter:
+    """Records what the camera was told, without drawing anything."""
+
+    def __init__(self):
+        self.vector = None
+        self.viewup = None
+        self.parallel = False
+        self.zoomed = None
+        self.reset_bounds = None
+        self.camera = self
+
+    def view_vector(self, vector, viewup=None):
+        self.vector, self.viewup = vector, viewup
+
+    def enable_parallel_projection(self):
+        self.parallel = True
+
+    def zoom(self, factor):
+        self.zoomed = factor
+
+    def reset_camera(self, bounds=None):
+        self.reset_bounds = bounds
+
+
+def test_a_slice_is_aimed_with_an_up_vector_not_just_a_direction():
+    """Without viewup VTK picks, and for a z-normal slice it picks something collinear
+    with the view direction and falls back to an arbitrary up."""
+    render = load("render")
+    plotter = FakePlotter()
+    render.aim(plotter, "z")
+
+    assert plotter.vector == render.NORMALS["z"]
+    assert plotter.viewup == (0.0, 1.0, 0.0), "y is up, so x runs across the page"
+    assert plotter.parallel, "a flat cut drawn in perspective reads as a graded mesh"
+
+
+def test_render_aims_the_same_way_its_siblings_do():
+    """The fix existed in two other files in the same directory and was never
+    back-ported to this one."""
+    render, results = load("render"), load("results")
+    assert render.VIEWUP == results.VIEWUP
+    for normal in render.NORMALS:
+        here, there = FakePlotter(), FakePlotter()
+        render.aim(here, normal)
+        results.aim(there, normal)
+        assert (here.vector, here.viewup) == (there.vector, there.viewup)
+
+
+def test_a_close_up_can_be_framed_on_a_region():
+    """Asked for the mesh around a step, the tool drew the whole domain as a sliver
+    with the step invisible, because there was no way to say where to look."""
+    render = load("render")
+    plotter = FakePlotter()
+    render.frame(plotter, None, zoom=None, bounds=(0, 1, 0, 1, 0, 1))
+    assert plotter.reset_bounds == [0, 1, 0, 1, 0, 1]
+
+    plotter = FakePlotter()
+    render.frame(plotter, None, zoom=4.0, bounds=None)
+    assert plotter.zoomed == 4.0
+
+
+def test_framing_is_not_applied_unless_asked_for():
+    render = load("render")
+    plotter = FakePlotter()
+    render.frame(plotter, None, zoom=None, bounds=None)
+    assert plotter.zoomed is None and plotter.reset_bounds is None
+
+
+# -- the digests report the number that measures the thing ---------------------
+
+
+PIMPLE_LOG = """Time = 1
+
+PIMPLE: iteration 1
+smoothSolver:  Solving for Ux, Initial residual = 1e-02, Final residual = 1e-06, No Iterations 3
+GAMG:  Solving for p, Initial residual = 5e-02, Final residual = 9e-08, No Iterations 5
+time step continuity errors : sum local = 1e-09, global = 1e-12, cumulative = 1e-12
+PIMPLE: iteration 2
+smoothSolver:  Solving for Ux, Initial residual = 1e-05, Final residual = 1e-09, No Iterations 2
+GAMG:  Solving for p, Initial residual = 2e-05, Final residual = 1e-09, No Iterations 4
+ExecutionTime = 12 s
+Time = 2
+
+smoothSolver:  Solving for Ux, Initial residual = 8e-03, Final residual = 1e-06, No Iterations 3
+time step continuity errors : sum local = 1e-06, global = 1e-09, cumulative = 5e-09
+ExecutionTime = 25 s
+End
+"""
+
+
+def test_a_step_reports_its_outer_residual_not_its_last_inner_corrector(tmp_path):
+    """`step` advances only on a `Time =` line, so every PIMPLE inner corrector landed
+    on the same step and the last one -- one to two orders lower -- was reported as that
+    step's residual. A transient table looked immaculate either way."""
+    log_digest = load("log_digest")
+    log = tmp_path / "log.pimpleFoam"
+    log.write_text(PIMPLE_LOG, encoding="utf-8")
+
+    data = log_digest.digest(log)
+    assert data["residuals"]["Ux"] == [(1, 1e-2), (2, 8e-3)], "one point per step"
+    assert data["outer_residual"]["Ux"] == 8e-3
+    assert 1e-5 not in [v for _, v in data["residuals"]["Ux"]], "the inner corrector"
+
+
+def test_the_continuity_series_is_kept_not_just_its_last_value(tmp_path):
+    """A growing cumulative error is a documented failure signature and only the most
+    recent value was kept, which is exactly what made it invisible."""
+    log_digest = load("log_digest")
+    log = tmp_path / "log.pimpleFoam"
+    log.write_text(PIMPLE_LOG, encoding="utf-8")
+    data = log_digest.digest(log)
+    assert [v for _, v in data["continuity_series"]] == [1e-12, 5e-09]
+
+
+def test_how_a_run_ended_is_the_first_thing_the_digest_says(tmp_path):
+    log_digest = load("log_digest")
+
+    fatal = {"fatal": "--> FOAM FATAL ERROR: no such field", "times": [3.0]}
+    assert "FOAM FATAL" in log_digest.how_it_ended(fatal)[0]
+
+    converged = {"converged_at": 412, "times": [412.0]}
+    assert "convergence at iteration 412" in log_digest.how_it_ended(converged)[0]
+
+    short = {"times": [37.0], "ended": True}
+    assert "stopped at 37 of a requested 1000" in log_digest.how_it_ended(short, 1000.0)[0]
+
+    cut = {"times": [10.0]}
+    assert "no End line" in log_digest.how_it_ended(cut)[0]
+
+
+def test_a_diverged_run_no_longer_reads_like_a_finished_one(tmp_path):
+    """It printed a normal-looking table headed "time steps parsed: 37"."""
+    log_digest = load("log_digest")
+    log = tmp_path / "log.simpleFoam"
+    log.write_text(
+        "Time = 1\n"
+        "smoothSolver:  Solving for Ux, Initial residual = 1, Final residual = 1e30, No Iterations 1000\n"
+        "--> FOAM FATAL ERROR: Maximum number of iterations exceeded\n",
+        encoding="utf-8")
+    assert "FOAM FATAL" in log_digest.report(log_digest.digest(log), log, None)
+
+
+ADVISORY_MESH = """Checking geometry...
+    Overall domain bounding box (0 0 0) (1 1 1)
+ *Number of severely non-orthogonal (> 70 degrees) faces: 74.
+    Mesh non-orthogonality Max: 86.3 average: 12.1
+Mesh OK.
+"""
+
+
+def test_a_one_star_advisory_is_reported_beside_mesh_ok(tmp_path):
+    """checkMesh's severe-non-orthogonality advisory carries ONE star; the WARNING
+    pattern required two and was never called anyway, so a mesh with 74 faces at 86.3
+    degrees was summarised as "Mesh OK" -- which a reader takes it to have ruled out."""
+    mesh_digest = load("mesh_digest")
+    data = mesh_digest.parse(ADVISORY_MESH)
+    assert data["warnings"] == ["Number of severely non-orthogonal (> 70 degrees) faces: 74."]
+
+    text = mesh_digest.report(data)
+    assert "advisory" in text and "74" in text
+    assert "Mesh OK." in text, "checkMesh's own verdict is still reported, not suppressed"
+
+
+def test_three_star_failures_are_still_failures_not_advisories():
+    mesh_digest = load("mesh_digest")
+    data = mesh_digest.parse("***Number of unused points: 12\n")
+    assert data["failures"] and not data.get("warnings")

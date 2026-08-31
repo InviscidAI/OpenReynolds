@@ -96,6 +96,7 @@ def status_lines(
     tokens: int = 0,
     local_files: int = 0,
     sync_age: float | None = None,
+    token_totals: dict | None = None,
 ) -> list[str]:
     """A picture of the session assembled from what the harness already knows.
 
@@ -108,6 +109,17 @@ def status_lines(
         lines.append(f"right now: {stage}")
     if tokens:
         lines.append(f"thread: {tokens:,} tokens")
+    totals = token_totals or {}
+    billed = sum(totals.values())
+    if billed:
+        # Cache reads at a tenth of input, cache writes at 1.25x: the split is the
+        # difference between a study that costs $1 and the same study costing $7.50.
+        read = totals.get("cache_read", 0)
+        lines.append(
+            f"sent so far: {billed:,} tokens - {read:,} read from cache "
+            f"({read / billed:.0%}), {totals.get('cache_write', 0):,} written to it, "
+            f"{totals.get('output', 0):,} out"
+        )
 
     jobs = list(session.jobs.values())
     live = [job for job in jobs if job.status == "running"]

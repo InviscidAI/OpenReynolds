@@ -104,6 +104,46 @@ def media_type(name: str) -> str | None:
     return MEDIA_TYPES.get(suffix)
 
 
+ATTACH_MAX_EDGE = 1024
+"""Longest edge an attached render is scaled down to.
+
+Renders arrive at 900x700 to 1600x500 and cost 840-1,333 tokens each, and a study reads
+the same path several times over while it fixes the framing. A mesh at 1024 px shows
+everything a mesh check is looking for -- cell spacing near a wall, a refinement band,
+whether the geometry is the right way up -- at roughly half the tokens. Transport only:
+the model still sees every picture it asks for, and `read_file` still hands back the
+whole file to anything that wants the bytes."""
+
+
+def downscale(data: bytes, media: str, max_edge: int = ATTACH_MAX_EDGE) -> bytes:
+    """`data` with its longest edge brought down to `max_edge`, or unchanged.
+
+    Unchanged is the honest fallback for every reason it might not work -- no Pillow on
+    this machine, an animation whose frames must not be flattened, a format that will
+    not round-trip. A picture that arrives larger than necessary is a cost; one that
+    arrives damaged, or does not arrive, is a wrong answer."""
+    if media == "image/gif":
+        return data  # flattening an animation loses the thing it is of
+    shape = dimensions(data)
+    if not shape or max(shape) <= max_edge:
+        return data
+    try:
+        import io as _io
+
+        from PIL import Image
+    except ImportError:
+        return data
+    try:
+        with Image.open(_io.BytesIO(data)) as image:
+            image.thumbnail((max_edge, max_edge))
+            buffer = _io.BytesIO()
+            image.save(buffer, format=image.format or "PNG")
+    except Exception:  # noqa: BLE001 - a picture that arrives is worth more than a small one
+        return data
+    smaller = buffer.getvalue()
+    return smaller if 0 < len(smaller) < len(data) else data
+
+
 def attachment(data: bytes, media: str) -> dict:
     """One image content block."""
     return {

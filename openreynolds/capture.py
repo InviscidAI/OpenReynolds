@@ -45,11 +45,23 @@ class Capture:
         title: str,
         instance_id: str,
         *,
+        study_id: str | None = None,
+        home: str | None = None,
         warn: Callable[[str], None] | None = None,
     ) -> Capture | None:
-        """Create the remote study. Returns None if the platform will not have us."""
+        """Create the remote study. Returns None if the platform will not have us.
+
+        `study_id` is this study's own id, so the platform row, the local directory
+        and the web URL are one string rather than three names for one thing."""
         try:
-            study_id = client.create_study(title, instance_id)
+            # Passed only when supplied, so a client without these parameters --
+            # an older service's, or a test's stand-in -- stays callable.
+            extra: dict[str, str] = {}
+            if study_id:
+                extra["study_id"] = study_id
+            if home:
+                extra["home"] = home
+            study_id = client.create_study(title, instance_id, **extra)
         except Exception as exc:
             if warn:
                 warn(f"capture off — could not open a study ({exc})")

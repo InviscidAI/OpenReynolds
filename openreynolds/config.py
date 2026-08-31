@@ -104,8 +104,10 @@ class Config:
     provider: str = "anthropic"
     """Whose model, as a preset name (`openreynolds config` lists them) or a bare API
     family, `anthropic` or `openai`, with `llm_base_url` saying where. Bring your own
-    key: the service never proxies a model call, so any vendor that speaks one of the
-    two dialects works, local ones included."""
+    key is the default, and any vendor that speaks one of the two dialects works,
+    local ones included. The one preset that needs no key of its own is `reynolds`:
+    there the service fronts the model and meters it to the account, and
+    `make_provider` derives the endpoint and the key from the service settings."""
     llm_api_key: str = ""
     """Older config files call this `anthropic_api_key`; `load()` still reads that."""
 
@@ -113,9 +115,9 @@ class Config:
     """Where the model client points. `None` means the preset's endpoint, or the
     vendor's default for a bare family.
 
-    TODO (future): the hosted service dropped its LLM proxy when it moved to
-    bring-your-own-key. If a `/v1/llm` endpoint ever ships, set this to
-    `<foamd_url>/v1/llm` and use the service key — a config change, not a code change.
+    The `reynolds` preset ignores whatever is here: the service's own `/v1/llm` is
+    derived from `foamd_url` at run time rather than stored, so moving the service
+    moves the model with it and a stale URL in a config file cannot outlive it.
     """
     context_window: int = 0
     """Tokens the model can hold in one thread; the loop refreshes at a fraction of it.
