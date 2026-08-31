@@ -579,20 +579,25 @@ schemes and answers in about a second, before anything is meshed; it suggests an
 refuse, and there are good reasons to run a smearing scheme knowingly -- for the loads, for
 a starting field, to debug a mesh -- so long as the report says which of the two it has.
 
-## The shock-capturing solver on the volume, and how to tell whether it is there
+## The shock-capturing solver, and how to tell where it is
 
 The section above ends at "reach for a density-based solver" and leaves open which one.
-The image ships `rhoCentralFoam` and `sonicFoam`, both explicit. A third option now
-exists on this workspace: **HiSA 1.13.4** (`gitlab.com/hisa/hisa`), an *implicit*
-density-based OpenFOAM solver -- AUSM+up flux, `wVanLeer` reconstruction, dual-time
-stepping with local time-stepping, GMRES under an LU-SGS preconditioner. It was compiled
-against v2512 on 2026-08-30, on the day the ONERA M6 replication described above needed
-it.
+The image ships `rhoCentralFoam` and `sonicFoam`, both explicit, and -- on newer images
+-- **HiSA 1.13.4** (`gitlab.com/hisa/hisa`), an *implicit* density-based OpenFOAM solver:
+AUSM+up flux, `wVanLeer` reconstruction, dual-time stepping with local time-stepping,
+GMRES under an LU-SGS preconditioner. It was first compiled onto a workspace volume on
+2026-08-30, on the day the ONERA M6 replication described above needed it; it is baked
+into the image now, at the OpenFOAM site directories
+(`$WM_PROJECT_DIR/site/2512/platforms/linux64GccDPInt32Opt/{bin,lib}`), which the
+sourced `bashrc` puts on `PATH` and `LD_LIBRARY_PATH` on its own. On such an instance
+`which hisa` answers after any ordinary sourced shell, no exports are needed, plain
+`mpirun -np N hisa -parallel` works, and the solver survives instance deletion because
+the image is not the volume.
 
-It lives on the instance volume rather than in the image, which means it is a fact about
-*this* instance and not about OpenReynolds. A fresh instance, or the same study after the
-instance has been deleted and rebuilt, has no HiSA and no sign that it ever did. The
-question is answerable in a second:
+An instance running an older image may instead carry the 2026-08-30 build on its
+*volume*, which is a fact about that instance and not about OpenReynolds -- deleted and
+rebuilt, it has no HiSA and no sign that it ever did. That build is invisible to a plain
+shell and answerable in a second:
 
     export WM_PROJECT_USER_DIR=/work/OpenFOAM/user-v2512
     export FOAM_USER_APPBIN=$WM_PROJECT_USER_DIR/platforms/linux64GccDPInt32Opt/bin
@@ -600,21 +605,25 @@ question is answerable in a second:
     export LD_LIBRARY_PATH=$FOAM_USER_LIBBIN:$LD_LIBRARY_PATH
     which hisa            # or: ls -l $FOAM_USER_APPBIN/hisa
 
-`hisa_env.py` in this directory is the same check written down: it says present or
-absent, runs `ldd` over the binary so a half-broken build reads as broken rather than as
-missing, prints those exact export lines, and prints the path to the bundled example. It
-reports and changes nothing.
+`hisa_env.py` in this directory is the whole check written down: it looks in the image's
+site directories first and at the volume second, says which of the two it found, runs
+`ldd` over the binary so a half-broken build reads as broken rather than as missing,
+prints the export lines when they are needed and says so when they are not, and prints
+the path to the bundled example. It reports and changes nothing.
 
-Every shell needs those four lines -- OpenFOAM's own `bashrc` does not set
-`WM_PROJECT_USER_DIR` to a path outside `$HOME`, so a solver that runs interactively will
-still fail to launch from a job unless the job's own command exports them. `mpirun` needs
-them forwarded explicitly: `mpirun -x WM_PROJECT_USER_DIR -x FOAM_USER_APPBIN -x
-FOAM_USER_LIBBIN -x LD_LIBRARY_PATH -np N hisa -parallel`. Without the `-x` the ranks
-start in a clean environment and die on a missing `libhisa*.so`, which reads like a
-solver crash and is not one.
+A *volume* build needs those four lines in every shell -- OpenFOAM's own `bashrc` does
+not set `WM_PROJECT_USER_DIR` to a path outside `$HOME`, so a solver that runs
+interactively will still fail to launch from a job unless the job's own command exports
+them. `mpirun` needs them forwarded explicitly: `mpirun -x WM_PROJECT_USER_DIR -x
+FOAM_USER_APPBIN -x FOAM_USER_LIBBIN -x LD_LIBRARY_PATH -np N hisa -parallel`. Without
+the `-x` the ranks start in a clean environment and die on a missing `libhisa*.so`,
+which reads like a solver crash and is not one. None of this applies to the image build,
+which lives on paths the sourced environment already carries.
 
-The source tree sits at `/work/hisa/hisa`, and it carries its own worked ONERA M6 case at
-`/work/hisa/hisa/examples/oneraM6/simulation`. That case is the fastest route to a
+HiSA's own worked ONERA M6 case ships with either build: at
+`/opt/hisa/examples/oneraM6/simulation` in the image, or at
+`/work/hisa/hisa/examples/oneraM6/simulation` beside a volume build's source tree
+(`hisa_env.py` prints whichever it found). That case is the fastest route to a
 correct dictionary set by a wide margin: HiSA's `fvSchemes`, `fvSolution` and
 `thermophysicalProperties` do not look like a `rhoSimpleFoam` case's, several of the
 entries are HiSA's own, and the introspection utilities that would let you discover them

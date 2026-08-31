@@ -2524,9 +2524,9 @@ def check_disk(case: Case, intent: Intent, free_bytes: int | None = None) -> lis
 SHOCK_CAPTURING = ("rhocentralfoam", "rhocentraldymfoam", "sonicfoam", "sonicdymfoam", "hisa")
 """Solvers that carry a discontinuity as a discontinuity. They are density-based: the
 flux itself is reconstructed with a limiter, so a compression lands in a few cells and
-stays there. All but `hisa` are in the image; `hisa` was built onto the workspace volume
-and so is a property of an instance rather than of the image -- `hisa_env.py` says
-whether this one has it."""
+stays there. All are in the image on newer images; on an older image `hisa` may
+instead be a build on the workspace volume, or absent -- `hisa_env.py` says which of
+the three this instance is."""
 
 PRESSURE_BASED_STEADY = ("rhosimplefoam", "simplefoam", "sonicfoamsteady")
 """Solvers that reach a shock through a pressure equation. They can run transonic and
@@ -2645,8 +2645,8 @@ def _shock_findings(case: Case, application: str, solver: str) -> list[Finding]:
             "method", "fail",
             f"solver {application} is pressure-based and steady; "
             "shock-capturing alternatives: rhoCentralFoam and sonicFoam are in the image, "
-            "hisa is a volume build that may or may not be on this instance (hisa_env.py "
-            "answers that in a second)",
+            "and so is hisa on newer images, on the volume or absent on older ones "
+            "(hisa_env.py answers that in a second)",
             "this family reaches a transonic state through a pressure equation whose "
             "stability depends on the limiters that smear a discontinuity, so the front "
             "arrives ten or so cells wide however fine the mesh is. Integrated loads can "

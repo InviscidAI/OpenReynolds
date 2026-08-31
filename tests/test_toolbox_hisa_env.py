@@ -1,15 +1,17 @@
 """`hisa_env.py`: does this instance have the shock-capturing solver, and how is it run?
 
 HiSA was compiled onto the workspace volume on 2026-08-30, in the middle of the ONERA M6
-replication where a pressure-based solver converged and showed no shock. It is on the
-volume, not in the image, so it is a property of an instance rather than of OpenReynolds
--- an instance rebuilt from scratch has no HiSA, and the failure mode this script exists
-to prevent is a session that assumes either answer and finds out from a job log.
+replication where a pressure-based solver converged and showed no shock; newer images
+bake it in at the OpenFOAM site directories instead, where the sourced bashrc finds it
+with no exports. So there are three answers now, not two: in the image (nothing to
+export), on the volume (four exports and `mpirun -x`), and absent -- and the script
+looks in that order, because the image location holds on every instance and the volume
+location is a fact about one.
 
-So the two cases tested hardest are the two answers: absent has to be a clean report and
-not a traceback, and present has to be recognised without any of it being installed here.
-The rest is shape -- the export lines and the example path are the payload, and JSON is
-how another script reads them.
+The cases tested hardest are still the answers themselves: absent has to be a clean
+report and not a traceback, and each kind of present has to be recognised without any of
+it being installed here. The rest is shape -- the export lines and the example path are
+the payload, and JSON is how another script reads them.
 """
 
 from __future__ import annotations
@@ -35,11 +37,25 @@ def hisa_env():
 
 
 @pytest.fixture(autouse=True)
-def _no_inherited_foam_env(monkeypatch):
+def _no_inherited_foam_env(monkeypatch, hisa_env, tmp_path_factory):
     """The build's platform name is read from `$WM_OPTIONS` when it is set, which is
-    right in the container and would make these assertions depend on the host."""
-    for name in ("WM_OPTIONS", "WM_PROJECT_USER_DIR", "FOAM_USER_LIBBIN", "LD_LIBRARY_PATH"):
+    right in the container and would make these assertions depend on the host. The same
+    goes for the image's site directories: a host that really has an image build would
+    answer every volume question with `image`, so the defaults are pointed somewhere
+    empty and the image tests opt in through the environment overrides."""
+    for name in (
+        "WM_OPTIONS",
+        "WM_PROJECT_USER_DIR",
+        "FOAM_USER_LIBBIN",
+        "LD_LIBRARY_PATH",
+        "FOAM_SITE_APPBIN",
+        "FOAM_SITE_LIBBIN",
+    ):
         monkeypatch.delenv(name, raising=False)
+    nowhere = tmp_path_factory.mktemp("no-image")
+    monkeypatch.setattr(hisa_env, "DEFAULT_SITE_APPBIN", str(nowhere / "bin"))
+    monkeypatch.setattr(hisa_env, "DEFAULT_SITE_LIBBIN", str(nowhere / "lib"))
+    monkeypatch.setattr(hisa_env, "DEFAULT_IMAGE_SOURCE", str(nowhere / "hisa"))
 
 
 PLATFORM = "linux64GccDPInt32Opt"
@@ -86,12 +102,69 @@ def test_a_binary_on_the_volume_is_recognised(hisa_env, tmp_path):
     found = hisa_env.probe(user_dir, source)
 
     assert found["available"] is True
+    assert found["location"] == "volume"
     assert found["binary_present"] is True
     assert found["binary"].endswith(f"platforms/{PLATFORM}/bin/hisa")
     # A stub shell script is not an ELF binary, so ldd either declines or is not here.
     assert found["linkage"] in ("ok", "unchecked")
     assert found["example_present"] is True
     assert found["example"].endswith("examples/oneraM6/simulation")
+    # A volume build is invisible to a plain shell, so the exports are the payload.
+    assert found["exports"]
+
+
+def build_image(root: Path, monkeypatch, *, example: bool = True) -> Path:
+    """A fake of the baked image layout: site bin and lib, and the kept example."""
+    appbin = root / "site" / "2512" / "platforms" / PLATFORM / "bin"
+    libbin = root / "site" / "2512" / "platforms" / PLATFORM / "lib"
+    appbin.mkdir(parents=True)
+    libbin.mkdir(parents=True)
+    target = appbin / "hisa"
+    target.write_text("#!/bin/sh\nexit 0\n")
+    target.chmod(0o755)
+    monkeypatch.setenv("FOAM_SITE_APPBIN", str(appbin))
+    monkeypatch.setenv("FOAM_SITE_LIBBIN", str(libbin))
+    source = root / "opt" / "hisa"
+    if example:
+        (source / "examples" / "oneraM6" / "simulation" / "system").mkdir(parents=True)
+    return source
+
+
+def test_an_image_build_is_found_first_and_needs_no_exports(hisa_env, tmp_path, monkeypatch):
+    """The image location is on every instance and on the sourced PATH already, so it
+    wins over the volume and the report stops prescribing exports that do nothing."""
+    image_source = build_image(tmp_path / "image", monkeypatch)
+    monkeypatch.setattr(hisa_env, "DEFAULT_IMAGE_SOURCE", str(image_source))
+    user_dir, source = build(tmp_path)  # a volume build is present too, and loses
+
+    found = hisa_env.probe(user_dir, source)
+    assert found["available"] is True
+    assert found["location"] == "image"
+    assert found["binary"].endswith("site/2512/platforms/" + PLATFORM + "/bin/hisa")
+    assert "image" in found["reason"]
+    assert found["exports"] == []
+    assert "-x" not in found["mpirun"]
+    assert found["example"].endswith("examples/oneraM6/simulation")
+
+    text = hisa_env.report(found)
+    assert "nothing to export" in text
+
+
+def test_the_volume_is_the_fallback_for_an_older_image(hisa_env, tmp_path, monkeypatch):
+    """An older image has no site build, and the 2026-08-30 volume build still counts."""
+    user_dir, source = build(tmp_path)
+    found = hisa_env.probe(user_dir, source)
+    assert found["available"] is True
+    assert found["location"] == "volume"
+    # The volume answer keeps its whole contract: exports, and mpirun forwarding.
+    assert found["exports"][0].startswith("export WM_PROJECT_USER_DIR=")
+    assert found["mpirun"].count("-x ") == 4
+
+
+def test_total_absence_names_both_places_it_looked(hisa_env, tmp_path):
+    found = hisa_env.probe(tmp_path / "OpenFOAM" / "user-v2512", tmp_path / "hisa")
+    assert found["available"] is False
+    assert "(image)" in found["reason"] and "(volume)" in found["reason"]
 
 
 def test_an_unresolved_shared_object_is_not_the_same_as_absent(hisa_env, tmp_path, monkeypatch):

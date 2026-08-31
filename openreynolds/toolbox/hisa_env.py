@@ -2,23 +2,27 @@
 """Is the shock-capturing solver on this instance, and what does a shell need to run it?
 
 HiSA is an implicit density-based OpenFOAM solver (AUSM+up flux, dual-time stepping,
-GMRES under LU-SGS). It is not in the image. It was built from source onto the workspace
-volume on 2026-08-30, during the ONERA M6 replication where `rhoSimpleFoam` converged
-beautifully and showed no shock at any of seven span stations; on the same 1.79M-cell
-mesh HiSA resolved the lambda structure and landed drag within 0.3% of a published band.
+GMRES under LU-SGS). Newer images bake it in, at the OpenFOAM site directories that the
+sourced bashrc already puts on PATH and LD_LIBRARY_PATH, so on those instances it runs
+with no exports at all. Before that it was built from source onto the workspace volume
+(2026-08-30, during the ONERA M6 replication where `rhoSimpleFoam` converged beautifully
+and showed no shock at any of seven span stations; on the same 1.79M-cell mesh HiSA
+resolved the lambda structure and landed drag within 0.3% of a published band), and a
+volume build is still the route onto an instance running an older image.
 
-Because it lives on the volume rather than in the image, whether it is here is a fact
-about *this* instance, and an instance rebuilt from scratch has no HiSA and no sign that
-it ever did. Guessing wrong is expensive in both directions: assuming it is absent means
-re-deriving a density-based dictionary set by hand, and assuming it is present means
-discovering otherwise from the middle of a job log.
+So this looks in the image's site directories first and at the volume second, and says
+which of the two it found. Whether it is here at all remains a fact about *this*
+instance, and guessing wrong is expensive in both directions: assuming it is absent
+means re-deriving a density-based dictionary set by hand, and assuming it is present
+means discovering otherwise from the middle of a job log.
 
-It also needs four environment variables that OpenFOAM's own `bashrc` does not set, and
-`mpirun` needs them forwarded with `-x` -- ranks that start without them die on a missing
-`libhisa*.so`, which reads like a solver crash and is not one. So this prints the exact
-export lines rather than describing them, and prints the path to the ONERA M6 case HiSA
-ships, which is by a wide margin the fastest route to a correct dictionary set given that
-`foamToC` and `foamInfo` are absent from this image.
+A volume build needs four environment variables that OpenFOAM's own `bashrc` does not
+set, and `mpirun` needs them forwarded with `-x` -- ranks that start without them die on
+a missing `libhisa*.so`, which reads like a solver crash and is not one. An image build
+needs none of that. Either way this prints what a shell needs rather than describing it,
+and prints the path to the ONERA M6 case HiSA ships, which is by a wide margin the
+fastest route to a correct dictionary set given that `foamToC` and `foamInfo` are absent
+from this image.
 
 This reports and changes nothing: it exports nothing, writes nothing, and installs
 nothing, and the reading can be wrong -- a binary it cannot analyse is reported as
@@ -46,6 +50,20 @@ from typing import Any
 # well choose somewhere else and this script should not be the reason it is not found.
 DEFAULT_USER_DIR = "/work/OpenFOAM/user-v2512"
 DEFAULT_SOURCE = "/work/hisa/hisa"
+
+# Where newer images bake it: the OpenFOAM site directories, which the sourced bashrc
+# puts on PATH and LD_LIBRARY_PATH with no exports needed. A shell that has sourced the
+# environment carries the real answer in $FOAM_SITE_APPBIN/$FOAM_SITE_LIBBIN; the
+# literal paths are the v2512 image's, for reading this from a shell that has not.
+DEFAULT_SITE_APPBIN = (
+    "/usr/lib/openfoam/openfoam2512/site/2512/platforms/linux64GccDPInt32Opt/bin"
+)
+DEFAULT_SITE_LIBBIN = (
+    "/usr/lib/openfoam/openfoam2512/site/2512/platforms/linux64GccDPInt32Opt/lib"
+)
+# The image keeps HiSA's worked ONERA M6 case here; the build tree itself is cleaned
+# out of the image, so this is a dictionaries-only tree rather than a full source.
+DEFAULT_IMAGE_SOURCE = "/opt/hisa"
 
 # WM_OPTIONS for the ESI image. A build with a different precision or label size lands
 # in a differently named directory, which is why the platform directory is looked up
@@ -80,6 +98,21 @@ def locations(user_dir: Path, source: Path) -> dict[str, Path]:
     libbin = user_dir / "platforms" / platform / "lib"
     return {
         "user_dir": user_dir,
+        "appbin": appbin,
+        "libbin": libbin,
+        "binary": appbin / "hisa",
+        "source": source,
+        "example": source / EXAMPLE_CASE,
+    }
+
+
+def site_locations() -> dict[str, Path]:
+    """Where an image build would be. The sourced environment is the authority when it
+    is there; the literal v2512 paths are for a shell that has not sourced it."""
+    appbin = Path(os.environ.get("FOAM_SITE_APPBIN") or DEFAULT_SITE_APPBIN)
+    libbin = Path(os.environ.get("FOAM_SITE_LIBBIN") or DEFAULT_SITE_LIBBIN)
+    source = Path(DEFAULT_IMAGE_SOURCE)
+    return {
         "appbin": appbin,
         "libbin": libbin,
         "binary": appbin / "hisa",
@@ -222,29 +255,50 @@ def probe_binary(
 
 
 def probe(user_dir: Path, source: Path) -> dict[str, Any]:
-    """Everything this script knows, as plain data. `main` only formats it."""
+    """Everything this script knows, as plain data. `main` only formats it.
+
+    The image's site directories are looked at first, because an image build is on
+    every instance and needs no environment; the volume locations second, because an
+    older image's instance may still carry the 2026-08-30 build there. `location`
+    says which of the two answered.
+    """
+    site = site_locations()
     where = locations(user_dir, source)
-    # `$PATH` is deliberately not searched: a shell that has already sourced the
-    # exports below would find hisa there, and this is asked in order to write them.
-    tool = probe_binary("hisa", where["appbin"], libbin=where["libbin"])
+
+    in_image = False
+    tool = probe_binary("hisa", site["appbin"], libbin=site["libbin"])
+    if tool["present"]:
+        in_image = True
+    else:
+        # `$PATH` is deliberately not searched: a shell that has already sourced the
+        # exports below would find hisa there, and this is asked in order to write them.
+        tool = probe_binary("hisa", where["appbin"], libbin=where["libbin"])
     binary = tool["path"]
     present = tool["present"]
     linkage, missing = tool["linkage"], tool["missing_libraries"]
 
     if not present:
         reason = (
-            f"no hisa binary at {binary.as_posix()} -- this instance does not have it, "
+            f"no hisa binary at {site['binary'].as_posix()} (image) or "
+            f"{binary.as_posix()} (volume) -- this instance does not have it, "
             "or it was built somewhere else (--user-dir)"
         )
     elif linkage == "missing":
         reason = "the binary is there and its shared objects do not resolve: " + ", ".join(
             missing
         )
+    elif in_image:
+        reason = f"hisa is at {binary.as_posix()}, baked into the image"
     else:
         reason = f"hisa is at {binary.as_posix()}"
 
+    # An image build is already on the sourced PATH and library path, so the export
+    # lines are the volume build's need, not a general one.
+    example = site["example"] if site["example"].is_dir() else where["example"]
+    found_source = site["source"] if in_image else where["source"]
     return {
         "available": present and linkage != "missing",
+        "location": "image" if in_image else "volume",
         "binary": binary.as_posix(),
         "binary_present": present,
         "linkage": linkage,
@@ -252,13 +306,13 @@ def probe(user_dir: Path, source: Path) -> dict[str, Any]:
         "reason": reason,
         "platform": platform_dir(user_dir),
         "user_dir": where["user_dir"].as_posix(),
-        "appbin": where["appbin"].as_posix(),
-        "libbin": where["libbin"].as_posix(),
-        "source": where["source"].as_posix(),
-        "example": where["example"].as_posix(),
-        "example_present": where["example"].is_dir(),
-        "exports": export_lines(where),
-        "mpirun": mpirun_prefix(),
+        "appbin": (site["appbin"] if in_image else where["appbin"]).as_posix(),
+        "libbin": (site["libbin"] if in_image else where["libbin"]).as_posix(),
+        "source": found_source.as_posix(),
+        "example": example.as_posix(),
+        "example_present": example.is_dir(),
+        "exports": [] if in_image else export_lines(where),
+        "mpirun": "mpirun -np <N> hisa -parallel" if in_image else mpirun_prefix(),
     }
 
 
@@ -277,10 +331,17 @@ def report(found: dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("# what a shell needs")
-    lines.extend(f"  {line}" for line in found["exports"])
-    lines.append("")
-    lines.append("  in parallel, the same variables have to cross into the ranks:")
-    lines.append(f"  {found['mpirun']}")
+    if found["exports"]:
+        lines.extend(f"  {line}" for line in found["exports"])
+        lines.append("")
+        lines.append("  in parallel, the same variables have to cross into the ranks:")
+        lines.append(f"  {found['mpirun']}")
+    else:
+        lines.append(
+            "  nothing to export: the image's site directories are on PATH and the "
+            "library path once the OpenFOAM environment is sourced"
+        )
+        lines.append(f"  in parallel: {found['mpirun']}")
 
     lines.append("")
     lines.append("# a worked case to copy dictionaries from")
@@ -298,7 +359,8 @@ def report(found: dict[str, Any]) -> str:
         lines.append("")
         lines.append("# if it is genuinely absent")
         lines.append(
-            "  it is a source build against v2512 from gitlab.com/hisa/hisa, roughly "
+            "  newer images ship it; an instance on an older image can carry a source "
+            "build against v2512 from gitlab.com/hisa/hisa onto the volume, roughly "
             "half an hour of compile"
         )
         lines.append(
