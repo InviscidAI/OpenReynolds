@@ -25,9 +25,26 @@ from .base import (
     Stat,
 )
 
-_RETRY_STATUSES = frozenset({429, 502, 503, 504})
+_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+"""Statuses worth trying again rather than handing to the model as a failed tool call.
+
+500 is here because of what it costs when it is not. Measured across two live studies,
+18% of one study's tool calls came back `http_error (500)` -- clustered in the window
+where the sandbox was being restarted underneath it -- while the other study, on the
+same instance, saw none. Reproduced by hand: a plain read-only
+`GET .../files?stat=1` answered 500 and then succeeded four seconds later, unchanged.
+
+Every one of those reached the model as a tool error, and every tool error costs a full
+turn: the whole conversation re-read, to learn that the backend blinked. The service's
+own `supa.run()` already retries once on a dropped database socket for the same reason;
+this is the same courtesy on the client side. A 500 that survives the retries still
+reaches the model, so nothing is hidden -- only the flapping is absorbed."""
+
 _MAX_ATTEMPTS = 5
 _DEFAULT_RETRY_AFTER_S = 10.0
+_SERVER_ERROR_RETRY_S = 1.0
+"""A 500 is a hiccup, not a queue, so it is retried quickly rather than backed off from
+the way a 429 or a cold-start 503 is."""
 
 
 def _decode_error(response: httpx.Response) -> BackendError:
@@ -97,6 +114,11 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
                 pass
         if response.status_code == 503:
             return _DEFAULT_RETRY_AFTER_S
+        if response.status_code == 500:
+            # Nothing is being asked to queue: the same call succeeded four seconds
+            # later, unchanged. Waiting the exponential backoff here would turn an
+            # absorbed hiccup into a visible stall.
+            return _SERVER_ERROR_RETRY_S
     return min(2.0**attempt, 30.0)
 
 
@@ -226,6 +248,14 @@ class FoamdClient:
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=httpx.Timeout(60.0, connect=connect_timeout),
+            # Redirects are followed. The service itself issues none, but the edge in
+            # front of it does: a long `POST .../exec` comes back as a bare `303` with an
+            # empty body, which this client turned into `bad_response (303): the body was
+            # empty`. The command has usually *run* by then, so the caller is left unable
+            # to tell a failure from a success -- a render that had already been written
+            # looked like a render that had not, and the same picture came back three
+            # times while the code that drew it was being changed underneath it.
+            follow_redirects=True,
         )
 
     def close(self) -> None:
@@ -283,13 +313,33 @@ class FoamdClient:
 
     # -- capture plane ---------------------------------------------------------
 
-    def create_study(self, title: str | None, instance_id: str | None) -> str:
+    def create_study(self, title: str | None, instance_id: str | None,
+                     study_id: str | None = None, home: str | None = None) -> str:
+        """Open the study on the platform, under this study's own id when given.
+
+        The id used to be the service's to choose, so a study was named twice --
+        `20260829-061843-9483` here and a uuid there -- and nothing could join the
+        row to the directory it described. `home` is recorded for the same reason:
+        a resume on a machine with no local state has to be able to find out which
+        directory on the volume belongs to this study.
+        """
         payload: dict[str, Any] = {}
         if title:
             payload["title"] = title
         if instance_id:
             payload["instance_id"] = instance_id
+        if study_id:
+            payload["id"] = study_id
+        if home:
+            payload["home"] = home
         return _json(self.request("POST", "/v1/studies", json=payload))["study_id"]
+
+    def get_study(self, study_id: str) -> dict[str, Any]:
+        """One study as the platform holds it: title, instance_id, home, created_at."""
+        return _json(self.request("GET", f"/v1/studies/{study_id}"))
+
+    def list_studies(self) -> list[dict[str, Any]]:
+        return _json(self.request("GET", "/v1/studies"))
 
     def post_messages(self, study_id: str, messages: list[dict[str, Any]]) -> None:
         self.request("POST", f"/v1/studies/{study_id}/messages", json=messages)

@@ -7,6 +7,7 @@ import io
 
 import pytest
 
+from openreynolds import images
 from openreynolds.images import MAX_INLINE_BYTES, protocol, show
 
 PNG = base64.b64decode(
@@ -106,3 +107,43 @@ def test_a_broken_stream_does_not_propagate(tmp_path, monkeypatch):
             raise OSError("pipe closed")
 
     assert show(png(tmp_path), stream=Broken()) is False
+
+
+# -- what travels is not always what is on disk --------------------------------
+
+
+def test_a_large_render_is_scaled_for_transport_only():
+    """Renders come out at 900x700 to 1600x500 and cost 840-1,333 tokens each, and a
+    study reads the same path several times while it fixes the framing. A mesh at
+    1024 px still shows near-wall spacing and a refinement band."""
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (2048, 1536), "white").save(buffer, format="PNG")
+    original = buffer.getvalue()
+
+    smaller = images.downscale(original, "image/png")
+    assert max(images.dimensions(smaller)) == images.ATTACH_MAX_EDGE
+    assert len(smaller) < len(original)
+
+
+def test_a_picture_already_small_enough_is_left_exactly_as_it_is():
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (300, 200), "white").save(buffer, format="PNG")
+    original = buffer.getvalue()
+    assert images.downscale(original, "image/png") is original
+
+
+def test_an_animation_is_never_flattened():
+    """Scaling a gif through a still encoder loses the thing it is of."""
+    assert images.downscale(b"GIF89a-not-really", "image/gif") == b"GIF89a-not-really"
+
+
+def test_an_unreadable_picture_travels_whole_rather_than_not_at_all():
+    """A picture that arrives larger than necessary is a cost; one that arrives damaged
+    is a wrong answer."""
+    assert images.downscale(b"not an image at all", "image/png") == b"not an image at all"

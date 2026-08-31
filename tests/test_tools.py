@@ -6,7 +6,7 @@ import pytest
 
 from openreynolds.backend.base import ExecResult, JobStatus
 from openreynolds.backend.base import WORKSPACE_ROOT
-from openreynolds.tools import TOOLS, dispatch
+from openreynolds.tools import TOOLS, ToolContext, dispatch
 
 
 def test_tool_list_is_deterministic():
@@ -389,3 +389,58 @@ def test_no_wait_asked_means_no_waiting(ctx):
     assert not is_error
     assert _time.monotonic() - began < 1
     assert "waited" not in out
+
+
+# -- the same bytes are not sent twice -----------------------------------------
+
+
+@pytest.fixture
+def roomy(backend, store):
+    """A context whose output cap is above the echo threshold, so a large repeat is
+    actually large by the time it is compared."""
+    return ToolContext(backend=backend, store=store, max_output=50_000)
+
+
+def test_a_byte_identical_repeat_points_at_the_first_one(roomy):
+    """`bash` output is 78-82% of everything the model is sent, and one study's most
+    expensive call -- `cat .toolbox/notes/*.md` -- was 4,177 tokens that then rode along
+    in all 76 requests after it. Reading it again puts a second copy in the same thread."""
+    roomy.backend.exec_result = ExecResult(0, "N" * 5_000, False, None)
+
+    first, _ = dispatch(roomy, "bash", {"cmd": "cat notes.md"})
+    assert "N" * 5_000 in first
+
+    again, error = dispatch(roomy, "bash", {"cmd": "cat notes.md"})
+    assert not error, "the call succeeded; only the second copy of the bytes is gone"
+    assert "identical, byte for byte" in again
+    assert "#1" in again, "and it says where the bytes already are"
+    assert len(again) < 500
+
+
+def test_output_that_changed_is_never_collapsed(roomy):
+    """A command whose answer moved is exactly the interesting case."""
+    roomy.backend.exec_result = ExecResult(0, "A" * 5_000, False, None)
+    dispatch(roomy, "bash", {"cmd": "tail log"})
+    roomy.backend.exec_result = ExecResult(0, "B" * 5_000, False, None)
+    second, _ = dispatch(roomy, "bash", {"cmd": "tail log"})
+    assert "B" * 5_000 in second
+
+
+def test_a_short_repeat_is_left_exactly_as_it_is(ctx):
+    """Below the threshold the sentence explaining the repeat costs what the repeat does."""
+    ctx.backend.exec_result = ExecResult(0, "ok", False, None)
+    dispatch(ctx, "bash", {"cmd": "ls"})
+    again, _ = dispatch(ctx, "bash", {"cmd": "ls"})
+    assert "identical" not in again and "ok" in again
+
+
+def test_the_same_failure_twice_is_still_reported_twice(ctx):
+    """A repeated error is a fact about the run, not a duplicate to fold away."""
+    def refuse(cmd, cwd=None, timeout_s=120):
+        raise BackendError("x" * 5_000, code="boom")
+
+    ctx.backend.exec = refuse
+    first, error1 = dispatch(ctx, "bash", {"cmd": "go"})
+    second, error2 = dispatch(ctx, "bash", {"cmd": "go"})
+    assert error1 and error2
+    assert first == second and "identical" not in second

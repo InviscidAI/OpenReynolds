@@ -16,6 +16,18 @@ the default is all of it, and the only limits left are two caps that exist so an
 automatic background copy can never be the reason a laptop runs out of disk.
 `--readable-only` is there for anyone who wants the small version on purpose.
 
+There are three policies, not two, and the third is the one the background cycles use
+(`live=True`, `reason_to_skip_live`). `everything` asks a decomposed solve for every
+per-processor field file it is writing, which is why a cycle never converged during one:
+thirty-one minutes after the answer was written, moving 233 files of which 156 were
+`processorN/` data nothing in either repo opens. `--readable-only` is the opposite
+mistake for a live cycle -- it drops `constant/polyMesh`, every written time and every
+STL, which is exactly what the hosted 3D viewer reads out of the mirror. The live policy
+keeps the mesh, the newest time, logs, postProcessing, dictionaries, images and surfaces,
+and drops only what is redundant. Pictures are also asked for in the first round trip
+rather than smallest-first, because smallest-first during a solve means "after the
+processor files".
+
 **Nothing is skipped quietly.** A silent filter and an empty workspace look identical
 from here, and the whole complaint that produced this file was somebody not being able
 to tell those apart. Every file left behind carries the reason it was left, and the
@@ -188,6 +200,86 @@ def grouped(skips: list[Skip]) -> str:
     return f"{len(skips)} file(s) - " + ", ".join(parts)
 
 
+LIVE_DROP_DIRS = frozenset({"VTK", "__pycache__"})
+"""Directories a background cycle never brings home. `processorN/` is handled
+separately because it is matched by shape rather than by name."""
+
+
+def newest_times(entries, root: str) -> dict[str, str]:
+    """For each case in the listing, the name of its newest written time directory.
+
+    A running solve writes a new one every few seconds and every earlier one is a
+    complete copy of the fields. Keeping them all is what made a cycle never converge;
+    keeping the newest is what the viewer and the user actually look at."""
+    newest: dict[str, tuple[float, str]] = {}
+    for entry in entries:
+        parts = _relative(entry.path, root).split("/")
+        for index, part in enumerate(parts[:-1]):
+            if not _is_time_directory(part):
+                continue
+            try:
+                value = float(part)
+            except ValueError:
+                continue
+            case = "/".join(parts[:index])
+            if value > newest.get(case, (float("-inf"), ""))[0]:
+                newest[case] = (value, part)
+    return {case: name for case, (_value, name) in newest.items()}
+
+
+def reason_to_skip_live(relative: str, newest: dict[str, str]) -> str | None:
+    """Why a file stays on the instance during a *background* cycle.
+
+    A third policy, between the two that existed. `--readable-only` is far too narrow
+    for this -- it drops `constant/polyMesh`, every written time and every STL, which is
+    exactly the data the hosted 3D viewer reads out of the mirror, so a cycle using it
+    would blind the page. And `everything=True`, which is what the cycles used, asks a
+    decomposed solve for every per-processor field file it is writing: one live run
+    spent thirty-one minutes after the answer was already written moving 233 files, 156
+    of them `processorN/` data that nothing in either repo will ever open, while a
+    200 KB render the user was waiting for sat behind them.
+
+    So: the mesh, the newest time, logs, postProcessing, dictionaries, images and
+    surfaces all come over. What is dropped is only what is genuinely redundant --
+    per-processor copies of fields that get reconstructed, superseded time directories,
+    and formats written for a viewer that is not on this machine.
+    """
+    parts = relative.split("/")
+    for index, part in enumerate(parts[:-1]):
+        if _PROCESSOR_DIR.match(part):
+            return "processor decomposition data"
+        if part in LIVE_DROP_DIRS:
+            return "written for a viewer that is not on this machine"
+        if _is_time_directory(part):
+            keep = newest.get("/".join(parts[:index]))
+            if keep is not None and part != keep:
+                return f"a superseded time directory ({part}/)"
+    if _suffix(parts[-1]) in SKIP_SUFFIXES:
+        return "written for a viewer that is not on this machine"
+    return None
+
+
+PRIORITY_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
+
+
+def _priority(entry) -> int:
+    """What to ask for first. Lower goes sooner.
+
+    Smallest-first was chosen so that one enormous log left behind is a sentence in the
+    report rather than three hundred dictionaries missing -- sound, and it inverts under
+    a live solve, because the smallest files in a decomposed case are precisely the
+    per-processor ones nobody is waiting for. A render the model just made and looked at
+    sat behind thousands of them: nine minutes for one picture, and a second that never
+    arrived at all. Pictures and reports are what somebody is watching for, so they go
+    in the first round trip and the bulk follows."""
+    name = entry.path.rsplit("/", 1)[-1]
+    if _suffix(name) in PRIORITY_SUFFIXES:
+        return 0
+    if name.startswith("log.") or _suffix(name) in (".md", ".txt", ".csv", ".json"):
+        return 1
+    return 2
+
+
 def reason_to_skip(relative: str) -> str | None:
     """Why this file stays on the instance, or None to bring it down.
 
@@ -245,6 +337,7 @@ def sync(
     *,
     path: str = "",
     everything: bool = False,
+    live: bool = False,
     max_file_bytes: int = MAX_FILE_BYTES,
     max_total_bytes: int = MAX_TOTAL_BYTES,
 ) -> MirrorReport:
@@ -277,7 +370,7 @@ def sync(
             f"the listing stopped at {MAX_ENTRIES} entries; part of {root} was not looked at"
         )
 
-    candidates = _wanted(entries, root, report, everything, max_file_bytes)
+    candidates = _wanted(entries, root, report, everything, max_file_bytes, live=live)
     _pull(browser, _within_budget(candidates, report, max_total_bytes), report)
     return report
 
@@ -305,16 +398,21 @@ def _wanted(
     report: MirrorReport,
     everything: bool,
     max_file_bytes: int,
+    live: bool = False,
 ) -> list[Entry]:
     """Files worth asking for: not filtered out, not too big, not already here."""
     wanted = []
+    newest = newest_times(entries, root) if live else {}
     for entry in entries:
         if entry.is_dir:
             continue
         relative = _relative(entry.path, root)
-        reason = None if everything else (
-            reason_to_skip(relative) or reason_by_size(relative, entry.size)
-        )
+        if live:
+            reason = reason_to_skip_live(relative, newest)
+        elif everything:
+            reason = None
+        else:
+            reason = reason_to_skip(relative) or reason_by_size(relative, entry.size)
         if reason:
             report.skipped.append(Skip(entry.path, reason, entry.size))
             continue
@@ -371,7 +469,13 @@ def _batches(wanted: list[Entry]) -> list[list[Entry]]:
     batches: list[list[Entry]] = []
     current: list[Entry] = []
     carried = 0
-    for entry in wanted:
+    # Which files come home is decided by the budget, smallest-first, so running out
+    # still costs one enormous log rather than three hundred dictionaries. Which round
+    # trip they come home *in* is decided here, and pictures go first: during a
+    # decomposed solve the smallest files are the per-processor ones, so a 200 KB render
+    # the model had just looked at sat behind thousands of them -- nine minutes for one
+    # picture, and a second that never arrived before the session ended.
+    for entry in sorted(wanted, key=lambda item: (_priority(item), item.size, item.path)):
         if current and (len(current) >= BATCH or carried + entry.size > BATCH_BYTES):
             batches.append(current)
             current, carried = [], 0
@@ -564,7 +668,7 @@ class LiveMirror:
             if progress is not None:
                 progress.sync_begin()
             try:
-                report = sync(self.browser, everything=True)
+                report = sync(self.browser, live=True)
             except Exception as exc:  # noqa: BLE001 - a convenience may not end a session
                 report = MirrorReport(
                     local_dir=Path.cwd(), warnings=[f"could not mirror: {exc}"]

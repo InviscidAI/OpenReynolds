@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from openreynolds.config import CONTEXT_WINDOW_TOKENS, Config
+from openreynolds import loop as loop_mod
+from openreynolds.llm import BadRequest, Turn
 from openreynolds.loop import KEEP_LIVE_IMAGES, Loop
 from openreynolds.tools import ToolContext
 
@@ -338,9 +340,11 @@ def _img_result(tool_id, path, size):
 
 def test_old_images_lose_their_pixels_but_keep_their_description(ctx, store, view):
     loop = Loop(Config(llm_api_key="k"), ctx, store, view)
+    # Over the byte budget, which is what actually made the API refuse a request.
+    big = loop_mod.LIVE_IMAGE_BUDGET // 4
     for i in range(5):
         loop.messages.append({"role": "assistant", "content": []})
-        loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/work/r{i}.png", 2000)]})
+        loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/work/r{i}.png", big)]})
 
     loop._evict_old_images(keep=2)
 
@@ -366,11 +370,85 @@ def test_eviction_is_idempotent(ctx, store, view):
 
 def test_eviction_runs_before_a_send(ctx, store, view):
     loop = Loop(Config(llm_api_key="k"), ctx, store, view)
-    for i in range(4):
-        loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/r{i}.png", 5000)]})
+    big = loop_mod.LIVE_IMAGE_BUDGET // 3
+    for i in range(KEEP_LIVE_IMAGES + 3):
+        loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/r{i}.png", big)]})
     install(loop, [message([text_block("looked")])])
 
     loop._send()
 
     live = [m for m in loop.messages if isinstance(m["content"][0]["content"], list)]
     assert len(live) == KEEP_LIVE_IMAGES, "the send shed all but the most recent images"
+
+
+def test_nothing_is_evicted_while_the_thread_is_under_the_byte_budget(ctx, store, view):
+    """Every eviction rewrites a block in the middle of the conversation, which
+    invalidates the prompt cache from there on. Triggered by a count, that was paid on
+    the third picture of a study -- measured at a net loss of ~3.5x, and worse the
+    longer the study ran, because the prefix being destroyed kept growing."""
+    loop = Loop(Config(llm_api_key="k"), ctx, store, view)
+    for i in range(12):
+        loop.messages.append({"role": "user", "content": [_img_result(f"t{i}", f"/r{i}.png", 1000)]})
+    before = [str(m) for m in loop.messages]
+
+    loop._evict_old_images(keep=2)
+
+    assert [str(m) for m in loop.messages] == before, "the cache prefix was left alone"
+
+
+def test_the_budget_is_measured_in_bytes_because_bytes_are_what_failed(ctx, store, view):
+    """The incident behind the guard was twenty-one images and five megabytes, and the
+    API refusing the request. Twenty-one small ones are not that."""
+    loop = Loop(Config(llm_api_key="k"), ctx, store, view)
+    blocks = [{"type": "image", "source": {"type": "base64", "data": "X" * 40}},
+              {"type": "text", "text": "note"}]
+    assert loop_mod._image_bytes(blocks) == 40
+    assert loop_mod._image_bytes([{"type": "text", "text": "no picture"}]) == 0
+
+
+def test_a_refused_system_turn_is_learned_once_not_every_time(ctx, store, view):
+    """`inform()` appends a fresh `role: "system"` on every harness fact, so without a
+    latch each job-end wake and each refresh paid for its own rejected request. The
+    Anthropic Messages API takes only user and assistant in `messages`, so this is the
+    ordinary path for every Anthropic-family provider, hosted or bring-your-own."""
+    loop = Loop(Config(llm_api_key="k"), ctx, store, view)
+    sent = []
+
+    class Refusing:
+        """Rejects a system turn once, exactly as the API does."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, **kwargs):
+            self.calls += 1
+            sent.append([m["role"] for m in kwargs["messages"]])
+            if any(m["role"] == "system" for m in kwargs["messages"]):
+                raise BadRequest("messages: unexpected role 'system'")
+            return Turn(content=[])
+
+    provider = Refusing()
+    loop.provider = provider
+
+    loop.say("first")
+    loop.inform("a job ended")
+    loop._send()
+    assert provider.calls == 2, "one rejection, then the folded retry"
+    assert "system" not in sent[-1]
+
+    loop.say("second")
+    loop.inform("another job ended")
+    loop._send()
+    assert provider.calls == 3, "the second fact cost no rejection at all"
+    assert not any("system" in roles for roles in sent[2:])
+
+
+def test_folding_leaves_every_other_message_byte_identical(ctx, store, view):
+    """The rewrite must not disturb the cached prefix -- that is the whole reason the
+    fold passes non-system messages through as the same objects."""
+    loop = Loop(Config(llm_api_key="k"), ctx, store, view)
+    original = {"role": "user", "content": "hello"}
+    assert loop._fold_system(original) is original
+
+    folded = loop._fold_system({"role": "system", "content": "a fact"})
+    assert folded["role"] == "user" and "a fact" in folded["content"]

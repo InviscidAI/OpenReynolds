@@ -258,6 +258,7 @@ class OpenAIProvider(Provider):
             stop_reason=stop,
             stop_explanation="the endpoint's content filter" if stop == "refusal" else "",
             context_tokens=_context_tokens(usage),
+            tokens=_token_classes(usage),
             provider=self.name,
             raw=raw,
         )
@@ -340,10 +341,27 @@ def _as_text(content: Any) -> str:
     return content if isinstance(content, str) else json.dumps(content, default=str)
 
 
-def _context_tokens(usage: Any) -> int:
+def _token_classes(usage: Any) -> dict[str, int]:
+    """The counts this API reports, under the names the loop uses.
+
+    Chat Completions gives prompt and completion totals, and its cached prefix -- when
+    the vendor bills one -- arrives as `prompt_tokens_details.cached_tokens`. `input` is
+    the uncached remainder, so the four keys still sum to the whole request."""
     if usage is None:
-        return 0
-    return int((getattr(usage, "prompt_tokens", 0) or 0) + (getattr(usage, "completion_tokens", 0) or 0))
+        return {}
+    prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = int(getattr(details, "cached_tokens", 0) or 0) if details is not None else 0
+    return {
+        "input": max(0, prompt - cached),
+        "cache_read": cached,
+        "cache_write": 0,
+        "output": int(getattr(usage, "completion_tokens", 0) or 0),
+    }
+
+
+def _context_tokens(usage: Any) -> int:
+    return sum(_token_classes(usage).values())
 
 
 def _message(exc: Exception) -> str:

@@ -60,7 +60,12 @@ class JobStatus:
     name: str | None = None
     exit_code: int | None = None
     end_reason: str | None = None
-    """completed | kill_on_match | killed_by_client | sandbox_expired"""
+    """completed | failed | killed_externally | kill_on_match | killed_by_client | sandbox_expired
+
+    Only `completed` means the work finished on its own terms. `failed` is the solver
+    stopping (a FOAM FATAL, a bad dictionary); `killed_externally` is a 137 or a 143 --
+    something outside the job acted, and nothing the job did caused it. They used to all
+    read `completed`, which left the exit code as the only honest signal there was."""
     started_at: str | None = None
     ended_at: str | None = None
     log_size: int | None = None

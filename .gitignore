@@ -16,7 +16,22 @@ dist/
 venv/
 .pytest_cache/
 .ruff_cache/
-user-test*.log
+
+# Session and run output. This repo is public; the sibling repos it is developed
+# alongside are not, and neither is the material that measures it. A transcript, a
+# driver script or a findings file written next to the source is internal by
+# default: it names accounts, instance ids, costs and unfixed defects. None of it
+# has ever been committed and none of it should be, so the names are listed here
+# rather than left to whoever runs `git add -A` in a hurry.
+user-test*.log*
+queue*.sh
+context.md
+issue.md
+FINDINGS*.md
+RESULTS*.md
+VERIFIED*.md
+qa-runs/
+reynolds-verification/
 
 # editor/agent scratch
 .claude/

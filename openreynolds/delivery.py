@@ -79,9 +79,19 @@ class Gallery:
     the mirror's own thread.
     """
 
-    def __init__(self, files_dir: Path, renders_dir: Path, assemble=None, encoder=None):
+    def __init__(self, files_dir: Path, renders_dir: Path, assemble=None, encoder=None,
+                 capture=None):
         self.files_dir = files_dir
         self.renders_dir = renders_dir
+        self.capture = capture
+        """Where a surfaced render is also sent for keeping, or None.
+
+        Renders used to reach the platform only when the model happened to call
+        `fetch` on one -- and delivery had deliberately stopped using `fetch`, so in
+        the ordinary path nothing was ever uploaded and a study looked at from
+        anywhere else had no pictures at all. This is the same moment a render
+        becomes visible locally, so it is the moment to send it. Fire-and-forget,
+        like every other capture: it cannot delay or fail a study."""
         self._assemble = assemble or video.assemble
         self._encoder = encoder or video.encoder
         self._delivered: set[str] = set()
@@ -132,7 +142,17 @@ class Gallery:
             shutil.copy2(src, target)
         except OSError:
             return None
+        self._keep(target)
         return target
+
+    def _keep(self, path: Path) -> None:
+        """Send a surfaced render to the platform, if this session is capturing."""
+        if self.capture is None:
+            return
+        try:
+            self.capture.artifact(path, kind="render")
+        except Exception:  # noqa: BLE001 - a convenience may not end a session
+            pass
 
     # -- animations ------------------------------------------------------------
 
@@ -148,13 +168,18 @@ class Gallery:
             last = self._assembled.get(str(directory), 0)
             if last and len(frames) - last < MIN_ASSEMBLE_GROWTH:
                 continue
-            out = self.renders_dir / f"{directory.name}.gif"
+            # What the frames were rendered for, when the instance said so. A gif
+            # at DEFAULT_FPS is the fallback for a directory nobody declared -- not
+            # the answer for one that asked for webp at 24.
+            name, fps = video.intent(directory)
+            out = self.renders_dir / (name or f"{directory.name}.gif")
             self.renders_dir.mkdir(parents=True, exist_ok=True)
             try:
-                self._assemble(frames, out)
+                self._assemble(frames, out, fps=fps)
             except video.VideoError:
                 continue
             self._assembled[str(directory)] = len(frames)
+            self._keep(out)
             event.videos.append(out)
 
     def _touched_dirs(self, pulled: list[Path]) -> list[Path]:

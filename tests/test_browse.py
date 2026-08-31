@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from pathlib import Path
+
 import pytest
 
 from openreynolds.backend.base import BackendError, ExecResult
@@ -209,3 +211,38 @@ def test_a_path_outside_the_remembered_root_is_a_miss(backend):
 
     assert browser.cached("/work/other-study") is None
     assert browser.cached("/work") is None
+
+
+def test_pulling_a_directory_is_bounded_by_the_mirrors_caps(backend, store, monkeypatch):
+    """It was one `get_tree` over the whole subtree -- the service building a single
+    in-memory tar of everything under it, consulting none of the caps. Aimed at a case
+    root during a decomposed solve that is every processorN/ directory at once, and the
+    mirror already records what that costs: a 38 MB batch whose connection closed at
+    6 MB, taking every file in it down with it."""
+    from openreynolds import mirror
+
+    asked = {}
+
+    def fake_sync(browser, **kwargs):
+        asked.update(kwargs)
+        return mirror.MirrorReport(local_dir=store.fetch_dir(), pulled=[Path("x")])
+
+    monkeypatch.setattr(mirror, "sync", fake_sync)
+    backend.dirs["/work/case"] = ["0", "system"]
+
+    Browser(backend, store).pull("/work/case")
+
+    assert asked["path"] == "/work/case"
+    assert asked["live"] is True, "the same policy the background cycles use"
+
+
+def test_a_pull_that_brought_nothing_back_says_why(backend, store, monkeypatch):
+    from openreynolds import mirror
+
+    monkeypatch.setattr(mirror, "sync", lambda browser, **k: mirror.MirrorReport(
+        local_dir=store.fetch_dir(), warnings=["could not look at /work/case: gone"]))
+    backend.dirs["/work/case"] = []
+
+    with pytest.raises(BackendError) as exc:
+        Browser(backend, store).pull("/work/case")
+    assert "could not look at" in str(exc.value)

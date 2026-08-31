@@ -133,6 +133,7 @@ class AnthropicProvider(Provider):
             stop_reason=response.stop_reason or "end_turn",
             stop_explanation=getattr(detail, "explanation", None) or "",
             context_tokens=_context_tokens(getattr(response, "usage", None)),
+            tokens=_token_classes(getattr(response, "usage", None)),
             provider=self.name,
         )
 
@@ -200,15 +201,26 @@ def _about_images(text: str) -> bool:
     return any(word in lowered for word in ("image", "vision", "multimodal", "content type", "unsupported"))
 
 
-def _context_tokens(usage: Any) -> int:
+def _token_classes(usage: Any) -> dict[str, int]:
+    """The four counts, kept apart, because their prices span 250x.
+
+    Summed into one integer -- which is all this module used to report -- a study whose
+    prompt cache is working perfectly and one whose cache is being invalidated on every
+    turn produce the same number. Cache reads are 68-80% of a study's model bill, so
+    that one number hid the only thing worth watching."""
     if usage is None:
-        return 0
-    return int(
-        (getattr(usage, "input_tokens", 0) or 0)
-        + (getattr(usage, "cache_read_input_tokens", 0) or 0)
-        + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
-        + (getattr(usage, "output_tokens", 0) or 0)
-    )
+        return {}
+    return {
+        "input": int(getattr(usage, "input_tokens", 0) or 0),
+        "cache_read": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+        "cache_write": int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
+        "output": int(getattr(usage, "output_tokens", 0) or 0),
+    }
+
+
+def _context_tokens(usage: Any) -> int:
+    """What the request occupied in the window: the four classes added up."""
+    return sum(_token_classes(usage).values())
 
 
 def _message(exc: Exception) -> str:

@@ -23,11 +23,29 @@ from .view import View
 
 MAX_TOKENS = 64_000
 
-KEEP_LIVE_IMAGES = 2
+KEEP_LIVE_IMAGES = 5
 """How many of the most recently read images keep their pixels in the thread. Older
 ones are reduced to their text description; the model has already reasoned on them and
 re-sending megabytes of base64 every turn is what made requests large enough to be
-refused. The path survives, so a picture can be re-read deliberately if it matters."""
+refused. The path survives, so a picture can be re-read deliberately if it matters.
+
+Two, until it was measured. Carrying five images costs about 5k extra tokens a turn at
+the cache-read rate -- a tenth of a cent -- and each eviction it avoids rewrites 3k to
+12k tokens at the cache-write rate. Keeping more is the cheap side of that trade."""
+
+LIVE_IMAGE_BUDGET = 3_000_000
+"""Bytes of image data the thread may carry before any eviction happens at all.
+
+The guard exists for a real incident: a session accumulated twenty-one images, five
+megabytes of them, and the API began refusing the requests. But it was triggered by a
+*count*, so it fired on the third picture of a study and every picture after -- and each
+firing rewrites a block in the middle of the conversation, which invalidates the prompt
+cache from that point on. Measured over one study: five evictions forced 32,920 tokens
+to be re-written to save re-reading about 107,000 cached ones, a net loss of roughly
+3.5x, and it got worse the longer the study ran because the prefix being destroyed grew.
+
+Bytes are what actually failed, so bytes are what triggers it now. Under the budget
+nothing is evicted and the cache prefix is never touched."""
 
 
 class Loop:
@@ -62,10 +80,37 @@ class Loop:
         """How much thread this model can hold; a refresh is due at a fraction of it."""
         self.messages: list[dict[str, Any]] = []
         self.context_tokens = 0
+        self.token_totals: dict[str, int] = {}
+        """Tokens so far, split by what each class costs -- input, cache_read,
+        cache_write, output.
+
+        `context_tokens` is one number for four things whose prices span 250x, so it
+        cannot say whether the prompt cache is working; on this workload caching is
+        worth 7.6-8x, and cache reads are 68-80% of a study's model bill. Kept here so
+        `/status` can show the share, which is the cheapest possible alarm on the one
+        mechanism holding the bill down."""
+        self._no_system_role = False
+        """Whether this endpoint has already refused a mid-conversation `system` turn.
+
+        Set the first time one is rejected, so the cost of finding out is one round trip
+        per session rather than one per harness fact. Not a provider capability flag:
+        the same vendor accepts it on one endpoint and not another, so it is learned
+        from the answer rather than declared in a table."""
         self.api_failures = 0
         """Consecutive model-API failures. Reset on any turn that completes; used to
         escalate from "the thread is intact" to a plain explanation once it is clearly
         not a one-off (a rate limit, a usage cap) rather than a blip."""
+        self.blocked_reason: str | None = None
+        """Why the model service refused the last call, when waiting cannot fix it.
+
+        A 429 or a dropped connection is worth trying again; a 402, a 401 or a bad
+        model id is the service answering a question about the account or the request
+        and it will answer the same way in a minute. A live session spent twenty-six
+        minutes discovering that: the account budget ran out mid-study, and the
+        harness woke the model ninety more times, each one refused, each one silent
+        on the page while the person typed "whats going on?". Set here so the caller
+        can stop asking; cleared by any turn that completes and by the user speaking.
+        """
 
     @property
     def client(self) -> Any:
@@ -102,11 +147,21 @@ class Loop:
         a user turn, so elsewhere this falls back to a marked user message — and
         `_send` degrades again if the model does not support the role at all.
         """
-        if self.messages and self.messages[-1]["role"] == "user":
+        if self.messages and self.messages[-1]["role"] == "user" and not self._no_system_role:
             self.messages.append({"role": "system", "content": text})
         else:
             self.messages.append({"role": "user", "content": _as_operator_text(text)})
         self._record("event", text)
+
+    @staticmethod
+    def _fold_system(message: dict[str, Any]) -> dict[str, Any]:
+        """A `system` turn as a marked user turn; anything else passed straight through.
+
+        Passed through as the *same object*, so the bytes of every other message are
+        untouched and the cached prefix survives the rewrite."""
+        if message.get("role") != "system":
+            return message
+        return {"role": "user", "content": _as_operator_text(message["content"])}
 
     # -- the turn --------------------------------------------------------------
 
@@ -169,14 +224,15 @@ class Loop:
         except BadRequest as exc:
             if "system" not in str(exc).lower():
                 raise
-            # This model has no mid-conversation system role — fold those turns into
-            # user messages and carry on.
-            self.messages = [
-                {"role": "user", "content": _as_operator_text(m["content"])}
-                if m["role"] == "system"
-                else m
-                for m in self.messages
-            ]
+            # This endpoint has no mid-conversation system role — fold those turns into
+            # user messages and carry on. Remembered, so it is learned once: `inform()`
+            # appends a fresh `role: "system"` every time it is called, so without the
+            # latch every job-end wake and every thread refresh paid for its own
+            # rejected request, forever. The Anthropic Messages API is one of these --
+            # `messages` takes only user and assistant -- so this is the ordinary path
+            # for every Anthropic-family provider, not an exotic one.
+            self._no_system_role = True
+            self.messages = [self._fold_system(m) for m in self.messages]
             return self._stream()
 
     def _evict_old_images(self, keep: int = KEEP_LIVE_IMAGES) -> None:
@@ -198,6 +254,7 @@ class Loop:
         text and is not found again.
         """
         image_results = []
+        carried = 0
         for message in self.messages:
             if message.get("role") != "user":
                 continue
@@ -212,6 +269,13 @@ class Loop:
                     isinstance(b, dict) and b.get("type") == "image" for b in inner
                 ):
                     image_results.append(block)
+                    carried += _image_bytes(inner)
+        # Nothing is evicted while the thread is under the byte budget. Every eviction
+        # rewrites a block in the middle of the conversation and so invalidates the
+        # prompt cache from there on; doing it on a count meant paying that on the third
+        # picture of a study, to save re-reading tokens that cost a tenth as much.
+        if carried <= LIVE_IMAGE_BUDGET:
+            return
         for block in image_results[: max(0, len(image_results) - keep)]:
             inner = block["content"]
             note = next(
@@ -299,6 +363,8 @@ class Loop:
     # -- context ---------------------------------------------------------------
 
     def _account(self, response: Turn) -> None:
+        for name, count in (response.tokens or {}).items():
+            self.token_totals[name] = self.token_totals.get(name, 0) + count
         if not response.context_tokens:
             return
         self.context_tokens = response.context_tokens
@@ -394,6 +460,19 @@ def _ticking(view: View, name: str, every: float = TICK_EVERY_S):
         yield
     finally:
         stop.set()
+
+
+def _image_bytes(blocks: list) -> int:
+    """Roughly how many bytes of picture a tool result is carrying.
+
+    base64 is four characters per three bytes, and it is the encoded length that
+    travels, so the encoded length is what the budget is measured in."""
+    total = 0
+    for block in blocks:
+        if isinstance(block, dict) and block.get("type") == "image":
+            source = block.get("source") or {}
+            total += len(source.get("data") or "")
+    return total
 
 
 def _as_operator_text(text: Any) -> str:
