@@ -11,10 +11,33 @@ There is no pipeline underneath choosing the order of those things. The agent de
 how to work. This repository is the plumbing that lets it, and the plumbing is
 deliberately not allowed to tell it what to do.
 
+**[tryreynolds.com](https://tryreynolds.com)** &middot;
 [Documentation](https://tryreynolds.com/docs/) &middot;
 [Worked studies](https://tryreynolds.com/studies/) &middot;
 [Hosted app](https://app.tryreynolds.com) &middot;
 [PyPI](https://pypi.org/project/openreynolds/)
+
+You do not need to know OpenFOAM to use it. You bring the engineering question: the
+geometry, the fluid, the speed, and what you want measured. Choosing the solver,
+writing the dictionaries, sizing the mesh and reading the residuals is the agent's job.
+
+[![A study in progress: the conversation and the agent's tool calls on the left, the mesh it built on the right, and the solver's own residuals across the top.](https://tryreynolds.com/figures/ui-app-study.jpg?v=1)](https://tryreynolds.com)
+
+<sub>A study in progress. What the agent says is on the left, what it did to the
+workspace is underneath, and what it built is on the right. The bar across the top is
+the solver's own numbers, read out of the log while the job runs.</sub>
+
+## What comes out
+
+Every one of these is from a real run, with its transcript published beside it at
+[tryreynolds.com/studies](https://tryreynolds.com/studies/).
+
+| | |
+|---|---|
+| ![The lambda shock on the ONERA M6 wing, upper-surface pressure coefficient.](https://tryreynolds.com/figures/studies/m6-cp-upper-surface.png) | ![Vortex shedding past a cylinder at Re = 100.](https://tryreynolds.com/figures/studies/cyl-shedding.gif) |
+| **[The lambda-shock, at one seventh the mesh](https://tryreynolds.com/studies/onera-m6-transonic.html)** <br> <sub>ONERA M6 at Mach 0.8395. Shock positions within 0.06 chord of the 1979 wind-tunnel data, on 1.79 million cells.</sub> | **[Four numbers, four published bands, one animation](https://tryreynolds.com/studies/vortex-shedding-cylinder.html)** <br> <sub>Vortex shedding at Re = 100, with the Strouhal number checked against the published band.</sub> |
+| ![Conjugate heat transfer on a finned heat sink.](https://tryreynolds.com/figures/studies/hs-temp.png) | ![Mach number through a converging-diverging nozzle.](https://tryreynolds.com/figures/studies/nozzle-mach.png) |
+| **[A heat sink, and an energy balance closed to 99.7%](https://tryreynolds.com/studies/finned-heat-sink.html)** <br> <sub>Conjugate heat transfer, with the energy balance closed as its own check.</sub> | **[The solver said it had converged. The agent checked.](https://tryreynolds.com/studies/converging-diverging-nozzle.html)** <br> <sub>A nozzle designed for Mach 2, run overexpanded, and the disagreement caught.</sub> |
 
 ```bash
 pip install openreynolds     # or: uvx openreynolds · pipx install openreynolds · npm i -g openreynolds
