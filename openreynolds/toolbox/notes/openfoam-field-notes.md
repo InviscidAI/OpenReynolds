@@ -676,3 +676,26 @@ one cell in z and a single `frontAndBack` patch declared `empty` in the dictiona
 every field, so the disagreement has no way to arise; `preflight.py`'s `empty` check reads
 the mesh -- or the `blockMeshDict`, when the mesh has not been built -- against every
 field in `0/` and says which file disagrees with which.
+
+## Files the person sends up, and PDFs in particular
+
+A hosted session's uploads land in the study's own `uploads/` directory, and the
+person's message names each path when it arrives. A PDF is worth a special word
+because its raw bytes read as noise: by the time the message arrives, the service
+has already unpacked it into a directory named after the file, holding one PNG per
+page named `page-01.png`, `page-02.png` (two digits, a dash) and the text layer as
+`text.md` with per-page headings. `read_file` on one of those PNGs returns the page
+as a picture, so a drawing, a title block or a plot can be looked at directly; the
+message's own note names the exact files. When a name does not answer, `ls` the
+directory rather than guessing variants -- the one time this went wrong, a session
+guessed `page_1.png` for `page-01.png` and then spent ten minutes on the road below.
+
+The road below: the workspace has no route to the internet. `pip install`, `apt
+install`, `git clone` and every other fetch hang or fail there by design, always,
+and nothing is gained by waiting on one or retrying. What the image ships is what
+there is -- and it ships a lot (OpenFOAM v2512, cfMesh, HiSA, ParaView's pvpython,
+Python with numpy and pyvista, and `pdftoppm`/`pdftotext` from poppler for
+re-rendering a drawing at higher resolution than the unpacked 2400 px when small
+dimension text needs it: `pdftoppm -r 300 -png plan.pdf out`). If a tool truly is
+not there, the honest move is to say so and work with what is, the way any solve
+here already does.

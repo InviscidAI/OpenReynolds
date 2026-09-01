@@ -21,7 +21,10 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("pyvista", reason="the drawing half runs on the OpenFOAM image")
+# exc_type=ImportError: a pyvista that is present but cannot load its VTK DLLs
+# (seen under a Windows Application Control policy) is the same situation as no
+# pyvista -- the drawing half runs on the OpenFOAM image, not here.
+pytest.importorskip("pyvista", reason="the drawing half runs on the OpenFOAM image", exc_type=ImportError)
 
 TOOLBOX = Path(__file__).resolve().parents[1] / "openreynolds" / "toolbox"
 
