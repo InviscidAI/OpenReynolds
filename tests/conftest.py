@@ -30,7 +30,10 @@ class FakeBackend(Backend):
         self.files: dict[str, bytes] = {}
         self.dirs: dict[str, list[str]] = {}
         self.exec_result = ExecResult(0, "ok", False, None)
-        self.exec_results: dict[str, ExecResult] = {}
+        self.exec_results: dict[str, ExecResult] = {
+            # So the briefing's imperative guards see the line that depends on it.
+            "nproc": ExecResult(0, "8\n", False, None),
+        }
         self.execs: list[str] = []
         self.jobs: dict[str, JobStatus] = {}
         self.logs: dict[str, bytes] = {}

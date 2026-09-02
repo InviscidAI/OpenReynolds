@@ -8,10 +8,13 @@ flag someone has to know about.
 
 from __future__ import annotations
 
+import time
+
 from typing import Any
 
 import anthropic
 
+from .. import trace
 from .base import (
     PROBE_PNG,
     BadRequest,
@@ -117,6 +120,7 @@ class AnthropicProvider(Provider):
         raise AssertionError("unreachable")
 
     def _stream_once(self, kwargs: dict[str, Any], listener: Listener) -> Turn:
+        _started = time.monotonic() if trace.on else 0.0
         with self.client.messages.stream(**kwargs) as stream:
             for event in stream:
                 if event.type == "content_block_start" and event.content_block.type == "thinking":
@@ -127,6 +131,15 @@ class AnthropicProvider(Provider):
                     elif event.delta.type == "text_delta":
                         listener.on_text(event.delta.text)
             response = stream.get_final_message()
+        if trace.on:
+            trace.event(
+                "turn",
+                seconds=round(time.monotonic() - _started, 3),
+                model=kwargs.get("model"),
+                messages=len(kwargs.get("messages") or []),
+                stop=response.stop_reason,
+                **trace.usage(response),
+            )
         detail = getattr(response, "stop_details", None)
         return Turn(
             content=list(response.content),

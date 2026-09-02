@@ -116,6 +116,9 @@ SKIP_SUFFIXES = frozenset({".vtk", ".vtu", ".vtp", ".vtm", ".pvd", ".foam", ".py
 opens; the rest are the mesh and the fields again, in another format."""
 
 _TIME_DIR = re.compile(r"^\d+(\.\d+)?([eE][-+]?\d+)?$")
+PROCESSOR_DATA = "processor decomposition data"
+"""Why a decomposed field is left behind. Named so the report can recognise it."""
+
 _PROCESSOR_DIR = re.compile(r"^processor\d+$")
 
 
@@ -176,9 +179,17 @@ class MirrorReport:
         return lines
 
     def _hint(self) -> str:
-        if not self.study_id:
-            return ""
-        return f"  (openreynolds pull --study {self.study_id} tries them again)"
+        parts = []
+        if self.study_id:
+            parts.append(f"openreynolds pull --study {self.study_id} tries them again")
+        # Decomposed fields are the one skip a retry cannot fix: the filter drops them
+        # every time, by design, so the line above is a promise it does not keep for
+        # them. What brings them home is reconstructing them into a case. Said only
+        # when there are some, and alongside the retry rather than instead of it --
+        # a mixed set has files the retry does work for.
+        if any(skip.reason == PROCESSOR_DATA for skip in self.skipped):
+            parts.append("reconstructPar makes the decomposed fields a case")
+        return f"  ({'; '.join(parts)})" if parts else ""
 
 
 LISTED_SKIPS = 40
@@ -292,7 +303,7 @@ def reason_to_skip(relative: str) -> str | None:
 
     for part in parts[:-1]:
         if _PROCESSOR_DIR.match(part):
-            return "processor decomposition data"
+            return PROCESSOR_DATA
         if part == "polyMesh":
             return "mesh data"
         if part == "__pycache__":

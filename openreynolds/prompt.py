@@ -36,7 +36,8 @@ want it, and written for somebody else's question rather than yours.
 `{TOOLBOX_DIR}/` holds a handful of small scripts and some reference notes, refreshed \
 from the distribution at the start of each session. They are offered, not imposed: use \
 them, edit them, replace them, or ignore them. `{TOOLBOX_DIR}/notes/` includes field \
-notes on OpenFOAM practice and a longer architecture document, both optional reading.
+notes on OpenFOAM practice -- among them what a transient run's wall clock is made \
+of, measured -- and a longer architecture document, both optional reading.
 
 # What is installed
 
@@ -45,12 +46,13 @@ you, so solver and utility names are on `PATH`. The introspection utilities `foa
 and `foamInfo` are **not** in this image, so what a selection slot accepts is \
 discoverable from the tutorials and from what the solvers say when they reject a token.
 
-The container runs as root, and `nproc` reports how many cores it has. Its \
-environment already carries what OpenMPI needs to launch there \
+The container runs as root, and `nproc` reports how many cores it has. The session is \
+billed for all of them, busy or idle, and a serial solve uses one; `decomposePar` and \
+`mpirun -np N` spread it over N. The environment carries what OpenMPI needs \
 (`OMPI_ALLOW_RUN_AS_ROOT`, `OMPI_ALLOW_RUN_AS_ROOT_CONFIRM`, and `PMIX_MCA_gds=hash`, \
-which is what lets PMIx start on an instance with no outbound network), so `mpirun` \
-works without arranging anything first. The field notes describe what its failure \
-looks like if that ever stops being true.
+which lets PMIx start with no outbound network), so `mpirun` works without arranging \
+anything first. The field notes describe what its failure looks like if that stops \
+being true.
 
 `python3` has numpy, matplotlib, pandas and pyvista. Rendering is headless via OSMesa: \
 `pyvista.OFF_SCREEN = True` and matplotlib's `Agg` backend both work, and there is no \
