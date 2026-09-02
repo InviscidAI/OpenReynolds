@@ -109,13 +109,51 @@ stall was wrong — it blamed smoothing, which the log timed at 0.52 s.
 
 ## 7. Deployed service is behind the checkout
 
-The deployed foamd treated `monthly_budget_cents = 0` as a hard zero; the checkout
-treats it as unlimited (`config.budget_is_unlimited`). Setting the documented staff value
-therefore locked the account out rather than freeing it. Whatever else has drifted is
-unknown — the two have not been diffed.
+**Diffed 2026-09-02. The control-plane half is closed; one image-only commit is still
+undeployed, and the env layer remains undiffable.**
 
+The original report: the deployed foamd treated `monthly_budget_cents = 0` as a hard
+zero while the checkout treated it as unlimited (`config.budget_is_unlimited`), so
+setting the documented staff value locked the account out rather than freeing it.
 Adjacent: `budget_for()` did not give an `inviscidai.com` account the staff budget at
 signup, so the founder's account was created with the free-plan cap.
+
+**Both are resolved in the deployed code.** `28bc7c2` ("A new account starts with no
+credit, and zero stops meaning unlimited") inverted the semantics deliberately —
+`budget_is_unlimited` is now `cents is None or int(cents) < 0`, and `0` means zero
+allowance and is refused. `config.budget_for()` returns `staff_budget_cents()` (default
+`-1`, unlimited) for any domain in `FOAMD_STAFF_DOMAINS` (default `inviscidai.com`).
+That commit landed 2026-08-30 17:30 UTC and deployed as v10 at 18:21 UTC.
+
+**How the diff was done, since `modal app history` records no commit.** Deploy times
+were matched against commit times (both UTC), then confirmed against the running
+service: the generated OpenAPI document from the checkout is **byte-identical** to
+`https://api.tryreynolds.com/openapi.json` — same 37 paths, 47 operations, all 14
+component schemas equal. The API contract has not drifted.
+
+**What is still out of sync.** Deploy v16 is 2026-09-01 18:51 UTC; the checkout is
+`c17558c` at 19:05 UTC. The single undeployed commit is `poppler-utils in the workspace
+image`, which touches `image/image.py` only — so the *control plane* is current and the
+*workspace image* is not. `modal_app.py` builds the image at deploy time, so
+`pdftoppm`/`pdftotext` are absent from every sandbox until the next `modal deploy`. Any
+session that re-renders a region of an uploaded blueprint at higher DPI fails today.
+
+**What could not be diffed.** Everything the running container reads from the
+`foamd-secrets` Secret — `FOAMD_STAFF_DOMAINS`, the `Caps` values
+(`FOAMD_DEFAULT_CPU`/`_MEM_GB`, `FOAMD_MAX_CPU`/`_MEM_GB`), the rate limits, the tariff.
+`modal secret list` shows the Secret's name and nothing of its contents, so code parity
+does not prove behaviour parity. `/health` already exposes `signups` and `llm` for
+exactly this reason ("how an operator confirms a secret edit actually reached the running
+container"); extending it with the resolved caps and tariff would make the whole
+configured surface diffable from outside.
+
+**Noted while looking.** `/health` reports `"signups":"open"` on production today, while
+`OpenFoam_Instance#5` item 1 — the fleet-wide 10/min key-minting throttle — is filed as a
+blocker *before* open signup.
+
+**Cheapest fix for the recurrence.** `modal deploy` takes `--tag`; deploying with
+`--tag $(git rev-parse --short HEAD)` fills the empty `Commit` column in
+`modal app history` and turns this whole exercise into one command.
 
 ---
 
