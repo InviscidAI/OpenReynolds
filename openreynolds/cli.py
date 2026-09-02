@@ -18,6 +18,7 @@ from rich.console import Console
 
 from . import __version__
 from .backend import hosted
+from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT
 from .browse import Browser
 from .capture import Capture
@@ -891,12 +892,21 @@ def session(
     resuming = study_id is not None
     store = Store(cfg.studies_dir, study_id or new_study_id())
 
+    local = bool(os.environ.get("OPENREYNOLDS_LOCAL"))
     try:
-        backend, client, resolved_instance = hosted.acquire(
-            cfg.foamd_url,
-            cfg.foamd_api_key,
-            instance_id or store.session.instance_id or None,
-        )
+        if local:
+            # A workspace on this machine: no container, no bill, and nothing to
+            # reach. Meant for working on the harness itself, where the question is
+            # what the agent does and the answer comes from running it repeatedly.
+            backend = LocalBackend()
+            client, resolved_instance = None, "local"
+            console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
+        else:
+            backend, client, resolved_instance = hosted.acquire(
+                cfg.foamd_url,
+                cfg.foamd_api_key,
+                instance_id or store.session.instance_id or None,
+            )
     except BackendError as exc:
         console.print(f"[red]Could not reach the workspace service:[/] {exc}")
         raise SystemExit(1) from exc
@@ -909,7 +919,7 @@ def session(
     store.save()
 
     capture = None
-    if cfg.capture:
+    if cfg.capture and client is not None:
         if resuming and store.session.remote_study_id:
             capture = Capture(client, store.session.remote_study_id, warn=_warn)
         else:
@@ -1079,6 +1089,34 @@ def _home_for(store: Store, backend: Backend, resuming: bool) -> str:
     return home
 
 
+def _machine_note(backend: Backend) -> str:
+    """What this machine is, measured rather than assumed.
+
+    The tool descriptions carry the same arithmetic, and a live run showed they can
+    be passed over entirely: it chose a serial solve on a 34,764-cell mesh without
+    the words serial, parallel or decompose appearing anywhere in its reasoning. The
+    question never came up. The briefing arrives as a message rather than as a
+    description of a tool, which makes it the one place a fact cannot be skipped --
+    so a fact this expensive to miss belongs here. It says what the machine is and
+    what was measured on it; what to do about that stays where every other decision
+    stays.
+    """
+    try:
+        result = backend.exec("nproc", timeout_s=30)
+        cores = int((result.output or "").strip().split()[0])
+    except Exception:  # noqa: BLE001 - not knowing is not a failed session
+        return ""
+    if cores <= 1:
+        return ""
+    return (
+        f"This machine has {cores} cores. A solver run as one process uses one of "
+        f"them, and the session is billed for all {cores} either way; `decomposePar` "
+        f"and `mpirun -np N` spread it over N. What the extra ranks return falls away "
+        f"as the cells each one holds get small, so the N worth using depends on the "
+        f"mesh."
+    )
+
+
 def _workspace_note(browser: Browser, home: str, resuming: bool) -> str:
     """What is in this study's directory, and what else is on the volume.
 
@@ -1184,6 +1222,9 @@ def _situation_brief(
         note = _workspace_note(browser, store.session.home or WORKSPACE_ROOT, resuming)
         if note:
             lines.append(note)
+    machine = _machine_note(backend)
+    if machine:
+        lines.append(machine)
     if preferences:
         # The user's standing note, in the user's voice. The harness relays it
         # verbatim and adds nothing: what to do about it stays the model's call,

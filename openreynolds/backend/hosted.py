@@ -266,10 +266,17 @@ class FoamdClient:
     def list_instances(self) -> list[dict[str, Any]]:
         return _json(self.request("GET", "/v1/instances"))
 
-    def create_instance(self, cpu: float = 4.0, mem_gb: int = 8) -> str:
-        body = _json(
-            self.request("POST", "/v1/instances", json={"cpu": cpu, "mem_gb": mem_gb})
-        )
+    def create_instance(self, cpu: float | None = None, mem_gb: int | None = None) -> str:
+        """Create an instance, letting the service pick any shape not asked for.
+
+        The size a new instance gets is the service's to choose: it is the thing that
+        knows the fleet's defaults and per-user ceilings, and it validates what it is
+        sent. Carrying a copy of those numbers here is how the copy and the original
+        drift apart -- which they did, silently, until an instance sized by one of them
+        was described to the model by the other.
+        """
+        shape = {k: v for k, v in (("cpu", cpu), ("mem_gb", mem_gb)) if v is not None}
+        body = _json(self.request("POST", "/v1/instances", json=shape))
         return body["instance_id"]
 
     def stop_instance(self, instance_id: str) -> dict[str, Any]:

@@ -36,7 +36,8 @@ want it, and written for somebody else's question rather than yours.
 `{TOOLBOX_DIR}/` holds a handful of small scripts and some reference notes, refreshed \
 from the distribution at the start of each session. They are offered, not imposed: use \
 them, edit them, replace them, or ignore them. `{TOOLBOX_DIR}/notes/` includes field \
-notes on OpenFOAM practice and a longer architecture document, both optional reading.
+notes on OpenFOAM practice -- among them what a transient run's wall clock is made \
+of, measured -- and a longer architecture document, both optional reading.
 
 # What is installed
 
@@ -45,9 +46,11 @@ you, so solver and utility names are on `PATH`. The introspection utilities `foa
 and `foamInfo` are **not** in this image, so what a selection slot accepts is \
 discoverable from the tutorials and from what the solvers say when they reject a token.
 
-The container runs as root and has 8 cores. OpenMPI refuses to run as root unless \
-`OMPI_ALLOW_RUN_AS_ROOT=1` and `OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1` are set, so a \
-`mpirun` without them fails immediately.
+The container runs as root and has as many cores as `nproc` reports. The session is \
+billed for all of them for as long as it is up, busy or idle. A solve run serially \
+uses one. `decomposePar` and `mpirun -np N` spread it over N; OpenMPI refuses to run \
+as root unless `OMPI_ALLOW_RUN_AS_ROOT=1` and `OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1` are \
+set, so a `mpirun` without them fails immediately.
 
 `python3` has numpy, matplotlib, pandas and pyvista. Rendering is headless via OSMesa: \
 `pyvista.OFF_SCREEN = True` and matplotlib's `Agg` backend both work, and there is no \

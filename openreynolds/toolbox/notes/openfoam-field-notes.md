@@ -22,6 +22,37 @@ parsing a file, `foamToC` telling you what this build actually compiled in, a on
 solver probe on a trivial mesh, an arithmetic cell-count estimate — cost less than a minute
 and sit directly upstream of the expensive things.
 
+## What a transient run's wall clock is actually made of
+
+Three numbers set it, and they are not equally large. Measured on a 2D laminar cylinder
+at Re=100, one cell in z, `pimpleFoam`:
+
+**Cores.** A solver started plainly occupies one, however many the container has.
+`decomposePar` then `mpirun -np N solver -parallel` occupies N. What the extra ranks
+return tracks cells *per rank*, not rank count: at 33.6k cells, 4 ranks ran 2.9x, 8 ranks
+3.6x, 16 ranks 4.6x; at 5.8k cells, 8 ranks returned nothing 4 had not already. Below
+roughly two thousand cells a rank the halo costs more than the arithmetic saved.
+
+**`endTime`.** This is the one that dwarfs the others, and on a bluff body it is mostly
+spent waiting for symmetry to break. From an unperturbed symmetric initial field the
+instability grows out of round-off: |Cl| was 1.3e-4 at t=35 and only 0.25 by t=90 — some
+fifteen shedding periods bought nothing but exponential growth from noise. The same case
+started with a small transverse component in the internal field, `internalField uniform
+(1 0.05 0)`, reached saturated amplitude by t≈55. Identical physics and Strouhal number
+(0.169 measured against 0.164 published); less than half the solver time. An `endTime` of
+200-plus is usually the cost of an unperturbed start rather than a requirement of the flow.
+
+**Write frequency.** `writeInterval 0.1` against `endTime 250` is 2,500 write times. On a
+40k-cell case that is several gigabytes and thousands of directories, which is also what
+the mirror and the file tree have to walk. Frames for an animation can be subsampled from
+sparse writes; they rarely need every one.
+
+One thing that looks like a fourth lever and is not: raising `maxCo`. At `nOuterCorrectors
+1` the solver is in PISO mode and `maxCo 5` diverged outright (Cl to 1e42). Adding outer
+correctors bought stability at `maxCo 2` and was still *slower* to the same solver time
+than plain PISO under Co<1, because each step then costs three. The timestep is not where
+this class of case is won.
+
 ## Verifying against the installation rather than from memory
 
 There is no complete static grammar for OpenFOAM dictionaries. It is distributed across the

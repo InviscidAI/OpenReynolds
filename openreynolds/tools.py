@@ -7,12 +7,15 @@ output and report facts; that is the whole job.
 
 from __future__ import annotations
 
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from . import images
-from .backend.base import Backend, BackendError, EXEC_MAX_TIMEOUT_S, WORKSPACE_ROOT
+from . import trace
+from .progress import case_dir_from_cmd, parse_control_dict, phase_from_cmd
+from .backend.base import Backend, BackendError, EXEC_MAX_TIMEOUT_S, JobStatus, WORKSPACE_ROOT
 from .store import Store
 
 SLOW_COMMAND_S = 10.0
@@ -45,6 +48,17 @@ class ToolContext:
 
     A waiting `job_check` ends early on it, so a person who speaks during a held
     call is heard in seconds rather than when the wait runs out."""
+    cores: int | None = None
+    """What `nproc` reported, once it has been asked. See `_core_count`."""
+    started: float = field(default_factory=time.monotonic)
+    """When this session began.
+
+    The one quantity nothing in the harness has ever said out loud, and the one the
+    person waiting actually cares about. Every cost this file reports -- ranks, write
+    times, steps -- is about the run being launched; none of them says what the study
+    has already spent. A model told a solve is 20,000 steps and not told the study is
+    fifty minutes old will reinvest every saving in more simulated time, which is good
+    physics and the wrong trade when somebody is waiting."""
     on_render: Callable[[str], None] | None = None
     """Called with the workspace path whenever the model looks at an image.
 
@@ -144,7 +158,19 @@ TOOLS: list[dict[str, Any]] = [
         "name": "job_start",
         "description": (
             "Start a long command detached and return a job id immediately. The job "
-            "keeps running after your turn ends, and after this session closes."
+            "keeps running after your turn ends, and after this session closes. "
+            "A solver started serially holds one core for the whole run, however "
+            "many the container has; a case put through `decomposePar` and started "
+            "with `mpirun -np N` holds N. What the extra ranks return falls away as "
+            "the cells each one holds get small, so there is an N past which they "
+            "stop paying. The cells-per-core figures written for shared clusters sit "
+            "well above it: those are about not tying up cores someone else could "
+            "use, and these are rented, idle and billed either way. "
+            "A decomposed run writes one set of files "
+            "per rank per write time, and the workspace is a network filesystem that "
+            "charges by the file: `-fileHandler collated`, passed to decomposePar, "
+            "the solver and reconstructPar alike, writes one set instead of N, which "
+            "reconstructs faster and leaves the solve unchanged."
         ),
         "input_schema": {
             "type": "object",
@@ -214,12 +240,23 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[T
     handler = _HANDLERS.get(name)
     if handler is None:
         return f"No such tool: {name}", True
+    # Read the clock only when something is listening: the handlers below time
+    # themselves off the same `time.monotonic`, and tests drive that with a fake.
+    started = time.monotonic() if trace.on else 0.0
     try:
         return handler(ctx, tool_input), False
     except BackendError as exc:
         return str(exc), True
     except Exception as exc:  # a harness bug is a fact the model should see
         return f"{type(exc).__name__}: {exc}", True
+    finally:
+        if trace.on:
+            trace.event(
+                "tool",
+                tool=name,
+                seconds=round(time.monotonic() - started, 3),
+                cmd=str(tool_input.get("cmd") or tool_input.get("path") or "")[:200],
+            )
 
 
 # -- handlers ------------------------------------------------------------------
@@ -235,6 +272,9 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
         # A four-minute command and a two-second one read identically otherwise, so
         # the cost of what was just done is invisible to whoever chose to do it.
         notes.append(f"[took {elapsed:.0f}s]")
+    mesher = _mesher_note(ctx, args)
+    if mesher:
+        notes.append(mesher.strip())
     ran_with = min(asked, EXEC_MAX_TIMEOUT_S)
     if asked > EXEC_MAX_TIMEOUT_S:
         # Say so rather than clamping quietly: a command cut off at a ceiling the
@@ -273,7 +313,41 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
 def _write_file(ctx: ToolContext, args: dict[str, Any]) -> str:
     data = args["content"].encode("utf-8")
     ctx.backend.put_file(args["path"], data)
-    return f"wrote {len(data)} bytes to {args['path']}"
+    return f"wrote {len(data)} bytes to {args['path']}{_written_run_shape(args)}"
+
+
+def _written_run_shape(args: dict[str, Any]) -> str:
+    """How many times a `controlDict` just asked to be written to disk.
+
+    `endTime` over `writeInterval` is the cheapest number in a study to get wrong: it
+    is two tokens in a dictionary and it sets how much disk the run needs, how long a
+    later `reconstructPar` walks -- that part is serial, however many ranks solved --
+    and how much of the workspace the mirror has to carry home. A live run chose 900
+    over 0.2, and the four and a half thousand write times that implies cost more in
+    reconstruction than the eight extra ranks had saved in solving.
+
+    Said here rather than at `job_start` because this is where the number is chosen,
+    and here it costs nothing to say: the content is already in hand, so there is no
+    round trip. Arithmetic on two declared values, not a forecast."""
+    path = str(args.get("path") or "")
+    if not path.endswith("system/controlDict"):
+        return ""
+    control = parse_control_dict(args.get("content") or "")
+    end, every = control.get("endTime"), control.get("writeInterval")
+    if end is None or not every:
+        return ""
+    span = end - (control.get("startTime") or 0.0)
+    parts = [f"endTime {end:g} / writeInterval {every:g} = {int(span / every)} write times"]
+    step = control.get("deltaT")
+    if step and not _ADJUST_DT.search(args.get("content") or ""):
+        # The number that actually sets what this run costs, and the one nobody
+        # writes down. A live case chose endTime 300 at deltaT 0.005 -- sixty
+        # thousand steps, two hours -- with its Courant number already at 0.69, so
+        # there was no larger timestep to be had and no way to spend less once the
+        # solve began. The write count was visible at this moment and the step
+        # count was not, and it was the step count that decided.
+        parts.append(f"deltaT {step:g} = {int(span / step)} steps at that timestep")
+    return f" [{', '.join(parts)}]"
 
 
 def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, Any]]:
@@ -348,7 +422,178 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
     )
     _announce_jobs(ctx)
     label = f" ({args['name']})" if args.get("name") else ""
-    return f"started job {job_id}{label}"
+    return f"started job {job_id}{label}{_solve_shape(ctx, args)}{_mesher_note(ctx, args)}"
+
+
+_EMPTY_PATCH = re.compile(r"^\s*type\s+empty\s*;", re.M)
+
+_ADJUST_DT = re.compile(r"^\s*adjustTimeStep\s+(yes|on|true)\s*;", re.M | re.I)
+"""Whether the solver sets its own timestep. When it does, `deltaT` is only where it
+starts and a step count derived from it is a number about nothing -- a live case
+wrote deltaT 0.001 under `maxCo 0.8`, and the 200,000 steps that implies was never
+going to happen."""
+
+
+def _is_two_dimensional(ctx: ToolContext, case: str) -> bool:
+    """Whether the case's mesh has an `empty` patch, i.e. is one cell thick.
+
+    Read from `constant/polyMesh/boundary` rather than the blockMeshDict, because it
+    is what the mesh actually is rather than what a dictionary asked for."""
+    try:
+        head = ctx.backend.get_file(f"{case}/constant/polyMesh/boundary", limit=8000)
+    except Exception:  # noqa: BLE001 - no mesh yet is not a failed launch
+        return False
+    return bool(_EMPTY_PATCH.search(head.decode("utf-8", "replace")))
+
+
+def _mesher_shape(ctx: ToolContext, cmd: str, case: str) -> str:
+    """What `snappyHexMesh` is about to be asked to do on a one-cell-thick mesh.
+
+    snappy is a three-dimensional mesher. Its snapping phase works by displacing
+    points onto the surface and checking mesh quality after each move; in a case
+    with an `empty` patch the third direction is pinned, so the displacement it
+    wants is the displacement it may not make. It does not fail -- it scales the
+    displacement back and tries again, over every cell, indefinitely.
+
+    Observed on this workspace: a 245,805-cell 2D case where the snapping phase
+    attracted 0 of 16,896 points to a feature edge, a feature point, or the nearest
+    surface, and was still moving the mesh forty minutes later. The agent watching
+    it read the phase wrong -- it blamed smoothing, which the log timed at 0.52 s --
+    and let it run. So say which phase costs what, at the moment the job starts,
+    while it is still cheap to choose the other mesher."""
+    if "snappyHexMesh" not in cmd or not _is_two_dimensional(ctx, case):
+        return ""
+    return (
+        " [this mesh has an empty patch, so it is one cell thick. snappyHexMesh is a "
+        "3D mesher: in a pinned direction it scales its displacement back and retries "
+        "rather than failing, so it stalls instead of stopping. blockMesh and cfMesh's "
+        "cartesian2DMesh mesh 2D directly]"
+    )
+
+
+def _mesher_note(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """The mesher warning, for whichever tool launched it."""
+    cmd = args.get("cmd") or ""
+    return _mesher_shape(ctx, cmd, case_dir_from_cmd(cmd, args.get("cwd") or ctx.home))
+
+
+def _solve_shape(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """What the solve that was just started is set to do, read back from its case.
+
+    The same argument as the `[took Ns]` note on `bash`: a run that ends in ninety
+    seconds and one that ends in nine hours read identically at the moment they are
+    launched, and the choice that separates them was made several turns earlier in a
+    file nobody looked at again. `endTime` and `writeInterval` are the two numbers
+    that decide it, and the count of writes they imply is arithmetic on them rather
+    than a guess about the future -- the bar's estimates stay with the bar
+    (`progress.Tracker.facts_for_wake`), which sends the model facts and no forecast.
+
+    Silent whenever it has nothing certain to say: not a solver, no controlDict, no
+    `endTime` to speak of. A note that appears only sometimes is a note worth reading.
+    """
+    cmd = args.get("cmd") or ""
+    if phase_from_cmd(cmd)[0] != "solving":
+        return ""
+    case = case_dir_from_cmd(cmd, args.get("cwd") or ctx.home)
+    try:
+        text = ctx.backend.get_file(f"{case}/system/controlDict").decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001 - a missing dict is not a failed launch
+        return ""
+    control = parse_control_dict(text)
+    parts = []
+    end, every = control.get("endTime"), control.get("writeInterval")
+    if end is not None:
+        parts.append(f"endTime {end:g}")
+        if every:
+            span = end - (control.get("startTime") or 0.0)
+            parts.append(f"writeInterval {every:g} ({int(span / every)} write times)")
+        step = control.get("deltaT")
+        if step and not _ADJUST_DT.search(text):
+            # Said here as well as at the `write_file` that chose it, because a
+            # dictionary is as often written by a `bash` heredoc, and this reads the
+            # file that is actually on disk rather than the one that went past.
+            span = end - (control.get("startTime") or 0.0)
+            parts.append(f"deltaT {step:g} ({int(span / step)} steps at that timestep)")
+    parts.append(_load_per_rank(ctx, cmd, case))
+    parts.append(_study_age(ctx))
+    return f" [{', '.join(p for p in parts if p)}]" if any(parts) else ""
+
+
+def _study_age(ctx: ToolContext) -> str:
+    """How long this study has taken so far. A fact, and the only one about the
+    thing the person is actually waiting on. Said at the moment a long run is
+    committed to, because that is when spending more of it is chosen."""
+    minutes = (time.monotonic() - ctx.started) / 60.0
+    if minutes < 1:
+        return ""
+    return f"this study is {minutes:.0f} min old so far"
+
+
+_NCELLS = re.compile(r"nCells:\s*(\d+)")
+
+
+def _cell_count(ctx: ToolContext, case: str) -> int:
+    """The mesh's cell count, from the header `blockMesh` and `snappyHexMesh` write.
+
+    `constant/polyMesh/owner` carries it in a `note` line just past the banner --
+    around byte 690, and further on a build whose architecture string is longer -- so
+    two kilobytes covers it with room to spare and still costs one small read rather
+    than a parse of the mesh."""
+    try:
+        head = ctx.backend.get_file(f"{case}/constant/polyMesh/owner", limit=2000)
+    except Exception:  # noqa: BLE001 - no mesh yet is not a failed launch
+        return 0
+    found = _NCELLS.search(head.decode("utf-8", "replace"))
+    return int(found.group(1)) if found else 0
+
+
+def _load_per_rank(ctx: ToolContext, cmd: str, case: str) -> str:
+    """How much mesh each rank is carrying.
+
+    Cells per rank is the number this decision turns on, and it is the one nobody
+    has. Reporting cores instead invites an all-or-nothing reading: a live run saw
+    "32 cores" against a 20,650-cell mesh, judged -- correctly -- that thirty-two
+    ranks would spend more on halo exchange than they saved, and concluded from that
+    that it should run on one. The choice was never between 1 and 32.
+
+    So say what each rank would hold, and let the arithmetic be visible. Silent when
+    the mesh has not been built yet, or when the machine has one core and there is no
+    choice to describe."""
+    cores = _core_count(ctx)
+    if cores <= 1:
+        return ""
+    ranks = _ranks_in(cmd)
+    cells = _cell_count(ctx, case)
+    if not cells:
+        return f"{ranks} rank(s), {cores} cores on this machine"
+    return (
+        f"{cells} cells on {ranks} rank(s) = {cells // ranks} each; "
+        f"{cores} cores on this machine"
+    )
+
+
+_MPIRUN_NP = re.compile(r"\bmpirun\b[^|;&]*?-np\s+(\d+)")
+
+
+def _ranks_in(cmd: str) -> int:
+    """How many ranks the command asked for. One, unless `mpirun -np N` says otherwise."""
+    found = _MPIRUN_NP.search(cmd)
+    return int(found.group(1)) if found else 1
+
+
+def _core_count(ctx: ToolContext) -> int:
+    """What `nproc` says, asked once per session.
+
+    The count is a property of the container and does not change under us, so paying
+    a round trip for it on every launch would be paying repeatedly for the same
+    answer. Zero means it could not be established, and nothing is said."""
+    if ctx.cores is None:
+        try:
+            result = ctx.backend.exec("nproc", timeout_s=30)
+            ctx.cores = int((result.output or "").strip().split()[0])
+        except Exception:  # noqa: BLE001 - not knowing is not a failed launch
+            ctx.cores = 0
+    return ctx.cores
 
 
 def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
@@ -391,10 +636,32 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
     header = describe_job(status)
     if waited_note:
         header += " " + waited_note
+    header += _running_on(ctx, record, status)
     header += f"\nlog: bytes {offset}–{next_offset}, eof={eof}"
     if clipped:
         header += f" (this window clipped at {ctx.max_output} bytes; call again from {offset + len(body.encode('utf-8'))})"
     return f"{header}\n\n{body}" if body else header
+
+
+def _running_on(ctx: ToolContext, record: Any, status: JobStatus) -> str:
+    """How much of the machine a still-running solve is using.
+
+    `_solve_shape` says this once, at launch, and a launch is a bad moment to hear
+    it: nothing has been spent yet and the number is abstract. A `job_check` is the
+    other moment -- the solve is real, the wait is being paid for, and killing it and
+    starting again is still cheaper than finishing. So the fact is repeated where the
+    decision is, and only while it can still be acted on.
+
+    Reads the command off the job record rather than the workspace, so it costs
+    nothing. Silent for a finished job (there is nothing to change), for anything
+    that is not a solver, and when the core count could not be established."""
+    if not status.running or record is None:
+        return ""
+    cmd = getattr(record, "cmd", "") or ""
+    if phase_from_cmd(cmd)[0] != "solving":
+        return ""
+    load = _load_per_rank(ctx, cmd, case_dir_from_cmd(cmd, getattr(record, "cwd", "") or ctx.home))
+    return f"\n{load}" if load else ""
 
 
 def _job_kill(ctx: ToolContext, args: dict[str, Any]) -> str:
