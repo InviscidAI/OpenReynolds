@@ -15,14 +15,26 @@ import argparse
 from pathlib import Path
 
 import numpy as np
-import pyvista as pv
 
-pv.OFF_SCREEN = True
+# pyvista is imported inside the functions that draw rather than at the top of the
+# file, so the camera geometry below -- NORMALS, VIEWUP, aim, frame -- can be imported
+# and tested anywhere. `results.py` has been written this way since it had the camera
+# fix; this file kept the top-level import, which is why the tests that cover the fix
+# could not load it outside the container. Nothing above the drawing functions touches pv.
+
+
+def _pyvista():
+    import pyvista as pv
+
+    pv.OFF_SCREEN = True
+    return pv
+
 
 NORMALS = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}
 
 
 def open_case(case: Path, time: float | None):
+    pv = _pyvista()
     foam = case / f"{case.name}.foam"
     if not foam.exists():
         foam.write_text("")
@@ -38,6 +50,7 @@ def open_case(case: Path, time: float | None):
 
 def internal_mesh(block):
     """The internalMesh block, whatever nesting this case produced."""
+    pv = _pyvista()
     if isinstance(block, pv.MultiBlock):
         if "internalMesh" in (block.keys() or []):
             return block["internalMesh"]
@@ -99,7 +112,7 @@ def frame(plotter, cut, zoom: float | None, bounds: tuple | None) -> None:
         plotter.camera.zoom(zoom)
 
 
-def save(plotter: pv.Plotter, out: Path) -> Path:
+def save(plotter, out: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     plotter.screenshot(str(out))
     plotter.close()
@@ -119,7 +132,7 @@ def render_field(mesh, field: str, normal: str, out: Path, zoom: float | None = 
         cut[f"|{field}|"] = np.linalg.norm(data, axis=1)
         scalars = f"|{field}|"
 
-    plotter = pv.Plotter(off_screen=True, window_size=(1100, 800))
+    plotter = _pyvista().Plotter(off_screen=True, window_size=(1100, 800))
     plotter.add_mesh(cut, scalars=scalars, cmap="viridis", show_edges=False)
     plotter.add_scalar_bar(title=scalars, n_labels=5)
     aim(plotter, normal)
@@ -131,7 +144,7 @@ def render_field(mesh, field: str, normal: str, out: Path, zoom: float | None = 
 def render_mesh(mesh, normal: str, out: Path, zoom: float | None = None,
                 bounds: tuple | None = None) -> Path:
     cut = slice_at(mesh, normal)
-    plotter = pv.Plotter(off_screen=True, window_size=(1100, 800))
+    plotter = _pyvista().Plotter(off_screen=True, window_size=(1100, 800))
     plotter.add_mesh(cut, color="white", show_edges=True, edge_color="black", line_width=0.4)
     aim(plotter, normal)
     frame(plotter, cut, zoom, bounds)
