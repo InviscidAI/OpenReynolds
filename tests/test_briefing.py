@@ -110,6 +110,28 @@ def test_the_design_document_describes_the_workspace_the_code_builds():
     assert "whether anyone is at the terminal" in plan
 
 
+def test_the_design_document_keeps_up_with_the_transports_that_ship():
+    """The same rule as above, applied to the one section that actually went stale.
+
+    The transport section spent months stating there was no metered proxy and that
+    a hosted one was future work, while the metered provider was live and shipping
+    in `presets.py`. Nothing caught it, because the claim was prose and the truth
+    was a dict. So tie the two together: if the code carries the preset, the
+    document has to describe it.
+    """
+    from openreynolds.llm.presets import PRESETS
+
+    plan = (Path(__file__).resolve().parents[1] / "docs" / "design.md").read_text(encoding="utf-8")
+    if "reynolds" in PRESETS:
+        assert "/v1/llm" in plan, (
+            "the metered provider ships in presets.py and the design document "
+            "does not describe it"
+        )
+        assert "there is no `/v1/llm`" not in plan, (
+            "the design document still denies a transport the code ships"
+        )
+
+
 # -- the user's standing note ----------------------------------------------------
 
 

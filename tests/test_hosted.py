@@ -6,6 +6,7 @@ import httpx2 as httpx
 import pytest
 
 from openreynolds.backend.base import BackendError
+from openreynolds.backend import hosted as hosted_mod
 from openreynolds.backend.hosted import FoamdClient, _decode_error, _retry_delay
 
 
@@ -53,9 +54,36 @@ def test_cold_start_has_a_default_delay():
 
 
 def test_other_failures_back_off_exponentially():
-    assert _retry_delay(response(500, {}), 0) == 1.0
-    assert _retry_delay(response(500, {}), 3) == 8.0
+    assert _retry_delay(None, 0) == 1.0
+    assert _retry_delay(None, 3) == 8.0
     assert _retry_delay(None, 10) == 30.0
+
+
+def test_a_server_error_is_retried_quickly_rather_than_backed_off_from():
+    """A 500 here is the sandbox being rebuilt underneath the call, not a queue: the
+    same read-only GET answered 500 and then succeeded four seconds later, unchanged.
+    Backing off exponentially would turn an absorbed hiccup into a visible stall."""
+    assert _retry_delay(response(500, {}), 0) == 1.0
+    assert _retry_delay(response(500, {}), 3) == 1.0
+
+
+def test_a_server_error_is_absorbed_instead_of_costing_a_model_turn(monkeypatch):
+    """18% of one live study's tool calls came back http_error (500). Every one reached
+    the model as a failed tool call, and a failed tool call costs a whole turn: the
+    entire conversation re-read to learn that the backend blinked."""
+    monkeypatch.setattr(hosted_mod.time, "sleep", lambda _s: None)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = {"n": 0}
+
+    def flaky(method, path, timeout=None, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return response(500, {"error": "internal", "message": "boom"})
+        return response(200, {"ok": True})
+
+    monkeypatch.setattr(client._client, "request", flaky)
+    assert client.request("GET", "/v1/whatever").status_code == 200
+    assert calls["n"] == 2, "one retry, and the model never heard about it"
 
 
 def test_client_retries_a_cold_start_then_succeeds(monkeypatch):

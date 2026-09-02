@@ -9,6 +9,7 @@ checked here is the reporting: a skip nobody hears about is the failure mode.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
@@ -789,3 +790,91 @@ def test_the_mirror_delivers_renders_it_pulls(backend, store, view):
 
     assert view.deliveries, "a delivered() event reached the view"
     assert (store.renders_dir / "p.png").exists()
+
+
+# -- the live policy -----------------------------------------------------------
+#
+# A background cycle is not an explicit `pull` and must not use either of the two
+# policies that existed. `everything=True` asked a decomposed solve for every
+# per-processor field file it was writing, so a cycle never converged: one study spent
+# 31 minutes after its answer was already written moving 233 files, 156 of them
+# processorN/ data nothing in either repo opens. `--readable-only` would blind the
+# hosted 3D viewer, which reads the mesh out of the mirror.
+
+
+def test_a_live_cycle_leaves_the_per_processor_copies_behind(backend, store):
+    workspace(
+        backend,
+        (f"{HOME}/case/processor0/2/U", 4_000),
+        (f"{HOME}/case/processor1/2/U", 4_000),
+        (f"{HOME}/case/2/U", 4_000),
+        (f"{HOME}/case/log.simpleFoam", 900),
+    )
+    report = mirror.sync(browser_for(backend, store), live=True)
+
+    assert sorted(Path(p).name for p in report.pulled) == ["U", "log.simpleFoam"]
+    assert [Path(s.path).parent.name for s in report.skipped] == ["2", "2"]
+    assert all("processor" in s.reason for s in report.skipped)
+
+
+def test_a_live_cycle_keeps_the_mesh_the_viewer_reads(backend, store):
+    """`--readable-only` calls polyMesh "mesh data" and drops it; the web viewer reads
+    its mesh out of the mirror and the page 404s without it."""
+    workspace(
+        backend,
+        (f"{HOME}/case/constant/polyMesh/points", 40_000),
+        (f"{HOME}/case/constant/polyMesh/owner", 40_000),
+        (f"{HOME}/case/constant/triSurface/body.stl", 9_000),
+    )
+    report = mirror.sync(browser_for(backend, store), live=True)
+    assert sorted(Path(p).name for p in report.pulled) == ["body.stl", "owner", "points"]
+    assert report.skipped == []
+
+
+def test_a_live_cycle_keeps_the_newest_time_and_drops_the_ones_it_replaced(backend, store):
+    """A running solve writes a complete copy of the fields every few seconds."""
+    workspace(
+        backend,
+        (f"{HOME}/case/1/U", 3_000),
+        (f"{HOME}/case/2/U", 3_000),
+        (f"{HOME}/case/10/U", 3_000),
+    )
+    report = mirror.sync(browser_for(backend, store), live=True)
+
+    assert [str(Path(p).parent.name) for p in report.pulled] == ["10"], "newest by value, not by name"
+    assert len(report.skipped) == 2
+    assert all("superseded" in s.reason for s in report.skipped)
+
+
+def test_newest_times_reads_the_number_not_the_string(backend, store):
+    entries = [
+        SimpleNamespace(path=f"{HOME}/case/9/U", size=1, is_dir=False),
+        SimpleNamespace(path=f"{HOME}/case/10/U", size=1, is_dir=False),
+    ]
+    assert mirror.newest_times(entries, HOME) == {"case": "10"}
+
+
+def test_a_render_is_asked_for_before_the_bulk(backend, store):
+    """A 200 KB render the model had just looked at sat behind thousands of smaller
+    per-processor files: nine minutes for one picture, and a second that never came."""
+    entries = [
+        SimpleNamespace(path=f"{HOME}/case/2/U", size=10, is_dir=False),
+        SimpleNamespace(path=f"{HOME}/renders/mesh.png", size=200_000, is_dir=False),
+        SimpleNamespace(path=f"{HOME}/case/log.simpleFoam", size=50, is_dir=False),
+    ]
+    order = [Path(e.path).name for batch in mirror._batches(entries) for e in batch]
+    assert order[0] == "mesh.png", "the picture goes in the first round trip"
+    assert order[1] == "log.simpleFoam", "then what was written down"
+
+
+def test_the_budget_is_still_spent_smallest_first(backend, store):
+    """Ordering the round trips is not the same as choosing the files: running out
+    should still cost one enormous picture rather than three hundred dictionaries."""
+    workspace(
+        backend,
+        (f"{HOME}/big.png", 5_000),
+        (f"{HOME}/case/system/fvSchemes", 100),
+        (f"{HOME}/case/system/controlDict", 100),
+    )
+    report = mirror.sync(browser_for(backend, store), live=True, max_total_bytes=5_000)
+    assert sorted(Path(p).name for p in report.pulled) == ["controlDict", "fvSchemes"]

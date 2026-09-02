@@ -46,11 +46,13 @@ you, so solver and utility names are on `PATH`. The introspection utilities `foa
 and `foamInfo` are **not** in this image, so what a selection slot accepts is \
 discoverable from the tutorials and from what the solvers say when they reject a token.
 
-The container runs as root and has as many cores as `nproc` reports. The session is \
-billed for all of them for as long as it is up, busy or idle. A solve run serially \
-uses one. `decomposePar` and `mpirun -np N` spread it over N; OpenMPI refuses to run \
-as root unless `OMPI_ALLOW_RUN_AS_ROOT=1` and `OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1` are \
-set, so a `mpirun` without them fails immediately.
+The container runs as root, and `nproc` reports how many cores it has. The session is \
+billed for all of them, busy or idle, and a serial solve uses one; `decomposePar` and \
+`mpirun -np N` spread it over N. The environment carries what OpenMPI needs \
+(`OMPI_ALLOW_RUN_AS_ROOT`, `OMPI_ALLOW_RUN_AS_ROOT_CONFIRM`, and `PMIX_MCA_gds=hash`, \
+which lets PMIx start with no outbound network), so `mpirun` works without arranging \
+anything first. The field notes describe what its failure looks like if that stops \
+being true.
 
 `python3` has numpy, matplotlib, pandas and pyvista. Rendering is headless via OSMesa: \
 `pyvista.OFF_SCREEN = True` and matplotlib's `Agg` backend both work, and there is no \

@@ -59,6 +59,20 @@ class ToolContext:
     has already spent. A model told a solve is 20,000 steps and not told the study is
     fifty minutes old will reinvest every saving in more simulated time, which is good
     physics and the wrong trade when somebody is waiting."""
+    echoes: dict[str, int] = field(default_factory=dict)
+    """Hash of a large tool output -> the call that first produced it.
+
+    `bash` output is 78-82% of everything the model is sent, and the single most
+    expensive call measured in one study was `cat .toolbox/notes/*.md | head -200`:
+    4,177 tokens that then rode along in all 76 requests after it, 21% of that study's
+    whole tool-derived context. It is re-read from scratch in every study, `checkMesh`
+    ran three times in one and `--help` was read twice in two pages.
+
+    This forbids nothing. The model may ask again as often as it likes and gets a true
+    answer; a byte-identical repeat is answered with a pointer to where the bytes
+    already are in the thread, which is the same information without the second copy."""
+    calls: int = 0
+    """How many tool calls this session has dispatched, so an echo can name one."""
     on_render: Callable[[str], None] | None = None
     """Called with the workspace path whenever the model looks at an image.
 
@@ -235,8 +249,29 @@ ToolResult = str | list[dict[str, Any]]
 """What a handler gives back: text, or content blocks when text cannot carry it."""
 
 
+ECHO_MIN_BYTES = 2_000
+"""Below this, the sentence explaining a repeat costs about what the repeat does."""
+
+
+def _echo(ctx: ToolContext, body: str) -> str:
+    """`body`, or a pointer to the call that already returned exactly these bytes."""
+    if len(body) < ECHO_MIN_BYTES:
+        return body
+    import hashlib
+
+    digest = hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()
+    first = ctx.echoes.get(digest)
+    if first is None:
+        ctx.echoes[digest] = ctx.calls
+        return body
+    head = body.strip().splitlines()[0][:120] if body.strip() else ""
+    return (f"[identical, byte for byte, to what call #{first} returned — it is still "
+            f"in this conversation, so it is not repeated here]\n{head}")
+
+
 def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[ToolResult, bool]:
     """Run one tool call. Returns (content, is_error)."""
+    ctx.calls += 1
     handler = _HANDLERS.get(name)
     if handler is None:
         return f"No such tool: {name}", True
@@ -244,7 +279,11 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[T
     # themselves off the same `time.monotonic`, and tests drive that with a fake.
     started = time.monotonic() if trace.on else 0.0
     try:
-        return handler(ctx, tool_input), False
+        result = handler(ctx, tool_input)
+        # Only text is collapsed, and only when it repeats exactly. An image is already
+        # handled by the eviction policy, and an error is never worth collapsing --
+        # the same failure twice is a fact about the run, not a duplicate.
+        return (_echo(ctx, result) if isinstance(result, str) else result), False
     except BackendError as exc:
         return str(exc), True
     except Exception as exc:  # a harness bug is a fact the model should see
@@ -404,9 +443,13 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
             pass
     shape = images.dimensions(data)
     described = f"{shape[0]}x{shape[1]} " if shape else ""
+    # Scaled for transport only. The description keeps the real dimensions and the real
+    # size, so what the model is told about the file stays true to the file on disk.
+    sent = images.downscale(data, media)
+    note = "" if sent is data else f", sent at {images.ATTACH_MAX_EDGE}px"
     return [
-        images.attachment(data, media),
-        {"type": "text", "text": f"{path} — {described}{media}, {len(data)} bytes"},
+        images.attachment(sent, media),
+        {"type": "text", "text": f"{path} — {described}{media}, {len(data)} bytes{note}"},
     ]
 
 

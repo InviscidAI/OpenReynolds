@@ -163,10 +163,34 @@ class Browser:
         return text, True
 
     def pull(self, path: str) -> list[Path]:
-        """Copy something out to the local mirror, and say where it landed."""
+        """Copy something out to the local mirror, and say where it landed.
+
+        Bounded, unlike the single `get_tree` this used to be. That asked the service to
+        build one in-memory tar of the whole subtree, consulting none of the mirror's
+        caps -- aimed at a case root during a decomposed solve it meant every
+        `processorN/` directory in one archive. The mirror already records what that
+        costs: a 38 MB batch whose connection closed at 6 MB, taking every file in it
+        down with it. So this goes through the same sync the background cycles use,
+        which batches by count and by bytes and reports what it left behind.
+        """
         if self.store is None:
             raise BackendError("no study directory to pull into", code="no_store")
-        return self.backend.get_tree([path], self.store.fetch_dir())
+        from .mirror import sync
+
+        # One named file is already bounded -- it is one file -- and asking for a
+        # listing of it first would be a round trip to learn what the caller said.
+        try:
+            if not self.backend.stat(path).is_dir:
+                return self.backend.get_tree([path], self.store.fetch_dir())
+        except BackendError:
+            pass  # cannot tell what it is; let the walk below decide
+
+        report = sync(self, path=path, live=True)
+        if report.warnings and not report.pulled:
+            # Nothing came back and something went wrong: that is a failed pull, and
+            # the caller should hear the reason rather than an empty list.
+            raise BackendError("; ".join(report.warnings), code="pull_failed")
+        return list(report.pulled)
 
     # -- the local side --------------------------------------------------------
 

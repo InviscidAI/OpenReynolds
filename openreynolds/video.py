@@ -19,6 +19,41 @@ FRAME_SUFFIXES = frozenset({".png", ".jpg", ".jpeg"})
 
 DEFAULT_FPS = 10.0
 
+SIDECAR = "frames.json"
+"""What `.toolbox/animate.py` writes beside the frames it renders: the container
+that was asked for, the frame rate, and the name the finished animation should
+have. The frames come home through the mirror; without reading this, so does the
+intent -- `animate.py --format webp --fps 24` rendered its frames correctly and
+then the harness assembled a 10 fps gif, because the only thing that crossed the
+gap was the pictures."""
+
+
+def intent(directory: Path) -> tuple[str, float]:
+    """`(output filename, fps)` the frames were rendered for, from the sidecar.
+
+    Falls back to `("", DEFAULT_FPS)` when there is no sidecar or it will not
+    parse -- frames a person assembled by hand have no intent to read, and that is
+    not an error. An unknown container is ignored rather than trusted: `assemble`
+    dispatches on the extension, and inventing one from a typo would produce a file
+    nothing can open.
+    """
+    import json
+
+    try:
+        data = json.loads((Path(directory) / SIDECAR).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "", DEFAULT_FPS
+    if not isinstance(data, dict):
+        return "", DEFAULT_FPS
+    name = str(data.get("output") or "")
+    if name and Path(name).suffix.lower().lstrip(".") not in ("gif", "mp4", "webp"):
+        name = ""
+    try:
+        fps = float(data.get("fps") or DEFAULT_FPS)
+    except (TypeError, ValueError):
+        fps = DEFAULT_FPS
+    return name, (fps if fps > 0 else DEFAULT_FPS)
+
 
 class VideoError(Exception):
     """Anything that stops a video being made. The message is the whole story."""

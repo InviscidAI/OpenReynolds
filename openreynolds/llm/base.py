@@ -82,6 +82,16 @@ class Turn:
     """Everything this request occupied in the model's window -- input, cached input
     and output together -- so the loop can tell when a refresh is due. Each provider
     counts differently; this is the one number they agree to report."""
+    tokens: dict[str, int] = field(default_factory=dict)
+    """The same request split by what each class of token costs: `input`, `cache_read`,
+    `cache_write`, `output`.
+
+    `context_tokens` sums them, which is the right number for "is a refresh due" and the
+    wrong one for anything about money: on Opus a cache read and an output token differ
+    in price by 250x, so a healthy cache and a completely broken one produce the same
+    figure. That is why an eviction bug could cost real money on every study and never
+    show up anywhere -- cache reads are 68-80% of a study's model bill, and nothing
+    reported them separately. Providers that do not break usage down leave this empty."""
     provider: str = ""
     raw: Any = None
     """The provider-native assistant message, when it differs from `content`."""

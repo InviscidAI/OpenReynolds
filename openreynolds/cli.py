@@ -407,7 +407,10 @@ def stop_cmd(study_id: str | None, force: bool) -> None:
         raise SystemExit(1) from exc
 
     try:
-        report = stop_everything(backend, store, force=force)
+        # Scoped to the study being stopped. `--force` is what widens it to the whole
+        # instance, which is the only place that sweep still belongs: a person naming a
+        # study and asking twice.
+        report = stop_everything(backend, store, force=force, home=store.session.home)
         _release(backend)
     finally:
         backend.close()
@@ -644,9 +647,11 @@ def renders_cmd(study_id: str | None, open_it: bool) -> None:
 @main.command("video")
 @click.argument("frames", default="")
 @click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
-@click.option("--fps", default=video_mod.DEFAULT_FPS, show_default=True, help="Frames per second.")
+@click.option("--fps", default=None, type=float,
+              help="Frames per second. Defaults to what the frames were rendered for "
+                   f"(their {video_mod.SIDECAR}), else {video_mod.DEFAULT_FPS:g}.")
 @click.option("--out", "out_path", default=None, help="Where to write the video. Defaults beside the frames.")
-def video_cmd(frames: str, study_id: str | None, fps: float, out_path: str | None) -> None:
+def video_cmd(frames: str, study_id: str | None, fps: float | None, out_path: str | None) -> None:
     """Assemble mirrored render frames into a video, on this machine.
 
     Stills render on the instance, next to the data; encoding happens here, next
@@ -680,7 +685,16 @@ def video_cmd(frames: str, study_id: str | None, fps: float, out_path: str | Non
         directory = found
 
     sequence = video_mod.frames_in(directory)
-    target = Path(out_path) if out_path else directory.parent / f"{directory.name}.mp4"
+    # The frames say what they were rendered for; the flags say what was asked for
+    # now. What is typed wins, and the sidecar answers when nothing was.
+    wanted_name, wanted_fps = video_mod.intent(directory)
+    fps = wanted_fps if fps is None else fps
+    if out_path:
+        target = Path(out_path)
+    elif wanted_name:
+        target = directory.parent / wanted_name
+    else:
+        target = directory.parent / f"{directory.name}.mp4"
     try:
         tool = video_mod.assemble(sequence, target, fps=fps)
     except video_mod.VideoError as exc:
@@ -891,6 +905,10 @@ def session(
     outcome: str | None = None
     resuming = study_id is not None
     store = Store(cfg.studies_dir, study_id or new_study_id())
+    known_here = (store.dir / "session.json").is_file()
+    """Whether this machine already held the study before this run. A resume without
+    it is a study opened somewhere else, and it is named by its id rather than
+    inheriting the shared workspace root."""
 
     local = bool(os.environ.get("OPENREYNOLDS_LOCAL"))
     try:
@@ -911,9 +929,23 @@ def session(
         console.print(f"[red]Could not reach the workspace service:[/] {exc}")
         raise SystemExit(1) from exc
 
+    if getattr(backend, "was_already_running", False):
+        # The account is capped at one instance and `acquire()` joins the one that is
+        # already there, which is the right default and was completely silent. Two
+        # terminals, or a terminal and the web app, then shared four cores with nothing
+        # said on either screen -- one live pair ran at a fifth of the throughput each
+        # had alone, and both were billed for it.
+        console.print(
+            f"[yellow]joining the workspace already running on {resolved_instance[:8]}[/] "
+            "- another session may be using it, so they share its cores"
+        )
     store.session.instance_id = resolved_instance
     store.session.model = cfg.model
-    store.session.home = _home_for(store, backend, resuming)
+    if resuming:
+        # A study this machine has never seen -- opened in the browser, or on another
+        # laptop -- knows nothing about itself until the platform is asked.
+        _recover_session(store, client, study_id)
+    store.session.home = _home_for(store, backend, resuming, known_here)
     if not store.session.title and one_shot:
         store.session.title = one_shot[:80]
     store.save()
@@ -924,7 +956,8 @@ def session(
             capture = Capture(client, store.session.remote_study_id, warn=_warn)
         else:
             capture = Capture.start(
-                client, store.session.title or store.session.study_id, resolved_instance, warn=_warn
+                client, store.session.title or store.session.study_id, resolved_instance,
+                study_id=store.session.study_id, home=store.session.home, warn=_warn,
             )
             if capture:
                 store.session.remote_study_id = capture.study_id
@@ -943,8 +976,11 @@ def session(
     live_mirror = LiveMirror(browser, interval_s=cfg.mirror_interval_s)
     # Delivery rides on the mirror: every render that arrives is surfaced into one
     # flat folder and a directory of frames is assembled into a gif on this machine,
-    # so the pictures reach the user without the agent ever running `fetch`.
-    live_mirror.gallery = Gallery(store.files_dir, store.renders_dir)
+    # so the pictures reach the user without the agent ever running `fetch`. The same
+    # moment sends it to the platform, which is how a study run here can be looked at
+    # from the browser -- before this, capture only saw a render if the model had
+    # happened to `fetch` one, and delivery exists precisely so that it need not.
+    live_mirror.gallery = Gallery(store.files_dir, store.renders_dir, capture=capture)
     # A render the model just looked at should be on the user's machine now, not at
     # the next cycle. poke() is non-blocking, so looking costs the model nothing.
     ctx.on_render = lambda _path: live_mirror.poke()
@@ -1059,7 +1095,38 @@ still going" without parsing the output."""
 WORKSPACE_LISTED = 40
 
 
-def _home_for(store: Store, backend: Backend, resuming: bool) -> str:
+def _recover_session(store: Store, client: Any, study_id: str | None) -> None:
+    """Fill in what this machine does not know about a study it is resuming.
+
+    `openreynolds --study <id>` does not require the study to have been run here, and
+    that is the point: a study run in the browser should be openable on a laptop. But
+    with no local `session.json` there was nothing to say which directory on the volume
+    belonged to it, and `_home_for` fell back to the workspace root -- so the study
+    opened among every other study's files, the mirror tried to bring the whole volume
+    down, and capture opened a second row because it could not find the first. The
+    platform knows all three facts; ask it.
+
+    Never raises: an older service without the read route, or no network, leaves the
+    session exactly as it was and the caller carries on with local state.
+    """
+    if not study_id or store.session.home:
+        return
+    try:
+        row = client.get_study(study_id)
+    except Exception:  # noqa: BLE001 - an older service, or none reachable
+        return
+    if not isinstance(row, dict) or not row.get("id"):
+        return
+    store.session.remote_study_id = str(row["id"])
+    if row.get("home"):
+        store.session.home = str(row["home"])
+    if row.get("instance_id") and not store.session.instance_id:
+        store.session.instance_id = str(row["instance_id"])
+    if row.get("title") and not store.session.title:
+        store.session.title = str(row["title"])
+
+
+def _home_for(store: Store, backend: Backend, resuming: bool, known_here: bool = True) -> str:
     """This study's own directory, made if it is not there.
 
     A new study used to open straight into the shared volume, among every other
@@ -1075,9 +1142,17 @@ def _home_for(store: Store, backend: Backend, resuming: bool) -> str:
     """
     if store.session.home:
         home = store.session.home
-    elif resuming:
+    elif resuming and known_here:
+        # A study this machine already had, whose session predates homes: it keeps
+        # the whole workspace, because moving its files out from under it would be
+        # worse than the untidiness.
         home = WORKSPACE_ROOT
     else:
+        # A new study, or one resumed on a machine that has never seen it -- opened
+        # in the browser, or on another laptop. `known_here` is false there, and the
+        # id names the directory. Falling back to the workspace root instead is what
+        # put one run among every other run's files, and made the mirror try to bring
+        # the whole volume down.
         home = f"{WORKSPACE_ROOT}/{store.session.study_id}"
 
     if home != WORKSPACE_ROOT:
@@ -1330,6 +1405,13 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     """
     study = store.session.study_id
     home = store.session.home or WORKSPACE_ROOT
+    shared = bool(getattr(backend, "was_already_running", False))
+    """Whether this session joined a workspace somebody else had already started.
+
+    An account is capped at one instance and `acquire()` joins the existing one without
+    saying so, so a second terminal -- or the web app, or `openreynolds files` -- lands in
+    the same container. Stopping it, or sweeping it, then reaches work this session never
+    started. One live run lost a 22-minute solve to exactly that."""
     console.print(f"\n[dim]this study's files are in {store.dir}[/]")
     console.print(f"[dim]on the instance they are at {home}[/]")
 
@@ -1346,17 +1428,29 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     if live:
         names = ", ".join(job.name or job.job_id[:8] for job in live)
         console.print(f"[dim]stopping {len(live)} running job(s): {names}[/]")
-    report = stop_everything(backend, store, force=True)
+    # Scoped to this study's own directory: the sweep still catches mpirun ranks that
+    # outlived their job's process group, which is why it exists, and can no longer
+    # reach a solve another session is running on the same instance.
+    report = stop_everything(backend, store, home=home)
     for line in report.lines():
         console.print(f"  [{'green' if report.clean else 'yellow'}]{line}[/]")
 
-    try:
-        shutdown = getattr(backend, "shutdown", None)
-        if shutdown is not None:
-            shutdown()
-            console.print("[dim]instance stopped; the workspace volume is untouched[/]")
-    except BackendError as exc:
-        console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")
+    if shared:
+        # Somebody else's session had this workspace up before this one joined it, so
+        # it is theirs to stop. `_release` has said so for every read-only command
+        # since it was written; the session path is the one that never asked.
+        console.print(
+            "[dim]this workspace was already running when this session joined it, "
+            "so it is left up[/]"
+        )
+    else:
+        try:
+            shutdown = getattr(backend, "shutdown", None)
+            if shutdown is not None:
+                shutdown()
+                console.print("[dim]instance stopped; the workspace volume is untouched[/]")
+        except BackendError as exc:
+            console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")
 
     console.print(f"[dim]  resume: openreynolds --study {study}[/]")
 
@@ -1461,6 +1555,7 @@ def _local(
                 store,
                 stage=stage,
                 tokens=getattr(loop, "context_tokens", 0) or 0,
+                token_totals=getattr(loop, "token_totals", None),
                 local_files=len(browser.local()),
                 sync_age=browser.cache_age(),
             )
@@ -1549,35 +1644,74 @@ def _open_folder(path: Path, view: View) -> None:
     view.info(f"opened {path}")
 
 
+RETRYABLE_MODEL_STATUSES = frozenset({408, 409, 425, 429})
+"""Model-API failures worth waking the model on again: a timeout, a conflict, a
+rate limit. Everything else the API answers with a 4xx is about this account or
+this request -- the budget, the key, the model id -- and answers the same way in a
+minute."""
+
+_REFUSALS = {
+    400: "the request itself was rejected",
+    401: "the key was not accepted",
+    402: "the account cannot pay for this call -- a budget or a usage cap",
+    403: "this account is not allowed to make this call",
+    404: "there is no such model at that endpoint",
+    413: "the request was too large to accept",
+}
+
+
 def _run_turn(loop: Loop, view: View) -> bool:
     """Run a turn, surviving a model-API failure. Returns whether it completed.
 
     A long study will meet a rate limit or a dropped connection eventually, and
     losing the whole session to one is a poor trade when the thread is still intact
     and the jobs are still running on the instance.
+
+    A refusal is the other case, and it is not survivable by waiting. When the API
+    says 402 or 401, every later call says it too: a live session watched a job for
+    twenty-six minutes making ninety refused calls, answering nobody, because the
+    harness could not tell "try again" from "this will never work". `blocked_reason`
+    is that distinction, and it is the caller's cue to stop asking until a person
+    says something.
     """
+    status: int | None = None
+    said = ""
     try:
         loop.run()
         loop.api_failures = 0
+        loop.blocked_reason = None
         return True
     except ProviderError as exc:
         loop.api_failures += 1
-        if exc.status_code:
-            said = f"The model API returned {exc.status_code}: {exc.message}"
+        status = exc.status_code
+        if status:
+            said = f"The model API returned {status}: {exc.message}"
         else:
             said = f"Could not reach the model API: {exc.message}"
-        console.print(f"\n[red]{said}[/]")
+        console.print()
+        console.print(f"[red]{said}[/]")
         # The terminal sees the console; a web page sees the view. A refused call
         # that only reached the console looked, on the page, like an agent that
         # had gone quiet -- for ten minutes, to a person typing "what's going on?".
         view.notice(said)
 
     loop.settle()
-    if loop.api_failures >= 2:
+    refused = bool(status) and 400 <= status < 500 and status not in RETRYABLE_MODEL_STATUSES
+    study = loop.store.session.study_id
+    if refused:
+        loop.blocked_reason = said
+        because = _REFUSALS.get(status, "the service refused the request")
+        console.print(
+            f"[yellow]That is a refusal, not a hiccup: {because}. Waiting will not "
+            "change it, so nothing more will be sent until you say something.[/]\n"
+            "[yellow]Your work is safe -- every job is still running on the instance "
+            "and every file is mirrored here.[/]"
+        )
+        view.info("waiting for you - the model service refused the last call")
+    elif loop.api_failures >= 2:
         # Twice in a row is not a blip. Say plainly what is happening and what to do,
         # rather than repeating "the thread is intact" while nothing gets through --
         # which is exactly what a live session did, to a very frustrated user.
-        study = loop.store.session.study_id
         console.print(
             f"[yellow]The model API has failed {loop.api_failures} times in a row. "
             "The usual cause is a rate limit or usage cap on your model API key, not "
@@ -1613,8 +1747,20 @@ def _run_interactive(
             if wake.kind == "eof":
                 return
             if wake.kind in ("job", "narrate"):
+                if loop.blocked_reason:
+                    # The service is refusing calls for a reason waiting does not fix.
+                    # A job ending is a fact worth keeping in the thread for whenever
+                    # this resumes; progress chatter is not, and neither is a turn --
+                    # it would be refused exactly as the last ninety were.
+                    if wake.kind == "job":
+                        loop.inform(wake.text)
+                    continue
                 loop.inform(wake.text)
             elif wake.kind == "user":
+                # A person speaking is the one thing that can change a refusal:
+                # they have topped the account up, fixed the key, or want to hear
+                # the failure again. Either way, try.
+                loop.blocked_reason = None
                 # A long solve is exactly when someone wants to leave, or to ask what
                 # is happening without setting the whole thing off again. The desk
                 # answers the question now; the model still hears it at the next wake.
@@ -1639,6 +1785,7 @@ def _run_interactive(
             line = reader.get()
             if line is None:
                 return
+            loop.blocked_reason = None
             spoken = _apply(commands.parse(line), loop, view, browser, store, progress)
             if spoken is QUIT:
                 return

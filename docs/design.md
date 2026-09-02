@@ -1,10 +1,25 @@
-# Plan 2 — openreynolds: The Agent
+# The design of openreynolds
 
-Open source. A UI-less CFD agent: an Anthropic tool-use loop, a small tool surface, a backend abstraction (hosted OpenFOAM service first, local OpenFOAM later), and an optional toolbox. Works entirely from a terminal.
+A UI-less CFD agent: a tool-use loop, a small tool surface, a backend abstraction (a
+hosted OpenFOAM service first, local OpenFOAM later), and an optional toolbox. Works
+entirely from a terminal.
 
-**Relationship to the other repos:** it talks to the hosted service (Plan 1, "foamd") over HTTPS with an API key and never imports its code — the published `/v1` spec is the only coupling. A UI comes later and must not be designed for now; the only obligation toward it is already satisfied by capture plumbing (§11).
+This document is why the code is shaped the way it is. It is kept true to the code
+rather than to the plan it started as: `tests/test_briefing.py` reads this file, on the
+grounds that a plan contradicting the code is worse than no plan, because it is the
+document someone reads first and it will be believed.
 
-**Relationship to the architecture document:** it is a reference library, not a spec. Its durable ideas — cheap checks before expensive operations, digests and renders for multi-GB artifacts, retrieval from precedent — survive here **demoted to optional capabilities**. Its control structure (gates G0–G7, state service, frozen specs, hermetic runners, locks, provenance enforcement, budgets, supervisor/deliberator split) does not survive at all, and none of its checker inventory is on the implementer to port. Cherry-pick later only if the agent's actual behavior shows something is missing.
+**Relationship to the compute service.** The agent talks to the hosted workspace service
+over HTTPS with an API key and never imports its code. The published `/v1` OpenAPI spec
+is the only coupling, which is what lets either side be replaced. The service holds no
+CFD knowledge and no agent logic; everything about how to work lives here.
+
+**Relationship to the earlier architecture study.** An earlier internal design proposed a
+controlled pipeline: enforced gates, frozen specs, a state service, provenance
+enforcement, a supervisor and deliberator split. None of that control structure survives,
+deliberately (§1). What did survive is demoted to **optional capabilities** the agent may
+reach for and may ignore: cheap checks before expensive operations, digests and renders
+for multi-gigabyte artifacts, retrieval from precedent.
 
 ---
 
@@ -114,7 +129,7 @@ That is the entire surface. No `run_gate`, no `amend_spec`, no `ask_user` tool �
 
 Short and environmental — roughly one page:
 
-- who you are (a CFD engineer-agent with full control of a Linux workspace with OpenFOAM ESI v2512 — the version pinned in Plan 1);
+- who you are (a CFD engineer-agent with full control of a Linux workspace with OpenFOAM ESI v2512 — the version the workspace image pins);
 - what exists: the tools above and their semantics; `/work` persists across sessions (so notes-to-self on disk are useful — stated as information, not instruction); each study works in `/work/<study-id>`, named in the briefing, which commands default to and which a new study finds empty, with the rest of the volume holding other studies' work; `/work/.toolbox/` holds optional scripts and reference notes, usable, editable, replaceable, or ignorable;
 - long-running things go in jobs; while a job runs you can end your turn and you'll be woken with the outcome;
 - it's a conversation — ask the user whenever *you* want their input;
@@ -130,7 +145,23 @@ Standard Anthropic tool-use loop: stream text to the terminal, dispatch `tool_us
 
 **LLM transport.** The Anthropic client is constructed from config (`base_url` + key), so proxy-vs-direct is a flag, not a code path. Default: **direct, bring-your-own-key** (`ANTHROPIC_API_KEY`). The loop sets an `X-Study-Id` header either way, so usage ties to the study. LLM transport is deliberately **not** part of the Backend protocol — it belongs to the loop, so a future LocalBackend user inherits whatever transport is configured.
 
-> **Amended.** This section originally defaulted to a platform LLM proxy at `<FOAMD_URL>/v1/llm` billed against a master key. Plan 1 subsequently dropped that proxy — its F5 shipped as "BYOK + attribution ledger", the published `openapi.yaml` states there is no `/v1/llm`, and there is no `llm_usage` table. **A hosted proxy is future work, tracked as a TODO in `openreynolds/config.py`**; nothing proxy-specific is built. If one ever ships, `llm_base_url` points at it and the key changes — a config change, not a code change.
+**Two transports, and the flag was enough.** This section originally assumed a platform
+proxy billed against a master key; that was then dropped in favour of bring-your-own-key
+only; and a metered proxy has since shipped after all. All three of those turned out to
+be the same code with a different `llm_base_url` and a different key, which is the point
+of putting transport in config rather than in the loop.
+
+What exists today:
+
+- **Bring your own key** (the default, and the only mode for a self-hosted agent). The
+  agent calls your provider directly with your key. The workspace service never sees it.
+- **The metered provider** (`OPENREYNOLDS_PROVIDER=reynolds`). The agent calls
+  `{service}/v1/llm` with its *workspace* key as the model key; the service swaps in the
+  platform's own credential, relays the request including streaming, and meters the
+  tokens into the same monthly budget as compute. No model key of your own.
+
+Neither is privileged in the code. `llm/presets.py` carries both, and `make_provider`
+cannot tell which it has.
 
 **Context strategy — resume doubles as compaction.** A resumed session (`--study X`) is a fresh thread: system prompt + a machine-assembled factual blurb (instance id, running jobs + statuses, study id, its own directory and what is in it, and whether anyone is at the terminal to answer) + the user's message. The model reorients itself from `/work` — supported, never scripted. When a live session approaches the context window, the harness uses the same move: tells the model the thread is being refreshed (so it can jot anything to disk it wants to keep), then rebuilds as a resume. The model's memory is the filesystem plus whatever notes it chose to keep — which is the free-will version of the architecture doc's "state must outlive context."
 
@@ -190,23 +221,42 @@ This is the platform-value capture that makes the closed pieces worth building, 
 
 Fetched PNGs print their local paths; inline terminal image display (iTerm2/kitty protocols) is an A5 nicety.
 
-**LLM auth — bring your own key.** `FOAMD_API_KEY` covers compute and capture; `ANTHROPIC_API_KEY` covers the LLM, billed to the user directly. Per-user/per-key request attribution is still logged server-side by the platform's audit ledger (Plan 1, F5). Since the agent is open source, direct mode could not have been prevented anyway; it is now simply the only mode. A hosted proxy stays possible later as a config change (§6).
+**Two keys, two bills.** The workspace key covers compute and capture and is billed to
+the workspace account. The model key covers the model and is billed to you by your
+provider, or, under the metered provider, to the same workspace account (§6). The service
+logs per-key request attribution either way, so usage ties to a study without the service
+ever holding a bring-your-own key.
 
 ---
 
 ## 12. LocalBackend (deferred, one negative obligation now)
 
-Later: the same protocol over `subprocess` with a sourced OpenFOAM environment, jobs via the same `jobd`-style wrapper run locally, capture still pointing at the platform (that's the "local users still send data our way" motion) with `--no-capture` for fully offline use. The only v1 obligation is negative: **nothing above the Backend protocol may assume HTTP, Docker, or foamd specifics.** Enforce in review.
+Later: the same protocol over `subprocess` with a sourced OpenFOAM environment, and jobs
+via the same `jobd`-style wrapper run locally. Capture would keep its current default of
+pointing at the workspace service, with `--no-capture` (or `OPENREYNOLDS_CAPTURE=0`) for
+fully offline use, on the same terms as today: it is opt-out, `doctor` reports whether it
+is on, and it fails quietly rather than delaying a study.
+
+The only obligation this places on the code now is a negative one: **nothing above the
+Backend protocol may assume HTTP, Docker, or anything specific to the hosted service.**
+That is what makes a local backend an addition rather than a rewrite, and it is enforced
+in review and by `tests/test_negative_obligation.py`.
 
 ---
 
-## 13. Milestones
+## 13. How it was built
 
-Dependencies on Plan 1: A1 needs F2 (exec+files), A3 needs F3 (jobs), capture in any milestone degrades gracefully until F4 exists. LLM: all A-milestones can run `--direct-llm` until F5 lands; flipping to the proxy is a config change, not a milestone.
+Kept because the acceptance column is the useful part: each milestone was defined by what
+a person could newly do, not by what had been written. A4 in particular is the one that
+tests the contract rather than the code.
+
+Each depended on the corresponding capability existing in the workspace service: the loop
+needed exec and files, jobs needed the job API, and capture degraded gracefully until the
+capture plane existed.
 
 | # | Deliverable | Acceptance — "you can now…" |
 |---|---|---|
-| A1 | loop + HostedBackend + tools | watch the model run `foamToC -functionObjects`, read and write files on a live instance; transcript rows appear in Supabase (if F4 up, else buffered/skipped cleanly) |
+| A1 | loop + HostedBackend + tools | watch the model run `foamToC -functionObjects`, read and write files on a live instance; transcript rows reach the capture plane, or are skipped cleanly if it is not up |
 | A2 | toolbox sync | the model reproduces pitzDaily and renders fields; PNGs land in `./studies/<id>/` |
 | A3 | jobs + watch mode | a long solve launched, laptop closed mid-run, resumed later, completed; wake-on-exit works; a `kill_on` the *model chose* fires correctly |
 | A4 | the elbow, free-form | "simulate airflow through an L-shaped junction" → the agent clarifies as *it* sees fit, authors geometry and case, meshes, solves, sanity-checks however it chooses, delivers numbers + renders + a write-up. **Success includes the negative check: zero forced stops, zero harness-imposed ordering occurred; it asked the user only when it actually wanted to** |
@@ -220,7 +270,11 @@ A4 is also the joint acceptance with the hosted service.
 
 1. **Model:** default `claude-opus-5` — 1M context, and it supports mid-conversation `role: "system"` messages, which is the right channel for job-wake facts (operator authority rather than impersonating the user, and it leaves the cached prefix intact); `--model` overrides per study. The context refresh (compaction-as-resume, §6) triggers at ~80 % of the window.
 
-   > **Amended.** This originally read `claude-sonnet-4-6`, justified as the sweet spot "on the platform's master key". That justification went away with the master key (§6, §11) — under BYOK the user pays their own, so the choice is capability, not platform cost. `--model claude-sonnet-5` remains a one-flag downgrade; note it does not support the mid-conversation system role, so wake facts fall back to a marked user message.
+   > **Amended.** This originally named a cheaper model, justified by what the platform
+   > would pay for it. Under bring-your-own-key the user pays their own bill, so the
+   > choice is capability rather than platform cost. `--model` remains a one-flag change;
+   > note that not every model supports the mid-conversation system role, and where it is
+   > missing the job-wake facts fall back to a marked user message.
 2. **Reference material:** ship both — the distilled `openfoam-field-notes.md` **and** the full architecture document as one more optional file under `notes/`. Disk is free, context is not, and the agent chooses what to read.
 3. **Toolbox sync:** always, at session start. It's under a megabyte; conditional sync isn't worth a code path.
 4. **Tool-output caps:** 48 KB default, env-tunable, never a hard wall — the truncation marker always says where the rest lives and how to window into it.

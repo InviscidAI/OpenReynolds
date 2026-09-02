@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from openreynolds import video
 from openreynolds.delivery import Gallery
 
 
@@ -174,3 +175,130 @@ def test_newest_lists_the_folder_newest_first(tmp_path):
 
     newest = g.newest()
     assert newest[0].name == "b.png"
+
+
+def test_the_frames_say_what_they_were_rendered_for(tmp_path):
+    """`animate.py --format webp --fps 24` renders the frames on the instance and
+    writes `frames.json` beside them; the frames mirror home and, before this, the
+    intent did not. Every animation came out a 10 fps gif whatever was asked for,
+    and `webp` was unreachable by any path."""
+    frames_dir = tmp_path / "wake_frames"
+    frames_dir.mkdir()
+    (frames_dir / "frames.json").write_text(
+        '{"version": 1, "container": "webp", "fps": 24.0, "output": "wake_frames.webp"}',
+        encoding="utf-8",
+    )
+
+    assert video.intent(frames_dir) == ("wake_frames.webp", 24.0)
+
+
+def test_a_directory_with_no_sidecar_keeps_the_old_answer(tmp_path):
+    """Frames somebody assembled by hand have no intent to read, and that is not an
+    error -- it is the fallback that has always been there."""
+    plain = tmp_path / "frames"
+    plain.mkdir()
+    assert video.intent(plain) == ("", video.DEFAULT_FPS)
+
+
+def test_a_sidecar_that_will_not_parse_is_not_a_reason_to_lose_the_animation(tmp_path):
+    broken = tmp_path / "frames"
+    broken.mkdir()
+    (broken / "frames.json").write_text("{not json", encoding="utf-8")
+    assert video.intent(broken) == ("", video.DEFAULT_FPS)
+
+
+def test_a_container_nobody_can_open_is_ignored_rather_than_trusted(tmp_path):
+    """`assemble` dispatches on the extension: inventing one from a typo would
+    produce a file nothing plays."""
+    odd = tmp_path / "frames"
+    odd.mkdir()
+    (odd / "frames.json").write_text(
+        '{"container": "mkv", "fps": 30.0, "output": "frames.mkv"}', encoding="utf-8"
+    )
+    name, fps = video.intent(odd)
+    assert name == "" and fps == 30.0
+
+
+def test_delivery_assembles_what_the_sidecar_asked_for(tmp_path):
+    """The whole point of the sidecar: the mirror carries the frames home and the
+    harness makes the animation the study asked for, not the one it defaults to."""
+    g = gallery(tmp_path)
+    frames_dir = tmp_path / "files" / "wake_frames"
+    frames_dir.mkdir(parents=True)
+    seq = []
+    for n in range(4):
+        frame = frames_dir / f"frame_{n:04d}.png"
+        frame.write_bytes(b"\x89PNG")
+        seq.append(frame)
+    (frames_dir / "frames.json").write_text(
+        '{"container": "mp4", "fps": 24.0, "output": "wake_frames.mp4"}', encoding="utf-8"
+    )
+
+    event = g.ingest(report(seq))
+
+    assert [out.name for _frames, out in g._calls] == ["wake_frames.mp4"]
+    assert any(path.name == "wake_frames.mp4" for path in event.videos)
+
+
+# --- renders reach the platform, not just the renders folder --------------------
+
+
+class _Keeper:
+    """Stands in for Capture: records what delivery handed it."""
+
+    def __init__(self, boom=False):
+        self.kept: list[tuple[str, str]] = []
+        self.boom = boom
+
+    def artifact(self, path, kind=None):
+        if self.boom:
+            raise RuntimeError("platform is down")
+        self.kept.append((path.name, kind))
+
+
+def test_a_surfaced_render_is_also_kept(tmp_path):
+    """Before this, a render reached the platform only if the model happened to call
+    `fetch` on it -- and delivery exists so that it need not, so nothing was kept and
+    a study looked at from anywhere else had no pictures."""
+    files, renders = tmp_path / "files", tmp_path / "renders"
+    (files / "case").mkdir(parents=True)
+    src = files / "case" / "mesh.png"
+    src.write_bytes(b"\x89PNG\r\n")
+    keeper = _Keeper()
+    gallery = Gallery(files, renders, capture=keeper)
+
+    class R:
+        pulled = [src]
+
+    event = gallery.ingest(R())
+    assert [p.name for p in event.images] == ["mesh.png"]
+    assert keeper.kept == [("mesh.png", "render")]
+
+
+def test_keeping_a_render_cannot_break_delivery(tmp_path):
+    """A convenience may not end a session: the picture still lands locally."""
+    files, renders = tmp_path / "files", tmp_path / "renders"
+    (files / "case").mkdir(parents=True)
+    src = files / "case" / "mesh.png"
+    src.write_bytes(b"\x89PNG\r\n")
+    gallery = Gallery(files, renders, capture=_Keeper(boom=True))
+
+    class R:
+        pulled = [src]
+
+    event = gallery.ingest(R())
+    assert [p.name for p in event.images] == ["mesh.png"]
+    assert (renders / "mesh.png").is_file()
+
+
+def test_no_capture_is_simply_no_keeping(tmp_path):
+    files, renders = tmp_path / "files", tmp_path / "renders"
+    (files / "case").mkdir(parents=True)
+    src = files / "case" / "mesh.png"
+    src.write_bytes(b"\x89PNG\r\n")
+
+    class R:
+        pulled = [src]
+
+    event = Gallery(files, renders).ingest(R())
+    assert [p.name for p in event.images] == ["mesh.png"]
