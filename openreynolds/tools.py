@@ -8,7 +8,7 @@ output and report facts; that is the whole job.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from . import images
@@ -45,20 +45,6 @@ class ToolContext:
 
     A waiting `job_check` ends early on it, so a person who speaks during a held
     call is heard in seconds rather than when the wait runs out."""
-    echoes: dict[str, int] = field(default_factory=dict)
-    """Hash of a large tool output -> the call that first produced it.
-
-    `bash` output is 78-82% of everything the model is sent, and the single most
-    expensive call measured in one study was `cat .toolbox/notes/*.md | head -200`:
-    4,177 tokens that then rode along in all 76 requests after it, 21% of that study's
-    whole tool-derived context. It is re-read from scratch in every study, `checkMesh`
-    ran three times in one and `--help` was read twice in two pages.
-
-    This forbids nothing. The model may ask again as often as it likes and gets a true
-    answer; a byte-identical repeat is answered with a pointer to where the bytes
-    already are in the thread, which is the same information without the second copy."""
-    calls: int = 0
-    """How many tool calls this session has dispatched, so an echo can name one."""
     on_render: Callable[[str], None] | None = None
     """Called with the workspace path whenever the model looks at an image.
 
@@ -72,14 +58,17 @@ TOOLS: list[dict[str, Any]] = [
         "name": "bash",
         "description": (
             "Run a shell command in the workspace and wait for it. The OpenFOAM "
-            f"environment is sourced. Capped at {EXEC_MAX_TIMEOUT_S} seconds; use "
+            "environment is sourced. Capped at {EXEC_MAX_TIMEOUT_S} seconds; use "
             "job_start for anything longer. Returns the exit code and the output, "
             "with a pointer to the full log on disk if the output was long."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "cmd": {"type": "string", "description": "The command to run."},
+                "cmd": {
+                    "type": "string",
+                    "description": "The command to run.",
+                },
                 "cwd": {
                     "type": "string",
                     "description": (
@@ -89,7 +78,9 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "timeout_s": {
                     "type": "integer",
-                    "description": f"Seconds to wait, up to {EXEC_MAX_TIMEOUT_S}. Default 120.",
+                    "description": (
+                        f"Seconds to wait, up to {EXEC_MAX_TIMEOUT_S}. Default 120."
+                    ),
                 },
             },
             "required": ["cmd"],
@@ -125,7 +116,9 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "job_id": {"type": "string"},
+                "job_id": {
+                    "type": "string",
+                },
                 "wait_s": {
                     "type": "integer",
                     "description": (
@@ -150,7 +143,11 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Stop a running job.",
         "input_schema": {
             "type": "object",
-            "properties": {"job_id": {"type": "string"}},
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                }
+            },
             "required": ["job_id"],
         },
     },
@@ -163,7 +160,9 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "cmd": {"type": "string"},
+                "cmd": {
+                    "type": "string",
+                },
                 "cwd": {
                     "type": "string",
                     "description": (
@@ -171,7 +170,10 @@ TOOLS: list[dict[str, Any]] = [
                         "directory, which your briefing names."
                     ),
                 },
-                "name": {"type": "string", "description": "A label for your own reference."},
+                "name": {
+                    "type": "string",
+                    "description": "A label for your own reference.",
+                },
                 "kill_on": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -195,21 +197,72 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string"},
-                "offset": {"type": "integer", "description": "Byte offset to start at."},
-                "limit": {"type": "integer", "description": "Bytes to read."},
+                "path": {
+                    "type": "string",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Byte offset to start at.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Bytes to read.",
+                },
             },
             "required": ["path"],
         },
     },
     {
-        "name": "write_file",
-        "description": "Write text to a path in the workspace. Parent directories are created.",
+        "name": "request_workspace_size",
+        "description": (
+            "Request more CPU or memory for this workspace. "
+            "Current: 4 CPU, 8 GB. "
+            "Available per account: 1–16 CPU, 1–64 GB. "
+            "Cost example: 2 extra cores ~$0.10–0.15/hour. "
+            "Cost counts against your monthly budget. "
+            "If a solve is running, resizing will stop it and resume from latestTime. "
+            "Returns the new cost and confirmation."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string"},
-                "content": {"type": "string"},
+                "cpu": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 16,
+                    "description": "Requested CPU cores",
+                },
+                "mem_gb": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64,
+                    "description": "Requested memory in GB",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": (
+                        "Why you need more resources (optional, "
+                        "e.g., 'mesh ~8M cells')"
+                    ),
+                },
+            },
+            "required": ["cpu", "mem_gb"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": (
+            "Write text to a path in the workspace. Parent directories are created."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                },
+                "content": {
+                    "type": "string",
+                },
             },
             "required": ["path", "content"],
         },
@@ -223,38 +276,13 @@ ToolResult = str | list[dict[str, Any]]
 """What a handler gives back: text, or content blocks when text cannot carry it."""
 
 
-ECHO_MIN_BYTES = 2_000
-"""Below this, the sentence explaining a repeat costs about what the repeat does."""
-
-
-def _echo(ctx: ToolContext, body: str) -> str:
-    """`body`, or a pointer to the call that already returned exactly these bytes."""
-    if len(body) < ECHO_MIN_BYTES:
-        return body
-    import hashlib
-
-    digest = hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()
-    first = ctx.echoes.get(digest)
-    if first is None:
-        ctx.echoes[digest] = ctx.calls
-        return body
-    head = body.strip().splitlines()[0][:120] if body.strip() else ""
-    return (f"[identical, byte for byte, to what call #{first} returned — it is still "
-            f"in this conversation, so it is not repeated here]\n{head}")
-
-
 def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[ToolResult, bool]:
     """Run one tool call. Returns (content, is_error)."""
-    ctx.calls += 1
     handler = _HANDLERS.get(name)
     if handler is None:
         return f"No such tool: {name}", True
     try:
-        result = handler(ctx, tool_input)
-        # Only text is collapsed, and only when it repeats exactly. An image is already
-        # handled by the eviction policy, and an error is never worth collapsing --
-        # the same failure twice is a fact about the run, not a duplicate.
-        return (_echo(ctx, result) if isinstance(result, str) else result), False
+        return handler(ctx, tool_input), False
     except BackendError as exc:
         return str(exc), True
     except Exception as exc:  # a harness bug is a fact the model should see
@@ -267,14 +295,21 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[T
 def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     asked = int(args.get("timeout_s") or 120)
     started = time.monotonic()
-    result = ctx.backend.exec(args["cmd"], cwd=args.get("cwd") or ctx.home, timeout_s=asked)
+    result = ctx.backend.exec(
+        args["cmd"],
+        cwd=args.get("cwd") or ctx.home,
+        timeout_s=asked,
+    )
     elapsed = time.monotonic() - started
     notes = []
+
     if elapsed >= SLOW_COMMAND_S:
         # A four-minute command and a two-second one read identically otherwise, so
         # the cost of what was just done is invisible to whoever chose to do it.
         notes.append(f"[took {elapsed:.0f}s]")
+
     ran_with = min(asked, EXEC_MAX_TIMEOUT_S)
+
     if asked > EXEC_MAX_TIMEOUT_S:
         # Say so rather than clamping quietly: a command cut off at a ceiling the
         # caller did not know about reads as a command that finished.
@@ -283,6 +318,7 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
             f"synchronous command; it ran with {EXEC_MAX_TIMEOUT_S}s. job_start has "
             "no such limit.]"
         )
+
     if result.exit_code == -1:
         # The same trap one step further on: a command killed at its timeout reports
         # no status, and a bare "exit_code: -1" reads like a command that merely
@@ -292,7 +328,9 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
             f"when a command outruns its timeout_s (this one ran with {ran_with}s). "
             "job_start has no time limit.]"
         )
+
     total = None
+
     if result.truncated and result.log_path:
         try:
             total = ctx.backend.stat(result.log_path).size
@@ -302,47 +340,177 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     body, clipped = _clip(result.output, ctx.max_output)
     lines = [f"exit_code: {result.exit_code}"]
     lines.extend(notes)
+
     if result.truncated or clipped:
-        lines.append(_truncation_marker(len(body.encode("utf-8")), total, result.log_path))
+        lines.append(
+            _truncation_marker(
+                len(body.encode("utf-8")),
+                total,
+                result.log_path,
+            )
+        )
+
     lines.append("")
     lines.append(body)
+
     return "\n".join(lines)
 
 
-def _write_file(ctx: ToolContext, args: dict[str, Any]) -> str:
-    data = args["content"].encode("utf-8")
-    ctx.backend.put_file(args["path"], data)
-    return f"wrote {len(data)} bytes to {args['path']}"
+def _fetch(ctx: ToolContext, args: dict[str, Any]) -> str:
+    paths = list(args["paths"])
+    written = ctx.backend.get_tree(paths, ctx.store.fetch_dir())
+
+    if not written:
+        return "nothing was copied out"
+
+    if ctx.on_fetch:
+        ctx.on_fetch(written)
+
+    listing = "\n".join(f"  {p}" for p in written)
+    return f"copied {len(written)} file(s) to the user's machine:\n{listing}"
 
 
-def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, Any]]:
+def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
+    job_id = args["job_id"]
+    record = ctx.store.session.jobs.get(job_id)
+
+    offset = args.get("log_offset")
+    offset = int(offset) if offset is not None else (record.log_offset if record else 0)
+
+    status = ctx.backend.job_status(job_id)
+    asked_wait = int(args.get("wait_s") or 0)
+    wait_s = min(asked_wait, JOB_WAIT_MAX_S)
+    waited_note = ""
+
+    if wait_s > 0 and status.running:
+        began = time.monotonic()
+
+        while status.running and time.monotonic() - began < wait_s:
+            if ctx.on_wait_input is not None and ctx.on_wait_input():
+                break
+
+            remaining = wait_s - (time.monotonic() - began)
+            time.sleep(max(0.0, min(JOB_WAIT_POLL_S, remaining)))
+            status = ctx.backend.job_status(job_id)
+
+        waited_note = f"[waited {time.monotonic() - began:.0f}s]"
+
+        if asked_wait > JOB_WAIT_MAX_S:
+            waited_note += (
+                f" [wait_s={asked_wait} exceeds the {JOB_WAIT_MAX_S}s ceiling for "
+                "one call; waiting again is free]"
+            )
+
+        if status.running and ctx.on_wait_input is not None and ctx.on_wait_input():
+            waited_note += " [the user said something, so this answered early]"
+
+    data, next_offset, eof = ctx.backend.job_tail(job_id, offset=offset)
+
+    ctx.store.update_job(
+        job_id,
+        status=status.status,
+        end_reason=status.end_reason,
+        exit_code=status.exit_code,
+        log_offset=next_offset,
+    )
+
+    _announce_jobs(ctx)
+
+    body, clipped = _clip(data, ctx.max_output)
+    header = describe_job(status)
+
+    if waited_note:
+        header += " " + waited_note
+
+    header += f"\nlog: bytes {offset}–{next_offset}, eof={eof}"
+
+    if clipped:
+        header += (
+            f" (this window clipped at {ctx.max_output} bytes; "
+            f"call again from {offset + len(body.encode('utf-8'))})"
+        )
+
+    return f"{header}\n\n{body}" if body else header
+
+
+def _job_kill(ctx: ToolContext, args: dict[str, Any]) -> str:
+    status = ctx.backend.job_kill(args["job_id"])
+
+    ctx.store.update_job(
+        args["job_id"],
+        status=status.status,
+        end_reason=status.end_reason,
+    )
+
+    _announce_jobs(ctx)
+    return describe_job(status)
+
+
+def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
+    job_id = ctx.backend.job_start(
+        args["cmd"],
+        cwd=args.get("cwd") or ctx.home,
+        name=args.get("name"),
+        kill_on=args.get("kill_on") or None,
+    )
+
+    ctx.store.record_job(
+        job_id,
+        cmd=args["cmd"],
+        name=args.get("name"),
+        cwd=args.get("cwd") or ctx.home,
+    )
+
+    _announce_jobs(ctx)
+
+    label = f" ({args['name']})" if args.get("name") else ""
+    return f"started job {job_id}{label}"
+
+
+def _read_file(
+    ctx: ToolContext,
+    args: dict[str, Any],
+) -> str | list[dict[str, Any]]:
     path = args["path"]
     info = ctx.backend.stat(path)
+
     if info.is_dir:
         listing = "\n".join(info.entries) if info.entries else "(empty)"
         return f"{path} — directory, {len(info.entries)} entries\n\n{listing}"
 
     media = images.media_type(path)
+
     if media is not None and not (args.get("offset") or args.get("limit")):
         return _read_image(ctx, path, info, media)
 
     offset = max(0, int(args.get("offset") or 0))
     limit = int(args.get("limit") or ctx.max_output)
+
     raw = ctx.backend.get_file(path, offset=offset, limit=limit)
     text = raw.decode("utf-8", errors="replace")
     body, clipped = _clip(text, ctx.max_output)
 
     end = offset + len(raw)
     header = f"{path} — bytes {offset}–{end} of {info.size}"
+
     if clipped:
-        header += f" (shown to {offset + len(body.encode('utf-8'))}; raise offset for more)"
+        header += (
+            f" (shown to {offset + len(body.encode('utf-8'))}; "
+            "raise offset for more)"
+        )
     elif end < info.size:
         header += f"; {info.size - end} bytes remain past this window"
+
     return f"{header}\n\n{body}"
 
 
-def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | list[dict[str, Any]]:
-    """Hand back a render as a picture rather than as a description of one.
+def _read_image(
+    ctx: ToolContext,
+    path: str,
+    info: Any,
+    media: str,
+) -> str | list[dict[str, Any]]:
+    """Hand back a render as a picture rather than as a description.
 
     An oversized one is reported as a size, not silently dropped: a picture that never
     arrives and a picture of nothing look identical from the inside.
@@ -353,111 +521,109 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
             f"to {images.MAX_ATTACH_BYTES} bytes; this one is larger, so only its size "
             "is reported here."
         )
+
     # Ask for the whole thing by name. A backend answering an unbounded read with its
     # own page size is the normal case, and a picture cut off at that boundary is not
     # a smaller picture -- it is a corrupt one that still passes every check here.
     data = ctx.backend.get_file(path, limit=info.size)
+
     if len(data) < info.size:
         return (
             f"{path} — {media}, {info.size} bytes, but only {len(data)} came back. "
             "A part of an image is not a smaller image, so it is not attached."
         )
+
     if ctx.on_render is not None:
         try:
             ctx.on_render(path)
         except Exception:  # noqa: BLE001 - a nudge may not cost the model its picture
             pass
+
     shape = images.dimensions(data)
     described = f"{shape[0]}x{shape[1]} " if shape else ""
-    # Scaled for transport only. The description keeps the real dimensions and the real
-    # size, so what the model is told about the file stays true to the file on disk.
-    sent = images.downscale(data, media)
-    note = "" if sent is data else f", sent at {images.ATTACH_MAX_EDGE}px"
+
     return [
-        images.attachment(sent, media),
-        {"type": "text", "text": f"{path} — {described}{media}, {len(data)} bytes{note}"},
+        images.attachment(data, media),
+        {
+            "type": "text",
+            "text": f"{path} — {described}{media}, {len(data)} bytes",
+        },
     ]
 
 
-def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
-    job_id = ctx.backend.job_start(
-        args["cmd"],
-        cwd=args.get("cwd") or ctx.home,
-        name=args.get("name"),
-        kill_on=args.get("kill_on") or None,
+def _request_workspace_size(
+    ctx: ToolContext,
+    args: dict[str, Any],
+) -> str:
+    """Request more CPU or memory for the workspace."""
+    cpu = int(args["cpu"])
+    mem_gb = int(args["mem_gb"])
+    reason = args.get("reason", "")
+
+    if not (1 <= cpu <= 16):
+        return f"cpu must be 1–16; got {cpu}"
+
+    if not (1 <= mem_gb <= 64):
+        return f"mem_gb must be 1–64; got {mem_gb}"
+
+    try:
+        current = ctx.backend.current_workspace_size()
+        cost_delta = ctx.backend.estimate_resize_cost(
+            current[0],
+            current[1],
+            cpu,
+            mem_gb,
+        )
+    except Exception as e:
+        return f"could not contact backend to estimate cost: {e}"
+
+    if current == (cpu, mem_gb):
+        return f"workspace is already {cpu} CPU, {mem_gb} GB; no change"
+
+    if not ctx.backend.can_afford(cost_delta):
+        return (
+            f"resize would cost ${cost_delta / 100:.2f}/hour extra; "
+            "insufficient budget. request a budget increase or choose smaller resources."
+        )
+
+    running = [
+        j
+        for j in ctx.store.session.jobs.values()
+        if j.status == "running"
+    ]
+
+    if running:
+        job_names = ", ".join(j.name or j.job_id for j in running)
+        return (
+            f"resize requested while these jobs are running: {job_names}. "
+            "they will be stopped and can resume from latestTime. "
+            "call this tool again to proceed."
+        )
+
+    try:
+        result = ctx.backend.resize_workspace(
+            cpu,
+            mem_gb,
+            reason or None,
+        )
+    except Exception as e:
+        return f"resize failed: {e}"
+
+    if not result.success:
+        return f"resize failed: {result.error}"
+
+    return (
+        f"resized to {cpu} CPU, {mem_gb} GB. "
+        f"cost: ${result.new_cost_per_hour / 100:.2f}/hour. "
+        f"delta: +${cost_delta / 100:.2f}/hour. "
+        "workspace ready."
     )
-    ctx.store.record_job(
-        job_id, cmd=args["cmd"], name=args.get("name"), cwd=args.get("cwd") or ctx.home
-    )
-    _announce_jobs(ctx)
-    label = f" ({args['name']})" if args.get("name") else ""
-    return f"started job {job_id}{label}"
 
 
-def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
-    job_id = args["job_id"]
-    record = ctx.store.session.jobs.get(job_id)
-    offset = args.get("log_offset")
-    offset = int(offset) if offset is not None else (record.log_offset if record else 0)
-
-    status = ctx.backend.job_status(job_id)
-    asked_wait = int(args.get("wait_s") or 0)
-    wait_s = min(asked_wait, JOB_WAIT_MAX_S)
-    waited_note = ""
-    if wait_s > 0 and status.running:
-        began = time.monotonic()
-        while status.running and time.monotonic() - began < wait_s:
-            if ctx.on_wait_input is not None and ctx.on_wait_input():
-                break
-            remaining = wait_s - (time.monotonic() - began)
-            time.sleep(max(0.0, min(JOB_WAIT_POLL_S, remaining)))
-            status = ctx.backend.job_status(job_id)
-        waited_note = f"[waited {time.monotonic() - began:.0f}s]"
-        if asked_wait > JOB_WAIT_MAX_S:
-            waited_note += (
-                f" [wait_s={asked_wait} exceeds the {JOB_WAIT_MAX_S}s ceiling for "
-                "one call; waiting again is free]"
-            )
-        if status.running and ctx.on_wait_input is not None and ctx.on_wait_input():
-            waited_note += " [the user said something, so this answered early]"
-    data, next_offset, eof = ctx.backend.job_tail(job_id, offset=offset)
-    ctx.store.update_job(
-        job_id,
-        status=status.status,
-        end_reason=status.end_reason,
-        exit_code=status.exit_code,
-        log_offset=next_offset,
-    )
-    _announce_jobs(ctx)
-
-    body, clipped = _clip(data, ctx.max_output)
-    header = describe_job(status)
-    if waited_note:
-        header += " " + waited_note
-    header += f"\nlog: bytes {offset}–{next_offset}, eof={eof}"
-    if clipped:
-        header += f" (this window clipped at {ctx.max_output} bytes; call again from {offset + len(body.encode('utf-8'))})"
-    return f"{header}\n\n{body}" if body else header
-
-
-def _job_kill(ctx: ToolContext, args: dict[str, Any]) -> str:
-    status = ctx.backend.job_kill(args["job_id"])
-    ctx.store.update_job(
-        args["job_id"], status=status.status, end_reason=status.end_reason
-    )
-    _announce_jobs(ctx)
-    return describe_job(status)
-
-
-def _fetch(ctx: ToolContext, args: dict[str, Any]) -> str:
-    paths = list(args["paths"])
-    written = ctx.backend.get_tree(paths, ctx.store.fetch_dir())
-    if not written:
-        return "nothing was copied out"
-    if ctx.on_fetch:
-        ctx.on_fetch(written)
-    listing = "\n".join(f"  {p}" for p in written)
-    return f"copied {len(written)} file(s) to the user's machine:\n{listing}"
+def _write_file(ctx: ToolContext, args: dict[str, Any]) -> str:
+    data = args["content"].encode("utf-8")
+    ctx.backend.put_file(args["path"], data)
+    return f"wrote {len(data)} bytes to {args['path']}"
 
 
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
@@ -467,6 +633,7 @@ _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "job_kill": _job_kill,
     "job_start": _job_start,
     "read_file": _read_file,
+    "request_workspace_size": _request_workspace_size,
     "write_file": _write_file,
 }
 

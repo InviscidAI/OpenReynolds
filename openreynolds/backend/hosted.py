@@ -22,6 +22,7 @@ from .base import (
     BackendError,
     ExecResult,
     JobStatus,
+    ResizeResult,
     Stat,
 )
 
@@ -511,6 +512,82 @@ class HostedBackend(Backend):
             )
         )
 
+    def current_workspace_size(self) -> tuple[float, int]:
+        """Get current workspace CPU and memory from foamd."""
+        try:
+            body = _json(
+                self._client.request(
+                    "GET", self._instance_path("/resources"), timeout=10.0
+                )
+            )
+            cpu = float(body.get("cpu", 4.0))
+            mem_gb = int(body.get("mem_gb", 8))
+            return (cpu, mem_gb)
+        except Exception as e:
+            raise BackendError(f"could not get workspace size: {e}")
+
+    def estimate_resize_cost(
+        self, from_cpu: float, from_mem_gb: int, to_cpu: float, to_mem_gb: int
+    ) -> int:
+        """Estimate resize cost from foamd."""
+        try:
+            body = _json(
+                self._client.request(
+                    "POST",
+                    self._instance_path("/pricing"),
+                    json={
+                        "from": {"cpu": from_cpu, "mem_gb": from_mem_gb},
+                        "to": {"cpu": to_cpu, "mem_gb": to_mem_gb}
+                    },
+                    timeout=10.0
+                )
+            )
+            return int(body.get("cost_delta_cents", 0))
+        except Exception as e:
+            raise BackendError(f"could not estimate resize cost: {e}")
+
+    def can_afford(self, cost_delta_cents: int) -> bool:
+        """Check if cost delta fits within monthly budget."""
+        try:
+            body = _json(
+                self._client.request(
+                    "GET", "/v1/account/budget", timeout=10.0
+                )
+            )
+            used_cents = int(body.get("used_cents", 0))
+            limit_cents = int(body.get("limit_cents", 0))
+            remaining = limit_cents - used_cents
+            return cost_delta_cents <= remaining
+        except Exception:
+            # If we can't check budget, assume we can't afford it (safe default)
+            return False
+
+    def resize_workspace(self, cpu: float, mem_gb: int, reason: str | None) -> ResizeResult:
+        """Request a workspace resize from foamd."""
+        try:
+            payload = {
+                "cpu": cpu,
+                "mem_gb": mem_gb,
+            }
+            if reason:
+                payload["reason"] = reason
+
+            body = _json(
+                self._client.request(
+                    "PATCH",
+                    self._instance_path(""),
+                    json=payload,
+                    timeout=30.0
+                )
+            )
+            return ResizeResult(
+                success=True,
+                new_cost_per_hour=int(body.get("cost_per_hour_cents", 0))
+            )
+        except BackendError as e:
+            return ResizeResult(success=False, error=str(e))
+        except Exception as e:
+            return ResizeResult(success=False, error=f"resize failed: {e}")
 
 def _job_status(body: dict[str, Any]) -> JobStatus:
     return JobStatus(

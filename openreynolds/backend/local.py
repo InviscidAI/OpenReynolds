@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import Backend, ExecResult, JobStatus, Stat
+from .base import Backend, ExecResult, JobStatus, ResizeResult, Stat
 
 
 class LocalBackend(Backend):
@@ -48,5 +48,27 @@ class LocalBackend(Backend):
     def job_tail(self, job_id: str, offset: int = 0) -> tuple[str, int, bool]: ...
 
     def job_kill(self, job_id: str, signal: str = "TERM") -> JobStatus: ...
+
+    
+    def current_workspace_size(self) -> tuple[float, int]:
+        """Local backend returns defaults."""
+        return (4.0, 8)
+
+    def estimate_resize_cost(
+        self, from_cpu: float, from_mem_gb: int, to_cpu: float, to_mem_gb: int
+    ) -> int:
+        """Cost estimation not available for local backend."""
+        return 0
+
+    def can_afford(self, cost_delta_cents: int) -> bool:
+        """Local backend has unlimited budget."""
+        return True
+
+    def resize_workspace(self, cpu: float, mem_gb: int, reason: str | None) -> ResizeResult:
+        """Local backend cannot resize."""
+        return ResizeResult(
+            success=False,
+            error="local backend does not support workspace resize"
+        )
 
     def close(self) -> None: ...
