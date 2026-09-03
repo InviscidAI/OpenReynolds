@@ -99,6 +99,11 @@ Modal preemption can do it, it is a data-availability bug rather than an own-goa
 
 ## 4. `303` with an empty body instead of an error
 
+**TRACKED — `InviscidAI/OpenFoam_Instance#2`, 2026-09-03.** Merged into that issue,
+which is now the single home for it. The evidence below widened its scope: that issue
+framed the 303 as a synchronous request outliving the web-endpoint window, which cannot
+explain `job_kill` or `list_instances`, neither of which is long-running.
+
 Seen on `job_kill`, on `list_instances`, and on an `exec` whose `timeout_s` exceeded the
 300 s the protocol advertises. The client surfaces
 `bad_response (303): the service answered 303 with a body that is not JSON`, which is
