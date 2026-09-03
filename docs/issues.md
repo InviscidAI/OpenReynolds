@@ -7,6 +7,10 @@ each discovery from becoming the new task: note it, keep the evidence, carry on.
 `found-by-using-it.md` is the companion narrative — what running it found and what was
 then fixed. This is the queue of what has not been.
 
+An entry that has been fixed is marked **RESOLVED** with the version that carries it and
+kept in place for one cycle, rather than deleted: the evidence is most useful to the next
+person while the fix is still fresh enough to be doubted.
+
 **A note on evidence.** `studies/` is gitignored, so the transcripts referenced below
 live only on the machine that ran them. Anything that matters long-term should be copied
 out before it is lost. Session logs under `/tmp` do not survive a reboot at all.
@@ -176,6 +180,10 @@ so code parity still does not prove behaviour parity.
 
 ## 8. `imageio` is not in the image, so every study pays to install it
 
+**RESOLVED — foamd v18 (`bec67af`), 2026-09-03.** Verified in a sandbox booted from
+the deployed image with egress blocked: `imageio` 2.37.4, its ffmpeg plugin 0.6.0,
+and `ffprobe` 6.1.1 on PATH.
+
 The container does not have it, and `pyproject.toml` lists it only as an optional `video`
 extra. The agent therefore runs `pip install imageio` from the network in study after
 study, and retries when it is slow — **2 to 5 minutes per study, 17.7 minutes across the
@@ -215,6 +223,11 @@ from the other end.
 
 ## 10. `jobd start` reuses a job directory without clearing its terminal state
 
+**RESOLVED — foamd v18 (`bec67af`), 2026-09-03.** Verified against the deployed
+image: a first run exits 3; one second into a second run started in the same
+directory the exit code is absent rather than a stale 3; the second run then
+finishes with its own 0.
+
 `cmd_start` does `mkdir -p "$dir"` and truncates `log`, and leaves `rc` and `killed_by`
 alone. So starting a job into a directory that has been used before leaves the *previous*
 run's exit code sitting next to a log that was just emptied. A caller that polls for
@@ -232,8 +245,11 @@ twice is an ordinary thing to type.
 went on to finish. The two pieces of evidence actively contradicted each other — a fresh,
 growing log beside a stale terminal exit code — which is what made it convincing.
 
-Fixed in the checkout on 2026-09-02 (`image/jobd_script.py`); undeployed, and every
-sandbox started from an older image still has the old behaviour.
+**A near neighbour, still open.** `jobd` builds its command with `$*`, so a quoted
+fragment does not survive: `jobd start --dir D -- sh -c "exit 3"` arrives as
+`sh -c exit 3` and returns 0. Found while verifying the fix above — the first attempt
+reported success on evidence that showed nothing. Same shape as issue 11, and it will
+mislead an agent the same way.
 
 ---
 
@@ -294,6 +310,8 @@ mpirun one.
 
 ## 13. The `request_log` middleware blocks the event loop
 
+**RESOLVED — foamd v18 (`bec67af`), 2026-09-03.**
+
 `app/audit.py`'s `request_log_middleware` is `async def` and calls `supa.insert(...)`
 synchronously, on every authenticated request, after the handler returns. That is a
 network round trip taken *on the event loop*, so it serializes every other request behind
@@ -303,4 +321,4 @@ thread, so pool sizing and per-route concurrency limits cannot help it.
 It is invisible to the test suite because `dependency_overrides[require_key]` skips the
 `request.state.principal` assignment that arms the write.
 
-Fixed in the checkout on 2026-09-02; undeployed.
+
