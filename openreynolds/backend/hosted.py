@@ -91,6 +91,8 @@ def _json(response: httpx.Response) -> Any:
     here and the service. Without this the JSONDecodeError escapes BackendError
     handling entirely.
     """
+    if 300 <= response.status_code < 400:
+        raise _redirect_error(response)
     try:
         return response.json()
     except ValueError:
@@ -102,6 +104,25 @@ def _json(response: httpx.Response) -> Any:
             code="bad_response",
             status=response.status_code,
         ) from None
+
+
+def _redirect_error(response: httpx.Response) -> BackendError:
+    """A 3xx that reached a decoder is a client that was built without redirects.
+
+    The service issues no redirects of its own; the edge in front of it does, and
+    answers a request that ran past its window with a bare `303` and an empty body.
+    Followed, that redirect returns the real result. Unfollowed, the empty body used
+    to surface as `bad_response (303): the body was empty` -- true, and useless: it
+    named the symptom and hid the one thing a reader can act on. So it is named.
+    """
+    location = response.headers.get("location", "")
+    where = f" to {location}" if location else ""
+    return BackendError(
+        f"the service answered {response.status_code} with a redirect{where} that this "
+        f"client did not follow; the client must be built with follow_redirects=True",
+        code="redirect_not_followed",
+        status=response.status_code,
+    )
 
 
 def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
@@ -123,11 +144,17 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
 
 
 # -- signing in from a terminal --------------------------------------------------------
+#
+# These four helpers pre-date `FoamdClient` and each build their own client. They ask
+# short questions, but the edge in front of the service does not know that, so they
+# follow redirects for the same reason `FoamdClient` does -- and because a client that
+# does not is the mistake this module has already made once.
 
 
 def _post_json(base_url: str, path: str, body: dict[str, Any], *, headers: dict[str, str] | None = None,
                transport: Any = None) -> httpx.Response:
-    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport) as client:
+    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport,
+                      follow_redirects=True) as client:
         try:
             return client.post(path, json=body, headers=headers or {})
         except httpx.HTTPError as exc:
@@ -137,7 +164,8 @@ def _post_json(base_url: str, path: str, body: dict[str, Any], *, headers: dict[
 def auth_config(base_url: str, *, transport: Any = None) -> dict[str, Any]:
     """Where the service's identity provider is. Public by design: it is what the
     service's own sign-in page fetches, so a terminal can sign in the same way."""
-    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport) as client:
+    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport,
+                      follow_redirects=True) as client:
         try:
             response = client.get("/dashboard/config.json")
         except httpx.HTTPError as exc:
@@ -213,7 +241,8 @@ def device_code(base_url: str, name: str | None = None, *, transport: Any = None
 
     The one request made with no key at all: the answer carries the code to show, the
     address to approve it at, and how patiently to poll. `transport` is for tests."""
-    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport) as client:
+    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport,
+                      follow_redirects=True) as client:
         try:
             response = client.post("/v1/device/code", json={"name": name} if name else {})
         except httpx.HTTPError as exc:
@@ -228,7 +257,8 @@ def device_token(base_url: str, code: str, *, transport: Any = None) -> dict[str
 
     The service hands the plaintext over exactly once, so a caller that gets a dict
     must save it then and there."""
-    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport) as client:
+    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport,
+                      follow_redirects=True) as client:
         try:
             response = client.post("/v1/device/token", json={"device_code": code})
         except httpx.HTTPError as exc:
@@ -280,6 +310,13 @@ class FoamdClient:
             except httpx.HTTPError as exc:
                 last_error = BackendError(f"cannot reach the service: {exc}", code="unreachable")
             else:
+                if 300 <= response.status_code < 400:
+                    # Unreachable while this client follows redirects, and kept because
+                    # of what happens when one does not: a bare 303 is under 400, so it
+                    # used to be handed back as a success and died three frames later in
+                    # the JSON decoder. Not retried -- how the client was built does not
+                    # change between attempts.
+                    raise _redirect_error(response)
                 if response.status_code < 400:
                     return response
                 last_error = _decode_error(response)

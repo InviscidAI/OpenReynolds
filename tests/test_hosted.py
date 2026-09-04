@@ -186,6 +186,97 @@ def test_extraction_is_atomic_per_file(tmp_path):
     assert leftovers == []
 
 
+# -- the edge's 150 s redirect -------------------------------------------------------
+#
+# Modal's edge answers any web request past 150 s with a bodyless 303. The command has
+# usually run by then, so the redirect is where the real answer is. `EXEC_MAX_TIMEOUT_S`
+# is 300 and stays there: the two numbers are decoupled, and a 250 s exec is a supported
+# thing to ask for -- it just needs a client that follows the redirect. Stubbed, because
+# what is being tested is the redirect and not the wait.
+
+
+def _edge_with_a_150s_redirect(result: dict) -> httpx.MockTransport:
+    """The edge as it behaves: a bare 303, empty body, to where the answer really is."""
+
+    def handler(request):
+        if request.url.path.endswith("/exec"):
+            return httpx.Response(303, headers={"Location": "/v1/exec-result"}, content=b"")
+        return httpx.Response(200, json=result)
+
+    return httpx.MockTransport(handler)
+
+
+def _client_against(transport: httpx.MockTransport, *, follow_redirects: bool) -> FoamdClient:
+    client = FoamdClient("https://svc.example", "of_live_test")
+    client._client = httpx.Client(
+        base_url="https://svc.example",
+        transport=transport,
+        follow_redirects=follow_redirects,
+    )
+    return client
+
+
+def test_an_unfollowed_redirect_is_named_not_a_json_decode_failure():
+    """The whole bug, as the model saw it: `bad_response (303): the body was empty`.
+    True, and useless -- it named the symptom and hid the one thing to act on."""
+    from openreynolds.backend.hosted import HostedBackend
+
+    client = _client_against(_edge_with_a_150s_redirect({}), follow_redirects=False)
+    backend = HostedBackend(client, "inst-1")
+
+    with pytest.raises(BackendError) as excinfo:
+        backend.exec("sleep 200", timeout_s=250)
+
+    assert excinfo.value.code == "redirect_not_followed", (
+        "not bad_response -- the JSON decoder must not be where this lands"
+    )
+    assert excinfo.value.status == 303
+    assert "follow_redirects" in excinfo.value.message
+    assert "/v1/exec-result" in excinfo.value.message
+
+
+def test_a_long_exec_completes_through_the_redirect():
+    """A 250 s exec is under `EXEC_MAX_TIMEOUT_S` and over the edge's window. Followed,
+    the redirect carries the real result: measured live, `sleep 200` returns rc=0."""
+    from openreynolds.backend.hosted import HostedBackend
+
+    transport = _edge_with_a_150s_redirect(
+        {"exit_code": 0, "output": "done", "truncated": False}
+    )
+    backend = HostedBackend(_client_against(transport, follow_redirects=True), "inst-1")
+
+    result = backend.exec("sleep 200", timeout_s=250)
+
+    assert result.exit_code == 0
+    assert result.output == "done"
+
+
+def test_a_bare_redirect_reaching_the_decoder_is_named_there_too():
+    """The sign-in helpers do not go through `FoamdClient.request`, so the decoder
+    carries the same guard -- one for every path a response takes to a JSON body."""
+    from openreynolds.backend.hosted import _json
+
+    with pytest.raises(BackendError) as excinfo:
+        _json(response(303, text="", headers={"Location": "/elsewhere"}))
+    assert excinfo.value.code == "redirect_not_followed"
+
+
+def test_the_signing_in_helpers_follow_redirects_too():
+    """The mistake, already in this module four times over: a bare client with no
+    `follow_redirects`. The edge does not know these questions are short ones."""
+    from openreynolds.backend.hosted import auth_config, device_code
+
+    def handler(request):
+        if request.url.path in ("/dashboard/config.json", "/v1/device/code"):
+            return httpx.Response(303, headers={"Location": "/after"}, content=b"")
+        return httpx.Response(200, json={"supabase_url": "https://sb.example",
+                                         "publishable_key": "pk", "device_code": "dc"})
+
+    transport = httpx.MockTransport(handler)
+    assert auth_config("https://svc.example", transport=transport)["publishable_key"] == "pk"
+    assert device_code("https://svc.example", transport=transport)["device_code"] == "dc"
+
+
 # -- signing in ---------------------------------------------------------------------
 
 

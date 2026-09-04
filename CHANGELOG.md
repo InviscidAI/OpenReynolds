@@ -34,6 +34,17 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- An unfollowed redirect says so. Modal's edge answers any request open past 150 s
+  with a bodyless `303` to the real result; `FoamdClient` has followed those since
+  `a228cbf`, but a `3xx` is under 400, so a client built without redirect-following
+  handed one back as a success and it died three frames later in the JSON decoder as
+  `bad_response (303): the body was empty` -- the most frequent tool error in the
+  transcripts, and a sentence that named the symptom while hiding the cause. Both the
+  request path and the decoder now raise `redirect_not_followed`, which says which
+  switch is off. The four sign-in helpers, which built their own clients, were that
+  exact mistake still in the codebase; they follow redirects too. `EXEC_MAX_TIMEOUT_S`
+  stays at 300: the cap governs the command, the 150 s governs one HTTP request, and a
+  redirect-following client runs a 250 s exec to completion.
 - `locationInMesh` survives a body that overhangs the domain. A box cut
   deliberately INSIDE the geometry -- tubes trimmed by their own end planes so they
   span the bank the way a correlation assumes -- puts the body's bound below the
