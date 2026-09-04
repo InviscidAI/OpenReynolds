@@ -317,3 +317,223 @@ That is the design working rather than failing. The capability — being able to
 you drew — gets used every session. The pre-built script does not, because the agent
 would rather write the render its own case needs. It also says which half was worth
 building: the image plumbing is load-bearing, the script is a convenience.
+
+## A field was added to the index and every index on disk went stale invisibly
+
+`search.py` rebuilds when the stamp's schema version does not match the code's, which is
+the mechanism that stops a stale index answering authoritatively about something else.
+A `notes` field was added to the earned row so `failure` queries had words to match on,
+and the schema version was left where it was.
+
+So the index already on disk passed the staleness check, was loaded, and answered
+`failure "diverged"` with nothing at all — against a study whose phase table says
+`diverged at t=0.31` in as many words. The rows had no `notes`, and nothing anywhere
+said so. A guard defeated by forgetting to move the number it reads.
+
+**Fix:** the version bumped, and a test that pins the exact field set of both rows
+against it, so the next change to a row has to move the number rather than remember to.
+
+## The ranking put a coincidence of filing above a match on a field
+
+The rule is that an exact match on an indexed field outranks the same word appearing
+somewhere in a path — `incompressible/simpleFoam/pitzDaily` contains `simpleFoam` and so
+does the `application` entry of a case that runs it, and only one of those is an answer.
+
+Running the query the design document itself uses, `internal incompressible steady`, put
+at the top a case that had matched `incompressible` *in its directory name*, above cases
+that matched it as a field. The regime class is offered to the matcher whole and split on
+its hyphen, so a class that is a single word — `steady`, which 21 cases carry because
+they have no properties file to read compressibility from — yielded the same pair twice
+and scored six points for one concept.
+
+**Fix:** the pairs de-duplicated before scoring. Two tests, one from each side: a
+one-word class must not outscore a two-field match, and a path coincidence must never
+add up to a field.
+
+## A concentration report collapsed on the one family it was written for
+
+The tutorial tree is not a neutral sample: 89 of its 557 cases are one solver from one
+family. So a report of "what do cases set this key to" says how many *families* hold each
+value as well as how many cases, because five cases from one directory of siblings and
+five unrelated ones are different claims that the counts cannot tell apart.
+
+Families were grouped by the two directory levels immediately above each case. Run
+against `div(-phi,Ua)` — a key only the adjoint tutorials set, every one of them under
+`incompressible/adjointOptimisationFoam` — it reported **47 families**, the largest named
+`1_Inlet_2_Outlet/levelSet`. The tree is not uniformly deep, that family nests further
+down than the others, and the proxy fell apart on the single case it existed to catch,
+in the direction that hides the problem.
+
+**Fix:** families measured down from the tree root, which the caller already knows,
+rather than up from the case. The same query now reports 2 families, the largest holding
+68 of the 69. It also showed what the honest version is worth: for `div(phi,U)`, the
+fourth most common value across the corpus — 37 cases, 12% — turns out to be held by one
+family alone.
+
+## An adoption was recorded against a query that never offered it
+
+The retrieval log keeps the whole ranked list rather than the winner, because the failure
+worth catching is a vendor hit and an earned hit disagreeing and the earned one being
+taken. `took <path>` records what was actually used, and it attached to the most recent
+retrieval.
+
+Three queries were run and the case adopted came from the first. The record hung it on
+the third, so the log said a `failure` query had produced a tutorial it never returned.
+"Most recent" is a guess, in the one file whose whole purpose is not guessing.
+
+**Fix:** it attaches to the most recent retrieval whose hits actually contained that
+path, which is a fact about what was on the screen. An adoption no query offered is kept
+unattached and surfaced separately — the agent used a case the corpus never handed it is
+the more interesting record, not a broken one.
+
+## Smaller ones, same origin
+
+- **The reader could not read the key the design document asks about.** Its own example
+  query is `div(phi,U)`, and the dictionary reader keyed on identifiers. `fvSchemes` is
+  keyed by the term being discretised, so `div(phi,U)` — the most common non-trivial key
+  in the tree, in 299 cases — and every quoted regex key in `fvSolution` read as nothing.
+  Found by checking the documented example against the real tree rather than by testing
+  the reader, which passed.
+- **Checking `blockMeshDict` before `snappyHexMeshDict` mislabels the snappy tier.**
+  62 of the 64 snappy cases also carry a `blockMeshDict`, because snappy cuts its mesh
+  out of a background block that blockMesh builds. In the order the design document's
+  table gives, a query for a snappy precedent finds 2 cases instead of 64. Found by
+  counting the corpus before writing the schema, which is the cheap version of finding
+  it by using it.
+- **Paths compared as strings are two cases when one is pasted from a shell.** A hit
+  recorded as `...\simpleFoam\motorBike` and an adoption typed as
+  `.../simpleFoam/motorBike` did not match, so the log reported that the corpus had never
+  offered the case that was used. Compared as paths, with a `normpath` to settle a stray
+  `..`, they are the one case they are.
+- **A test fixture that shared a directory built a case the corpus cannot contain.** The
+  single-case harvest helper reused one tree across calls, so a second call's properties
+  file landed beside the first's and produced a case carrying both
+  `thermophysicalProperties` and `transportProperties`. The compressibility test failed
+  for a reason that was entirely the fixture's.
+
+## An unset `$FOAM_TUTORIALS` indexed the working directory and called it a success
+
+`Path(os.environ.get("FOAM_TUTORIALS", ""))` is not an empty path. `Path("")`
+normalises to `Path(".")`, and a `Path` defines no `__bool__`, so it is truthy and
+`is_dir()` is True. The guard `if not args.tutorials or not args.tutorials.is_dir()`
+could therefore never fire, and the message it would have printed was unreachable code.
+
+With the variable unset, `corpus.py build` walked the current directory, found whatever
+`system/controlDict` happened to be under it, and printed `indexed 1 / built against
+unknown unknown` with exit 0. `search.py` was worse: it has no guard, and `ensure()`
+builds on the first query, so a single query wrote a stamped index of the wrong tree and
+answered from it. An index of the wrong corpus that reports success is worse than a
+refusal, because nothing downstream can tell.
+
+**Fix:** the environment is read as a string and only becomes a `Path` when it is
+non-empty, so the guard sees `None`. The guard belongs on *building*, not on asking — an
+index already on disk and not stale is answerable with no tree in sight, which is every
+query after the first.
+
+## A stale index could not be detected because the stamp did not say what it was built from
+
+Found while verifying the previous one. Having produced an index of the working
+directory, correcting `$FOAM_TUTORIALS` and querying again returned the bogus row with
+no rebuild and no warning: the stamp matched on schema and on version, and the tree was
+the one thing it recorded nothing about.
+
+`$WM_PROJECT_VERSION` being unset made it permanent. `staleness` returns None on an
+unknown live version — deliberately, so it does not rebuild on every query forever — and
+that short-circuit sat *above* every remaining check. So an agent that fixed its
+environment mid-session kept being answered about the wrong corpus for the rest of it.
+
+**Fix:** the stamp records the tutorial and work trees, and the tree is compared *before*
+the version short-circuit. An older stamp records no tree, which is something unknown
+rather than a mismatch, so the schema version was bumped to make those rebuild once
+instead of being special-cased forever.
+
+## Deleting one index file left every query answering "nothing matched" for good
+
+The module docstring said the index is rebuilt when it is missing. It was not:
+`staleness` read `corpus.stamp.json` and nothing else, and the loader passes over a file
+it cannot open, one tier at a time. So with a valid stamp in place and
+`tutorials.index.jsonl` removed — a hand clean of the corpus directory, or a partial
+copy — every query printed `nothing matched` and exited 0, indefinitely.
+
+**Fix:** both index files have to exist, checked alongside the stamp, and the docstring
+now describes what the code does.
+
+## The one command that did not print a tier merged the two tiers
+
+`keyword` answers "what does the corpus set this to". It took a tier filter and the
+command line passed its default of `None`, so a shipped tutorial and this instance's own
+finished study were counted into one table — and the footer called all of them "tutorial
+families". Verified with one of each disagreeing about `div(phi,U)`: the output was a
+50/50 split with nothing on screen to say that half of it was the system's own prior
+output.
+
+The test suite already had a test whose docstring said mixing them "is how a house style
+becomes a fact". The capability was there; the default was wrong. Every other command
+prints the tier of every hit.
+
+**Fix:** one distribution per tier, each labelled, and the footer says "tutorial
+families" only when they are tutorials. Reported separately rather than restricted to
+the vendor tier, because "what have my own studies used" is a real question — just a
+different one, and the answer has to say which it is answering.
+
+## A file named `physicalProperties` was taken as proof of incompressibility
+
+`compressible_of` read `transportProperties` **or** `physicalProperties` as
+incompressible. On the Foundation fork that second name replaced *both*
+`transportProperties` and `thermophysicalProperties`, so its presence says nothing
+either way — and the review raised it as an unverified fork risk.
+
+It turned out to be verifiably wrong on the tree being indexed. The single
+`physicalProperties` in the whole of v2512 belongs to
+`electromagnetics/electrostaticFoam/chargedWire` and contains `epsilon0` and `k`: a
+vacuum permittivity and a mobility. There is no fluid transport in it at all, and it was
+being indexed as an incompressible case on the strength of the filename.
+
+**Fix:** the file is opened. A `thermoType` in it is a thermophysical model, a `nu` or a
+`viscosityModel` is the incompressible form, and anything else is null. The charged-wire
+case now reads null, which is what had actually been read about it.
+
+## A query reported that it understood words the tier it searched had never seen
+
+`failure` searches the earned tier only, and the unmatched-word notice was computed over
+the rows of both. So `failure "pitzDaily"` — a word that appears solely in a vendor path
+— printed a bare "nothing matched" and wrote `unmatched: []` into the retrieval log,
+telling the reader and the record that the query had been understood and simply had no
+answer.
+
+**Fix:** the notice takes the same tier filter the search does.
+
+## The provenance log lost an eighth of its records when two processes wrote at once
+
+`retrievals.jsonl` was appended with `open(path, "a")` and one `write`, on the reasoning
+the manifest already states: concurrent appends interleave whole lines but never halves
+of one, which is why these files are JSONL rather than a JSON array that has to be read,
+edited and rewritten.
+
+The reasoning was inherited rather than measured, and it is wrong. Six processes
+appending 150 records each produced **763 lines instead of 900, 23 of them cut mid-JSON**
+-- records lost outright, not merely interleaved. Buffered append mode is a seek-to-end
+followed by a write with nothing joining them, so two writers agree on an offset and one
+overwrites the other.
+
+Rewriting it as a single `os.write` to an `O_APPEND` descriptor did not fix it either:
+796 of 900. That is one syscall, which POSIX makes atomic for a regular file, but the
+Windows CRT implements append as the same seek-then-write pair.
+
+**Fix:** a lock file -- created `O_EXCL`, released after the write, no platform branch
+and nothing imported. 900 of 900, none torn. Past the retry budget the write proceeds
+unlocked on purpose: a record written into a possible race beats a record dropped for
+certain, and a process that died holding its lock must not silence the log for good.
+
+A provenance log that quietly loses an eighth of its records is worth less than no log,
+for the same reason a stale index is worth less than no index.
+
+Measured on Windows. On Linux a small record is one buffered `write()` and the loss mode
+probably does not arise, but "probably" is not what a record of what happened should
+rest on, and the suite runs on developer machines too.
+
+**`study_state.record` has the same defect and is not fixed here.** The same test
+against the study manifest: 805 of 900 artifacts survived, and `artifacts()` duly
+reported 805. It is the file the claim came from, five toolbox scripts write to it, and
+changing it is a wider change than the corpus work -- so it is written down rather than
+quietly altered.
