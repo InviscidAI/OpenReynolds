@@ -241,3 +241,71 @@ rather than a JSON-decode failure.
 7. **`api.version` is the frozen string `"0.1.0"`** and identifies nothing. A
    `FOAMD_GIT_SHA` injected at deploy would have made local issue 7's whole
    timestamp-matching exercise a single request.
+
+---
+
+# Wave outcome, 2026-09-04
+
+All five items implemented, merged to `main` in each repo, nothing pushed and nothing
+deployed. Suites: foamd **426 passed**, OpenReynolds **1730 passed, 3 skipped**,
+`check_openapi.py` ok. `gate_live.py` phases 0-4: **21 checks passed**, 2m49s, ~$0.04.
+
+## What the wave proved that the triage only argued
+
+- **The double-start bug is real, caught live.** Against real Modal on a throwaway
+  Volume: old `get_or_start` turned 4 concurrent first-requests into **4 Sandboxes on one
+  Volume**; the fix returns **1**. Section 3's confidence note ("fits the evidence but was
+  not caught in the act") can be retired for the mechanism, though still not for the claim
+  that this is what corrupted that particular workspace.
+- **Local issue 12's parallel half is closed.** With `env=config.sandbox_env()` a gate
+  sandbox carries the OMPI/PMIX vars and `mpirun -np 4` succeeds **with
+  `--allow-run-as-root` removed**. Production was never blocked; the gate was measuring a
+  container production never ships. Phase 0 now asserts the env key for key so the drift
+  cannot recur silently.
+- **The `#codeStream` half is confirmed and is now the only blocker on local issue 1.**
+  Gate phase: `stock cylinder2D: rc=1, cannot complete as root`. The shedding control
+  experiment needs the non-root work and nothing else.
+
+## What the wave found that nobody had filed
+
+- **A pre-existing wrapper bug.** The user command ran in a `{ }` group, not a subshell,
+  so a command ending in `exit N` — ordinary in a pasted script — exited the wrapper's own
+  shell: `head` never ran and `output` came back empty. Survivable only because the log
+  was already on the Volume to read back, which is exactly what section 4 stops writing
+  for a sub-cap exec. Now a subshell. **Found by the byte-identical check that was
+  deliberately kept out of the permanent suite and run once** — the null test earned its
+  keep and was then discarded, as agreed.
+
+## Corrections to this document, made by implementation
+
+- **§5** said "`FoamdClient.request` treats a 3xx reaching the JSON decoder as a named
+  error". Those are two different places: `request` never reaches the decoder, and the
+  decoder is also reached from the sign-in helpers, which bypass `request`. Guards in
+  both; either alone leaves a real path uncovered.
+- **§1/§3's live check is invalid as written.** `chmod a-w /work/.foamd/exec` no longer
+  makes an exec fail, because the capture buffer is container-local now. The check must
+  run an **over-cap** exec and assert `log_path == ""` plus the copy failure in `stderr` —
+  **not** a non-zero rc, which is deliberately preserved through a failed sync.
+- **§3's "assert exactly one Sandbox in `SANDBOX_APP_NAME`"** is wrong for a shared
+  production app; the check diffs the listing before and after and asserts one *new*
+  Sandbox.
+- **§3 missed a race in the orphan sweep**: `get_or_start` returns a Sandbox a moment
+  before its caller writes the id, so a listing taken in that window shows a container no
+  row claims yet. Handled by a per-candidate re-read immediately before terminating.
+- **§2 had a trap it did not state.** "Env override winning in both directions" means
+  `FOAMD_SIGNUPS_ENABLED` can no longer default to `1` — unset and `=1` must differ. If
+  the deployed Secret already carries `=1`, **deploying ships the ceiling switched off.**
+- **§2 said "configurable" and named no ceiling.** $500/month was invented to fill the
+  gap. An operator should set it deliberately.
+
+## Blocked, and why
+
+- **Gate phases 5-6 cannot pass yet.** They drive the *deployed* service, which still runs
+  `bec67af`. They assert the new `stderr` field, `log_path == ""` on a failed sync, and
+  one-Sandbox-per-race — none of which exist in production until this is deployed.
+- **Phase 5 additionally needs a free instance slot.** The account caps at one concurrent
+  instance and `7602ac4c...` holds it. Not deleted deliberately: `delete_instance` destroys
+  the Volume, and that is the row local issue 3 cites as evidence.
+- **The migration `sql/schema_f13.sql` is unapplied.** A missing `fleet_state` table fails
+  open by design, so until it is applied there is no ceiling — today's state, not a
+  regression. Deploy order is migration first.
