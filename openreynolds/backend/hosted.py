@@ -436,6 +436,16 @@ class HostedBackend(Backend):
                 "POST", self._instance_path("/exec"), json=payload, timeout=timeout_s + 60.0
             )
         )
+        if body.get("promoted") and body.get("job_id"):
+            # The command outran the synchronous window and the service moved it to a
+            # detached job rather than hold a fragile long exec connection (which used to
+            # 500 and get retried, re-running a 13-minute command). Surface it as the job
+            # it now is, so the next step is a job_check, not a re-run.
+            note = body.get("note") or (
+                f"moved to detached job {body['job_id']}; follow it with job_check"
+            )
+            return ExecResult(exit_code=0, output=note, truncated=False, log_path=None,
+                              stderr="", job_id=str(body["job_id"]))
         return ExecResult(
             exit_code=body.get("exit_code", -1),
             output=body.get("output", ""),

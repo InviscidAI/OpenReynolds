@@ -53,6 +53,19 @@ def test_bash_surfaces_the_workspace_stderr_when_the_wrapper_failed(ctx, backend
     assert "cwd not found: /work/gone" in content
 
 
+def test_bash_surfaces_a_promoted_job_instead_of_reading_like_a_result(ctx, backend):
+    """A command that outran the synchronous window is moved to a detached job by the
+    backend and comes back with a job_id. _bash must say so -- follow it with job_check,
+    do not re-run -- rather than let it read like a command that finished with no output."""
+    backend.exec_result = ExecResult(
+        0, "moved to detached job job-xyz; follow it with job_check", False, None,
+        job_id="job-xyz")
+    content, is_error = dispatch(ctx, "bash", {"cmd": "reconstructPar -latestTime"})
+    assert not is_error
+    assert "job-xyz" in content
+    assert "job_check" in content
+
+
 def test_bash_says_nothing_extra_when_the_wrapper_stderr_is_empty(ctx, backend):
     backend.exec_result = ExecResult(0, "ok", False, None)
     content, _ = dispatch(ctx, "bash", {"cmd": "echo ok"})

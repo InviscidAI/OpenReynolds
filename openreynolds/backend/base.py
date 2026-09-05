@@ -37,6 +37,10 @@ class ExecResult:
     (that is in `output`). Empty in the normal case; when it is not, it is usually the
     platform rather than the command, which is the difference a caller needs in order
     not to retry a failure that will fail again."""
+    job_id: str = ""
+    """Set when a synchronous command outran the exec window and the backend moved it to
+    a detached job: this is that job's id. The command did not fail and must not be
+    re-run -- it is running now, to be followed with job_check."""
 
 
 @dataclass(frozen=True)

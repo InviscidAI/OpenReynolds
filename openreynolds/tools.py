@@ -338,6 +338,14 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
         # instead of reading like a command that merely produced nothing and being
         # retried into the same wall.
         notes.append(f"[workspace: {result.stderr.strip()[:300]}]")
+    if getattr(result, "job_id", ""):
+        # The command ran past the synchronous window and became a detached job. Said
+        # plainly so the next step is job_check on this id, not a re-run of a command
+        # that is already running.
+        notes.append(
+            f"[moved to detached job {result.job_id}: it outran the synchronous exec "
+            f"window and is running now -- follow it with job_check, do not re-run it]"
+        )
     total = None
     if result.truncated and result.log_path:
         try:
