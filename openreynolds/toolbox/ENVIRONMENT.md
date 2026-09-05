@@ -21,7 +21,8 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
   `#includeEtc`, `render.py` falls back to `foamToVTK` — reach for `render.py` before writing
   pyvista by hand.
 - **imageio** with the ffmpeg plugin, and a system **ffmpeg**/**ffprobe** — so frames can be
-  turned into a `.gif`/`.mp4`/`.webp` *on this instance*, not only on your machine.
+  turned into a `.gif`/`.mp4`/`.webp` *on this instance*, not only on your machine. `encode.py`
+  does exactly that from a `*_frames/` directory, so a finished animation need not be hand-written.
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
 

@@ -332,6 +332,12 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
             f"when a command outruns its timeout_s (this one ran with {ran_with}s). "
             "job_start has no time limit.]"
         )
+    if getattr(result, "stderr", "").strip():
+        # The workspace itself, not the command: a working directory that is gone, a
+        # capture-sync that failed. Surfaced so a platform failure is legible as one
+        # instead of reading like a command that merely produced nothing and being
+        # retried into the same wall.
+        notes.append(f"[workspace: {result.stderr.strip()[:300]}]")
     total = None
     if result.truncated and result.log_path:
         try:

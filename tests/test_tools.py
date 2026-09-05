@@ -41,6 +41,24 @@ def test_bash_reports_exit_code(ctx, backend):
     assert "boom" in content
 
 
+def test_bash_surfaces_the_workspace_stderr_when_the_wrapper_failed(ctx, backend):
+    """A failure of the workspace itself -- a gone working directory, a capture-sync
+    that failed -- comes back on the wrapper's stderr, not the command output. It used
+    to be dropped, so a platform failure read like a command that produced nothing and
+    got retried into the same wall. Now it is shown, labelled as the workspace."""
+    backend.exec_result = ExecResult(3, "", False, None, stderr="cwd not found: /work/gone")
+    content, is_error = dispatch(ctx, "bash", {"cmd": "echo test"})
+    assert not is_error
+    assert "workspace:" in content
+    assert "cwd not found: /work/gone" in content
+
+
+def test_bash_says_nothing_extra_when_the_wrapper_stderr_is_empty(ctx, backend):
+    backend.exec_result = ExecResult(0, "ok", False, None)
+    content, _ = dispatch(ctx, "bash", {"cmd": "echo ok"})
+    assert "workspace:" not in content
+
+
 def test_bash_clamps_and_passes_through_timeout(ctx, backend):
     dispatch(ctx, "bash", {"cmd": "sleep 1", "timeout_s": 42, "cwd": "/work/case"})
     assert backend.last_exec == ("sleep 1", "/work/case", 42)

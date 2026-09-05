@@ -31,6 +31,12 @@ class ExecResult:
     """True when `output` is only part of what the command produced."""
     log_path: str | None
     """Where the complete output lives in the workspace, when the backend keeps one."""
+    stderr: str = ""
+    """The *wrapper's* own stderr -- why the command could not be run at all (a working
+    directory that is gone, a capture-sync that failed), not what the command printed
+    (that is in `output`). Empty in the normal case; when it is not, it is usually the
+    platform rather than the command, which is the difference a caller needs in order
+    not to retry a failure that will fail again."""
 
 
 @dataclass(frozen=True)

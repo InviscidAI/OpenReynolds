@@ -441,6 +441,10 @@ class HostedBackend(Backend):
             output=body.get("output", ""),
             truncated=bool(body.get("truncated")),
             log_path=body.get("log_path"),
+            # The wrapper's own stderr, which the service already computes and returns
+            # as "why the command did not run" -- dropped here until now, so a failure
+            # of the workspace itself reached the model as a bare exit code.
+            stderr=body.get("stderr", "") or "",
         )
 
     # -- files -----------------------------------------------------------------

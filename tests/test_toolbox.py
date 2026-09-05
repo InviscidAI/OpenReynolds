@@ -352,7 +352,10 @@ def test_the_toolbox_sticks_to_what_the_image_provides():
     rather than enumerated, and what is left to police is the third-party set and
     the scripts' own siblings.
     """
-    third_party = {"numpy", "matplotlib", "pandas", "pyvista"}
+    # imageio (with the ffmpeg plugin) joined the image when gif/mp4 encoding moved onto
+    # the instance; `encode.py` is the script that uses it. It is on the image, so it is
+    # allowed here like the other four.
+    third_party = {"numpy", "matplotlib", "pandas", "pyvista", "imageio"}
     siblings = {script.stem for script in TOOLBOX.glob("*.py")}
     allowed = set(sys.stdlib_module_names) | third_party | siblings | {"__future__"}
     for script in sorted(TOOLBOX.glob("*.py")):
