@@ -104,3 +104,32 @@ def test_the_prompt_says_a_study_has_a_directory_of_its_own():
     assert "its own directory" in SYSTEM_PROMPT
     assert "briefing names" in SYSTEM_PROMPT
     assert "empty one" in SYSTEM_PROMPT
+
+
+def test_the_prompt_does_not_call_other_studies_merely_readable():
+    """It used to say prior studies were "readable if you ever want it", which told
+    the model they were probably beside the point -- and that was accurate right up
+    until they were indexed. The consequence it describes is the one issue #1 names:
+    every study re-deriving solver, scheme and BC choices from scratch, and repeating
+    a mistake an earlier study on the same instance had already resolved."""
+    assert "readable if you ever want it" not in SYSTEM_PROMPT
+    assert "searchable" in SYSTEM_PROMPT
+
+
+def test_the_prompt_names_no_toolbox_script():
+    """22 scripts sit in the toolbox and the prompt names none of them; they are found
+    through the directory and the index in its README. Naming one would have the
+    harness recommending a particular script, which is a milder version of the same
+    thing the imperative patterns above exist to keep out -- and it would put the
+    other 21 at a disadvantage the prompt never decided to give them.
+
+    This is also the answer to "where should a new script be advertised": its row in
+    `toolbox/README.md`, like every other one.
+    """
+    from pathlib import Path
+
+    toolbox = Path(__file__).resolve().parents[1] / "openreynolds" / "toolbox"
+    scripts = sorted(path.name for path in toolbox.glob("*.py"))
+    assert len(scripts) > 10, "sanity: the toolbox should not be nearly empty"
+    named = [name for name in scripts if name in SYSTEM_PROMPT]
+    assert not named, f"the prompt names {', '.join(named)} and no other script"
