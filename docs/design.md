@@ -10,9 +10,10 @@ grounds that a plan contradicting the code is worse than no plan, because it is 
 document someone reads first and it will be believed.
 
 **Relationship to the compute service.** The agent talks to the hosted workspace service
-over HTTPS with an API key and never imports its code. The published `/v1` OpenAPI spec
-is the only coupling, which is what lets either side be replaced. The service holds no
-CFD knowledge and no agent logic; everything about how to work lives here.
+over HTTPS with an API key and does not import its code. The published `/v1` OpenAPI spec
+is the coupling, which is what lets either side be replaced. Today the service runs what
+it is told and the decisions about how to work are made here; that describes the current
+code, and it can change if a different split measures better.
 
 **Relationship to the earlier architecture study.** An earlier internal design proposed a
 controlled pipeline: enforced gates, frozen specs, a state service, provenance
@@ -23,7 +24,7 @@ for multi-gigabyte artifacts, retrieval from precedent.
 
 ---
 
-## 1. The free-will contract (binding design constraints)
+## 1. The free-will contract (the current design constraints, held by tests)
 
 The agent decides everything about how to work. The harness is plumbing. Concretely:
 
@@ -42,6 +43,8 @@ The agent decides everything about how to work. The harness is plumbing. Concret
 - grade, veto, or amend the model's outputs.
 
 There is no gate DAG, no state machine, no lock, no watchdog with authority, no budget the model must reason about. If the agent wants to write itself a spec, tests, or a checklist, it can — and nothing verifies that it did.
+
+These are the constraints the code has today and three tests hold it to them (`test_prompt.py`, `test_briefing.py`, `test_negative_obligation.py`). They are a thesis with evidence behind it (`found-by-using-it.md`), not a law: if a measured result argues for a different division of labour, change the tests together with the code rather than working around them.
 
 ---
 
