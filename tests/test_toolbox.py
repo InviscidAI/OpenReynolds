@@ -376,6 +376,16 @@ def test_the_toolbox_index_names_every_script_in_it():
         assert script.name in index, f"{script.name} is in the toolbox and not in its index"
 
 
+def test_the_environment_manifest_states_the_facts_the_corpus_kept_missing():
+    """235 install attempts and a run of `import fitz` failures came from not knowing
+    the instance: the network is sealed, PDFs are pdftoppm not fitz, imageio and gmsh
+    are already here. The manifest states those so they are read, not rediscovered."""
+    env = (TOOLBOX / "ENVIRONMENT.md").read_text(encoding="utf-8").lower()
+    for fact in ("sealed", "pdftoppm", "imageio", "gmsh", "foamtovtk"):
+        assert fact in env, f"ENVIRONMENT.md does not mention {fact}"
+    assert "fitz" in env, "the manifest should name fitz to steer off it"
+
+
 def test_the_index_offers_rather_than_instructs():
     """The toolbox is offered, not imposed. An index that told the model when to run
     things would be the workflow injection the whole design exists to avoid."""
@@ -461,6 +471,40 @@ def test_framing_is_not_applied_unless_asked_for():
     plotter = FakePlotter()
     render.frame(plotter, None, zoom=None, bounds=None)
     assert plotter.zoomed is None and plotter.reset_bounds is None
+
+
+# The reader fails on a `0/` field that is a `$variable`, `flowVelocity`/`Tinf`, or an
+# `#includeEtc` -- 73 studies met that and hand-wrote pyvista to get around it. The
+# fallback reads foamToVTK output instead; these cover the file-picking it does, which
+# is the part that has changed shape across OpenFOAM releases.
+
+
+def test_time_is_read_out_of_a_foamtovtk_output_name():
+    render = load("render")
+    assert render.time_from_stem("motorBike_300") == 300.0
+    assert render.time_from_stem("cavity_12") == 12.0
+    assert render.time_from_stem("internal") == 0.0  # unparseable -> 0, not a failure
+
+
+def test_newest_internal_vtk_takes_the_last_write_across_either_layout(tmp_path):
+    render = load("render")
+    vtk = tmp_path / "VTK"
+    # modern layout: a per-time subdir with internal.vtu
+    old = vtk / "case_100"
+    old.mkdir(parents=True)
+    (old / "internal.vtu").write_text("old")
+    # a later write, legacy layout: a bare .vtk
+    new = vtk / "case_200.vtk"
+    new.write_text("new")
+    import os, time as _t
+    later = _t.time() + 10
+    os.utime(new, (later, later))
+    assert render.newest_internal_vtk(vtk) == new
+
+
+def test_newest_internal_vtk_is_none_when_foamtovtk_wrote_nothing(tmp_path):
+    render = load("render")
+    assert render.newest_internal_vtk(tmp_path / "VTK") is None
 
 
 # -- the digests report the number that measures the thing ---------------------

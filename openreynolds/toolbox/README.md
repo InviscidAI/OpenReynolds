@@ -33,6 +33,11 @@ Anything that writes a PNG is worth knowing about twice over, because `read_file
 image path hands the picture back to you rather than its bytes — so a render is
 something you can look at, not only something you can produce.
 
+`ENVIRONMENT.md` lists what is installed on this instance — the Python packages, the
+binaries on PATH, and which tool does a job (PDF is `pdftoppm`, not `fitz`; gifs are
+`imageio`; meshing is `gmsh`) — so the environment can be read rather than probed, and the
+sealed network is stated once rather than met as a surprise.
+
 `notes/openfoam-field-notes.md` is OpenFOAM practice written as field notes rather than
 procedure. `notes/bundle-layout.md` is one suggested `/work` layout, labelled a
 suggestion. `notes/openfoam-agent-architecture.md` is a longer design document, optional

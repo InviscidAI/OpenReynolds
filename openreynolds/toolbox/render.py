@@ -34,18 +34,98 @@ NORMALS = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}
 
 
 def open_case(case: Path, time: float | None):
+    """The case as pyvista blocks, at the chosen (default latest) write time.
+
+    The fast path is pyvista's `OpenFOAMReader`. It fails on a field file the VTK
+    reader cannot parse -- a `0/` value that is a `$variable`, a `flowVelocity` or
+    `Tinf` symbol, or an `#includeEtc` directive -- with `Error reading line N of
+    ./0/U`, and 73 studies met that and hand-wrote a pyvista script to get around
+    it. `foamToVTK` does not have that limitation: it reads through OpenFOAM's own
+    libraries, which expand includes and resolve variables, so when the reader
+    raises we fall back to it. It is slower (it writes files), which is why it is
+    the fallback and not the primary path.
+    """
     pv = _pyvista()
     foam = case / f"{case.name}.foam"
     if not foam.exists():
         foam.write_text("")
-    reader = pv.OpenFOAMReader(str(foam))
-    times = list(reader.time_values)
-    chosen = times[-1] if times else 0.0
-    if time is not None and times:
-        chosen = min(times, key=lambda t: abs(t - time))
-    reader.set_active_time_value(chosen)
-    reader.cell_to_point_creation = True
-    return reader.read(), chosen, times
+    try:
+        reader = pv.OpenFOAMReader(str(foam))
+        times = list(reader.time_values)
+        chosen = times[-1] if times else 0.0
+        if time is not None and times:
+            chosen = min(times, key=lambda t: abs(t - time))
+        reader.set_active_time_value(chosen)
+        reader.cell_to_point_creation = True
+        block = reader.read()
+        if internal_mesh(block) is None:
+            raise ValueError("no internalMesh from OpenFOAMReader")
+        return block, chosen, times
+    except Exception as exc:  # the reader choked -- go through foamToVTK
+        print(f"OpenFOAMReader failed ({type(exc).__name__}: {exc}); "
+              f"falling back to foamToVTK", flush=True)
+        return open_case_via_foamtovtk(case, time)
+
+
+def open_case_via_foamtovtk(case: Path, time: float | None):
+    """Read the case through `foamToVTK`, the include/variable-safe path.
+
+    Runs `foamToVTK` (which needs the OpenFOAM environment the toolbox is invoked
+    under) to write `<case>/VTK/`, then reads the newest internal-mesh output pyvista
+    understands. foamToVTK's layout has changed across releases -- modern builds write
+    `VTK/<name>_<index>/internal.vtu`, older ones `VTK/<name>_<index>.vtk` -- so we
+    take whichever internal-mesh file is newest rather than assume one shape.
+    """
+    import subprocess
+
+    pv = _pyvista()
+    argv = ["foamToVTK", "-case", str(case)]
+    if time is None:
+        argv.append("-latestTime")
+    else:
+        argv += ["-time", f"{time:g}"]
+    proc = subprocess.run(argv, cwd=str(case), capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit(
+            "could not read this case: OpenFOAMReader failed and foamToVTK also failed "
+            f"(exit {proc.returncode}). Last lines:\n" + "\n".join(proc.stderr.splitlines()[-8:])
+        )
+
+    newest = newest_internal_vtk(case / "VTK")
+    if newest is None:
+        raise SystemExit(f"foamToVTK wrote nothing readable under {case / 'VTK'}")
+    block = pv.read(str(newest))
+    stem = newest.parent.name if newest.name == "internal.vtu" else newest.stem
+    chosen = time_from_stem(stem)
+    return block, chosen, [chosen]
+
+
+def newest_internal_vtk(vtk_dir: Path) -> Path | None:
+    """The most recently written internal-mesh file foamToVTK left, or None.
+
+    Modern foamToVTK writes `<name>_<index>/internal.vtu`; older builds write
+    `<name>_<index>.vtk` directly in `VTK/`. We accept either and take the newest by
+    mtime -- the `-latestTime`/`-time` write we just made -- rather than assuming a
+    layout or that the highest index is the wanted time.
+    """
+    candidates = list(vtk_dir.glob("**/internal.vtu")) + list(vtk_dir.glob("*.vtk"))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def time_from_stem(stem: str) -> float:
+    """The write time read out of a foamToVTK output name, else 0.0.
+
+    `motorBike_300` -> 300.0, `cavity_12` -> 12.0. The trailing numeric token is the
+    write index/time; anything unparseable leaves 0.0 rather than failing a render.
+    """
+    for token in reversed(stem.replace("_", " ").split()):
+        try:
+            return float(token)
+        except ValueError:
+            continue
+    return 0.0
 
 
 def internal_mesh(block):
