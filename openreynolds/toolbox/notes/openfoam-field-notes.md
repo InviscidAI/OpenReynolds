@@ -554,6 +554,30 @@ from the evidence rather than from the record. `progress_report.py` answers "whe
 from the same two files plus the solver log, and `gallery.py --final` prints the path of
 the newest artifact of each kind.
 
+## The case directory is on a network filesystem
+
+`/work` is a Modal Volume mounted over 9p: durable, and the reason a preempted run resumes,
+but every file open crosses the network. The stages that touch many small files pay for
+every one of them, and `reconstructPar` is the worst -- it reads a set of files per field
+per processor per write and writes them back merged. Measured on one 160-write case,
+`reconstructPar` took 5m23s on the Volume and 27s on container-local `/tmp`; a 120-write
+case, 133s against 6s. The solver's write side pays a smaller version of the same tax,
+around 20%.
+
+Container-local disk (`/tmp`, an overlay fs) does not have this cost, but it is wiped when
+the Sandbox stops. `scratch.py` bridges the two: `scratch.py run <case> -- <command>` stages
+the case to `/tmp`, runs the command there, and copies results back to the Volume every
+minute, so the durable copy is at most a checkpoint behind and a preemption still resumes
+from `latestTime`; `scratch.py reconstruct <case>` does the same for reconstruction and is
+scoped (`--latest`, `--time A:B`, `--fields "U p"`) and idempotent (only the times a case is
+missing). Reconstruction being its own command is deliberate -- decomposed results are
+persisted when the solve job ends, so a lost reconstruct never costs the solve. Two case
+settings cut the file count at the source: the collated file handler writes one file per
+processor region a write instead of one per field per processor (a quarter of the files),
+and `writeFormat binary` halves the bytes. The cases `case_gen`, `cad_gen` and `snappy_gen`
+write carry both, and the `Allrun` those last two generate already solves and reconstructs
+through `scratch.py`, falling back to the Volume if the toolbox is not at its usual path.
+
 ## Waiting on a job without paying for it
 
 A running solve invites the reflex of pacing with `sleep` inside `bash` -- `sleep 200;

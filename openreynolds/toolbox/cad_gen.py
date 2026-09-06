@@ -706,19 +706,42 @@ def allmesh(roles: dict, cores: int, mrf: bool = False, snappy_layers: bool = Fa
     return "\n".join(lines)
 
 
+TOOLBOX_DEST = "/work/.toolbox"
+"""Where the toolbox is refreshed to at the start of a session (cli.py). Allrun looks
+for scratch.py here; if it is somewhere else, the `-f` guard falls back to the Volume."""
+
+
 def allrun(solver: str, cores: int, thermal: bool = False) -> str:
     """potentialFoam first: a divergence-free start is what a tetrahedral mesh most
     wants, and on the 2026-09-06 penne the segregated solver started from a uniform
     field and had negative omega on its first iteration. The compressible solver
-    starts from its own thermo, so it skips that."""
+    starts from its own thermo, so it skips that.
+
+    The solve and the reconstruction run on container-local disk through `scratch.py`,
+    which checkpoints results back to the Volume as they land. The case directory is on
+    the 9p Volume, where reconstructPar is an order of magnitude slower -- measured 133s
+    against 6s on one 120-write case -- and a preempted run on local disk still resumes,
+    because the Volume copy is never more than a checkpoint behind. If the toolbox is not
+    at its usual path the `-f` guard runs everything on the Volume instead, unchanged.
+    """
     if not solver:
         return "#!/bin/sh\n# a mesh-only case: nothing to run\n"
-    lines = ["#!/bin/sh", "set -e", "cd \"$(dirname \"$0\")\""]
+    solve = (f"decomposePar -force > log.decomposePar 2>&1 && "
+             f"mpirun -np {cores} {solver} -parallel > log.{solver} 2>&1")
+    lines = ["#!/bin/sh", "set -e", 'cd "$(dirname "$0")"', 'CASE="$PWD"',
+             f'SCRATCH={TOOLBOX_DEST}/scratch.py']
     if not thermal:
+        # Serial and cheap; it writes the initial field in place, then the solve stages it.
         lines.append("potentialFoam -writePhi > log.potentialFoam 2>&1")
-    lines += ["decomposePar -force > log.decomposePar 2>&1",
-              f"mpirun -np {cores} {solver} -parallel > log.{solver} 2>&1",
-              "reconstructPar -latestTime > log.reconstructPar 2>&1", ""]
+    lines += [
+        'if [ -f "$SCRATCH" ]; then',
+        f"  python3 \"$SCRATCH\" run \"$CASE\" -- sh -c '{solve}'",
+        '  python3 "$SCRATCH" reconstruct "$CASE" --latest > log.reconstructPar 2>&1',
+        "else",
+        "  decomposePar -force > log.decomposePar 2>&1",
+        f"  mpirun -np {cores} {solver} -parallel > log.{solver} 2>&1",
+        "  reconstructPar -latestTime > log.reconstructPar 2>&1",
+        "fi", ""]
     return "\n".join(lines)
 
 

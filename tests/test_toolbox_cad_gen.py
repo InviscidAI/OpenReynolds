@@ -137,6 +137,27 @@ def test_allrun_is_empty_for_a_mesh_only_case(cad_gen):
     assert "mpirun -np 8 simpleFoam -parallel" in cad_gen.allrun("simpleFoam", 8)
 
 
+def test_allrun_solves_and_reconstructs_on_local_disk_with_a_volume_fallback(cad_gen):
+    """The case is on the 9p Volume, so the solve and the reconstruct go through
+    scratch.py (local disk + checkpoint); if the toolbox is not at its usual path the
+    same commands run on the Volume instead."""
+    run = cad_gen.allrun("simpleFoam", 8)
+    assert f"{cad_gen.TOOLBOX_DEST}/scratch.py" in run
+    assert 'if [ -f "$SCRATCH" ]; then' in run
+    assert 'python3 "$SCRATCH" run "$CASE" --' in run
+    assert 'python3 "$SCRATCH" reconstruct "$CASE" --latest' in run
+    # the fallback branch still runs everything on the Volume, unchanged
+    assert "reconstructPar -latestTime > log.reconstructPar 2>&1" in run
+    # potentialFoam warm-start stays serial and in place, before either branch
+    assert run.index("potentialFoam") < run.index("SCRATCH\" ]")
+
+
+def test_a_thermal_allrun_skips_potentialFoam_but_still_uses_scratch(cad_gen):
+    run = cad_gen.allrun("buoyantSimpleFoam", 4, thermal=True)
+    assert "potentialFoam" not in run
+    assert 'python3 "$SCRATCH" run "$CASE" --' in run
+
+
 def test_the_frontal_area_of_a_unit_cube_is_one(cad_gen):
     class Mesh:
         def getNodes(self):

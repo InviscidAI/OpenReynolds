@@ -349,6 +349,51 @@ def test_a_steady_case_counts_iterations_and_a_transient_one_counts_seconds(case
     assert "backward" in (transient / "system" / "fvSchemes").read_text(encoding="utf-8")
 
 
+# -- the I/O settings: the case is written for the network Volume it runs on --------
+
+
+def test_a_generated_case_writes_binary_and_collated(case_gen, tmp_path):
+    """Uncollated ascii is the slowest cell of the measured matrix on the 9p Volume;
+    binary halves the bytes and collated writes a quarter of the files."""
+    target = tmp_path / "io"
+    build(case_gen, "circle", target, "--study", "steady", "--iterations", "100")
+    control = (target / "system" / "controlDict").read_text(encoding="utf-8")
+    assert "writeFormat     binary;" in control
+    assert "writeCompression off;" in control
+    assert "fileHandler     collated;" in control
+    assert "OptimisationSwitches" in control
+
+
+def test_a_steady_run_purges_but_a_transient_one_keeps_its_history(case_gen, tmp_path):
+    """A steady answer is latestTime and its history is in the log, so it purges; a
+    transient time series can be the deliverable (a shedding animation is its frames),
+    so it keeps everything unless asked."""
+    steady = tmp_path / "s"
+    build(case_gen, "circle", steady, "--study", "steady", "--iterations", "100")
+    assert "purgeWrite      3;" in (steady / "system" / "controlDict").read_text(encoding="utf-8")
+
+    transient = tmp_path / "t"
+    build(case_gen, "circle", transient, "--study", "transient", "--end-time", "1")
+    assert "purgeWrite      0;" in (transient / "system" / "controlDict").read_text(encoding="utf-8")
+
+
+def test_purge_is_overridable_in_either_direction(case_gen, tmp_path):
+    keep_all = tmp_path / "k"
+    build(case_gen, "circle", keep_all, "--study", "steady", "--purge", "0")
+    assert "purgeWrite      0;" in (keep_all / "system" / "controlDict").read_text(encoding="utf-8")
+
+    bounded = tmp_path / "b"
+    build(case_gen, "circle", bounded, "--study", "transient", "--end-time", "1", "--purge", "5")
+    assert "purgeWrite      5;" in (bounded / "system" / "controlDict").read_text(encoding="utf-8")
+
+
+def test_purge_write_defaults_by_study_type(case_gen):
+    assert case_gen.purge_write("steady", {}) == 3
+    assert case_gen.purge_write("transient", {}) == 0
+    assert case_gen.purge_write("transient", {"purge": 4}) == 4
+    assert case_gen.purge_write("steady", {"purge": 0}) == 0
+
+
 def test_a_mesh_only_study_names_no_solver_but_still_writes_fields(case_gen, tmp_path, capsys):
     """blockMesh does not read 0/, but a mesh-only study that turns into a solve is
     then one edit away rather than an afternoon."""
