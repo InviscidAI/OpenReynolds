@@ -324,10 +324,17 @@ anything is re-run harder:
   knew. gmsh's OpenCASCADE kernel meshes the B-rep body-fitted in about a second, and
   `gmshToFoam` reads the `.msh` (version 2.2 ASCII; physical surface names become
   patches, every one of type `patch`, so walls are retyped with `foamDictionary` before
-  a wall function reads them; the volume's physical name becomes a cellZone). No prism
-  layers come with it, so the first cell sets y+ and the wall function has to be one
-  that tolerates the buffer layer -- nutUSpalding is. `cad_gen.py` is that chain, from a
-  short JSON of primitives or any STEP file, and keeps the STEP it meshed.
+  a wall function reads them; the volume's physical name becomes a cellZone). Prism
+  layers: gmsh extrudes real prisms off a body that stands free of every boundary
+  (`extrudeBoundaryLayer`, then the volume rebuilt from the box faces and the layer's
+  shell), and where the body touches a floor, a symmetry plane or a passage's inlet the
+  layers come from snappyHexMesh run with only `addLayers` on, over the gmsh mesh --
+  that phase was built for junctions, and its table says how many layers were actually
+  built. Without layers the first tet sets y+ and the wall function has to be one that
+  tolerates the buffer layer -- nutUSpalding is. A prism stack thicker than the surface
+  cell extrudes into itself on any concave wall and the mesher runs without end rather
+  than failing. `cad_gen.py` is that chain, from a short JSON of primitives or any STEP
+  file, and keeps the STEP it meshed.
 
 Turbulence quantities (`k`, `omega`, `epsilon`) plateauing one to two orders above
 `U` and `p` is normal near walls and rarely worth chasing on its own.
