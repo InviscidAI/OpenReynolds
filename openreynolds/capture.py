@@ -1,8 +1,20 @@
 """Platform capture — invisible to the model, and never in its way.
 
 Messages, fetched artifacts and any end-of-session results payload are posted to the
-platform on a background thread. If the platform is unreachable the work buffers, then
-retries, then is dropped with a warning. Nothing here can delay or fail a study.
+platform on a background thread. If the platform is unreachable the work buffers, and
+what will not go is dropped with a warning. Nothing here can delay or fail a study.
+
+Retrying is the transport's job and not this module's, which is a correction rather
+than a division of labour: this worker used to try each item three more times on top of
+the five `FoamdClient.request` already gives it, so one message could be posted fifteen
+times. The service takes the `seq` this client assigns and its `messages` table indexes
+`(study_id, seq)` without making it unique, so every repeat of a post that had already
+been carried out appended the same row again — one job reply from a 3D transient run
+landed in the captured transcript three times, five more messages of the same study
+twice. And because there is one worker and it is serial, those repeats also held every
+later message behind them: rows carry the time they were *inserted*, not the time the
+agent recorded them, so a transcript read back afterwards showed a run stalled for
+twenty-six minutes that was not stalled at all.
 """
 
 from __future__ import annotations
@@ -15,7 +27,6 @@ from typing import Any, Callable
 
 from .backend.hosted import FoamdClient
 
-_MAX_ATTEMPTS = 3
 _CONTENT_CAP = 20_000
 """Characters of any single captured message body. The local mirror keeps the full text."""
 
@@ -98,17 +109,24 @@ class Capture:
         self._queue.put(task)
 
     def _drain(self) -> None:
+        """Post each item once, and let go of whatever will not go.
+
+        One attempt, deliberately. The client underneath already retries what is safe
+        to retry — a rate limit, a workspace still booting, a connection that was never
+        made — and refuses to repeat a write whose outcome it does not know. A second
+        attempt from here cannot tell those apart, so all it can add is the duplicate
+        row this module's docstring is about. A message that is lost leaves a gap in a
+        sequence that is dense by construction, which is a thing anyone reading the
+        transcript can see; a message posted twice is a thing nobody sees.
+        """
         while True:
             task = self._queue.get()
             if task is None:
                 return
-            for attempt in range(_MAX_ATTEMPTS):
-                try:
-                    task()
-                    break
-                except Exception:
-                    if attempt == _MAX_ATTEMPTS - 1:
-                        self._dropped += 1
+            try:
+                task()
+            except Exception:
+                self._dropped += 1
 
 
 def _cap_content(content: Any) -> Any:
