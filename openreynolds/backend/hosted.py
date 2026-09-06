@@ -48,6 +48,25 @@ never ran, so asking again cannot make the same thing happen twice. 500, 502 and
 say nothing of the kind -- the work may have been done and only the answer lost -- and
 neither does a read timeout."""
 
+_NO_RETRY_CODES = frozenset({"modal_auth_failed"})
+"""Coded errors that are never worth trying again, whatever their status says.
+
+`_RETRY_STATUSES` is keyed on the status code, which is the bluntest thing a response
+carries: it has to answer for every route at once. A coded error is the finer signal,
+and this is the case that needs it.
+
+`modal_auth_failed` is the service's own Modal credentials being rejected. It is a 500
+because it genuinely is an internal fault of the service -- nothing else would be honest,
+since the caller's request was fine and a 4xx would blame them for it -- and 500 is in
+the retry set for good reasons that have nothing to do with this. So without this set, a
+permanent configuration fault costs four backoffs and then reports itself as a transient
+failure, which is exactly the cost foamd's carve-out was written to avoid, reached by the
+other door.
+
+Anything added here has to be an error where *no* later attempt can succeed until a
+person acts. A workspace still booting is not one; rejected credentials are.
+"""
+
 _REPEATABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
 """Methods a client may send again when it does not know whether the first one landed.
 
@@ -364,6 +383,11 @@ class FoamdClient:
                 if response.status_code < 400:
                     return response
                 last_error = _decode_error(response)
+                # Before the status is consulted: a code in this set outranks it, because
+                # the status cannot distinguish "the service blinked" from "the service
+                # cannot reach Modal at all until somebody renews a token".
+                if last_error.code in _NO_RETRY_CODES:
+                    raise last_error
                 if response.status_code not in _RETRY_STATUSES:
                     raise last_error
                 ambiguous = response.status_code not in _DECLINED_STATUSES

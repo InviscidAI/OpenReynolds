@@ -477,3 +477,47 @@ def test_a_tar_upload_says_it_may_be_repeated(monkeypatch):
     monkeypatch.setattr(client._client, "request", flaky)
     client.request("POST", "/v1/instances/i/tar", repeatable=True)
     assert len(calls) == 2
+
+
+def test_rejected_service_credentials_are_not_retried(monkeypatch):
+    """`modal_auth_failed` is a 500, and 500 is in the retry set for good reasons that
+    have nothing to do with this one: the service's own Modal credentials have been
+    rejected, so no later attempt can succeed until a person renews them.
+
+    Without the code carve-out this cost four backoffs and then reported a permanent
+    configuration fault as a transient failure -- which is the cost foamd's own carve-out
+    was written to avoid, arriving by the other door."""
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def fake_request(method, path, **kwargs):
+        calls.append(path)
+        return response(500, {"error": "modal_auth_failed",
+                              "message": "this service's own Modal credentials were "
+                                         "rejected; retrying will not clear it"})
+
+    monkeypatch.setattr(client._client, "request", fake_request)
+    with pytest.raises(BackendError) as caught:
+        client.request("GET", "/v1/instances")
+
+    assert len(calls) == 1, f"tried {len(calls)} times; no attempt can succeed"
+    assert caught.value.code == "modal_auth_failed"
+    assert "retrying will not clear it" in str(caught.value)
+
+
+def test_an_ordinary_500_is_still_retried(monkeypatch):
+    """The carve-out is one code, not a policy change. A bare 500 -- the sandbox being
+    restarted underneath a read -- is the case `_RETRY_STATUSES` exists for, and it must
+    keep its retries."""
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def fake_request(method, path, **kwargs):
+        calls.append(path)
+        if len(calls) < 3:
+            return response(500, {"error": "http_error", "message": "internal"})
+        return response(200, {"ok": True})
+
+    monkeypatch.setattr(client._client, "request", fake_request)
+    assert client.request("GET", "/v1/instances").json() == {"ok": True}
+    assert len(calls) == 3
