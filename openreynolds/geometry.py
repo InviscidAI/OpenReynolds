@@ -56,16 +56,19 @@ FINISH_TIMEOUT_S = 240
 case with a million tets takes about a minute. Past this the finish reports it did not
 complete and the main agent has Allmesh to run itself."""
 
-MAX_LAPS = 6
+MAX_LAPS = 8
 """Laps of spec -> picture -> report -> revise before the last good spec is committed."""
 
-MAX_SECONDS = 240.0
-"""Wall-clock budget for the laps; the commit itself is not counted.
+MAX_SECONDS = 600.0
+"""Wall-clock budget for the laps; the commit and the finish are not counted.
 
 Measured on the serpentine run (qa-runs/RESULTS-mesh2d.md): a lap is 30-40 s of model
 time at medium effort and 1-2 s of build, and a 90 s budget cut one call at three laps
-with every edge still classified `inlet` and another at one lap with nothing built.
-Four minutes is six laps' worth; the main agent sees "still running" meanwhile."""
+with every edge still classified `inlet`. At high effort, which is what the desk now
+reasons at, the first re-measured valve (2026-09-07, study 20260907-003655-6aab) ran
+into a 240 s budget at 246 s: the cap, not agreement, ended it. Ten minutes is the
+ceiling the revamp plan sets; the laps end on agreement well before it when the
+checks pass, and the main agent sees "still running" meanwhile."""
 
 MAX_REPLY_TOKENS = 16_000
 """The premise gate saw a 2k reply spent entirely on thinking, with no spec in it."""
@@ -103,7 +106,7 @@ wall -- and the red crosses on the picture are where they are; fix it or say why
 
 If anything disagrees with the claims, reply with a revised spec (the whole spec, JSON \
 only). If the leg table, the counts and the picture all match the claims and no check \
-fails, reply with the single word COMMIT. At most 6 laps. If you cannot make them agree \
+fails, reply with the single word COMMIT. At most 8 laps. If you cannot make them agree \
 within that, reply COMMIT followed by one line starting "disagrees:" saying what still \
 differs, so it is recorded.
 

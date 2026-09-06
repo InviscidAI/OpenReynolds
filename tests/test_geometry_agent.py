@@ -84,7 +84,10 @@ def test_the_brief_says_render_measure_compare_commit_and_the_cap():
     text = GEOMETRY_SYSTEM.lower()
     for word in ("picture", "report", "compare", "commit", "islands", "extent", "revised spec"):
         assert word in text, word
-    assert "at most 6 laps" in text
+    assert f"at most {geometry.MAX_LAPS} laps" in text
+    # a lap at high effort is a minute or more; a four-minute budget ended the first
+    # re-measured valve on the cap rather than on agreement
+    assert geometry.MAX_SECONDS >= 600
     assert "never run a solver" in text and "never mesh" in text
     assert "disagrees:" in text
 
@@ -176,8 +179,8 @@ def test_the_time_cap_commits_what_built_and_says_it_was_the_time(backend, store
     still classified inlet, and the words said "lap cap". Now the cap is four minutes
     and the words name which cap it was."""
     agent = Recording(cfg(), backend, store, "/work/s", [json.dumps(GOOD)])
-    clock = iter([0.0, 0.0, 0.0, 300.0, 300.0, 300.0, 300.0])
-    monkeypatch.setattr(geometry.time, "monotonic", lambda: next(clock, 300.0))
+    clock = iter([0.0, 0.0, 0.0, 700.0, 700.0, 700.0, 700.0])
+    monkeypatch.setattr(geometry.time, "monotonic", lambda: next(clock, 700.0))
     result = agent.run("anything", case="c")
     assert result.laps == 1 and result.capped == "time" and not result.agreed
     assert geometry.MAX_SECONDS >= 240
