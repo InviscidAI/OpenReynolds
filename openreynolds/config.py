@@ -146,6 +146,11 @@ class Config:
     """The model the geometry desk (`geometry.py`) authors shapes with. Empty means the
     main model: authoring a geometry is the work, not the narration, and the premise gate
     showed it wants the capable one."""
+    geometry_effort: str = "high"
+    """The effort the geometry desk reasons at, whatever the main loop's is. Placing an
+    arc's end and a row's pitch is arithmetic the model gets right one time in six at
+    medium; the hosted app runs the main loop at medium, and the shapes it authored
+    there were wrong. `OPENREYNOLDS_GEOMETRY_EFFORT` overrides."""
     studies_dir: Path = field(default_factory=lambda: Path.cwd() / "studies")
     preferences: str = ""
     """The standing note from `preferences_path()`, or empty when there is none."""
@@ -224,6 +229,7 @@ class Config:
                 preset.desk_model if preset else DEFAULT_DESK_MODEL,
             ),
             geometry_model=pick("OPENREYNOLDS_GEOMETRY_MODEL", "geometry_model"),
+            geometry_effort=pick("OPENREYNOLDS_GEOMETRY_EFFORT", "geometry_effort", "high"),
             foamd_url=pick("FOAMD_URL", "foamd_url", DEFAULT_FOAMD_URL).rstrip("/"),
             foamd_api_key=pick("FOAMD_API_KEY", "foamd_api_key"),
             provider=provider,

@@ -169,6 +169,45 @@ def parse_spec(entries) -> list[dict]:
     return ops
 
 
+def unpack_spec(payload) -> tuple[list, float]:
+    """A spec is a list of ops, or {"ops": [...], "scale": 0.001}: the same two shapes
+    `mesh2d.py` takes, so a desk that writes one grammar's envelope is not refused by
+    the other. Returns (the op list, the scale the spec declares or 1)."""
+    if isinstance(payload, dict):
+        entries = payload.get("ops")
+        try:
+            scale = float(payload.get("scale", 1.0))
+        except (TypeError, ValueError):
+            raise SystemExit("the spec's \"scale\" must be a number (0.001 for millimetres)") from None
+        if scale <= 0:
+            raise SystemExit("the spec's \"scale\" must be positive")
+        return entries, scale
+    return payload, 1.0
+
+
+def parse_port_rule(text: str):
+    """--inlet / --outlet: 'x:min', 'z:max', 'y:0.08' (the face flat on that plane) or
+    'near:x,y,z' (the boundary face whose centre is nearest that point)."""
+    if not isinstance(text, str) or ":" not in text:
+        raise SystemExit(f"a port is 'x:min', 'y:0.08' or 'near:x,y,z', not {text!r}")
+    head, _, rest = text.partition(":")
+    head = head.strip().lower()
+    if head == "near":
+        parts = [p for p in rest.replace(";", ",").split(",") if p.strip()]
+        if len(parts) != 3:
+            raise SystemExit(f"'near' wants a point, near:x,y,z, not {text!r}")
+        return {"kind": "near", "point": vec3([float(p) for p in parts], f"the point in {text!r}")}
+    if head not in AXES:
+        raise SystemExit(f"the axis in {text!r} must be x, y or z (or 'near:x,y,z')")
+    rest = rest.strip()
+    if rest in ("min", "max"):
+        return {"kind": rest, "axis": AXES[head]}
+    try:
+        return {"kind": "at", "axis": AXES[head], "value": float(rest)}
+    except ValueError:
+        raise SystemExit(f"the position in {text!r} must be min, max or a number") from None
+
+
 def body_name(ops: list[dict]) -> str:
     """The op called `body`, or the last one."""
     for op in ops:
@@ -438,6 +477,66 @@ def classify_internal(surface_bounds, bounds, axis: int, tol: float) -> str:
     return "walls"
 
 
+def face_centre(gmsh, surface: int) -> tuple[float, float, float]:
+    b = gmsh.model.getBoundingBox(2, surface)
+    return ((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2)
+
+
+def port_faces(gmsh, boundary: list[int], bounds, opts, tol: float) -> dict[int, str]:
+    """The faces --inlet / --outlet name: on a plane (every face flat on it) or nearest
+    a point (one face). A rule that names nothing is an error, not a silent wall."""
+    named: dict[int, str] = {}
+    for port in ("inlet", "outlet"):
+        rule = opts.get(f"{port}_rule")
+        if not rule:
+            continue
+        if rule["kind"] == "near":
+            px, py, pz = rule["point"]
+            best = min(boundary, key=lambda s: math.dist(face_centre(gmsh, s), (px, py, pz)))
+            named[best] = port
+            continue
+        axis = rule["axis"]
+        value = {"min": bounds[axis], "max": bounds[axis + 3]}.get(rule["kind"], rule.get("value"))
+        hits = [s for s in boundary if on_plane(gmsh.model.getBoundingBox(2, s), axis, value, tol)]
+        if not hits:
+            raise SystemExit(f"--{port} {'xyz'[axis]}:{value:g} names no face: nothing on the boundary is "
+                             f"flat on that plane (the body spans {'xyz'[axis]} {bounds[axis]:.4g}.."
+                             f"{bounds[axis + 3]:.4g})")
+        for s in hits:
+            named[s] = port
+    return named
+
+
+def port_checks(gmsh, patches: dict[str, list[int]], axis: int, opts) -> None:
+    """A passage has one inlet and one outlet, and they are alike in size. The
+    automatic reading -- flat at the two ends of the longest axis -- takes the side wall
+    of an L duct's second leg for its outlet, both ends of a U for inlets, and nothing
+    for an elbow's outlet; each was written as a case before this."""
+    occ = gmsh.model.occ
+    problems = []
+    for port in ("inlet", "outlet"):
+        faces = patches.get(port, [])
+        if len(faces) == 1:
+            continue
+        end = "low" if port == "inlet" else "high"
+        spots = ", ".join(f"({c[0]:.4g}, {c[1]:.4g}, {c[2]:.4g})" for c in
+                          (face_centre(gmsh, s) for s in faces[:4])) or "none"
+        problems.append(f"{len(faces)} {port} faces (centres {spots}); a passage has exactly one. The "
+                        f"automatic reading takes the faces flat at the {end} end of the longest axis "
+                        f"({'xyz'[axis]}); --{port} names the right one (x:min, y:0.08, near:x,y,z)")
+    inlet, outlet = patches.get("inlet", []), patches.get("outlet", [])
+    if len(inlet) == 1 and len(outlet) == 1 and not problems:
+        a_in, a_out = occ.getMass(2, inlet[0]), occ.getMass(2, outlet[0])
+        ratio = max(a_in, a_out) / max(min(a_in, a_out), 1e-30)
+        if ratio > 3.0 and not (opts.get("inlet_rule") and opts.get("outlet_rule")):
+            big = "outlet" if a_out > a_in else "inlet"
+            problems.append(f"the inlet ({a_in:.4g} m2) and the outlet ({a_out:.4g} m2) differ {ratio:.3g}x "
+                            f"in area; the {big} is probably a side wall taken for an end. --inlet and "
+                            f"--outlet name the ends (x:min, y:0.08, near:x,y,z)")
+    if problems:
+        raise SystemExit("\n".join("!! ERROR   " + p for p in problems) + "\nnot written: the patches are wrong")
+
+
 def build_roles(patches: dict[str, list[int]], opts, body_patch: str,
                 direction=(1.0, 0.0, 0.0)) -> dict:
     far = opts.get("far") or "slip"
@@ -633,16 +732,24 @@ def generate(gmsh, built: Built, opts, body_patch: str, planes=(), layer=None):
     occ.synchronize()
 
     axis = longest_axis(built.extent)
+    boundary = [s for d, s in gmsh.model.getBoundary(fluid, combined=True, oriented=False)]
+    named = port_faces(gmsh, boundary, built.bounds, opts, tol) if internal else {}
 
     def patch_of(surface: int) -> str:
+        if surface in named:
+            return named[surface]
         sb = gmsh.model.getBoundingBox(2, surface)
         name = classify_internal(sb, built.bounds, axis, tol) if internal \
             else classify(sb, box, tol, bool(opts.get("ground")), planes)
+        if internal and name in ("inlet", "outlet") and any(v == name for v in named.values()):
+            return "walls"      # a rule named that port; the automatic reading yields to it
         return body_patch if name == "body" else name
 
     patches: dict[str, list[int]] = {}
-    for d, s in gmsh.model.getBoundary(fluid, combined=True, oriented=False):
+    for s in boundary:
         patches.setdefault(patch_of(s), []).append(s)
+    if internal:
+        port_checks(gmsh, patches, axis, opts)
     wall_name = "walls" if internal else body_patch
     walls = patches.get(wall_name, [])
 
@@ -1033,25 +1140,77 @@ def parse_rotation(spec: str) -> list[tuple[float, float, float, float]]:
     return turns
 
 
+def preview_mpl(gmsh, built: Built, out: Path, title: str) -> Path:
+    """Four views drawn with matplotlib from the coarse surface triangles: the three
+    axis projections and an isometric one, facet edges on. What the geometry desk
+    draws where it runs -- the runner has gmsh and matplotlib and no pyvista."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import PolyCollection
+
+    tags, coords, _ = gmsh.model.mesh.getNodes()
+    xyz = {int(t): (coords[3 * i], coords[3 * i + 1], coords[3 * i + 2]) for i, t in enumerate(tags)}
+    _, nodes = gmsh.model.mesh.getElementsByType(2)
+    tris = [[xyz[int(nodes[i + k])] for k in range(3)] for i in range(0, len(nodes), 3)]
+    iso = (math.radians(35.264), math.radians(45.0))
+
+    def project(p, view):
+        x, y, z = p
+        if view == "xy":
+            return (x, y)
+        if view == "xz":
+            return (x, z)
+        if view == "yz":
+            return (y, z)
+        a, b = iso
+        xr, yr = x * math.cos(b) - y * math.sin(b), x * math.sin(b) + y * math.cos(b)
+        return (xr, yr * math.sin(a) + z * math.cos(a))
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    for ax, (view, label) in zip(axes.flat, (("iso", "isometric"), ("xy", "+z looking down"),
+                                              ("xz", "+y"), ("yz", "+x"))):
+        polys = [[project(p, view) for p in t] for t in tris]
+        ax.add_collection(PolyCollection(polys, facecolors="#c9ced6", edgecolors="#2b3138", linewidths=0.25))
+        ax.set_aspect("equal")
+        ax.autoscale()
+        ax.set_title(label, loc="left", fontsize=10)
+        ax.grid(True, lw=0.3)
+    dx, dy, dz = built.extent
+    fig.suptitle(f"{title}   extent {dx:.4g} x {dy:.4g} x {dz:.4g} m", fontsize=10)
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=110)
+    plt.close(fig)
+    return out
+
+
 def preview(gmsh, built: Built, out: Path, title: str) -> Path:
-    """The solid alone, surface-meshed and drawn by geometry_view's four fixed views
-    -- the picture a person checks a spec against before anything is meshed in 3D.
-    geometry_view reads surface files, so the surface goes through an STL beside
-    the PNG; pyvista is imported only here, so the rest of the script needs none."""
+    """The solid alone, surface-meshed and drawn from four fixed views -- the picture a
+    person checks a spec against before anything is meshed in 3D. geometry_view's
+    pyvista views where pyvista is importable (the instance); matplotlib's projections
+    where it is not (the runner the geometry desk draws in). Either way the rest of
+    the script needs neither."""
     import tempfile
-    geometry_view = sibling("geometry_view")
     span = max(built.extent) or 1.0
     # Coarse on purpose: the facets are the outline the picture is read by, and at a
     # sixtieth of the span they merge into a black surface.
     gmsh.option.setNumber("Mesh.MeshSizeMax", span / 25.0)
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 20)
     gmsh.model.mesh.generate(2)
-    with tempfile.TemporaryDirectory() as tmp:
-        surface = Path(tmp) / "preview.stl"
-        gmsh.write(str(surface))
-        mesh = geometry_view.load(surface)
-        out = Path(out)
-        geometry_view.draw([("body", mesh)], out, title)
+    out = Path(out)
+    try:
+        geometry_view = sibling("geometry_view")
+    except ImportError:
+        geometry_view = None
+    if geometry_view is None:
+        preview_mpl(gmsh, built, out, title)
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            surface = Path(tmp) / "preview.stl"
+            gmsh.write(str(surface))
+            mesh = geometry_view.load(surface)
+            geometry_view.draw([("body", mesh)], out, title)
     gmsh.model.mesh.clear()
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 12)
     return out
@@ -1111,6 +1270,11 @@ def main(argv: list[str] | None = None) -> int:
                      help="Mesh the solid's own volume as the passage -- a pipe, a duct -- "
                           "with the inlet at its low face and the outlet at its high face "
                           "along its longest axis, rather than the air around it.")
+    src.add_argument("--inlet", default=None, dest="inlet_rule",
+                     help="--internal: where the inlet is -- x:min, y:0.08 (faces flat on that "
+                          "plane) or near:x,y,z (the face nearest that point); default: read off "
+                          "the longest axis, refused when that gives other than one.")
+    src.add_argument("--outlet", default=None, dest="outlet_rule", help="--internal: where the outlet is.")
     ap.add_argument("--dry-run", action="store_true", dest="dry_run",
                     help="Build the solid and report; mesh and write nothing.")
     ap.add_argument("--preview", type=Path, default=None,
@@ -1206,6 +1370,10 @@ def main(argv: list[str] | None = None) -> int:
 
     opts = vars(args)
     opts["thermal"] = args.study in THERMAL
+    for port in ("inlet_rule", "outlet_rule"):
+        if opts.get(port) and not args.internal:
+            ap.error(f"--{port.split('_')[0]} names a passage's end; it goes with --internal")
+        opts[port] = parse_port_rule(opts[port]) if opts.get(port) else None
     if opts["nu"] is None and opts["reynolds"] is None:
         opts["nu"] = 1.5e-5
     notes: list[str] = []
@@ -1222,7 +1390,12 @@ def main(argv: list[str] | None = None) -> int:
     occ = gmsh.model.occ
     try:
         if args.spec is not None:
-            ops = parse_spec(json.loads(args.spec.read_text(encoding="utf-8")))
+            entries, declared = unpack_spec(json.loads(args.spec.read_text(encoding="utf-8")))
+            if declared != 1.0 and args.scale == 1.0:
+                args.scale = declared
+            elif declared != 1.0 and args.scale != declared:
+                notes.append(f"the spec declares scale {declared:g}; --scale {args.scale:g} was used")
+            ops = parse_spec(entries)
             tags = build_solid(gmsh, ops)
             source = f"{args.spec.name}: {len(ops)} ops, body is {body_name(ops)!r}"
         else:

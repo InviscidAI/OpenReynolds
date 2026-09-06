@@ -845,10 +845,21 @@ def _geometry(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     lines = []
     if result.error:
         lines.append(f"geometry: {result.error}")
-    if result.case_rel:
+    if result.case_rel and result.meshed:
+        lines.append(
+            f"case written to {result.case_rel} and meshed there: geometry.json is the spec, "
+            "outline.png the first picture above, constant/polyMesh the OpenFOAM mesh "
+            "(Allmesh ran gmshToFoam, retyped the patches and ran checkMesh; log.checkMesh), "
+            "renders/mesh_z.png the second picture. checkMesh:\n" + result.mesh_report +
+            "\nAn edited geometry.json rebuilds the case with "
+            f"`python3 {WORKSPACE_ROOT}/.toolbox/{result.script} . --spec geometry.json "
+            f"--scale {result.scale:g} --force && sh Allmesh`, or this tool again with the change in words."
+        )
+    elif result.case_rel:
         lines.append(
             f"case written to {result.case_rel}: geometry.json is the spec, outline.png "
-            "the picture above, body.msh the gmsh mesh. Not yet an OpenFOAM mesh: "
+            "the picture above, body.msh the gmsh mesh. Not yet an OpenFOAM mesh"
+            + (f" ({result.mesh_report})" if result.mesh_report else "") + ": "
             "`sh Allmesh` there runs gmshToFoam, retypes the patches and checkMesh "
             "(log.checkMesh), and `python3 /work/.toolbox/render.py . --scene mesh` "
             "draws the result. An edited geometry.json rebuilds the case with "
@@ -866,11 +877,13 @@ def _geometry(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         lines.append("")
         lines.append(result.report)
     text = "\n".join(lines)
+    blocks: list[dict] = []
     if result.png:
-        return [
-            images.attachment(images.downscale(result.png, "image/png"), "image/png"),
-            {"type": "text", "text": text},
-        ]
+        blocks.append(images.attachment(images.downscale(result.png, "image/png"), "image/png"))
+    if result.mesh_png:
+        blocks.append(images.attachment(images.downscale(result.mesh_png, "image/png"), "image/png"))
+    if blocks:
+        return blocks + [{"type": "text", "text": text}]
     return text
 
 

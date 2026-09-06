@@ -337,3 +337,89 @@ def test_end_to_end_a_tesla_valve_lands_on_the_workspace(backend, store):
         assert (local / name).exists(), name
     assert backend.trees == [(local, "/work/s/tesla")]
     assert json.loads((local / "geometry.json").read_text())["scale"] == 0.001
+
+
+# -- Phase 0 of the geometry revamp: effort, the refused picture, the finish -------
+
+
+def test_the_desk_reasons_at_its_own_effort_and_the_brief_judges_by_claims(backend, store, available):
+    """The hosted app runs the main loop at medium, and at medium the model places an
+    arc's end right one time in six; the desk's effort is its own, high by default."""
+    assert Recording(cfg(effort="medium"), backend, store, "/work/s", ["x"]).effort == "high"
+    assert Recording(cfg(geometry_effort="max"), backend, store, "/work/s", ["x"]).effort == "max"
+    assert geometry.MAX_REPLY_TOKENS >= 16_000
+    for phrase in ("checkable claims", "leg table", "!! ERROR", "footprint plus a gap", "against the flow"):
+        assert phrase in GEOMETRY_SYSTEM, phrase
+
+
+def test_a_refused_spec_still_shows_its_picture(backend, store, available):
+    """A check that fails after the build (overlapping copies) draws the failure with
+    red crosses; the desk sees that picture, not only the words."""
+    class Refusing(Recording):
+        def _build(self, mode, spec, work, scale):
+            self.builds.append((mode, spec, scale))
+            if len(self.builds) == 1:
+                return 2, "!! ERROR   repeat 'row': copies 1 and 2 overlap by 26.7", PNG
+            return 0, "extent 0.06 x 0.012 m, 4 islands", PNG
+
+    agent = Refusing(cfg(), backend, store, "/work/s", [json.dumps(GOOD), json.dumps(GOOD), "COMMIT"])
+    result = agent.run("a row of loops")
+    assert result.agreed and result.laps == 3
+    refusal = agent._provider.calls[1]["messages"][-1]["content"]
+    assert refusal[0]["type"] == "image" and "refused it" in refusal[1]["text"]
+
+
+CHECKMESH_LOG = """\
+Mesh stats
+    points:           8206
+    cells:            3750
+    hexahedra:     3750
+    prisms:        0
+Checking geometry...
+    Mesh non-orthogonality Max: 42.3202 average: 7.25575
+    Max skewness = 1.14032 OK.
+Mesh OK.
+"""
+
+
+def test_the_finish_meshes_on_the_instance_and_carries_the_digest_and_picture_back(backend, store, available):
+    """After the case is shipped the desk runs Allmesh, checkMesh and the mesh render
+    in one exec; the main agent had spent four to six turns discovering that itself."""
+    from openreynolds.backend.base import ExecResult
+    backend.exec_result = ExecResult(0, "Mesh OK.\nrenders/mesh_z.png", False, None)
+    backend.files["/work/s/valve/log.checkMesh"] = CHECKMESH_LOG.encode()
+    backend.files["/work/s/valve/renders/mesh_z.png"] = PNG + b"mesh"
+    agent = Recording(cfg(), backend, store, "/work/s", [json.dumps(GOOD), "COMMIT"])
+    result = agent.run("a valve", case="valve")
+    assert result.case_rel == "/work/s/valve"
+    cmd, cwd, timeout = backend.last_exec
+    assert "sh Allmesh" in cmd and "render.py . --scene mesh" in cmd and cwd == "/work/s/valve"
+    assert timeout == geometry.FINISH_TIMEOUT_S
+    assert result.meshed and "Mesh OK" in result.mesh_report and "3750" in result.mesh_report.replace(",", "")
+    assert result.mesh_png == PNG + b"mesh"
+
+
+def test_a_finish_that_fails_says_so_and_the_case_still_returns(backend, store, available):
+    from openreynolds.backend.base import ExecResult
+    backend.exec_result = ExecResult(1, "gmshToFoam: cannot open body.msh", False, None)
+    agent = Recording(cfg(), backend, store, "/work/s", [json.dumps(GOOD), "COMMIT"])
+    result = agent.run("a valve", case="valve")
+    assert result.case_rel == "/work/s/valve" and not result.meshed
+    assert "did not finish" in result.mesh_report and "cannot open body.msh" in result.mesh_report
+    assert result.mesh_png is None
+
+
+def test_the_tool_answers_with_both_pictures_when_the_finish_meshed(ctx):
+    class Desk:
+        def run(self, request, mode, study, case):
+            r = GeometryResult(report="extent 0.06 x 0.012 m, 4 islands", png=PNG,
+                               case_rel="/work/s/valve", laps=2, seconds=7.0, agreed=True, scale=0.001)
+            r.meshed, r.mesh_report, r.mesh_png = True, "# checkMesh\ncells 3750\nMesh OK.", PNG + b"m"
+            return r
+    ctx.geometry = Desk()
+    out, failed = tools.dispatch(ctx, "geometry", {"request": "a valve"})
+    assert not failed
+    assert [b["type"] for b in out] == ["image", "image", "text"]
+    text = out[2]["text"]
+    assert "meshed there" in text and "Mesh OK." in text and "Not yet" not in text
+    assert "--force && sh Allmesh" in text

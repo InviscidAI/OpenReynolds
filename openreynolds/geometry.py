@@ -41,6 +41,21 @@ from .llm.base import Listener
 
 TOOLBOX = Path(__file__).resolve().parent / "toolbox"
 
+
+def _mesh_digest():
+    """The toolbox is a directory of scripts, not a package: load the digest by path."""
+    spec = importlib.util.spec_from_file_location("toolbox_mesh_digest", TOOLBOX / "mesh_digest.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    return module
+TOOLBOX_DEST = "/work/.toolbox"
+"""Where the toolbox is refreshed to on the instance (cli.py), for the finish step."""
+
+FINISH_TIMEOUT_S = 240
+"""gmshToFoam, checkMesh and one mesh render on a one-cell 2D case take seconds; a 3D
+case with a million tets takes about a minute. Past this the finish reports it did not
+complete and the main agent has Allmesh to run itself."""
+
 MAX_LAPS = 6
 """Laps of spec -> picture -> report -> revise before the last good spec is committed."""
 
@@ -52,7 +67,9 @@ time at medium effort and 1-2 s of build, and a 90 s budget cut one call at thre
 with every edge still classified `inlet` and another at one lap with nothing built.
 Four minutes is six laps' worth; the main agent sees "still running" meanwhile."""
 
-MAX_REPLY_TOKENS = 8_000
+MAX_REPLY_TOKENS = 16_000
+"""The premise gate saw a 2k reply spent entirely on thinking, with no spec in it."""
+
 COMMIT = "COMMIT"
 
 GEOMETRY_SYSTEM = """\
@@ -60,21 +77,35 @@ You author a geometry for a CFD case from a request in words, using a spec gramm
 in the first message) that a tool turns into a picture and a measured report. You work in \
 laps.
 
+Before the first spec, write the request's checkable claims to yourself: every length, \
+angle, radius, count and direction it states, and which way the flow goes. The report is \
+judged against those, not against the picture looking right.
+
 Lap 1: reply with ONLY a JSON spec in the grammar -- no prose, no code fences. Lengths in \
-metres; a top-level "scale" (for example 0.001) says the numbers are in that unit instead.
+metres; a top-level "scale" (for example 0.001) says the numbers are in that unit instead. \
+Work out where each feature ends before placing the next: a repeated feature's pitch is \
+its footprint plus a gap, never less.
 
-Then, each lap, you are shown the picture the tool drew and its report: extent, area, \
-islands (enclosed inner loops), each patch's edge count and length, and any warning. \
-Compare them with the request. Count the features: islands are enclosed bypasses or \
-holes; a passage needs one flat inlet edge and one flat outlet edge; a body in a box has \
-inlet, outlet, farfield and body. Check the extent against the sizes asked for. Look, in \
-the picture and the report, for open loops, overlaps between neighbours, small pockets, \
-notches, slivers, and edges the report warns about.
+Then, each lap, you are shown the picture the tool drew and its report: the measurements \
+(extent, area, islands, each patch's edge count and length), a leg table for every \
+channel (each leg's start, end and absolute heading, each arc's radius and sweep, where a \
+leg lands), and the checks. Compare the leg table with the claims: the angle a branch \
+leaves at, the radius of a loop, whether a return leg heads against the flow (a heading \
+with a component opposite the passage's axis) are all there as numbers. Count the \
+features: islands are enclosed bypasses or holes; a passage has exactly one inlet edge and \
+one outlet edge; a body in a box has inlet, outlet, farfield and body. Check the extent \
+against the sizes asked for.
 
-If anything disagrees, reply with a revised spec (the whole spec, JSON only). If the \
-picture and the numbers are the shape that was asked for, reply with the single word \
-COMMIT. At most 6 laps. If you cannot make them agree within that, reply COMMIT followed \
-by one line starting "disagrees:" saying what still differs, so it is recorded.
+A line marked "!! ERROR" means the spec was refused (copies of a repeat that overlap or \
+touch, a leg that lands off the body, other than one inlet or outlet): fix that first. A \
+line marked "!!" is a warning with coordinates -- a short edge, a channel end read as a \
+wall -- and the red crosses on the picture are where they are; fix it or say why it stays.
+
+If anything disagrees with the claims, reply with a revised spec (the whole spec, JSON \
+only). If the leg table, the counts and the picture all match the claims and no check \
+fails, reply with the single word COMMIT. At most 6 laps. If you cannot make them agree \
+within that, reply COMMIT followed by one line starting "disagrees:" saying what still \
+differs, so it is recorded.
 
 Never run a solver, never mesh, never reply with anything but a spec or COMMIT. \
 Measure, compare, then commit."""
@@ -154,6 +185,12 @@ class GeometryResult:
         self.capped = capped
         """"laps" or "time" when the loop ended on a cap rather than on the model's
         COMMIT, so the words can say the last picture was not agreed to."""
+        self.meshed = False
+        """Whether Allmesh ran to a checkMesh log on the instance (the finish step)."""
+        self.mesh_report = ""
+        """checkMesh's digest when meshed; else what stopped the finish, in words."""
+        self.mesh_png: bytes | None = None
+        """The mesh render from the instance, when the finish produced one."""
 
 
 class GeometryAgent:
@@ -165,7 +202,9 @@ class GeometryAgent:
         self.store = store
         self.home = str(home or "").rstrip("/")
         self.model = cfg.geometry_model or cfg.model
-        self.effort = getattr(cfg, "effort", "medium")
+        # The desk's own effort, not the main loop's: the hosted app runs the loop at
+        # medium, and at medium the model places an arc's end right one time in six.
+        self.effort = cfg.geometry_effort or "high"
         self.preferences = getattr(cfg, "preferences", "") or ""
         self._provider = make_provider(cfg, timeout=min(120.0, cfg.llm_timeout_s or 120.0))
 
@@ -265,8 +304,14 @@ class GeometryAgent:
             rc, report, png = self._build(mode, spec, work / f"lap{laps}", scale)
             trace.event("geometry_lap", lap=laps, rc=rc, seconds=round(time.monotonic() - started, 1))
             if rc != 0:
-                messages.append({"role": "user", "content": [{"type": "text", "text": (
-                    f"The tool refused it:\n{report[-2000:]}\n\nReply with a corrected spec.")}]})
+                # A refused spec still has its picture when a check failed after the
+                # build (the red crosses are on it); a spec the parser refused has none.
+                refused: list[dict] = []
+                if png:
+                    refused.append(images.attachment(images.downscale(png, "image/png"), "image/png"))
+                refused.append({"type": "text", "text": (
+                    f"The tool refused it:\n{report[-3000:]}\n\nReply with a corrected spec.")})
+                messages.append({"role": "user", "content": refused})
                 continue
             last_spec, last_scale, last_report, last_png = spec, scale, report, png
             content: list[dict] = []
@@ -292,7 +337,49 @@ class GeometryAgent:
                                   tokens=tokens, error=f"the case did not write: {exc}")
         remote = f"{self.home}/{case}" if self.home else case
         self.backend.put_tree(local, remote)
-        return GeometryResult(report=last_report, png=last_png, case_rel=remote, laps=laps,
-                              seconds=seconds, tokens=tokens, agreed=agreed, disagrees=disagrees,
-                              script="mesh2d.py" if mode == "2d" else "cad_gen.py",
-                              scale=last_scale, capped=capped)
+        result = GeometryResult(report=last_report, png=last_png, case_rel=remote, laps=laps,
+                                seconds=seconds, tokens=tokens, agreed=agreed, disagrees=disagrees,
+                                script="mesh2d.py" if mode == "2d" else "cad_gen.py",
+                                scale=last_scale, capped=capped)
+        self._finish(remote, result)
+        return result
+
+    # -- the finish: the OpenFOAM mesh, its check and its picture, on the instance ----
+
+    def _finish(self, remote: str, result: GeometryResult) -> None:
+        """Run Allmesh, checkMesh and the mesh render on the instance in one exec and
+        carry the digest and the picture back in the result. Measured before this
+        existed: the main agent spent four to six turns after "case written" finding
+        out that nothing was meshed yet, that ./Allmesh had no exec bit, what the
+        render tool's flags were. None of that is geometry."""
+        exec_ = getattr(self.backend, "exec", None)
+        get_file = getattr(self.backend, "get_file", None)
+        if exec_ is None or get_file is None:
+            return
+        cmd = ("sh Allmesh > log.Allmesh 2>&1; rc=$?; tail -12 log.Allmesh; "
+               f"python3 {TOOLBOX_DEST}/render.py . --scene mesh --out renders > log.render 2>&1 "
+               "|| tail -5 log.render; exit $rc")
+        try:
+            run = exec_(cmd, cwd=remote, timeout_s=FINISH_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 - the words say what happened
+            result.mesh_report = f"the mesh was not built on the instance: {exc}"
+            return
+        output = (getattr(run, "output", "") or "").strip()
+        rc = getattr(run, "exit_code", 1)
+        digest = ""
+        try:
+            log = get_file(f"{remote}/log.checkMesh", limit=400_000).decode("utf-8", "replace")
+            mesh_digest = _mesh_digest()
+            digest = mesh_digest.report(mesh_digest.parse(log)).strip()
+        except Exception:  # noqa: BLE001 - no log means the mesh step did not get that far
+            digest = ""
+        try:
+            result.mesh_png = get_file(f"{remote}/renders/mesh_z.png", limit=20_000_000)
+        except Exception:  # noqa: BLE001
+            result.mesh_png = None
+        if rc == 0 and digest:
+            result.meshed = True
+            result.mesh_report = digest
+        else:
+            result.mesh_report = ("Allmesh did not finish (exit %s):\n%s" % (rc, output[-1500:])) \
+                if rc != 0 else (output[-1500:] or "checkMesh wrote no log")

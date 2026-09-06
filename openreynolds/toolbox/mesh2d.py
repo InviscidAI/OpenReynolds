@@ -30,39 +30,43 @@ from +x.
             leg before it tangentially (positive angle turns left). Any internal
             passage is this: a bypass, a serpentine, a manifold branch. A leg written
             {"line": {"to": "y:1.5"}} runs along its heading until it reaches that
-            line (and half a width past it, to join what it meets) -- the way to bring
-            a return leg back onto a wall without working out its length.
+            line and is cut flush there -- the way to bring a return leg back onto a
+            wall without working out its length. A channel that leaves a wall at an
+            angle says so with "from": "y:1.5" (the line it starts on) and is cut flush
+            there too; without it, one corner of its square start sticks out of the wall.
+            The first leg of a channel with "from" is a line or a "to" leg.
   fuse      of [names...]        cut  from, take [names...]        intersect  of [names...]
   translate target, by [dx,dy]   rotate  target, angle, about [x,y]   copy  target
   mirror    target, axis x|y, at (the line x=at or y=at, default 0), keep (also keep the original)
   repeat    target, count, step [dx,dy], angle (per copy), about        copies, fused together
-  patches   [{"name": "inlet", "at": "x:min"}, {"name": "lid", "box": [x0,y0,x1,y1], "kind": "slip"}]
-            names an edge by where it sits, before the automatic reading below; a
-            position or box is in the spec's own units, like the ops (--scale applies)
+  patches   [{"name": "inlet", "at": "x:min"}, {"name": "outlet", "at": "near:0,6"},
+             {"name": "lid", "box": [x0,y0,x1,y1], "kind": "slip"}]
+            names an edge by where it sits, before the automatic reading below: "at" is
+            x:min, y:max, x:0.012 (every edge flat on that line) or near:x,y (the one
+            edge whose middle is nearest that point -- how a U-bend's two ends, both on
+            x=0, are told apart); a position or box is in the spec's own units, like
+            the ops (--scale applies)
 
 Without a `patches` entry the edges are read off the shape: for a passage, the edges
 flat at the low end of its longest axis are the inlet, flat at the high end the outlet,
 everything else `walls`. With --external the shape is a body and a flow box is put
 round it (inlet/outlet/farfield/body). The two z faces are always `frontAndBack`, empty.
 
-A Tesla valve is one rect, one channel and a repeat -- four bypasses that leave the
-channel steeply, sweep round, and come back down onto the channel's top wall (y=1.5)
-against the -x direction, each leaving a teardrop island (mm; run with --scale 0.001).
-The return leg is written `to` the wall rather than as a length, so it always lands:
-
-  {"ops": [
-    {"op": "rect", "name": "main", "origin": [0, -1.5], "size": [60, 3]},
-    {"op": "channel", "name": "bypass", "width": 3, "start": [9, 1.5], "heading": 60,
-     "path": [{"line": 2}, {"arc": {"radius": 3.5, "angle": 240}}, {"line": {"to": "y:1.5"}}]},
-    {"op": "repeat", "name": "bypasses", "target": "bypass", "count": 4, "step": [12, 0]},
-    {"op": "fuse", "name": "body", "of": ["main", "bypasses"]}],
-   "patches": [{"name": "inlet", "at": "x:min"}, {"name": "outlet", "at": "x:max"}]}
-
-The report it prints -- extent, area, islands, edges per patch -- is the check that the
-shape is the one that was meant, made before a mesh exists; `islands 4` is what four
-enclosed bypasses look like as a number. The mesh is all hexahedra when checkMesh's
-`hexahedra:` equals its `cells:`, and the summary says so, or says how many prisms
-were left where a quad could not be made.
+There is deliberately no worked example of a named shape here: an example written by
+hand is a shape nobody measured, and one such example was copied into a wrong Tesla
+valve by every author that read it. The report is the check instead, and it has three
+parts. The measurements: extent, area, islands (enclosed inner loops), edges per patch.
+The leg table: for every `channel`, each leg's start, end and absolute heading, each
+arc's centre, radius and sweep, and where a `to` leg lands -- so "leaves at 25 degrees",
+"outer radius 6", "returns against the flow" are read off numbers, not off the picture.
+The checks: copies of a `repeat` that overlap or touch each other, a `to` leg that lands
+off the body, a passage with other than one inlet and one outlet, the open end of a
+channel read as a wall, and edges shorter than a third of the narrowest channel (the
+notches and slivers that make bad cells). A check that fails is printed with its
+coordinates, `!!` marks it, and the script exits 2 after the preview is drawn, so the
+picture of the failure is still there to look at. The mesh is all hexahedra when
+checkMesh's `hexahedra:` equals its `cells:`, and the summary says so, or says how many
+prisms were left where a quad could not be made.
 """
 from __future__ import annotations
 
@@ -119,14 +123,22 @@ def number(value, what: str, positive: bool = False) -> float:
     return out
 
 
-def parse_where(text) -> tuple[int, str, float | None]:
-    """'x:min', 'y:max' or 'x:0.012' -> (axis, 'min'|'max'|'at', value)."""
+def parse_where(text) -> tuple:
+    """'x:min', 'y:max', 'x:0.012' -> (axis, 'min'|'max'|'at', value);
+    'near:0,6' -> (None, 'near', (x, y)): the one edge whose middle is nearest that
+    point -- the way to name an end when two ends sit on the same line (a U-bend)."""
     if not isinstance(text, str) or ":" not in text:
-        raise SystemExit(f"a position is 'x:min', 'y:max' or 'x:0.012', not {text!r}")
+        raise SystemExit(f"a position is 'x:min', 'y:max', 'x:0.012' or 'near:x,y', not {text!r}")
     axis_name, _, where = text.partition(":")
-    axis = {"x": 0, "y": 1}.get(axis_name.strip())
+    axis_name = axis_name.strip()
+    if axis_name == "near":
+        parts = [p for p in where.replace(";", ",").split(",") if p.strip()]
+        if len(parts) != 2:
+            raise SystemExit(f"'near' wants a point, near:x,y, not {text!r}")
+        return None, "near", (number(parts[0], f"x in {text!r}"), number(parts[1], f"y in {text!r}"))
+    axis = {"x": 0, "y": 1}.get(axis_name)
     if axis is None:
-        raise SystemExit(f"the axis in {text!r} must be x or y")
+        raise SystemExit(f"the axis in {text!r} must be x or y (or 'near:x,y')")
     where = where.strip()
     if where in ("min", "max"):
         return axis, where, None
@@ -176,6 +188,9 @@ def scale_rules(rules: list[dict], scale: float) -> list[dict]:
         if rule["at"] is not None and rule["at"][1] == "at":
             axis, where, value = rule["at"]
             item["at"] = (axis, where, value * scale)
+        elif rule["at"] is not None and rule["at"][1] == "near":
+            (px, py) = rule["at"][2]
+            item["at"] = (None, "near", (px * scale, py * scale))
         if rule["box"] is not None:
             item["box"] = tuple(v * scale for v in rule["box"])
         out.append(item)
@@ -261,6 +276,11 @@ def parse_spec(payload) -> tuple[list[dict], list[dict]]:
             op["width"] = number(raw.get("width"), f"{w}: width", positive=True)
             op["start"] = vec2(raw.get("start"), f"{w}: start")
             op["heading"] = number(raw.get("heading", 0.0), f"{w}: heading")
+            op["from"] = None
+            if raw.get("from") is not None:
+                op["from"] = parse_where(raw["from"])
+                if op["from"][1] != "at":
+                    raise SystemExit(f"{w}: from is the line the channel starts on, x:0.05 or y:1.5")
             path = raw.get("path")
             if not isinstance(path, list) or not path:
                 raise SystemExit(f"{w}: path is a non-empty list of {{\"line\": L}} / {{\"arc\": ...}}")
@@ -407,9 +427,26 @@ def classify_external(bounds, box, tol: float) -> str:
     return "body"
 
 
+def resolve_near(gmsh, built: "Built2D", rules: list[dict]) -> None:
+    """A `near` rule names one edge: the boundary curve whose middle is nearest the
+    point. Its middle becomes the rule's target, which the lateral surfaces of the
+    extruded mesh (same middle in x, y) match too."""
+    for rule in rules:
+        if rule["at"] is not None and rule["at"][1] == "near":
+            px, py = rule["at"][2]
+            nearest = min(built.curves, key=lambda c: math.hypot(*(a - b for a, b in zip(curve_midpoint(gmsh, c), (px, py)))))
+            rule["_target"] = curve_midpoint(gmsh, nearest)
+
+
 def edge_rule(bounds, rules: list[dict], domain, tol: float) -> str | None:
     """The first rule the edge satisfies, by name; None when none does."""
+    mid = ((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2)
     for rule in rules:
+        if rule["at"] is not None and rule["at"][1] == "near":
+            target = rule.get("_target")
+            if target and math.hypot(mid[0] - target[0], mid[1] - target[1]) < tol:
+                return rule["name"]
+            continue
         if rule["at"] is not None:
             axis, where, value = rule["at"]
             if where == "min":
@@ -569,8 +606,10 @@ def case_files(plan, flow, opts, model: str, study: str, external: bool) -> dict
     return files
 
 
-def report_lines(built: Built2D, curve_patch: dict, source: str) -> list[str]:
-    """The measured description of the shape -- what a picture cannot say in numbers."""
+def report_lines(built: Built2D, curve_patch: dict, source: str, legs: dict | None = None,
+                 checks: list | None = None, axis: int = 0, gmsh=None) -> list[str]:
+    """The measured description of the shape -- what a picture cannot say in numbers:
+    the measurements, the leg table, the checks."""
     w, h = built.extent
     lines = [f"geometry   {source}",
              f"extent     {w:.4g} x {h:.4g} m   area {built.area:.4g} m2   "
@@ -582,9 +621,22 @@ def report_lines(built: Built2D, curve_patch: dict, source: str) -> list[str]:
     lines.append("patches    " + ", ".join(
         f"{name} ({len(per[name])} edge{'s' if len(per[name]) != 1 else ''}, {sum(per[name]):.4g} m)"
         for name in order))
+    if legs:
+        lines += leg_lines(legs, axis)
+    groups: dict[str, list] = {}
     for c, length in built.short:
-        lines.append(f"!! a {length:.3g} m edge (curve {c}); the quads there will be poor -- "
-                     "usually two parts meeting at a tangent or a copy landing on a wall")
+        groups.setdefault(f"{length:.2g}", []).append(c)
+    for key, cs in groups.items():
+        where = ""
+        if gmsh:
+            spots = [curve_midpoint(gmsh, c) for c in cs[:4]]
+            where = " at " + ", ".join(f"({x:.4g}, {y:.4g})" for x, y in spots) + (" ..." if len(cs) > 4 else "")
+        plural = "s" if len(cs) != 1 else ""
+        lines.append(f"!!         {len(cs)} edge{plural} of {key} m{where}: short against the narrowest "
+                     "channel -- a sliver, a corner poking through a wall, or a leg shorter than the "
+                     "channel is wide; the cells there will be poor")
+    if checks:
+        lines += check_lines(checks)
     return lines
 
 
@@ -615,21 +667,51 @@ def _leg(occ, x, y, heading, length, width) -> int:
     return r
 
 
-def _channel(occ, width, start, heading, path) -> list[int]:
+def _half_plane(occ, axis: int, value: float, sign: float, reach: float) -> int:
+    """Everything on the `sign` side of the line axis=value, as a face to cut with."""
+    if axis == 1:
+        y0 = value if sign > 0 else value - reach
+        return occ.addRectangle(-reach, y0, 0, 2 * reach, reach)
+    x0 = value if sign > 0 else value - reach
+    return occ.addRectangle(x0, -reach, 0, reach, 2 * reach)
+
+
+def _channel(occ, width, start, heading, path, legs: list | None = None,
+             from_line=None) -> list[int]:
     """The centreline compiled to faces: a rect per line leg, a band per arc (its centre
-    at the leg end plus R along the normal, so the arc continues the leg tangentially),
-    a disk of w/2 at each joint so nothing meets at a knife edge; all fused."""
+    at the leg end plus R along the normal, so the arc continues the leg tangentially);
+    all fused. Every transition is tangent by construction, so there is nothing to
+    round at a joint: the joint disks an earlier version added there stuck out past the
+    outer wall of every arc by a sliver and made twelve notches on one valve.
+
+    Every leg is recorded into `legs` (start, end, absolute headings, an arc's centre and
+    radius, where a `to` leg lands) -- the numbers a request states and a picture only
+    suggests. A `to` leg is cut off flush at the line it runs to, and a channel given
+    `from` (the line it starts on, a wall it leaves) is cut flush there too: a square
+    cap on a leg that meets a wall at an angle has one corner outside the wall, a notch."""
     x, y = start
     h = heading
     parts: list[int] = []
-    joints: list[tuple[float, float]] = []
-    for seg in path:
+    reach = 1e3 * (width + math.hypot(*start) + sum(
+        (seg["line"] if isinstance(seg.get("line"), (int, float)) else 0)
+        + (seg["arc"]["radius"] if "arc" in seg else 0) for seg in path) + 1.0)
+    for i, seg in enumerate(path):
         if "line" in seg or "to" in seg:
+            record = {"kind": "line", "from": (x, y), "heading": h}
+            back = 0.0
+            if i == 0 and from_line is not None:
+                axis, _, value = from_line
+                d = (math.cos(math.radians(h)), math.sin(math.radians(h)))[axis]
+                if abs(d) < 1e-9:
+                    raise SystemExit(f"a channel heading {h:g} degrees runs along {'xy'[axis]}={value:g}, "
+                                     "so it cannot start from it")
+                back = width / abs(d)
+                record["from_line"] = f"{'xy'[axis]}={value:g}"
             if "to" in seg:
-                # Run along the heading until the line x=v or y=v, and half a width
-                # beyond it so the leg joins what it meets cleanly. This is the one
+                # Run along the heading until the line x=v or y=v: this is the one
                 # arithmetic a passage's return leg keeps getting wrong when it is
-                # typed as a length: where the arc left it, and how far the wall is.
+                # typed as a length. Overshoot enough for both corners to cross the
+                # line, then cut the leg flush at it.
                 axis, kind, value = seg["to"]
                 if kind != "at":
                     raise SystemExit("a leg's `to` is a coordinate, x:0.05 or y:1.5, not min/max")
@@ -640,12 +722,28 @@ def _channel(occ, width, start, heading, path) -> list[int]:
                 if length <= 0:
                     raise SystemExit(f"a leg heading {h:g} degrees from ({x:g}, {y:g}) moves away from "
                                      f"{'xy'[axis]}={value:g}")
-                length += width / 2
+                lands = (x + length * math.cos(math.radians(h)), y + length * math.sin(math.radians(h)))
+                x0, y0 = x - back * math.cos(math.radians(h)), y - back * math.sin(math.radians(h))
+                leg = _leg(occ, x0, y0, h, back + length + width / abs(d), width)
+                cut, _ = occ.cut([(2, leg)], [(2, _half_plane(occ, axis, value, math.copysign(1.0, d), reach))])
+                parts += [t for dd, t in cut]
+                record.update(kind="to", line=f"{'xy'[axis]}={value:g}", lands=lands, length=length)
+                x, y = lands
             else:
                 length = seg["line"]
-            parts.append(_leg(occ, x, y, h, length, width))
-            x += length * math.cos(math.radians(h))
-            y += length * math.sin(math.radians(h))
+                x0, y0 = x - back * math.cos(math.radians(h)), y - back * math.sin(math.radians(h))
+                parts.append(_leg(occ, x0, y0, h, back + length, width))
+                x += length * math.cos(math.radians(h))
+                y += length * math.sin(math.radians(h))
+                record["length"] = length
+            if back:
+                axis, _, value = from_line
+                d = (math.cos(math.radians(h)), math.sin(math.radians(h)))[axis]
+                cut, _ = occ.cut([(2, parts[-1])],
+                                 [(2, _half_plane(occ, axis, value, -math.copysign(1.0, d), reach))])
+                parts[-1:] = [t for dd, t in cut]
+            record["to"] = (x, y)
+            record["heading_out"] = h
         else:
             radius, angle = seg["arc"]["radius"], seg["arc"]["angle"]
             nx, ny = -math.sin(math.radians(h)), math.cos(math.radians(h))   # left normal
@@ -656,23 +754,69 @@ def _channel(occ, width, start, heading, path) -> list[int]:
             a1 = a0 + angle
             lo, hi = (a0, a1) if a1 > a0 else (a1, a0)
             parts += _band(occ, (cx, cy), radius - width / 2, radius + width / 2, lo, hi)
+            record = {"kind": "arc", "from": (x, y), "heading": h, "centre": (cx, cy),
+                      "radius": radius, "sweep": angle,
+                      "outer_radius": radius + width / 2, "inner_radius": radius - width / 2}
             h += angle
             x, y = cx + radius * math.cos(math.radians(a1)), cy + radius * math.sin(math.radians(a1))
-        joints.append((x, y))
-    for jx, jy in joints[:-1]:
-        parts.append(occ.addDisk(jx, jy, 0, width / 2, width / 2))
+            record.update(to=(x, y), heading_out=h)
+        if legs is not None:
+            legs.append(record)
     tags = [(2, t) for t in parts]
     if len(tags) > 1:
         tags, _ = occ.fuse([tags[0]], tags[1:])
+    if legs is not None:
+        legs.append({"kind": "ports", "start": tuple(start), "end": (x, y), "width": width,
+                     "heading_in": heading, "heading_out": h})
     return [t for d, t in tags]
 
 
-def build_face(gmsh, ops: list[dict], scale: float = 1.0, rotate: float = 0.0) -> int:
+def _instances_apart(occ, gmsh, base, copies, name: str, checks: list[dict]) -> None:
+    """Consecutive copies of a repeat must neither overlap nor touch: they are meant as
+    separate instances, and a fuse would quietly absorb either. Measured, not assumed --
+    the loops of one 'correct' Tesla valve overlapped by a quarter of their area and
+    passed every count."""
+    instances = [base] + [list(c) for c in copies]
+    for k in range(len(instances) - 1):
+        a = occ.copy(instances[k])
+        b = occ.copy(instances[k + 1])
+        common, _ = occ.intersect(a, b, removeObject=True, removeTool=True)
+        occ.synchronize()
+        area = sum(occ.getMass(2, t) for d, t in common if d == 2)
+        if common:
+            occ.remove(common, recursive=True)
+            occ.synchronize()
+        if area > 0:
+            x0, y0, _, x1, y1, _ = gmsh.model.getBoundingBox(2, instances[k][0][1])
+            checks.append({"level": "error", "where": ((x0 + x1) / 2, (y0 + y1) / 2),
+                           "what": f"repeat {name!r}: copies {k + 1} and {k + 2} overlap by {area:.4g} "
+                                   f"(units squared); the step is smaller than a copy's footprint "
+                                   f"({x1 - x0:.4g} x {y1 - y0:.4g}) plus a gap"})
+            continue
+        try:
+            gap = occ.getDistance(2, instances[k][0][1], 2, instances[k + 1][0][1])[0]
+        except Exception:  # noqa: BLE001 - an older kernel without getDistance
+            gap = None
+        if gap is not None and gap <= 1e-9:
+            x0, y0, _, x1, y1, _ = gmsh.model.getBoundingBox(2, instances[k][0][1])
+            checks.append({"level": "error", "where": ((x0 + x1) / 2, (y0 + y1) / 2),
+                           "what": f"repeat {name!r}: copies {k + 1} and {k + 2} touch (gap 0); two "
+                                   f"walls meeting at a knife edge mesh into slivers"})
+        elif gap is not None and k == 0:
+            checks.append({"level": "info", "where": None,
+                           "what": f"repeat {name!r}: gap between copies {gap:.4g}"})
+
+
+def build_face(gmsh, ops: list[dict], scale: float = 1.0, rotate: float = 0.0,
+               legs: dict | None = None, checks: list | None = None) -> int:
     """Run the ops through OpenCASCADE and return the one face that is the body.
     Everything else the ops made along the way is removed, so nothing but the body
-    is meshed."""
+    is meshed. `legs` (channel name -> its leg records) and `checks` (the lint
+    findings) are filled in when given; both are in the spec's own units."""
     occ = gmsh.model.occ
     made: dict[str, list[int]] = {}
+    legs = legs if legs is not None else {}
+    checks = checks if checks is not None else []
 
     def tags(name):
         return [(2, t) for t in made[name]]
@@ -695,7 +839,9 @@ def build_face(gmsh, ops: list[dict], scale: float = 1.0, rotate: float = 0.0) -
         elif kind == "outline":
             made[name] = [_polygon_face(occ, outline_points(Path(op["file"]), op["size"], op["aoa"]))]
         elif kind == "channel":
-            made[name] = _channel(occ, op["width"], op["start"], op["heading"], op["path"])
+            legs[name] = []
+            made[name] = _channel(occ, op["width"], op["start"], op["heading"], op["path"], legs[name],
+                                  from_line=op.get("from"))
         elif kind == "fuse":
             first, rest = op["of"][0], op["of"][1:]
             out, _ = occ.fuse(tags(first), [t for n in rest for t in tags(n)])
@@ -742,8 +888,10 @@ def build_face(gmsh, ops: list[dict], scale: float = 1.0, rotate: float = 0.0) -
                     occ.translate(c, k * op["step"][0], k * op["step"][1], 0)
                 if op["angle"]:
                     occ.rotate(c, about[0], about[1], 0, 0, 0, 1, math.radians(k * op["angle"]))
-                copies += c
-            out, _ = occ.fuse(base, copies)
+                copies.append(c)
+            occ.synchronize()
+            _instances_apart(occ, gmsh, base, copies, name, checks)
+            out, _ = occ.fuse(base, [t for c in copies for t in c])
             made[name] = [t for d, t in out if d == 2]
         elif kind == "fillet":
             raise SystemExit(f"op {name!r}: fillet is not in this version; a rounded corner is "
@@ -767,7 +915,11 @@ def build_face(gmsh, ops: list[dict], scale: float = 1.0, rotate: float = 0.0) -
     return face
 
 
-def measure2d(gmsh, face: int, domain=None, external: bool = False) -> Built2D:
+def measure2d(gmsh, face: int, domain=None, external: bool = False,
+              short_below: float | None = None) -> Built2D:
+    """`short_below`: an edge shorter than this is a sliver or a notch. The caller
+    passes a third of the narrowest channel when there is one; a thousandth of the
+    span (the old rule) missed every notch on a 3 mm channel."""
     occ = gmsh.model.occ
     x0, y0, _, x1, y1, _ = gmsh.model.getBoundingBox(2, face)
     bounds = (x0, y0, x1, y1)
@@ -776,9 +928,118 @@ def measure2d(gmsh, face: int, domain=None, external: bool = False) -> Built2D:
     loops, _ = occ.getCurveLoops(face)
     curves = [abs(t) for d, t in gmsh.model.getBoundary([(2, face)], combined=False, oriented=False)]
     lengths = {c: occ.getMass(1, c) for c in curves}
-    short = [(c, length) for c, length in lengths.items() if length < 1e-3 * span]
+    threshold = short_below if short_below else 1e-3 * span
+    short = [(c, length) for c, length in lengths.items() if length < threshold]
     return Built2D(face, bounds, extent, occ.getMass(2, face), len(loops) - 1, curves, lengths,
                    short, domain or bounds, external)
+
+
+def narrowest_channel(ops: list[dict]) -> float | None:
+    widths = [op["width"] for op in ops if op["op"] == "channel"]
+    return min(widths) if widths else None
+
+
+def curve_midpoint(gmsh, curve: int) -> tuple[float, float]:
+    x0, y0, _, x1, y1, _ = gmsh.model.getBoundingBox(1, curve)
+    return ((x0 + x1) / 2, (y0 + y1) / 2)
+
+
+def landing_checks(gmsh, face: int, legs: dict, scale: float, checks: list) -> None:
+    """A `to` leg lands on the body or it is an error: a point a tenth of a width past
+    the line it ran to, along its heading, has to be inside the face."""
+    for name, records in legs.items():
+        width = next((r["width"] for r in records if r["kind"] == "ports"), 0.0)
+        for r in records:
+            if r["kind"] != "to":
+                continue
+            h = math.radians(r["heading"])
+            px = (r["lands"][0] + 0.1 * width * math.cos(h)) * scale
+            py = (r["lands"][1] + 0.1 * width * math.sin(h)) * scale
+            if not gmsh.model.isInside(2, face, [px, py, 0.0]):
+                checks.append({"level": "error", "where": (px, py),
+                               "what": f"channel {name!r}: the leg to {r['line']} lands at "
+                                       f"({r['lands'][0]:.4g}, {r['lands'][1]:.4g}) and nothing of the body "
+                                       f"is there; it runs off the part it was meant to join"})
+
+
+def port_checks(gmsh, built: Built2D, curve_patch: dict, legs: dict, scale: float,
+                checks: list) -> None:
+    """A channel's open end that the classification read as a wall is almost always a
+    missing inlet or outlet (the U-bend whose both ends sit on the same side, the
+    serpentine that ends where it began)."""
+    tol = max(built.extent) * 1e-3 + 1e-12
+    for name, records in legs.items():
+        ports = next((r for r in records if r["kind"] == "ports"), None)
+        if ports is None:
+            continue
+        for label, point in (("start", ports["start"]), ("end", ports["end"])):
+            px, py = point[0] * scale, point[1] * scale
+            for c in built.curves:
+                mx, my = curve_midpoint(gmsh, c)
+                if math.hypot(mx - px, my - py) < tol and abs(built.lengths[c] - ports["width"] * scale) < tol:
+                    if curve_patch.get(c) == "walls":
+                        checks.append({"level": "warn", "where": (px, py),
+                                       "what": f"channel {name!r}: its open {label} at ({point[0]:.4g}, "
+                                               f"{point[1]:.4g}) was read as a wall; if it is the inlet or "
+                                               f"the outlet, name it (patches, --inlet, --outlet)"})
+
+
+def count_checks(gmsh, built: Built2D, curve_patch: dict, rules: list[dict], checks: list) -> None:
+    """A passage has one inlet edge and one outlet edge. Two inlets is a U-bend read
+    off its bounding box; none is an end that is not flat to the axis. Either was a
+    note before, and the case was written anyway."""
+    if built.external:
+        return
+    kinds = {r["name"]: r["kind"] for r in rules}
+    for want in ("inlet", "outlet"):
+        names = [n for n, k in kinds.items() if k == want] or [want]
+        edges = [c for c, n in curve_patch.items() if n in names]
+        if len(edges) == 1:
+            continue
+        where = [curve_midpoint(gmsh, c) for c in edges]
+        spots = ", ".join(f"({x:.4g}, {y:.4g})" for x, y in where) or "none"
+        end = "low" if want == "inlet" else "high"
+        checks.append({"level": "error", "where": where[0] if where else None,
+                       "what": f"{len(edges)} {want} edges (at {spots}); a passage has exactly one. "
+                               f"The automatic reading takes the edges flat at the {end} end of the "
+                               f"longest axis; --{want} x:min / y:0.05 or a patches rule names the right one"})
+
+
+def leg_lines(legs: dict, axis: int) -> list[str]:
+    """The leg table: the numbers a request states, read off what was built."""
+    lines = []
+    along = "xy"[axis]
+    for name, records in legs.items():
+        lines.append(f"channel    {name!r} (spec units)")
+        for i, r in enumerate(records):
+            if r["kind"] == "ports":
+                continue
+            h = r["heading"] % 360
+            if r["kind"] == "arc":
+                turn = "left" if r["sweep"] > 0 else "right"
+                lines.append(f"  leg {i + 1}  arc  r {r['radius']:.4g} (outer {r['outer_radius']:.4g}, inner "
+                             f"{r['inner_radius']:.4g}) centre ({r['centre'][0]:.4g}, {r['centre'][1]:.4g}) "
+                             f"{abs(r['sweep']):.4g} deg {turn}: heading {h:.4g} -> {r['heading_out'] % 360:.4g}")
+            else:
+                dx, dy = math.cos(math.radians(h)), math.sin(math.radians(h))
+                comp = dx if axis == 0 else dy
+                sense = f"+{along}" if comp > 1e-9 else (f"-{along}" if comp < -1e-9 else f"across {along}")
+                what = f"to {r['line']}" if r["kind"] == "to" else f"line {r['length']:.4g}"
+                lines.append(f"  leg {i + 1}  {what}  from ({r['from'][0]:.4g}, {r['from'][1]:.4g}) heading "
+                             f"{h:.4g} deg ({sense}) to ({r['to'][0]:.4g}, {r['to'][1]:.4g})")
+    return lines
+
+
+def check_lines(checks: list) -> list[str]:
+    lines = []
+    for c in checks:
+        mark = {"error": "!! ERROR", "warn": "!!", "info": "check"}[c["level"]]
+        lines.append(f"{mark:<10} {c['what']}")
+    return lines
+
+
+def has_errors(checks: list) -> bool:
+    return any(c["level"] == "error" for c in checks)
 
 
 def curve_bounds(gmsh, curve: int) -> tuple:
@@ -788,6 +1049,7 @@ def curve_bounds(gmsh, curve: int) -> tuple:
 
 def classify_curves(gmsh, built: Built2D, axis: int, rules: list[dict]) -> dict[int, str]:
     tol = max(built.extent) * 1e-4 + 1e-12
+    resolve_near(gmsh, built, rules)
     return {c: patch_for_edge(curve_bounds(gmsh, c), built.domain, axis, tol, rules, built.external)
             for c in built.curves}
 
@@ -815,10 +1077,11 @@ COLOURS = {"inlet": "#1f77b4", "outlet": "#d62728", "walls": "#111111", "body": 
 
 
 def preview(gmsh, built: Built2D, curve_patch: dict, out: Path, title: str,
-            caption: list[str]) -> Path:
+            caption: list[str], marks: list | None = None) -> Path:
     """The outline, filled, with every edge coloured by the patch it was read as, and
-    the measured report under it. A coarse triangle mesh is drawn and thrown away; the
-    real mesh is made afterwards with its own options."""
+    the measured report under it; every failed check is a red cross where it is, so the
+    eye lands on the notch or the overlap and not on the four islands. A coarse triangle
+    mesh is drawn and thrown away; the real mesh is made afterwards with its own options."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -850,14 +1113,18 @@ def preview(gmsh, built: Built2D, curve_patch: dict, out: Path, title: str,
         for i in range(0, len(en), 2):
             a, b = pos[int(en[i])], pos[int(en[i + 1])]
             ax.plot([a[0], b[0]], [a[1], b[1]], color=colour, lw=1.6)
+    for x, y, level in (marks or []):
+        colour = "#d62728" if level == "error" else "#ff7f0e"
+        ax.plot([x], [y], marker="x", ms=11, mew=2.2, color=colour, zorder=5)
     ax.set_aspect("equal")
     ax.autoscale()
     ax.grid(True, lw=0.3)
     ax.set_title(title)
     ax.legend([Line2D([0], [0], color=col, lw=2) for col in seen.values()], list(seen),
               loc="upper right", fontsize=8, frameon=True)
-    fig.text(0.01, 0.01, "\n".join(caption), family="monospace", fontsize=8, va="bottom")
-    fig.subplots_adjust(bottom=0.06 + 0.035 * len(caption))
+    shown = caption[:14] + ([f"... and {len(caption) - 14} more lines in the report"] if len(caption) > 14 else [])
+    fig.text(0.01, 0.01, "\n".join(shown), family="monospace", fontsize=8, va="bottom")
+    fig.subplots_adjust(bottom=min(0.6, 0.06 + 0.035 * len(shown)))
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=110)
     plt.close(fig)
@@ -936,9 +1203,10 @@ def generate(gmsh, built: Built2D, axis: int, rules: list[dict], curve_patch: di
 
 def summary(built: Built2D, curve_patch: dict, source: str, mesh: MeshResult2D | None,
             flow, model: str, why: str, study: str, sizes, length_note: str,
-            notes: list[str], drawn: Path | None) -> list[str]:
+            notes: list[str], drawn: Path | None, legs: dict | None = None,
+            checks: list | None = None, axis: int = 0, gmsh=None) -> list[str]:
     cell, wall_cell, thickness = sizes
-    lines = report_lines(built, curve_patch, source)
+    lines = report_lines(built, curve_patch, source, legs, checks, axis, gmsh)
     axis_name = "x" if built.domain[2] - built.domain[0] >= built.domain[3] - built.domain[1] else "y"
     if built.external:
         lines.append(f"domain     a flow box {built.domain[2] - built.domain[0]:.4g} x "
@@ -1056,22 +1324,26 @@ def main(argv: list[str] | None = None) -> int:
     gmsh.option.setNumber("General.Terminal", 1 if args.verbose else 0)
     gmsh.model.add("mesh2d")
     try:
-        body = build_face(gmsh, ops, scale=args.scale, rotate=args.rotate)
+        legs: dict = {}
+        checks: list = []
+        body = build_face(gmsh, ops, scale=args.scale, rotate=args.rotate, legs=legs, checks=checks)
+        for c in checks:          # found while building, before the scale was applied
+            if c.get("where"):
+                c["where"] = (c["where"][0] * args.scale, c["where"][1] * args.scale)
+        narrow = narrowest_channel(ops)
+        short_below = narrow * args.scale / 3.0 if narrow else None
         external = bool(args.external)
         if external:
             face, box = external_face(gmsh, body, opts)
-            built = measure2d(gmsh, face, domain=box, external=True)
+            built = measure2d(gmsh, face, domain=box, external=True, short_below=short_below)
         else:
-            built = measure2d(gmsh, body)
+            built = measure2d(gmsh, body, short_below=short_below)
         axis = {"auto": longest_axis2d(built.extent), "x": 0, "y": 1}[args.along]
         curve_patch = classify_curves(gmsh, built, axis, rules)
-        names = set(curve_patch.values())
         if not external:
-            for want in ("inlet", "outlet"):
-                if want not in names:
-                    end = "low" if want == "inlet" else "high"
-                    notes.append(f"!! no edge sits flat at the passage's {end} end along "
-                                 f"{'xy'[axis]}, so there is no {want}; --{want} names one")
+            landing_checks(gmsh, built.face, legs, args.scale, checks)
+            port_checks(gmsh, built, curve_patch, legs, args.scale, checks)
+            count_checks(gmsh, built, curve_patch, rules, checks)
         sizes = mesh_sizes2d(built.extent, opts)
         cell, wall_cell, thickness = sizes
         if external:
@@ -1083,23 +1355,27 @@ def main(argv: list[str] | None = None) -> int:
             dh = 4.0 * built.area / walls_len if walls_len > 0 else max(built.extent)
             length = float(opts.get("length") or dh)
             length_note = f"reference length {length:.4g} m (hydraulic diameter 4A/P of the walls)"
-        for c, ln in built.short:
-            notes.append(f"a {ln:.3g} m edge at curve {c} will make poor quads")
-
         drawn = None
         if args.preview is not None:
-            caption = report_lines(built, curve_patch, source)
-            drawn = preview(gmsh, built, curve_patch, args.preview, Path(source.split(" ")[0]).name, caption)
+            caption = report_lines(built, curve_patch, source, legs, checks, axis, gmsh)
+            marks = [(*c["where"], c["level"]) for c in checks if c.get("where") and c["level"] != "info"]
+            marks += [(*curve_midpoint(gmsh, c), "warn") for c, _ in built.short]
+            drawn = preview(gmsh, built, curve_patch, args.preview, Path(source.split(" ")[0]).name,
+                            caption, marks)
 
         flow = model = why = None
         if args.study != "mesh" or not args.dry_run:
             flow = case_gen.derive_flow(opts, length)
             model, why = case_gen.turbulence_model(opts, flow)
 
-        if args.dry_run:
+        if args.dry_run or has_errors(checks):
             for line in summary(built, curve_patch, source, None, flow, model or "", why or "",
-                                args.study, sizes, length_note, notes, drawn):
+                                args.study, sizes, length_note, notes, drawn, legs, checks, axis, gmsh):
                 print(line)
+            if has_errors(checks):
+                print(f"not written: {sum(1 for c in checks if c['level'] == 'error')} check(s) failed "
+                      "(the !! ERROR lines above, and the red crosses on the preview)")
+                return 2
             return 0
 
         target: Path = args.case
@@ -1108,13 +1384,14 @@ def main(argv: list[str] | None = None) -> int:
         target.mkdir(parents=True, exist_ok=True)
         (target / "constant" / "geometry").mkdir(parents=True, exist_ok=True)
         if args.spec is not None:
+            # The record is the spec as written, with the scale and rotation it was
+            # built at: the same file rebuilds the case, which the normalised ops (tuples,
+            # resolved `to` legs) could not.
+            raw = json.loads(args.spec.read_text(encoding="utf-8"))
+            record = dict(raw) if isinstance(raw, dict) else {"ops": raw}
+            record.update(scale=args.scale, rotate=args.rotate)
             (target / "constant" / "geometry" / "body.json").write_text(
-                json.dumps({"ops": ops, "patches": [
-                    {"name": r["name"], "kind": r["kind"],
-                     **({"at": f"{'xy'[r['at'][0]]}:{r['at'][1] if r['at'][1] != 'at' else r['at'][2]}"}
-                        if r["at"] else {"box": list(r["box"])})} for r in rules],
-                            "scale": args.scale, "rotate": args.rotate}, indent=1),
-                encoding="utf-8")
+                json.dumps(record, indent=1), encoding="utf-8")
         with cad_gen.quiet_fd1():
             gmsh.write(str(target / "constant" / "geometry" / "body.step"))
 
@@ -1138,7 +1415,7 @@ def main(argv: list[str] | None = None) -> int:
         (target / "Allrun").chmod(0o755)
 
         for line in summary(built, curve_patch, source, mesh, flow, model, why, args.study, sizes,
-                            length_note, notes, drawn):
+                            length_note, notes, drawn, legs, checks, axis, gmsh):
             print(line)
         print(f"wrote {len(written)} files and body.msh into {target}")
         print(f"next: sh {target}/Allmesh   (gmshToFoam, retype walls and frontAndBack, checkMesh)")

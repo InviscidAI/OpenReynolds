@@ -6,6 +6,38 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Geometry is checked by machine before it is a case (`qa-runs/PLAN-geometry-revamp.md`,
+  Phase 0). A "correct" Tesla valve had passed every count -- four islands, an inlet, an
+  outlet, Mesh OK -- with its four loops overlapping each other by a quarter of their
+  area and a notch at every junction. `mesh2d.py` now refuses copies of a `repeat` that
+  overlap or touch (the overlap measured), a `to` leg that lands off the body, and a
+  passage with other than one inlet and one outlet; it warns, with coordinates and red
+  crosses on the preview, about short edges (a third of the narrowest channel, not a
+  thousandth of the span) and a channel end read as a wall; it prints a leg table for
+  every channel (each leg's start, end and absolute heading, each arc's radius and
+  sweep, where a leg lands) so a request's angles and radii are read off numbers; a
+  `to` leg and a channel given `from` are cut flush at the wall (the joint disks that
+  made the notches are gone); a `near:x,y` patch rule names an end when two ends sit on
+  one line. The worked Tesla example is gone from the docstring: a shape written by hand
+  is a shape nobody measured, and it was copied into a wrong valve by every author that
+  read it. `cad_gen.py --internal` refuses a passage whose automatic reading gives other
+  than one inlet and one outlet, or an inlet and outlet that differ threefold in area
+  (an L duct's side wall taken for its end, both ends of a U taken for inlets, an elbow
+  with no outlet -- each was written as a case before); `--inlet` / `--outlet` name the
+  ends (`x:min`, `y:0.08`, `near:x,y,z`). It also takes `mesh2d.py`'s spec envelope
+  (`{"ops": [...], "scale": 0.001}`) and draws its preview with matplotlib where pyvista
+  is not importable, which is the runner the geometry desk draws in -- there, every 3D
+  lap had failed. The desk reasons at its own effort (`geometry_effort`,
+  `OPENREYNOLDS_GEOMETRY_EFFORT`, default high; the hosted app runs the main loop at
+  medium and authored wrong shapes at it), replies in up to 16k tokens, is told to write
+  the request's checkable claims down first and to judge the leg table against them, sees
+  the picture of a refused spec, and finishes the job: after the case is shipped it runs
+  Allmesh, checkMesh and the mesh render on the instance in one exec and returns the
+  checkMesh digest and the mesh picture with the outline, so the main agent has nothing
+  left to discover.
+
 ### Added
 
 - An eighth tool, `geometry`, and the desk behind it (`openreynolds/geometry.py`).

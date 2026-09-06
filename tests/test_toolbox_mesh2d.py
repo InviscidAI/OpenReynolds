@@ -324,7 +324,7 @@ def test_the_report_counts_islands_and_edges_per_patch(mesh2d):
     text = "\n".join(lines)
     assert "islands 4" in text
     assert "inlet (1 edge, 0.003 m)" in text and "walls (2 edges, 0.255 m)" in text
-    assert "!!" in text and "curve 4" in text
+    assert "!!" in text and "1 edge of 1e-05 m" in text and "short against the narrowest" in text
 
 
 # -- the kernel: real builds into a tmp dir ---------------------------------------
@@ -430,13 +430,136 @@ def test_dry_run_writes_only_the_preview(mesh2d, tmp_path, capsys):
 
 
 def test_repeat_and_mirror_make_one_face(mesh2d, tmp_path, capsys):
+    """A row of pins on a channel floor, mirrored onto the ceiling: the copies of a
+    repeat stand apart (that is what a repeat means) and the whole is one face."""
     pytest.importorskip("gmsh")
     spec = tmp_path / "rm.json"
     spec.write_text(json.dumps([
-        {"op": "disk", "name": "a", "center": [0, 0], "radius": 1},
-        {"op": "repeat", "name": "row", "target": "a", "count": 3, "step": [1.5, 0]},
-        {"op": "mirror", "name": "body", "target": "row", "axis": "y", "at": -0.5, "keep": True}]), encoding="utf-8")
+        {"op": "rect", "name": "duct", "origin": [0, 0], "size": [10, 4]},
+        {"op": "disk", "name": "pin", "center": [2, 0.5], "radius": 0.6},
+        {"op": "repeat", "name": "row", "target": "pin", "count": 3, "step": [2, 0]},
+        {"op": "mirror", "name": "pins", "target": "row", "axis": "y", "at": 2, "keep": True},
+        {"op": "fuse", "name": "body", "of": ["duct", "pins"]}]), encoding="utf-8")
     assert mesh2d.main(["--spec", str(spec), "--dry-run"]) == 0
     out = capsys.readouterr().out
     assert "islands 0" in out
-    assert re.search(r"extent\s+5 x 3", out)
+    assert re.search(r"extent\s+10 x 4", out)
+    assert "gap between copies 0.8" in out
+
+
+# -- the checks: what a count cannot see ------------------------------------------
+
+
+def test_the_docstring_carries_no_worked_shape(mesh2d):
+    """A shape described by hand is a shape nobody measured; the one that was here was
+    copied into a wrong valve by every author that read it."""
+    assert "Tesla" not in mesh2d.__doc__.split("There is deliberately")[0]
+    assert '"op": "channel"' not in mesh2d.__doc__
+
+
+def test_overlapping_copies_of_a_repeat_are_refused_with_the_overlap_measured(mesh2d, tmp_path, capsys):
+    """Four bypasses at a 12 mm pitch whose footprint is 20 mm: each pair overlaps by a
+    quarter of a loop, the union absorbs it, `islands 4` still holds -- and the case
+    that passed every count is refused here, with the picture still drawn."""
+    pytest.importorskip("gmsh")
+    pytest.importorskip("matplotlib")
+    spec = tmp_path / "overlap.json"
+    spec.write_text(json.dumps({"ops": [
+        {"op": "rect", "name": "main", "origin": [0, -1.5], "size": [60, 3]},
+        {"op": "channel", "name": "bypass", "width": 3, "start": [14, 1.0], "heading": 25, "from": "y:1.5",
+         "path": [{"line": 5}, {"arc": {"radius": 4.5, "angle": 200}}, {"line": {"to": "y:1.5"}}]},
+        {"op": "repeat", "name": "bypasses", "target": "bypass", "count": 4, "step": [12, 0]},
+        {"op": "fuse", "name": "body", "of": ["main", "bypasses"]}],
+        "patches": [{"name": "inlet", "at": "x:min"}, {"name": "outlet", "at": "x:max"}]}), encoding="utf-8")
+    png = tmp_path / "overlap.png"
+    case = tmp_path / "case"
+    assert mesh2d.main([str(case), "--spec", str(spec), "--scale", "0.001", "--preview", str(png)]) == 2
+    out = capsys.readouterr().out
+    assert "islands 4" in out
+    assert re.search(r"!! ERROR\s+repeat 'bypasses': copies 1 and 2 overlap by 2\d\.\d", out)
+    assert "not written" in out
+    assert png.exists() and not (case / "Allmesh").exists()
+
+
+def test_a_leg_that_lands_off_the_body_is_refused(mesh2d, tmp_path, capsys):
+    """A bypass leaving at 25 degrees from x=6 comes back down 10 mm upstream of where
+    it left: past the inlet face, onto nothing. Before, this was a note and a case."""
+    pytest.importorskip("gmsh")
+    spec = tmp_path / "off.json"
+    spec.write_text(json.dumps({"ops": [
+        {"op": "rect", "name": "main", "origin": [0, -1.5], "size": [60, 3]},
+        {"op": "channel", "name": "bypass", "width": 3, "start": [6, 1.5], "heading": 25,
+         "path": [{"line": 5}, {"arc": {"radius": 4.5, "angle": 200}}, {"line": {"to": "y:1.5"}}]},
+        {"op": "fuse", "name": "body", "of": ["main", "bypass"]}]}), encoding="utf-8")
+    assert mesh2d.main(["--spec", str(spec), "--scale", "0.001", "--dry-run"]) == 2
+    out = capsys.readouterr().out
+    assert re.search(r"!! ERROR\s+channel 'bypass': the leg to y=1.5 lands at \(-3\.9\d+, 1\.5\)", out)
+    assert re.search(r"!! ERROR\s+0 inlet edges", out)
+
+
+def test_a_u_bend_needs_its_ends_named_and_near_names_them(mesh2d, tmp_path, capsys):
+    """Both ends of a U sit on x=0: the automatic reading calls both the inlet and
+    nothing the outlet, which is refused; `near:x,y` picks each end by where it is."""
+    pytest.importorskip("gmsh")
+    u = {"scale": 0.001, "ops": [{"op": "channel", "name": "body", "width": 2, "start": [0, 0], "heading": 0,
+         "path": [{"line": 30}, {"arc": {"radius": 3, "angle": 180}}, {"line": 30}]}]}
+    spec = tmp_path / "u.json"
+    spec.write_text(json.dumps(u), encoding="utf-8")
+    assert mesh2d.main(["--spec", str(spec), "--scale", "0.001", "--dry-run"]) == 2
+    out = capsys.readouterr().out
+    assert re.search(r"!! ERROR\s+2 inlet edges", out) and re.search(r"!! ERROR\s+0 outlet edges", out)
+    u["patches"] = [{"name": "inlet", "at": "near:0,0"}, {"name": "outlet", "at": "near:0,6"}]
+    spec.write_text(json.dumps(u), encoding="utf-8")
+    case = tmp_path / "u"
+    assert mesh2d.main([str(case), "--spec", str(spec), "--scale", "0.001", "--cell", "0.0005"]) == 0
+    out = capsys.readouterr().out
+    assert re.search(r"patches\s+inlet \(1 edge, 0\.002 m\), outlet \(1 edge, 0\.002 m\)", out)
+    assert re.search(r"patches\s+inlet \(1\), outlet \(1\), walls", out)   # the extruded surfaces too
+    assert "ERROR" not in out
+    record = json.loads((case / "constant" / "geometry" / "body.json").read_text(encoding="utf-8"))
+    assert record["patches"][1]["at"] == "near:0,6" and record["scale"] == 0.001
+
+
+def test_the_leg_table_states_headings_radii_and_where_a_leg_lands(mesh2d, tmp_path, capsys):
+    """'Leaves at 60 degrees, outer radius 4, returns heading 300 (+x: with the flow)':
+    the numbers a request states, read off what was built rather than off the picture."""
+    pytest.importorskip("gmsh")
+    spec = tmp_path / "legs.json"
+    spec.write_text(json.dumps({"ops": [
+        {"op": "rect", "name": "main", "origin": [0, -1.5], "size": [60, 3]},
+        {"op": "channel", "name": "bypass", "width": 3, "start": [9, 1.5], "heading": 60, "from": "y:1.5",
+         "path": [{"line": 1.5}, {"arc": {"radius": 2.5, "angle": 240}}, {"line": {"to": "y:1.5"}}]},
+        {"op": "fuse", "name": "body", "of": ["main", "bypass"]}],
+        "patches": [{"name": "inlet", "at": "x:min"}, {"name": "outlet", "at": "x:max"}]}), encoding="utf-8")
+    assert mesh2d.main(["--spec", str(spec), "--scale", "0.001", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert re.search(r"leg 1\s+line 1\.5\s+from \(9, 1\.5\) heading 60 deg \(\+x\)", out)
+    assert re.search(r"leg 2\s+arc\s+r 2\.5 \(outer 4, inner 1\).*240 deg left: heading 60 -> 300", out)
+    assert re.search(r"leg 3\s+to y=1\.5\s+from .* heading 300 deg \(\+x\) to \(6\.1\d+, 1\.5\)", out)
+
+
+def test_a_channel_from_a_wall_starts_flush_with_it(mesh2d, tmp_path, capsys):
+    """A leg leaving a wall at 60 degrees has a square start cap, one corner of which
+    sits outside the wall; `from` cuts the start flush, so no wall edge of the union
+    lies above the line the bypass leaves from except the bypass's own walls."""
+    pytest.importorskip("gmsh")
+    import gmsh
+    ops, _ = mesh2d.parse_spec([
+        {"op": "rect", "name": "main", "origin": [0, -1.5], "size": [60, 3]},
+        {"op": "channel", "name": "bypass", "width": 3, "start": [9, 1.5], "heading": 60, "from": "y:1.5",
+         "path": [{"line": 6}]},
+        {"op": "fuse", "name": "body", "of": ["main", "bypass"]}])
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    try:
+        face = mesh2d.build_face(gmsh, ops)
+        built = mesh2d.measure2d(gmsh, face)
+        # a flush start: the main rect's four sides (its top split either side of the
+        # bypass) and the bypass's two walls and end cap -- eight edges. A square start
+        # cap leaves a ninth, the piece of cap standing above the wall.
+        assert len(built.curves) == 8, sorted(round(v, 3) for v in built.lengths.values())
+        assert not built.short
+        assert all(mesh2d.curve_bounds(gmsh, c)[1] >= 1.5 - 1e-6 for c in built.curves
+                   if mesh2d.curve_bounds(gmsh, c)[3] > 1.5 + 1e-6)
+    finally:
+        gmsh.finalize()

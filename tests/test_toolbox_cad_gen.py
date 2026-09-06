@@ -383,3 +383,100 @@ def test_dry_run_writes_nothing(cad_gen, tmp_path):
     (tmp_path / "penne.json").write_text(json.dumps(PENNE))
     assert cad_gen.main(["--spec", str(tmp_path / "penne.json"), "--dry-run"]) == 0
     assert sorted(p.name for p in tmp_path.iterdir()) == ["penne.json"]
+
+
+# -- Phase 0 of the geometry revamp: the envelope, the ports, the refusals ----------
+
+
+def test_the_spec_envelope_is_the_same_as_mesh2d_s(cad_gen):
+    """A list, or {"ops": [...], "scale": 0.001}: the desk writes one envelope for
+    both grammars, and the 3D one refused the dict outright."""
+    ops = [{"op": "box", "name": "body", "origin": [0, 0, 0], "size": [1, 1, 1]}]
+    assert cad_gen.unpack_spec(ops) == (ops, 1.0)
+    assert cad_gen.unpack_spec({"ops": ops, "scale": 0.001}) == (ops, 0.001)
+    assert cad_gen.unpack_spec({"ops": ops}) == (ops, 1.0)
+    with pytest.raises(SystemExit) as err:
+        cad_gen.unpack_spec({"ops": ops, "scale": "mm"})
+    assert "scale" in str(err.value)
+    with pytest.raises(SystemExit):
+        cad_gen.unpack_spec({"ops": ops, "scale": 0})
+
+
+def test_port_rules_read_the_three_forms(cad_gen):
+    assert cad_gen.parse_port_rule("x:min") == {"kind": "min", "axis": 0}
+    assert cad_gen.parse_port_rule("z:max") == {"kind": "max", "axis": 2}
+    assert cad_gen.parse_port_rule("y:0.08") == {"kind": "at", "axis": 1, "value": 0.08}
+    assert cad_gen.parse_port_rule("near:0, 0.035, 0.005") == {"kind": "near", "point": (0.0, 0.035, 0.005)}
+    for bad in ("y", "w:min", "near:1,2", "x:left"):
+        with pytest.raises(SystemExit):
+            cad_gen.parse_port_rule(bad)
+
+
+L_DUCT = [{"op": "box", "name": "leg1", "origin": [0, 0, 0], "size": [0.10, 0.01, 0.01]},
+          {"op": "box", "name": "leg2", "origin": [0.09, 0, 0], "size": [0.01, 0.08, 0.01]},
+          {"op": "fuse", "name": "body", "of": ["leg1", "leg2"]}]
+
+U_DUCT = [{"op": "box", "name": "leg1", "origin": [0, 0, 0], "size": [0.10, 0.01, 0.01]},
+          {"op": "box", "name": "leg2", "origin": [0.09, 0, 0], "size": [0.01, 0.04, 0.01]},
+          {"op": "box", "name": "leg3", "origin": [0, 0.03, 0], "size": [0.10, 0.01, 0.01]},
+          {"op": "fuse", "name": "body", "of": ["leg1", "leg2", "leg3"]}]
+
+
+def test_an_l_duct_read_off_its_bounding_box_is_refused_and_a_rule_fixes_it(cad_gen, tmp_path, capsys):
+    """The automatic reading took the side wall of the second leg (flat at x-max, eight
+    times the inlet's area) for the outlet and wrote the case. Refused now, with the
+    areas; `--outlet y:max` names the real end."""
+    pytest.importorskip("gmsh")
+    spec = tmp_path / "l.json"
+    spec.write_text(json.dumps(L_DUCT), encoding="utf-8")
+    with pytest.raises(SystemExit) as err:
+        cad_gen.main([str(tmp_path / "l"), "--spec", str(spec), "--internal", "--speed", "1"])
+    assert "differ 8x in area" in str(err.value) and "side wall" in str(err.value)
+    assert not (tmp_path / "l" / "Allmesh").exists()
+    assert cad_gen.main([str(tmp_path / "l2"), "--spec", str(spec), "--internal", "--speed", "1",
+                         "--outlet", "y:max"]) == 0
+    out = capsys.readouterr().out
+    assert "patches    inlet (1), walls (6), outlet (1)" in out
+
+
+def test_a_u_duct_has_two_inlets_by_the_automatic_reading_and_near_names_each_end(cad_gen, tmp_path, capsys):
+    pytest.importorskip("gmsh")
+    spec = tmp_path / "u.json"
+    spec.write_text(json.dumps(U_DUCT), encoding="utf-8")
+    with pytest.raises(SystemExit) as err:
+        cad_gen.main([str(tmp_path / "u"), "--spec", str(spec), "--internal", "--speed", "1"])
+    assert "2 inlet faces" in str(err.value)
+    assert cad_gen.main([str(tmp_path / "u2"), "--spec", str(spec), "--internal", "--speed", "1",
+                         "--inlet", "near:0,0.005,0.005", "--outlet", "near:0,0.035,0.005"]) == 0
+    out = capsys.readouterr().out
+    assert "patches    inlet (1), walls (8), outlet (1)" in out
+    u = (tmp_path / "u2" / "0" / "U").read_text(encoding="utf-8")
+    assert u.count("fixedValue") == 1
+
+
+def test_a_port_rule_that_names_nothing_is_an_error_not_a_wall(cad_gen, tmp_path):
+    pytest.importorskip("gmsh")
+    spec = tmp_path / "l.json"
+    spec.write_text(json.dumps(L_DUCT), encoding="utf-8")
+    with pytest.raises(SystemExit) as err:
+        cad_gen.main([str(tmp_path / "l"), "--spec", str(spec), "--internal", "--outlet", "z:0.5"])
+    assert "names no face" in str(err.value)
+
+
+def test_the_preview_draws_without_pyvista(cad_gen, tmp_path, monkeypatch, capsys):
+    """The runner the geometry desk draws in has gmsh and matplotlib and no pyvista;
+    there every 3D lap had failed at the preview."""
+    pytest.importorskip("gmsh")
+    pytest.importorskip("matplotlib")
+    import sys
+    monkeypatch.setitem(sys.modules, "pyvista", None)
+    spec = tmp_path / "penne.json"
+    spec.write_text(json.dumps({"scale": 0.001, "ops": [
+        {"op": "cylinder", "name": "outer", "base": [0, 0, 0], "axis": [40, 0, 0], "radius": 5},
+        {"op": "cylinder", "name": "bore", "base": [-1, 0, 0], "axis": [42, 0, 0], "radius": 4},
+        {"op": "cut", "name": "body", "from": "outer", "take": ["bore"]}]}), encoding="utf-8")
+    png = tmp_path / "p.png"
+    assert cad_gen.main(["--spec", str(spec), "--dry-run", "--preview", str(png)]) == 0
+    out = capsys.readouterr().out
+    assert png.stat().st_size > 20_000
+    assert "extent 0.04 x 0.01" in out, "the spec's own scale was applied"
