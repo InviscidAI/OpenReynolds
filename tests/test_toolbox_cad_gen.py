@@ -151,9 +151,12 @@ def test_a_dry_run_measures_surfaces_shells_and_voids_before_any_mesh(cad_gen, t
         {"op": "sphere", "name": "outer", "center": [0, 0, 0], "radius": 1.0},
         {"op": "sphere", "name": "inner", "center": [0, 0, 0], "radius": 0.5},
         {"op": "cut", "name": "body", "from": "outer", "take": ["inner"]}]), encoding="utf-8")
-    assert cad_gen.main(["--spec", str(hollow), "--dry-run"]) == 0
-    out = capsys.readouterr().out
-    assert "2 surfaces in 2 shells, 1 enclosed void" in out
+    # the void is measured, and for a body in a flow it is a refusal: a cavity no
+    # flow reaches is the fluid drawn instead of the solid (the 3D penne run)
+    with pytest.raises(SystemExit) as err:
+        cad_gen.main(["--spec", str(hollow), "--dry-run"])
+    assert "1 enclosed void (2 surfaces in 2 shells)" in str(err.value)
+    assert "describe the solid only" in str(err.value)
 
 
 def test_allrun_is_empty_for_a_mesh_only_case(cad_gen):
@@ -480,3 +483,42 @@ def test_the_preview_draws_without_pyvista(cad_gen, tmp_path, monkeypatch, capsy
     out = capsys.readouterr().out
     assert png.stat().st_size > 20_000
     assert "extent 0.04 x 0.01" in out, "the spec's own scale was applied"
+
+
+def test_the_envelope_carries_domain_and_ports(cad_gen):
+    """A desk that cannot pass flags says in the spec that the solid is a passage and
+    where its ends are."""
+    ops = [{"op": "box", "name": "body", "origin": [0, 0, 0], "size": [1, 1, 1]}]
+    entries, scale, extras = cad_gen.unpack_envelope(
+        {"ops": ops, "scale": 0.001, "domain": "internal", "inlet": "x:min", "outlet": "near:0,0.035,0.005"})
+    assert entries == ops and scale == 0.001
+    assert extras == {"domain": "internal", "inlet": {"kind": "min", "axis": 0},
+                      "outlet": {"kind": "near", "point": (0.0, 0.035, 0.005)}}
+    assert cad_gen.unpack_envelope(ops) == (ops, 1.0, {})
+    with pytest.raises(SystemExit):
+        cad_gen.unpack_envelope({"ops": ops, "domain": "inside"})
+
+
+def test_a_hollow_external_body_is_refused_as_the_fluid_drawn_instead_of_the_solid(cad_gen, tmp_path, capsys):
+    """The 3D penne run drew a 200 mm box with a tube-shaped cavity -- the fluid --
+    and the report said "1 enclosed void" for six laps while nothing refused it."""
+    pytest.importorskip("gmsh")
+    spec = tmp_path / "fluid.json"
+    spec.write_text(json.dumps([
+        {"op": "box", "name": "flowbox", "origin": [-0.1, -0.05, -0.05], "size": [0.2, 0.1, 0.1]},
+        {"op": "cylinder", "name": "tube", "base": [-0.02, 0, 0], "axis": [0.04, 0, 0], "radius": 0.005},
+        {"op": "cut", "name": "body", "from": "flowbox", "take": ["tube"]}]), encoding="utf-8")
+    with pytest.raises(SystemExit) as err:
+        cad_gen.main(["--spec", str(spec), "--dry-run"])
+    assert "enclosed void" in str(err.value) and "describe the solid only" in str(err.value)
+
+
+def test_a_passage_declared_in_the_envelope_is_meshed_internal_with_its_ports(cad_gen, tmp_path, capsys):
+    pytest.importorskip("gmsh")
+    spec = tmp_path / "u.json"
+    spec.write_text(json.dumps({"ops": U_DUCT, "domain": "internal",
+                                "inlet": "near:0,0.005,0.005", "outlet": "near:0,0.035,0.005"}), encoding="utf-8")
+    assert cad_gen.main([str(tmp_path / "u"), "--spec", str(spec), "--speed", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "patches    inlet (1), walls (8), outlet (1)" in out
+    assert "domain internal" in out

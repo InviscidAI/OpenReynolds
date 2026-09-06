@@ -26,6 +26,20 @@ snappyHexMesh took three minutes plus twelve minutes of writing dictionaries by 
 they are real prisms and not a shrink-wrap; the planar patches the body touches -- a
 floor, a symmetry plane, a pipe's inlet -- are re-made around the layer's rim.
 
+THE SPEC DESCRIBES THE SOLID ONLY -- the body the air flows round, or, for a passage,
+the volume the fluid fills. Never draw the flow box or the fluid around a body: the
+tool cuts the fluid out itself, putting a flow box round the solid in body lengths
+(inlet upstream at -x, outlet at +x, `farfield` elsewhere, the solid's surface named
+`body`). A spec that draws a box with a tube-shaped cavity is refused: an enclosed void
+in an external body is the fluid drawn instead of the solid. The envelope
+`{"ops": [...], "scale": 0.001, "domain": "internal", "inlet": "x:min", "outlet":
+"near:0,0.035,0.005"}` carries the unit (a spec in mm), whether the solid IS the passage
+(`"domain": "internal"`: a pipe, a duct, a manifold -- its open ends become the inlet and
+outlet; `"external"` is the default), and where those ends are when the automatic
+reading (flat at the two ends of the longest axis) would be wrong: `x:min`, `y:0.08`
+(faces flat on that plane) or `near:x,y,z` (the face nearest that point). A passage must
+come out with exactly one inlet and one outlet or it is refused.
+
 The spec, one op per entry, each optionally `"name"`d so a later op can refer to it;
 the op named `"body"` is the solid, otherwise the last one is:
 
@@ -173,16 +187,33 @@ def unpack_spec(payload) -> tuple[list, float]:
     """A spec is a list of ops, or {"ops": [...], "scale": 0.001}: the same two shapes
     `mesh2d.py` takes, so a desk that writes one grammar's envelope is not refused by
     the other. Returns (the op list, the scale the spec declares or 1)."""
-    if isinstance(payload, dict):
-        entries = payload.get("ops")
-        try:
-            scale = float(payload.get("scale", 1.0))
-        except (TypeError, ValueError):
-            raise SystemExit("the spec's \"scale\" must be a number (0.001 for millimetres)") from None
-        if scale <= 0:
-            raise SystemExit("the spec's \"scale\" must be positive")
-        return entries, scale
-    return payload, 1.0
+    entries, scale, _ = unpack_envelope(payload)
+    return entries, scale
+
+
+def unpack_envelope(payload) -> tuple[list, float, dict]:
+    """(ops, scale, extras): the extras are what the envelope says beyond the ops --
+    `domain` (internal|external), `inlet`, `outlet` (port rules) -- so a desk that
+    cannot pass flags can still say a solid is a passage and where its ends are."""
+    if not isinstance(payload, dict):
+        return payload, 1.0, {}
+    entries = payload.get("ops")
+    try:
+        scale = float(payload.get("scale", 1.0))
+    except (TypeError, ValueError):
+        raise SystemExit("the spec's \"scale\" must be a number (0.001 for millimetres)") from None
+    if scale <= 0:
+        raise SystemExit("the spec's \"scale\" must be positive")
+    extras: dict = {}
+    domain = payload.get("domain")
+    if domain is not None:
+        if domain not in ("internal", "external"):
+            raise SystemExit("the spec's \"domain\" is \"internal\" (the solid is the passage) or \"external\"")
+        extras["domain"] = domain
+    for port in ("inlet", "outlet"):
+        if payload.get(port) is not None:
+            extras[port] = parse_port_rule(payload[port])
+    return entries, scale, extras
 
 
 def parse_port_rule(text: str):
@@ -1390,11 +1421,20 @@ def main(argv: list[str] | None = None) -> int:
     occ = gmsh.model.occ
     try:
         if args.spec is not None:
-            entries, declared = unpack_spec(json.loads(args.spec.read_text(encoding="utf-8")))
+            entries, declared, extras = unpack_envelope(json.loads(args.spec.read_text(encoding="utf-8")))
             if declared != 1.0 and args.scale == 1.0:
                 args.scale = declared
             elif declared != 1.0 and args.scale != declared:
                 notes.append(f"the spec declares scale {declared:g}; --scale {args.scale:g} was used")
+            if extras.get("domain") == "internal" and not args.internal:
+                args.internal = opts["internal"] = True
+                notes.append("the spec says the solid is the passage (domain internal)")
+            for port in ("inlet", "outlet"):
+                if extras.get(port) and not opts.get(f"{port}_rule"):
+                    opts[f"{port}_rule"] = extras[port]
+            if extras and not args.internal and any(p in extras for p in ("inlet", "outlet")):
+                raise SystemExit("the spec names an inlet or outlet, which is a passage's; say "
+                                 "\"domain\": \"internal\" or drop them")
             ops = parse_spec(entries)
             tags = build_solid(gmsh, ops)
             source = f"{args.spec.name}: {len(ops)} ops, body is {body_name(ops)!r}"
@@ -1425,6 +1465,19 @@ def main(argv: list[str] | None = None) -> int:
         whole = measure(gmsh, tags)
         if whole.volume <= 0:
             raise SystemExit("the solid has no volume")
+        if whole.voids and not args.internal:
+            # A box with a tube-shaped hollow is the fluid drawn instead of the solid
+            # (study 20260907-014926-9c22: six laps, a second flow box round the first,
+            # gmshToFoam failing on the result, 40 turns). The report said "1 enclosed
+            # void" every lap; now it is a refusal with the reason.
+            if args.preview is not None:
+                preview(gmsh, whole, args.preview, source)
+            raise SystemExit(
+                f"!! ERROR   the body has {whole.voids} enclosed void{'s' if whole.voids != 1 else ''} "
+                f"({whole.surfaces} surfaces in {whole.shells} shells): a cavity no flow reaches. For "
+                "the flow ROUND a body, describe the solid only -- the tool puts the flow box round it; "
+                "do not draw the box or the fluid. For the flow THROUGH a passage, the solid is the "
+                "passage's own volume and the spec says \"domain\": \"internal\".\nnot written")
         opts["_l_ref"] = args.length or whole.extent[0]
         flow_state = case_gen.derive_flow(opts, opts["_l_ref"])
         model, why = case_gen.turbulence_model(opts, flow_state)

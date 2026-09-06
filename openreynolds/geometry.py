@@ -87,7 +87,10 @@ judged against those, not against the picture looking right.
 Lap 1: reply with ONLY a JSON spec in the grammar -- no prose, no code fences. Lengths in \
 metres; a top-level "scale" (for example 0.001) says the numbers are in that unit instead. \
 Work out where each feature ends before placing the next: a repeated feature's pitch is \
-its footprint plus a gap, never less.
+its footprint plus a gap, never less. In 3D the spec is the SOLID only -- the body the \
+air flows round, or a passage's own volume with "domain": "internal" -- never the flow \
+box or the fluid: the tool adds the box. A report line saying the body has an enclosed \
+void means the fluid was drawn instead of the solid.
 
 Then, each lap, you are shown the picture the tool drew and its report: the measurements \
 (extent, area, islands, each patch's edge count and length), a leg table for every \
