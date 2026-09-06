@@ -34,10 +34,13 @@ with 400 write directories as on one with none.
 from __future__ import annotations
 
 import argparse
+import atexit
 import gzip
 import math
 import re
+import shutil
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -51,10 +54,20 @@ import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cad_convert  # noqa: E402  (sibling script, not a package)
 import study_state  # noqa: E402  (sibling script, not a package)
 
 
 SURFACE_SUFFIXES = (".stl", ".obj", ".ply", ".vtk", ".vtp", ".vtu", ".stlb")
+
+CAD_SUFFIXES = cad_convert.CAD_SUFFIXES
+"""STEP and IGES. They are surfaces a case *could* be built from and gmsh reads them,
+so a case holding one and no STL is not a case with no geometry -- it is a case whose
+geometry has not been tessellated yet, which is a different sentence and the one worth
+printing. The panel draws it anyway, coarsely, because a picture before the mesh size
+has been chosen is exactly when the picture is most useful. What it does not do is
+leave those triangles anywhere a mesher could find them: they go to a temporary
+directory that dies with the process. See `cad_convert.render_tessellation`."""
 
 SURFACE_DIRS = ("constant/triSurface", "constant/geometry", "constant/trisurface")
 
@@ -345,7 +358,7 @@ def parse_boundary(text: str) -> list[dict]:
     return patches
 
 
-def find_surfaces(case: Path) -> list[Path]:
+def find_surfaces(case: Path, suffixes: tuple[str, ...] = SURFACE_SUFFIXES) -> list[Path]:
     """Surface files a snappy case would have been built from.
 
     De-duplicated by resolved path: `triSurface` and `trisurface` are both spelled
@@ -357,7 +370,7 @@ def find_surfaces(case: Path) -> list[Path]:
 
     def take(paths) -> None:
         for path in paths:
-            if not path.is_file() or path.suffix.lower() not in SURFACE_SUFFIXES:
+            if not path.is_file() or path.suffix.lower() not in suffixes:
                 continue
             key = str(path.resolve()).lower()
             if key in seen:
@@ -386,6 +399,14 @@ def disk_stats(case: Path) -> dict:
         "bounds": None,
         "cell_volume": None,
     }
+    for path in find_surfaces(case, CAD_SUFFIXES):
+        # Stated next to the counts because that is where somebody reading "0 cells"
+        # would otherwise conclude the case has no geometry in it at all.
+        unit = cad_convert.declared_unit(path)
+        stats["notes"].append(
+            f"{path.name} is CAD ({unit['unit'] or 'no unit declared'}), not tessellated"
+        )
+
     directory = polymesh_dir(case)
     if directory is None:
         stats["notes"].append("no constant/polyMesh -- this case has not been meshed")
@@ -754,7 +775,8 @@ def render_geometry(case: Path, out: Path) -> Path:
     # Looked for before pyvista is imported, so that a case with no geometry says
     # "no geometry" whatever the state of the graphics stack.
     files = find_surfaces(case)
-    if not files:
+    cad = find_surfaces(case, CAD_SUFFIXES)
+    if not files and not cad:
         raise Missing(
             "no surface file under constant/triSurface -- either this is a blockMesh "
             "case or the geometry has not been copied in yet"
@@ -762,6 +784,8 @@ def render_geometry(case: Path, out: Path) -> Path:
     pv = _pyvista()
     parts = []
     skipped = []
+    unconverted = []
+    scratch = None
     for path in files[:10]:
         try:
             mesh = pv.read(str(path))
@@ -770,8 +794,24 @@ def render_geometry(case: Path, out: Path) -> Path:
             parts.append((path.name, mesh))
         except Exception as exc:  # noqa: BLE001
             skipped.append(f"{path.name}: {type(exc).__name__}")
+    for path in cad[:10 - len(parts)]:
+        # Drawn from a throwaway tessellation, never from one a mesher could reach.
+        try:
+            if scratch is None:
+                scratch = tempfile.mkdtemp(prefix="first_look_render_")
+                atexit.register(shutil.rmtree, scratch, True)
+            mesh = pv.read(str(cad_convert.render_tessellation(path, Path(scratch))))
+            parts.append((f"{path.name} (render tessellation)", mesh))
+            unit = cad_convert.declared_unit(path)["unit"] or "no unit"
+            unconverted.append(f"{path.name}: CAD, {unit}, not converted")
+        except Exception as exc:  # noqa: BLE001
+            skipped.append(f"{path.name}: {type(exc).__name__}")
+            unconverted.append(f"{path.name}: CAD, not converted, and not drawable here")
     if not parts:
-        raise Missing("surface files present but none could be read: " + "; ".join(skipped))
+        raise Missing(
+            "surface files present but none could be read: "
+            + "; ".join(skipped + unconverted)
+        )
 
     spans = [float(np.linalg.norm(np.asarray(mesh.bounds)[1::2] - np.asarray(mesh.bounds)[0::2]))
              for _name, mesh in parts]
@@ -799,6 +839,13 @@ def render_geometry(case: Path, out: Path) -> Path:
         plotter.add_legend(bcolor="white", size=(0.35, min(0.35, 0.06 * len(parts))), loc="lower right")
         plotter.add_text(f"{parts[biggest][0]} translucent (it encloses the rest)",
                          font_size=7, position="upper_left", color="dimgray")
+    if unconverted:
+        # Said on the picture, because a facet count off a render tessellation looks
+        # exactly like a facet count off the surface a mesher would read.
+        plotter.add_text(
+            "\n".join(unconverted + ["facet counts above are the picture's, not the part's"]),
+            font_size=7, position="lower_left", color="dimgray",
+        )
     plotter.camera_position = "iso"
     return _finish(plotter, out)
 

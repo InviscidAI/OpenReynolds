@@ -12,21 +12,67 @@ depends on where they are and what you are about to run.
     python3 geometry_view.py a.stl b.stl --per-part --out /work/case/renders
     python3 geometry_view.py wing.stl --check               # numbers only, no render
 
-Reads anything VTK reads: .stl, .obj, .ply, .vtk, .vtp, .vtu.
+Reads anything VTK reads: .stl, .obj, .ply, .vtk, .vtp, .vtu -- and .step, .stp,
+.iges and .igs, which VTK does not read, by tessellating them coarsely *for the
+picture only*. See `RENDER_ONLY` below before doing anything with that.
 """
 
 from __future__ import annotations
 
 import argparse
+import atexit
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import pyvista as pv
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cad_convert  # noqa: E402  (sibling script, not a package)
+
 pv.OFF_SCREEN = True
 
 SUFFIXES = (".stl", ".obj", ".ply", ".vtk", ".vtp", ".vtu")
+
+CAD_SUFFIXES = cad_convert.CAD_SUFFIXES
+"""STEP and IGES. gmsh reads them as B-rep, so refusing to draw one is a wall in
+front of a capability that is already there -- and a picture of the part is worth
+having *before* anybody has chosen a mesh size."""
+
+RENDER_ONLY = """\
+The triangles this makes from a CAD file are for drawing and nothing else.
+
+They are written into a temporary directory that is deleted when the process exits,
+so they cannot be picked up by a case, and they are deliberately coarse -- the
+bounding-box diagonal over twenty-five, chosen by `cad_convert.render_tessellation` with no
+reference to any mesh. A render tessellation is not a geometry decision: nothing
+downstream consumes it, it never reaches snappyHexMesh and never reaches a solver, so
+it can be as coarse as looks right.
+
+The tessellation that *does* feed a solver is `cad_convert.py --clmax`, chosen against
+the finest surface cell size at the wall, refusing to run until somebody has chosen it.
+Unifying the two so there is "one tessellation" would reintroduce exactly the accident
+that separation exists to prevent. The counts, areas and face sizes printed for a CAD
+file below are therefore properties of *this picture*, not of the part; the bounding
+box is within a coarse chord of the part's.\
+"""
+
+_RENDER_DIR: Path | None = None
+
+
+def _render_scratch() -> Path:
+    """A process-lifetime temporary directory for render tessellations.
+
+    Deliberately not next to the CAD file: an STL sitting in `constant/triSurface`
+    is an STL a case will mesh, and this one must never be meshed by anything.
+    """
+    global _RENDER_DIR
+    if _RENDER_DIR is None:
+        _RENDER_DIR = Path(tempfile.mkdtemp(prefix="geometry_view_render_"))
+        atexit.register(shutil.rmtree, _RENDER_DIR, True)
+    return _RENDER_DIR
 
 VIEWS = (("iso", "isometric"), ("xy", "+z looking down"), ("xz", "+y"), ("yz", "+x"))
 
@@ -44,13 +90,24 @@ def gather(paths: list[Path]) -> list[Path]:
     found: list[Path] = []
     for path in paths:
         if path.is_dir():
-            found.extend(sorted(p for p in path.iterdir() if p.suffix.lower() in SUFFIXES))
+            found.extend(sorted(
+                p for p in path.iterdir()
+                if p.suffix.lower() in SUFFIXES or p.suffix.lower() in CAD_SUFFIXES
+            ))
         else:
             found.append(path)
     return found
 
 
 def load(path: Path) -> pv.PolyData:
+    """The surface, as triangles VTK can draw.
+
+    A tessellated file is read as it stands. A STEP or IGES file has no triangles in
+    it at all, so one is made -- coarsely, temporarily, and for the picture only.
+    `RENDER_ONLY` says why that is a different thing from converting the part.
+    """
+    if path.suffix.lower() in CAD_SUFFIXES:
+        path = cad_convert.render_tessellation(path, _render_scratch())
     mesh = pv.read(str(path))
     if not isinstance(mesh, pv.PolyData):
         mesh = mesh.extract_surface()
@@ -121,7 +178,7 @@ def measure(mesh: pv.PolyData) -> dict:
     return facts
 
 
-def report(name: str, facts: dict) -> list[str]:
+def report(name: str, facts: dict, cad: bool = False) -> list[str]:
     bounds, extent = facts["bounds"], facts["extent"]
     lines = [
         f"{name}",
@@ -144,6 +201,15 @@ def report(name: str, facts: dict) -> list[str]:
             f"  face area {facts['face_area_min']:.3g} .. {facts['face_area_max']:.3g}   "
             f"typical edge {facts['edge_typical']:.3g}   "
             f"zero-area faces {facts['degenerate_faces']}"
+        )
+    if cad:
+        lines.append(
+            "  CAD: every count, area and face size above belongs to a render "
+            "tessellation, and the bounding box to within its sagitta"
+        )
+        lines.append(
+            "  (diagonal/25, thrown away with the process -- cad_convert.py --clmax "
+            "makes the one a mesh reads)"
         )
     return lines
 
@@ -279,7 +345,7 @@ def main() -> None:
             print(f"{path}: could not be read ({exc})")
             continue
         parts.append((path.name, mesh))
-        print("\n".join(report(str(path), measure(mesh))))
+        print("\n".join(report(str(path), measure(mesh), cad=path.suffix.lower() in CAD_SUFFIXES)))
 
     if not parts:
         raise SystemExit("nothing could be read")

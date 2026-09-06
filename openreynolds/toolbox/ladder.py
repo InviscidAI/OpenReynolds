@@ -190,6 +190,16 @@ OUTLET_NAMES = re.compile(r"outlet|^out$|exhaust|^downstream", re.I)
 
 SURFACE_SUFFIXES = (".stl", ".stlb", ".obj")
 
+CAD_SUFFIXES = preflight.CAD_SUFFIXES
+"""STEP and IGES count here for the same reason an STL does.
+
+`has_body_surface` asks whether something is immersed in the domain rather than
+bounding it -- a question about the study, answered before any of it is meshed. A
+`.step` in `constant/triSurface` answers it exactly as well as a `.stl` does, and
+reading it as "no body" put a ladder for a channel in front of somebody meshing a
+wing. Nothing here reads the file's contents; the question is what is there.
+"""
+
 
 def vector_entry(text: str, key: str) -> tuple[float, float, float] | None:
     """A `key (a b c);` entry, ignoring any `dimensions [...]` beside it."""
@@ -231,7 +241,7 @@ def has_body_surface(case: preflight.Case) -> bool:
         directory = case.path / relative
         if directory.is_dir():
             for entry in directory.iterdir():
-                if entry.is_file() and entry.suffix.lower() in SURFACE_SUFFIXES:
+                if entry.is_file() and entry.suffix.lower() in SURFACE_SUFFIXES + CAD_SUFFIXES:
                     return True
     return bool(case.read("system/snappyHexMeshDict").strip())
 

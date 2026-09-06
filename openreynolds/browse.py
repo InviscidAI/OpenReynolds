@@ -50,6 +50,60 @@ class Entry:
         return f"{'d' if self.is_dir else '-'} {human(self.size):>8}  {self.path}"
 
 
+class Listing(list):
+    """The entries, and whether the walk that produced them was cut short.
+
+    A `list`, so every caller that only wants the entries is unchanged and nothing
+    downstream has to learn a new type. The flag rides along for the callers that
+    *draw* the listing, because a cap nobody is told about is indistinguishable from
+    a workspace that ends there -- which is the most convincing wrong answer a file
+    browser can give.
+
+    Not a filter. When the walk is capped the answer is to say so and let the person
+    narrow `path` or `depth`; a browser that quietly omits a directory that exists on
+    the filesystem is worse than one that admits it ran out of room, and the person
+    most likely to be looking at the dotted bookkeeping directory is somebody
+    debugging the thing that fills it.
+    """
+
+    def __init__(
+        self,
+        entries=(),
+        *,
+        truncated: bool = False,
+        limit: int = MAX_ENTRIES,
+        root: str = "",
+        depth: int = DEFAULT_DEPTH,
+    ):
+        super().__init__(entries)
+        self.truncated = truncated
+        self.limit = limit
+        self.root = root
+        self.depth = depth
+
+    @property
+    def notice(self) -> str:
+        """One line saying the listing was cut short, or "" when it was not.
+
+        Empty when nothing was cut, so a caller can print it unconditionally.
+        """
+        if not self.truncated:
+            return ""
+        where = self.root or "this path"
+        return (
+            f"listing capped at {self.limit:,} entries: {where} holds more than that "
+            f"within depth {self.depth}, and the rest was not looked at. Nothing is "
+            f"hidden -- narrow the path, or lower the depth, to see it."
+        )
+
+    def lines(self) -> list[str]:
+        """What to print: every entry, and the cap notice when there was one."""
+        drawn = [entry.line() for entry in self]
+        if self.truncated:
+            drawn.append(self.notice)
+        return drawn
+
+
 def human(size: int) -> str:
     """Bytes at a glance."""
     step = float(size)
@@ -71,14 +125,23 @@ class Browser:
         self._cached_entries: list[Entry] | None = None
         self._cached_root: str = ""
         self._cached_at: float = 0.0
+        self._cached_truncated: bool = False
+        self._cached_depth: int = DEFAULT_DEPTH
 
     # -- listing ---------------------------------------------------------------
 
-    def tree(self, path: str = "", depth: int = DEFAULT_DEPTH) -> list[Entry]:
+    def tree(self, path: str = "", depth: int = DEFAULT_DEPTH) -> Listing:
         """Everything under `path`, to a depth, in one round trip.
 
         One command beats one call per directory: a workspace has hundreds of
         directories, and a listing that takes a minute to draw is not a listing.
+
+        Capped at `MAX_ENTRIES`, and the result says when the cap was reached. It
+        used to say nothing: 2,993 command logs under one dotted directory took
+        three quarters of the budget and the study tree was cut off behind them,
+        with a listing that looked complete. `head` is asked for one line more than
+        the cap so "there was more" is measured rather than inferred from a listing
+        that happens to be exactly `MAX_ENTRIES` long.
         """
         path = path or self.home
         # `-H` follows a symlink named on the command line, and only that one. The
@@ -88,13 +151,21 @@ class Browser:
         # alone, so no loop can be walked into.
         cmd = (
             f"find -H {shlex.quote(path)} -maxdepth {int(depth)} -mindepth 1 "
-            f"-printf '{FIND_FORMAT}' 2>/dev/null | head -n {MAX_ENTRIES}"
+            f"-printf '{FIND_FORMAT}' 2>/dev/null | head -n {MAX_ENTRIES + 1}"
         )
         result = self.backend.exec(cmd, timeout_s=60)
         entries = [entry for line in result.output.splitlines() if (entry := _parse(line))]
+        truncated = len(entries) > MAX_ENTRIES
+        del entries[MAX_ENTRIES:]
         if entries or result.exit_code == 0:
-            return sorted(entries, key=_order)
-        return sorted(self.list_dir(path), key=_order)
+            return Listing(
+                sorted(entries, key=_order),
+                truncated=truncated,
+                limit=MAX_ENTRIES,
+                root=path,
+                depth=int(depth),
+            )
+        return Listing(sorted(self.list_dir(path), key=_order), root=path, depth=int(depth))
 
     def remember(self, root: str, entries: list[Entry]) -> None:
         """Keep the last full listing, and when it was taken.
@@ -104,9 +175,14 @@ class Browser:
         paying a network round trip for a listing somebody just took."""
         self._cached_root = root.rstrip("/") or WORKSPACE_ROOT
         self._cached_entries = list(entries)
+        # Whether the listing was cut short is part of the listing. A pane drawn from
+        # the remembered copy must not look more complete than the one drawn from the
+        # call that took it.
+        self._cached_truncated = bool(getattr(entries, "truncated", False))
+        self._cached_depth = int(getattr(entries, "depth", DEFAULT_DEPTH))
         self._cached_at = time.time()
 
-    def cached(self, path: str = "") -> list[Entry] | None:
+    def cached(self, path: str = "") -> Listing | None:
         """The remembered listing under `path`, or None when it does not cover it.
 
         None means "go and look", never "there is nothing there" -- a cache miss and
@@ -116,15 +192,31 @@ class Browser:
             return None
         target = (path or self.home).rstrip("/") or WORKSPACE_ROOT
         if target == self._cached_root:
-            return list(self._cached_entries)
+            return self._remembered(self._cached_entries, self._cached_root)
         if not target.startswith(self._cached_root + "/"):
             return None
         prefix = target + "/"
-        return [
-            entry
-            for entry in self._cached_entries
-            if entry.path == target or entry.path.startswith(prefix)
-        ]
+        return self._remembered(
+            [
+                entry
+                for entry in self._cached_entries
+                if entry.path == target or entry.path.startswith(prefix)
+            ],
+            target,
+        )
+
+    def _remembered(self, entries: list[Entry], root: str) -> Listing:
+        """A slice of the remembered listing, still carrying whether it was capped.
+
+        A subtree of a capped walk is capped too: `find` stopped part-way through the
+        whole listing, so what is missing could be anywhere under it."""
+        return Listing(
+            entries,
+            truncated=self._cached_truncated,
+            limit=MAX_ENTRIES,
+            root=root,
+            depth=self._cached_depth,
+        )
 
     def cache_age(self) -> float | None:
         """Seconds since the remembered listing was taken, or None if there is none."""

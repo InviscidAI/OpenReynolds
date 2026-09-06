@@ -219,6 +219,14 @@ class ConsoleView(View):
             self.console.print(f"[{style}]{entry.line()}[/]" if style else entry.line())
         if len(entries) > MAX_LISTED:
             self.console.print(f"[dim]... {len(entries) - MAX_LISTED} more[/]")
+        # Read off `entries`, not the slice above: `Listing` is a list subclass and
+        # slicing it returns a plain list, which carries no notice. Two different
+        # truncations are in play -- this pane showing MAX_LISTED of what it was given,
+        # and `find` having stopped before it saw everything. The second one is the
+        # one nobody could see.
+        notice = getattr(entries, "notice", "")
+        if notice:
+            self.console.print(f"[yellow]{notice}[/]")
 
     def show_renders(self, renders_dir: Any) -> None:
         renders_dir = Path(renders_dir)

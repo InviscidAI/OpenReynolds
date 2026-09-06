@@ -73,6 +73,7 @@ from typing import Any, Callable, NamedTuple
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cad_convert  # noqa: E402  (sibling script, not a package)
 import cells_estimate  # noqa: E402  (sibling script, not a package)
 import log_digest  # noqa: E402
 import mesh_digest  # noqa: E402
@@ -484,6 +485,17 @@ SURFACE_DIRS = ("constant/triSurface", "constant/geometry", "constant/trisurface
 
 SURFACE_SUFFIXES = (".stl", ".stlb")
 
+CAD_SUFFIXES = cad_convert.CAD_SUFFIXES
+"""STEP and IGES: read by `Case.cad`, never by `Case.surfaces`.
+
+The separation is the point. Everything downstream of `Case.surfaces` -- the scale
+diagnosis, `cells_estimate`, the predicted cell count -- reads triangles and feeds a
+mesh, and a B-rep has no triangles to give it. What changes here is only that a case
+holding a `.step` and no `.stl` stops being reported as a case with no geometry: it
+has geometry, and it has not been tessellated. That is a different finding with a
+different repair.
+"""
+
 
 class Case:
     """A case directory, read once and remembered.
@@ -595,6 +607,28 @@ class Case:
             return found
 
         return self._memo("surfaces", find)
+
+    @property
+    def cad(self) -> list[Path]:
+        """CAD files in the surface directories, which snappyHexMesh cannot read."""
+
+        def find() -> list[Path]:
+            found: list[Path] = []
+            seen: set[str] = set()
+            for relative in SURFACE_DIRS:
+                directory = self.path / relative
+                if not directory.is_dir():
+                    continue
+                for entry in sorted(directory.iterdir()):
+                    if not entry.is_file() or entry.suffix.lower() not in CAD_SUFFIXES:
+                        continue
+                    key = str(entry.resolve()).lower()
+                    if key not in seen:
+                        seen.add(key)
+                        found.append(entry)
+            return found
+
+        return self._memo("cad", find)
 
     @property
     def cell_count(self) -> int | None:
@@ -832,6 +866,24 @@ def scale_diagnosis(
 def check_geometry(case: Case, intent: Intent) -> list[Finding]:
     surfaces = case.surfaces
     if not surfaces:
+        cad = case.cad
+        if cad:
+            # Not "no geometry". The geometry is here and is in a format the mesher
+            # does not read, which is a fact with a repair rather than a blank.
+            declared = []
+            for path in cad:
+                unit = cad_convert.declared_unit(path)
+                declared.append(f"{path.name} ({unit['unit'] or 'no unit declared'})")
+            return [Finding(
+                "geometry", "fail",
+                f"{', '.join(declared)} under {', '.join(SURFACE_DIRS)}, and no .stl",
+                "snappyHexMesh reads triangles; gmsh on this image reads these as B-rep "
+                "but nothing has tessellated them yet, so there is no surface to mesh "
+                "and nothing here to measure a scale or a cell count against",
+                "tessellate at a size you have chosen -- python3 cad_convert.py "
+                "<file> --clmax <metres> --out constant/triSurface/<name>.stl; clmax "
+                "follows the finest surface cell size, roughly 0.5 * dx_surface",
+            )]
         return [Finding(
             "geometry", "skipped",
             f"no .stl under {', '.join(SURFACE_DIRS)}",

@@ -240,6 +240,12 @@ class FilesTree(Tree):
         self.root.expand()
         if not entries:
             self.root.add_leaf(Text("(nothing here yet)", style="dim"))
+        # A capped walk says so here too. Without it the tree looks complete, which is
+        # the failure this notice exists for -- a listing that stopped early and a
+        # workspace that really ends there draw identically.
+        notice = getattr(entries, "notice", "")
+        if notice:
+            self.root.add_leaf(Text(notice, style="yellow"))
 
 
 class FileScreen(ModalScreen):

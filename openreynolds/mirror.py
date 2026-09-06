@@ -374,12 +374,16 @@ def sync(
     # files pane wants to draw. Remember it so showing the workspace is free.
     browser.remember(root, entries)
 
-    if len(entries) >= MAX_ENTRIES:
-        # `find` output is capped, so the tail of a very large workspace was never
-        # examined at all. That is a different thing from there being nothing there.
-        report.warnings.append(
-            f"the listing stopped at {MAX_ENTRIES} entries; part of {root} was not looked at"
-        )
+    # `find` output is capped, so the tail of a very large workspace was never examined
+    # at all. That is a different thing from there being nothing there.
+    #
+    # Asked of the listing rather than counted here. `len(entries) >= MAX_ENTRIES` was a
+    # guess from the outside and it was wrong at the boundary: a workspace holding
+    # exactly MAX_ENTRIES entries is complete, and this called it truncated. `browse`
+    # now asks `find` for one more line than it will keep, so the flag is measured. The
+    # wording lives there too -- one sentence, in one place, rather than two that drift.
+    if getattr(entries, "truncated", False):
+        report.warnings.append(entries.notice)
 
     candidates = _wanted(entries, root, report, everything, max_file_bytes, live=live)
     _pull(browser, _within_budget(candidates, report, max_total_bytes), report)

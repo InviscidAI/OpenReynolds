@@ -544,3 +544,37 @@ migration by hand.
 No data was harmed and the outcome was wanted a few minutes later, but there is currently
 no way to query through this tool without migrating. A `--no-apply` flag, or refusing
 `--sql` while anything is pending, would fix it.
+
+---
+
+## 21. Sign-in cannot be throttled by anything in this project
+
+Found while scoping `ui`'s missing rate limiting, 2026-09-06. Filed here rather than on
+GitHub because the fix is a setting in somebody's console, not a change to any repo.
+
+`OpenFoam_Instance#5` lists, among the `ui` items, "no rate limiting in the app at all,
+and Turnstile is off by default and never verified server-side". The second half implies
+the app could verify it. **It cannot.** There is no sign-in route in `ui`: the browser
+talks to Supabase directly, and `web/src/turnstile.ts` holds a *site* key only. Sign-in,
+sign-up and password reset never reach this server, so nothing in `ui` — and nothing in
+foamd — sees them.
+
+Throttling them, and checking the Turnstile token, are settings on the Supabase project
+(Authentication -> Attack Protection), where the matching secret also lives.
+
+**Why it matters.** Rate limiting in `ui` protects spend and guessable codes: session
+starts, redemption codes, CLI approvals, checkout. It does not protect the front door.
+Anything that reads "the app is rate limited now" as covering sign-in abuse is wrong, and
+the deployment story does not say so anywhere.
+
+**What to do.** Two things, neither of them code:
+
+- Set the Turnstile secret and enable Attack Protection on the Supabase project, so the
+  token the sign-in card already sends is actually checked. The widget renders and the
+  token travels today; nothing verifies it.
+- Say so where a deployer will see it. `ui/README.md` is the place, and it is already
+  being edited for issue 15.
+
+**Evidence.** `reynolds_app/app.py` route list (no auth route among them);
+`reynolds_app/settings.py:55` (`turnstile_site_key`, public, "never this server");
+`web/src/turnstile.ts`.

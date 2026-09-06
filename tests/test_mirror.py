@@ -222,12 +222,26 @@ def test_a_full_report_names_the_files_it_left(backend, store):
 
 def test_a_truncated_listing_says_so_rather_than_looking_empty(backend, store):
     """`find` output is capped. A workspace too big to list is not an empty one."""
-    rows = tuple((f"{HOME}/case/f{n}.bin", 10) for n in range(MAX_ENTRIES))
+    rows = tuple((f"{HOME}/case/f{n}.bin", 10) for n in range(MAX_ENTRIES + 5))
     workspace(backend, *rows)
 
     report = mirror.sync(browser_for(backend, store))
 
     assert any("was not looked at" in warning for warning in report.warnings)
+
+
+def test_a_workspace_of_exactly_the_cap_is_complete_and_says_nothing(backend, store):
+    """The boundary this used to get wrong. `len(entries) >= MAX_ENTRIES` counted from
+    the outside and called a workspace holding exactly the cap truncated -- it is not,
+    it is a complete listing that happens to be that long. `browse` asks `find` for one
+    line more than it keeps, so "there was more" is measured rather than inferred, and
+    a warning here would be a false alarm about a workspace that is entirely visible."""
+    rows = tuple((f"{HOME}/case/f{n}.bin", 10) for n in range(MAX_ENTRIES))
+    workspace(backend, *rows)
+
+    report = mirror.sync(browser_for(backend, store))
+
+    assert not any("was not looked at" in warning for warning in report.warnings)
 
 
 def test_nothing_at_all_says_nothing_at_all(backend, store):

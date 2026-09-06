@@ -67,11 +67,19 @@ from pathlib import Path
 from typing import Callable, Iterable, NamedTuple, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cad_convert
 import study_state
 
 PYTHON = sys.executable or "python3"
 
 SURFACE_SUFFIXES = (".stl", ".stlb", ".obj", ".ply", ".vtk", ".vtp", ".vtu")
+
+CAD_SUFFIXES = cad_convert.CAD_SUFFIXES
+"""STEP and IGES, kept in their own list rather than folded into the one above.
+
+A `.step` in `constant/triSurface` is geometry -- the study has something to work
+from, and saying "no surfaces" about it is wrong. It is not a surface snappyHexMesh
+can read, so it is not offered as one; `cad_convert.py --clmax` is what makes one."""
 
 TAIL_LINES = 14
 """How much of a failed command's log goes into the phase note. Enough to show a
@@ -89,11 +97,23 @@ memory."""
 
 
 def surfaces(case: Path) -> list[Path]:
-    """Surface files under `constant/triSurface`, the place snappy looks for them."""
+    """Surface files under `constant/triSurface`, the place snappy looks for them.
+
+    Tessellated only. A STEP file sitting beside these is geometry but is not one of
+    these, and `cad_files` is where it is answered for.
+    """
     directory = case / "constant" / "triSurface"
     if not directory.is_dir():
         return []
     return sorted(p for p in directory.iterdir() if p.suffix.lower() in SURFACE_SUFFIXES)
+
+
+def cad_files(case: Path) -> list[Path]:
+    """CAD under `constant/triSurface` that nothing has tessellated yet."""
+    directory = case / "constant" / "triSurface"
+    if not directory.is_dir():
+        return []
+    return sorted(p for p in directory.iterdir() if p.suffix.lower() in CAD_SUFFIXES)
 
 
 def numeric_dirs(directory: Path) -> list[tuple[float, Path]]:
@@ -332,11 +352,18 @@ def geometry_evidence(ctx: Context) -> tuple[bool, str]:
     found = surfaces(ctx.case)
     if found:
         return True, f"{len(found)} surface(s) in constant/triSurface"
+    cad = cad_files(ctx.case)
+    if cad:
+        return True, (
+            f"{len(cad)} CAD file(s) in constant/triSurface ("
+            + ", ".join(p.name for p in cad)
+            + ") -- geometry is here, tessellated it is not"
+        )
     if (ctx.case / "system" / "blockMeshDict").exists():
         return True, "system/blockMeshDict"
     if (ctx.case / "system" / "blockMeshDict.m4").exists():
         return True, "system/blockMeshDict.m4"
-    return False, "no surfaces in constant/triSurface and no blockMeshDict"
+    return False, "no surfaces or CAD in constant/triSurface and no blockMeshDict"
 
 
 def geometry_build(ctx: Context) -> tuple[list[Command], str]:
@@ -368,11 +395,11 @@ def preview_build(ctx: Context) -> tuple[list[Command], str]:
     if owner:
         return [script(ctx, owner, str(ctx.case))], ""
     fallback = find_script(ctx, "geometry_view.py")
-    if fallback and surfaces(ctx.case):
+    if fallback and (surfaces(ctx.case) or cad_files(ctx.case)):
         return [script(ctx, fallback, str(ctx.case / "constant" / "triSurface"),
                        "--out", str(ctx.case / "renders"))], ""
     if fallback:
-        return [], "geometry_view.py is here but there are no surfaces to draw"
+        return [], "geometry_view.py is here but there are no surfaces or CAD to draw"
     return [], "neither first_look.py nor geometry_view.py is in the toolbox"
 
 

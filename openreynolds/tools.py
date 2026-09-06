@@ -81,12 +81,36 @@ class ToolContext:
     must not fail the read -- it is a nudge, and the picture matters more."""
 
 
+FRESH_SHELL = (
+    "Each call runs in a fresh shell: `cwd` carries between calls, nothing else does "
+    "-- variables you export, files you source and shell options are gone by the next "
+    "one. The OpenFOAM environment and the tutorials' `RunFunctions` helpers are "
+    "loaded again for you on every call, `bash` and `job_start` alike."
+)
+"""The shell contract, said once and repeated verbatim in both tools that run one.
+
+A fact about the environment, not an instruction: it says what is so and leaves what
+to do about it entirely alone. It is here because the only other way to learn it is by
+hitting it, and what that produces is `127 command not found` -- a message that reads
+as a broken image and points diagnosis at the wrong layer.
+
+The second half is a claim about the sandbox, and it is only true because the exec
+wrapper and the job wrapper both source the OpenFOAM bashrc and `RunFunctions` before
+anything else. `tests/test_shell_contract.py` checks that against the service rather
+than taking it on trust: a description that promises something the environment does not
+do is the same class of bug as a listing that does not say it was cut short.
+
+Identical in both descriptions on purpose. They are read independently -- a model
+looking at `job_start` alone must get the whole fact -- and one wording repeated is
+cheaper to keep true than two that drift."""
+
+
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "bash",
         "description": (
-            "Run a shell command in the workspace and wait for it. The OpenFOAM "
-            f"environment is sourced. Capped at {EXEC_MAX_TIMEOUT_S} seconds; use "
+            "Run a shell command in the workspace and wait for it. "
+            f"{FRESH_SHELL} Capped at {EXEC_MAX_TIMEOUT_S} seconds; use "
             "job_start for anything longer. Returns the exit code and the output, "
             "with a pointer to the full log on disk if the output was long."
         ),
@@ -173,6 +197,7 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "Start a long command detached and return a job id immediately. The job "
             "keeps running after your turn ends, and after this session closes. "
+            f"{FRESH_SHELL} "
             "A solver started serially holds one core for the whole run, however "
             "many the container has; a case put through `decomposePar` and started "
             "with `mpirun -np N` holds N. What the extra ranks return falls away as "

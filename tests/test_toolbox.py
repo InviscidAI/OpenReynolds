@@ -352,7 +352,11 @@ def test_the_toolbox_sticks_to_what_the_image_provides():
     rather than enumerated, and what is left to police is the third-party set and
     the scripts' own siblings.
     """
-    third_party = {"numpy", "matplotlib", "pandas", "pyvista"}
+    # gmsh joined this set when `pip install gmsh` went into the image: the module,
+    # not only the command, and OCC-enabled, which is what lets `cad_convert.py` read
+    # a STEP file as B-rep. It is imported inside the functions that need it there,
+    # so the refusals stay readable on a machine that has none of this.
+    third_party = {"numpy", "matplotlib", "pandas", "pyvista", "gmsh"}
     siblings = {script.stem for script in TOOLBOX.glob("*.py")}
     allowed = set(sys.stdlib_module_names) | third_party | siblings | {"__future__"}
     for script in sorted(TOOLBOX.glob("*.py")):

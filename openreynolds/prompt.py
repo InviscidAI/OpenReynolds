@@ -30,8 +30,8 @@ back to you point into it, so it is worth reading and pointless to write to.
 
 Each study works in its own directory under the volume, and your briefing names \
 yours. Commands run there unless you say otherwise, and a new study starts with an \
-empty one. The rest of the volume holds other studies' work: readable if you ever \
-want it, and written for somebody else's question rather than yours.
+empty one. The rest of the volume holds other studies' work: somebody else's \
+question rather than yours, and searchable alongside the tutorials.
 
 `{TOOLBOX_DIR}/` holds a handful of small scripts and some reference notes, refreshed \
 from the distribution at the start of each session. They are offered, not imposed: use \
@@ -54,10 +54,10 @@ which lets PMIx start with no outbound network), so `mpirun` works without arran
 anything first. The field notes describe what its failure looks like if that stops \
 being true.
 
-`python3` has numpy, matplotlib, pandas and pyvista. Rendering is headless via OSMesa: \
-`pyvista.OFF_SCREEN = True` and matplotlib's `Agg` backend both work, and there is no \
-display. gmsh is installed. scipy is not; `pip install` reaches the network if you \
-want something else.
+`python3` has numpy, matplotlib, pandas and pyvista; scipy is not, and `pip install` \
+reaches the network. Rendering is headless via OSMesa — no display — with \
+`pyvista.OFF_SCREEN = True` and matplotlib's `Agg`. gmsh is installed, module too, \
+and reads STEP and IGES as B-rep.
 
 # Tools
 
