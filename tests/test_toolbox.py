@@ -355,7 +355,9 @@ def test_the_toolbox_sticks_to_what_the_image_provides():
     # imageio (with the ffmpeg plugin) joined the image when gif/mp4 encoding moved onto
     # the instance; `encode.py` is the script that uses it. It is on the image, so it is
     # allowed here like the other four.
-    third_party = {"numpy", "matplotlib", "pandas", "pyvista", "imageio"}
+    # gmsh's Python module joined the image with cad_gen.py, which drives its
+    # OpenCASCADE kernel; the binary had been there all along, importable by nothing.
+    third_party = {"numpy", "matplotlib", "pandas", "pyvista", "imageio", "gmsh"}
     siblings = {script.stem for script in TOOLBOX.glob("*.py")}
     allowed = set(sys.stdlib_module_names) | third_party | siblings | {"__future__"}
     for script in sorted(TOOLBOX.glob("*.py")):

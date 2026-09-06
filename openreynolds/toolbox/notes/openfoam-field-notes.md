@@ -317,6 +317,17 @@ anything is re-run harder:
   diverging case into a converging one for seconds of extra cost. A steady case from
   `case_gen.py` already carries the `Phi` solver and `potentialFlow` block
   `potentialFoam` needs, so it runs on the generated case without editing fvSolution.
+- **A solid that is really a few primitives.** A tube, a box with a roof, a plate with
+  holes: snappyHexMesh is the general tool for an arbitrary uploaded surface, and on a
+  shape that is two cylinders and a subtraction it spends its time -- octree refinement,
+  snapping to 44,000 triangles, layer iterations -- rediscovering edges the CAD already
+  knew. gmsh's OpenCASCADE kernel meshes the B-rep body-fitted in about a second, and
+  `gmshToFoam` reads the `.msh` (version 2.2 ASCII; physical surface names become
+  patches, every one of type `patch`, so walls are retyped with `foamDictionary` before
+  a wall function reads them; the volume's physical name becomes a cellZone). No prism
+  layers come with it, so the first cell sets y+ and the wall function has to be one
+  that tolerates the buffer layer -- nutUSpalding is. `cad_gen.py` is that chain, from a
+  short JSON of primitives or any STEP file, and keeps the STEP it meshed.
 
 Turbulence quantities (`k`, `omega`, `epsilon`) plateauing one to two orders above
 `U` and `p` is normal near walls and rarely worth chasing on its own.

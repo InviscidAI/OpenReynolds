@@ -24,6 +24,15 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
   turned into a `.gif`/`.mp4`/`.webp` *on this instance*, not only on your machine. `encode.py`
   does exactly that from a `*_frames/` directory, so a finished animation need not be hand-written.
 
+- **gmsh** (the Python module, `import gmsh`) — the OpenCASCADE geometry kernel and the mesher
+  in one: `gmsh.model.occ` builds boxes, cylinders, spheres, cones, booleans, fillets, imports
+  STEP, and meshes the result body-fitted; `gmshToFoam` turns the `.msh` into a polyMesh.
+  `cad_gen.py` drives exactly this chain from a JSON spec or a STEP file.
+- **build123d** — parametric CAD in readable Python on the same OpenCASCADE kernel (via OCP):
+  `Cylinder(5, 40) - Cylinder(4, 40)` is a penne, `export_step(part, "body.step")` writes the
+  B-rep that `cad_gen.py --step` meshes. This is the editable layer: a solid as a short script,
+  and STEP as the file any CAD program opens.
+
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
 
 ## Binaries on PATH
