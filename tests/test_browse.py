@@ -123,7 +123,7 @@ class _FakeExec:
     workspace_root = "/work"
     exec_result = ExecResult(0, LISTING, False, None)
 
-    def exec(self, cmd, cwd=None, timeout_s=120):
+    def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
         self.last_exec = (cmd, cwd, timeout_s)
         return self.exec_result
 

@@ -161,7 +161,7 @@ def test_no_note_means_no_mention_of_one(backend, store):
 def volume_with(backend, *paths):
     """`find` answers for whichever path it is asked about."""
 
-    def looking(cmd, cwd=None, timeout_s=120):
+    def looking(cmd, cwd=None, timeout_s=120, *, background=False):
         target = next(
             word.strip("'\"") for word in cmd.split()[1:] if not word.startswith("-")
         )

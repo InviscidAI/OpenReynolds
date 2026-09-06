@@ -426,16 +426,28 @@ class HostedBackend(Backend):
 
     # -- commands --------------------------------------------------------------
 
-    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120) -> ExecResult:
+    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120,
+             *, background: bool = False) -> ExecResult:
         timeout_s = max(1, min(int(timeout_s), EXEC_MAX_TIMEOUT_S))
         payload: dict[str, Any] = {"cmd": cmd, "timeout_s": timeout_s}
         if cwd:
             payload["cwd"] = cwd
+        if background:
+            # Only when true, so an older service -- which would ignore the field
+            # anyway -- sees exactly the request it saw before.
+            payload["background"] = True
         body = _json(
             self._client.request(
                 "POST", self._instance_path("/exec"), json=payload, timeout=timeout_s + 60.0
             )
         )
+        if body.get("idle"):
+            # The service had no Sandbox up and, this being a poll, did not build one.
+            # Nothing ran. Deliberately NOT exit_code 0 with empty output: that reads
+            # as "the workspace is empty", which is the one wrong answer a file mirror
+            # acts on rather than ignores.
+            return ExecResult(exit_code=-1, output="", truncated=False, log_path=None,
+                              stderr="", idle=True)
         if body.get("promoted") and body.get("job_id"):
             # The command outran the synchronous window and the service moved it to a
             # detached job rather than hold a fragile long exec connection (which used to

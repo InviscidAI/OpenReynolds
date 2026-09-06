@@ -41,6 +41,13 @@ class ExecResult:
     """Set when a synchronous command outran the exec window and the backend moved it to
     a detached job: this is that job's id. The command did not fail and must not be
     re-run -- it is running now, to be followed with job_check."""
+    idle: bool = False
+    """A `background` command found no workspace running, so nothing was run.
+
+    Not a failure and not an empty workspace -- the difference matters, because an
+    empty listing is the most convincing wrong answer a file mirror can be given.
+    `output` is empty and `exit_code` says nothing; the only correct reading is
+    "ask again later"."""
 
 
 @dataclass(frozen=True)
@@ -114,7 +121,17 @@ class Backend(Protocol):
     workspace_root: str
     """Absolute path of the persistent directory, e.g. "/work"."""
 
-    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120) -> ExecResult: ...
+    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120,
+             *, background: bool = False) -> ExecResult:
+        """Run one command and wait for it.
+
+        `background=True` says this command is a poll rather than work: run it only on
+        a workspace that is already up, and do not let it keep that workspace alive. A
+        hosted backend bills by the second for as long as something claims to be using
+        it, so a listing taken on a timer must not be that claim. Backends with no
+        lifecycle to protect may ignore it. When nothing is running, the result comes
+        back with `idle` set and no output."""
+        ...
 
     def put_file(self, path: str, data: bytes) -> None: ...
 
