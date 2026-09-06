@@ -132,6 +132,30 @@ def test_allmesh_retypes_every_wall_after_gmshToFoam_and_checks_the_mesh(cad_gen
     assert text.index("-set wall") < text.index("checkMesh")
 
 
+def test_a_dry_run_measures_surfaces_shells_and_voids_before_any_mesh(cad_gen, tmp_path, capsys):
+    """The 3D half of write-and-verify: the facts a picture cannot state, printed
+    before a mesh exists. A box is six surfaces in one shell; a hollow ball is two
+    surfaces in two shells with one enclosed void -- a cavity no flow reaches."""
+    pytest.importorskip("gmsh")
+    import json
+    box = tmp_path / "box.json"
+    box.write_text(json.dumps([{"op": "box", "name": "body", "origin": [0, 0, 0], "size": [1, 1, 1]}]),
+                   encoding="utf-8")
+    assert cad_gen.main(["--spec", str(box), "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "6 surfaces in 1 shell, wetted area 6 m2" in out
+    assert "void" not in out
+
+    hollow = tmp_path / "hollow.json"
+    hollow.write_text(json.dumps([
+        {"op": "sphere", "name": "outer", "center": [0, 0, 0], "radius": 1.0},
+        {"op": "sphere", "name": "inner", "center": [0, 0, 0], "radius": 0.5},
+        {"op": "cut", "name": "body", "from": "outer", "take": ["inner"]}]), encoding="utf-8")
+    assert cad_gen.main(["--spec", str(hollow), "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "2 surfaces in 2 shells, 1 enclosed void" in out
+
+
 def test_allrun_is_empty_for_a_mesh_only_case(cad_gen):
     assert "mpirun" not in cad_gen.allrun("", 4)
     assert "mpirun -np 8 simpleFoam -parallel" in cad_gen.allrun("simpleFoam", 8)

@@ -180,13 +180,23 @@ def body_name(ops: list[dict]) -> str:
 # -- building it -------------------------------------------------------------------
 
 class Built:
-    """What the kernel handed back: the body's dimTags, its bounds, its volume."""
+    """What the kernel handed back: the body's dimTags, its bounds, its volume -- and
+    the measured facts a picture cannot state: how many surfaces, how they close into
+    shells (a second shell is a cavity no flow reaches), the wetted area off the B-rep,
+    and any sliver surface that will make poor cells. Printed before a mesh exists, so
+    the shape can be checked against what was meant where checking is cheap."""
 
-    def __init__(self, tags, bounds, volume: float, extent):
+    def __init__(self, tags, bounds, volume: float, extent, surfaces: int = 0, shells: int = 0,
+                 voids: int = 0, wetted: float = 0.0, slivers=()):
         self.tags = list(tags)
         self.bounds = tuple(bounds)          # x0, y0, z0, x1, y1, z1
         self.volume = float(volume)
         self.extent = tuple(extent)          # dx, dy, dz
+        self.surfaces = int(surfaces)
+        self.shells = int(shells)
+        self.voids = int(voids)
+        self.wetted = float(wetted)
+        self.slivers = list(slivers)         # (surface tag, area) below 1e-6 of the wetted area
 
     @property
     def centre(self) -> tuple[float, float, float]:
@@ -276,7 +286,32 @@ def measure(gmsh, tags) -> Built:
     x0 = min(b[0] for b in boxes); y0 = min(b[1] for b in boxes); z0 = min(b[2] for b in boxes)
     x1 = max(b[3] for b in boxes); y1 = max(b[4] for b in boxes); z1 = max(b[5] for b in boxes)
     volume = sum(occ.getMass(d, t) for d, t in tags)
-    return Built(tags, (x0, y0, z0, x1, y1, z1), volume, (x1 - x0, y1 - y0, z1 - z0))
+    # Surfaces, grouped into shells by the curves they share: one shell is a plain
+    # solid, a second shell inside it is a cavity. Union-find over shared curves.
+    surfaces = sorted({abs(s) for d, s in gmsh.model.getBoundary(list(tags), combined=True, oriented=False)})
+    areas = {s: occ.getMass(2, s) for s in surfaces}
+    parent = {s: s for s in surfaces}
+
+    def find(s):
+        while parent[s] != s:
+            parent[s] = parent[parent[s]]
+            s = parent[s]
+        return s
+
+    owner: dict[int, int] = {}
+    for s in surfaces:
+        for d, c in gmsh.model.getBoundary([(2, s)], combined=False, oriented=False):
+            c = abs(c)
+            if c in owner:
+                parent[find(owner[c])] = find(s)
+            else:
+                owner[c] = s
+    shells = len({find(s) for s in surfaces})
+    wetted = sum(areas.values())
+    slivers = [(s, a) for s, a in areas.items() if a < 1e-6 * wetted]
+    return Built(tags, (x0, y0, z0, x1, y1, z1), volume, (x1 - x0, y1 - y0, z1 - z0),
+                 surfaces=len(surfaces), shells=shells, voids=max(shells - len(tags), 0),
+                 wetted=wetted, slivers=slivers)
 
 
 # -- symmetry ----------------------------------------------------------------------
@@ -896,6 +931,18 @@ def summary(built: Built, mesh: MeshResult | None, flow, opts, model: str, why: 
     dx, dy, dz = built.extent
     lines = [f"geometry   {source}",
              f"           extent {dx:.4g} x {dy:.4g} x {dz:.4g} m, volume {built.volume:.4g} m3"]
+    if built.surfaces:
+        plural = "s" if built.shells != 1 else ""
+        line = f"           {built.surfaces} surfaces in {built.shells} shell{plural}"
+        if built.voids:
+            line += f", {built.voids} enclosed void{'s' if built.voids != 1 else ''} (a cavity no flow reaches)"
+        lines.append(line + f", wetted area {built.wetted:.4g} m2 (off the B-rep, before any mesh)")
+    if len(built.tags) > 1:
+        lines.append(f"!! the body is {len(built.tags)} separate solids; only a fuse of parts that "
+                     "overlap is one body")
+    for tag, area in built.slivers:
+        lines.append(f"!! a {area:.3g} m2 surface (tag {tag}), a sliver; cells there will be poor "
+                     "-- usually two parts meeting at a tangent")
     if opts.get("internal"):
         along = "xyz"[longest_axis(built.extent)]
         lines.append(f"domain     the body's own volume (internal flow), running along {along}: "

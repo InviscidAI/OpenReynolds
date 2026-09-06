@@ -27,6 +27,11 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 - **gmsh** (the Python module, `import gmsh`) — the OpenCASCADE geometry kernel and the mesher
   in one: `gmsh.model.occ` builds boxes, cylinders, spheres, cones, booleans, fillets, imports
   STEP, and meshes the result body-fitted; `gmshToFoam` turns the `.msh` into a polyMesh.
+  The same kernel builds a *planar* face from 2D primitives (rectangles, disks, arc-bands,
+  polygons, a constant-width `channel` along a centreline, booleans), meshes it in quads and
+  extrudes it one cell thick into hexahedra with `frontAndBack` typed `empty`: `mesh2d.py`
+  is that route from a JSON spec or an x,y outline, and its `--preview` draws and measures
+  the shape (extent, area, islands, edges per patch) before anything is meshed.
   `cad_gen.py` drives exactly this chain from a JSON spec or a STEP file.
 - **build123d** — parametric CAD in readable Python on the same OpenCASCADE kernel (via OCP):
   `Cylinder(5, 40) - Cylinder(4, 40)` is a penne, `export_step(part, "body.step")` writes the

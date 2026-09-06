@@ -752,6 +752,23 @@ every field, so the disagreement has no way to arise; `preflight.py`'s `empty` c
 the mesh -- or the `blockMeshDict`, when the mesh has not been built -- against every
 field in `0/` and says which file disagrees with which.
 
+For an outline that is neither a template nor a star-shaped body, gmsh makes the same
+kind of mesh in one pass, and the recipe is short: a plane face from the outline, meshed
+in quads (`Mesh.Algorithm 8`, Blossom full-quad recombination, `setRecombine` on the
+face), extruded one cell with `extrude(..., numElements=[1], recombine=True)` so every
+quad becomes one hexahedron, a physical group per edge patch on the lateral surfaces and
+one for the two z faces, written as msh 2.2 ASCII for `gmshToFoam`, which types every
+patch `patch` -- so the walls are retyped `wall` and the z faces `empty` with
+`foamDictionary` before anything reads them. `mesh2d.py` is that pass in one call, from
+a JSON of 2D primitives (a constant-width `channel` along a centreline is how a bypass, a
+serpentine or a manifold branch is written) or an x,y outline file, and it draws the face
+with its patches coloured and prints extent, area, the number of islands and each patch's
+edge count and length before a mesh exists -- the check that the shape is the one that
+was meant, made where it is cheap. `checkMesh`'s `hexahedra:` equal to its `cells:` is
+the all-hex confirmation. A geometry is authored whole and looked at, which is a
+different kind of task from the ladder above: its rungs are physics that a reduced case
+can answer one at a time, while a shape is right or wrong as a picture and a few numbers.
+
 ## Files the person sends up, and PDFs in particular
 
 A hosted session's uploads land in the study's own `uploads/` directory, and the
