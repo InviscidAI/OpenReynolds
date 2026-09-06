@@ -563,3 +563,26 @@ def test_a_channel_from_a_wall_starts_flush_with_it(mesh2d, tmp_path, capsys):
                    if mesh2d.curve_bounds(gmsh, c)[3] > 1.5 + 1e-6)
     finally:
         gmsh.finalize()
+
+
+def test_near_names_a_closed_curve_and_its_extruded_surface(mesh2d, tmp_path, capsys):
+    """A cylinder in a channel named `near` its centre: the curve is a full circle,
+    whose gmsh bounding box is a little off centre, so a tolerance match between the
+    curve and the extruded surface failed and the cylinder came out as `walls` in the
+    OpenFOAM mesh (study 20260907-011928-d6c4). Nearest is nearest, in both passes."""
+    pytest.importorskip("gmsh")
+    spec = tmp_path / "cyl.json"
+    spec.write_text(json.dumps({"scale": 0.001, "ops": [
+        {"op": "rect", "name": "box", "origin": [0, 0], "size": [300, 60]},
+        {"op": "disk", "name": "cyl", "center": [100, 30], "radius": 5},
+        {"op": "cut", "name": "body", "from": "box", "take": ["cyl"]}],
+        "patches": [{"name": "inlet", "at": "x:min"}, {"name": "outlet", "at": "x:max"},
+                    {"name": "walls", "at": "y:min"}, {"name": "walls", "at": "y:max"},
+                    {"name": "cylinder", "at": "near:100,30"}]}), encoding="utf-8")
+    case = tmp_path / "cyl"
+    assert mesh2d.main([str(case), "--spec", str(spec), "--scale", "0.001", "--cell", "0.003"]) == 0
+    out = capsys.readouterr().out
+    assert "cylinder (1 edge, 0.03142 m)" in out
+    assert re.search(r"patches\s+inlet \(1\), outlet \(1\), cylinder \(1\), walls \(2\), frontAndBack \(2\)", out), out
+    assert re.search(r"entry0/cylinder/type\s+-set wall", (case / "Allmesh").read_text(encoding="utf-8"))
+    assert re.search(r"cylinder\s*\{\s*type\s+noSlip", (case / "0" / "U").read_text(encoding="utf-8"))

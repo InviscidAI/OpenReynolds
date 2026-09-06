@@ -427,25 +427,28 @@ def classify_external(bounds, box, tol: float) -> str:
     return "body"
 
 
-def resolve_near(gmsh, built: "Built2D", rules: list[dict]) -> None:
-    """A `near` rule names one edge: the boundary curve whose middle is nearest the
-    point. Its middle becomes the rule's target, which the lateral surfaces of the
-    extruded mesh (same middle in x, y) match too."""
+def near_targets(rules: list[dict], centres: dict[int, tuple[float, float]]) -> dict[int, str]:
+    """entity -> patch name for every `near` rule: the one entity whose centre is
+    nearest the rule's point. Nearest, not within a tolerance: gmsh's bounding box of
+    a circle is a little off its centre (0.09948 for a circle at 0.1), so a target
+    derived from the curve never met the extruded surface within any tolerance, and
+    a cylinder named `near` its centre came out as `walls` (study
+    20260907-011928-d6c4). Called once for the curves and once for the lateral
+    surfaces; each pass picks its own nearest."""
+    out: dict[int, str] = {}
     for rule in rules:
-        if rule["at"] is not None and rule["at"][1] == "near":
+        if rule["at"] is not None and rule["at"][1] == "near" and centres:
             px, py = rule["at"][2]
-            nearest = min(built.curves, key=lambda c: math.hypot(*(a - b for a, b in zip(curve_midpoint(gmsh, c), (px, py)))))
-            rule["_target"] = curve_midpoint(gmsh, nearest)
+            nearest = min(centres, key=lambda tag: math.hypot(centres[tag][0] - px, centres[tag][1] - py))
+            out.setdefault(nearest, rule["name"])
+    return out
 
 
 def edge_rule(bounds, rules: list[dict], domain, tol: float) -> str | None:
-    """The first rule the edge satisfies, by name; None when none does."""
-    mid = ((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2)
+    """The first rule the edge satisfies, by name; None when none does. `near` rules
+    are resolved by `near_targets` before this is asked."""
     for rule in rules:
         if rule["at"] is not None and rule["at"][1] == "near":
-            target = rule.get("_target")
-            if target and math.hypot(mid[0] - target[0], mid[1] - target[1]) < tol:
-                return rule["name"]
             continue
         if rule["at"] is not None:
             axis, where, value = rule["at"]
@@ -1049,8 +1052,9 @@ def curve_bounds(gmsh, curve: int) -> tuple:
 
 def classify_curves(gmsh, built: Built2D, axis: int, rules: list[dict]) -> dict[int, str]:
     tol = max(built.extent) * 1e-4 + 1e-12
-    resolve_near(gmsh, built, rules)
-    return {c: patch_for_edge(curve_bounds(gmsh, c), built.domain, axis, tol, rules, built.external)
+    named = near_targets(rules, {c: curve_midpoint(gmsh, c) for c in built.curves})
+    return {c: named.get(c) or patch_for_edge(curve_bounds(gmsh, c), built.domain, axis, tol, rules,
+                                              built.external)
             for c in built.curves}
 
 
@@ -1176,13 +1180,17 @@ def generate(gmsh, built: Built2D, axis: int, rules: list[dict], curve_patch: di
     occ.synchronize()
     volume = [t for d, t in out if d == 3][0]
     tol = max(built.extent) * 1e-4 + 1e-12
+    boxes = {s: gmsh.model.getBoundingBox(2, s)
+             for d, s in gmsh.model.getBoundary([(3, volume)], combined=True, oriented=False)}
+    lateral = {s: ((b[0] + b[3]) / 2, (b[1] + b[4]) / 2) for s, b in boxes.items() if abs(b[5] - b[2]) >= tol}
+    named = near_targets(rules, lateral)
     patches: dict[str, list[int]] = {}
-    for d, s in gmsh.model.getBoundary([(3, volume)], combined=True, oriented=False):
-        x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(2, s)
+    for s, (x0, y0, z0, x1, y1, z1) in boxes.items():
         if abs(z1 - z0) < tol:
             name = EMPTY
         else:
-            name = patch_for_edge((x0, y0, x1, y1), built.domain, axis, tol, rules, built.external)
+            name = named.get(s) or patch_for_edge((x0, y0, x1, y1), built.domain, axis, tol, rules,
+                                                  built.external)
         patches.setdefault(name, []).append(s)
     for name, tags in patches.items():
         g = gmsh.model.addPhysicalGroup(2, tags)
