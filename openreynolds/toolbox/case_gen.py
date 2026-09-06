@@ -2156,6 +2156,20 @@ P_SOLVER = ["solver          GAMG;", "tolerance       1e-07;", "relTol          
             "smoother        GaussSeidel;"]
 SMOOTH_SOLVER = ["solver          smoothSolver;", "smoother        symGaussSeidel;",
                  "tolerance       1e-08;", "relTol          0.1;"]
+PHI_SOLVER = ["solver          GAMG;", "smoother        DIC;", "tolerance       1e-06;",
+              "relTol          0.01;"]
+"""The linear solver `potentialFoam` needs for the velocity-potential Laplace equation.
+
+A steady SIMPLE run started from a uniform field spends its first hundred-odd iterations
+just filling the domain with a flow field before the residuals mean anything, and a
+coarse case can diverge in that startup before it ever converges. `potentialFoam`
+computes a potential-flow field in seconds and writes it back as the initial condition,
+which the field notes record as routinely turning a diverging start into a converging
+one -- but it stops at once with `keyword Phi is undefined` unless fvSolution names a
+solver for `Phi` and a `potentialFlow` block sets its corrector count. The generator
+never wrote either, so an agent reaching for the warm-start it is told to reach for had
+to hand-edit fvSolution first. Both are inert for simpleFoam itself (it reads neither),
+so a steady case now carries the warm-start as a capability rather than a chore."""
 
 
 def solver_entry(name: str, settings: list[str]) -> list[str]:
@@ -2213,12 +2227,18 @@ def fv_solution(study: str, model: str) -> str:
         if study == "transient":
             final = name[:-1] + 'Final"' if name.endswith('"') else name + "Final"
             lines += solver_entry(final, converged(settings))
+    if study != "transient":
+        # Only the steady case carries it: `potentialFoam` is the warm-start for a
+        # segregated steady solve, and a transient solvers block asks every entry for a
+        # matching `Final` -- `Phi` has none, and does not want one.
+        lines += solver_entry("Phi", PHI_SOLVER)
     lines += ["}", ""]
     if study == "transient":
         lines += ["PIMPLE", "{", "    nOuterCorrectors 2;", "    nCorrectors     2;",
                   "    nNonOrthogonalCorrectors 1;", "}"]
     else:
-        lines += ["SIMPLE", "{", "    nNonOrthogonalCorrectors 1;", "    consistent      yes;",
+        lines += ["potentialFlow", "{", "    nNonOrthogonalCorrectors 10;", "}", "",
+                  "SIMPLE", "{", "    nNonOrthogonalCorrectors 1;", "    consistent      yes;",
                   "    residualControl", "    {"]
         lines += [f"        {field:<15} {tol:g};" for field, tol in residual_control(fields)]
         lines += ["    }", "}", "",

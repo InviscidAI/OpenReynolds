@@ -510,6 +510,80 @@ def test_newest_internal_vtk_is_none_when_foamtovtk_wrote_nothing(tmp_path):
     assert render.newest_internal_vtk(tmp_path / "VTK") is None
 
 
+# -- derived fields: vorticity and Q, which the solver never writes ------------
+#
+# `render.py --fields vorticity` used to print "no field named vorticity" because
+# vorticity and the Q-criterion are functions of grad(U), not solver outputs -- 73
+# studies answered it by hand-writing a pyvista script. `add_derived` computes them from
+# U with the one VTK call those scripts made, so the ordinary colour path draws them.
+
+
+class FakeDataset:
+    """A stand-in for a pyvista mesh: point/cell arrays and the one derivative call.
+
+    `compute_derivative` here returns whatever quantity the flag asked for, so the array
+    routing in `add_derived` -- which component it keeps, what it names it -- can be
+    checked without VTK, which lives in the container.
+    """
+
+    def __init__(self, point_data=None, cell_data=None):
+        self.point_data = dict(point_data or {})
+        self.cell_data = dict(cell_data or {})
+
+    def cell_data_to_point_data(self):
+        return FakeDataset(point_data={**self.point_data, **self.cell_data})
+
+    def compute_derivative(self, scalars=None, **flags):
+        out = FakeDataset()
+        if flags.get("vorticity"):
+            # z-component distinct and signed, so keeping the right one is visible
+            out.point_data["vorticity"] = np.array([[0.0, 0.0, 3.0], [0.0, 0.0, -5.0]])
+        if flags.get("qcriterion"):
+            out.point_data["qcriterion"] = np.array([1.0, 2.0])
+        return out
+
+
+def test_canonical_folds_case_and_punctuation():
+    render = load("render")
+    assert render.canonical("Vorticity") == "vorticity"
+    assert render.canonical("Q-criterion") == render.canonical("q_criterion") == "qcriterion"
+
+
+def test_the_derived_registry_maps_the_aliases_to_one_quantity():
+    render = load("render")
+    assert render.DERIVED_FROM_U["vort"] == render.DERIVED_FROM_U["curl"] == "vorticity"
+    assert render.DERIVED_FROM_U["q"] == render.DERIVED_FROM_U["qcrit"] == "qcriterion"
+
+
+def test_add_derived_ignores_a_field_it_cannot_make():
+    render = load("render")
+    mesh = FakeDataset(point_data={"U": np.zeros((2, 3))})
+    assert render.add_derived(mesh, "temperature") is None  # not a derived quantity
+
+
+def test_add_derived_needs_a_velocity_to_take_a_gradient_of():
+    render = load("render")
+    mesh = FakeDataset(point_data={"p": np.zeros(2)})
+    assert render.add_derived(mesh, "vorticity") is None  # no U present
+
+
+def test_add_derived_keeps_the_signed_out_of_plane_vorticity():
+    render = load("render")
+    mesh = FakeDataset(point_data={"U": np.zeros((2, 3))})
+    name = render.add_derived(mesh, "vorticity")
+    assert name == "vorticity_z"
+    assert mesh.point_data["vorticity_z"].tolist() == [3.0, -5.0]
+    assert "vorticity_mag" in mesh.point_data  # magnitude kept for a 3D case
+    assert name in render.SIGNED_FIELDS, "signed vorticity is drawn about zero"
+
+
+def test_add_derived_reads_U_off_cell_data_when_that_is_where_it_is():
+    render = load("render")
+    mesh = FakeDataset(cell_data={"U": np.zeros((2, 3))})
+    assert render.add_derived(mesh, "Q") == "qcriterion"
+    assert mesh.point_data["qcriterion"].tolist() == [1.0, 2.0]
+
+
 # -- the digests report the number that measures the thing ---------------------
 
 

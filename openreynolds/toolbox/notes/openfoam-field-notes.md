@@ -314,7 +314,9 @@ anything is re-run harder:
   hundred iterations rather than plateauing later.
 - **A bad start.** `potentialFoam` before the segregated solver, or a first-order
   run continued (`startFrom latestTime`) on second-order schemes, routinely turns a
-  diverging case into a converging one for seconds of extra cost.
+  diverging case into a converging one for seconds of extra cost. A steady case from
+  `case_gen.py` already carries the `Phi` solver and `potentialFlow` block
+  `potentialFoam` needs, so it runs on the generated case without editing fvSolution.
 
 Turbulence quantities (`k`, `omega`, `epsilon`) plateauing one to two orders above
 `U` and `p` is normal near walls and rarely worth chasing on its own.

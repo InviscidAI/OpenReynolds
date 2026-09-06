@@ -736,6 +736,29 @@ def test_residual_control_names_only_the_fields_the_model_has(case_gen):
     assert "nuTilda" in entries and "omega" not in "".join(entries)
 
 
+def test_a_steady_case_can_be_warm_started_with_potentialFoam(case_gen, tmp_path):
+    """The field notes call potentialFoam before a segregated steady solve a routine
+    way to turn a diverging start into a converging one, but it stops at once with
+    'keyword Phi is undefined' unless fvSolution names a Phi solver and a potentialFlow
+    block -- neither of which the generator used to write, so the warm-start meant a
+    hand-edit first. Both are inert for simpleFoam, which reads neither."""
+    case = tmp_path / "warm"
+    assert build(case_gen, "circle", case, "--study", "steady") == 0
+    text = (case / "system" / "fvSolution").read_text(encoding="utf-8")
+    solvers = text[text.index("solvers"):text.index("potentialFlow")]
+    assert "Phi" in solvers, "potentialFoam needs a linear solver named for Phi"
+    assert "potentialFlow" in text and "nNonOrthogonalCorrectors" in text[text.index("potentialFlow"):]
+
+
+def test_a_transient_case_carries_no_Phi_solver(case_gen, tmp_path):
+    """potentialFoam is the warm-start for a steady solve; a transient solvers block
+    asks every entry for a matching Final, and Phi has none and wants none."""
+    case = tmp_path / "unsteady"
+    assert build(case_gen, "circle", case, "--study", "transient") == 0
+    text = (case / "system" / "fvSolution").read_text(encoding="utf-8")
+    assert "Phi" not in text and "potentialFlow" not in text
+
+
 def test_the_case_computes_the_coefficients_the_study_is_about(case_gen, tmp_path):
     """controlDict had no functions block, while preflight warns when forceCoeffs is
     missing and results.py reads forceCoeffs.dat -- both ends assumed one existed."""

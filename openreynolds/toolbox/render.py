@@ -4,8 +4,15 @@
 Headless via OSMesa. Fixed cameras so two runs of the same case are a visual diff
 rather than two unrelated pictures.
 
+`--fields` takes solver outputs (`U`, `p`, `k`, ...) and also the quantities a solver
+does not write but a study usually wants to see: `vorticity` (the out-of-plane
+component, drawn signed so the two rows of a von Karman street read as opposite colours)
+and `Q` (the Q-criterion). Those are functions of the velocity gradient, computed here
+from `U`, so they no longer need a hand-written pyvista script.
+
     python3 render.py /work/case                      # latest time, all default scenes
     python3 render.py /work/case --fields U p --normal z --time 500
+    python3 render.py /work/case --fields vorticity Q  # derived from U
     python3 render.py /work/case --scene mesh --out /work/case/renders
 """
 
@@ -199,21 +206,83 @@ def save(plotter, out: Path) -> Path:
     return out
 
 
+def canonical(name: str) -> str:
+    """A field name reduced so `vorticity`, `Vorticity`, `vort` and `q-criterion` all
+    reach the same entry. Case, underscores, hyphens and the |mag| bars are noise here."""
+    return name.lower().replace("_", "").replace("-", "").replace("|", "")
+
+
+DERIVED_FROM_U = {
+    "vorticity": "vorticity", "vort": "vorticity", "curl": "vorticity",
+    "q": "qcriterion", "qcriterion": "qcriterion", "qcrit": "qcriterion",
+}
+"""Field names the solver never writes, mapped to the VTK quantity that makes them.
+
+`foamToVTK` and the OpenFOAMReader carry only what is on disk -- `U`, `p`, the turbulence
+fields -- and vorticity and the Q-criterion are neither: they are contractions of grad(U).
+So `render.py --fields vorticity` used to print "no field named vorticity" and 73 studies
+answered it by hand-writing a pyvista script that ran `compute_derivative`. That is the
+one call this needs; it is done once, on the volume mesh, so the ordinary slice-and-colour
+path draws the result like any written field."""
+
+SIGNED_FIELDS = frozenset({"vorticity_z"})
+"""Fields drawn about zero with a diverging map. Vorticity in a wake is signed -- the two
+rows of a shed street turn opposite ways -- and a sequential map (viridis) hides the sign
+that is the whole reason to plot it, so those get `coolwarm` centred on zero instead."""
+
+
+def add_derived(mesh, field: str):
+    """Compute `field` from `U` onto `mesh` when the solver did not write it.
+
+    Returns the name of the scalar array to colour by, or None when `field` is neither a
+    written field nor one we know how to derive. The gradient needs the cells, so this
+    runs on the volume mesh before any slice is taken; the slice then inherits the array.
+    """
+    quantity = DERIVED_FROM_U.get(canonical(field))
+    if quantity is None:
+        return None
+    if "U" not in mesh.point_data and "U" not in mesh.cell_data:
+        return None  # nothing to take a gradient of
+    source = mesh if "U" in mesh.point_data else mesh.cell_data_to_point_data()
+    kwargs = {"scalars": "U", quantity: True}
+    derived = source.compute_derivative(**kwargs)
+    values = np.asarray(derived.point_data[quantity])
+    if quantity == "vorticity":
+        # The out-of-plane component is the one a 2D wake is read by; keep the signed z
+        # component as the default and the magnitude alongside it for a 3D case.
+        mesh.point_data["vorticity_z"] = values[:, 2]
+        mesh.point_data["vorticity_mag"] = np.linalg.norm(values, axis=1)
+        return "vorticity_z"
+    mesh.point_data[quantity] = values
+    return quantity
+
+
 def render_field(mesh, field: str, normal: str, out: Path, zoom: float | None = None,
                  bounds: tuple | None = None) -> Path | None:
-    if field not in mesh.point_data and field not in mesh.cell_data:
+    if field in mesh.point_data or field in mesh.cell_data:
+        name = field
+    else:
+        name = add_derived(mesh, field)
+    if name is None:
         return None
     cut = slice_at(mesh, normal)
-    data = cut.point_data.get(field, cut.cell_data.get(field))
+    data = cut.point_data.get(name, cut.cell_data.get(name))
     if data is None:
         return None
-    scalars = field
+    scalars = name
     if data.ndim > 1 and data.shape[1] > 1:
-        cut[f"|{field}|"] = np.linalg.norm(data, axis=1)
-        scalars = f"|{field}|"
+        cut[f"|{name}|"] = np.linalg.norm(data, axis=1)
+        scalars = f"|{name}|"
+
+    # A signed field reads about zero on a diverging map; everything else on viridis.
+    cmap = "coolwarm" if scalars in SIGNED_FIELDS else "viridis"
+    clim = None
+    if scalars in SIGNED_FIELDS:
+        extent = float(np.max(np.abs(data))) or 1.0
+        clim = (-extent, extent)
 
     plotter = _pyvista().Plotter(off_screen=True, window_size=(1100, 800))
-    plotter.add_mesh(cut, scalars=scalars, cmap="viridis", show_edges=False)
+    plotter.add_mesh(cut, scalars=scalars, cmap=cmap, clim=clim, show_edges=False)
     plotter.add_scalar_bar(title=scalars, n_labels=5)
     aim(plotter, normal)
     frame(plotter, cut, zoom, bounds)
@@ -239,7 +308,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("case", type=Path)
     parser.add_argument("--out", type=Path, default=None, help="defaults to <case>/renders")
-    parser.add_argument("--fields", nargs="*", default=["U", "p"])
+    parser.add_argument("--fields", nargs="*", default=["U", "p"],
+                        help="solver outputs (U, p, k, ...) or derived: vorticity, Q")
     parser.add_argument("--normal", default="z", choices=sorted(NORMALS))
     parser.add_argument("--time", type=float, default=None)
     parser.add_argument("--scene", default="all", choices=["all", "mesh", "fields"])
