@@ -430,8 +430,11 @@ def generate(gmsh, built: Built, opts, body_patch: str):
     gmsh.option.setNumber("Mesh.MeshSizeMin", near * 0.25)
     gmsh.option.setNumber("Mesh.MeshSizeMax", far)
     gmsh.option.setNumber("Mesh.Algorithm3D", 10)     # HXT: parallel Delaunay
+    # Both optimisers: the Netgen pass costs about as long again as the meshing and
+    # takes the worst tets off the top of the non-orthogonality distribution, which
+    # is where a segregated solver on tets gets into trouble first.
     gmsh.option.setNumber("Mesh.Optimize", 1)
-    gmsh.option.setNumber("Mesh.OptimizeNetgen", 0)
+    gmsh.option.setNumber("Mesh.OptimizeNetgen", 1)
     gmsh.option.setNumber("General.NumThreads", int(opts.get("threads") or os.cpu_count() or 1))
 
     started = time.time()
@@ -462,21 +465,97 @@ def allmesh(roles: dict, cores: int) -> str:
 
 
 def allrun(solver: str, cores: int) -> str:
+    """potentialFoam first: a divergence-free start is what a tetrahedral mesh most
+    wants, and on the 2026-09-06 penne the segregated solver started from a uniform
+    field and had negative omega on its first iteration."""
     if not solver:
         return "#!/bin/sh\n# a mesh-only case: nothing to run\n"
     return "\n".join([
         "#!/bin/sh", "set -e", "cd \"$(dirname \"$0\")\"",
+        "potentialFoam -writePhi > log.potentialFoam 2>&1",
         "decomposePar -force > log.decomposePar 2>&1",
         f"mpirun -np {cores} {solver} -parallel > log.{solver} 2>&1",
         "reconstructPar -latestTime > log.reconstructPar 2>&1", ""])
+
+
+TRANSIENT = ("transient",)
+
+
+def fv_schemes(opts) -> str:
+    """Schemes for a tetrahedral mesh, which is not the hex-dominant mesh snappy makes.
+
+    Tets from a Delaunay mesher sit at 60-70 degrees of non-orthogonality at their
+    worst, and the hex-tuned set -- second-order turbulence convection, a third of a
+    non-orthogonal correction -- drove omega negative on the first iteration of the
+    first case this generator produced. So: upwind on the turbulence equations (their
+    accuracy is not where a drag or a pressure drop lives), half the correction on the
+    Laplacians, and limited gradients everywhere."""
+    steady = opts["study"] not in TRANSIENT
+    ddt = "steadyState" if steady else "Euler"
+    bounded = "bounded " if steady else ""
+    lines = ["ddtSchemes", "{", f"    default         {ddt};", "}", "",
+             "gradSchemes", "{", "    default         cellLimited Gauss linear 1;", "}", "",
+             "divSchemes", "{", "    default         none;",
+             f"    div(phi,U)      {bounded}Gauss linearUpwind grad(U);"]
+    for field in ("k", "omega", "epsilon", "nuTilda", "gammaInt", "ReThetat"):
+        lines.append(f"    div(phi,{field}) {bounded}Gauss upwind;")
+    lines += ["    div((nuEff*dev2(T(grad(U))))) Gauss linear;", "}", "",
+              "laplacianSchemes", "{", "    default         Gauss linear limited corrected 0.5;",
+              "}", "", "interpolationSchemes", "{", "    default         linear;", "}", "",
+              "snGradSchemes", "{", "    default         limited corrected 0.5;", "}", "",
+              "wallDist", "{", "    method          meshWave;", "}"]
+    return case_gen.foam_file("dictionary", "fvSchemes", "\n".join(lines), "system")
+
+
+def fv_solution(opts, model: str) -> str:
+    """Plain SIMPLE with the classic factors rather than SIMPLEC: on tets the higher
+    pressure factor buys speed the mesh cannot carry. Two non-orthogonal correctors,
+    and the Phi solver and potentialFlow block that Allrun's potentialFoam reads."""
+    transient = opts["study"] in TRANSIENT
+    turb = list(case_gen.turbulence_fields(model))
+    lines = ["solvers", "{",
+             "    p", "    {", "        solver          GAMG;", "        tolerance       1e-7;",
+             "        relTol          0.01;", "        smoother        GaussSeidel;", "    }", ""]
+    if transient:
+        lines += ["    pFinal", "    {", "        solver          GAMG;",
+                  "        tolerance       1e-7;", "        relTol          0;",
+                  "        smoother        GaussSeidel;", "    }", ""]
+    else:
+        lines += case_gen.solver_entry("Phi", case_gen.PHI_SOLVER)
+    fields = ["U"] + turb
+    lines += [f'    "({"|".join(fields)})"', "    {", "        solver          smoothSolver;",
+              "        smoother        symGaussSeidel;", "        tolerance       1e-8;",
+              "        relTol          0.1;", "    }", ""]
+    if transient:
+        lines += [f'    "({"|".join(fields)})Final"', "    {", "        solver          smoothSolver;",
+                  "        smoother        symGaussSeidel;", "        tolerance       1e-8;",
+                  "        relTol          0;", "    }", ""]
+    lines += ["}", ""]
+    if transient:
+        lines += ["PIMPLE", "{", "    nOuterCorrectors 2;", "    nCorrectors     2;",
+                  "    nNonOrthogonalCorrectors 2;", "    consistent      no;", "}", ""]
+    else:
+        lines += ["potentialFlow", "{", "    nNonOrthogonalCorrectors 10;", "}", "",
+                  "SIMPLE", "{", "    nNonOrthogonalCorrectors 2;", "    consistent      no;", "",
+                  "    residualControl", "    {"]
+        for name, value in [("p", 1e-4), ("U", 1e-5)] + [(f, 1e-5) for f in turb]:
+            lines.append(f"        {name:<12s} {value:g};")
+        lines += ["    }", "}", ""]
+    lines += ["relaxationFactors", "{", "    fields", "    {"]
+    lines += ['        ".*"            1;'] if transient else ["        p               0.3;"]
+    lines += ["    }", "    equations", "    {"]
+    lines += ['        ".*"            1;'] if transient else ["        U               0.7;",
+                                                                '        ".*"            0.7;']
+    lines += ["    }", "}"]
+    return case_gen.foam_file("dictionary", "fvSolution", "\n".join(lines), "system")
 
 
 def case_files(plan, flow, opts, model: str, body_patch: str) -> dict[str, str]:
     solver = snappy_gen.SOLVERS[opts["study"]]
     files = {
         "system/controlDict": snappy_gen.control_dict(opts, flow, body_patch),
-        "system/fvSchemes": snappy_gen.fv_schemes(opts),
-        "system/fvSolution": snappy_gen.fv_solution(opts, model),
+        "system/fvSchemes": fv_schemes(opts),
+        "system/fvSolution": fv_solution(opts, model),
         "system/decomposeParDict": snappy_gen.decompose_dict(opts["cores"]),
         "constant/turbulenceProperties": case_gen.turbulence_properties(model),
         "constant/transportProperties": case_gen.transport_properties(flow),
