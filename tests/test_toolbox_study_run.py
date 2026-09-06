@@ -510,6 +510,85 @@ def test_a_failure_stays_visible_as_a_failure(tmp_path, study_run, state):
     assert result["mesh"].status == "failed"
 
 
+# -- digest: the workspace at a glance in one read ---------------------------------
+
+
+def test_owner_ncells_reads_the_header_note(tmp_path, state):
+    case = tmp_path / "c"
+    poly = case / "constant" / "polyMesh"
+    poly.mkdir(parents=True)
+    (poly / "owner").write_text('FoamFile{}\nnote "nPoints:1200 nCells:500 nFaces:3400";\n',
+                                encoding="utf-8")
+    assert state.owner_ncells(case) == 500
+
+
+def test_owner_ncells_is_none_without_a_mesh(tmp_path, state):
+    assert state.owner_ncells(tmp_path / "nope") is None
+
+
+def test_latest_time_ignores_constant_system_and_processors(tmp_path, state):
+    case = tmp_path / "c"
+    for name in ("0", "100", "200", "constant", "system", "processor0"):
+        (case / name).mkdir(parents=True)
+    assert state.latest_time(case) == "200"
+
+
+def test_latest_time_of_a_written_but_unsolved_case_is_zero_not_blank(tmp_path, state):
+    case = tmp_path / "c"
+    (case / "0").mkdir(parents=True)
+    (case / "system").mkdir()
+    assert state.latest_time(case) == "0"
+
+
+def test_is_case_dir_wants_a_marker(tmp_path, state):
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    assert not state.is_case_dir(bare)
+    case = tmp_path / "case"
+    (case / "system").mkdir(parents=True)
+    (case / "system" / "controlDict").write_text("application simpleFoam;\n", encoding="utf-8")
+    assert state.is_case_dir(case)
+
+
+def test_digest_gathers_cases_phases_and_artifacts(tmp_path, state):
+    root = tmp_path / "study"
+    (root / ".reynolds").mkdir(parents=True)
+    case = root / "cyl"
+    (case / "system").mkdir(parents=True)
+    (case / "system" / "controlDict").write_text("application simpleFoam;\n", encoding="utf-8")
+    poly = case / "constant" / "polyMesh"
+    poly.mkdir(parents=True)
+    (poly / "owner").write_text('note "nCells:1234";\n', encoding="utf-8")
+    (case / "200").mkdir()
+    state.set_phase("mesh", "done", root=root)
+    state.set_phase("solve", "running", root=root)
+    render = case / "renders" / "vort.png"
+    render.parent.mkdir(parents=True)
+    render.write_bytes(b"x")  # exists=True keeps only artifacts still on disk
+    state.record("vorticity", render, root=root)
+
+    data = state.digest(root)
+    assert data["study"] == "study"
+    phases = dict(data["phases"])
+    assert phases["mesh"] == "done" and phases["solve"] == "running"
+    assert data["next_phase"], "some phase is still unsettled"
+    cases = {c["name"]: c for c in data["cases"]}
+    assert "cyl" in cases
+    assert cases["cyl"]["meshed"] and cases["cyl"]["cells"] == 1234
+    assert cases["cyl"]["latest_time"] == "200"
+    assert data["artifact_kinds"].get("vorticity") == 1
+
+    text = state.render_digest(data)
+    assert "cyl" in text and "1,234 cells" in text and "vorticity" in text
+
+
+def test_digest_of_an_empty_study_says_so_without_raising(tmp_path, state):
+    root = tmp_path / "study"
+    (root / ".reynolds").mkdir(parents=True)
+    text = state.render_digest(state.digest(root))
+    assert "none found" in text and "none registered" in text
+
+
 def test_the_next_phase_is_the_first_unsettled_one(tmp_path, study_run, state):
     case = make_study(tmp_path)
     (case / "system" / "blockMeshDict").write_text("blocks ();\n", encoding="utf-8")
