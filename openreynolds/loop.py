@@ -362,6 +362,12 @@ class Loop:
 
     # -- context ---------------------------------------------------------------
 
+    def add_tokens(self, tokens: dict) -> None:
+        """Count model usage made on this session's behalf outside the loop -- the
+        geometry desk's laps -- so `status` shows what the study actually spent."""
+        for name, count in (tokens or {}).items():
+            self.token_totals[name] = self.token_totals.get(name, 0) + int(count)
+
     def _account(self, response: Turn) -> None:
         for name, count in (response.tokens or {}).items():
             self.token_totals[name] = self.token_totals.get(name, 0) + count

@@ -1,8 +1,12 @@
-"""The tool surface: seven tools, thin handlers, everything delegating to `Backend`.
+"""The tool surface: eight tools, thin handlers, everything delegating to `Backend`.
 
 There is no `run_gate`, no `amend_spec`, no `ask_user` — asking is just talking. Nothing
 here inspects what the model is doing or refuses it on policy grounds. The handlers cap
 output and report facts; that is the whole job.
+
+The eighth, `geometry`, delegates to the geometry desk (`geometry.py`) rather than to the
+backend: it is the one tool whose work is a model loop of its own, run where the runner
+is, and this module still knows nothing about how that loop reaches its model.
 """
 
 from __future__ import annotations
@@ -79,6 +83,13 @@ class ToolContext:
     A render the model just examined is exactly the file the user wants on their
     machine right now, not at the next mirror cycle. The hook must not block and
     must not fail the read -- it is a nudge, and the picture matters more."""
+    geometry: Any = None
+    """The geometry desk (`geometry.GeometryAgent`), when this process can run one:
+    gmsh and matplotlib importable, a model key. None means the `geometry` tool
+    answers with why not, and the toolbox script on the instance is the way."""
+    on_tokens: Callable[[dict], None] | None = None
+    """Called with the model usage a tool spent on the session's behalf -- the
+    geometry desk's laps -- so it lands in the same totals as the main loop's."""
 
 
 FRESH_SHELL = (
@@ -149,6 +160,52 @@ TOOLS: list[dict[str, Any]] = [
                 }
             },
             "required": ["paths"],
+        },
+    },
+    {
+        "name": "geometry",
+        "description": (
+            "Author a geometry from a description in words and get back a case on "
+            "the workspace, a picture of the shape, and its measurements (extent, "
+            "area, enclosed loops, patches). A separate loop composes the shape from "
+            "2D primitives and passages (or 3D primitives and STEP), draws it, "
+            "measures it and revises it until the picture and the numbers match the "
+            "request, then writes the case: geometry, mesh script (Allmesh), "
+            "controlDict, schemes, solution, fields. Meshing and solving are not run. "
+            "Takes about a minute."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request": {
+                    "type": "string",
+                    "description": (
+                        "The shape in words, with its sizes and units, what is "
+                        "inlet and outlet, and anything about it that matters."
+                    ),
+                },
+                "case": {
+                    "type": "string",
+                    "description": (
+                        "Directory name for the case under the study (default "
+                        "'geometry')."
+                    ),
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["2d", "3d"],
+                    "description": (
+                        "2d: a planar outline extruded one cell thick with empty "
+                        "front and back (default). 3d: a body-fitted volume."
+                    ),
+                },
+                "study": {
+                    "type": "string",
+                    "enum": ["mesh", "steady", "transient"],
+                    "description": "What the case files are set up for (default mesh).",
+                },
+            },
+            "required": ["request"],
         },
     },
     {
@@ -766,9 +823,56 @@ def _fetch(ctx: ToolContext, args: dict[str, Any]) -> str:
     return f"copied {len(written)} file(s) to the user's machine:\n{listing}"
 
 
+def _geometry(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    """The geometry desk's answer as one tool result: the picture first, the words
+    second, so that when the picture is later evicted from the thread the caption
+    still carries the measurements and where the case is."""
+    if ctx.geometry is None:
+        return (
+            "the geometry desk is not available in this process (gmsh and matplotlib "
+            "are needed here, and a model key); `mesh2d.py --spec` and `cad_gen.py "
+            "--spec` in the toolbox build the same case on the instance from a spec "
+            "written by hand"
+        )
+    result = ctx.geometry.run(
+        str(args.get("request", "")),
+        mode=str(args.get("mode") or "2d"),
+        study=str(args.get("study") or "mesh"),
+        case=args.get("case"),
+    )
+    if ctx.on_tokens and result.tokens:
+        ctx.on_tokens(result.tokens)
+    lines = []
+    if result.error:
+        lines.append(f"geometry: {result.error}")
+    if result.case_rel:
+        lines.append(
+            f"case written to {result.case_rel}: geometry.json is the spec, outline.png "
+            "the picture above, body.msh the gmsh mesh. Not yet an OpenFOAM mesh: "
+            "`sh Allmesh` there runs gmshToFoam, retypes the patches and checkMesh "
+            "(log.checkMesh), and `python3 /work/.toolbox/render.py . --scene mesh` "
+            "draws the result."
+        )
+    lines.append(f"laps {result.laps}, {result.seconds:.0f} s" + (
+        "" if result.agreed or result.error else (
+            f"; the desk committed without agreeing: {result.disagrees}"
+            if result.disagrees else "; committed the last good spec at the lap cap")))
+    if result.report:
+        lines.append("")
+        lines.append(result.report)
+    text = "\n".join(lines)
+    if result.png:
+        return [
+            images.attachment(images.downscale(result.png, "image/png"), "image/png"),
+            {"type": "text", "text": text},
+        ]
+    return text
+
+
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "bash": _bash,
     "fetch": _fetch,
+    "geometry": _geometry,
     "job_check": _job_check,
     "job_kill": _job_kill,
     "job_start": _job_start,

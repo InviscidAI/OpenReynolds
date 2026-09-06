@@ -2,7 +2,7 @@
 
 **A CFD agent with a real OpenFOAM workspace.**
 
-OpenReynolds is a tool-use loop with seven tools pointed at a Linux machine that has
+OpenReynolds is a tool-use loop with eight tools pointed at a Linux machine that has
 OpenFOAM v2512 on it. You describe the flow; it writes the case, meshes it, launches
 the solver, reads the residuals while they come in, looks at its own renders, and
 hands back the figures and the files that made them.
@@ -87,7 +87,7 @@ workspace** gets a file tree you can open things from.
 `--plain` gives a plain streaming terminal instead, which is what you want in CI or
 over a poor connection.
 
-## The seven tools
+## The eight tools
 
 That is the whole surface. Anything the agent does to a case, it does through one of
 these.
@@ -101,6 +101,7 @@ these.
 | `job_check` | Ask how a job is doing. It can hold the answer until the job ends, and returns early the moment you type. |
 | `job_kill` | Stop a job, and confirm it actually stopped. |
 | `fetch` | Read something from the open web: a paper, a benchmark table, a geometry reference. |
+| `geometry` | Turn a shape described in words into a case on the workspace, with a picture of it and its measurements. A second loop, running beside the agent with gmsh in-process, composes the shape, draws it, measures it and revises it before committing — the write-and-look laps that took the main loop four remote round trips each. Needs `pip install openreynolds[geometry]`; without it the tool says so and the toolbox scripts do the same from a hand-written spec. |
 
 ## The rule this repository keeps
 
@@ -245,7 +246,8 @@ or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
 | --- | --- |
 | `cli.py` | Entry point, session assembly, subcommands. |
 | `loop.py` | The tool-use loop: streaming, interjections, thread refresh. |
-| `tools.py` | The seven tool schemas and their handlers. |
+| `tools.py` | The eight tool schemas and their handlers. |
+| `geometry.py` | The geometry desk behind the `geometry` tool: its own brief, its own model client, laps of build → draw → measure → revise in-process, then the case committed to the workspace. |
 | `watch.py` | Job polling, wake facts, progress, narration. |
 | `mirror.py` / `store.py` | Files home, and the local `./studies/<id>/` record. |
 | `backend/` | The `Backend` protocol. `hosted.py` is the only module that knows the service exists. |

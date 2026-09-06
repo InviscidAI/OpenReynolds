@@ -8,6 +8,25 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- An eighth tool, `geometry`, and the desk behind it (`openreynolds/geometry.py`).
+  The same model that one-shots a Tesla-valve mesh in a chat app took 66 turns and
+  29 minutes in this harness for the wrong shape, and with `mesh2d.py` in the
+  toolbox still spent four preview laps of its own turns getting the shape right:
+  every write-and-look was a remote round trip. The desk runs those laps where the
+  model is -- gmsh and the preview in the runner's own process, one to two seconds a
+  lap -- under its own brief (spec, picture, measured report, revise, commit; six
+  laps; never a solver), then ships the finished case to the workspace and hands
+  the main agent one result: the picture, the measurements, where the case is. The
+  main prompt gains a descriptive sentence and nothing that says when to use it.
+  `pip install openreynolds[geometry]` (gmsh, matplotlib); without it the tool says
+  so and the toolbox scripts do the same from a hand-written spec.
+  `OPENREYNOLDS_GEOMETRY_MODEL` / `geometry_model` pick its model; the default is
+  the main one, and its tokens land in the same totals as the main loop's.
+- `toolbox/mesh2d.py`: any closed 2D outline -- primitives, booleans, constant-width
+  passages swept along a centreline -- to a one-cell-thick all-hex OpenFOAM case in
+  one call, drawn and measured (extent, area, enclosed loops, per-patch edge counts
+  and lengths) before it is meshed. `cad_gen.py`'s 3D path prints the same kind of
+  measured report (surfaces, shells, enclosed voids, wetted area) off the B-rep.
 - `toolbox/snappy_gen.py`: complete, runnable cases around an uploaded surface.
   `case_gen.py` writes a body-fitted blockMesh for shapes it can draw; this writes
   the other half -- a background box, snappyHexMesh cut to an STL, boundary layers

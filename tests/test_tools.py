@@ -16,6 +16,7 @@ def test_tool_list_is_deterministic():
     assert names == [
         "bash",
         "fetch",
+        "geometry",
         "job_check",
         "job_kill",
         "job_start",

@@ -186,6 +186,28 @@ def test_extraction_is_atomic_per_file(tmp_path):
     assert leftovers == []
 
 
+def test_a_script_by_shebang_is_shipped_executable(tmp_path):
+    """The geometry desk writes `Allmesh` on the user's machine and ships it with
+    `put_tree`. On Windows there is no execute bit to carry, so it arrived as
+    `Permission denied` and cost the model a turn. A shebang is the file saying it is
+    a script; the archive says so too."""
+    import io as _io
+    import tarfile as _tarfile
+
+    from openreynolds.backend.hosted import _tar_gz_of
+
+    case = tmp_path / "case"
+    case.mkdir()
+    (case / "Allmesh").write_text("#!/bin/sh\nset -e\n", encoding="utf-8")
+    (case / "geometry.json").write_text("{}", encoding="utf-8")
+    (case / "Allmesh").chmod(0o644)
+
+    with _tarfile.open(fileobj=_io.BytesIO(_tar_gz_of(case)), mode="r:gz") as tar:
+        modes = {m.name: m.mode for m in tar.getmembers()}
+    assert modes["Allmesh"] & 0o111 == 0o111
+    assert modes["geometry.json"] & 0o111 == 0
+
+
 # -- the edge's 150 s redirect -------------------------------------------------------
 #
 # Modal's edge answers any web request past 150 s with a bodyless 303. The command has

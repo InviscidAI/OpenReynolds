@@ -142,6 +142,10 @@ class Config:
     mid-turn -- the difference between a message heard in seconds and one that waits
     out a five-minute solve."""
     desk_model: str = DEFAULT_DESK_MODEL
+    geometry_model: str = ""
+    """The model the geometry desk (`geometry.py`) authors shapes with. Empty means the
+    main model: authoring a geometry is the work, not the narration, and the premise gate
+    showed it wants the capable one."""
     studies_dir: Path = field(default_factory=lambda: Path.cwd() / "studies")
     preferences: str = ""
     """The standing note from `preferences_path()`, or empty when there is none."""
@@ -219,6 +223,7 @@ class Config:
                 "OPENREYNOLDS_DESK_MODEL", "desk_model",
                 preset.desk_model if preset else DEFAULT_DESK_MODEL,
             ),
+            geometry_model=pick("OPENREYNOLDS_GEOMETRY_MODEL", "geometry_model"),
             foamd_url=pick("FOAMD_URL", "foamd_url", DEFAULT_FOAMD_URL).rstrip("/"),
             foamd_api_key=pick("FOAMD_API_KEY", "foamd_api_key"),
             provider=provider,

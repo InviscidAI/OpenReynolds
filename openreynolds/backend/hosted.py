@@ -693,6 +693,12 @@ def _tar_gz_of(local_dir: Path) -> bytes:
             info.uname = info.gname = ""
             if item.is_file():
                 with item.open("rb") as fh:
+                    if fh.read(2) == b"#!":
+                        # A shebang is the file saying it is a script. Windows has no
+                        # execute bit to carry, so an `Allmesh` written there arrived
+                        # as `Permission denied` and cost the model a turn.
+                        info.mode |= 0o755
+                    fh.seek(0)
                     tar.addfile(info, fh)
             else:
                 tar.addfile(info)

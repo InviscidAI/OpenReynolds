@@ -22,7 +22,7 @@ from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT
 from .browse import Browser
 from .capture import Capture
-from . import commands, images
+from . import commands, geometry, images
 from .config import Config, config_path
 from .delivery import Gallery
 from .llm import PRESETS, ProviderError, make_provider, preset_for
@@ -1021,6 +1021,12 @@ def session(
         live_mirror.start()
         view.workspace(browser)
         loop = Loop(cfg, ctx, store, view, capture=capture, progress=tracker)
+        # The geometry desk: a shape authored, drawn, measured and committed in one tool
+        # call, with its own model client (geometry.py). Only where it can actually run --
+        # gmsh and matplotlib in this process, a model key -- else the tool says why not.
+        ctx.on_tokens = loop.add_tokens
+        if not cfg.model_key_missing() and geometry.unavailable() is None:
+            ctx.geometry = geometry.GeometryAgent(cfg, backend, store, store.session.home)
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
         )
