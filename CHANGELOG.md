@@ -36,7 +36,17 @@ All notable changes to this project are recorded here. The format follows
   the picture of a refused spec, and finishes the job: after the case is shipped it runs
   Allmesh, checkMesh and the mesh render on the instance in one exec and returns the
   checkMesh digest and the mesh picture with the outline, so the main agent has nothing
-  left to discover.
+  left to discover. Measured on six prompts through the desk (`qa-runs/RESULTS-phase0.md`):
+  the first correct Tesla valve from any run (leave 20°, outer radius 6, return against the
+  flow, loops apart) in 4 turns and 5 minutes, and an L duct, a U duct and a serpentine
+  each right in 4 to 5 turns. What the runs found and what changed after them: a `near`
+  rule picks the nearest edge and the nearest surface rather than one within a tolerance
+  (gmsh's box round a circle is off its centre, and a cylinder named `near` came out as
+  `walls`); the desk's laps get ten minutes and eight laps (a lap at high effort is a
+  minute); the 3D spec is stated to be the solid only, the envelope carries `domain`
+  (internal|external) and `inlet`/`outlet`, and a hollow external body is refused as the
+  fluid drawn instead of the solid (the 3D penne run drew the box, and the report's "1
+  enclosed void" went unrefused for six laps).
 
 ### Added
 
