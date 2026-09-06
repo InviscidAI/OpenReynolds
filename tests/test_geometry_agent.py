@@ -396,7 +396,7 @@ def test_the_finish_meshes_on_the_instance_and_carries_the_digest_and_picture_ba
     result = agent.run("a valve", case="valve")
     assert result.case_rel == "/work/s/valve"
     cmd, cwd, timeout = backend.last_exec
-    assert "sh Allmesh" in cmd and "render.py . --scene mesh" in cmd and cwd == "/work/s/valve"
+    assert "sh Allmesh" in cmd and "--scene mesh" in cmd and "render.py . " not in cmd and cwd == "/work/s/valve"
     assert timeout == geometry.FINISH_TIMEOUT_S
     assert result.meshed and "Mesh OK" in result.mesh_report and "3750" in result.mesh_report.replace(",", "")
     assert result.mesh_png == PNG + b"mesh"

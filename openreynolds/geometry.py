@@ -360,7 +360,9 @@ class GeometryAgent:
         if exec_ is None or get_file is None:
             return
         cmd = ("sh Allmesh > log.Allmesh 2>&1; rc=$?; tail -12 log.Allmesh; "
-               f"python3 {TOOLBOX_DEST}/render.py . --scene mesh --out renders > log.render 2>&1 "
+               # the case by its absolute path, not `.`: render.py names its ParaView
+               # marker after the directory, and `.` gave it the name `.foam`
+               f"python3 {TOOLBOX_DEST}/render.py \"$PWD\" --scene mesh --out renders > log.render 2>&1 "
                "|| tail -5 log.render; exit $rc")
         try:
             run = exec_(cmd, cwd=remote, timeout_s=FINISH_TIMEOUT_S)
