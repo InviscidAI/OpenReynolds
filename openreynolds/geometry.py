@@ -131,7 +131,8 @@ def case_args(mode: str, spec_path: Path, target: Path, study: str, scale: float
 class GeometryResult:
     def __init__(self, report: str = "", png: bytes | None = None, case_rel: str = "",
                  laps: int = 0, seconds: float = 0.0, tokens: dict | None = None,
-                 agreed: bool = False, disagrees: str = "", error: str = ""):
+                 agreed: bool = False, disagrees: str = "", error: str = "",
+                 script: str = "mesh2d.py", scale: float = 1.0):
         self.report = report
         self.png = png
         self.case_rel = case_rel
@@ -141,6 +142,10 @@ class GeometryResult:
         self.agreed = agreed
         self.disagrees = disagrees
         self.error = error
+        self.script = script
+        """The toolbox script that rebuilds the committed spec on the instance."""
+        self.scale = scale
+        """The `--scale` that spec was built with (its own top-level "scale", if any)."""
 
 
 class GeometryAgent:
@@ -278,4 +283,6 @@ class GeometryAgent:
         remote = f"{self.home}/{case}" if self.home else case
         self.backend.put_tree(local, remote)
         return GeometryResult(report=last_report, png=last_png, case_rel=remote, laps=laps,
-                              seconds=seconds, tokens=tokens, agreed=agreed, disagrees=disagrees)
+                              seconds=seconds, tokens=tokens, agreed=agreed, disagrees=disagrees,
+                              script="mesh2d.py" if mode == "2d" else "cad_gen.py",
+                              scale=last_scale)

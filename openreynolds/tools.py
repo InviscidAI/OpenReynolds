@@ -851,7 +851,9 @@ def _geometry(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
             "the picture above, body.msh the gmsh mesh. Not yet an OpenFOAM mesh: "
             "`sh Allmesh` there runs gmshToFoam, retypes the patches and checkMesh "
             "(log.checkMesh), and `python3 /work/.toolbox/render.py . --scene mesh` "
-            "draws the result."
+            "draws the result. An edited geometry.json rebuilds the case with "
+            f"`python3 {WORKSPACE_ROOT}/.toolbox/{result.script} . --spec geometry.json "
+            f"--scale {result.scale:g} --force`, or this tool again with the change in words."
         )
     lines.append(f"laps {result.laps}, {result.seconds:.0f} s" + (
         "" if result.agreed or result.error else (

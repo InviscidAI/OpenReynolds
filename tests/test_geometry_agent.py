@@ -135,6 +135,7 @@ def test_bad_spec_then_good_spec_then_commit(backend, store, available):
 
     assert result.error == "" and result.agreed and result.laps == 3
     assert [b[2] for b in agent.builds] == [1.0, 0.001], "scale is read off the spec"
+    assert result.scale == 0.001 and result.script == "mesh2d.py"
     assert result.png == PNG and "0 islands" in result.report
     # the refusal came back verbatim and the picture went back as an image block
     calls = agent._provider.calls
@@ -239,7 +240,7 @@ def test_the_tool_answers_with_the_picture_first_and_the_words_second(ctx):
             self.args = (request, mode, study, case)
             return GeometryResult(report="extent 0.06 x 0.012 m, 4 islands", png=PNG,
                                   case_rel="/work/s/valve", laps=2, seconds=7.0,
-                                  tokens={"input": 5}, agreed=True)
+                                  tokens={"input": 5}, agreed=True, scale=0.001)
     spent = []
     ctx.geometry = Desk()
     ctx.on_tokens = spent.append
@@ -252,6 +253,10 @@ def test_the_tool_answers_with_the_picture_first_and_the_words_second(ctx):
     # the first live run read "case written" as "meshed" and went looking for a
     # checkMesh log that did not exist yet; the words now say what is still to do
     assert "Not yet an OpenFOAM mesh" in text and "sh Allmesh" in text
+    # the second live run called the tool again for a one-line change because it
+    # believed nothing on the instance could rebuild the spec; the rebuild is named,
+    # with the scale the spec was built at
+    assert "/work/.toolbox/mesh2d.py . --spec geometry.json --scale 0.001 --force" in text
     assert spent == [{"input": 5}]
     # what survives eviction is the words, and they carry the measurements
     assert "4 islands" in tools.describe(out)
