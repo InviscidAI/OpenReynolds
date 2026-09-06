@@ -59,7 +59,11 @@ class WalkingBackend:
         self.paths = paths
         self.calls: list[str] = []
 
-    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 60):
+    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 60,
+             *, background: bool = False):
+        # `background` is the poll flag the mirror's timed cycle sets; this stub has no
+        # lifecycle to protect, so it runs the listing either way. Accepted rather than
+        # ignored so the signature stays the one `Browser.tree` actually calls.
         self.calls.append(cmd)
         root = cmd.split()[2].strip("'")
         depth = int(cmd.split("-maxdepth ")[1].split()[0])

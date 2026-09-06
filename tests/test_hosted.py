@@ -370,3 +370,110 @@ def test_terms_and_mint_carry_the_session():
     assert mint_key("https://svc.example", "jwt", "laptop", transport=transport)["key"] == "of_live_x"
     assert all(auth == "Bearer jwt" for _, auth, _ in seen)
     assert b"laptop" in seen[1][2]
+
+
+# -- a write is not repeated in the dark ----------------------------------------------
+#
+# From a 3D transient run whose captured transcript held one `job_check` reply three
+# times, at three timestamps minutes apart, all under the same message `seq`. The agent
+# produced that reply once -- `Store.append_message` hands out a seq once -- so the
+# repeats were the client posting the same row again after the service had already
+# written it, and the timestamps were insert times, not the agent's.
+
+
+def test_a_write_is_not_repeated_when_its_answer_was_lost(monkeypatch):
+    """A POST that reached the service and whose answer did not come back must not be
+    sent again. The service cannot tell the repeat from a new message: `seq` comes from
+    this client and the transcript table indexes it without making it unique."""
+    monkeypatch.setattr(hosted_mod.time, "sleep", lambda _s: None)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    landed = []
+
+    def commits_then_times_out(method, path, timeout=None, **kwargs):
+        landed.append(path)
+        raise httpx.ReadTimeout("the answer never came back")
+
+    monkeypatch.setattr(client._client, "request", commits_then_times_out)
+    with pytest.raises(BackendError) as excinfo:
+        client.post_messages("study-1", [{"seq": 197, "role": "tool", "content": "x"}])
+
+    assert excinfo.value.code == "timeout"
+    assert len(landed) == 1, "the row was written once; asking again writes it again"
+
+
+def test_an_ambiguous_server_error_does_not_repeat_a_write(monkeypatch):
+    """500, 502 and 504 are retried on a read and not on a write: none of them says
+    whether the work was done, and only the write leaves a mark if it was."""
+    monkeypatch.setattr(hosted_mod.time, "sleep", lambda _s: None)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    sent = []
+
+    def bad_gateway(method, path, timeout=None, **kwargs):
+        sent.append(method)
+        return response(502, {"error": "bad_gateway", "message": "upstream"})
+
+    monkeypatch.setattr(client._client, "request", bad_gateway)
+    with pytest.raises(BackendError):
+        client.request("POST", "/v1/studies/s/messages", json=[])
+    assert sent == ["POST"]
+
+    sent.clear()
+    with pytest.raises(BackendError):
+        client.request("GET", "/v1/instances")
+    assert len(sent) == 5, "a read is unchanged -- repeating it costs nothing"
+
+
+def test_a_write_is_still_retried_when_the_service_declined_it(monkeypatch):
+    """A 429 and a cold-start 503 are the service saying it did nothing, so repeating
+    the call cannot repeat an effect. Losing these retries would mean losing every
+    first call to a workspace that is still booting."""
+    monkeypatch.setattr(hosted_mod.time, "sleep", lambda _s: None)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def booting(method, path, timeout=None, **kwargs):
+        calls.append(path)
+        if len(calls) < 3:
+            return response(503, {"error": "unavailable", "message": "booting"},
+                            headers={"Retry-After": "0"})
+        return response(201, {"inserted": 1})
+
+    monkeypatch.setattr(client._client, "request", booting)
+    client.post_messages("study-1", [{"seq": 1, "role": "user", "content": "hello"}])
+    assert len(calls) == 3
+
+
+def test_a_write_is_still_retried_when_the_connection_was_never_made(monkeypatch):
+    """Nothing was handed over, so nothing can have happened twice."""
+    monkeypatch.setattr(hosted_mod.time, "sleep", lambda _s: None)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def refused(method, path, timeout=None, **kwargs):
+        calls.append(path)
+        if len(calls) < 2:
+            raise httpx.ConnectError("connection refused")
+        return response(201, {"inserted": 1})
+
+    monkeypatch.setattr(client._client, "request", refused)
+    client.post_messages("study-1", [{"seq": 1, "role": "user", "content": "hello"}])
+    assert len(calls) == 2
+
+
+def test_a_tar_upload_says_it_may_be_repeated(monkeypatch):
+    """The method is a rule of thumb, not the fact. Unpacking the same archive over
+    the same directory twice leaves the workspace exactly as once does, so a tree
+    transfer keeps its retries where a transcript row loses them."""
+    monkeypatch.setattr(hosted_mod.time, "sleep", lambda _s: None)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def flaky(method, path, timeout=None, **kwargs):
+        calls.append(path)
+        if len(calls) < 2:
+            raise httpx.ReadTimeout("the answer never came back")
+        return response(200, {"ok": True})
+
+    monkeypatch.setattr(client._client, "request", flaky)
+    client.request("POST", "/v1/instances/i/tar", repeatable=True)
+    assert len(calls) == 2

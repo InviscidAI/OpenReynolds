@@ -314,7 +314,27 @@ anything is re-run harder:
   hundred iterations rather than plateauing later.
 - **A bad start.** `potentialFoam` before the segregated solver, or a first-order
   run continued (`startFrom latestTime`) on second-order schemes, routinely turns a
-  diverging case into a converging one for seconds of extra cost.
+  diverging case into a converging one for seconds of extra cost. A steady case from
+  `case_gen.py` already carries the `Phi` solver and `potentialFlow` block
+  `potentialFoam` needs, so it runs on the generated case without editing fvSolution.
+- **A solid that is really a few primitives.** A tube, a box with a roof, a plate with
+  holes: snappyHexMesh is the general tool for an arbitrary uploaded surface, and on a
+  shape that is two cylinders and a subtraction it spends its time -- octree refinement,
+  snapping to 44,000 triangles, layer iterations -- rediscovering edges the CAD already
+  knew. gmsh's OpenCASCADE kernel meshes the B-rep body-fitted in about a second, and
+  `gmshToFoam` reads the `.msh` (version 2.2 ASCII; physical surface names become
+  patches, every one of type `patch`, so walls are retyped with `foamDictionary` before
+  a wall function reads them; the volume's physical name becomes a cellZone). Prism
+  layers: gmsh extrudes real prisms off a body that stands free of every boundary
+  (`extrudeBoundaryLayer`, then the volume rebuilt from the box faces and the layer's
+  shell), and where the body touches a floor, a symmetry plane or a passage's inlet the
+  layers come from snappyHexMesh run with only `addLayers` on, over the gmsh mesh --
+  that phase was built for junctions, and its table says how many layers were actually
+  built. Without layers the first tet sets y+ and the wall function has to be one that
+  tolerates the buffer layer -- nutUSpalding is. A prism stack thicker than the surface
+  cell extrudes into itself on any concave wall and the mesher runs without end rather
+  than failing. `cad_gen.py` is that chain, from a short JSON of primitives or any STEP
+  file, and keeps the STEP it meshed.
 
 Turbulence quantities (`k`, `omega`, `epsilon`) plateauing one to two orders above
 `U` and `p` is normal near walls and rarely worth chasing on its own.
@@ -533,6 +553,30 @@ against what is actually on disk, so a study advanced by hand between sessions i
 from the evidence rather than from the record. `progress_report.py` answers "where is it?"
 from the same two files plus the solver log, and `gallery.py --final` prints the path of
 the newest artifact of each kind.
+
+## The case directory is on a network filesystem
+
+`/work` is a Modal Volume mounted over 9p: durable, and the reason a preempted run resumes,
+but every file open crosses the network. The stages that touch many small files pay for
+every one of them, and `reconstructPar` is the worst -- it reads a set of files per field
+per processor per write and writes them back merged. Measured on one 160-write case,
+`reconstructPar` took 5m23s on the Volume and 27s on container-local `/tmp`; a 120-write
+case, 133s against 6s. The solver's write side pays a smaller version of the same tax,
+around 20%.
+
+Container-local disk (`/tmp`, an overlay fs) does not have this cost, but it is wiped when
+the Sandbox stops. `scratch.py` bridges the two: `scratch.py run <case> -- <command>` stages
+the case to `/tmp`, runs the command there, and copies results back to the Volume every
+minute, so the durable copy is at most a checkpoint behind and a preemption still resumes
+from `latestTime`; `scratch.py reconstruct <case>` does the same for reconstruction and is
+scoped (`--latest`, `--time A:B`, `--fields "U p"`) and idempotent (only the times a case is
+missing). Reconstruction being its own command is deliberate -- decomposed results are
+persisted when the solve job ends, so a lost reconstruct never costs the solve. Two case
+settings cut the file count at the source: the collated file handler writes one file per
+processor region a write instead of one per field per processor (a quarter of the files),
+and `writeFormat binary` halves the bytes. The cases `case_gen`, `cad_gen` and `snappy_gen`
+write carry both, and the `Allrun` those last two generate already solves and reconstructs
+through `scratch.py`, falling back to the Volume if the toolbox is not at its usual path.
 
 ## Waiting on a job without paying for it
 

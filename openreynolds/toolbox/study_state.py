@@ -29,13 +29,16 @@ about it; what to do next is the agent's call.
     python3 study_state.py list --kind vorticity    # just those
     python3 study_state.py latest mesh-full         # one path, for a read_file
     python3 study_state.py phases                   # the pipeline and its statuses
+    python3 study_state.py digest                   # one read: cases, mesh/solve, phases, artifacts
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -427,6 +430,170 @@ def phase_status(name: str, root: Path | str = ".") -> str:
     return "pending"
 
 
+# -- the workspace at a glance -----------------------------------------------------
+#
+# On resume, the first thing a session does is work out what is already here: which cases
+# exist, whether each is meshed, how far the solve got, what has been rendered. Answered
+# by hand that is a run of `ls`, a `cat phases.json`, a `study_state.py list` and a peek
+# into each case's time directories -- several tool calls, each paying the round-trip
+# floor, before any work starts. `digest` is those questions in one read. It decides
+# nothing; it reports what is on disk.
+
+
+_NCELLS = re.compile(rb"nCells:\s*(\d+)")
+
+
+def is_case_dir(path: Path) -> bool:
+    """Whether a directory looks like an OpenFOAM case, by cheap stat checks only:
+    a `system/controlDict`, a built `constant/polyMesh`, or a `*.foam` handle."""
+    try:
+        if (path / "system" / "controlDict").is_file():
+            return True
+        if (path / "constant" / "polyMesh").is_dir():
+            return True
+        return any(path.glob("*.foam"))
+    except OSError:
+        return False
+
+
+def is_meshed(case: Path) -> bool:
+    """A polyMesh exists on disk (plain or gzipped `owner`/`points`)."""
+    poly = case / "constant" / "polyMesh"
+    return any((poly / name).is_file() or (poly / f"{name}.gz").is_file()
+               for name in ("owner", "points"))
+
+
+def latest_time(case: Path) -> str:
+    """The name of the highest-numbered time directory, or "".
+
+    `constant`, `system` and `processor*` are not times; `0` is the initial field and
+    counts, so a case written but not yet solved reads as `0` rather than blank.
+    """
+    best: tuple[float, str] | None = None
+    try:
+        children = list(case.iterdir())
+    except OSError:
+        return ""
+    for child in children:
+        if not child.is_dir():
+            continue
+        name = child.name
+        if name in ("constant", "system") or name.startswith("processor"):
+            continue
+        try:
+            value = float(name)
+        except ValueError:
+            continue
+        if best is None or value > best[0]:
+            best = (value, name)
+    return best[1] if best else ""
+
+
+def owner_ncells(case: Path) -> int | None:
+    """The cell count out of `constant/polyMesh/owner`'s header note, the cheapest count
+    there is -- OpenFOAM writes `nCells:` into the note, so it is a regex over the first
+    couple of kilobytes rather than a mesh read. None when there is no readable owner."""
+    poly = case / "constant" / "polyMesh"
+    for name in ("owner", "owner.gz"):
+        path = poly / name
+        if not path.is_file():
+            continue
+        try:
+            if name.endswith(".gz"):
+                with gzip.open(path, "rb") as handle:
+                    head = handle.read(2048)
+            else:
+                head = path.read_bytes()[:2048]
+        except OSError:
+            continue
+        match = _NCELLS.search(head)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def discover_cases(root: Path | str = ".") -> list[Path]:
+    """Case directories at the study home and one level below it, in name order.
+
+    One level is enough: a study keeps its cases as `<home>/<case>` (or is itself the
+    case, the legacy `/work` layout), and walking deeper would wander into a case's own
+    time and processor directories.
+    """
+    study = find_root(root)
+    found: list[Path] = []
+    if is_case_dir(study):
+        found.append(study)
+    try:
+        children = sorted(study.iterdir())
+    except OSError:
+        children = []
+    for child in children:
+        if child.is_dir() and child.name != STATE_DIR and is_case_dir(child) and child != study:
+            found.append(child)
+    return found
+
+
+def case_summary(case: Path) -> dict[str, Any]:
+    return {
+        "name": case.name,
+        "path": str(case),
+        "meshed": is_meshed(case),
+        "cells": owner_ncells(case),
+        "latest_time": latest_time(case),
+    }
+
+
+def digest(root: Path | str = ".") -> dict[str, Any]:
+    """Everything a resumed session asks first, in one structure: the phase table, the
+    cases present with their mesh/solve state, and a count of what has been produced."""
+    study = find_root(root)
+    phases = load_phases(study)
+    arts = artifacts(root=study, exists=True)
+    kinds: dict[str, int] = {}
+    for row in arts:
+        kind = str(row.get("kind") or "other")
+        kinds[kind] = kinds.get(kind, 0) + 1
+    return {
+        "study": study.name,
+        "home": str(study),
+        "updated_at": phases.get("updated_at"),
+        "case": phases.get("case", ""),
+        "next_phase": next_phase(study),
+        "phases": [(row.get("name"), row.get("status")) for row in phases["phases"]],
+        "cases": [case_summary(case) for case in discover_cases(study)],
+        "artifact_kinds": kinds,
+        "artifact_count": len(arts),
+    }
+
+
+def render_digest(data: dict[str, Any]) -> str:
+    lines = [
+        f"study {data['study']}   updated {data['updated_at'] or '-'}   "
+        f"next: {data['next_phase'] or '(all settled)'}"
+    ]
+    lines.append("phases  " + "  ".join(f"{name}:{status}" for name, status in data["phases"]))
+    if data["cases"]:
+        lines.append("cases:")
+        width = max(len(case["name"]) for case in data["cases"])
+        for case in data["cases"]:
+            if case["cells"]:
+                mesh = f"{case['cells']:,} cells"
+            elif case["meshed"]:
+                mesh = "meshed"
+            else:
+                mesh = "no mesh yet"
+            when = f"latest t={case['latest_time']}" if case["latest_time"] else "no time written"
+            lines.append(f"  {case['name']:<{width}}  {mesh:<16}  {when}")
+    else:
+        lines.append("cases: none found under the study home")
+    if data["artifact_count"]:
+        kinds = ", ".join(f"{kind} x{count}" for kind, count in sorted(data["artifact_kinds"].items()))
+        lines.append(f"artifacts: {data['artifact_count']} registered — {kinds}")
+    else:
+        lines.append("artifacts: none registered yet")
+    return "\n".join(lines)
+
+
 # -- the command line --------------------------------------------------------------
 
 
@@ -447,6 +614,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("phases", help="The pipeline and where it got to.")
     sub.add_parser("next", help="The first phase that is not done or skipped.")
+
+    whole = sub.add_parser("digest", help="One read: cases, mesh/solve state, phases, artifacts.")
+    whole.add_argument("--json", action="store_true")
 
     mark = sub.add_parser("set", help="Move a phase to a status.")
     mark.add_argument("phase")
@@ -495,6 +665,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "next":
         print(next_phase(root))
+        return 0
+
+    if args.command == "digest":
+        data = digest(root)
+        if args.json:
+            print(json.dumps(data, indent=2))
+            return 0
+        print(render_digest(data))
         return 0
 
     if args.command == "set":

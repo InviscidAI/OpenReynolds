@@ -151,7 +151,11 @@ class LocalBackend(Backend):
             )
         return resolved
 
-    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120) -> ExecResult:
+    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120,
+             *, background: bool = False) -> ExecResult:
+        # `background` is accepted and ignored: it exists to stop a hosted backend
+        # billing for a workspace a poll is only looking at, and this machine is not
+        # rented by the second. A local poll runs like any other command.
         limit = min(int(timeout_s or 120), EXEC_MAX_TIMEOUT_S)
         where = self._resolve(cwd)
         where.mkdir(parents=True, exist_ok=True)

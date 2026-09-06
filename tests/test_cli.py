@@ -685,7 +685,7 @@ def test_a_study_from_before_homes_existed_keeps_the_whole_workspace(backend, st
 def test_a_directory_that_cannot_be_made_falls_back_rather_than_failing(
     backend, store, quiet_console
 ):
-    def refuse(cmd, cwd=None, timeout_s=120):
+    def refuse(cmd, cwd=None, timeout_s=120, *, background=False):
         raise BackendError("read-only volume", code="bad_request")
 
     backend.exec = refuse
@@ -749,7 +749,7 @@ def test_infrastructure_directories_are_not_listed_as_someone_else_s_work(backen
 
 
 def test_a_workspace_that_cannot_be_listed_does_not_stop_the_session(backend, store):
-    def broken(cmd, cwd=None, timeout_s=120):
+    def broken(cmd, cwd=None, timeout_s=120, *, background=False):
         raise BackendError("instance is not up", code="unavailable")
 
     backend.exec = broken

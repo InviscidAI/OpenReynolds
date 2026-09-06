@@ -130,7 +130,8 @@ class Browser:
 
     # -- listing ---------------------------------------------------------------
 
-    def tree(self, path: str = "", depth: int = DEFAULT_DEPTH) -> Listing:
+    def tree(self, path: str = "", depth: int = DEFAULT_DEPTH,
+             *, background: bool = False) -> Listing:
         """Everything under `path`, to a depth, in one round trip.
 
         One command beats one call per directory: a workspace has hundreds of
@@ -142,6 +143,11 @@ class Browser:
         with a listing that looked complete. `head` is asked for one line more than
         the cap so "there was more" is measured rather than inferred from a listing
         that happens to be exactly `MAX_ENTRIES` long.
+
+        `background=True` marks the listing a poll: the backend runs it only on a
+        workspace already up, and it does not keep that workspace alive. Raises
+        BackendError("workspace_idle") when there is nothing running -- which is a
+        thing to wait out, not an empty workspace.
         """
         path = path or self.home
         # `-H` follows a symlink named on the command line, and only that one. The
@@ -153,7 +159,12 @@ class Browser:
             f"find -H {shlex.quote(path)} -maxdepth {int(depth)} -mindepth 1 "
             f"-printf '{FIND_FORMAT}' 2>/dev/null | head -n {MAX_ENTRIES + 1}"
         )
-        result = self.backend.exec(cmd, timeout_s=60)
+        result = self.backend.exec(cmd, timeout_s=60, background=background)
+        if result.idle:
+            # Nothing ran, so there is nothing to say about what is on disk. Falling
+            # through would answer "no files", and the list_dir fallback below would
+            # go start the very workspace this listing declined to start.
+            raise BackendError("the workspace is not running", code="workspace_idle")
         entries = [entry for line in result.output.splitlines() if (entry := _parse(line))]
         truncated = len(entries) > MAX_ENTRIES
         del entries[MAX_ENTRIES:]

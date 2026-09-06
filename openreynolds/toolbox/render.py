@@ -4,8 +4,15 @@
 Headless via OSMesa. Fixed cameras so two runs of the same case are a visual diff
 rather than two unrelated pictures.
 
+`--fields` takes solver outputs (`U`, `p`, `k`, ...) and also the quantities a solver
+does not write but a study usually wants to see: `vorticity` (the out-of-plane
+component, drawn signed so the two rows of a von Karman street read as opposite colours)
+and `Q` (the Q-criterion). Those are functions of the velocity gradient, computed here
+from `U`, so they no longer need a hand-written pyvista script.
+
     python3 render.py /work/case                      # latest time, all default scenes
     python3 render.py /work/case --fields U p --normal z --time 500
+    python3 render.py /work/case --fields vorticity Q  # derived from U
     python3 render.py /work/case --scene mesh --out /work/case/renders
 """
 
@@ -34,18 +41,98 @@ NORMALS = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}
 
 
 def open_case(case: Path, time: float | None):
+    """The case as pyvista blocks, at the chosen (default latest) write time.
+
+    The fast path is pyvista's `OpenFOAMReader`. It fails on a field file the VTK
+    reader cannot parse -- a `0/` value that is a `$variable`, a `flowVelocity` or
+    `Tinf` symbol, or an `#includeEtc` directive -- with `Error reading line N of
+    ./0/U`, and 73 studies met that and hand-wrote a pyvista script to get around
+    it. `foamToVTK` does not have that limitation: it reads through OpenFOAM's own
+    libraries, which expand includes and resolve variables, so when the reader
+    raises we fall back to it. It is slower (it writes files), which is why it is
+    the fallback and not the primary path.
+    """
     pv = _pyvista()
     foam = case / f"{case.name}.foam"
     if not foam.exists():
         foam.write_text("")
-    reader = pv.OpenFOAMReader(str(foam))
-    times = list(reader.time_values)
-    chosen = times[-1] if times else 0.0
-    if time is not None and times:
-        chosen = min(times, key=lambda t: abs(t - time))
-    reader.set_active_time_value(chosen)
-    reader.cell_to_point_creation = True
-    return reader.read(), chosen, times
+    try:
+        reader = pv.OpenFOAMReader(str(foam))
+        times = list(reader.time_values)
+        chosen = times[-1] if times else 0.0
+        if time is not None and times:
+            chosen = min(times, key=lambda t: abs(t - time))
+        reader.set_active_time_value(chosen)
+        reader.cell_to_point_creation = True
+        block = reader.read()
+        if internal_mesh(block) is None:
+            raise ValueError("no internalMesh from OpenFOAMReader")
+        return block, chosen, times
+    except Exception as exc:  # the reader choked -- go through foamToVTK
+        print(f"OpenFOAMReader failed ({type(exc).__name__}: {exc}); "
+              f"falling back to foamToVTK", flush=True)
+        return open_case_via_foamtovtk(case, time)
+
+
+def open_case_via_foamtovtk(case: Path, time: float | None):
+    """Read the case through `foamToVTK`, the include/variable-safe path.
+
+    Runs `foamToVTK` (which needs the OpenFOAM environment the toolbox is invoked
+    under) to write `<case>/VTK/`, then reads the newest internal-mesh output pyvista
+    understands. foamToVTK's layout has changed across releases -- modern builds write
+    `VTK/<name>_<index>/internal.vtu`, older ones `VTK/<name>_<index>.vtk` -- so we
+    take whichever internal-mesh file is newest rather than assume one shape.
+    """
+    import subprocess
+
+    pv = _pyvista()
+    argv = ["foamToVTK", "-case", str(case)]
+    if time is None:
+        argv.append("-latestTime")
+    else:
+        argv += ["-time", f"{time:g}"]
+    proc = subprocess.run(argv, cwd=str(case), capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit(
+            "could not read this case: OpenFOAMReader failed and foamToVTK also failed "
+            f"(exit {proc.returncode}). Last lines:\n" + "\n".join(proc.stderr.splitlines()[-8:])
+        )
+
+    newest = newest_internal_vtk(case / "VTK")
+    if newest is None:
+        raise SystemExit(f"foamToVTK wrote nothing readable under {case / 'VTK'}")
+    block = pv.read(str(newest))
+    stem = newest.parent.name if newest.name == "internal.vtu" else newest.stem
+    chosen = time_from_stem(stem)
+    return block, chosen, [chosen]
+
+
+def newest_internal_vtk(vtk_dir: Path) -> Path | None:
+    """The most recently written internal-mesh file foamToVTK left, or None.
+
+    Modern foamToVTK writes `<name>_<index>/internal.vtu`; older builds write
+    `<name>_<index>.vtk` directly in `VTK/`. We accept either and take the newest by
+    mtime -- the `-latestTime`/`-time` write we just made -- rather than assuming a
+    layout or that the highest index is the wanted time.
+    """
+    candidates = list(vtk_dir.glob("**/internal.vtu")) + list(vtk_dir.glob("*.vtk"))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def time_from_stem(stem: str) -> float:
+    """The write time read out of a foamToVTK output name, else 0.0.
+
+    `motorBike_300` -> 300.0, `cavity_12` -> 12.0. The trailing numeric token is the
+    write index/time; anything unparseable leaves 0.0 rather than failing a render.
+    """
+    for token in reversed(stem.replace("_", " ").split()):
+        try:
+            return float(token)
+        except ValueError:
+            continue
+    return 0.0
 
 
 def internal_mesh(block):
@@ -119,21 +206,83 @@ def save(plotter, out: Path) -> Path:
     return out
 
 
+def canonical(name: str) -> str:
+    """A field name reduced so `vorticity`, `Vorticity`, `vort` and `q-criterion` all
+    reach the same entry. Case, underscores, hyphens and the |mag| bars are noise here."""
+    return name.lower().replace("_", "").replace("-", "").replace("|", "")
+
+
+DERIVED_FROM_U = {
+    "vorticity": "vorticity", "vort": "vorticity", "curl": "vorticity",
+    "q": "qcriterion", "qcriterion": "qcriterion", "qcrit": "qcriterion",
+}
+"""Field names the solver never writes, mapped to the VTK quantity that makes them.
+
+`foamToVTK` and the OpenFOAMReader carry only what is on disk -- `U`, `p`, the turbulence
+fields -- and vorticity and the Q-criterion are neither: they are contractions of grad(U).
+So `render.py --fields vorticity` used to print "no field named vorticity" and 73 studies
+answered it by hand-writing a pyvista script that ran `compute_derivative`. That is the
+one call this needs; it is done once, on the volume mesh, so the ordinary slice-and-colour
+path draws the result like any written field."""
+
+SIGNED_FIELDS = frozenset({"vorticity_z"})
+"""Fields drawn about zero with a diverging map. Vorticity in a wake is signed -- the two
+rows of a shed street turn opposite ways -- and a sequential map (viridis) hides the sign
+that is the whole reason to plot it, so those get `coolwarm` centred on zero instead."""
+
+
+def add_derived(mesh, field: str):
+    """Compute `field` from `U` onto `mesh` when the solver did not write it.
+
+    Returns the name of the scalar array to colour by, or None when `field` is neither a
+    written field nor one we know how to derive. The gradient needs the cells, so this
+    runs on the volume mesh before any slice is taken; the slice then inherits the array.
+    """
+    quantity = DERIVED_FROM_U.get(canonical(field))
+    if quantity is None:
+        return None
+    if "U" not in mesh.point_data and "U" not in mesh.cell_data:
+        return None  # nothing to take a gradient of
+    source = mesh if "U" in mesh.point_data else mesh.cell_data_to_point_data()
+    kwargs = {"scalars": "U", quantity: True}
+    derived = source.compute_derivative(**kwargs)
+    values = np.asarray(derived.point_data[quantity])
+    if quantity == "vorticity":
+        # The out-of-plane component is the one a 2D wake is read by; keep the signed z
+        # component as the default and the magnitude alongside it for a 3D case.
+        mesh.point_data["vorticity_z"] = values[:, 2]
+        mesh.point_data["vorticity_mag"] = np.linalg.norm(values, axis=1)
+        return "vorticity_z"
+    mesh.point_data[quantity] = values
+    return quantity
+
+
 def render_field(mesh, field: str, normal: str, out: Path, zoom: float | None = None,
                  bounds: tuple | None = None) -> Path | None:
-    if field not in mesh.point_data and field not in mesh.cell_data:
+    if field in mesh.point_data or field in mesh.cell_data:
+        name = field
+    else:
+        name = add_derived(mesh, field)
+    if name is None:
         return None
     cut = slice_at(mesh, normal)
-    data = cut.point_data.get(field, cut.cell_data.get(field))
+    data = cut.point_data.get(name, cut.cell_data.get(name))
     if data is None:
         return None
-    scalars = field
+    scalars = name
     if data.ndim > 1 and data.shape[1] > 1:
-        cut[f"|{field}|"] = np.linalg.norm(data, axis=1)
-        scalars = f"|{field}|"
+        cut[f"|{name}|"] = np.linalg.norm(data, axis=1)
+        scalars = f"|{name}|"
+
+    # A signed field reads about zero on a diverging map; everything else on viridis.
+    cmap = "coolwarm" if scalars in SIGNED_FIELDS else "viridis"
+    clim = None
+    if scalars in SIGNED_FIELDS:
+        extent = float(np.max(np.abs(data))) or 1.0
+        clim = (-extent, extent)
 
     plotter = _pyvista().Plotter(off_screen=True, window_size=(1100, 800))
-    plotter.add_mesh(cut, scalars=scalars, cmap="viridis", show_edges=False)
+    plotter.add_mesh(cut, scalars=scalars, cmap=cmap, clim=clim, show_edges=False)
     plotter.add_scalar_bar(title=scalars, n_labels=5)
     aim(plotter, normal)
     frame(plotter, cut, zoom, bounds)
@@ -159,7 +308,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("case", type=Path)
     parser.add_argument("--out", type=Path, default=None, help="defaults to <case>/renders")
-    parser.add_argument("--fields", nargs="*", default=["U", "p"])
+    parser.add_argument("--fields", nargs="*", default=["U", "p"],
+                        help="solver outputs (U, p, k, ...) or derived: vorticity, Q")
     parser.add_argument("--normal", default="z", choices=sorted(NORMALS))
     parser.add_argument("--time", type=float, default=None)
     parser.add_argument("--scene", default="all", choices=["all", "mesh", "fields"])

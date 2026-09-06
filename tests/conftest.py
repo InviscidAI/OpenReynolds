@@ -35,15 +35,19 @@ class FakeBackend(Backend):
             "nproc": ExecResult(0, "8\n", False, None),
         }
         self.execs: list[str] = []
+        self.exec_background: list[bool] = []
+        """Whether each exec declared itself a poll. Separate from `execs` so the
+        many tests that assert on the commands are not disturbed by it."""
         self.jobs: dict[str, JobStatus] = {}
         self.logs: dict[str, bytes] = {}
         self.started: list[dict] = []
         self.trees: list[tuple[Path, str]] = []
         self.fetched: list[str] = []
 
-    def exec(self, cmd, cwd=None, timeout_s=120):
+    def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
         self.last_exec = (cmd, cwd, timeout_s)
         self.execs.append(cmd)
+        self.exec_background.append(background)
         return self.exec_results.get(cmd, self.exec_result)
 
     def put_file(self, path, data):

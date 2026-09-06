@@ -349,6 +349,7 @@ def sync(
     path: str = "",
     everything: bool = False,
     live: bool = False,
+    background: bool = False,
     max_file_bytes: int = MAX_FILE_BYTES,
     max_total_bytes: int = MAX_TOTAL_BYTES,
 ) -> MirrorReport:
@@ -356,6 +357,10 @@ def sync(
 
     Returns a report whatever happens. Callers are sessions with work in flight, and
     none of them can afford an exception from a convenience.
+
+    `background=True` is the unattended cycle on the clock below, as opposed to a sync
+    somebody asked for. It tells the backend this listing is a poll, so that a session
+    nobody is using stops looking busy -- see LiveMirror.
     """
     store = browser.store
     if store is None:
@@ -365,8 +370,14 @@ def sync(
     root = path or browser.home or WORKSPACE_ROOT
 
     try:
-        entries = browser.tree(root, depth=DEPTH)
+        entries = browser.tree(root, depth=DEPTH, background=background)
     except (BackendError, OSError) as exc:
+        if getattr(exc, "code", "") == "workspace_idle":
+            # The expected steady state of an idle session, not a fault: there is no
+            # workspace up because nothing has been asked of it, and this cycle
+            # declined to start one. Saying so every twenty seconds for a night would
+            # bury the warnings that mean something.
+            return report
         report.warnings.append(f"could not look at {root}: {exc}")
         return report
 
@@ -648,7 +659,10 @@ class LiveMirror:
 
     def sync_now(self) -> MirrorReport:
         """One sync, immediately, on the caller's thread. Serialized with the
-        background cycles by the same lock."""
+        background cycles by the same lock.
+
+        Foreground by definition: something asked for it, so the workspace is in use
+        and may be started if it is not up."""
         return self._cycle()
 
     def catch_up(self) -> MirrorReport | None:
@@ -675,15 +689,21 @@ class LiveMirror:
             self._wake.clear()
             if self._stop.is_set():
                 return
-            self._cycle()
+            # Every cycle on this thread is a poll, including a poked one: whatever
+            # provoked the poke was itself a command a moment ago, and that is what
+            # keeps the workspace alive. This loop outlives the person -- it ran ~150
+            # listings an hour for as long as a session process stayed open -- so if
+            # it counted as use, a hosted workspace could never be reclaimed and
+            # billed until its 24-hour ceiling. It does not count.
+            self._cycle(background=True)
 
-    def _cycle(self) -> MirrorReport:
+    def _cycle(self, *, background: bool = False) -> MirrorReport:
         progress = self.progress
         with self._lock:
             if progress is not None:
                 progress.sync_begin()
             try:
-                report = sync(self.browser, live=True)
+                report = sync(self.browser, live=True, background=background)
             except Exception as exc:  # noqa: BLE001 - a convenience may not end a session
                 report = MirrorReport(
                     local_dir=Path.cwd(), warnings=[f"could not mirror: {exc}"]

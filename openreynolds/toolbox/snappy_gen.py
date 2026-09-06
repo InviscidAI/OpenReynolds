@@ -995,16 +995,21 @@ def control_dict(opts, flow, body_patch: str) -> str:
         end, write = float(opts["iterations"]), max(1.0, opts["iterations"] / opts["writes"])
         control, delta = "timeStep", 1.0
         extra = []
+    purge = case_gen.purge_write("transient" if study in TRANSIENT else "steady", opts)
     lines = [f"application     {solver};", "", "startFrom       latestTime;",
              "startTime       0;", "stopAt          endTime;",
              f"endTime         {end:g};", f"deltaT          {delta:g};", "",
              f"writeControl    {control};", f"writeInterval   {write:g};",
-             "purgeWrite      0;", "writeFormat     binary;",
+             f"purgeWrite      {purge};", "writeFormat     binary;",
              "writePrecision  8;", "writeCompression off;",
              "timeFormat      general;", "timePrecision   6;",
              "runTimeModifiable true;"]
     lines += extra
-    body = "\n".join(lines) + "\n\n" + function_objects(opts, flow, body_patch) + "\n"
+    # The collated file handler on the case (see case_gen.io_optimisation): one file per
+    # processor region a write instead of one per field per processor, which is the cost
+    # that matters on the 9p Volume and 4x fewer files to checkpoint and reconstruct.
+    body = ("\n".join(lines) + "\n\n" + function_objects(opts, flow, body_patch) + "\n"
+            + case_gen.io_optimisation())
     return case_gen.foam_file("dictionary", "controlDict", body, "system")
 
 

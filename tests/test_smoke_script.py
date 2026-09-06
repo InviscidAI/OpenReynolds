@@ -77,7 +77,7 @@ r/geometry.png
         """A solver outside any job's process group, as `mpirun` leaves behind."""
         self._polls: dict[str, int] = {}
 
-    def exec(self, cmd, cwd=None, timeout_s=120):
+    def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
         if "WM_PROJECT_VERSION" in cmd:
             return ExecResult(0, "hello\n2512\n", False, None)
         if cmd.strip() == "exit 7":
@@ -231,7 +231,7 @@ def test_it_cleans_up_after_itself(wired, tmp_path):
     smoke, backend = wired
     calls = []
     original = backend.exec
-    backend.exec = lambda cmd, cwd=None, timeout_s=120: (
+    backend.exec = lambda cmd, cwd=None, timeout_s=120, *, background=False: (
         calls.append(cmd) or original(cmd, cwd=cwd, timeout_s=timeout_s)
     )
 
@@ -243,7 +243,7 @@ def test_it_cleans_up_after_itself(wired, tmp_path):
 
 def test_a_failing_check_is_reported_and_exits_nonzero(wired, capsys):
     smoke, backend = wired
-    backend.exec = lambda cmd, cwd=None, timeout_s=120: ExecResult(0, "wrong version", False, None)
+    backend.exec = lambda cmd, cwd=None, timeout_s=120, *, background=False: ExecResult(0, "wrong version", False, None)
 
     exit_code = smoke.main()
     output = capsys.readouterr().out

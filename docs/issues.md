@@ -547,7 +547,54 @@ no way to query through this tool without migrating. A `--no-apply` flag, or ref
 
 ---
 
-## 21. Sign-in cannot be throttled by anything in this project
+## 21. A captured transcript can hold the same message more than once — RESOLVED (client side)
+
+**What happened.** In one 3D transient study the captured transcript held a single
+`job_check` reply three times, at 04:58:41, 05:00:39 and 05:09:47, all three under
+message `seq` 197; five other messages of the same study appeared twice. Read back, it
+looked like an agent being handed a stale "the job is still running" answer for
+twenty-six minutes after the job had in fact been killed — a correctness failure worth
+half an hour of a run.
+
+**It was not one.** The agent produced that reply exactly once, and two facts prove it.
+`Store.append_message` increments a counter before it returns, so no two records can
+share a seq — three rows at seq 197 are three copies of one record, not three records.
+And the reply's own text is a timestamp: `running_for=` and `[waited …s]` are computed
+from the clock at the moment the string is built, and all three copies carry the same
+values, down to the second the sandbox died.
+
+**Mechanism.** `POST /v1/studies/{id}/messages` was retried at two layers — five
+attempts in `FoamdClient.request`, three more around them in `Capture._drain`, so up to
+fifteen posts of one message. The service takes `seq` from the client and its `messages`
+table indexes `(study_id, seq)` without a unique constraint, so a post that had been
+carried out and whose answer was lost (a read timeout, a 502 from the edge) wrote its row
+and every repeat wrote it again. The capture worker is also serial, so a repeat storm
+holds every later message behind it — and `messages.created_at` defaults to `now()` at
+insert, so the transcript is stamped with the uploader's clock, not the agent's. That is
+the whole of the apparent stall.
+
+**Fixed here** (`hosted.py`, `capture.py`): a request is repeated only when it is safe
+to repeat. Reads keep every retry they had; a write is retried only on the failures that
+prove the service did nothing (429, a cold-start 503, a connection never made) and is
+handed to the caller on an ambiguous one. `Capture` no longer retries at all, since the
+transport below it now knows what this module cannot. `POST .../tar` says
+`repeatable=True` for itself, because unpacking the same archive twice is unpacking it
+once.
+
+**Still open, on the service side.** Two changes would make the transcript
+self-defending rather than merely no longer attacked:
+
+- a unique key on `messages(study_id, seq)`, so a repeat is idempotent instead of
+  additive and a client may retry freely again;
+- a client-supplied timestamp column, so a row records when the agent said the thing
+  rather than when the row happened to be inserted. Without it no transcript timeline
+  can be trusted to within the upload backlog, and the backlog is unbounded.
+
+Nothing here reached the model: `Loop._record` posts to capture after the message is
+already in the thread, and `_job_check` reads a live status on every call with no cache
+anywhere in the path.
+
+## 22. Sign-in cannot be throttled by anything in this project
 
 Found while scoping `ui`'s missing rate limiting, 2026-09-06. Filed here rather than on
 GitHub because the fix is a setting in somebody's console, not a change to any repo.
@@ -578,3 +625,4 @@ the deployment story does not say so anywhere.
 **Evidence.** `reynolds_app/app.py` route list (no auth route among them);
 `reynolds_app/settings.py:55` (`turnstile_site_key`, public, "never this server");
 `web/src/turnstile.ts`.
+

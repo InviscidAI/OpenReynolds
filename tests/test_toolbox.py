@@ -352,11 +352,16 @@ def test_the_toolbox_sticks_to_what_the_image_provides():
     rather than enumerated, and what is left to police is the third-party set and
     the scripts' own siblings.
     """
-    # gmsh joined this set when `pip install gmsh` went into the image: the module,
-    # not only the command, and OCC-enabled, which is what lets `cad_convert.py` read
-    # a STEP file as B-rep. It is imported inside the functions that need it there,
-    # so the refusals stay readable on a machine that has none of this.
-    third_party = {"numpy", "matplotlib", "pandas", "pyvista", "gmsh"}
+    # imageio (with the ffmpeg plugin) joined the image when gif/mp4 encoding moved onto
+    # the instance; `encode.py` is the script that uses it. It is on the image, so it is
+    # allowed here like the other four.
+    # gmsh joined this set when `pip install gmsh` went into the image: the module, not
+    # only the command, and OCC-enabled. That is what lets `cad_convert.py` read a STEP
+    # file as B-rep and what drives the OpenCASCADE kernel `cad_gen.py` meshes with; the
+    # binary had been there all along, importable by nothing. It is imported inside the
+    # functions that need it, so the refusals stay readable on a machine that has none
+    # of this.
+    third_party = {"numpy", "matplotlib", "pandas", "pyvista", "imageio", "gmsh"}
     siblings = {script.stem for script in TOOLBOX.glob("*.py")}
     allowed = set(sys.stdlib_module_names) | third_party | siblings | {"__future__"}
     for script in sorted(TOOLBOX.glob("*.py")):
@@ -378,6 +383,16 @@ def test_the_toolbox_index_names_every_script_in_it():
     index = (TOOLBOX / "README.md").read_text(encoding="utf-8")
     for script in sorted(TOOLBOX.glob("*.py")):
         assert script.name in index, f"{script.name} is in the toolbox and not in its index"
+
+
+def test_the_environment_manifest_states_the_facts_the_corpus_kept_missing():
+    """235 install attempts and a run of `import fitz` failures came from not knowing
+    the instance: the network is sealed, PDFs are pdftoppm not fitz, imageio and gmsh
+    are already here. The manifest states those so they are read, not rediscovered."""
+    env = (TOOLBOX / "ENVIRONMENT.md").read_text(encoding="utf-8").lower()
+    for fact in ("sealed", "pdftoppm", "imageio", "gmsh", "foamtovtk"):
+        assert fact in env, f"ENVIRONMENT.md does not mention {fact}"
+    assert "fitz" in env, "the manifest should name fitz to steer off it"
 
 
 def test_the_index_offers_rather_than_instructs():
@@ -465,6 +480,114 @@ def test_framing_is_not_applied_unless_asked_for():
     plotter = FakePlotter()
     render.frame(plotter, None, zoom=None, bounds=None)
     assert plotter.zoomed is None and plotter.reset_bounds is None
+
+
+# The reader fails on a `0/` field that is a `$variable`, `flowVelocity`/`Tinf`, or an
+# `#includeEtc` -- 73 studies met that and hand-wrote pyvista to get around it. The
+# fallback reads foamToVTK output instead; these cover the file-picking it does, which
+# is the part that has changed shape across OpenFOAM releases.
+
+
+def test_time_is_read_out_of_a_foamtovtk_output_name():
+    render = load("render")
+    assert render.time_from_stem("motorBike_300") == 300.0
+    assert render.time_from_stem("cavity_12") == 12.0
+    assert render.time_from_stem("internal") == 0.0  # unparseable -> 0, not a failure
+
+
+def test_newest_internal_vtk_takes_the_last_write_across_either_layout(tmp_path):
+    render = load("render")
+    vtk = tmp_path / "VTK"
+    # modern layout: a per-time subdir with internal.vtu
+    old = vtk / "case_100"
+    old.mkdir(parents=True)
+    (old / "internal.vtu").write_text("old")
+    # a later write, legacy layout: a bare .vtk
+    new = vtk / "case_200.vtk"
+    new.write_text("new")
+    import os, time as _t
+    later = _t.time() + 10
+    os.utime(new, (later, later))
+    assert render.newest_internal_vtk(vtk) == new
+
+
+def test_newest_internal_vtk_is_none_when_foamtovtk_wrote_nothing(tmp_path):
+    render = load("render")
+    assert render.newest_internal_vtk(tmp_path / "VTK") is None
+
+
+# -- derived fields: vorticity and Q, which the solver never writes ------------
+#
+# `render.py --fields vorticity` used to print "no field named vorticity" because
+# vorticity and the Q-criterion are functions of grad(U), not solver outputs -- 73
+# studies answered it by hand-writing a pyvista script. `add_derived` computes them from
+# U with the one VTK call those scripts made, so the ordinary colour path draws them.
+
+
+class FakeDataset:
+    """A stand-in for a pyvista mesh: point/cell arrays and the one derivative call.
+
+    `compute_derivative` here returns whatever quantity the flag asked for, so the array
+    routing in `add_derived` -- which component it keeps, what it names it -- can be
+    checked without VTK, which lives in the container.
+    """
+
+    def __init__(self, point_data=None, cell_data=None):
+        self.point_data = dict(point_data or {})
+        self.cell_data = dict(cell_data or {})
+
+    def cell_data_to_point_data(self):
+        return FakeDataset(point_data={**self.point_data, **self.cell_data})
+
+    def compute_derivative(self, scalars=None, **flags):
+        out = FakeDataset()
+        if flags.get("vorticity"):
+            # z-component distinct and signed, so keeping the right one is visible
+            out.point_data["vorticity"] = np.array([[0.0, 0.0, 3.0], [0.0, 0.0, -5.0]])
+        if flags.get("qcriterion"):
+            out.point_data["qcriterion"] = np.array([1.0, 2.0])
+        return out
+
+
+def test_canonical_folds_case_and_punctuation():
+    render = load("render")
+    assert render.canonical("Vorticity") == "vorticity"
+    assert render.canonical("Q-criterion") == render.canonical("q_criterion") == "qcriterion"
+
+
+def test_the_derived_registry_maps_the_aliases_to_one_quantity():
+    render = load("render")
+    assert render.DERIVED_FROM_U["vort"] == render.DERIVED_FROM_U["curl"] == "vorticity"
+    assert render.DERIVED_FROM_U["q"] == render.DERIVED_FROM_U["qcrit"] == "qcriterion"
+
+
+def test_add_derived_ignores_a_field_it_cannot_make():
+    render = load("render")
+    mesh = FakeDataset(point_data={"U": np.zeros((2, 3))})
+    assert render.add_derived(mesh, "temperature") is None  # not a derived quantity
+
+
+def test_add_derived_needs_a_velocity_to_take_a_gradient_of():
+    render = load("render")
+    mesh = FakeDataset(point_data={"p": np.zeros(2)})
+    assert render.add_derived(mesh, "vorticity") is None  # no U present
+
+
+def test_add_derived_keeps_the_signed_out_of_plane_vorticity():
+    render = load("render")
+    mesh = FakeDataset(point_data={"U": np.zeros((2, 3))})
+    name = render.add_derived(mesh, "vorticity")
+    assert name == "vorticity_z"
+    assert mesh.point_data["vorticity_z"].tolist() == [3.0, -5.0]
+    assert "vorticity_mag" in mesh.point_data  # magnitude kept for a 3D case
+    assert name in render.SIGNED_FIELDS, "signed vorticity is drawn about zero"
+
+
+def test_add_derived_reads_U_off_cell_data_when_that_is_where_it_is():
+    render = load("render")
+    mesh = FakeDataset(cell_data={"U": np.zeros((2, 3))})
+    assert render.add_derived(mesh, "Q") == "qcriterion"
+    assert mesh.point_data["qcriterion"].tolist() == [1.0, 2.0]
 
 
 # -- the digests report the number that measures the thing ---------------------

@@ -40,6 +40,28 @@ own `supa.run()` already retries once on a dropped database socket for the same 
 this is the same courtesy on the client side. A 500 that survives the retries still
 reaches the model, so nothing is hidden -- only the flapping is absorbed."""
 
+_DECLINED_STATUSES = frozenset({429, 503})
+"""The subset of `_RETRY_STATUSES` that says the service turned the call away.
+
+A 429 is the rate limiter and a 503 is a workspace still booting: in both the handler
+never ran, so asking again cannot make the same thing happen twice. 500, 502 and 504
+say nothing of the kind -- the work may have been done and only the answer lost -- and
+neither does a read timeout."""
+
+_REPEATABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
+"""Methods a client may send again when it does not know whether the first one landed.
+
+A POST is not one of them, and the transcript is where that showed. A study's messages
+are posted one at a time to `POST /v1/studies/{id}/messages` carrying a `seq` this
+client assigns; the service inserts what it is given and `messages(study_id, seq)` is an
+ordinary index, not a unique key. So a POST that was carried out and whose answer was
+lost -- a read timeout, a 502 from the edge -- wrote the row, and every repeat wrote it
+again. One `job_check` reply from a 3D transient run appeared in the captured transcript
+three times, and five other messages of the same study twice; read back afterwards it
+looked exactly like an agent being served a stale answer for twenty-six minutes, and
+that is not what happened. Nothing here is retried in the dark now: an ambiguous failure
+on a write is handed to the caller instead of being tried again."""
+
 _MAX_ATTEMPTS = 5
 _DEFAULT_RETRY_AFTER_S = 10.0
 _SERVER_ERROR_RETRY_S = 1.0
@@ -297,18 +319,40 @@ class FoamdClient:
         path: str,
         *,
         timeout: float | None = None,
+        repeatable: bool | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
-        """Issue one request, retrying cold starts and transient failures."""
+        """Issue one request, retrying cold starts and transient failures.
+
+        `repeatable` says whether sending this call a second time is the same as
+        sending it once. It defaults to the method (`_REPEATABLE_METHODS`), and a
+        caller overrides it where the method is a poor guide -- a `POST .../tar` that
+        unpacks the same bytes over the same directory is repeatable, a `POST` that
+        appends a row to a transcript is not. When it is false, only a failure that
+        proves the service did nothing (`_DECLINED_STATUSES`, or never connecting at
+        all) is tried again; an ambiguous one is raised, because the alternative is
+        doing the work twice and never finding out.
+        """
+        repeat_ok = (
+            method.upper() in _REPEATABLE_METHODS if repeatable is None else repeatable
+        )
         last_error: BackendError | None = None
         for attempt in range(_MAX_ATTEMPTS):
             response = None
+            # Whether this failure leaves it unknown whether the service acted.
+            ambiguous = False
             try:
                 response = self._client.request(method, path, timeout=timeout, **kwargs)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                # Nothing was ever handed over, so repeating this repeats no effect --
+                # true whatever the method is.
+                last_error = BackendError(f"cannot reach the service: {exc}", code="unreachable")
             except httpx.TimeoutException as exc:
                 last_error = BackendError(f"request timed out: {exc}", code="timeout")
+                ambiguous = True
             except httpx.HTTPError as exc:
                 last_error = BackendError(f"cannot reach the service: {exc}", code="unreachable")
+                ambiguous = True
             else:
                 if 300 <= response.status_code < 400:
                     # Unreachable while this client follows redirects, and kept because
@@ -322,6 +366,10 @@ class FoamdClient:
                 last_error = _decode_error(response)
                 if response.status_code not in _RETRY_STATUSES:
                     raise last_error
+                ambiguous = response.status_code not in _DECLINED_STATUSES
+
+            if ambiguous and not repeat_ok:
+                raise last_error
 
             if attempt < _MAX_ATTEMPTS - 1:
                 time.sleep(_retry_delay(response, attempt))
@@ -426,21 +474,53 @@ class HostedBackend(Backend):
 
     # -- commands --------------------------------------------------------------
 
-    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120) -> ExecResult:
+    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120,
+             *, background: bool = False) -> ExecResult:
         timeout_s = max(1, min(int(timeout_s), EXEC_MAX_TIMEOUT_S))
         payload: dict[str, Any] = {"cmd": cmd, "timeout_s": timeout_s}
         if cwd:
             payload["cwd"] = cwd
+        if background:
+            # Only when true, so an older service -- which would ignore the field
+            # anyway -- sees exactly the request it saw before.
+            payload["background"] = True
+        # Left non-repeatable, and the note further down says why in the concrete: an
+        # ambiguous failure here used to be retried and re-ran a 13-minute command. The
+        # command is arbitrary -- it may already have moved files or written a case --
+        # so a repeat is a second run, not a second look. The cold-start 503 a first
+        # call meets is still retried, because that one is the service saying it did
+        # nothing at all.
         body = _json(
             self._client.request(
                 "POST", self._instance_path("/exec"), json=payload, timeout=timeout_s + 60.0
             )
         )
+        if body.get("idle"):
+            # The service had no Sandbox up and, this being a poll, did not build one.
+            # Nothing ran. Deliberately NOT exit_code 0 with empty output: that reads
+            # as "the workspace is empty", which is the one wrong answer a file mirror
+            # acts on rather than ignores.
+            return ExecResult(exit_code=-1, output="", truncated=False, log_path=None,
+                              stderr="", idle=True)
+        if body.get("promoted") and body.get("job_id"):
+            # The command outran the synchronous window and the service moved it to a
+            # detached job rather than hold a fragile long exec connection (which used to
+            # 500 and get retried, re-running a 13-minute command). Surface it as the job
+            # it now is, so the next step is a job_check, not a re-run.
+            note = body.get("note") or (
+                f"moved to detached job {body['job_id']}; follow it with job_check"
+            )
+            return ExecResult(exit_code=0, output=note, truncated=False, log_path=None,
+                              stderr="", job_id=str(body["job_id"]))
         return ExecResult(
             exit_code=body.get("exit_code", -1),
             output=body.get("output", ""),
             truncated=bool(body.get("truncated")),
             log_path=body.get("log_path"),
+            # The wrapper's own stderr, which the service already computes and returns
+            # as "why the command did not run" -- dropped here until now, so a failure
+            # of the workspace itself reached the model as a bare exit code.
+            stderr=body.get("stderr", "") or "",
         )
 
     # -- files -----------------------------------------------------------------
@@ -488,6 +568,10 @@ class HostedBackend(Backend):
             content=archive,
             headers={"Content-Type": "application/gzip"},
             timeout=300.0,
+            # A POST by method, idempotent in fact: it unpacks the same archive over
+            # the same directory, so a second one leaves the workspace as the first
+            # did. Said here so an upload over a flaky link still gets its retries.
+            repeatable=True,
         )
 
     def get_tree(self, remote_paths: list[str], local_dir: Path) -> list[Path]:
@@ -498,6 +582,8 @@ class HostedBackend(Backend):
             self._instance_path("/tar"),
             params={"mode": "pack", "paths": remote_paths},
             timeout=300.0,
+            # A read wearing a POST, because the path list travels in the body.
+            repeatable=True,
         )
         return _extract_tar_gz(response.content, local_dir)
 

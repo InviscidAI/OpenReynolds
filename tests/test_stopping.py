@@ -96,7 +96,7 @@ def test_force_kills_what_outlived_its_job(backend, store):
     commands: list[str] = []
     state = {"alive": True}
 
-    def exec_(cmd, cwd=None, timeout_s=120):
+    def exec_(cmd, cwd=None, timeout_s=120, *, background=False):
         commands.append(cmd)
         if cmd.startswith("pkill"):
             state["alive"] = False
@@ -117,7 +117,7 @@ def test_without_force_nothing_is_pkilled(backend, store):
     with_jobs(backend, store, "sweep")
     commands: list[str] = []
 
-    def exec_(cmd, cwd=None, timeout_s=120):
+    def exec_(cmd, cwd=None, timeout_s=120, *, background=False):
         commands.append(cmd)
         return ExecResult(0, "bash\nsimpleFoam\nps", False, None)
 

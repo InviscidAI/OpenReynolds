@@ -63,14 +63,22 @@ def test_messages_results_and_artifacts_all_arrive(tmp_path):
     assert client.results == [{"passed": True}]
 
 
-def test_a_transient_failure_is_retried(tmp_path):
-    client = FakeClient(fail_times=2)
+def test_an_upload_is_attempted_once_and_not_repeated(tmp_path):
+    """Retrying belongs to the transport, which knows what is safe to send twice.
+
+    This worker cannot know: it holds an opaque callable, so its only move is to run
+    the whole post again, and a post that had already been carried out appends the
+    row a second time. Absorbing a blip is `FoamdClient.request`'s job and it is
+    tested there (`test_hosted.py`); what is tested here is that nothing is added on
+    top of it.
+    """
+    client = FakeClient(fail_times=1)
     capture = Capture(client, "remote-1")
     capture.message(0, "user", "hello")
     drain(capture)
 
-    assert client.attempts == 3
-    assert len(client.messages) == 1
+    assert client.attempts == 1
+    assert client.messages == []
 
 
 def test_a_persistent_failure_is_dropped_with_a_warning():
@@ -141,3 +149,48 @@ def test_capping_walks_nested_structures():
     capped = _cap_content(["a" * (_CONTENT_CAP + 1), {"b": "c"}, 42, None])
     assert len(capped[0]) == _CONTENT_CAP
     assert capped[1:] == [{"b": "c"}, 42, None]
+
+
+# -- the whole path, as the incident ran it --------------------------------------------
+
+
+def test_one_recorded_message_reaches_the_service_exactly_once():
+    """The incident, end to end: one reply recorded, three rows in the transcript.
+
+    A `job_check` reply from a 3D transient run appeared three times in the captured
+    transcript, minutes apart, all under message seq 197 — and five other messages of
+    the same study twice. The agent produced that text once: `Store.append_message`
+    increments a counter before it returns, so two records can never share a seq, and
+    the reply's own `running_for=` and `[waited …s]` were computed when the string was
+    built. What repeated was the upload. The service takes `seq` from this client and
+    its transcript table indexes `(study_id, seq)` without a unique constraint, so a
+    post that had already been carried out and whose answer was lost wrote the row
+    again on every repeat — and there were up to fifteen: three here on top of five in
+    `FoamdClient.request`.
+
+    Driven through the real client so both layers are in the test, because either one
+    alone is enough to produce the duplicate.
+    """
+    from openreynolds.backend.hosted import FoamdClient
+    import httpx2 as httpx
+
+    posted: list[bytes] = []
+
+    def commits_then_loses_the_answer(request: httpx.Request) -> httpx.Response:
+        posted.append(request.read())
+        raise httpx.ReadTimeout("the row was written; the answer never came back")
+
+    client = FoamdClient("https://svc.example", "of_live_test")
+    client._client = httpx.Client(
+        base_url="https://svc.example",
+        transport=httpx.MockTransport(commits_then_loses_the_answer),
+    )
+
+    capture = Capture(client, "study-1")
+    capture.message(197, "tool", {"tool": "job_check", "output": "status=running"})
+    capture.close(timeout=5)
+
+    assert len(posted) == 1, (
+        f"one recorded message, {len(posted)} posts — each one appends another row "
+        "under the same seq, and nothing downstream can tell them apart"
+    )
