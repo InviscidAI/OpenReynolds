@@ -44,8 +44,13 @@ TOOLBOX = Path(__file__).resolve().parent / "toolbox"
 MAX_LAPS = 6
 """Laps of spec -> picture -> report -> revise before the last good spec is committed."""
 
-MAX_SECONDS = 90.0
-"""Wall-clock budget for the laps; the commit itself is not counted."""
+MAX_SECONDS = 240.0
+"""Wall-clock budget for the laps; the commit itself is not counted.
+
+Measured on the serpentine run (qa-runs/RESULTS-mesh2d.md): a lap is 30-40 s of model
+time at medium effort and 1-2 s of build, and a 90 s budget cut one call at three laps
+with every edge still classified `inlet` and another at one lap with nothing built.
+Four minutes is six laps' worth; the main agent sees "still running" meanwhile."""
 
 MAX_REPLY_TOKENS = 8_000
 COMMIT = "COMMIT"
@@ -132,7 +137,7 @@ class GeometryResult:
     def __init__(self, report: str = "", png: bytes | None = None, case_rel: str = "",
                  laps: int = 0, seconds: float = 0.0, tokens: dict | None = None,
                  agreed: bool = False, disagrees: str = "", error: str = "",
-                 script: str = "mesh2d.py", scale: float = 1.0):
+                 script: str = "mesh2d.py", scale: float = 1.0, capped: str = ""):
         self.report = report
         self.png = png
         self.case_rel = case_rel
@@ -146,6 +151,9 @@ class GeometryResult:
         """The toolbox script that rebuilds the committed spec on the instance."""
         self.scale = scale
         """The `--scale` that spec was built with (its own top-level "scale", if any)."""
+        self.capped = capped
+        """"laps" or "time" when the loop ended on a cap rather than on the model's
+        COMMIT, so the words can say the last picture was not agreed to."""
 
 
 class GeometryAgent:
@@ -271,9 +279,11 @@ class GeometryAgent:
             messages.append({"role": "user", "content": content})
 
         seconds = time.monotonic() - started
+        capped = "" if (agreed or disagrees) else ("laps" if laps >= MAX_LAPS else "time")
         if last_spec is None:
-            return GeometryResult(error="no spec built within the laps allowed", laps=laps,
-                                  seconds=seconds, tokens=tokens)
+            return GeometryResult(error=f"no spec built within the {capped} allowed "
+                                  f"({laps} lap(s), {seconds:.0f} s)", laps=laps,
+                                  seconds=seconds, tokens=tokens, capped=capped)
         local = Path(self.store.fetch_dir()) / case
         try:
             self._write_case(mode, last_spec, study, local, last_scale)
@@ -285,4 +295,4 @@ class GeometryAgent:
         return GeometryResult(report=last_report, png=last_png, case_rel=remote, laps=laps,
                               seconds=seconds, tokens=tokens, agreed=agreed, disagrees=disagrees,
                               script="mesh2d.py" if mode == "2d" else "cad_gen.py",
-                              scale=last_scale)
+                              scale=last_scale, capped=capped)

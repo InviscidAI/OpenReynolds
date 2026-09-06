@@ -858,7 +858,10 @@ def _geometry(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     lines.append(f"laps {result.laps}, {result.seconds:.0f} s" + (
         "" if result.agreed or result.error else (
             f"; the desk committed without agreeing: {result.disagrees}"
-            if result.disagrees else "; committed the last good spec at the lap cap")))
+            if result.disagrees else
+            f"; the {result.capped or 'lap'} cap ended the laps, so this is the last spec "
+            "that built and NOT one the desk agreed matches the request -- the picture "
+            "and the report below say how far it is")))
     if result.report:
         lines.append("")
         lines.append(result.report)

@@ -37,7 +37,8 @@ from +x.
   mirror    target, axis x|y, at (the line x=at or y=at, default 0), keep (also keep the original)
   repeat    target, count, step [dx,dy], angle (per copy), about        copies, fused together
   patches   [{"name": "inlet", "at": "x:min"}, {"name": "lid", "box": [x0,y0,x1,y1], "kind": "slip"}]
-            names an edge by where it sits, before the automatic reading below
+            names an edge by where it sits, before the automatic reading below; a
+            position or box is in the spec's own units, like the ops (--scale applies)
 
 Without a `patches` entry the edges are read off the shape: for a passage, the edges
 flat at the low end of its longest axis are the inlet, flat at the high end the outlet,
@@ -157,6 +158,26 @@ def parse_rules(rules) -> list[dict]:
             if not isinstance(box, (list, tuple)) or len(box) != 4:
                 raise SystemExit(f"patches entry {i} ({name}): box is [x0, y0, x1, y1]")
             item["box"] = tuple(number(v, f"box of {name}") for v in box)
+        out.append(item)
+    return out
+
+
+def scale_rules(rules: list[dict], scale: float) -> list[dict]:
+    """The spec's patch positions and boxes, in the units the shape is built in.
+
+    A spec in mm with `"box": [-0.6, -1.2, 0.6, 1.2]` round its inlet was, before this,
+    matched against the shape after --scale 0.001 -- a box of 1.2 m round a 38 mm
+    serpentine, so every edge was the inlet. Rules share the ops' units."""
+    if scale == 1.0:
+        return rules
+    out = []
+    for rule in rules:
+        item = dict(rule)
+        if rule["at"] is not None and rule["at"][1] == "at":
+            axis, where, value = rule["at"]
+            item["at"] = (axis, where, value * scale)
+        if rule["box"] is not None:
+            item["box"] = tuple(v * scale for v in rule["box"])
         out.append(item)
     return out
 
@@ -1016,6 +1037,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.spec is not None:
         ops, rules = parse_spec(json.loads(args.spec.read_text(encoding="utf-8")))
+        rules = scale_rules(rules, args.scale)  # the spec's rules, in the spec's units
         source = f"{args.spec} ({len(ops)} ops)"
     else:
         ops = [{"op": "outline", "name": "body", "file": str(args.outline), "size": args.size, "aoa": args.aoa}]

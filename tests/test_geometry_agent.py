@@ -167,7 +167,25 @@ def test_the_lap_cap_commits_the_last_good_spec_and_says_so(backend, store, avai
     result = agent.run("anything", case="c")
     assert result.laps == geometry.MAX_LAPS
     assert not result.agreed and result.disagrees == "" and result.error == ""
+    assert result.capped == "laps"
     assert backend.trees and agent.written[-1][1] == GOOD
+
+
+def test_the_time_cap_commits_what_built_and_says_it_was_the_time(backend, store, available, monkeypatch):
+    """The serpentine run: a 90 s budget ended one call at three laps with every edge
+    still classified inlet, and the words said "lap cap". Now the cap is four minutes
+    and the words name which cap it was."""
+    agent = Recording(cfg(), backend, store, "/work/s", [json.dumps(GOOD)])
+    clock = iter([0.0, 0.0, 0.0, 300.0, 300.0, 300.0, 300.0])
+    monkeypatch.setattr(geometry.time, "monotonic", lambda: next(clock, 300.0))
+    result = agent.run("anything", case="c")
+    assert result.laps == 1 and result.capped == "time" and not result.agreed
+    assert geometry.MAX_SECONDS >= 240
+    desk = SimpleNamespace(run=lambda *a, **k: result)
+    out, _ = tools.dispatch(ToolContext(backend=backend, store=store, max_output=1000,
+                                        geometry=desk), "geometry", {"request": "x"})
+    assert "the time cap ended the laps" in out[1]["text"]
+    assert "NOT one the desk agreed" in out[1]["text"]
 
 
 def test_a_commit_that_still_disagrees_is_recorded(backend, store, available):
@@ -182,7 +200,7 @@ def test_the_time_cap_is_honoured(backend, store, available, monkeypatch):
     monkeypatch.setattr(geometry, "MAX_SECONDS", 0.0)
     agent = Recording(cfg(), backend, store, "/work/s", [json.dumps(GOOD), "COMMIT"])
     result = agent.run("anything")
-    assert result.laps == 0 and "no spec built" in result.error and backend.trees == []
+    assert result.laps == 0 and "no spec built within the time" in result.error and backend.trees == []
 
 
 def test_a_failed_commit_is_reported_not_raised(backend, store, available):

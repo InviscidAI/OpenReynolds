@@ -194,6 +194,36 @@ def test_a_rule_names_an_edge_before_the_automatic_reading(mesh2d):
     assert mesh2d.patch_for_edge((1.0, 0.0, 1.0, 0.3), domain, 0, tol, at_value, False) == "inlet"
 
 
+def test_rules_are_in_the_specs_units_and_scale_with_it(mesh2d):
+    """The serpentine run: a spec in mm carried `"box": [-0.6, -1.2, 0.6, 1.2]` round
+    its inlet, the shape was built at --scale 0.001, and the unscaled box -- 1.2 m
+    across a 38 mm shape -- made every one of the 20 edges the inlet."""
+    _, rules = mesh2d.parse_spec({"ops": CHANNEL, "patches": [
+        {"name": "inlet", "box": [-0.6, -1.2, 0.6, 1.2]},
+        {"name": "outlet", "at": "x:30"},
+        {"name": "lid", "at": "y:max", "kind": "slip"}]})
+    scaled = mesh2d.scale_rules(rules, 0.001)
+    assert scaled[0]["box"] == pytest.approx((-0.0006, -0.0012, 0.0006, 0.0012))
+    assert scaled[1]["at"] == (0, "at", pytest.approx(0.03))
+    assert scaled[2]["at"] == (1, "max", None), "min/max name an end, not a length"
+    assert mesh2d.scale_rules(rules, 1.0) is rules
+    # a 38 mm-wide passage's far wall no longer sits inside the inlet's box
+    domain, tol = (-0.004, -0.001, 0.034, 0.019), 4e-6
+    assert mesh2d.patch_for_edge((0.03, 0.017, 0.03, 0.019), domain, 0, tol, scaled, False) != "inlet"
+    assert mesh2d.patch_for_edge((0.0, -0.001, 0.0, 0.001), domain, 0, tol, scaled, False) == "inlet"
+
+
+def test_the_spec_rules_are_scaled_where_the_shape_is(mesh2d, tmp_path, capsys):
+    pytest.importorskip("gmsh")
+    spec = tmp_path / "mm.json"
+    spec.write_text(json.dumps({"ops": [{"op": "rect", "name": "body", "origin": [0, 0], "size": [30, 2]}],
+                                "patches": [{"name": "inlet", "box": [-0.5, -0.5, 0.5, 2.5]},
+                                            {"name": "outlet", "at": "x:30"}]}), encoding="utf-8")
+    assert mesh2d.main(["--spec", str(spec), "--scale", "0.001", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "inlet (1 edge, 0.002 m), outlet (1 edge, 0.002 m), walls (2 edges, 0.06 m)" in out
+
+
 # -- roles, Allmesh and the case text ----------------------------------------------
 
 
