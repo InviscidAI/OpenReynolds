@@ -9,6 +9,7 @@ believed, and that a budget ends a run that is going nowhere.
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -179,6 +180,61 @@ def test_a_workspace_that_refuses_a_command_does_not_end_the_run(backend, store)
     result = desk.run("a duct")
     assert result.steps[0].exit_code == -1
     assert result.ok
+
+
+def test_a_picture_that_has_not_changed_is_not_sent_again(backend, store):
+    """A command that merely mentions an old render -- a `cat` of a build script, an
+    `ls` -- would otherwise put the previous picture in front of the desk as if this
+    command had just drawn it. The harness telling the model it is looking at
+    something current when it is not is the exact mistake this segment exists to end."""
+    desk = mesher(backend, store, [block("python3 mesh_look.py . --out look.png"),
+                                   block("cat build.py  # writes look.png? no"),
+                                   block(f"echo {MESH_DONE}")])
+    answers(backend, {"mesh_look.py": ExecResult(0, "drawn", False, None),
+                      "--json": ExecResult(0, OK_JSON, False, None)})
+    backend.files["/work/study/mesh/look.png"] = RAW_PNG
+    result = desk.run("a duct")
+    assert result.steps[0].image == "/work/study/mesh/look.png"
+    assert result.steps[1].image == ""
+    second = desk.provider.calls[2]["messages"][-1]["content"]
+    assert [b["type"] for b in second] == ["text"]
+
+
+def test_a_picture_that_changed_is_sent_again(backend, store):
+    sizes = {"n": 0}
+
+    def stat(path):
+        sizes["n"] += 1
+        return SimpleNamespace(path=path, type="regular file", size=len(RAW_PNG),
+                               mtime=sizes["n"], is_dir=False, entries=[])
+
+    desk = mesher(backend, store, [block("python3 mesh_look.py . --out look.png"),
+                                   block("python3 mesh_look.py . --out look.png"),
+                                   block(f"echo {MESH_DONE}")])
+    answers(backend, {"mesh_look.py . --out": ExecResult(0, "drawn", False, None),
+                      "--json": ExecResult(0, OK_JSON, False, None)})
+    backend.files["/work/study/mesh/look.png"] = RAW_PNG
+    backend.stat = stat
+    result = desk.run("a duct")
+    assert result.steps[0].image and result.steps[1].image
+
+
+def test_an_overloaded_endpoint_is_tried_once_more(backend, store, monkeypatch):
+    """A desk five minutes into a mesh cannot resume -- the next call starts a clean
+    thread -- so losing one to a 529 is expensive. A 400 is not retried: it is a fact
+    about the request."""
+    monkeypatch.setattr("openreynolds.mesher.agent.RETRY_PAUSE_S", 0)
+    desk = mesher(backend, store, [ProviderError("529 overloaded", 529),
+                                   block(f"echo {MESH_DONE}")])
+    answers(backend, {"mesh_look.py": ExecResult(0, OK_JSON, False, None)})
+    result = desk.run("a duct")
+    assert result.ok and not result.error
+
+    desk = mesher(backend, store, [ProviderError("400 bad request", 400),
+                                   block(f"echo {MESH_DONE}")])
+    answers(backend, {"mesh_look.py": ExecResult(0, OK_JSON, False, None)})
+    result = desk.run("a duct")
+    assert result.stopped == "provider" and "400" in result.error
 
 
 # -- the finish ---------------------------------------------------------------

@@ -33,8 +33,15 @@ MAX_STEPS = 30
 """Enough for a shape, a look, two or three revisions, a refine and a finish. A run
 that has not converged by here is not one step from converging."""
 
-MAX_SECONDS = 900.0
-"""Fifteen minutes. Meshing one of these cases by hand cost twenty to thirty."""
+MAX_SECONDS = 1200.0
+"""Twenty minutes, and the step count is the real bound.
+
+Measured over the six acceptance runs: five desks finished in 1.9 to 5.2 minutes, and
+the Tesla valve -- the request with the most clauses in it -- was still working at
+fourteen. A lap is 30-40 s and a meshing command can be minutes, so at fifteen the
+clock was cutting a run whose own step budget was nowhere near spent. What should stop
+a run is thirty commands without an answer, not a mesh that takes three minutes to
+build."""
 
 STEP_TIMEOUT_S = 240
 """One command. Longer work goes in the background and is polled -- the brief says so."""
@@ -51,6 +58,12 @@ TRANSCRIPT_ROWS = 40
 SAID_LINES = 6
 """How many of them travel with the job. The last few are the ones that are about
 this mesh; a whole session's worth would bury the request in an older study's."""
+
+RETRY_STATUSES = {408, 429, 500, 502, 503, 504, 529}
+"""Model-API failures worth one more try: overloaded, rate-limited, gateway. A 400 or
+a 401 says the same thing twice."""
+
+RETRY_PAUSE_S = 5.0
 
 KEEP_IMAGES = 2
 """Pictures kept in the thread. Older observations keep their words and lose their
@@ -127,6 +140,7 @@ class Mesher:
         case_rel = _case_name(case)
         case_dir = f"{self.home}/{case_rel}"
         started = time.monotonic()
+        self._sent: dict[str, tuple[int, int]] = {}
         result = MeshResult(case_rel=case_rel, case_dir=case_dir)
         try:
             self.backend.exec(f"mkdir -p {shlex.quote(case_dir)}", timeout_s=60)
@@ -155,10 +169,7 @@ class Mesher:
                 result.stopped = "time"
                 break
             try:
-                turn = self.provider.stream(
-                    model=self.model, system=system, messages=messages, tools=[],
-                    effort=self.effort, max_tokens=MAX_REPLY_TOKENS, listener=Listener(),
-                )
+                turn = self._turn(system, messages)
             except ProviderError as exc:
                 result.error = f"the model call failed: {exc}"
                 result.stopped = "provider"
@@ -254,6 +265,25 @@ class Mesher:
         result.remarks.append(text.strip())
         return text.strip()
 
+    def _turn(self, system: str, messages: list[dict[str, Any]]) -> Any:
+        """One model call, retried once when the failure is one that passes.
+
+        A desk five minutes into a mesh is expensive to lose to an overloaded endpoint,
+        and the run cannot resume: the next call starts a clean thread. A 400 is not
+        retried -- it is a fact about the request, and repeating it costs the same
+        error twice."""
+        for attempt in (1, 2):
+            try:
+                return self.provider.stream(
+                    model=self.model, system=system, messages=messages, tools=[],
+                    effort=self.effort, max_tokens=MAX_REPLY_TOKENS, listener=Listener(),
+                )
+            except ProviderError as exc:
+                if attempt == 2 or exc.status_code not in RETRY_STATUSES:
+                    raise
+                time.sleep(RETRY_PAUSE_S)
+        raise AssertionError("unreachable")
+
     # -- the machine -----------------------------------------------------------
 
     def _exec(self, cmd: str, case_dir: str, messages: list[dict[str, Any]]) -> Step:
@@ -290,6 +320,12 @@ class Mesher:
         arrives. Only the last path named is fetched -- a command that draws four
         panels into one file is the normal case, and four separate pictures a step is
         a token bill nobody asked for.
+
+        A file that has not changed since it was last sent is not sent again. A command
+        that merely mentions an old render (a `cat` of a script, an `ls`) would
+        otherwise put yesterday's picture in front of the desk as if the command had
+        just drawn it -- which is the exact mistake this whole segment exists to stop,
+        in the one place that is the harness's fault rather than the model's.
         """
         for name in reversed(_PNG.findall(cmd)):
             path = name if name.startswith("/") else f"{case_dir}/{name.lstrip('./')}"
@@ -299,11 +335,14 @@ class Mesher:
                 continue
             if info.is_dir or not info.size or info.size > images.MAX_ATTACH_BYTES:
                 continue
+            if self._sent.get(path) == (info.size, info.mtime):
+                continue
             try:
                 data = self.backend.get_file(path, limit=info.size)
             except Exception:  # noqa: BLE001
                 continue
             if len(data) == info.size:
+                self._sent[path] = (info.size, info.mtime)
                 return path, data
         return "", None
 
