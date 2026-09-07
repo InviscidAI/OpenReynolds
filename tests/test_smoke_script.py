@@ -115,7 +115,7 @@ r/geometry.png
             return ExecResult(0, "", False, None)
         return ExecResult(0, "", False, None)
 
-    def stat(self, path):
+    def stat(self, path, **kwargs):
         if path == self.BIG_LOG:
             return Stat(path, "regular file", 200_000, 0, [])
         return super().stat(path)

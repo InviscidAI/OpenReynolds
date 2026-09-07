@@ -55,6 +55,19 @@ def test_the_mesh_tool_is_offered_only_when_there_is_a_desk_behind_it(ctx):
     assert tools_for(ctx) is TOOLS
 
 
+def test_reading_a_file_is_bounded_in_time(ctx, backend):
+    """Until 2026-09-07 a read had no timeout at all -- one `stat` was watched sitting
+    for over ten minutes -- and the backend's own default is five. A contended read is
+    usually very slow or fast, so a minute is the honest wait: the model can read again,
+    and a tool call it cannot escape is the expensive part."""
+    from openreynolds.tools import READ_ATTEMPTS, READ_TIMEOUT_S
+
+    backend.files["/work/x.txt"] = b"hello"
+    dispatch(ctx, "read_file", {"path": "/work/x.txt"})
+    assert backend.stat_kwargs == {"timeout": READ_TIMEOUT_S, "max_attempts": READ_ATTEMPTS}
+    assert backend.get_file_kwargs["timeout"] == READ_TIMEOUT_S
+
+
 def test_unknown_tool_is_an_error_not_a_crash(ctx):
     content, is_error = dispatch(ctx, "run_gate", {})
     assert is_error

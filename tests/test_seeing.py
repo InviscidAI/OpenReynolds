@@ -161,8 +161,11 @@ def paging_backend(ctx, size=2_200_000, page=1_000_000):
     ctx.backend.files["/work/big.png"] = b"\x89PNG\r\n\x1a\n" + b"\x00" * (size - 8)
     original = ctx.backend.get_file
 
-    def get_file(path, offset=0, limit=None):
-        return original(path, offset=offset, limit=limit if limit is not None else page)
+    def get_file(path, offset=0, limit=None, **kwargs):
+        # `**kwargs` because a caller may bound its own read (`timeout`,
+        # `max_attempts`); what this stub is about is the page size, nothing else.
+        return original(path, offset=offset, limit=limit if limit is not None else page,
+                        **kwargs)
 
     ctx.backend.get_file = get_file
     return ctx
@@ -186,7 +189,7 @@ def test_a_short_read_is_refused_rather_than_attached(ctx):
     """If it still comes back short, saying so beats handing over a broken PNG."""
     ctx.backend.files["/work/short.png"] = b"\x89PNG\r\n\x1a\n" + b"\x00" * 500_000
 
-    def stingy(path, offset=0, limit=None):
+    def stingy(path, offset=0, limit=None, **kwargs):
         return ctx.backend.files[path][:1000]
 
     ctx.backend.get_file = stingy

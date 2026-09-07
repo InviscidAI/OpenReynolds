@@ -42,6 +42,8 @@ class FakeBackend(Backend):
         self.logs: dict[str, bytes] = {}
         self.started: list[dict] = []
         self.trees: list[tuple[Path, str]] = []
+        self.stat_kwargs: dict = {}
+        self.get_file_kwargs: dict = {}
         self.fetched: list[str] = []
         self.get_tree_calls: list[dict] = []
 
@@ -55,6 +57,7 @@ class FakeBackend(Backend):
         self.files[path] = data
 
     def get_file(self, path, offset=0, limit=None, *, timeout=300.0, max_attempts=None):
+        self.get_file_kwargs = {"timeout": timeout, "max_attempts": max_attempts}
         del timeout, max_attempts  # no network here to bound; see HostedBackend.get_file
         if path not in self.files:
             raise BackendError(f"no such path: {path}", code="not_found", status=404)
@@ -62,6 +65,7 @@ class FakeBackend(Backend):
         return data[:limit] if limit is not None else data
 
     def stat(self, path, *, timeout=300.0, max_attempts=None):
+        self.stat_kwargs = {"timeout": timeout, "max_attempts": max_attempts}
         del timeout, max_attempts
         if path in self.dirs:
             return Stat(path, "directory", 0, 0, self.dirs[path])

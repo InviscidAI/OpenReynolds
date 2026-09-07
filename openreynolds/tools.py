@@ -32,6 +32,21 @@ JOB_WAIT_MAX_S = 300
 JOB_WAIT_POLL_S = 5.0
 """How often a waiting `job_check` looks at the job."""
 
+READ_TIMEOUT_S = 60.0
+"""How long `read_file` waits on the workspace for one file before saying so.
+
+The backend's own default is 300 s, and until 2026-09-07 it was *unbounded* -- one
+`stat` was watched sitting for over ten minutes. Measured on a contended workspace,
+two of three stats of a file another session was writing timed out at 40 s while the
+same file settled answered in 2.8 s, so a read that is going to be slow is usually
+going to be very slow, and the model is better told that in a minute than blocked for
+five. It reads again if it wants to; a tool call it cannot escape is the expensive
+part."""
+
+READ_ATTEMPTS = 2
+"""Retries inside one `read_file`. A contended read that failed twice inside a minute
+is a fact worth reporting, not one worth waiting out."""
+
 TAIL_HINT_BYTES = 4_000
 """How far back from the end a truncation marker points, so the offered offset lands on
 the tail rather than another copy of the head."""
@@ -493,7 +508,7 @@ def _written_run_shape(args: dict[str, Any]) -> str:
 
 def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, Any]]:
     path = args["path"]
-    info = ctx.backend.stat(path)
+    info = ctx.backend.stat(path, timeout=READ_TIMEOUT_S, max_attempts=READ_ATTEMPTS)
     if info.is_dir:
         listing = "\n".join(info.entries) if info.entries else "(empty)"
         return f"{path} — directory, {len(info.entries)} entries\n\n{listing}"
@@ -504,7 +519,8 @@ def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, A
 
     offset = max(0, int(args.get("offset") or 0))
     limit = int(args.get("limit") or ctx.max_output)
-    raw = ctx.backend.get_file(path, offset=offset, limit=limit)
+    raw = ctx.backend.get_file(path, offset=offset, limit=limit,
+                               timeout=READ_TIMEOUT_S, max_attempts=READ_ATTEMPTS)
     text = raw.decode("utf-8", errors="replace")
     body, clipped = _clip(text, ctx.max_output)
 
@@ -532,7 +548,8 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
     # Ask for the whole thing by name. A backend answering an unbounded read with its
     # own page size is the normal case, and a picture cut off at that boundary is not
     # a smaller picture -- it is a corrupt one that still passes every check here.
-    data = ctx.backend.get_file(path, limit=info.size)
+    data = ctx.backend.get_file(path, limit=info.size, timeout=READ_TIMEOUT_S,
+                                max_attempts=READ_ATTEMPTS)
     if len(data) < info.size:
         return (
             f"{path} — {media}, {info.size} bytes, but only {len(data)} came back. "
