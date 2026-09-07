@@ -357,7 +357,7 @@ def test_the_toolbox_sticks_to_what_the_image_provides():
     # allowed here like the other four.
     # gmsh joined this set when `pip install gmsh` went into the image: the module, not
     # only the command, and OCC-enabled. That is what lets `cad_convert.py` read a STEP
-    # file as B-rep and what drives the OpenCASCADE kernel `cad_gen.py` meshes with; the
+    # file as B-rep and the kernel the mesh desk builds and meshes solids with; the
     # binary had been there all along, importable by nothing. It is imported inside the
     # functions that need it, so the refusals stay readable on a machine that has none
     # of this.

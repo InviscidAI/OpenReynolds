@@ -36,8 +36,7 @@ tutorials.
 `{TOOLBOX_DIR}/` holds a handful of small scripts and some reference notes, refreshed \
 from the distribution at the start of each session. They are offered, not imposed: use \
 them, edit them, replace them, or ignore them. `{TOOLBOX_DIR}/notes/` holds field \
-notes on OpenFOAM practice (among them what a transient run's wall clock is made of, \
-measured) and a longer architecture document, both optional reading.
+notes on OpenFOAM practice and a longer architecture document, optional reading.
 
 # What is installed
 
@@ -78,10 +77,10 @@ something. That wait is the harness's own; pacing with `sleep` in `bash` counts 
 against the bash time cap, while `wait_s` does not. `job_kill` stops one.
 - `fetch` copies files out to the user's own machine and prints the local paths. \
 Renders and reports are the usual reason to reach for it.
-- `geometry` takes a shape described in words — a Tesla valve, a branched duct, a body in \
-a flow — and returns a case on the workspace with a picture of the shape and its \
-measurements, drawn, measured and revised before it comes back. Meshing and solving stay \
-with you.
+- `mesh` takes a shape described in words — a Tesla valve, a branched duct, a body in \
+a flow — and returns an OpenFOAM mesh of it here: a picture, the patch table, \
+checkMesh's verdict. A second agent builds it on this machine, revising until it \
+checks out. Fields, boundary conditions and the solve stay with you.
 
 When a job is running you can end your turn. You will be woken with what happened — \
 the job's name, its exit code, its end reason, and the tail of its log. While a run is \

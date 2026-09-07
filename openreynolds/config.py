@@ -142,15 +142,20 @@ class Config:
     mid-turn -- the difference between a message heard in seconds and one that waits
     out a five-minute solve."""
     desk_model: str = DEFAULT_DESK_MODEL
-    geometry_model: str = ""
-    """The model the geometry desk (`geometry.py`) authors shapes with. Empty means the
-    main model: authoring a geometry is the work, not the narration, and the premise gate
-    showed it wants the capable one."""
-    geometry_effort: str = "high"
-    """The effort the geometry desk reasons at, whatever the main loop's is. Placing an
+    mesher_model: str = ""
+    """The model the mesh desk (`mesher/`) builds geometry with. Empty means the main
+    model: building the shape is the work, not the narration."""
+    mesher_effort: str = "high"
+    """The effort the mesh desk reasons at, whatever the main loop's is. Placing an
     arc's end and a row's pitch is arithmetic the model gets right one time in six at
-    medium; the hosted app runs the main loop at medium, and the shapes it authored
-    there were wrong. `OPENREYNOLDS_GEOMETRY_EFFORT` overrides."""
+    medium, and the hosted app runs the main loop at medium.
+    `OPENREYNOLDS_MESHER_EFFORT` overrides."""
+    mesher_max_steps: int = 0
+    """Commands the mesh desk may run in one call; 0 takes the default (30).
+    `OPENREYNOLDS_MESHER_MAX_STEPS`."""
+    mesher_max_seconds: float = 0.0
+    """Wall clock for one call; 0 takes the default (900 s).
+    `OPENREYNOLDS_MESHER_MAX_SECONDS`."""
     studies_dir: Path = field(default_factory=lambda: Path.cwd() / "studies")
     preferences: str = ""
     """The standing note from `preferences_path()`, or empty when there is none."""
@@ -228,8 +233,10 @@ class Config:
                 "OPENREYNOLDS_DESK_MODEL", "desk_model",
                 preset.desk_model if preset else DEFAULT_DESK_MODEL,
             ),
-            geometry_model=pick("OPENREYNOLDS_GEOMETRY_MODEL", "geometry_model"),
-            geometry_effort=pick("OPENREYNOLDS_GEOMETRY_EFFORT", "geometry_effort", "high"),
+            mesher_model=pick("OPENREYNOLDS_MESHER_MODEL", "mesher_model"),
+            mesher_effort=pick("OPENREYNOLDS_MESHER_EFFORT", "mesher_effort", "high"),
+            mesher_max_steps=int(pick("OPENREYNOLDS_MESHER_MAX_STEPS", "mesher_max_steps", 0) or 0),
+            mesher_max_seconds=float(pick("OPENREYNOLDS_MESHER_MAX_SECONDS", "mesher_max_seconds", 0) or 0),
             foamd_url=pick("FOAMD_URL", "foamd_url", DEFAULT_FOAMD_URL).rstrip("/"),
             foamd_api_key=pick("FOAMD_API_KEY", "foamd_api_key"),
             provider=provider,

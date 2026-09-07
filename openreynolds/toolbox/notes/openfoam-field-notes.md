@@ -333,8 +333,7 @@ anything is re-run harder:
   built. Without layers the first tet sets y+ and the wall function has to be one that
   tolerates the buffer layer -- nutUSpalding is. A prism stack thicker than the surface
   cell extrudes into itself on any concave wall and the mesher runs without end rather
-  than failing. `cad_gen.py` is that chain, from a short JSON of primitives or any STEP
-  file, and keeps the STEP it meshed.
+  than failing.
 
 Turbulence quantities (`k`, `omega`, `epsilon`) plateauing one to two orders above
 `U` and `p` is normal near walls and rarely worth chasing on its own.
@@ -574,9 +573,9 @@ missing). Reconstruction being its own command is deliberate -- decomposed resul
 persisted when the solve job ends, so a lost reconstruct never costs the solve. Two case
 settings cut the file count at the source: the collated file handler writes one file per
 processor region a write instead of one per field per processor (a quarter of the files),
-and `writeFormat binary` halves the bytes. The cases `case_gen`, `cad_gen` and `snappy_gen`
-write carry both, and the `Allrun` those last two generate already solves and reconstructs
-through `scratch.py`, falling back to the Volume if the toolbox is not at its usual path.
+and `writeFormat binary` halves the bytes. The cases `case_gen` writes carry both, and an
+`Allrun` that solves and reconstructs through `scratch.py` (falling back to the Volume if
+the toolbox is not at its usual path) is worth writing for any case that will be solved.
 
 ## Waiting on a job without paying for it
 
@@ -759,12 +758,12 @@ face), extruded one cell with `extrude(..., numElements=[1], recombine=True)` so
 quad becomes one hexahedron, a physical group per edge patch on the lateral surfaces and
 one for the two z faces, written as msh 2.2 ASCII for `gmshToFoam`, which types every
 patch `patch` -- so the walls are retyped `wall` and the z faces `empty` with
-`foamDictionary` before anything reads them. `mesh2d.py` is that pass in one call, from
-a JSON of 2D primitives (a constant-width `channel` along a centreline is how a bypass, a
-serpentine or a manifold branch is written) or an x,y outline file, and it draws the face
-with its patches coloured and prints extent, area, the number of islands and each patch's
-edge count and length before a mesh exists -- the check that the shape is the one that
-was meant, made where it is cheap. `checkMesh`'s `hexahedra:` equal to its `cells:` is
+`foamDictionary` before anything reads them. Name the physical group where the surface is
+created, never by asking afterwards where a face sits in the bounding box: on any L, U or
+elbow that labels the wrong end and says nothing. `mesh_look.py` then draws the mesh with
+one colour per patch and prints each patch's area, centre and mean normal -- the check
+that the shape is the one that was meant and that the inlet is the end it should be.
+`checkMesh`'s `hexahedra:` equal to its `cells:` is
 the all-hex confirmation. A geometry is authored whole and looked at, which is a
 different kind of task from the ladder above: its rungs are physics that a reduced case
 can answer one at a time, while a shape is right or wrong as a picture and a few numbers.

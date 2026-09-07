@@ -58,15 +58,6 @@ toolbox = [
     "pandas>=2.0",
     "pyvista>=0.43",
 ]
-# The geometry desk (openreynolds/geometry.py) builds and draws a shape in the agent's
-# own process, so gmsh's Python module has to be importable there. Without this extra
-# the `geometry` tool says so and the toolbox script on the instance is the way.
-geometry = [
-    "gmsh>=4.13",
-    "matplotlib>=3.7",
-    "numpy>=1.24",
-]
-
 [project.scripts]
 openreynolds = "openreynolds.cli:main"
 

@@ -8,39 +8,41 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
-- The geometry segment is a package, `openreynolds/geometry/`, and the desk authors in
-  Python instead of JSON (`qa-runs/geometry-design/DESIGN.md`, Phase 1). The old grammar
-  made overlap the default outcome: a turtle path plus a `repeat` with its own pitch asks
-  the model for arithmetic it does not do reliably, and the shape that came back had four
-  loops growing through each other. A script says what it means instead. `Row(bypass,
-  count=4, gap=2)` derives its pitch from the footprint the tool measures and refuses the
-  row with the two numbers when they do not fit; `Bypass(wall=main.top, at_x=14,
-  leave_angle=25, outer_radius=6, return_angle=45)` is solved in closed form and lands on
-  the wall it names; ports are declared by intent (`s.inlet = duct.left`) and resolved
-  against the built face, never by a bounding box. The lap ends in a print-back the model
-  reads: the features it built, the leg table, the lint findings with coordinates, the
-  measurements, and the compliance table.
-- A shape is judged against the request's own words. The desk's first lap writes claims --
-  every number with a tolerance, every clause a named predicate (`returns_against_flow`,
-  `shallow_angle`), the counts, where the inlet and outlet belong -- before it draws
-  anything, so the geometry is measured against the sentence and not against itself. It
-  cannot commit with a lint error or a failing claim; where a request cannot be met it
-  replies `COMMIT disagrees: <clause>` and the person sees which clause. Three invariants
-  are pinned by tests: no reference without a golden, no commit without a clean lint and a
-  compliance table, no mesh result without a fitness table.
-- A library of reference shapes (`geometry/library/`): the Tesla valve, a serpentine and a
-  T-junction, each parameterised code with a rendered golden and golden measurements. No
-  entry reaches the model until a person has looked at its render and approved it; a shape
-  described in a docstring and never drawn is how the wrong valve was copied into four
-  runs. All three are unapproved and invisible until then.
+- The mesh desk (`openreynolds/mesher/`): geometry and meshing are now one small agent
+  with one tool. It gets a shape in words and a case directory, and works the way a
+  person at a terminal does -- one fenced ```bash block a message, run on the instance
+  that already has OpenFOAM, gmsh, build123d and pyvista on it, with the output pasted
+  back. Two things the harness owns rather than the model: any PNG a command writes
+  comes back attached to that command's output, so seeing is not something to remember
+  to arrange; and `echo MESH_DONE` does not end the run -- `mesher/check.py` runs
+  `mesh_look.py` on the machine and hands the run back with the reasons unless
+  `constant/polyMesh` exists, `checkMesh` passes, at least two patches carry names
+  somebody chose (not `patch0` out of gmshToFoam), an `Allmesh` or build script is
+  there to rebuild it, and a picture was drawn. Budgets are a turn count and a wall
+  clock, and a run that hits one is still checked, because an unexamined mesh is the
+  failure this desk exists to end. Three files and a brief, in place of a spec
+  language, a compiler, a linter, a claims engine and a shape library.
+- `toolbox/mesh_look.py`: any meshed case drawn and measured in one call, straight from
+  `constant/polyMesh` -- no solve, no fields, no time directory needed. One PNG with
+  **one colour per patch** (2D: the patches and the cells, with the `empty` front and
+  back left out so the others are visible; 3D: the patches with the flow box drawn faint
+  and a cut on each axis), and under it cells, faces, points, the bounding box, whether
+  the mesh is one cell thick, `checkMesh`'s verdict with maximum non-orthogonality,
+  skewness and aspect ratio, and for every patch its type, face count, area, centre and
+  mean unit normal. The normal is the point: it says which end is the inlet without
+  anybody guessing from where the patch sits, which is the classification mistake that
+  silently mislabelled every L, U and elbow.
+- The hosted app's **Mesh** panel (`ui`): pick a case, press Look, and see the same
+  picture and the same table the desk works from, with a box to ask the session for a
+  change in words. It replaces the CAD-spec editor, whose spec language went with the
+  toolbox that read it.
 
 ### Fixed
 
-- A mesh-only case names an application in `controlDict`. The 3D desk's finish ran Allmesh
-  on a case whose dictionary said `application ;` (a mesh-only study has no solver) and
-  gmshToFoam refused it; the 2026-09-07 penne re-measure spent twenty turns fixing that
-  line by hand after the desk had drawn the right solid in 34 seconds. `snappy_gen`'s
-  writer names `simpleFoam`, as `case_gen`'s already did.
+- A user turn carrying a picture reaches an OpenAI-family model. The provider's renderer
+  handled an image inside a tool result and dropped a bare `image` block in a user
+  message, which is exactly the shape the mesh desk sends every render in: a model was
+  shown nothing and told it had been shown a picture.
 - The workspace mirror no longer stalls a session for minutes (F-54). The desk's uploaded
   `Allrun`, a file nothing on the instance ever opens, made foamd's path probe time out
   and answer 400, and the mirror read the 400 as one unresolvable file, split every batch
@@ -54,79 +56,20 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
-- Geometry is checked by machine before it is a case (`qa-runs/PLAN-geometry-revamp.md`,
-  Phase 0). A "correct" Tesla valve had passed every count -- four islands, an inlet, an
-  outlet, Mesh OK -- with its four loops overlapping each other by a quarter of their
-  area and a notch at every junction. `mesh2d.py` now refuses copies of a `repeat` that
-  overlap or touch (the overlap measured), a `to` leg that lands off the body, and a
-  passage with other than one inlet and one outlet; it warns, with coordinates and red
-  crosses on the preview, about short edges (a third of the narrowest channel, not a
-  thousandth of the span) and a channel end read as a wall; it prints a leg table for
-  every channel (each leg's start, end and absolute heading, each arc's radius and
-  sweep, where a leg lands) so a request's angles and radii are read off numbers; a
-  `to` leg and a channel given `from` are cut flush at the wall (the joint disks that
-  made the notches are gone); a `near:x,y` patch rule names an end when two ends sit on
-  one line. The worked Tesla example is gone from the docstring: a shape written by hand
-  is a shape nobody measured, and it was copied into a wrong valve by every author that
-  read it. `cad_gen.py --internal` refuses a passage whose automatic reading gives other
-  than one inlet and one outlet, or an inlet and outlet that differ threefold in area
-  (an L duct's side wall taken for its end, both ends of a U taken for inlets, an elbow
-  with no outlet -- each was written as a case before); `--inlet` / `--outlet` name the
-  ends (`x:min`, `y:0.08`, `near:x,y,z`). It also takes `mesh2d.py`'s spec envelope
-  (`{"ops": [...], "scale": 0.001}`) and draws its preview with matplotlib where pyvista
-  is not importable, which is the runner the geometry desk draws in -- there, every 3D
-  lap had failed. The desk reasons at its own effort (`geometry_effort`,
-  `OPENREYNOLDS_GEOMETRY_EFFORT`, default high; the hosted app runs the main loop at
-  medium and authored wrong shapes at it), replies in up to 16k tokens, is told to write
-  the request's checkable claims down first and to judge the leg table against them, sees
-  the picture of a refused spec, and finishes the job: after the case is shipped it runs
-  Allmesh, checkMesh and the mesh render on the instance in one exec and returns the
-  checkMesh digest and the mesh picture with the outline, so the main agent has nothing
-  left to discover. Measured on six prompts through the desk (`qa-runs/RESULTS-phase0.md`):
-  the first correct Tesla valve from any run (leave 20°, outer radius 6, return against the
-  flow, loops apart) in 4 turns and 5 minutes, and an L duct, a U duct and a serpentine
-  each right in 4 to 5 turns. What the runs found and what changed after them: a `near`
-  rule picks the nearest edge and the nearest surface rather than one within a tolerance
-  (gmsh's box round a circle is off its centre, and a cylinder named `near` came out as
-  `walls`); the desk's laps get ten minutes and eight laps (a lap at high effort is a
-  minute); the 3D spec is stated to be the solid only, the envelope carries `domain`
-  (internal|external) and `inlet`/`outlet`, and a hollow external body is refused as the
-  fluid drawn instead of the solid (the 3D penne run drew the box, and the report's "1
-  enclosed void" went unrefused for six laps).
+- The previous geometry and meshing stack is **gone**, not extended: the
+  `openreynolds/geometry/` package (a sketch API, a compiler, a linter, a claims engine,
+  a measurement kernel, a fitness table, a preview renderer, a shape library -- 12,400
+  lines), `toolbox/mesh2d.py`, `toolbox/cad_gen.py` and `toolbox/snappy_gen.py`, their
+  tests and fixtures, the `geometry` tool, the `geometry` install extra, and the gmsh +
+  matplotlib + X/GL layer the hosted runner carried so the old desk could draw in its own
+  process. Every mesh generator went with it: the mesh desk writes the geometry itself,
+  in whatever gmsh, build123d, blockMesh, snappyHexMesh or cfMesh script the shape
+  actually calls for, and leaves that script in the case so a person can change a number
+  and re-run it. What is kept from all of it is the one lesson that paid: render and
+  measure, never assert.
 
 ### Added
 
-- An eighth tool, `geometry`, and the desk behind it (`openreynolds/geometry.py`).
-  The same model that one-shots a Tesla-valve mesh in a chat app took 66 turns and
-  29 minutes in this harness for the wrong shape, and with `mesh2d.py` in the
-  toolbox still spent four preview laps of its own turns getting the shape right:
-  every write-and-look was a remote round trip. The desk runs those laps where the
-  model is -- gmsh and the preview in the runner's own process, one to two seconds a
-  lap -- under its own brief (spec, picture, measured report, revise, commit; six
-  laps; never a solver), then ships the finished case to the workspace and hands
-  the main agent one result: the picture, the measurements, where the case is. The
-  main prompt gains a descriptive sentence and nothing that says when to use it.
-  `pip install openreynolds[geometry]` (gmsh, matplotlib); without it the tool says
-  so and the toolbox scripts do the same from a hand-written spec.
-  `OPENREYNOLDS_GEOMETRY_MODEL` / `geometry_model` pick its model; the default is
-  the main one, and its tokens land in the same totals as the main loop's.
-- `toolbox/mesh2d.py`: any closed 2D outline -- primitives, booleans, constant-width
-  passages swept along a centreline -- to a one-cell-thick all-hex OpenFOAM case in
-  one call, drawn and measured (extent, area, enclosed loops, per-patch edge counts
-  and lengths) before it is meshed. `cad_gen.py`'s 3D path prints the same kind of
-  measured report (surfaces, shells, enclosed voids, wetted area) off the B-rep.
-- `toolbox/snappy_gen.py`: complete, runnable cases around an uploaded surface.
-  `case_gen.py` writes a body-fitted blockMesh for shapes it can draw; this writes
-  the other half -- a background box, snappyHexMesh cut to an STL, boundary layers
-  sized to a stated `--y-plus`, and the dictionaries for a steady, transient,
-  thermal (`buoyantSimpleFoam`) or MRF run. Three things in it are load-bearing:
-  the reference area is **measured off the STL** rather than typed in (wetted area
-  is the triangle sum, frontal area the rasterised silhouette, which is right for a
-  body with a hollow or a second part behind the first); a `--symmetry` plane that
-  **bisects** the body scales that area with it while one that merely bounds the
-  flow -- a waterline closing a hull -- does not; and the first layer follows from
-  y+ with the factor of two the centroid definition implies. `--wall-speed` exists
-  because a propeller tip at 4000 rpm sees 50 m/s while its tunnel sees 7.
 - Each generated case carries an `Allmesh` script: blockMesh, feature extraction,
   snappyHexMesh, `topoSet` where there is a rotating zone, and checkMesh in one
   call, with one log per stage and a digest at the end -- replacing the fifty-odd

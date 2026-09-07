@@ -104,6 +104,17 @@ class OpenAIProvider(Provider):
                     )
             elif kind == "text":
                 trailing.append({"type": "text", "text": block.get("text", "")})
+            elif kind == "image":
+                # A picture sent as part of a user turn rather than inside a tool
+                # result -- what the mesh desk does with every render it draws. Dropped
+                # silently before this branch existed, and a model that is shown no
+                # picture and told it was shown one is worse than one working blind.
+                source = block.get("source", {})
+                trailing.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{source.get('media_type', 'image/png')};"
+                                         f"base64,{source.get('data', '')}"},
+                })
         out = tool_messages
         if trailing:
             out.append({"role": "user", "content": trailing})

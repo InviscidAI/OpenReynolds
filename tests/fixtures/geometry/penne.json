@@ -1,4 +1,0 @@
-[{"op": "cylinder", "name": "outer", "base": [0,0,0], "axis": [0.04,0,0], "radius": 0.005},
- {"op": "cylinder", "name": "bore",  "base": [-0.001,0,0], "axis": [0.042,0,0], "radius": 0.004},
- {"op": "cut", "name": "tube", "from": "outer", "take": ["bore"]},
- {"op": "rotate", "name": "body", "target": "tube", "axis": [0,1,0], "angle": 20, "about": [0.02,0,0]}]

@@ -16,10 +16,10 @@ def test_tool_list_is_deterministic():
     assert names == [
         "bash",
         "fetch",
-        "geometry",
         "job_check",
         "job_kill",
         "job_start",
+        "mesh",
         "read_file",
         "write_file",
     ]
@@ -28,12 +28,14 @@ def test_tool_list_is_deterministic():
         assert tool["description"]
 
 
-def test_the_geometry_tool_describes_its_tables_without_an_imperative():
-    """DESIGN.md 3.18: the description gains one descriptive clause naming the two
-    tables the tool returns; the restraint test_prompt applies to the main prompt
-    applies here too, so the clause says what comes back and never what to do."""
-    description = next(t for t in TOOLS if t["name"] == "geometry")["description"]
-    assert "compliance table" in description and "fitness table" in description
+def test_the_mesh_tool_says_what_comes_back_and_what_does_not():
+    """The description says what the tool returns and, just as importantly, what it
+    does not: a result read as "the case is ready to solve" is the failure this tool
+    was rebuilt to stop. The restraint test_prompt applies to the main prompt applies
+    here too -- the clause says what comes back, never what the caller should do."""
+    description = next(t for t in TOOLS if t["name"] == "mesh")["description"]
+    assert "checkMesh" in description and "patch table" in description
+    assert "no boundary conditions" in description and "no solve" in description
     lowered = description.lower()
     for imperative in ("you must", "always ", "never ", "you should", "prefer "):
         assert imperative not in lowered, imperative

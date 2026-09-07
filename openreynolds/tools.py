@@ -4,9 +4,10 @@ There is no `run_gate`, no `amend_spec`, no `ask_user` — asking is just talkin
 here inspects what the model is doing or refuses it on policy grounds. The handlers cap
 output and report facts; that is the whole job.
 
-The eighth, `geometry`, delegates to the geometry desk (`geometry.py`) rather than to the
-backend: it is the one tool whose work is a model loop of its own, run where the runner
-is, and this module still knows nothing about how that loop reaches its model.
+The eighth, `mesh`, delegates to the mesh desk (`mesher/`) rather than straight to the
+backend: it is the one tool whose work is a model loop of its own — an agent with one
+bash block a step, on the same workspace — and this module still knows nothing about
+how that loop reaches its model.
 """
 
 from __future__ import annotations
@@ -83,13 +84,13 @@ class ToolContext:
     A render the model just examined is exactly the file the user wants on their
     machine right now, not at the next mirror cycle. The hook must not block and
     must not fail the read -- it is a nudge, and the picture matters more."""
-    geometry: Any = None
-    """The geometry desk (`geometry.GeometryAgent`), when this process can run one:
-    gmsh and matplotlib importable, a model key. None means the `geometry` tool
-    answers with why not, and the toolbox script on the instance is the way."""
+    mesher: Any = None
+    """The mesh desk (`mesher.Mesher`), when there is a model key to run one with.
+    None means the `mesh` tool answers with why not, and meshing is the caller's own
+    work like any other command."""
     on_tokens: Callable[[dict], None] | None = None
-    """Called with the model usage a tool spent on the session's behalf -- the
-    geometry desk's laps -- so it lands in the same totals as the main loop's."""
+    """Called with the model usage a tool spent on the session's behalf -- the mesh
+    desk's steps -- so it lands in the same totals as the main loop's."""
 
 
 FRESH_SHELL = (
@@ -160,53 +161,6 @@ TOOLS: list[dict[str, Any]] = [
                 }
             },
             "required": ["paths"],
-        },
-    },
-    {
-        "name": "geometry",
-        "description": (
-            "Author a geometry from a description in words and get back a case on "
-            "the workspace, a picture of the shape, and its measurements (extent, "
-            "area, enclosed loops, patches). A separate loop composes the shape from "
-            "2D primitives and passages (or 3D primitives and STEP), draws it, "
-            "measures it and revises it until the picture and the numbers match the "
-            "request, then writes the case: geometry, mesh script (Allmesh), "
-            "controlDict, schemes, solution, fields; returns a compliance table against "
-            "the request's claims and a mesh fitness table. Solving is not run. Takes "
-            "a few minutes."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "request": {
-                    "type": "string",
-                    "description": (
-                        "The shape in words, with its sizes and units, what is "
-                        "inlet and outlet, and anything about it that matters."
-                    ),
-                },
-                "case": {
-                    "type": "string",
-                    "description": (
-                        "Directory name for the case under the study (default "
-                        "'geometry')."
-                    ),
-                },
-                "mode": {
-                    "type": "string",
-                    "enum": ["2d", "3d"],
-                    "description": (
-                        "2d: a planar outline extruded one cell thick with empty "
-                        "front and back (default). 3d: a body-fitted volume."
-                    ),
-                },
-                "study": {
-                    "type": "string",
-                    "enum": ["mesh", "steady", "transient"],
-                    "description": "What the case files are set up for (default mesh).",
-                },
-            },
-            "required": ["request"],
         },
     },
     {
@@ -291,6 +245,42 @@ TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["cmd"],
+        },
+    },
+    {
+        "name": "mesh",
+        "description": (
+            "Describe a geometry in words and get back an OpenFOAM mesh of it on the "
+            "workspace. A separate agent builds it on this same machine — it chooses "
+            "the mesher (gmsh body-fitted, blockMesh, snappyHexMesh, cfMesh), writes "
+            "the geometry as a script, renders the mesh and measures it, and revises "
+            "until checkMesh passes and the shape measures up to what was asked for. "
+            "You get the picture, the patch table with each patch's area and normal, "
+            "checkMesh's verdict, and where the case is. It is a MESH only: no fields, "
+            "no boundary conditions, no solver settings and no solve — those stay with "
+            "you. Takes a few minutes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request": {
+                    "type": "string",
+                    "description": (
+                        "The shape in words: its sizes with units, which end is the "
+                        "inlet and which the outlet, whether it is a plane (2D) case "
+                        "or a volume, and any property that has to be right — an "
+                        "angle, a radius, a gap, a count. Anything you leave out is "
+                        "the mesh desk's to choose."
+                    ),
+                },
+                "case": {
+                    "type": "string",
+                    "description": (
+                        "Directory name for the case under the study (default 'mesh')."
+                    ),
+                },
+            },
+            "required": ["request"],
         },
     },
     {
@@ -824,135 +814,80 @@ def _fetch(ctx: ToolContext, args: dict[str, Any]) -> str:
     return f"copied {len(written)} file(s) to the user's machine:\n{listing}"
 
 
-def _geometry(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
-    """The geometry desk's answer as one tool result: the pictures first, the words
-    second, so that when the picture is later evicted from the thread the caption
-    still carries the measurements, the tables and where the case is."""
-    if ctx.geometry is None:
+def _mesh(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    """The mesh desk's answer as one tool result: the picture first, the words second,
+    so that when the picture is later evicted from the thread the caption still carries
+    the patch table, the verdict and where the case is."""
+    if ctx.mesher is None:
         return (
-            "the geometry desk is not available in this process (gmsh and matplotlib "
-            "are needed here, and a model key); `mesh2d.py --spec` and `cad_gen.py "
-            "--spec` in the toolbox build the same case on the instance from a spec "
-            "written by hand"
+            "the mesh desk is not available in this session (it needs a model key of "
+            "its own to run); meshing here is yours to do with bash like anything else"
         )
-    result = ctx.geometry.run(
-        str(args.get("request", "")),
-        mode=str(args.get("mode") or "2d"),
-        study=str(args.get("study") or "mesh"),
-        case=args.get("case"),
-    )
+    result = ctx.mesher.run(str(args.get("request", "")), case=args.get("case"))
     if ctx.on_tokens and result.tokens:
         ctx.on_tokens(result.tokens)
-    text = geometry_text(result)
-    blocks: list[dict] = []
+    text = mesh_text(result)
     if result.png:
-        blocks.append(images.attachment(images.downscale(result.png, "image/png"), "image/png"))
-    if result.mesh_png:
-        blocks.append(images.attachment(images.downscale(result.mesh_png, "image/png"), "image/png"))
-    if blocks:
-        return blocks + [{"type": "text", "text": text}]
+        return [images.attachment(images.downscale(result.png, "image/png"), "image/png"),
+                {"type": "text", "text": text}]
     return text
 
 
-def geometry_text(result: Any) -> str:
-    """The words of the geometry tool's answer, in the order DESIGN.md 6.4 fixes: where
-    the case is and whether it is meshed, what the finish found missing, the warnings
-    committed with, the laps, the disagreement, the CLAIMS block with the rows a person
-    must check first, the FITNESS block, then the print-back. When the finish did not
-    mesh, the text says what is still to do and how."""
-    lines = []
+def mesh_text(result: Any) -> str:
+    """The words of the mesh tool's answer: whether it is a mesh, what the mesh is,
+    what the desk says it built, what is still to do, and how to change it.
+
+    The order is deliberate. A tool result that opened with "case written" was once
+    read as "meshed" and the solve that followed had nothing to solve, so the first
+    line here is always the state of `constant/polyMesh` and never anything else.
+    """
+    check = result.check
+    lines: list[str] = []
     if result.error:
-        lines.append(f"geometry: {result.error}")
-    # a BodyInBox record rebuilds with the flow-box flags the case writer used (the spec
-    # grammar has no key for the box); a passage's command is today's, unchanged
-    external = " ".join(_external_flags((getattr(result, "record", None) or {}).get("external")))
-    rebuild = (f"`python3 {WORKSPACE_ROOT}/.toolbox/{result.script} . --spec geometry.json "
-               + (external + " " if external else "") + f"--scale {result.scale:g} --force")
-    if result.case_rel and result.meshed:
-        lines.append(
-            f"case written to {result.case_rel} and meshed there: geometry.json is the spec, "
-            "outline.png the first picture above, constant/polyMesh the OpenFOAM mesh "
-            "(Allmesh ran gmshToFoam, retyped the patches and ran checkMesh; log.checkMesh), "
-            "renders/mesh_z.png the second picture. checkMesh:\n" + result.checkmesh +
-            "\nAn edited geometry.json rebuilds the case with "
-            + rebuild + " && sh Allmesh`, or this tool again with the change in words."
-        )
-    elif result.case_rel:
-        lines.append(
-            f"case written to {result.case_rel}: geometry.json is the spec, outline.png "
-            "the picture above, body.msh the gmsh mesh. Not yet an OpenFOAM mesh"
-            + (f" ({result.checkmesh})" if result.checkmesh else "") + ": still to do there, "
-            "`sh Allmesh` runs gmshToFoam, retypes the patches and checkMesh "
-            "(log.checkMesh), and `python3 /work/.toolbox/render.py . --scene mesh` "
-            "draws the result. An edited geometry.json rebuilds the case with "
-            + rebuild + "`, or this tool again with the change in words."
-        )
-    for finding in getattr(result, "lint", None) or []:
-        if getattr(finding, "code", "") == "E-MESH-PATCH":
-            lines.append(finding.text())
-    unaccepted = getattr(result, "warnings_unaccepted", None) or []
-    if unaccepted and result.case_rel:
-        where = "; ".join(
-            f"{f.code} at ({f.where[0]:g}, {f.where[1]:g})" if f.where else f.code for f in unaccepted)
-        lines.append(f"committed with {len(unaccepted)} warning{'s' if len(unaccepted) != 1 else ''}: {where}")
-    claims_note = f" (claims lap {result.claims_seconds:.0f} s)" if getattr(result, "claims_seconds", 0) else ""
-    accounting = f"laps {result.laps}{claims_note}, {result.seconds:.0f} s"
-    disagrees = list(getattr(result, "disagrees", None) or [])
-    disagreement = getattr(result, "disagreement_text", "") or ""
-    if not result.agreed and not result.error:
-        if disagrees or disagreement:
-            n = len(disagrees) or 1
-            accounting += (f"; the desk committed with {n} disagreement{'s' if n != 1 else ''} -- "
-                           + (disagreement or ", ".join(disagrees)))
-        else:
-            accounting += (
-                f"; the {result.capped or 'lap'} cap ended the laps, so this is the last shape "
-                "that built and NOT one the desk agreed matches the request -- the picture "
-                "and the report below say how far it is")
-    lines.append(accounting)
-    table = getattr(result, "compliance", None)
-    if table is not None and getattr(table, "rows", None):
+        lines.append(f"the mesh desk stopped: {result.error}")
+    if result.ok and check is not None:
+        lines.append(f"meshed: {result.case_rel}/constant/polyMesh is an OpenFOAM mesh "
+                     "and checkMesh passes on it.")
+    elif check is not None and check.missing:
+        why = "; ".join(check.missing)
+        lines.append(f"NOT a usable mesh yet in {result.case_rel}: {why}")
+    else:
+        lines.append(f"nothing was meshed in {result.case_rel}")
+    if result.summary:
         lines.append("")
-        lines.extend(_claims_block(table))
-    fitness = getattr(result, "fitness", None)
-    if result.meshed and fitness is not None:
+        lines.append("the mesh desk says:")
+        lines.extend(f"  {line}" for line in result.summary.splitlines())
+    if check is not None and check.lines():
         lines.append("")
-        lines.append("FITNESS")
-        lines.extend(f"  {line}" for line in fitness.lines())
-    if result.report:
-        lines.append("")
-        lines.append(result.report)
+        lines.extend(check.lines())
+    lines.append("")
+    lines.append(_mesh_accounting(result))
+    lines.append(
+        f"this is a mesh and nothing else: no 0/ fields, no boundary conditions, no "
+        f"solver settings, nothing solved. Look at it again yourself with "
+        f"`python3 {WORKSPACE_ROOT}/.toolbox/mesh_look.py {result.case_rel} --out look.png`, "
+        f"rebuild it after an edit with `cd {result.case_rel} && sh Allmesh`, or call this "
+        "tool again with what to change."
+    )
     return "\n".join(lines)
 
 
-def _external_flags(external: Any) -> list[str]:
-    """`case.external_flags` without importing the geometry package at module load (the
-    kernel loads gmsh lazily; the tool text must not)."""
-    if not external:
-        return []
-    from openreynolds.geometry.case import external_flags
-    return external_flags(external)
-
-
-def _claims_block(table: Any) -> list[str]:
-    """The CLAIMS block with the rows a person must look at first: FAIL, disagreed, not
-    measurable and reported rows under one heading, the passing rows after."""
-    first = [r for r in table.rows if r.verdict != "pass" or r.kind == "report"]
-    rest = [r for r in table.rows if r not in first]
-    header = table.lines()[:1]
-    out = list(header)
-    if first:
-        out.append("  not measurable, for you to check:")
-        out.extend(f"  {line}" for line in type(table)(rows=first).lines()[1:])
-    if rest:
-        out.extend(f"  {line}" for line in type(table)(rows=rest).lines()[1:])
-    return out
+def _mesh_accounting(result: Any) -> str:
+    steps = len(getattr(result, "steps", []) or [])
+    line = f"{steps} step{'s' if steps != 1 else ''}, {result.seconds / 60:.1f} min"
+    if result.stopped == "steps":
+        line += f"; it ran out of steps before it was finished, so this is where it got to"
+    elif result.stopped == "time":
+        line += "; it ran out of time before it was finished, so this is where it got to"
+    elif result.stopped == "provider":
+        line += "; the model call failed, so this is where it got to"
+    return line
 
 
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "bash": _bash,
     "fetch": _fetch,
-    "geometry": _geometry,
+    "mesh": _mesh,
     "job_check": _job_check,
     "job_kill": _job_kill,
     "job_start": _job_start,

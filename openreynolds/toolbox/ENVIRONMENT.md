@@ -26,17 +26,19 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 
 - **gmsh** (the Python module, `import gmsh`) — the OpenCASCADE geometry kernel and the mesher
   in one: `gmsh.model.occ` builds boxes, cylinders, spheres, cones, booleans, fillets, imports
-  STEP, and meshes the result body-fitted; `gmshToFoam` turns the `.msh` into a polyMesh.
-  The same kernel builds a *planar* face from 2D primitives (rectangles, disks, arc-bands,
-  polygons, a constant-width `channel` along a centreline, booleans), meshes it in quads and
-  extrudes it one cell thick into hexahedra with `frontAndBack` typed `empty`: `mesh2d.py`
-  is that route from a JSON spec or an x,y outline, and its `--preview` draws and measures
-  the shape (extent, area, islands, edges per patch) before anything is meshed.
-  `cad_gen.py` drives exactly this chain from a JSON spec or a STEP file.
+  STEP, and meshes the result body-fitted; `gmshToFoam` turns the `.msh` into a polyMesh, and
+  types every patch `patch`, so walls are retyped afterwards with `foamDictionary` or
+  `createPatch`. The same kernel builds a *planar* face from 2D primitives, meshes it in quads
+  and extrudes it one cell thick into hexahedra with the two z faces typed `empty`, which is
+  how a plane case is meshed here. Name a physical group per surface as you build it and the
+  patch names come out of the geometry rather than out of where a face happens to sit.
 - **build123d** — parametric CAD in readable Python on the same OpenCASCADE kernel (via OCP):
   `Cylinder(5, 40) - Cylinder(4, 40)` is a penne, `export_step(part, "body.step")` writes the
-  B-rep that `cad_gen.py --step` meshes. This is the editable layer: a solid as a short script,
-  and STEP as the file any CAD program opens.
+  B-rep gmsh imports with `merge`/`importShapes` and meshes. This is the editable layer: a
+  solid as a short script, and STEP as the file any CAD program opens.
+- `mesh_look.py` in the toolbox draws any meshed case with one colour per patch and prints
+  its cells, bounds, patch areas and normals and checkMesh's verdict — the fastest way to
+  see whether a mesh is the shape that was meant and whether the inlet is the end you think.
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
 

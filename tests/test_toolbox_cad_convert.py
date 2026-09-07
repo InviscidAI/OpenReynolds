@@ -223,7 +223,7 @@ def test_first_look_lists_cad_next_to_the_counts(tmp_path):
 # looked right in a picture -- which is precisely the accident #19 was filed about.
 
 SOLVER_FED = (
-    "preflight.py", "cells_estimate.py", "snappy_gen.py", "case_gen.py",
+    "preflight.py", "cells_estimate.py", "case_gen.py", "mesh_look.py",
     "study_run.py", "ladder.py", "layer_report.py", "mesh_digest.py",
 )
 

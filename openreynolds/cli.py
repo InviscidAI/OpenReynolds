@@ -22,7 +22,7 @@ from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT
 from .browse import Browser
 from .capture import Capture
-from . import commands, geometry, images
+from . import commands, images, mesher
 from .config import Config, config_path
 from .delivery import Gallery
 from .llm import PRESETS, ProviderError, make_provider, preset_for
@@ -1025,12 +1025,13 @@ def session(
         # command waited minutes behind a cycle's transfers. Held around each tool
         # call, this is how a cycle knows to stand aside (mirror.Gate).
         loop.gate = live_mirror.gate
-        # The geometry desk: a shape authored, drawn, measured and committed in one tool
-        # call, with its own model client (geometry.py). Only where it can actually run --
-        # gmsh and matplotlib in this process, a model key -- else the tool says why not.
+        # The mesh desk: geometry and its mesh built by a second agent on this same
+        # workspace, one bash block at a time, with its own model client (mesher/).
+        # It needs nothing in this process but a key -- the machine it works on is the
+        # one the session is already talking to.
         ctx.on_tokens = loop.add_tokens
-        if not cfg.model_key_missing() and geometry.unavailable() is None:
-            ctx.geometry = geometry.GeometryAgent(cfg, backend, store, store.session.home)
+        if not cfg.model_key_missing():
+            ctx.mesher = mesher.Mesher(cfg, backend, store, store.session.home)
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
         )
