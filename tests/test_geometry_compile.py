@@ -479,3 +479,64 @@ s.wall(box.body_edge, name="wing")
     assert plan_.edge_targets["box.body"]["kind"] == "loop" and len(plan_.edge_targets["box.body"]["points"]) == 64
     assert [r["name"] for r in plan_.rules] == ["inlet", "outlet", "farfield", "wing"]
     assert plan_.features["box"].kind == "BodyInBox"
+
+
+def test_a_mirrored_keep_copy_keeps_both_features():
+    """`mirrored(keep=True)` compiles the original and the copy: the original's Solved,
+    outline and ops stay under its name and the copy's live under `<name>.mirror`, so the
+    copy never overwrites the original (the cylinder stays at (100, 30))."""
+    plan_ = plan_of(scripts.T05 + "\ns.fluid = (duct - cyl).mirrored('x', at=150, keep=True)\n")
+    assert plan_.features["cyl"].solved["centre"] == [100, 30] and plan_.features["cyl"].ops == ["cyl"]
+    assert plan_.features["cyl.mirror"].solved["centre"] == [200, 30] and plan_.features["cyl.mirror"].ops == ["cyl.mirror"]
+    assert plan_.features["duct"].solved["origin"] == [0, 0] and plan_.features["duct.mirror"].solved["origin"] == [0, 0]
+    assert set(plan_.outlines) == {"duct", "cyl", "duct.mirror", "cyl.mirror"}
+    assert min(p[0] for p in plan_.outlines["cyl"][0]) == pytest.approx(95)
+    assert min(p[0] for p in plan_.outlines["cyl.mirror"][0]) == pytest.approx(195)
+    assert plan_.edge_targets["cyl.edge"]["centre"] == [100, 30]
+    # a kept mirror of the valve: the row's instances and its apart pairs carry the suffix
+    plan_ = plan_of(scripts.T01 + "\ns.fluid = (main | loops).mirrored('y', at=0, keep=True)\n")
+    assert {"loops[0]", "loops.mirror[0]", "loop", "loop.mirror", "main", "main.mirror"} <= set(plan_.outlines)
+    assert set(plan_.instances) == {"loops", "loops.mirror"}
+    assert ("loops", "loops.mirror", None) in plan_.apart
+    assert plan_.features["loop.mirror"].solved["wall_line"]["outward"] == [0, -1]
+    assert plan_.features["loop"].solved["wall_line"]["outward"] == [0, 1]
+    assert tuple(plan_.features["main"].solved["legs"][0]["to"]) == (60, 0)
+
+
+def test_a_transformed_serpentine_keeps_its_end_in_the_sketch_frame():
+    """A Serpentine has no leg records in its Solved (the listed key set), so a translate
+    or rotate above it moves only its end and heading; it must not fail."""
+    moved = plan_of(scripts.T02 + "\ns.fluid = snake.moved(10, 5)\n")
+    assert moved.features["snake"].solved["end"] == pytest.approx([10, 23])
+    assert moved.features["snake"].solved["end_heading"] == pytest.approx(180)
+    assert sorted(p[1] for p in moved.edge_targets["snake.end"]["points"]) == pytest.approx([22, 24])
+    rotated = plan_of(scripts.T02 + "\ns.fluid = snake.rotated(90, about=(0, 0))\n")
+    assert rotated.features["snake"].solved["end"] == pytest.approx([-18, 0], abs=1e-9)
+    assert rotated.features["snake"].solved["end_heading"] == pytest.approx(270)
+    assert set(rotated.features["snake"].solved) == gc.SOLVED_KEYS["Serpentine"]
+
+
+def test_rotated_targets_wall_lines_and_steps_turn_with_the_fluid():
+    """Under a `rotate` op every sketch-frame value that other units read turns with the
+    outlines: a side target's outward normal, a Bypass's wall line and a Row's step; the
+    values in the wall's own frame (footprint, anchors, landing) stay."""
+    script = scripts.T01.replace("s.outlet(main.end)", "s.outlet(main.end)\ns.patch(main.top, name='lid', kind='slip')")
+    plain = plan_of(script)
+    plan_ = plan_of(script + "\ns.fluid = (main | loops).rotated(30, about=(0, 0))\n")
+    c, s_ = math.cos(math.radians(30)), math.sin(math.radians(30))
+    assert plan_.edge_targets["main.top"]["outward"] == pytest.approx([-s_, c])
+    assert plain.edge_targets["main.top"]["outward"] == pytest.approx([0, 1])
+    wall = plan_.features["loop"].solved["wall_line"]
+    assert wall["flow"] == pytest.approx([c, s_]) and wall["outward"] == pytest.approx([-s_, c])
+    assert wall["point"] == pytest.approx([-1.5 * s_, 1.5 * c]) and wall["angle"] == pytest.approx(30)
+    assert wall["axis"] is None and wall["span"] == 60
+    assert plan_.instances["loops"]["step"] == pytest.approx([14.66 * c, 14.66 * s_], abs=0.005)
+    assert next(op for op in plan_.ops if op["op"] == "repeat")["step"] == pytest.approx([14.66, 0], abs=0.005)
+    assert plan_.features["loops"].solved["anchors"] == plain.features["loops"].solved["anchors"]
+    assert plan_.features["loop"].solved["footprint"] == plain.features["loop"].solved["footprint"]
+    # a translate moves the wall's point and nothing else
+    moved = plan_of(script + "\ns.fluid = (main | loops).moved(10, 5)\n")
+    assert moved.features["loop"].solved["wall_line"]["point"] == pytest.approx([10, 6.5])
+    assert moved.features["loop"].solved["wall_line"]["axis"] == "y"
+    assert moved.features["loop"].solved["wall_line"]["value"] == pytest.approx(6.5)
+    assert moved.instances["loops"]["step"] == pytest.approx([14.66, 0], abs=0.005)

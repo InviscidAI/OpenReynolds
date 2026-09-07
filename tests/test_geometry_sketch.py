@@ -179,7 +179,9 @@ loop = Bypass(wall=main.top, width=3, leave_angle=20, outer_radius=6, return_ang
 s.fluid = main | loop
 ''')
     err = refusal(lambda: gc.plan(Sketch.current()), "E-BYPASS-AT")
-    assert "Bypass 'loop' outside a Row needs at=<u along main.top, 0 at the upstream end, 60 at the downstream end>" in str(err)
+    assert str(err).startswith("!! ERROR  E-BYPASS-AT  Bypass 'loop': outside a Row needs at=<u along main.top, 0 at the "
+                               "inlet end, 60 at the outlet end>")
+    assert "Bypass 'loop': Bypass 'loop'" not in str(err)
 
 
 def test_self_cross_is_refused_only_after_a_built_instance_shows_it(gm):
@@ -395,6 +397,54 @@ s.outlet(duct.right)
     assert plan_.features["pins"].solved["gap"] == pytest.approx((100 - 4 * 2) / 3)
     run(base.replace("along=(1, 0), ", "").format(extra=""))
     refusal(lambda: gc.plan(Sketch.current()), "E-ROW-ALONG")
+
+
+def test_a_row_of_disks_along_a_wall_sits_inside_the_wall_span():
+    """An item that is not a Bypass is anchored at its footprint's centre along the wall:
+    four r 1 disks on a 100 wall with the gap solved sit at 0..2, ..., 98..100 (not at the
+    disk's drawn x = 10 shifted by a Bypass-style anchor); align and start place the
+    footprint, never the drawn position."""
+    base = '''
+s = Sketch(units="mm")
+duct = s.rect(origin=(0, 0), size=(100, 20), name="duct")
+pin = s.disk(centre=(10, 5), radius=1, name="pin")
+pins = Row(pin, count=4, along=duct.top, {extra}name="pins")
+s.fluid = duct - pins
+s.inlet(duct.left)
+s.outlet(duct.right)
+'''
+
+    def spans(plan_):
+        return [(min(q[0] for q in plan_.outlines[k][0]), max(q[0] for q in plan_.outlines[k][0]))
+                for k in ("pins[0]", "pins[3]")]
+
+    plan_ = gc.plan(run(base.format(extra="")))
+    row = plan_.features["pins"].solved
+    assert row["anchors"] == pytest.approx([1, 33.667, 66.333, 99], abs=0.005)
+    assert row["span"] == pytest.approx([0, 100], abs=1e-9)
+    assert spans(plan_) == [pytest.approx((0, 2), abs=1e-9), pytest.approx((98, 100), abs=1e-9)]
+    assert next(op for op in plan_.ops if op["name"] == "pins.first")["by"] == pytest.approx([-9, 0])
+    plan_ = gc.plan(run(base.format(extra='gap=2, align="start", ')))
+    assert plan_.features["pins"].solved["anchors"] == pytest.approx([1, 5, 9, 13])
+    assert spans(plan_) == [pytest.approx((0, 2)), pytest.approx((12, 14))]
+    plan_ = gc.plan(run(base.format(extra='gap=2, align="end", ')))
+    assert spans(plan_) == [pytest.approx((86, 88)), pytest.approx((98, 100))]
+    plan_ = gc.plan(run(base.format(extra="gap=2, start=30, ")))
+    assert plan_.features["pins"].solved["anchors"] == pytest.approx([30, 34, 38, 42])
+    assert spans(plan_) == [pytest.approx((29, 31)), pytest.approx((41, 43))]
+    # every instance lies within the wall's span, whatever the placement
+    for extra in ("", 'gap=2, align="start", ', 'gap=2, align="end", ', "gap=2, start=30, "):
+        plan_ = gc.plan(run(base.format(extra=extra)))
+        for k in range(4):
+            xs = [q[0] for q in plan_.outlines[f"pins[{k}]"][0]]
+            assert -1e-9 <= min(xs) and max(xs) <= 100 + 1e-9, (extra, k)
+    # a row of a non-Bypass item that does not fit says where the item is drawn, not "upstream of its anchor"
+    run(base.replace("size=(100, 20)", "size=(10, 20)").replace("radius=1", "radius=2").format(extra=""))
+    err = refusal(lambda: gc.plan(Sketch.current()), "E-ROW-FIT")
+    assert "Row 'pins': 4 x Disk 'pin' do not fit on duct.top (10 long)" in str(err)
+    assert "each instance spans 4 along the wall (drawn at u 8..12)" in str(err)
+    assert "4 x 4 = 16 needed before any gap; 10 - 2 x margin 0 = 10 available" in str(err)
+    assert err.partial is Sketch.current().features["pin"]
 
 
 # -- passages -------------------------------------------------------------------------------
@@ -678,6 +728,18 @@ s.apart(loops, baffle, gap=1.0)
     assert not any({a, b} == {"loops", "main"} for a, b, _ in plan_.apart)
     assert not any({a, b} == {"loops", "loop"} for a, b, _ in plan_.apart)
     assert len(plan_.instances) == 2
+
+
+def test_a_bare_bypass_and_a_row_are_apart_by_default():
+    """D35: a Row and any named feature that is not its host are apart by default -- a
+    bare Bypass on the other wall included; a Row's own item (the template its instances
+    repeat) is not a part beside them."""
+    run(scripts.T01 + '''
+extra = Bypass(wall=main.bottom, width=3, leave_angle=20, outer_radius=6, return_angle=80, at=30, name="extra")
+s.fluid = main | loops | extra
+''')
+    plan_ = gc.plan(Sketch.current())
+    assert plan_.apart == [("extra", "loops", None)]
 
 
 def test_the_fluid_must_be_assigned_and_the_sketch_be_one():

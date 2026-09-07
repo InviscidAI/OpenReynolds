@@ -496,7 +496,8 @@ def _claim_value(c: dict) -> str:
 class _Node:
     """What compiling one feature returns: its op name, the closed-form outlines and edge
     targets beneath it (in the frame of its result: a transform above it moves them), and
-    the feature keys whose solved leg records live in that frame."""
+    the feature keys (Passage, Serpentine, Bypass, Row) whose sketch-frame solved values --
+    leg records, ends, a wall line, a step -- live in that frame and move with it."""
     name: str
     outlines: dict[str, list[list[Point]]] = field(default_factory=dict)
     targets: dict[str, dict] = field(default_factory=dict)
@@ -559,7 +560,10 @@ class _Compiler:
         return op["name"]
 
     def _feature_key(self, feature: Feature, opname: str) -> str:
-        return feature.name or opname
+        """The key a feature's Solved, outline and edge targets live under: its name, with
+        the `.mirror` suffix while compiling the kept copy of a mirror (so the copy never
+        overwrites the original's entry), else its op name."""
+        return (feature.name + self._suffix) if feature.name else opname
 
     # -- the walk ------------------------------------------------------------------------
 
@@ -850,8 +854,8 @@ class _Compiler:
         if anchor is None:
             if f.at is None:
                 up = f.wall.feature.name or "the wall"
-                raise SketchError("E-BYPASS-AT", who, f"{who} outside a Row needs at=<u along {f.wall}, 0 at the "
-                                  f"upstream end, {fmt(frame.span)} at the downstream end>",
+                raise SketchError("E-BYPASS-AT", who, f"outside a Row needs at=<u along {f.wall}, 0 at the "
+                                  f"inlet end, {fmt(frame.span)} at the outlet end>",
                                   f"Bypass(..., at=30) leaves {f.wall} 30 along it; a Row places its instances itself "
                                   f"(the wall belongs to {up})")
             anchor = f.at
@@ -928,7 +932,7 @@ class _Compiler:
         left, right = strip_walls(w, records_uv, wall_uv, wall_uv)
         loop_uv = _clip_half_plane(_dedupe(left + list(reversed(right))), *wall_uv)
         loop = [frame.point(u, v) for u, v in loop_uv]
-        node = _Node(name)
+        node = _Node(name, passages=[key])
         node.outlines[key] = [loop]
         node.targets[f"{key}.start"] = {"kind": "cap", "points": [frame.point(*right[0]), frame.point(*left[0])],
                                         "width": w}
@@ -1038,18 +1042,21 @@ class _Compiler:
         pitch = f.pitch if f.pitch is not None else footprint + gap
         if f.pitch is not None and f.gap is None:
             gap = pitch - footprint
-        # placement
+        # placement: an anchor is the u a Bypass hangs from (its footprint lo..hi is relative
+        # to it); for any other item the anchor is its footprint's centre along the wall
+        # (lo..hi are where the item is drawn), so `start=` fixes that centre
         total = count * footprint + (count - 1) * (pitch - footprint)
+        anchor_lo = lo if isinstance(item, Bypass) else -footprint / 2
         if frame is not None:
             if f.start is not None:
-                first_lo = f.start + lo
+                first_lo = f.start + anchor_lo
             elif f.align == "start":
                 first_lo = margin
             elif f.align == "end":
                 first_lo = span - margin - total
             else:
                 first_lo = (span - total) / 2
-            anchor0 = first_lo - lo
+            anchor0 = first_lo - anchor_lo
             anchors = [anchor0 + k * pitch for k in range(count)]
             row_span = (first_lo, first_lo + total)
             step = (pitch * frame.flow[0], pitch * frame.flow[1])
@@ -1096,6 +1103,7 @@ class _Compiler:
         host = frame.ref.feature if frame is not None else None
         self.rows.append((f, key, host))
         node.name = name
+        node.passages.append(key)
         return node
 
     def _item_outline(self, item: Feature, T: Affine) -> list[Point]:
@@ -1111,8 +1119,18 @@ class _Compiler:
 
     @staticmethod
     def _shift_node(node: _Node, T: Affine) -> _Node:
+        """The node's outlines and edge targets under an affine: points moved, a side's
+        outward normal turned with them."""
         node.outlines = {k: [[_apply(T, p) for p in loop] for loop in loops] for k, loops in node.outlines.items()}
-        node.targets = {k: dict(t, points=[_apply(T, p) for p in t["points"]]) for k, t in node.targets.items()}
+        targets = {}
+        for k, t in node.targets.items():
+            moved = dict(t, points=[_apply(T, p) for p in t["points"]])
+            if t.get("outward") is not None:
+                moved["outward"] = list(_unit(_apply_vec(T, t["outward"])))
+            if t.get("centre") is not None:
+                moved["centre"] = list(_apply(T, t["centre"]))
+            targets[k] = moved
+        node.targets = targets
         return node
 
     def _free_parameter(self, row: Row, item: Bypass, frame: _WallFrame) -> tuple[str, dict]:
@@ -1170,8 +1188,9 @@ class _Compiler:
         count = row.count
         span = frame.span
         head = f"{count} x {label(item)} do not fit on {frame.ref} ({fmt(span)} long)"
-        lines = [f"each instance spans {fmt(footprint)} along the wall ({fmt(-lo)} upstream of its anchor to "
-                 f"{fmt(hi)} downstream)"]
+        lines = [f"each instance spans {fmt(footprint)} along the wall"
+                 + (f" ({fmt(-lo)} upstream of its anchor to {fmt(hi)} downstream)" if isinstance(item, Bypass)
+                    else f" (drawn at u {fmt(lo)}..{fmt(hi)})")]
         if row.gap is None:
             lines.append(f"{count} x {fmt(footprint)} = {fmt(count * footprint)} needed before any gap; {fmt(span)} - 2 x "
                          f"margin {fmt(margin)} = {fmt(available)} available")
@@ -1249,10 +1268,27 @@ class _Compiler:
         return self._after_transform(inner, name, _rotate_affine(deg, about), deg)
 
     def _after_transform(self, inner: _Node, name: str, T: Affine, deg: float) -> _Node:
+        """A `translate` / `rotate` op moves what was compiled beneath it, so every solved
+        value that lives in the sketch frame follows: a Passage's leg records, end and
+        heading; a Serpentine's end and heading; a Bypass's wall line; a Row's step. The
+        values in a wall's own frame (a Bypass's P1, C, landing, footprint; a Row's anchors)
+        are unchanged by construction."""
         node = self._shift_node(inner, T)
         for key in node.passages:
-            solved = self.features[key].solved
-            solved["legs"] = _transform_records(solved["legs"], T)
+            feature = self.features[key]
+            solved = feature.solved
+            if feature.kind == "Bypass":
+                wl = solved["wall_line"]
+                frame = _WallFrame(None, _apply(T, wl["point"]), _unit(_apply_vec(T, wl["flow"])),
+                                   _unit(_apply_vec(T, wl["outward"])), wl["span"])
+                solved["wall_line"] = frame.as_dict()
+                continue
+            if feature.kind == "Row":
+                step = self.instances[key]["step"]
+                self.instances[key]["step"] = list(_apply_vec(T, step))
+                continue
+            if "legs" in solved:
+                solved["legs"] = _transform_records(solved["legs"], T)
             solved["end"] = list(_apply(T, solved["end"]))
             solved["end_heading"] = solved["end_heading"] + deg
         node.name = name
@@ -1271,8 +1307,8 @@ class _Compiler:
         name = self._opname(f, root)
         self._emit({"op": "fuse", "name": name, "of": [original.name, copy.name]})
         outlines = dict(original.outlines)
-        outlines.update({f"{k}.mirror": v for k, v in copy.outlines.items()})
-        return _Node(name, outlines, dict(original.targets), original.passages)
+        outlines.update(copy.outlines)
+        return _Node(name, outlines, dict(original.targets), original.passages + copy.passages)
 
     def _body_in_box(self, f: BodyInBox, T: Affine, root: bool) -> _Node:
         body = self.visit(f.body, T)
@@ -1364,12 +1400,15 @@ class _Compiler:
                     raise SketchError("E-ARGS", "Sketch", f"s.apart names {label(missing)}, which is not part of s.fluid",
                                       "apart parts are features of the fluid: s.apart(top_loops, bottom_loops)")
                 add(ka, kb, gap)
+        items = {id(row.item) for row, _, _ in self.rows}
         for row, key, host in self.rows:
             for other, other_key, other_host in self.rows:
-                if other is not row:
+                # by key, not identity: a kept mirror compiles the same Row twice
+                if other_key != key:
                     add(key, other_key, None)
             for feature, fkey in self.named:
-                if feature is row.item or feature is host or isinstance(feature, Bypass):
+                # a Row's item is the template its instances repeat, not a part beside them
+                if id(feature) in items or feature is host:
                     continue
                 add(key, fkey, None)
         return pairs
