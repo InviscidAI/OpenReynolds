@@ -19,6 +19,10 @@ from rich.console import Console
 
 from . import images
 
+SLOW_MIRROR_CYCLE_S = 30.0
+"""An empty mirror cycle longer than this gets a line in the terminal. The ordinary
+empty cycle runs every twenty seconds all session and rightly says nothing."""
+
 
 @runtime_checkable
 class View(Protocol):
@@ -248,14 +252,26 @@ class ConsoleView(View):
             self.console.print(f"[cyan]{line}[/]" if index == 0 else f"[dim]{line}[/]")
 
     def mirrored(self, report: Any) -> None:
-        """Only arrivals rate a line here -- this fires every cycle for the whole
-        session, and the full account (skips, warnings) still prints when the
-        session closes down."""
+        """Arrivals rate a line here, with what the cycle cost; so does a cycle that
+        found nothing but took minutes, and so does a copy that failed, named by
+        path. The ordinary empty cycle -- every twenty seconds, all session -- says
+        nothing, and the full account of skips still prints at close-down."""
         pulled = getattr(report, "pulled", None)
+        cost = getattr(report, "cost", None)
+        cost = cost() if callable(cost) else ""
         if pulled:
             self.console.print(
-                f"[dim]mirrored {len(pulled)} file(s) -> {report.local_dir}[/]"
+                f"[dim]mirrored {len(pulled)} file(s) -> {report.local_dir}"
+                f"{f'  ({cost})' if cost else ''}[/]"
             )
+        elif cost and getattr(report, "seconds", 0.0) >= SLOW_MIRROR_CYCLE_S:
+            # A cycle that found nothing and took minutes is where a session's wall
+            # clock went; a log with no line for it made that impossible to see.
+            self.console.print(f"[dim]mirror: nothing new after {cost}[/]")
+        # A batch that failed is named here, as it happens, with the path it failed
+        # on: it used to reach the log only at close-down, and without the path.
+        for warning in getattr(report, "warnings", None) or ():
+            self.console.print(f"[dim]mirror: {warning}[/]")
 
     def prompt(self) -> None:
         self.console.print("\n[bold green]>[/] ", end="")
