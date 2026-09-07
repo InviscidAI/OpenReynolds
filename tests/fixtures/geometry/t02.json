@@ -1,0 +1,57 @@
+{
+ "scale": 0.001,
+ "ops": [
+  {
+   "op": "channel",
+   "name": "snake",
+   "width": 2,
+   "start": [
+    0,
+    0
+   ],
+   "heading": 0,
+   "path": [
+    {
+     "line": 30
+    },
+    {
+     "arc": {
+      "radius": 3,
+      "angle": 180
+     }
+    },
+    {
+     "line": 30
+    },
+    {
+     "arc": {
+      "radius": 3,
+      "angle": -180
+     }
+    },
+    {
+     "line": 30
+    },
+    {
+     "arc": {
+      "radius": 3,
+      "angle": 180
+     }
+    },
+    {
+     "line": 30
+    }
+   ]
+  }
+ ],
+ "patches": [
+  {
+   "name": "inlet",
+   "at": "near:0,0"
+  },
+  {
+   "name": "outlet",
+   "at": "near:0,18"
+  }
+ ]
+}

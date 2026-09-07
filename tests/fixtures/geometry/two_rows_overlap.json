@@ -1,0 +1,153 @@
+{
+ "scale": 0.001,
+ "ops": [
+  {
+   "op": "channel",
+   "name": "main",
+   "width": 3,
+   "start": [
+    0,
+    0
+   ],
+   "heading": 0,
+   "path": [
+    {
+     "line": 60
+    }
+   ]
+  },
+  {
+   "op": "channel",
+   "name": "loop_raw",
+   "width": 3,
+   "start": [
+    7.24,
+    1.5
+   ],
+   "heading": 20,
+   "from": "y:1.5",
+   "path": [
+    {
+     "line": 3
+    },
+    {
+     "arc": {
+      "radius": 4.5,
+      "angle": 240
+     }
+    },
+    {
+     "line": {
+      "to": "y:1.5"
+     }
+    }
+   ]
+  },
+  {
+   "op": "rect",
+   "name": "loop_clip",
+   "origin": [
+    -100,
+    1.5
+   ],
+   "size": [
+    300,
+    100
+   ]
+  },
+  {
+   "op": "intersect",
+   "name": "loop",
+   "of": [
+    "loop_raw",
+    "loop_clip"
+   ]
+  },
+  {
+   "op": "repeat",
+   "name": "loops",
+   "target": "loop",
+   "count": 4,
+   "step": [
+    14.66,
+    0
+   ]
+  },
+  {
+   "op": "channel",
+   "name": "loop2_raw",
+   "width": 3,
+   "start": [
+    14.24,
+    1.5
+   ],
+   "heading": 20,
+   "from": "y:1.5",
+   "path": [
+    {
+     "line": 3
+    },
+    {
+     "arc": {
+      "radius": 4.5,
+      "angle": 240
+     }
+    },
+    {
+     "line": {
+      "to": "y:1.5"
+     }
+    }
+   ]
+  },
+  {
+   "op": "rect",
+   "name": "loop2_clip",
+   "origin": [
+    -100,
+    1.5
+   ],
+   "size": [
+    300,
+    100
+   ]
+  },
+  {
+   "op": "intersect",
+   "name": "loop2",
+   "of": [
+    "loop2_raw",
+    "loop2_clip"
+   ]
+  },
+  {
+   "op": "repeat",
+   "name": "loops2",
+   "target": "loop2",
+   "count": 3,
+   "step": [
+    14.66,
+    0
+   ]
+  },
+  {
+   "op": "fuse",
+   "name": "body",
+   "of": [
+    "main",
+    "loops",
+    "loops2"
+   ]
+  }
+ ],
+ "patches": [
+  {
+   "name": "inlet",
+   "at": "near:0,0"
+  },
+  {
+   "name": "outlet",
+   "at": "near:60,0"
+  }
+ ]
+}

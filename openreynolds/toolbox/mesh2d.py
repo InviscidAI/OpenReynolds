@@ -774,39 +774,66 @@ def _channel(occ, width, start, heading, path, legs: list | None = None,
     return [t for d, t in tags]
 
 
-def _instances_apart(occ, gmsh, base, copies, name: str, checks: list[dict]) -> None:
-    """Consecutive copies of a repeat must neither overlap nor touch: they are meant as
-    separate instances, and a fuse would quietly absorb either. Measured, not assumed --
-    the loops of one 'correct' Tesla valve overlapped by a quarter of their area and
-    passed every count."""
+ALL_PAIRS_UP_TO = 12
+"""A repeat of this many copies or fewer has every pair checked; beyond it, consecutive
+pairs plus the closing one (a ring). A rotational repeat's first and fourth copy can
+overlap while every consecutive pair is clear."""
+
+
+def _instances_apart(occ, gmsh, base, copies, name: str, checks: list[dict],
+                     step=(0.0, 0.0)) -> None:
+    """Copies of a repeat must neither overlap nor touch: they are meant as separate
+    instances, and a fuse would quietly absorb either. Measured, not assumed -- the
+    loops of one 'correct' Tesla valve overlapped by a quarter of their area and passed
+    every count. Every dict carries the numbers beside the sentence (`pair`, 1-based as
+    the sentence says; `overlap`, `gap`, `instance_area`, `footprint`, `pitch`) so a
+    reader that rewrites the sentence does not parse it; `where` is the overlap's own
+    centroid, or the nearest points of a touching pair."""
     instances = [base] + [list(c) for c in copies]
-    for k in range(len(instances) - 1):
+    n = len(instances)
+    if n <= ALL_PAIRS_UP_TO:
+        pairs = [(k, j) for k in range(n) for j in range(k + 1, n)]
+    else:
+        pairs = [(k, k + 1) for k in range(n - 1)] + [(0, n - 1)]
+    instance_area = sum(occ.getMass(2, t) for d, t in base if d == 2)
+    x0, y0, x1, y1 = sampled_bounds(gmsh, 2, base[0][1])
+    footprint = (x1 - x0, y1 - y0)
+    pitch = math.hypot(step[0], step[1])
+    for k, j in pairs:
         a = occ.copy(instances[k])
-        b = occ.copy(instances[k + 1])
+        b = occ.copy(instances[j])
         common, _ = occ.intersect(a, b, removeObject=True, removeTool=True)
         occ.synchronize()
-        area = sum(occ.getMass(2, t) for d, t in common if d == 2)
+        faces = [(d, t) for d, t in common if d == 2]
+        area = sum(occ.getMass(2, t) for d, t in faces)
+        where = ((x0 + x1) / 2 + k * step[0], (y0 + y1) / 2 + k * step[1])
+        if area > 0:
+            cx = sum(occ.getMass(2, t) * occ.getCenterOfMass(2, t)[0] for d, t in faces) / area
+            cy = sum(occ.getMass(2, t) * occ.getCenterOfMass(2, t)[1] for d, t in faces) / area
+            where = (cx, cy)
         if common:
             occ.remove(common, recursive=True)
             occ.synchronize()
         if area > 0:
-            x0, y0, _, x1, y1, _ = gmsh.model.getBoundingBox(2, instances[k][0][1])
-            checks.append({"level": "error", "where": ((x0 + x1) / 2, (y0 + y1) / 2),
-                           "what": f"repeat {name!r}: copies {k + 1} and {k + 2} overlap by {area:.4g} "
+            checks.append({"level": "error", "where": where, "pair": (k + 1, j + 1), "overlap": area,
+                           "instance_area": instance_area, "footprint": footprint, "pitch": pitch,
+                           "what": f"repeat {name!r}: copies {k + 1} and {j + 1} overlap by {area:.4g} "
                                    f"(units squared); the step is smaller than a copy's footprint "
-                                   f"({x1 - x0:.4g} x {y1 - y0:.4g}) plus a gap"})
+                                   f"({footprint[0]:.4g} x {footprint[1]:.4g}) plus a gap"})
             continue
         try:
-            gap = occ.getDistance(2, instances[k][0][1], 2, instances[k + 1][0][1])[0]
+            gap, ax, ay, _, bx, by, _ = occ.getDistance(2, instances[k][0][1], 2, instances[j][0][1])
+            nearest = ((ax + bx) / 2, (ay + by) / 2)
         except Exception:  # noqa: BLE001 - an older kernel without getDistance
-            gap = None
+            gap, nearest = None, None
         if gap is not None and gap <= 1e-9:
-            x0, y0, _, x1, y1, _ = gmsh.model.getBoundingBox(2, instances[k][0][1])
-            checks.append({"level": "error", "where": ((x0 + x1) / 2, (y0 + y1) / 2),
-                           "what": f"repeat {name!r}: copies {k + 1} and {k + 2} touch (gap 0); two "
+            checks.append({"level": "error", "where": nearest, "pair": (k + 1, j + 1), "gap": gap,
+                           "instance_area": instance_area, "footprint": footprint, "pitch": pitch,
+                           "what": f"repeat {name!r}: copies {k + 1} and {j + 1} touch (gap 0); two "
                                    f"walls meeting at a knife edge mesh into slivers"})
-        elif gap is not None and k == 0:
-            checks.append({"level": "info", "where": None,
+        elif gap is not None and (k, j) == (0, 1):
+            checks.append({"level": "info", "where": nearest, "pair": (1, 2), "gap": gap,
+                           "instance_area": instance_area, "footprint": footprint, "pitch": pitch,
                            "what": f"repeat {name!r}: gap between copies {gap:.4g}"})
 
 
@@ -893,7 +920,7 @@ def build_face(gmsh, ops: list[dict], scale: float = 1.0, rotate: float = 0.0,
                     occ.rotate(c, about[0], about[1], 0, 0, 0, 1, math.radians(k * op["angle"]))
                 copies.append(c)
             occ.synchronize()
-            _instances_apart(occ, gmsh, base, copies, name, checks)
+            _instances_apart(occ, gmsh, base, copies, name, checks, step=op["step"])
             out, _ = occ.fuse(base, [t for c in copies for t in c])
             made[name] = [t for d, t in out if d == 2]
         elif kind == "fillet":
@@ -905,6 +932,11 @@ def build_face(gmsh, ops: list[dict], scale: float = 1.0, rotate: float = 0.0,
                          "not touch. A fuse joins parts that overlap; a repeat's copies must "
                          "each reach the part they are meant to join")
     face = made[body][0]
+    occ.synchronize()
+    # The landing check runs here, on the unscaled face: `isInside` answers 1 for every
+    # point on a face that carries a dilate (a T04 built with `to` legs reported no error
+    # at --scale 0.001 and the error at scale 1), so it has to be asked before the scale.
+    landing_checks(gmsh, face, legs, 1.0, checks)
     if scale != 1.0:
         occ.dilate([(2, face)], 0, 0, 0, scale, scale, scale)
     if rotate:
@@ -924,8 +956,8 @@ def measure2d(gmsh, face: int, domain=None, external: bool = False,
     passes a third of the narrowest channel when there is one; a thousandth of the
     span (the old rule) missed every notch on a 3 mm channel."""
     occ = gmsh.model.occ
-    x0, y0, _, x1, y1, _ = gmsh.model.getBoundingBox(2, face)
-    bounds = (x0, y0, x1, y1)
+    bounds = sampled_bounds(gmsh, 2, face)
+    x0, y0, x1, y1 = bounds
     extent = (x1 - x0, y1 - y0)
     span = max(extent)
     loops, _ = occ.getCurveLoops(face)
@@ -942,24 +974,53 @@ def narrowest_channel(ops: list[dict]) -> float | None:
     return min(widths) if widths else None
 
 
+def sampled_bounds(gmsh, dim: int, tag: int, n: int = 64) -> tuple[float, float, float, float]:
+    """Tight bounds from `getValue` at n parameters per boundary curve plus the vertices.
+    `getBoundingBox` is tight at the scale a shape was drawn at and loose after the
+    dilate to metres (a lone bypass loop: 13.019 x 11.638 at scale 1, 0.01763 x 0.01620
+    at 0.001, against 0.01302 x 0.01164 sampled), so the extent, an edge's midpoint and a
+    copy's footprint are read from the curves. The geometry package carries the same
+    function (`measure.sampled_bounds`); a test pins the two equal."""
+    curves = [tag] if dim == 1 else [abs(int(t)) for _, t in gmsh.model.getBoundary(
+        [(2, tag)], combined=False, oriented=False)]
+    xs: list[float] = []
+    ys: list[float] = []
+    for c in curves:
+        b = gmsh.model.getParametrizationBounds(1, c)
+        t0, t1 = float(b[0][0]), float(b[1][0])
+        xyz = gmsh.model.getValue(1, c, [t0 + (t1 - t0) * i / (n - 1) for i in range(n)])
+        xs += [float(xyz[3 * i]) for i in range(n)]
+        ys += [float(xyz[3 * i + 1]) for i in range(n)]
+        for _, v in gmsh.model.getBoundary([(1, c)], oriented=False):
+            xyz = gmsh.model.getValue(0, abs(int(v)), [])
+            xs.append(float(xyz[0]))
+            ys.append(float(xyz[1]))
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 def curve_midpoint(gmsh, curve: int) -> tuple[float, float]:
-    x0, y0, _, x1, y1, _ = gmsh.model.getBoundingBox(1, curve)
-    return ((x0 + x1) / 2, (y0 + y1) / 2)
+    """The point ON the curve at its mid parameter (an arc's bounding-box centre is off
+    the curve, and off its extruded surface's box by millimetres)."""
+    b = gmsh.model.getParametrizationBounds(1, curve)
+    xyz = gmsh.model.getValue(1, curve, [(float(b[0][0]) + float(b[1][0])) / 2])
+    return (float(xyz[0]), float(xyz[1]))
 
 
 def landing_checks(gmsh, face: int, legs: dict, scale: float, checks: list) -> None:
     """A `to` leg lands on the body or it is an error: a point a tenth of a width past
-    the line it ran to, along its heading, has to be inside the face."""
+    the line it ran to, along its heading, has to be inside the face. Called by
+    `build_face` before the dilate (where `isInside` is right); `scale` stays for a
+    caller that holds an unscaled face and wants the check's `where` in metres."""
     for name, records in legs.items():
         width = next((r["width"] for r in records if r["kind"] == "ports"), 0.0)
         for r in records:
             if r["kind"] != "to":
                 continue
             h = math.radians(r["heading"])
-            px = (r["lands"][0] + 0.1 * width * math.cos(h)) * scale
-            py = (r["lands"][1] + 0.1 * width * math.sin(h)) * scale
+            px = r["lands"][0] + 0.1 * width * math.cos(h)
+            py = r["lands"][1] + 0.1 * width * math.sin(h)
             if not gmsh.model.isInside(2, face, [px, py, 0.0]):
-                checks.append({"level": "error", "where": (px, py),
+                checks.append({"level": "error", "where": (px * scale, py * scale),
                                "what": f"channel {name!r}: the leg to {r['line']} lands at "
                                        f"({r['lands'][0]:.4g}, {r['lands'][1]:.4g}) and nothing of the body "
                                        f"is there; it runs off the part it was meant to join"})
@@ -1046,8 +1107,7 @@ def has_errors(checks: list) -> bool:
 
 
 def curve_bounds(gmsh, curve: int) -> tuple:
-    x0, y0, _, x1, y1, _ = gmsh.model.getBoundingBox(1, curve)
-    return (x0, y0, x1, y1)
+    return sampled_bounds(gmsh, 1, curve)
 
 
 def classify_curves(gmsh, built: Built2D, axis: int, rules: list[dict]) -> dict[int, str]:
@@ -1061,7 +1121,7 @@ def classify_curves(gmsh, built: Built2D, axis: int, rules: list[dict]) -> dict[
 def external_face(gmsh, body: int, opts) -> tuple[int, tuple]:
     """The flow box minus the body, in body lengths; returns (face, box bounds)."""
     occ = gmsh.model.occ
-    x0, y0, _, x1, y1, _ = gmsh.model.getBoundingBox(2, body)
+    x0, y0, x1, y1 = sampled_bounds(gmsh, 2, body)
     L = x1 - x0
     bx0, by0 = x0 - float(opts["ahead"]) * L, y0 - float(opts["below"]) * L
     bx1, by1 = x1 + float(opts["behind"]) * L, y1 + float(opts["above"]) * L
@@ -1182,15 +1242,20 @@ def generate(gmsh, built: Built2D, axis: int, rules: list[dict], curve_patch: di
     tol = max(built.extent) * 1e-4 + 1e-12
     boxes = {s: gmsh.model.getBoundingBox(2, s)
              for d, s in gmsh.model.getBoundary([(3, volume)], combined=True, oriented=False)}
-    lateral = {s: ((b[0] + b[3]) / 2, (b[1] + b[4]) / 2) for s, b in boxes.items() if abs(b[5] - b[2]) >= tol}
-    named = near_targets(rules, lateral)
+    # Each lateral surface takes its base curve's patch by topology: the surface's own
+    # boundary carries the curve it was extruded from (measured: laterals 2..6 of the
+    # cylinder-in-a-channel face carry curves 6, 7, 8, 9, 5; the top face carries none),
+    # so the curve classification decided once is the mesh's patch set and a `near:` at
+    # an arc's mid-parameter point cannot land on the concentric arc's surface.
     patches: dict[str, list[int]] = {}
     for s, (x0, y0, z0, x1, y1, z1) in boxes.items():
         if abs(z1 - z0) < tol:
             name = EMPTY
         else:
-            name = named.get(s) or patch_for_edge((x0, y0, x1, y1), built.domain, axis, tol, rules,
-                                                  built.external)
+            base = [abs(int(c)) for _, c in gmsh.model.getBoundary([(2, s)], combined=False, oriented=False)]
+            name = next((curve_patch[c] for c in base if c in curve_patch), None)
+            if name is None:
+                name = patch_for_edge((x0, y0, x1, y1), built.domain, axis, tol, rules, built.external)
         patches.setdefault(name, []).append(s)
     for name, tags in patches.items():
         g = gmsh.model.addPhysicalGroup(2, tags)
@@ -1349,7 +1414,6 @@ def main(argv: list[str] | None = None) -> int:
         axis = {"auto": longest_axis2d(built.extent), "x": 0, "y": 1}[args.along]
         curve_patch = classify_curves(gmsh, built, axis, rules)
         if not external:
-            landing_checks(gmsh, built.face, legs, args.scale, checks)
             port_checks(gmsh, built, curve_patch, legs, args.scale, checks)
             count_checks(gmsh, built, curve_patch, rules, checks)
         sizes = mesh_sizes2d(built.extent, opts)

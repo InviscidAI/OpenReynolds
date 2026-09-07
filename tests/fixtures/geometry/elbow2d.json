@@ -1,0 +1,29 @@
+{
+ "scale": 0.001,
+ "ops": [
+  {
+   "op": "channel",
+   "name": "elbow",
+   "width": 10,
+   "start": [
+    -50,
+    0
+   ],
+   "heading": 0,
+   "path": [
+    {
+     "line": 50
+    },
+    {
+     "arc": {
+      "radius": 20,
+      "angle": 90
+     }
+    },
+    {
+     "line": 50
+    }
+   ]
+  }
+ ]
+}

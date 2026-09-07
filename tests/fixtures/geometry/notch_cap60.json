@@ -1,0 +1,55 @@
+{
+ "scale": 0.001,
+ "ops": [
+  {
+   "op": "rect",
+   "name": "main",
+   "origin": [
+    0,
+    -1.5
+   ],
+   "size": [
+    60,
+    3
+   ]
+  },
+  {
+   "op": "channel",
+   "name": "branch",
+   "width": 3,
+   "start": [
+    9,
+    1.5
+   ],
+   "heading": 60,
+   "path": [
+    {
+     "line": 6
+    }
+   ]
+  },
+  {
+   "op": "fuse",
+   "name": "body",
+   "of": [
+    "main",
+    "branch"
+   ]
+  }
+ ],
+ "patches": [
+  {
+   "name": "inlet",
+   "at": "x:min"
+  },
+  {
+   "name": "outlet",
+   "at": "x:max"
+  },
+  {
+   "name": "outlet2",
+   "kind": "outlet",
+   "at": "near:12,6.7"
+  }
+ ]
+}
