@@ -128,12 +128,23 @@ def test_the_report_phase_finds_the_script_that_owns_it(study_run, tmp_path):
 # -- where the state directory lands ------------------------------------------------
 
 
+def meshed(root: Path, name: str) -> Path:
+    """A case with a real polyMesh in it and nothing else, for `case_gen` to dress."""
+    import shutil
+
+    cavity = Path(__file__).resolve().parent / "data" / "cavity" / "constant" / "polyMesh"
+    case = root / name
+    (case / "constant").mkdir(parents=True)
+    shutil.copytree(cavity, case / "constant" / "polyMesh")
+    return case
+
+
 def test_case_gen_puts_the_state_directory_at_the_study_home(tmp_path):
     case_gen = load("case_gen")
     study = tmp_path / "study"
     study.mkdir()
     with contextlib.redirect_stdout(io.StringIO()):
-        case_gen.main(["circle", str(study / "cyl"), "--reynolds", "200"])
+        case_gen.main([str(meshed(study, "cyl")), "--length", "0.1", "--reynolds", "200"])
     assert (study / ".reynolds").is_dir()
     assert not (study / "cyl" / ".reynolds").exists()
 
@@ -146,8 +157,8 @@ def test_two_cases_in_one_study_share_one_manifest(tmp_path):
     study = tmp_path / "study"
     study.mkdir()
     with contextlib.redirect_stdout(io.StringIO()):
-        case_gen.main(["circle", str(study / "re100"), "--reynolds", "100"])
-        case_gen.main(["circle", str(study / "re200"), "--reynolds", "200"])
+        case_gen.main([str(meshed(study, "re100")), "--length", "0.1", "--reynolds", "100"])
+        case_gen.main([str(meshed(study, "re200")), "--length", "0.1", "--reynolds", "200"])
 
     entries = gallery.collect(root=study)
 

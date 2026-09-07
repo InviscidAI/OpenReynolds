@@ -745,11 +745,11 @@ way it goes wrong is a mesh built with several cells in z, or side patches left 
 3D to anyone looking at the result. When the request says 2D, the geometry render is the
 cheap place to catch it, not the finished solve.
 
-Two things in the toolbox already know this pairing. `case_gen.py` writes 2D cases with
-one cell in z and a single `frontAndBack` patch declared `empty` in the dictionary and in
-every field, so the disagreement has no way to arise; `preflight.py`'s `empty` check reads
-the mesh -- or the `blockMeshDict`, when the mesh has not been built -- against every
-field in `0/` and says which file disagrees with which.
+Two things in the toolbox already know this pairing. `case_gen.py` reads the patch types
+off the mesh itself and writes `empty` into every field for every patch the mesh calls
+`empty`, so the disagreement has no way to arise; `preflight.py`'s `empty` check reads the
+mesh -- or the `blockMeshDict`, when the mesh has not been built -- against every field in
+`0/` and says which file disagrees with which.
 
 For an outline that is neither a template nor a star-shaped body, gmsh makes the same
 kind of mesh in one pass, and the recipe is short: a plane face from the outline, meshed

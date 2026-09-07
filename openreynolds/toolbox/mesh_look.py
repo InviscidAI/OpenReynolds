@@ -141,11 +141,18 @@ def parse_check(log: str) -> dict:
         ("max_non_orthogonality", r"non-orthogonality Max:\s*([-\d.eE+]+)"),
         ("max_skewness", r"[Mm]ax skewness\s*=\s*([-\d.eE+]+)"),
         ("max_aspect_ratio", r"Max aspect ratio\s*=\s*([-\d.eE+]+)"),
+        # The smallest cell in the mesh, which is what a Courant time step and a y+
+        # estimate are actually sized on. checkMesh prints it as a volume.
+        ("min_volume", r"Min volume\s*=\s*([-\d.eE+]+)"),
     ):
         match = re.search(pattern, log)
         if match:
             try:
-                out["metrics"][key] = float(match.group(1))
+                # checkMesh ends its sentences: `Min volume = 4.4444e-09. Max volume ...`
+                # and the trailing full stop is inside the number's own character class,
+                # so `float` refused it and the smallest cell went unmeasured -- which
+                # is a time step and a y+ estimate quietly falling back to an average.
+                out["metrics"][key] = float(match.group(1).rstrip("."))
             except ValueError:
                 pass
     return out
@@ -166,6 +173,10 @@ def open_mesh(case: Path):
     pv.OFF_SCREEN = True
     times = [p for p in case.iterdir() if p.is_dir() and _is_time(p.name)]
     if not times:
+        # The reader wants one time directory to exist and a mesh-only case has none.
+        # Made here and taken away again in `look`, because looking at a case must not
+        # change it: a `--dry-run` that leaves a `0/` behind is a side effect nobody
+        # asked for, and an empty `0/` is a case that looks set up and is not.
         (case / "0").mkdir(exist_ok=True)
     foam = case / f"{case.name}.foam"
     if not foam.exists():
@@ -195,7 +206,7 @@ def _is_time(name: str) -> bool:
     return True
 
 
-def measure_patches(entries: list[dict], surfaces: dict) -> list[dict]:
+def measure_patches(entries: list[dict], surfaces: dict, bounds=None) -> list[dict]:
     """The boundary table: the dictionary's names and counts, plus what the geometry says.
 
     Area, centre and mean normal come from the faces themselves. The normal is the one
@@ -209,6 +220,7 @@ def measure_patches(entries: list[dict], surfaces: dict) -> list[dict]:
         row = dict(entry)
         surface = surfaces.get(entry["name"])
         if surface is not None and surface.n_cells:
+            row["touches"] = box_contact(surface.points, bounds)
             try:
                 sized = surface.compute_cell_sizes(length=False, area=True, volume=False)
                 areas = np.asarray(sized.cell_data["Area"], dtype=float)
@@ -227,7 +239,7 @@ def measure_patches(entries: list[dict], surfaces: dict) -> list[dict]:
                 # patch cancels and says so, and a flat one keeps its direction.
                 normals = surface.extract_surface().compute_normals(
                     cell_normals=True, point_normals=False, consistent_normals=True,
-                    auto_orient_normals=True, splitting=False)
+                    auto_orient_normals=True)
                 vectors = np.asarray(normals.cell_data["Normals"], dtype=float)
                 weight = areas / areas.sum() if areas.sum() and len(areas) == len(vectors) else None
                 mean = (np.average(vectors, axis=0, weights=weight) if weight is not None
@@ -241,14 +253,72 @@ def measure_patches(entries: list[dict], surfaces: dict) -> list[dict]:
     return out
 
 
-def enclosure_patches(surfaces: dict, bounds) -> set:
+def as_box(bounds) -> list:
+    """VTK's (xmin, xmax, ymin, ymax, zmin, zmax) as OpenFOAM's two corners.
+
+    checkMesh prints its bounding box as (min) (max) and pyvista hands its own back
+    interleaved, and mixing the two silently produced a domain 0.06 x -0.3 x 0.001 m
+    -- a negative span nothing complained about. One convention, converted once: the
+    two corners, which is what every reader of this file expects.
+    """
+    if not bounds or len(bounds) != 6:
+        return []
+    x0, x1, y0, y1, z0, z1 = (float(v) for v in bounds)
+    return [x0, y0, z0, x1, y1, z1]
+
+
+def box_contact(points, bounds) -> int:
+    """How many of the domain's axes this patch reaches the end of.
+
+    The measurement that separates a body in the flow from the wall of a passage, and
+    it took three wrong answers to arrive at. A cylinder in a channel touches the
+    bounding box on no axis; a square body sitting on the floor touches it on one (the
+    floor); the wall of an L-duct runs into the ends and the sides and touches it on
+    two. So: a wall patch reaching one axis or none is something in the flow, and one
+    reaching two or more is the domain's own boundary.
+
+    Axes the domain is only one cell thick in are not counted -- in a plane case every
+    point in the mesh lies on both z faces, which made every patch look like the box.
+    """
+    import numpy as np
+
+    if not bounds or len(bounds) != 6:
+        return 0
+    array = np.asarray(points, dtype=float)
+    if not len(array):
+        return 0
+    lo = np.array(bounds[:3], dtype=float)
+    hi = np.array(bounds[3:], dtype=float)
+    span = hi - lo
+    widest = float(span.max()) if span.size else 0.0
+    tol = 1e-6 + 0.002 * widest
+    reached = 0
+    for axis in range(3):
+        if span[axis] <= 0.05 * widest:
+            continue
+        column = array[:, axis]
+        if (np.abs(column - lo[axis]) <= tol).any() or (np.abs(column - hi[axis]) <= tol).any():
+            reached += 1
+    return reached
+
+
+def enclosure_patches(surfaces: dict, bounds, types: dict | None = None) -> set:
     """Which patches are the outside of the box rather than the thing inside it.
 
-    A patch every one of whose points lies on the domain's bounding box is a wall of
-    the enclosure -- an inlet plane, a farfield, a floor. A body immersed in the flow
-    is not, and neither is the wall of a passage that bends. It matters because an
-    opaque flow box hides everything the picture was drawn to show, and "make the big
-    ones transparent" mislabels a wide floor. This is measured, not guessed.
+    A patch is part of the enclosure when, for some axis, every one of its points sits
+    on that axis' minimum or maximum -- an inlet plane, a farfield, a floor, or the
+    two z faces of a plane case together. A body immersed in the flow is on no such
+    face, and neither is the wall of a passage that bends.
+
+    The axis test is per-axis rather than per-point for a reason that cost a wrong
+    answer: in a plane case every point in the mesh lies on one of the two z faces,
+    so a "does this point touch the box anywhere" rule made a cylinder in mid-channel
+    part of the enclosure. A direction the domain is only one cell thick in is not a
+    direction anything can be classified by, so it is left out of the test entirely.
+
+    It matters twice: an opaque flow box hides everything the picture was drawn to
+    show, and a body in open flow carries a hundredth of the free-stream turbulence a
+    passage does.
     """
     import numpy as np
 
@@ -256,16 +326,25 @@ def enclosure_patches(surfaces: dict, bounds) -> set:
         return set()
     lo = np.array(bounds[:3], dtype=float)
     hi = np.array(bounds[3:], dtype=float)
-    span = np.where(hi - lo > 0, hi - lo, 1.0)
-    tol = 1e-6 + 0.002 * float(span.max())
+    span = hi - lo
+    widest = float(span.max()) if span.size else 0.0
+    tol = 1e-6 + 0.002 * widest
+    # A direction the domain is barely thick in tells nothing apart.
+    axes = [i for i in range(3) if span[i] > 0.05 * widest]
     out = set()
     for name, surface in surfaces.items():
-        points = np.asarray(surface.points, dtype=float)
-        if not len(points):
-            continue
-        on_face = ((np.abs(points - lo) <= tol) | (np.abs(points - hi) <= tol)).any(axis=1)
-        if on_face.all():
+        if types and types.get(name) == "empty":
             out.add(name)
+            continue
+        points = np.asarray(surface.points, dtype=float)
+        if not len(points) or not axes:
+            continue
+        for axis in axes:
+            column = points[:, axis]
+            on_face = (np.abs(column - lo[axis]) <= tol) | (np.abs(column - hi[axis]) <= tol)
+            if on_face.all():
+                out.add(name)
+                break
     return out
 
 
@@ -291,8 +370,8 @@ def draw(case: Path, internal, surfaces: dict, out_png: Path, two_d: bool,
     pv.OFF_SCREEN = True
     types = types or {}
     colours = {name: PALETTE[i % len(PALETTE)] for i, name in enumerate(sorted(surfaces))}
-    domain = list(internal.bounds) if internal is not None else []
-    enclosure = set() if two_d else enclosure_patches(surfaces, domain)
+    domain = as_box(internal.bounds) if internal is not None else []
+    enclosure = set() if two_d else enclosure_patches(surfaces, domain, types)
     if len(enclosure) == len(surfaces):
         enclosure = set()  # a bare box: there is nothing else to see past it
     shown = {name: s for name, s in surfaces.items()
@@ -455,17 +534,30 @@ def look(case: Path, out_png: Path | None, check: bool = True) -> dict:
 
     payload["two_d"] = any(e.get("type") == "empty" for e in entries)
     internal, surfaces = None, {}
+    made_time = not any(p.is_dir() and _is_time(p.name) for p in case.iterdir())
     try:
         internal, surfaces = open_mesh(case)
     except Exception as exc:  # noqa: BLE001 - the numbers survive a reader that will not open
         payload["error"] = f"the mesh could not be opened for drawing ({type(exc).__name__}: {exc})"
+    finally:
+        if made_time:
+            try:
+                (case / "0").rmdir()  # only ever the empty one this call made
+            except OSError:
+                pass
     if internal is not None:
         payload["cells"] = payload.get("cells") or int(internal.n_cells)
         payload["points"] = payload.get("points") or int(internal.n_points)
         if not payload["bounds"]:
-            payload["bounds"] = [float(v) for v in internal.bounds]
+            payload["bounds"] = as_box(internal.bounds)
     if surfaces:
-        payload["patches"] = measure_patches(entries, surfaces)
+        payload["patches"] = measure_patches(entries, surfaces, payload["bounds"])
+        # Which patches are the walls of the box rather than something inside it.
+        # The picture uses it to draw the enclosure faint; `case_gen.py` uses it to
+        # tell a body in open flow from a passage, which sets the free-stream
+        # turbulence. Measured once, here, while the surfaces are open.
+        payload["enclosure"] = sorted(enclosure_patches(
+            surfaces, payload["bounds"], {e["name"]: e.get("type", "") for e in entries}))
     if out_png is not None and surfaces:
         try:
             payload["render"] = draw(case, internal, surfaces, out_png, payload["two_d"],
