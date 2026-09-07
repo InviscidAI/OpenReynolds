@@ -751,9 +751,13 @@ def passage_widths(gmsh, face: int, wk: Walk, w_min: float) -> PassageWidths:
     total = sum(c.length for c in wk.curves.values() if c.length >= w_min)
     spacing = w_min / 4.0 if total <= 200 * w_min else w_min / 2.0
     sharp = [v.at for v in wk.vertices if v.interior_deg < 90.0]
+    # A cap's inward ray runs along its channel and measures a length, not a width (a
+    # 60 x 3 rect's two caps added eight rays of 9 to the sample); only wall curves are
+    # sampled, and the open-end candidates are the caps whatever they are named.
+    caps = {e.curve for e in open_ends(gmsh, wk, w_min, None)}
     depths: list[tuple[float, tuple[float, float]]] = []
     for info in wk.curves.values():
-        if info.length < w_min:
+        if info.length < w_min or info.tag in caps:
             continue
         pts = info.samples
         cum = [0.0]

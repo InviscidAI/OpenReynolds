@@ -393,6 +393,7 @@ def judge(gmsh, face: int, plan: "Plan", wk: Walk, m: Measurements, legacy_check
         return _ordered(legacy)
     w = m.reference_width
     span = max(m.extent)
+    external = any(s.kind == "BodyInBox" for s in (getattr(plan, "features", None) or {}).values())
     findings: list[Finding] = []
     findings += _void_and_body(gmsh, plan, wk, m, cfg, units)
     findings += _drop_judged_landings(legacy, plan, m)
@@ -407,7 +408,7 @@ def judge(gmsh, face: int, plan: "Plan", wk: Walk, m: Measurements, legacy_check
     findings += _cusps_and_lips(wk, cfg)
     findings += _passage(m, cfg, w)
     findings += _ports(gmsh, wk, plan, m, cfg, w)
-    findings += _units(m, claims, cfg, span)
+    findings += _units(m, claims, cfg, _body_span(wk) if external else span)
     findings += kernel_findings(list(getattr(plan, "ops", []) or []))
     canary = kernel_state(gmsh, face, wk)
     if canary is not None:
@@ -420,6 +421,19 @@ def judge(gmsh, face: int, plan: "Plan", wk: Walk, m: Measurements, legacy_check
 
 def _ordered(findings: list[Finding]) -> list[Finding]:
     return sorted(findings, key=lambda f: _LEVEL_ORDER.get(f.level, 3))
+
+
+def _body_span(wk: Walk) -> float:
+    """The span the units check judges on a BodyInBox: the body's, not the flow box's
+    (3.6, the units row). The body is the fluid's hole loops; a 20 mm body in a box five
+    lengths long is judged against the request's 20, not the box's 70. With no hole
+    (the body reached the box's edge) the fluid's own span stands."""
+    pts = [p for k in range(1, len(wk.loops)) for c in wk.loops[k] for p in wk.curves[c].samples]
+    if not pts:
+        return wk.span()
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return max(max(xs) - min(xs), max(ys) - min(ys))
 
 
 def has_errors(findings: list[Finding]) -> bool:
@@ -509,6 +523,16 @@ def _row_gaps(plan, m: Measurements, legacy: list[Finding], cfg: LintConfig, w: 
             out.append(render("warn", "W-GAP", f"Row '{name}'", where=first.where, a=a, b=b, gap=measured, w=w))
         if declared is not None and not inst.get("gap_declared"):
             first.what = TEXTS["I-GAP"].format(gap=measured, solved_text=f" (solved gap {float(declared):.4g} is along the wall's bounding footprint)")
+        # The build measured the wall distance with OCC (`_instances_apart`, edit 2) and
+        # `measure` never sees the check dicts, so the row's `gap_measured` is written
+        # here, where both are in hand; the claims (c11's "walls 2.44 apart") read it.
+        if math.isfinite(measured):
+            row = m.rows.get(name)
+            if row is not None and row.gap_measured is None:
+                row.gap_measured = measured
+            entry = m.features.get(name)
+            if isinstance(entry, dict) and entry.get("gap_measured") is None:
+                entry["gap_measured"] = measured
     return out
 
 
@@ -697,8 +721,10 @@ def _landings(gmsh, face: int, plan, wk: Walk, m: Measurements, cfg: LintConfig,
     tenth on the leg's side must be inside (else the mouth is capped); (c) the landing's
     u within the host wall's span, the span read off the built face (`host_wall_span`:
     the record's `wall_line` carries axis, value, flow and outward, not a u origin);
-    (d) the `to` line on the host wall's line (closed form). (d) and (c) are judged before
-    the samples, since a leg that stopped short fails (a) for that reason."""
+    (d) the `to` line on the host wall's line (closed form; a line outside the host
+    is refused, a line inside it is a flush cut after the fuse and the samples judge it).
+    (d) is judged before the samples, since a leg that stopped short fails (a) for that
+    reason; the record's `wall_line` is read as a dict or as 3.4's tuple (`_wall_line`)."""
     out: list[Finding] = []
     solved = getattr(plan, "features", None) or {}
     tol = cfg.touch_rel * span + 1e-12
@@ -743,16 +769,19 @@ def _landings(gmsh, face: int, plan, wk: Walk, m: Measurements, cfg: LintConfig,
                 fields = dict(line=r["line"], lx=lands[0], ly=lands[1], n=n, host=host, width=width)
                 span_text = f"the mouth spans {lands[axis ^ 1] - half:.4g}..{lands[axis ^ 1] + half:.4g} on {r['line']}"
                 start = half
-                if wall is not None:
-                    w_axis = int(wall.get("axis", axis))
-                    w_value = float(wall.get("value", to_value))
+                wall_frame = _wall_line(wall, axis, to_value)
+                if wall_frame is not None and wall_frame[0] == axis:
+                    w_axis, w_value, flow, outward = wall_frame
                     host_line = f"{'xy'[w_axis]} = {w_value:g}"
-                    if w_axis != axis or abs(w_value - to_value) > tol:
+                    # Clause (d), closed form: the `to` line on the wall's line. It refuses
+                    # only a line OUTSIDE the host (the cap stands proud, a gap between it
+                    # and the wall); a line inside the host is cut where the fuse buries
+                    # the cap and the outline is a flush cut (8.1 row 6: not a defect),
+                    # so the samples judge it like any landing.
+                    if (to_value - w_value) * outward[w_axis] > tol:
                         out.append(render("error", "E-LAND", subject, where=lands, variant="short",
                                           short=abs(w_value - to_value), host_line=host_line, k=past, **fields))
                         continue
-                    flow = tuple(wall.get("flow") or ((1.0, 0.0) if w_axis == 1 else (0.0, 1.0)))
-                    outward = tuple(wall.get("outward") or ((0.0, 1.0) if w_axis == 1 else (1.0, 0.0)))
                     measured = host_wall_span(wk, w_axis, w_value, outward, flow, max(tol, 1e-6 * width))
                     if measured is not None:
                         host_span, upstream = measured
@@ -773,6 +802,28 @@ def _landings(gmsh, face: int, plan, wk: Walk, m: Measurements, cfg: LintConfig,
                 if leg_side:
                     out.append(render("error", "E-LAND", subject, where=lands, variant="capped", k=leg_side, **fields))
     return out
+
+
+def _wall_line(wall, axis: int, value: float) -> tuple[int, float, tuple, tuple] | None:
+    """The record's `wall_line` as (axis, value, flow, outward), whether U1 wrote it as a
+    dict with those keys or as the tuple 3.4 lists (axis, value, flow, outward, span);
+    None when the record has none. A missing flow runs +x along a horizontal wall and +y
+    along a vertical one; a missing outward points +y / +x."""
+    if wall is None:
+        return None
+    if isinstance(wall, dict):
+        w_axis = int(wall.get("axis", axis))
+        w_value = float(wall.get("value", value))
+        flow, outward = wall.get("flow"), wall.get("outward")
+    else:
+        parts = list(wall)
+        w_axis = int(parts[0]) if len(parts) > 0 and parts[0] is not None else axis
+        w_value = float(parts[1]) if len(parts) > 1 and parts[1] is not None else value
+        flow = parts[2] if len(parts) > 2 else None
+        outward = parts[3] if len(parts) > 3 else None
+    flow = tuple(float(v) for v in flow) if flow else ((1.0, 0.0) if w_axis == 1 else (0.0, 1.0))
+    outward = tuple(float(v) for v in outward) if outward else ((0.0, 1.0) if w_axis == 1 else (1.0, 0.0))
+    return w_axis, w_value, flow, outward
 
 
 def _row_start(plan, row, u, half) -> float:

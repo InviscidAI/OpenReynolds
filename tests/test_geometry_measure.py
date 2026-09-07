@@ -206,6 +206,21 @@ def test_ray_depth_bisects_to_the_resolution(gm):
     assert measure.ray_depth(gm, face, (5.0, 3.0), (0.0, 1.0), 3.0, 12, until="inside") == 3.0
 
 
+def test_passage_widths_sample_the_walls_and_not_the_caps(gm):
+    """A cap's inward ray runs along its channel (9 on a 60 x 3 rect, the 3 w cap) and
+    is a length, not a width: the two 60 walls give 160 rays at w/4 and the caps none,
+    so the median is the width and not pulled up by eight rays of 9."""
+    gm.model.add("bare_widths")
+    occ = gm.model.occ
+    r = occ.addRectangle(0, 0, 0, 60, 3)
+    occ.synchronize()
+    wk = measure.walk(gm, r, 3.0)
+    p = measure.passage_widths(gm, r, wk, 3.0)
+    assert p.n == 160
+    assert p.min == pytest.approx(3.0, abs=0.003) and p.median == pytest.approx(3.0, abs=0.003)
+    assert max(v for v in [p.min, p.p10, p.median]) < 3.01
+
+
 def test_passage_widths_on_t01_and_t02(gm):
     """Pinned 2026-09-07 from the first run of the bisecting implementation: T01's 3 mm
     channel reads 2.999, T02's 2 mm reads 1.999 (resolution 1e-3 w), where the coarse

@@ -748,3 +748,27 @@ def test_every_lateral_surface_takes_its_base_curves_patch(mesh2d, tmp_path, cap
     assert edges == {"inlet": 1, "outlet": 1, "bend": 1, "walls": 7}
     assert faces == {**edges, "frontAndBack": 2}
     assert '"bend"' in (case / "body.msh").read_text(encoding="utf-8")
+
+
+def test_a_repeat_beyond_twelve_checks_the_closing_pair(mesh2d):
+    """Edit 2 (D23): beyond twelve copies the consecutive pairs and the closing pair are
+    checked; fourteen spokes at 360/13 degrees put copy 14 on copy 1 while every
+    consecutive pair is clear, and the ring's closing pair is what catches it."""
+    pytest.importorskip("gmsh")
+    import gmsh
+    ops, _ = mesh2d.parse_spec([
+        {"op": "disk", "name": "hub", "center": [0, 0], "radius": 3.5},
+        {"op": "rect", "name": "spoke", "origin": [3, -0.3], "size": [7, 0.6]},
+        {"op": "repeat", "name": "spokes", "target": "spoke", "count": 14, "angle": 360 / 13, "about": [0, 0]},
+        {"op": "fuse", "name": "body", "of": ["hub", "spokes"]}])
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    try:
+        checks: list = []
+        mesh2d.build_face(gmsh, ops, checks=checks)
+    finally:
+        gmsh.finalize()
+    overlaps = [c for c in checks if "overlap" in c["what"]]
+    assert [c["pair"] for c in overlaps] == [(1, 14)]
+    assert overlaps[0]["overlap"] == pytest.approx(4.2, abs=1e-6)
+    assert [c["pair"] for c in checks if c["level"] == "info"] == [(1, 2)]

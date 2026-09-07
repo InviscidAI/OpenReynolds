@@ -104,10 +104,40 @@ def test_a_declared_gap_the_build_does_not_keep_is_refused(gm):
     assert "loops[0]" in gap[0].what and "loops[1]" in gap[0].what
     solved = spec_plan(spec, instances={"loops": {"count": 4, "step": (13.0, 0.0), "gap": 0.8, "gap_declared": False,
                                                   "footprint": (13.02, 11.25)}})
-    again = judged(gm, spec, "row_gap_solved", plan=solved)[3]
+    _, _, m2, again, _, _ = judged(gm, spec, "row_gap_solved", plan=solved)
     assert not with_code(again, "E-ROW-GAP") and not with_code(again, "W-GAP")
     info = with_code(again, "I-GAP")
     assert len(info) == 1 and info[0].numbers["gap"] == pytest.approx(0.80, abs=0.01)
+    # the build's OCC distance reaches the row's measure, which the claims read (c11)
+    assert m2.rows["loops"].gap_measured == pytest.approx(0.80, abs=0.01)
+    assert m2.features["loops"]["gap_measured"] == pytest.approx(0.80, abs=0.01)
+    assert m2.features["loops"]["gap"] == 0.8
+
+
+def test_a_to_line_inside_the_host_is_a_flush_cut_not_a_short_landing(gm):
+    """8.1 row 6: a cap cut INSIDE the parent is interior after the fuse and the outline
+    is identical to a flush cut, so `to y:1.0` against a wall at 1.5 is no E-LAND (and
+    no notch); the closed-form clause (d) refuses only a line OUTSIDE the host."""
+    spec = load_spec("landing_short.json")
+    for op in spec["ops"]:
+        if op["op"] == "channel" and op["name"] == "branch":
+            op["path"][-1] = {"line": {"to": "y:1.0"}}
+    _, _, _, findings, _, _ = judged(gm, spec, "landing_inside", plan=bypass_plan(spec, "branch", kind="Passage"))
+    assert not with_code(findings, "E-LAND"), [f.text() for f in findings]
+    assert not with_code(findings, "E-NOTCH")
+
+
+def test_a_wall_line_recorded_as_a_tuple_is_read(gm):
+    """3.4 lists `wall_line (axis, value, flow, outward, span)`: the landing lint reads
+    it as that tuple as well as a dict with those keys."""
+    spec = load_spec("tesla_real_attempt1.json")
+    feature = Solved(kind="Bypass", params={},
+                     solved={"lands_on": "main.top", "wall_line": (1, 1.5, (1.0, 0.0), (0.0, 1.0), 60.0)},
+                     ops=["bypass"])
+    _, _, _, findings, _, _ = judged(gm, spec, "attempt1_tuple", plan=spec_plan(spec, features={"bypass": feature}))
+    land = with_code(findings, "E-LAND")
+    assert len(land) == 1 and near(land[0].where, -3.93, 1.5) and land[0].numbers["k"] == 5
+    assert "main.top spans u 0..60" in land[0].what
 
 
 def test_an_undeclared_gap_under_a_tenth_of_the_width_warns(gm):
@@ -331,6 +361,27 @@ def test_a_fourfold_unit_slip_warns(gm):
     assert not with_code(findings, "E-UNITS")
 
 
+def test_units_are_judged_on_the_bodys_span_for_a_body_in_a_box(gm):
+    """3.6, the units row: for a BodyInBox the span is the body's. A 20 mm block in a
+    70 x 50 flow box against a request of 20 is r = 1 (no finding), where the box's
+    span would have warned at 3.5x; a request of 6 warns at 3.33x on the body's 20."""
+    spec = {"scale": 0.001, "ops": [
+        {"op": "rect", "name": "box", "origin": [-20, -20], "size": [70, 50]},
+        {"op": "rect", "name": "block", "origin": [0, 0], "size": [20, 10]},
+        {"op": "cut", "name": "body", "from": "box", "take": ["block"]}],
+        "patches": [{"name": "inlet", "at": "x:min"}, {"name": "outlet", "at": "x:max"},
+                    {"name": "farfield", "at": "y:min"}, {"name": "farfield", "at": "y:max"}]}
+    plan = spec_plan(spec, features={"wing": Solved(kind="BodyInBox", params={}, solved={"box": (-20, -20, 50, 30)},
+                                                    ops=["block"])}, declared_widths=[4.0])
+    claim = {"unit": "mm", "claims": [{"id": "c1", "kind": "measure", "measure": "length", "of": "wing", "value": 20}]}
+    _, _, _, findings, _, _ = judged(gm, spec, "body_units_ok", plan=plan, claims=claim)
+    assert not with_code(findings, "W-UNITS") and not with_code(findings, "E-UNITS"), [f.text() for f in findings]
+    small = {"unit": "mm", "claims": [{"id": "c1", "kind": "measure", "measure": "length", "of": "wing", "value": 6}]}
+    _, _, _, findings, _, _ = judged(gm, spec, "body_units_warn", plan=plan, claims=small)
+    warn = with_code(findings, "W-UNITS")
+    assert len(warn) == 1 and warn[0].numbers["r"] == pytest.approx(20 / 6) and warn[0].numbers["span"] == pytest.approx(20.0)
+
+
 # -- 16, 17: bodies in a flow ---------------------------------------------------------------------
 
 
@@ -355,7 +406,6 @@ def test_a_passage_drawn_into_a_body_is_an_open_end_on_the_body(gm):
     assert [f.code for f in findings] == ["E-PORT-ON-BODY"] and findings[0].level == "error"
     assert near(findings[0].where, 12.0, 5.0) and findings[0].numbers["length"] == pytest.approx(4.0)
     assert "+x" in findings[0].what
-    block = _body(gm, "t05.json", "plain_body") if False else None
     gm.model.add("plain_block")
     occ = gm.model.occ
     r = occ.addRectangle(0, 0, 0, 20, 10)
