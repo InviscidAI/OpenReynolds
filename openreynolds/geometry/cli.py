@@ -433,13 +433,23 @@ def reference_gate(name: str | None):
                             f"until a person approves it (cli golden --approve {name} --by <name>)")
     try:
         entry = library.get(name)
+    except library.LibraryError as exc:
+        # an unknown name is refused under the same code, but the text says what it is
+        raise Refusal("E-REFERENCE-UNAPPROVED",
+                      _refusal_text("E-REFERENCE-UNAPPROVED", str(exc), "nothing is shown as a reference")) from None
+    try:
         approval = library.approval(entry)
         if approval is None or approval.get("source_sha") != library.source_sha(entry):
             raise Refusal("E-REFERENCE-UNAPPROVED", refusal)
-        golden = json.loads((library.GOLDEN / f"{entry.name}.json").read_text(encoding="utf-8"))
-    except (NotImplementedError, KeyError, FileNotFoundError, OSError, ValueError):
-        # NotImplementedError: the library is U0's stub until U6 lands, and a library
-        # that is not built approves nothing (D32)
+        golden_path = library.GOLDEN / f"{entry.name}.json"
+        if not golden_path.exists():
+            raise Refusal("E-REFERENCE-UNAPPROVED",
+                          _refusal_text("E-REFERENCE-UNAPPROVED",
+                                        f"library entry '{name}' is approved but its golden is missing; nothing is shown",
+                                        f"cli golden --regenerate {name}, then approve it again"))
+        golden = json.loads(golden_path.read_text(encoding="utf-8"))
+    except (KeyError, OSError, ValueError):
+        # a library that cannot answer approves nothing (D32)
         raise Refusal("E-REFERENCE-UNAPPROVED", refusal) from None
     return library.ReferenceMatch(entry=entry.name, preset=str(golden.get("preset") or approval.get("preset") or ""),
                                   approved_at=str(approval.get("at", "")),
@@ -765,10 +775,18 @@ def cmd_preview(args) -> int:
                     params[key] = value
             sk = entry.build(args.preset, **params)
             lap = Lap(work=work, preview_path=out, started=time.monotonic(), script="")
+            # the entry's own claims judge the preview unless a claims file is given, so the
+            # print-back a person reads before approving carries the CLAIMS block
+            claim_set = None
+            if args.claims:
+                claim_set, lap.claims_payload, _ = load_claims(Path(args.claims))
+            elif entry.claims is not None:
+                claim_set, _ = claims.parse(entry.claims)
+                lap.claims_payload = entry.claims
             with _gmsh_session("library") as gmsh:
                 try:
-                    plan = compile.plan(sk, None, gmsh)
-                    return run_plan(gmsh, lap, plan, sk, None)
+                    plan = compile.plan(sk, claim_set, gmsh)
+                    return run_plan(gmsh, lap, plan, sk, claim_set)
                 except SketchError as exc:
                     return refused_with_partial(gmsh, lap, exc)
         if args.record:
@@ -814,13 +832,23 @@ def _sha(value) -> str:
 
 
 def _span(golden: dict) -> float:
-    extent = (golden.get("measurements") or {}).get("extent") or [1.0, 1.0]
-    return float(max(extent))
+    return library.span_of(golden)
+
+
+def _write_approvals(path: Path, approvals: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(approvals, indent=1) + "\n", encoding="utf-8")
 
 
 def cmd_golden(args) -> int:
+    """`--regenerate [NAME]` builds, measures and draws each entry into golden/ and writes
+    its APPROVALS record with `approved: false` (an existing approval stands only when
+    the source, measurements and outline shas all still match); `--approve NAME --by
+    <person>` is the one command that flips the flag, recording who and when against the
+    shas on disk; `--check` rebuilds every entry into a temp dir and diffs it against its
+    golden, refusing an entry that is not approved or whose source changed since."""
     approvals_path = library.GOLDEN / "APPROVALS.json"
-    approvals = _read_json(approvals_path) if approvals_path.exists() else {}
+    approvals = library.approvals()
     if args.approve:
         entry = library.get(args.approve)
         golden_path = library.GOLDEN / f"{entry.name}.json"
@@ -831,20 +859,26 @@ def cmd_golden(args) -> int:
         if golden.get("source_sha") != library.source_sha(entry):
             print(f"{entry.name}: the golden was made from another source; regenerate it before approving")
             return 1
-        approvals[entry.name] = {"preset": golden.get("preset"), "by": args.by,
+        approvals[entry.name] = {"preset": golden.get("preset"), "approved": True, "by": args.by,
                                  "at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                 "source_sha": golden["source_sha"],
-                                 "measurements_sha": _sha(golden.get("measurements")),
-                                 "outline_sha": _sha(golden.get("outline"))}
-        approvals_path.parent.mkdir(parents=True, exist_ok=True)
-        approvals_path.write_text(json.dumps(approvals, indent=1), encoding="utf-8")
+                                 **library.shas(golden)}
+        _write_approvals(approvals_path, approvals)
         print(f"approved {entry.name} ({golden.get('preset')}) by {args.by}")
         return EXIT_OK
     if args.regenerate is not None:
         targets = [library.get(args.regenerate)] if args.regenerate else library.entries()
         for entry in targets:
             golden = library.regenerate(entry, into=library.GOLDEN)
-            print(f"regenerated {entry.name} ({golden.get('preset')}): {library.GOLDEN / (entry.name + '.json')}")
+            shas = library.shas(golden)
+            record = approvals.get(entry.name)
+            if isinstance(record, dict) and record.get("approved") is True and all(record.get(k) == v for k, v in shas.items()):
+                standing = f"approved by {record.get('by')} on {record.get('at')}; unchanged, the approval stands"
+            else:
+                approvals[entry.name] = {"preset": golden.get("preset"), "approved": False, "by": None, "at": None, **shas}
+                standing = f"awaiting approval (cli golden --approve {entry.name} --by <person>)"
+            print(f"regenerated {entry.name} ({golden.get('preset')}): {library.GOLDEN / (entry.name + '.json')} "
+                  f"and .png; {standing}")
+        _write_approvals(approvals_path, approvals)
         return EXIT_OK
     if args.check:
         failed = 0
@@ -857,12 +891,16 @@ def cmd_golden(args) -> int:
             golden = _read_json(golden_path)
             approval = approvals.get(entry.name)
             sha = library.source_sha(entry)
-            if approval is None:
+            if not isinstance(approval, dict) or approval.get("approved") is not True:
                 print(f"{entry.name}: not approved")
                 failed += 1
                 continue
             if approval.get("source_sha") != sha:
                 print(f"{entry.name}: the source changed since its approval (sha {sha[:12]} vs approved {approval.get('source_sha', '')[:12]})")
+                failed += 1
+                continue
+            if golden.get("source_sha") != sha:
+                print(f"{entry.name}: the golden on disk was made from another source (sha {golden.get('source_sha', '')[:12]}); regenerate it")
                 failed += 1
                 continue
             with tempfile.TemporaryDirectory(prefix="golden-") as tmp:

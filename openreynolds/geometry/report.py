@@ -246,6 +246,15 @@ def _wall_span_for(row: str, plan: "Plan") -> float | None:
     return None
 
 
+def _start_text(start) -> str:
+    """A point, or a branch's `(wall, u)` (D37; the record keeps the wall as its name) as
+    'on main.top at u 50', which is what the script wrote and what the LEGS block's
+    first leg locates."""
+    if isinstance(start, (list, tuple)) and len(start) == 2 and isinstance(start[0], str):
+        return f"on {start[0]} at u {_g(start[1])}"
+    return _pt(start)
+
+
 def _passage_summary(name: str, sol, m: Measurements | None) -> list[str]:
     s, p = sol.solved, sol.params
     feat = (m.features.get(name) if m is not None else None) or {}
@@ -258,7 +267,7 @@ def _passage_summary(name: str, sol, m: Measurements | None) -> list[str]:
     if len(legs) == 1 and legs[0].get("kind") == "line":
         line = f"width {_g(width)}, one leg {_g(legs[0].get('length'))} along {_sense(legs[0].get('heading', 0))}"
         if start is not None and end is not None:
-            line += f", start {_pt(start)} end {_pt(end)}"
+            line += f", start {_start_text(start)} end {_pt(end)}"
         return [line]
     straight = sum(1 for r in legs if r.get("kind") == "line")
     corners = sum(1 for r in legs if r.get("kind") == "corner")
@@ -268,7 +277,7 @@ def _passage_summary(name: str, sol, m: Measurements | None) -> list[str]:
         line += f", centreline {_g(s['length'])}"
     tail = []
     if start is not None:
-        tail.append(f"start {_pt(start)}" + (f" heading {_g(heading)}" if heading is not None else ""))
+        tail.append(f"start {_start_text(start)}" + (f" heading {_g(heading)}" if heading is not None else ""))
     if end is not None:
         tail.append(f"end {_pt(end)}" + (f" heading {_g(end_heading)}" if end_heading is not None else ""))
     if tail:

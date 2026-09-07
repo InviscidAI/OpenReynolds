@@ -1,7 +1,10 @@
 """The three invariants of DESIGN.md 8.2, and the facts pinned beside them.
 
-Invariant 1 (no reference without an approved golden) is U6's and stays a strict
-xfail placeholder here until the library, its goldens and the approvals exist.
+Invariant 1 (no reference without an approved golden) reads every surface the model
+can see for a shape word and asks the library for an approved golden of it; it is a
+strict xfail until a person approves the goldens, and the never-xfail gate beside it
+(test_geometry_library.py::test_an_unapproved_entry_is_never_matched_or_shown) is what
+keeps an unapproved shape from reaching the model meanwhile (D32).
 Invariants 2 (no commit without a compliance table and clean lint) and 3 (a meshed
 result carries a measured fitness table, never a placeholder) are the desk's, and run
 over the same `Scripted` harness as test_geometry_agent.py: a fake child returning
@@ -39,16 +42,69 @@ def available(monkeypatch):
     monkeypatch.setattr(desk, "unavailable", lambda: None)
 
 
-# -- invariant 1: U6's -------------------------------------------------------------
+# -- invariant 1: no reference without an approved golden ----------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="awaiting Kabir's approval of the goldens; U6 (library + goldens) writes this test")
-def test_no_reference_without_a_golden():
-    """Invariant 1: every shape word the model can read is a library entry with an
-    approved golden whose source_sha matches the entry's file now, and every library
-    entry is approved. U6 owns the body; strict, so it goes green by itself the day the
-    approvals exist and red again the day an entry's source changes without one."""
-    pytest.fail("U6 writes this test against library.entries(), approval() and regenerate()")
+SHAPE_WORDS = ("tesla", "serpentine", "t-junction", "t junction", "venturi", "nozzle", "backward step",
+               "backward-facing", "cylinder in", "aerofoil", "airfoil", "manifold", "spiral", "penne",
+               "ahmed", "naca", "pin-fin", "bent pipe", "bluff body")
+
+
+def readable_surface() -> str:
+    """Everything the model reads that could name a shape (8.2): the lap-0 message as the
+    desk builds it (the request, reference.md, the claims schema, MEASURES, PREDICATES),
+    the brief, the sketch docstrings, lint's texts, the two toolbox docstrings and the
+    geometry tool's description."""
+    from openreynolds.geometry import _toolbox, lint, sketch
+    return (desk.BRIEF + desk.claims_message("a duct", reference=None) + sketch.api_summary()
+            + (sketch.__doc__ or "")
+            + "".join(getattr(sketch, n).__doc__ or "" for n in sketch.API if hasattr(getattr(sketch, n), "__doc__"))
+            + "".join(claims_mod.MEASURES.values()) + "".join(p.__doc__ or "" for p in claims_mod.PREDICATES.values())
+            + "".join(lint.TEXTS.values())
+            + (_toolbox.load("mesh2d").__doc__ or "") + (_toolbox.load("cad_gen").__doc__ or "")
+            + next(t for t in tools.TOOLS if t["name"] == "geometry")["description"]).lower()
+
+
+@pytest.mark.xfail(strict=True, reason="awaiting Kabir's approval of the goldens (cli golden --approve NAME --by Kabir)")
+def test_no_reference_without_a_golden(tmp_path):
+    """Invariant 1. Every shape word the model can read is a library entry with an
+    approved golden whose source_sha matches the entry's file now; and every library
+    entry is approved, its golden on disk with its picture, and rebuilds to its golden.
+    Strict, so it goes green by itself the day the approvals exist and red again the day
+    an entry's source changes without a new approval (or a shape word appears without
+    an entry)."""
+    from openreynolds.geometry import library
+    pytest.importorskip("gmsh")
+    named = {w for w in SHAPE_WORDS if w in readable_surface()}
+    approved = {e.name for e in library.entries() if library.approval(e) is not None}
+    for word in named:
+        assert any(word.replace(" ", "_").replace("-", "_") in name for name in approved), word
+    for entry in library.entries():
+        approval = library.approval(entry)
+        assert approval is not None and approval["source_sha"] == library.source_sha(entry), entry.name
+        golden = json.loads((library.GOLDEN / f"{entry.name}.json").read_text(encoding="utf-8"))
+        assert (library.GOLDEN / f"{entry.name}.png").exists()
+        rebuilt = library.regenerate(entry, into=tmp_path)
+        assert library.hausdorff(rebuilt["outline"], golden["outline"]) < 1e-6 * library.span_of(golden)
+        assert library.measurements_agree(rebuilt["measurements"], golden["measurements"], rel=1e-6)
+
+
+def test_the_shape_words_the_model_reads_today_are_the_library_entries_plus_the_toolbox_docstrings():
+    """What invariant 1 will find the day it runs: the desk's own surfaces name only the
+    library's shapes (tesla, serpentine), while `manifold` and `penne` come from the
+    mesh2d and cad_gen module docstrings alone -- left alone in Phase 1 (section 12), so
+    the invariant stays red on those two words until the docstrings or the library
+    change. Pinned so the day it moves is noticed."""
+    from openreynolds.geometry import _toolbox, lint, sketch
+    desk_side = (desk.BRIEF + desk.claims_message("a duct", reference=None) + sketch.api_summary()
+                 + (sketch.__doc__ or "")
+                 + "".join(getattr(sketch, n).__doc__ or "" for n in sketch.API if hasattr(getattr(sketch, n), "__doc__"))
+                 + "".join(claims_mod.MEASURES.values()) + "".join(p.__doc__ or "" for p in claims_mod.PREDICATES.values())
+                 + "".join(lint.TEXTS.values())
+                 + next(t for t in tools.TOOLS if t["name"] == "geometry")["description"]).lower()
+    assert {w for w in SHAPE_WORDS if w in desk_side} == {"serpentine"}, "the API card names the Serpentine class"
+    toolbox = ((_toolbox.load("mesh2d").__doc__ or "") + (_toolbox.load("cad_gen").__doc__ or "")).lower()
+    assert {w for w in SHAPE_WORDS if w in toolbox} == {"tesla", "serpentine", "manifold", "penne"}
 
 
 # -- invariant 2: no commit without a table and clean lint --------------------------

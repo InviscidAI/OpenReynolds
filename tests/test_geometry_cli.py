@@ -385,11 +385,15 @@ def test_main_without_a_command_prints_help_and_exits_1(capsys):
 
 
 def test_golden_check_passes_on_committed_goldens(capsys):
-    approvals = library.GOLDEN / "APPROVALS.json"
-    if not approvals.exists():
-        pytest.skip("no APPROVALS.json yet: awaiting the library (U6) and Kabir's approval")
-    if not json.loads(approvals.read_text(encoding="utf-8")):
-        pytest.skip("APPROVALS.json is empty: awaiting Kabir's approval")
+    """CI's `cli golden --check`, once a person has approved every entry: until then the
+    records are there with `approved: false` (U6 writes them at regeneration) and the
+    check is skipped, not failed -- the approval is Kabir's to give."""
+    approvals = library.approvals()
+    if not approvals:
+        pytest.skip("no APPROVALS.json records yet: cli golden --regenerate writes them")
+    unapproved = [name for name, record in approvals.items() if record.get("approved") is not True]
+    if unapproved:
+        pytest.skip(f"awaiting Kabir's approval of {', '.join(unapproved)} (cli golden --approve NAME --by Kabir)")
     assert cli.main(["golden", "--check"]) == 0, capsys.readouterr().out
 
 
