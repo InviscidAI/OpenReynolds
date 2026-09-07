@@ -628,22 +628,22 @@ class HostedBackend(Backend):
     ) -> list[Path]:
         """Pack and download the given paths.
 
-        `timeout` and `max_attempts` exist for the mirror's background cycles, which
-        (without `via="volume"`) run on the same container as whatever tool call the
-        model is mid-way through (see `mirror.py`): a request left at its ordinary
-        300 s / 5-attempt defaults can sit stuck on one awkward path for minutes, and
-        the tool call waits behind it the whole time. A caller in a hurry passes both
-        down; `openreynolds pull`, asked for explicitly and with nothing else running,
-        passes neither and gets the patient defaults it always had.
+        `timeout` and `max_attempts` exist for the mirror's background cycles: a
+        request left at its ordinary 300 s / 5-attempt defaults can sit stuck on one
+        awkward path for minutes, and this is a copy nobody is waiting for. A caller
+        in a hurry passes both down; `openreynolds pull`, asked for explicitly, passes
+        neither and gets the patient defaults it always had.
 
         `via="volume"` asks the service to build the archive straight off the
-        persistent volume instead of running `tar` inside the sandbox that tool calls
-        also use -- the background mirror's own reason to contend with a tool call at
-        all, gone rather than waited around. Not the default: a volume-built archive
-        cannot carry the executable bit (a shebang script loses it), which is fine for
-        a background copy nobody is about to run and wrong for a file `fetch` was
-        asked for by name -- so `fetch`/`openreynolds pull` leave this unset and get
-        the sandbox path, unchanged.
+        persistent volume instead of running `tar` in the workspace's own container.
+        It exists for the two cases that need it -- a path the container's jail
+        refuses (which is a real service-side bug, `qa-runs/FINDINGS.md` F-55) and a
+        copy that must not wake a stopped workspace -- and it is deliberately NOT what
+        the mirror uses. Measured (`qa-runs/tail_probe.py`): copying two case
+        directories takes 39 s that way against 7 s through the container, and the
+        contention it was introduced to avoid turned out to be the service blocking
+        its own event loop, which is fixed. It also cannot carry the executable bit,
+        which a file `fetch` was asked for by name may need.
         """
         if not remote_paths:
             return []

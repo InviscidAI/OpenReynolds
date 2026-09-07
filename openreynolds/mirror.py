@@ -63,10 +63,15 @@ time with a cycle in flight. That is still true of the listing (`browser.tree`, 
 tool call to end before it starts one -- bounded, because a turn of back-to-back tool
 calls would otherwise never even list at all, and a bounded wait is a delay, which the
 cycle can afford, where an unbounded one is the twenty-five minutes the turn-end sync
-once cost. It is no longer true of a pull: `get_tree(..., via="volume")` reads the
-persistent volume directly, off the container a tool call uses, so a live cycle's
-round trips no longer wait on this at all (see `_pull_batch`) -- there is nothing left
-to stand aside for."""
+once cost. It was briefly true of a pull as well, and the measurement took it back:
+what made an archive request stall a `bash` call was never the container's CPU, it was
+the workspace service running that request *on its event loop*, where one slow call
+stalls every other request the process is serving. With that fixed, a copy and a
+command no longer notice each other -- `echo ok` costs the same 8-10 s whether a copy
+is in flight or not -- so a live pull uses the ordinary archive again, which is five
+times faster than reading every file out of the volume one at a time (7 s against 39 s
+for two case directories). What stays is the bound: a cycle still must not sit on one
+file for minutes."""
 
 LIVE_PULL_TIMEOUT_S = 25.0
 """How long a background cycle's own archive request may run before it gives up on it.
@@ -694,25 +699,24 @@ def _pull_batch(
     file whose failure is a fact about the path is remembered and not asked for again
     this session. Which file it was is named, because the log never said.
     """
-    # `gate is not None` is exactly "this cycle shares a container with a tool call
-    # that may be running right now" (see `LiveMirror._cycle`). It used to mean
-    # waiting for the gate before every round trip, on the reasoning that a slow
-    # archive request here was a `bash` call stalled behind it -- true while building
-    # the archive meant running inside that same container. `via="volume"` asks the
-    # backend for a copy that does not (see `Backend.get_tree`, and `backend/hosted.py`
-    # for what it actually does): there is nothing left to stand aside for, and
-    # waiting anyway was pure delay -- up to GATE_WAIT_S of it, every batch, for a
-    # wait that protected nothing. So a live cycle now goes straight to the round
-    # trip. The bound stays regardless (`LIVE_PULL_TIMEOUT_S`, one attempt): the
-    # backend does not promise this alternate path is always fast
-    # (`qa-runs/LATENCY.md`), and this cycle still must not sit on one file for
-    # minutes even when nothing else is waiting on it.
+    # `gate is not None` is exactly "this cycle is running in the background while a
+    # tool call may be in flight" (see `LiveMirror._cycle`), and what it buys is the
+    # bound below, not a different route. Both were tried: for one afternoon a live
+    # pull asked the backend for a copy that avoids the workspace's compute container
+    # altogether, on the reasoning that a slow archive request here was a `bash` call
+    # stalled behind it. The reasoning was right about the symptom and wrong about the
+    # cause -- the stall was the service running that request on its own event loop,
+    # not the container's CPU -- and with that fixed, measured directly
+    # (`qa-runs/LATENCY.md`, `tail_probe.py`): a copy in flight costs a concurrent
+    # `echo ok` nothing either way, and the volume route is five times slower to copy
+    # (39 s against 7 s). So the ordinary archive it is, bounded: this cycle must not
+    # sit on one file for minutes even when nothing else is waiting on it.
     report.round_trips += 1
     try:
         if gate is not None:
             written = browser.backend.get_tree(
                 [entry.path for entry in batch], report.local_dir,
-                timeout=LIVE_PULL_TIMEOUT_S, max_attempts=1, via="volume",
+                timeout=LIVE_PULL_TIMEOUT_S, max_attempts=1,
             )
         else:
             written = browser.backend.get_tree([entry.path for entry in batch], report.local_dir)
