@@ -1,0 +1,4 @@
+[{"op": "box", "name": "leg1", "origin": [0,0,0], "size": [0.10,0.01,0.01]},
+ {"op": "box", "name": "leg2", "origin": [0.09,0,0], "size": [0.01,0.04,0.01]},
+ {"op": "box", "name": "leg3", "origin": [0,0.03,0], "size": [0.10,0.01,0.01]},
+ {"op": "fuse", "name": "body", "of": ["leg1","leg2","leg3"]}]

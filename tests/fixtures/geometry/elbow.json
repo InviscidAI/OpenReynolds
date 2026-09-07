@@ -1,0 +1,6 @@
+[{"op": "cylinder", "name": "leg1", "base": [-0.05,0,0], "axis": [0.05,0,0], "radius": 0.005},
+ {"op": "torus", "name": "ring", "center": [0,0.02,0], "radius": 0.02, "tube": 0.005},
+ {"op": "box", "name": "quarter", "origin": [0,0,-0.01], "size": [0.03,0.03,0.02]},
+ {"op": "intersect", "name": "bend", "of": ["ring", "quarter"]},
+ {"op": "cylinder", "name": "leg2", "base": [0.02,0.02,0], "axis": [0,0.05,0], "radius": 0.005},
+ {"op": "fuse", "name": "body", "of": ["leg1", "bend", "leg2"]}]

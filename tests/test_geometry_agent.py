@@ -15,7 +15,7 @@ import pytest
 
 from openreynolds import geometry, tools
 from openreynolds.config import Config
-from openreynolds.geometry import GEOMETRY_SYSTEM, GeometryAgent, GeometryResult, extract_spec
+from openreynolds.geometry import GEOMETRY_SYSTEM, GeometryAgent, GeometryResult, desk, extract_spec
 from openreynolds.llm.base import TextBlock, Turn
 from openreynolds.tools import ToolContext
 
@@ -74,7 +74,7 @@ class Recording(GeometryAgent):
 
 @pytest.fixture
 def available(monkeypatch):
-    monkeypatch.setattr(geometry, "unavailable", lambda: None)
+    monkeypatch.setattr(desk, "unavailable", lambda: None)
 
 
 # -- the brief ------------------------------------------------------------------
@@ -180,13 +180,13 @@ def test_the_time_cap_commits_what_built_and_says_it_was_the_time(backend, store
     and the words name which cap it was."""
     agent = Recording(cfg(), backend, store, "/work/s", [json.dumps(GOOD)])
     clock = iter([0.0, 0.0, 0.0, 700.0, 700.0, 700.0, 700.0])
-    monkeypatch.setattr(geometry.time, "monotonic", lambda: next(clock, 700.0))
+    monkeypatch.setattr(desk.time, "monotonic", lambda: next(clock, 700.0))
     result = agent.run("anything", case="c")
     assert result.laps == 1 and result.capped == "time" and not result.agreed
     assert geometry.MAX_SECONDS >= 240
-    desk = SimpleNamespace(run=lambda *a, **k: result)
+    fake_desk = SimpleNamespace(run=lambda *a, **k: result)
     out, _ = tools.dispatch(ToolContext(backend=backend, store=store, max_output=1000,
-                                        geometry=desk), "geometry", {"request": "x"})
+                                        geometry=fake_desk), "geometry", {"request": "x"})
     assert "the time cap ended the laps" in out[1]["text"]
     assert "NOT one the desk agreed" in out[1]["text"]
 
@@ -200,7 +200,7 @@ def test_a_commit_that_still_disagrees_is_recorded(backend, store, available):
 
 
 def test_the_time_cap_is_honoured(backend, store, available, monkeypatch):
-    monkeypatch.setattr(geometry, "MAX_SECONDS", 0.0)
+    monkeypatch.setattr(desk, "MAX_SECONDS", 0.0)
     agent = Recording(cfg(), backend, store, "/work/s", [json.dumps(GOOD), "COMMIT"])
     result = agent.run("anything")
     assert result.laps == 0 and "no spec built within the time" in result.error and backend.trees == []
@@ -226,7 +226,7 @@ def test_a_model_failure_is_reported_not_raised(backend, store, available):
 
 
 def test_without_gmsh_the_desk_says_why(backend, store, monkeypatch):
-    monkeypatch.setattr(geometry.importlib.util, "find_spec",
+    monkeypatch.setattr(desk.importlib.util, "find_spec",
                         lambda name: None if name == "gmsh" else object())
     assert "gmsh" in geometry.unavailable()
     result = Recording(cfg(), backend, store, "/work/s", ["x"]).run("x")
@@ -236,7 +236,7 @@ def test_without_gmsh_the_desk_says_why(backend, store, monkeypatch):
 def test_the_client_seam_is_the_desks(backend, store, available):
     """The same replacement `test_desk.py` uses: the SDK client under the provider."""
     agent = Recording(cfg(), backend, store, "/work/s", [])
-    agent._provider = geometry.make_provider(cfg())
+    agent._provider = desk.make_provider(cfg())
     fake = FakeMessages([message([text_block(json.dumps(GOOD))]), message([text_block("COMMIT")])])
     agent._client = SimpleNamespace(messages=fake)
     result = agent.run("anything")
@@ -298,7 +298,7 @@ def test_the_tool_reports_a_desk_that_did_not_agree(ctx):
 
 
 def test_the_session_wires_the_desk_only_where_it_can_run():
-    source = (Path(geometry.__file__).parent / "cli.py").read_text(encoding="utf-8")
+    source = (Path(geometry.__file__).parents[1] / "cli.py").read_text(encoding="utf-8")
     assert "ctx.on_tokens = loop.add_tokens" in source
     assert "geometry.unavailable() is None" in source
     assert "ctx.geometry = geometry.GeometryAgent(cfg, backend, store, store.session.home)" in source

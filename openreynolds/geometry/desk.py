@@ -35,11 +35,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import images, trace
-from .llm import ProviderError, make_provider
-from .llm.base import Listener
+from .. import images, trace
+from ..llm import ProviderError, make_provider
+from ..llm.base import Listener
 
-TOOLBOX = Path(__file__).resolve().parent / "toolbox"
+TOOLBOX = Path(__file__).resolve().parents[1] / "toolbox"
 
 
 def _mesh_digest():
