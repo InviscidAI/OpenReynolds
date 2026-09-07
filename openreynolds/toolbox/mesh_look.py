@@ -218,10 +218,20 @@ def measure_patches(entries: list[dict], surfaces: dict) -> list[dict]:
                 row["center"] = [float(v) for v in (
                     np.average(centre, axis=0, weights=weight) if weight is not None
                     else centre.mean(axis=0))]
+                # Consistent ordering matters more here than it looks. Without it the
+                # faces of a curved patch come back with their normals pointing
+                # whichever way each cell happened to be wound, and the mean of a
+                # cylinder's faces -- which must cancel to nothing, because the patch
+                # closes on itself -- came out as a confident unit vector at 45
+                # degrees, reported next to "flat". Oriented consistently, a closed
+                # patch cancels and says so, and a flat one keeps its direction.
                 normals = surface.extract_surface().compute_normals(
-                    cell_normals=True, point_normals=False, consistent_normals=False)
+                    cell_normals=True, point_normals=False, consistent_normals=True,
+                    auto_orient_normals=True, splitting=False)
                 vectors = np.asarray(normals.cell_data["Normals"], dtype=float)
-                mean = vectors.mean(axis=0)
+                weight = areas / areas.sum() if areas.sum() and len(areas) == len(vectors) else None
+                mean = (np.average(vectors, axis=0, weights=weight) if weight is not None
+                        else vectors.mean(axis=0))
                 norm = float(np.linalg.norm(mean))
                 row["normal"] = [float(v) for v in (mean / norm)] if norm > 1e-9 else [0.0, 0.0, 0.0]
                 row["flat"] = norm > 0.98
@@ -374,8 +384,16 @@ def report(payload: dict) -> str:
     bounds = payload.get("bounds") or []
     if len(bounds) == 6:
         x0, y0, z0, x1, y1, z1 = bounds
-        lines.append(f"  bounds {x1 - x0:.4g} x {y1 - y0:.4g} x {z1 - z0:.4g} m"
-                     f"   x {x0:.4g}..{x1:.4g}   y {y0:.4g}..{y1:.4g}   z {z0:.4g}..{z1:.4g}")
+        span = (x1 - x0, y1 - y0, z1 - z0)
+        line = (f"  bounds {span[0]:.4g} x {span[1]:.4g} x {span[2]:.4g} m"
+                f"   x {x0:.4g}..{x1:.4g}   y {y0:.4g}..{y1:.4g}   z {z0:.4g}..{z1:.4g}")
+        # In millimetres too, when it is small enough that the request was probably
+        # written in them. OpenFOAM has no units and reads these numbers as metres, so
+        # a geometry built in millimetres and never scaled is a mesh a thousand times
+        # too big with nothing anywhere saying so.
+        if 0 < max(span) < 10:
+            line += f"   [{span[0] * 1000:.4g} x {span[1] * 1000:.4g} x {span[2] * 1000:.4g} mm]"
+        lines.append(line)
     lines.append(f"  checkMesh: {payload.get('checkmesh', '(not run)')}")
     for key, value in sorted((payload.get("metrics") or {}).items()):
         lines.append(f"    {key.replace('_', ' ')}: {value:g}")

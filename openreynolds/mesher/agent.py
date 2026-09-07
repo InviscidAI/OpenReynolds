@@ -145,8 +145,17 @@ class Mesher:
                 result.stopped = "provider"
                 break
             turns += 1
-            messages.append(turn.as_message())
             _add(result.tokens, turn.tokens)
+            said = _assistant(turn)
+            if said is None:
+                # A turn that is all reasoning and no words. Sending it back verbatim
+                # is a 400 from the Messages API ("text content blocks must be
+                # non-empty") which killed a whole run mid-mesh, so the empty turn is
+                # dropped and the desk is asked for the command it did not send.
+                _observe(messages, "That message arrived empty. Send one fenced ```bash "
+                                   "block with the command you want run.")
+                continue
+            messages.append(said)
             last_text = turn.text.strip() or last_text
 
             cmd, complaint = parse_action(turn.text)
@@ -156,7 +165,7 @@ class Mesher:
 
             if _is_finish(cmd):
                 result.summary = _summary(turn.text)
-                check = verify(self.backend, case_dir, case_rel)
+                check = verify(self.backend, case_dir, case_rel, request)
                 result.check = check
                 if check.ok:
                     result.ok = True
@@ -174,10 +183,13 @@ class Mesher:
             _evict(messages)
 
         result.seconds = time.monotonic() - started
-        if not result.ok and result.check is None and not result.error:
-            # The budget ran out mid-flight. What is on disk may still be a mesh, and
-            # an unlooked-at mesh is exactly the failure this desk exists to end.
-            result.check = verify(self.backend, case_dir, case_rel)
+        if not result.ok and result.check is None:
+            # The run ended without saying done -- out of steps, out of time, or the
+            # model call failed. What is on disk may still be a finished mesh, and a
+            # mesh nobody looked at is exactly the failure this desk exists to end.
+            # Measured, not assumed: a T10 run built 91,000 cells, hit a 400 on its
+            # next model call, and was reported as "nothing was meshed".
+            result.check = verify(self.backend, case_dir, case_rel, request)
             result.ok = result.check.ok
         if not result.summary:
             result.summary = _summary(last_text)
@@ -285,6 +297,29 @@ def _summary(text: str) -> str:
 
 
 # -- the thread ---------------------------------------------------------------
+
+
+def _assistant(turn: Any) -> dict[str, Any] | None:
+    """The turn as a thread entry, with empty blocks left out, or None if nothing is left.
+
+    An empty text block is not a harmless nothing: the Messages API refuses the whole
+    request that carries one, so a single empty turn ends the run several steps into a
+    mesh that was going fine.
+    """
+    message = turn.as_message()
+    content = [b for b in (message.get("content") or []) if not _is_empty(b)]
+    if not content:
+        return None
+    message["content"] = content
+    return message
+
+
+def _is_empty(block: Any) -> bool:
+    kind = block.get("type") if isinstance(block, dict) else getattr(block, "type", "")
+    if kind != "text":
+        return False
+    text = block.get("text") if isinstance(block, dict) else getattr(block, "text", "")
+    return not (text or "").strip()
 
 
 def _observe(messages: list[dict[str, Any]], text: str) -> None:

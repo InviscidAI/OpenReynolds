@@ -35,6 +35,23 @@ TIMEOUT_S = 280
 
 _UNNAMED = re.compile(r"^(patch|region|surface|volume)\d+$|^defaultFaces$")
 
+_SIZED = re.compile(r"(\d+(?:\.\d+)?)\s*(mm|cm|millimetres?|millimeters?|centimetres?|"
+                    r"centimeters?|metres?|meters?|m)\b", re.I)
+_IN_METRES = {"mm": 0.001, "millimetre": 0.001, "millimetres": 0.001,
+              "millimeter": 0.001, "millimeters": 0.001,
+              "cm": 0.01, "centimetre": 0.01, "centimetres": 0.01,
+              "centimeter": 0.01, "centimeters": 0.01,
+              "m": 1.0, "metre": 1.0, "metres": 1.0, "meter": 1.0, "meters": 1.0}
+
+SCALE_SLACK = 100.0
+"""How far the mesh may be from the size the request named before it is called wrong.
+
+Generous on purpose: a flow box round a 20 mm sphere is legitimately twenty times the
+body, and a request may name a small feature on a large part. What this is looking for
+is the thousandfold -- a geometry built in millimetres and left there, which OpenFOAM
+reads as metres and solves as a duct 74 m across. That one is not a judgement call.
+"""
+
 
 @dataclass
 class Check:
@@ -102,7 +119,7 @@ class Check:
         return out
 
 
-def verify(backend: Any, case_dir: str, case_rel: str) -> Check:
+def verify(backend: Any, case_dir: str, case_rel: str, request: str = "") -> Check:
     """Run the check on the workspace and read the verdict.
 
     One command: draw the mesh, measure it, run checkMesh, write the JSON, print it.
@@ -126,10 +143,11 @@ def verify(backend: Any, case_dir: str, case_rel: str) -> Check:
                      "and fix what it says" + (f"\n  {tail}" if tail else "")],
             error="no json",
         )
-    return read(payload, case_rel, case_dir)
+    return read(payload, case_rel, case_dir, request)
 
 
-def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "") -> Check:
+def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "",
+         request: str = "") -> Check:
     """The JSON `mesh_look.py --json` writes, turned into a verdict.
 
     Split from `verify` so the rules can be tested without a workspace: this function
@@ -179,12 +197,57 @@ def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "") -> Che
                        "can be rebuilt or edited -- leave the script that made this mesh")
     if not check.render:
         missing.append("no picture of the mesh was drawn")
+    off = scale_mismatch(request, check.bounds)
+    if off:
+        missing.append(off)
     if payload.get("error"):
         missing.append(str(payload["error"]))
 
     check.missing = missing
     check.ok = not missing
     return check
+
+
+def largest_length(request: str) -> float:
+    """The biggest length the request names, in metres, or 0 when it names none.
+
+    `"a duct 100 mm long and 20 mm tall"` is 0.1. Read off the words rather than
+    assumed, so the comparison below is between two measurements.
+    """
+    best = 0.0
+    for number, unit in _SIZED.findall(request or ""):
+        try:
+            metres = float(number) * _IN_METRES[unit.lower()]
+        except (ValueError, KeyError):
+            continue
+        best = max(best, metres)
+    return best
+
+
+def scale_mismatch(request: str, bounds: list[float]) -> str:
+    """Whether the mesh is the size the request asked for, to within a factor of 100.
+
+    The failure this exists for: a geometry authored in millimetres and meshed
+    without a scale. OpenFOAM has no units -- it reads the numbers as metres -- so a
+    74 mm duct becomes a 74 m duct, every velocity is the wrong Reynolds number, and
+    nothing in checkMesh or in the picture says a word about it. The only place the
+    intended size is written down is the request, so that is what it is measured
+    against.
+    """
+    asked = largest_length(request)
+    if not asked or not bounds or len(bounds) != 6:
+        return ""
+    built = max(bounds[3] - bounds[0], bounds[4] - bounds[1], bounds[5] - bounds[2])
+    if built <= 0:
+        return ""
+    ratio = built / asked
+    if 1.0 / SCALE_SLACK <= ratio <= SCALE_SLACK:
+        return ""
+    return (f"the mesh is {built:.4g} m across and the request's largest dimension is "
+            f"{asked:.4g} m -- {ratio:.0f}x out. OpenFOAM reads the mesh in metres, so a "
+            "geometry built in millimetres has to be scaled (gmsh: multiply the "
+            "coordinates or set Mesh.ScalingFactor; blockMesh: `scale 0.001;`; an "
+            "existing mesh: `transformPoints -scale '(0.001 0.001 0.001)'`)")
 
 
 def _json_in(text: str) -> dict[str, Any] | None:

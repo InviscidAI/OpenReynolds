@@ -67,7 +67,11 @@ anything not listed here is a constraint, not an install.
 **Build it with a script, not by hand.** Your geometry lives in `build.py` (gmsh or \
 build123d) or in a dictionary you generate, and `Allmesh` is the one command that \
 rebuilds the mesh from nothing. Both stay in the case directory when you are done. A \
-person who wants the duct 2 mm wider edits one number and re-runs; that is the point.
+person who wants the duct 2 mm wider edits one number and re-runs; that is the point. \
+So `Allmesh` is the thing you actually ran, not a file written at the end to satisfy \
+somebody: build the mesh *through* it, and if a step in it failed while the mesh came \
+out anyway (a `foamDictionary` retype that errored, say), fix the step before you \
+finish — what you leave behind has to work when it is run again.
 
 **Look at every shape before you believe in it.** `python3 /work/.toolbox/mesh_look.py \
 . --out look.png` draws the mesh and measures it: bounds, cell count, one panel per \
@@ -85,6 +89,14 @@ not measure is a property you did not build.
 per face as you build it; in blockMesh it is the boundary entry you write. Never assign \
 a patch by asking where a face sits in the bounding box -- on any bend or U-turn that \
 labels the wrong end and says nothing.
+
+**Metres, always.** OpenFOAM has no units: it reads the mesh's numbers as metres and \
+a 74 mm duct built in millimetres becomes a 74 m duct, at a thousandth of the Reynolds \
+number, with checkMesh and the picture both perfectly happy. Author in millimetres if \
+that is how the request reads, but scale before you finish -- gmsh: multiply the \
+coordinates or set `Mesh.ScalingFactor`; blockMesh: `scale 0.001;`; a mesh that already \
+exists: `transformPoints -scale '(0.001 0.001 0.001)'`. The bounds in the look report \
+are the check: they are in metres, and the millimetre figure is printed beside them.
 
 **Pick the cheapest mesher that fits the shape.** A solid or a passage you can describe \
 with primitives and booleans: gmsh-OCC, body-fitted, no STL and no snappyHexMesh. A \

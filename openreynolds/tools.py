@@ -843,8 +843,11 @@ def mesh_text(result: Any) -> str:
     """
     check = result.check
     lines: list[str] = []
-    if result.error:
+    if result.error and not result.ok:
         lines.append(f"the mesh desk stopped: {result.error}")
+    elif result.error:
+        lines.append(f"the mesh desk stopped ({result.error}) -- but the mesh it had "
+                     "already built is there and passes:")
     if result.ok and check is not None:
         lines.append(f"meshed: {result.case_rel}/constant/polyMesh is an OpenFOAM mesh "
                      "and checkMesh passes on it.")

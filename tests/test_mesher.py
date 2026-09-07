@@ -239,9 +239,54 @@ def test_running_out_of_time_stops_the_run(backend, store):
 
 def test_a_model_failure_is_reported_rather_than_raised(backend, store):
     desk = mesher(backend, store, [ProviderError("429 overloaded", 429)])
+    answers(backend, {"mesh_look.py": ExecResult(0, NOT_YET_JSON, False, None)})
     result = desk.run("a duct")
     assert not result.ok and result.stopped == "provider"
     assert "429 overloaded" in result.error
+
+
+def test_a_model_failure_after_the_mesh_was_built_still_reports_the_mesh(backend, store):
+    """A T10 run built 91,000 cells, hit a 400 on its next model call, and the tool
+    result said "nothing was meshed" -- which is a wrong answer, not a cautious one.
+    Whatever ended the run, what is on disk is looked at before anything is said."""
+    desk = mesher(backend, store, [ProviderError("400 bad request", 400)])
+    answers(backend, {"mesh_look.py": ExecResult(0, OK_JSON, False, None)})
+    result = desk.run("a duct")
+    assert result.ok and result.check.cells == 3750
+    assert "400 bad request" in result.error
+    from openreynolds.tools import mesh_text
+    text = mesh_text(result)
+    assert "already built is there and passes" in text
+    assert "meshed: mesh/constant/polyMesh" in text
+
+
+def test_an_empty_turn_is_not_sent_back_to_the_api(backend, store):
+    """A turn that is all reasoning and no words carries an empty text block, and the
+    Messages API refuses the whole next request because of it -- which ended a T09 run
+    three steps into a mesh that was going fine. The empty turn is dropped and the desk
+    is asked again."""
+    desk = mesher(backend, store, ["", block(f"echo {MESH_DONE}")])
+    answers(backend, {"mesh_look.py": ExecResult(0, OK_JSON, False, None)})
+    result = desk.run("a duct")
+    assert result.ok
+    sent = desk.provider.calls[1]["messages"]
+    assert all(m["role"] != "assistant" for m in sent)
+    assert "arrived empty" in sent[-1]["content"][0]["text"]
+
+
+def test_a_turn_with_words_and_an_empty_block_keeps_the_words(backend, store):
+    desk = mesher(backend, store, [block("ls")], mesher_max_steps=1)
+    desk.provider.texts = [block("ls")]
+    answers(backend, {"mesh_look.py": ExecResult(0, NOT_YET_JSON, False, None)})
+
+    def stream(**kwargs):
+        desk.provider.calls.append({**kwargs, "messages": [dict(m) for m in kwargs["messages"]]})
+        return Turn(content=[TextBlock(text=""), TextBlock(text=block("ls"))],
+                    provider="anthropic", tokens={})
+
+    desk.provider.stream = stream
+    result = desk.run("a duct")
+    assert [s.cmd for s in result.steps] == ["ls"]
 
 
 # -- the thread ---------------------------------------------------------------

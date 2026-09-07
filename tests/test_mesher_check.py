@@ -12,7 +12,9 @@ from types import SimpleNamespace
 import pytest
 
 from openreynolds.backend.base import ExecResult
-from openreynolds.mesher.check import LOOK, Check, look_command, read, verify
+from openreynolds.mesher.check import (
+    LOOK, Check, largest_length, look_command, read, scale_mismatch, verify,
+)
 
 GOOD = {
     "polymesh": True, "cells": 3750, "faces": 15000, "points": 7600,
@@ -93,6 +95,52 @@ def test_the_refusal_reads_as_work_not_as_a_verdict():
     text = check.as_refusal()
     assert text.startswith("The check did not pass")
     assert "Fix it and say done again" in text
+
+
+# -- the size the request asked for --------------------------------------------
+
+
+@pytest.mark.parametrize("request_text,expected", [
+    ("a passage 8 mm wide, two legs 60 mm long, 20 mm apart", 0.06),
+    ("a channel 300 mm long and 60 mm high", 0.3),
+    ("a box 1 m long and 0.6 m high", 1.0),
+    ("a pipe of 20 mm bore with a 4 cm bend radius", 0.04),
+    ("something with no sizes in it at all", 0.0),
+])
+def test_the_largest_length_is_read_off_the_words(request_text, expected):
+    assert largest_length(request_text) == pytest.approx(expected)
+
+
+def test_a_mesh_left_in_millimetres_is_caught():
+    """The T04 U-duct: gmsh built it in millimetres and nothing scaled it, so the
+    mesh was 74 m across. checkMesh passed, the picture was right, and the case
+    would have solved a duct a thousand times too big."""
+    off = scale_mismatch("a passage 8 mm wide, two legs 60 mm long",
+                         [0, -0.004, 0, 0.074, 0.024, 0.001])
+    assert off == ""
+    off = scale_mismatch("a passage 8 mm wide, two legs 60 mm long", [0, -4, 0, 74, 24, 1])
+    assert "74 m across" in off and "1233x out" in off
+    assert "transformPoints -scale" in off
+
+
+def test_a_flow_box_round_a_small_body_is_not_a_scale_error():
+    """A sphere of 20 mm in a box twenty times its size is the normal case, and a
+    check that calls it wrong is a check nobody can leave switched on."""
+    assert scale_mismatch("a sphere of 20 mm diameter in a flow box",
+                          [-0.1, -0.1, -0.1, 0.3, 0.1, 0.1]) == ""
+
+
+def test_no_sizes_and_no_bounds_mean_no_opinion():
+    assert scale_mismatch("mesh me something nice", [0, 0, 0, 74, 24, 1]) == ""
+    assert scale_mismatch("a duct 60 mm long", []) == ""
+    assert scale_mismatch("a duct 60 mm long", [0, 0, 0, 0, 0, 0]) == ""
+
+
+def test_the_scale_check_reaches_the_verdict():
+    check = read(facts(bounds=[0, 0, 0, 74, 24, 1]), "mesh", "/work/s/mesh",
+                 "a passage 8 mm wide, two legs 60 mm long")
+    assert not check.ok
+    assert any("1233x out" in m for m in check.missing)
 
 
 # -- reaching the workspace ----------------------------------------------------
