@@ -670,6 +670,22 @@ def _instances(m: Measurements, of: str, args: dict) -> tuple[list[tuple[str, di
     return resolve(of, m, args.get("_plan"))
 
 
+ANGLE_EPS_DEG = 1e-6
+"""How far past a degree margin still counts as meeting it.
+
+A leg asked to leave at 30 degrees is built by trigonometry and measured back off the
+face, so it comes home as 30.000000000000004; the T01 run of 2026-09-07 spent three of
+its eight laps backing away from a shape that was right, because `30.000000000000004 <=
+30` is False. A millionth of a degree is smaller than any geometry can hold and far
+larger than the arithmetic's own error.
+"""
+
+
+def _within(value: float, limit: float, upper: bool) -> bool:
+    """`value` meets a margin that is an upper (or lower) bound, to ANGLE_EPS_DEG."""
+    return value <= limit + ANGLE_EPS_DEG if upper else value >= limit - ANGLE_EPS_DEG
+
+
 def _margin(args: dict, name: str, default: float, stricter) -> tuple[float, str]:
     """A claim may not narrow a predicate margin (3.7): the margin judged is the stricter
     of the default and the claim's (`stricter` picks it: min for an upper bound, max for a
@@ -717,7 +733,8 @@ def _returns(m: Measurements, of: str, args: dict, against: bool) -> Verdict:
         hx, hy = _unit(float(heading))
         comp = hx * flow[0] + hy * flow[1]
         angle = math.degrees(math.acos(max(-1.0, min(1.0, comp))))
-        ok = angle > min_deg if against else angle < min_deg
+        ok = (angle > min_deg - ANGLE_EPS_DEG if against
+              else angle < min_deg + ANGLE_EPS_DEG)
         oks.append(ok)
         texts.append(f"heading {float(heading):.4g} deg, {angle:.4g} deg from the flow ({label}): component {comp:.2f}")
         if against != (comp < 0):
@@ -740,7 +757,7 @@ def shallow_angle(m: Measurements, of: str, args: dict) -> Verdict:
         angle = _junction_angle(m, label, feat, "leave")
         if angle is None:
             return Verdict(None, f"{label} has no junction angle (no leg leaves a wall)")
-        oks.append(angle <= limit)
+        oks.append(_within(angle, limit, upper=True))
         texts.append(fmt_angle(angle))
         numbers = {"angle": angle}
     lip = _first(insts[0][1], "lip_angle")
@@ -765,7 +782,7 @@ def steep_angle(m: Measurements, of: str, args: dict) -> Verdict:
             angle = _junction_angle(m, label, feat, "leave")
         if angle is None:
             return Verdict(None, f"{label} has no junction angle (no leg meets a wall)")
-        oks.append(angle >= limit)
+        oks.append(_within(angle, limit, upper=False))
         texts.append(fmt_angle(angle))
         numbers = {"angle": angle}
     return Verdict(all(oks), f"{of} angle at the wall = {_multi(texts, len(insts))} built at the leg's wall{note}",

@@ -656,3 +656,17 @@ def test_can_commit_reads_a_comma_separated_disagrees_string_too():
     assert ok and why == "COMMIT accepted, disagreeing with c8, c9"
     ok, why = can_commit([], table, SimpleNamespace(disagrees="c8", accepts=[]))
     assert not ok and why.startswith("COMMIT refused: c9 FAILS and is not named")
+
+
+def test_an_angle_built_exactly_on_its_margin_passes():
+    """The T01 run of 2026-09-07 asked for a 30 degree leave angle, got 30.000000000000004
+    back from the built face, and spent three of its eight laps retreating from a shape
+    that met the claim. A margin in degrees is met to a millionth of a degree."""
+    m = t01_measurements(leave_angle=30.000000000000004)
+    shallow = claims.PREDICATES["shallow_angle"](m, "loops[*]", {"max": 30})
+    assert shallow.ok is True, shallow.text
+    steep = claims.PREDICATES["steep_angle"](
+        t01_measurements(return_angle=59.999999999999993), "loops[*]", {"min": 60})
+    assert steep.ok is True, steep.text
+    assert claims.PREDICATES["shallow_angle"](
+        t01_measurements(leave_angle=30.5), "loops[*]", {"max": 30}).ok is False
