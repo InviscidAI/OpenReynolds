@@ -768,6 +768,25 @@ the all-hex confirmation. A geometry is authored whole and looked at, which is a
 different kind of task from the ladder above: its rungs are physics that a reduced case
 can answer one at a time, while a shape is right or wrong as a picture and a few numbers.
 
+Two more gotchas belong next to that recipe, both found the hard way -- run to
+failure on the real instance, not read off documentation -- and both baked into
+`toolbox/templates/duct2d.py` and `toolbox/templates/body_in_box.py`, which run the
+whole recipe end to end rather than describe it. First: every OpenFOAM utility, not
+just solvers, constructs a `Foam::Time` before it touches anything, so `gmshToFoam`
+run in a directory that has nothing but a `.msh` in it fails "cannot find file
+.../system/controlDict"; there is no mesh-only exemption. A minimal `controlDict`
+has to exist before `gmshToFoam` runs, not after -- and `checkMesh` asks for more
+than that: it builds an `fvMesh`, not just a `polyMesh` (its non-orthogonality and
+skewness metrics are computed with the interpolation weights `fvSchemes` sets), so it
+fails on a missing `system/fvSchemes` even once `gmshToFoam` has already succeeded on
+`controlDict` alone; `fvSolution` follows for free since nothing at this stage reads
+it. All three are stubs, not a real case -- enough to parse, nothing solved. Second:
+`constant/polyMesh/boundary` is a bare list, not a named dictionary, so
+`foamDictionary` addresses the whole thing as one pseudo-entry it calls `entry0` --
+`foamDictionary constant/polyMesh/boundary -entry wall_bottom.type -set wall` fails
+with "not found in dictionary", and the patch has to be reached through that wrapper,
+`-entry entry0.wall_bottom.type -set wall`.
+
 ## Files the person sends up, and PDFs in particular
 
 A hosted session's uploads land in the study's own `uploads/` directory, and the

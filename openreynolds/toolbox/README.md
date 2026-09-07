@@ -33,6 +33,8 @@ Each takes `--help`.
 | `animate.py` | One PNG per write time into a `*_frames/` directory, fixed camera. Designed to run as a job and to flush each frame as it lands, so the frames mirror home while they render and the harness assembles the gif on your machine — including a partial one from the frames so far. |
 | `encode.py` | A `*_frames/` directory turned into a `.gif`, `.mp4` or `.webp` on the instance, reading the frame order and rate from the `frames.json` sidecar `animate.py`/`showcase.py` leave. The image carries the encoder (imageio with ffmpeg), so the finished animation can be made here rather than only on your machine — which is the only place a hosted session has. |
 | `scratch.py` | The case directory lives on the Volume, which is a network filesystem, so the stages that touch many small files pay for every one across the wire — `reconstructPar` most of all (measured 5m23s on the Volume against 27s on local disk for one 160-write case, 39s against 4s for 40 writes; the solver itself about 20% slower). `run` stages a case to container-local `/tmp`, runs a command there, and copies results back to the Volume every minute, so the durable copy is never more than a checkpoint behind and a preempted run resumes from `latestTime` with nothing lost. `reconstruct` does the same for reconstruction, off the decomposed data already on the Volume, so a lost reconstruct never costs the solve — and it is scoped (`--latest`, `--time A:B`, `--fields "U p"`) and idempotent (only the times a case is missing, so a second call is nearly free). Uses only `rsync` and the OpenFOAM tools already here. |
+| `templates/duct2d.py` | A closed planar outline meshed in quads (`Mesh.Algorithm 8`, Blossom full-quad recombination, `setRecombine`), extruded one cell into hexahedra (`extrude(..., numElements=[1], recombine=True)`), converted with `gmshToFoam`, the walls and the two z faces retyped `wall`/`empty` with `foamDictionary`, `checkMesh`, `mesh_look.py`. Copy it into a case directory, edit `LENGTH_M` and `HEIGHT_M`, run it -- the working 2D recipe, not a page describing one. |
+| `templates/body_in_box.py` | An OpenCASCADE primitive cut out of a flow box (`gmsh.model.occ`, a boolean, not a bounding-box guess) and meshed body-fitted with tetrahedra -- no STL, no snappyHexMesh -- converted with `gmshToFoam`, the body retyped `wall`, `checkMesh`, `mesh_look.py`. Copy it in, edit `BODY_RADIUS_M` and `CELL_SIZE_M`, run it -- the working 3D recipe, including how the box around the body is sized and its faces named. |
 
 Anything that writes a PNG is worth knowing about twice over, because `read_file` on an
 image path hands the picture back to you rather than its bytes — so a render is
@@ -42,6 +44,10 @@ something you can look at, not only something you can produce.
 binaries on PATH, and which tool does a job (PDF is `pdftoppm`, not `fitz`; gifs are
 `imageio`; meshing is `gmsh`) — so the environment can be read rather than probed, and the
 sealed network is stated once rather than met as a surprise.
+
+`templates/` holds the two meshing recipes as working scripts rather than as prose to
+retype: `duct2d.py` for a plane case and `body_in_box.py` for a body in a flow box, each
+copy-edit-run, each ending in `checkMesh` and a `mesh_look.py` call.
 
 `notes/openfoam-field-notes.md` is OpenFOAM practice written as field notes rather than
 procedure. `notes/bundle-layout.md` is one suggested `/work` layout, labelled a
