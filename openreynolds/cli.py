@@ -22,7 +22,7 @@ from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT
 from .browse import Browser
 from .capture import Capture
-from . import commands, images, mesher
+from . import commands, images, levels, mesher
 from .config import Config, config_path
 from .delivery import Gallery
 from .llm import PRESETS, ProviderError, make_provider, preset_for
@@ -53,6 +53,18 @@ console = Console()
 @click.option("--study", "study_id", help="Resume a local study by id.")
 @click.option("--instance", "instance_id", help="Use a specific workspace instance.")
 @click.option("--model", help="Override the model for this session.")
+@click.option(
+    "--ambition",
+    type=click.Choice(list(levels.AMBITION), case_sensitive=False),
+    default=None,
+    help="How much work this study is worth (default: standard).",
+)
+@click.option(
+    "--consent",
+    type=click.Choice(list(levels.CONSENT), case_sensitive=False),
+    default=None,
+    help="When to come back and ask (default: costly).",
+)
 @click.option("--no-capture", is_flag=True, help="Do not send anything to the platform.")
 @click.option("--plain", is_flag=True, help="Plain streaming terminal instead of the interface.")
 @click.option(
@@ -73,6 +85,8 @@ def main(
     study_id: str | None,
     instance_id: str | None,
     model: str | None,
+    ambition: str | None,
+    consent: str | None,
     no_capture: bool,
     plain: bool,
     keep_alive: bool,
@@ -85,6 +99,10 @@ def main(
     cfg = Config.load()
     if model:
         cfg.model = model
+    if ambition:
+        cfg.ambition = levels.normalise(ambition, "ambition")
+    if consent:
+        cfg.consent = levels.normalise(consent, "consent")
     if no_capture:
         cfg.capture = False
 
@@ -186,6 +204,17 @@ def config_cmd(from_env: bool, key_file: Path | None, provider: str | None) -> N
                 "Model API key", default=cfg.llm_api_key or "", hide_input=True
             ).strip()
         cfg.model = click.prompt("Model", default=cfg.model).strip()
+        # The two levels are the only settings here that are not credentials, and they
+        # are the ones a person is most likely to want a standing answer to. Asked
+        # last, so the run that only wanted to paste a key can hold enter twice.
+        for axis, current in (("ambition", cfg.ambition), ("consent", cfg.consent)):
+            console.print(f"  ({levels.AXES[axis][current]})")
+            setattr(cfg, axis, click.prompt(
+                axis.capitalize(),
+                default=current,
+                type=click.Choice(list(levels.AXES[axis]), case_sensitive=False),
+                show_choices=True,
+            ).strip().lower())
     except (click.Abort, EOFError):
         # Some shells report a terminal and then deliver EOF, so isatty() alone cannot
         # tell whether prompting will work. Explain rather than dying on "Aborted!".
@@ -377,6 +406,8 @@ def _print_settings(cfg: Config) -> None:
         ("provider", cfg.provider),
         ("model key", "via the service key" if cfg.provider == "reynolds" else _redact(cfg.llm_api_key)),
         ("model", cfg.model),
+        ("ambition", cfg.ambition),
+        ("consent", cfg.consent),
     ):
         console.print(f"  {name:14} {value or '[red]not set[/]'}")
 
@@ -1051,6 +1082,8 @@ def session(
                 interactive=not one_shot,
                 browser=browser,
                 preferences=cfg.preferences,
+                ambition=cfg.ambition,
+                consent=cfg.consent,
             )
         )
         try:
@@ -1292,6 +1325,53 @@ def _when(mtime: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.gmtime(mtime)) + "Z"
 
 
+def _standing_lines(ambition: str, consent: str, preferences: str = "") -> list[str]:
+    """What the user wants: the two levels, and their standing note if they keep one.
+
+    Separate from the rest of the briefing because it is the half a thread has to be
+    told again whenever it starts over. The workspace facts can be re-derived from the
+    workspace; what a person asked for cannot be derived from anything.
+    """
+    # The levels are how much work the study is worth and when the user wants to hear
+    # from you. Named rather than free text so they can be asked for without composing
+    # a note, and so `/status` can say where a session stands.
+    lines = list(levels.briefing_lines(ambition, consent))
+    if preferences:
+        # The user's standing note, in the user's voice. The harness relays it
+        # verbatim and adds nothing: what to do about it stays the model's call,
+        # like anything else the user says.
+        #
+        # Which of the two wins is settled here rather than left to be discovered.
+        # The levels came off a menu; the note is the person's own sentences, and
+        # someone who writes one and picks a level that disagrees with it meant the
+        # sentences. Saying so is a decision; leaving it open would be an accident.
+        lines.append(
+            "The user keeps a standing note that they ask to have passed on at the "
+            "start of every session. Where it and the two levels differ, the note is "
+            "the one they wrote themselves. In their own words:"
+        )
+        lines.append(preferences.strip())
+    return lines
+
+
+def _fresh_thread_brief(store: Store, backend: Backend, cfg: Config) -> str:
+    """The blurb a rebuilt thread opens with, after a context refresh.
+
+    `situation()` describes the workspace, and a refresh empties the thread. Without
+    this the second half of a long study ran on defaults nobody chose: the levels and
+    the standing note were said once at session start and then thrown away at 80% of
+    the window, while `/status` went on reporting levels the thread had never heard
+    of. The workspace survives a refresh on disk; what the user asked for only
+    survives by being said again.
+    """
+    return "\n".join(
+        [
+            situation(store, backend),
+            *_standing_lines(cfg.ambition, cfg.consent, cfg.preferences),
+        ]
+    )
+
+
 def _situation_brief(
     store: Store,
     backend: Backend,
@@ -1299,6 +1379,8 @@ def _situation_brief(
     interactive: bool,
     browser: Browser | None = None,
     preferences: str = "",
+    ambition: str = levels.DEFAULT_AMBITION,
+    consent: str = levels.DEFAULT_CONSENT,
 ) -> str:
     """Facts about this session, assembled by the harness.
 
@@ -1318,15 +1400,7 @@ def _situation_brief(
     machine = _machine_note(backend)
     if machine:
         lines.append(machine)
-    if preferences:
-        # The user's standing note, in the user's voice. The harness relays it
-        # verbatim and adds nothing: what to do about it stays the model's call,
-        # like anything else the user says.
-        lines.append(
-            "The user keeps a standing note that they ask to have passed on at the "
-            "start of every session. In their own words:"
-        )
-        lines.append(preferences.strip())
+    lines.extend(_standing_lines(ambition, consent, preferences))
     if interactive:
         lines.append(
             "A person is at the terminal for this session and can answer you. Anything "
@@ -1547,8 +1621,43 @@ def _apply(
             return None
         loop.say(command.text)
         return command.text
+    if command.kind == commands.LEVEL:
+        said = _level(command.text, loop.cfg, view)
+        if said:
+            loop.say(said)
+        return said
     _local(command, view, browser, store, loop, progress)
     return None
+
+
+def _level(text: str, cfg: Config, view: View) -> str | None:
+    """Show the two levels, or change them for the rest of this study.
+
+    The third scope the levels have. A per-user default in the config file answers
+    "how do I usually work", `--ambition`/`--consent` answer "how about today", and
+    this answers the case the other two cannot: the answer turned out to be more
+    interesting than the question, halfway through. Changing them mid-study reaches
+    the model as the user's own sentence, because that is what it is -- the harness
+    is not deciding anything here, it is carrying a word the person typed.
+
+    Bare `/level` costs no turn, like `/status`: what a study is set to do should be
+    answerable without derailing what it is doing.
+    """
+    ambition, consent, unusable = levels.chosen(text)
+    if unusable or not (ambition or consent):
+        if unusable:
+            # Deliberately not "not a level": one of these can be a perfectly good
+            # level that lost to another word on the same axis, and saying it does not
+            # exist would send someone looking for a typo they did not make.
+            view.info(f"nothing changed, could not use: {', '.join(unusable)}")
+        view.status(levels.menu_lines(cfg.ambition, cfg.consent))
+        return None
+    if ambition:
+        cfg.ambition = ambition
+    if consent:
+        cfg.consent = consent
+    view.status([f"ambition {cfg.ambition}, consent {cfg.consent}"])
+    return levels.spoken(ambition, consent)
 
 
 def _local(
@@ -1574,6 +1683,7 @@ def _local(
                 stage=stage,
                 tokens=getattr(loop, "context_tokens", 0) or 0,
                 token_totals=getattr(loop, "token_totals", None),
+                levels=(loop.cfg.ambition, loop.cfg.consent) if loop is not None else None,
                 local_files=len(browser.local()),
                 sync_age=browser.cache_age(),
             )
@@ -1624,6 +1734,10 @@ def _typed_while_working(
             for_model.append(command.text)
             if concierge is not None:
                 concierge.ask(command.text)
+        elif command.kind == commands.LEVEL:
+            said = _level(command.text, loop.cfg, view)
+            if said:
+                for_model.append(said)
         else:
             _local(command, view, browser, store, loop, progress)
     return "\n".join(for_model) or None
@@ -1829,7 +1943,7 @@ def _run_interactive(
         else:
             _mirror(browser, view)
         if completed and loop.needs_refresh:
-            loop.refresh(situation(store, backend))
+            loop.refresh(_fresh_thread_brief(store, backend, loop.cfg))
 
 
 def _run_one_shot(
@@ -1881,7 +1995,7 @@ def _run_one_shot(
         if live is not None:
             live.catch_up()
         if loop.needs_refresh:
-            loop.refresh(situation(store, backend))
+            loop.refresh(_fresh_thread_brief(store, backend, loop.cfg))
     return "ok"
 
 

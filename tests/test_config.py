@@ -26,6 +26,8 @@ ENV_KEYS = (
     "OPENREYNOLDS_NARRATE_EVERY_S",
     "OPENREYNOLDS_CAPTURE",
     "OPENREYNOLDS_DESK",
+    "OPENREYNOLDS_AMBITION",
+    "OPENREYNOLDS_CONSENT",
 )
 
 
@@ -111,6 +113,41 @@ def test_no_preferences_file_means_an_empty_note(clean_env):
     assert Config.load().preferences == ""
 
 
+# -- the two levels ------------------------------------------------------------
+
+
+def test_the_levels_have_defaults_of_their_own(clean_env):
+    """An empty note used to mean nothing was said about how far to take a study,
+    and nothing said is the ambitious end by default."""
+    cfg = Config.load()
+    assert cfg.ambition == "standard"
+    assert cfg.consent == "costly"
+
+
+def test_the_file_and_the_environment_both_set_the_levels(clean_env, monkeypatch):
+    write_config(clean_env, ambition="sketch", consent="never")
+    assert (Config.load().ambition, Config.load().consent) == ("sketch", "never")
+
+    monkeypatch.setenv("OPENREYNOLDS_AMBITION", "thorough")
+    monkeypatch.setenv("OPENREYNOLDS_CONSENT", "early")
+    assert (Config.load().ambition, Config.load().consent) == ("thorough", "early")
+
+
+@pytest.mark.parametrize("bad", ["thorogh", "", "  ", "AGGRESSIVE"])
+def test_a_level_nobody_recognises_falls_back_rather_than_failing(clean_env, bad):
+    """A typo in an environment variable should not be a session that will not start,
+    and it must not reach the briefing either -- that would put a word in the user's
+    mouth that they never picked."""
+    write_config(clean_env, ambition=bad)
+    assert Config.load().ambition == "standard"
+
+
+def test_a_level_is_read_case_insensitively(clean_env):
+    write_config(clean_env, ambition="Thorough", consent="NEVER")
+    cfg = Config.load()
+    assert (cfg.ambition, cfg.consent) == ("thorough", "never")
+
+
 # -- what counts as configured -------------------------------------------------
 
 
@@ -150,6 +187,8 @@ def test_save_writes_only_the_settings_that_have_values(clean_env):
         "desk_model": "claude-haiku-4-5",
         "effort": "high",
         "context_window": 1_000_000,
+        "ambition": "standard",
+        "consent": "costly",
     }
     assert "studies_dir" not in saved
     assert "capture" not in saved

@@ -261,8 +261,12 @@ def test_config_writes_credentials_outside_the_repo(tmp_path, monkeypatch):
     monkeypatch.delenv("FOAMD_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
+    # Service url, service key, provider, model key, model, then the two levels --
+    # which take their current value on a bare newline.
     result = CliRunner().invoke(
-        cli.main, ["config"], input="https://svc.example/\nof_live_x\nzai\nsk-zai-y\nglm-4.6\n"
+        cli.main,
+        ["config"],
+        input="https://svc.example/\nof_live_x\nzai\nsk-zai-y\nglm-4.6\n\n\n",
     )
 
     assert result.exit_code == 0
@@ -273,6 +277,30 @@ def test_config_writes_credentials_outside_the_repo(tmp_path, monkeypatch):
     assert saved["provider"] == "zai"
     assert saved["llm_api_key"] == "sk-zai-y"
     assert saved["context_window"] == 200_000
+    assert saved["ambition"] == "standard", "held enter, so the default stands"
+    assert saved["consent"] == "costly"
+
+
+def test_config_sets_the_two_levels(tmp_path, monkeypatch):
+    """The README says `openreynolds config` sets your usual pair. It did not ask,
+    which left no supported way to change the per-user default short of editing the
+    JSON by hand or exporting an environment variable for every session."""
+    target = tmp_path / "config.json"
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(target))
+    for name in ("FOAMD_URL", "FOAMD_API_KEY", "ANTHROPIC_API_KEY",
+                 "OPENREYNOLDS_AMBITION", "OPENREYNOLDS_CONSENT"):
+        monkeypatch.delenv(name, raising=False)
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["config"],
+        input="https://svc.example/\nof_live_x\nzai\nsk-zai-y\nglm-4.6\nthorough\nnever\n",
+    )
+
+    assert result.exit_code == 0
+    saved = json.loads(target.read_text())
+    assert (saved["ambition"], saved["consent"]) == ("thorough", "never")
 
 
 def test_exit_works_while_a_job_is_running(loop, backend, store, view, quiet_console):
@@ -1506,3 +1534,58 @@ def test_recover_session_survives_a_service_without_the_route(store):
     store.session.home = ""
     cli._recover_session(store, _StudyClient(boom=True), "s")
     assert store.session.home == ""                  # unchanged, no exception
+
+
+# -- changing the levels mid-study ---------------------------------------------
+
+
+def test_a_level_change_reaches_the_model_and_sticks(loop, view):
+    """The third scope the levels have, and the only one that answers the case the
+    other two cannot: the answer turned out to be more interesting than the question,
+    halfway through."""
+    said = cli._level("thorough never", loop.cfg, view)
+
+    assert (loop.cfg.ambition, loop.cfg.consent) == ("thorough", "never")
+    assert said and "`thorough`" in said and "`never`" in said
+
+
+def test_one_word_leaves_the_other_axis_alone(loop, view):
+    loop.cfg.ambition = "sketch"
+    loop.cfg.consent = "early"
+
+    cli._level("thorough", loop.cfg, view)
+
+    assert (loop.cfg.ambition, loop.cfg.consent) == ("thorough", "early")
+
+
+def test_a_bare_level_shows_the_menu_and_says_nothing_to_the_model(loop, view):
+    """Like `/status`: what a study is set to do should be answerable without
+    derailing what it is doing."""
+    said = cli._level("", loop.cfg, view)
+
+    assert said is None
+    assert any("ambition is standard" in line for line in view.statuses[-1])
+
+
+def test_a_misspelt_level_changes_nothing_and_says_which_word(loop, view):
+    """Half-applying `/level thorogh never` would set consent, silently drop the word
+    they cared about, and leave them believing both had taken."""
+    said = cli._level("thorogh never", loop.cfg, view)
+
+    assert said is None
+    assert (loop.cfg.ambition, loop.cfg.consent) == ("standard", "costly")
+    assert any("thorogh" in line for line in view.infos)
+
+
+def test_a_level_typed_at_the_prompt_goes_into_the_thread(
+    loop, backend, store, view, quiet_console
+):
+    install_model(loop, [message([text_block("noted")])])
+
+    cli._run_interactive(
+        loop, backend, store, view, Browser(backend, store),
+        ScriptedReader(["/level thorough", "/exit"]),
+    )
+
+    assert loop.cfg.ambition == "thorough"
+    assert "`thorough`" in loop.messages[0]["content"]

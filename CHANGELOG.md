@@ -8,6 +8,29 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **Two named levels: `ambition` and `consent`** (`openreynolds/levels.py`, issue #25).
+  How much work a study is worth and when to come back and ask are separate things, and
+  until now there was one control over both: `preferences.md`, free text, empty by
+  default. Empty is not neutral -- it is the ambitious end, picked by default and
+  discovered afterwards, and a modest question could become a refinement family with
+  transient runs and animation frames before anyone was asked. `ambition` is
+  `sketch | standard | thorough` and `consent` is `early | costly | never`, three levels
+  each and defaults (`standard`, `costly`) that are written down rather than implied.
+  Separate axes, so "thorough, but check with me before real money" and "just the quick
+  version, don't ask" are each one line. Three scopes: `openreynolds config` and
+  `OPENREYNOLDS_AMBITION`/`OPENREYNOLDS_CONSENT` for the usual pair, `--ambition` and
+  `--consent` for a session, and `/level thorough never` for a change mid-study when the
+  answer turns out to be more interesting than the question. `/level` on its own shows
+  the menu and `/status` reports the pair, neither costing a turn -- which is the whole
+  reason these are named values rather than more prose. A line `/level` cannot wholly
+  use applies none of itself, a typo and a self-contradicting pair (`/level standard
+  thorough`) alike: half of what somebody typed, taken silently, is worse than nothing.
+  They carry intent and not a ceiling: a spend or wall-clock cap the harness checked
+  itself would be the budget `docs/design.md` §1 rules out by name. `preferences.md` is unchanged and still
+  relayed verbatim; where it and a level disagree the briefing says the note wins,
+  because the note is the person's own sentences and the level came off a menu.
+  Every combination of the two goes through `test_briefing.py`'s imperative sweep, so a
+  level says what the person wants and never what the model has to do.
 - The mesh desk (`openreynolds/mesher/`): geometry and meshing are now one small agent
   with one tool. It gets a shape in words and a case directory, and works the way a
   person at a terminal does -- one fenced ```bash block a message, run on the instance
@@ -49,6 +72,14 @@ All notable changes to this project are recorded here. The format follows
   attached to its output as though it had just been drawn.
 - A model call that fails with an overloaded or gateway status is retried once. A desk
   five minutes into a mesh cannot resume; the next call starts a clean thread.
+- **A context refresh no longer forgets what the user asked for.** `Loop.refresh` empties
+  the thread and re-opens it with `watch.situation()`, which describes the workspace and
+  nothing about the person -- so `preferences.md` was relayed once at session start and
+  thrown away at 80% of the window, and the second half of every long study ran without
+  the standing note its first half had. The two new levels would have been lost the same
+  way, with `/status` still reporting them from the config, which is how this was found.
+  The blurb a rebuilt thread opens with now carries both (`cli._fresh_thread_brief`), and
+  it goes through the same imperative sweep the session-start briefing does.
 - A user turn carrying a picture reaches an OpenAI-family model. The provider's renderer
   handled an image inside a tool result and dropped a bare `image` block in a user
   message, which is exactly the shape the mesh desk sends every render in: a model was

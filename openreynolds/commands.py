@@ -16,6 +16,7 @@ from typing import Any
 SAY = "say"
 ASIDE = "aside"
 STATUS = "status"
+LEVEL = "level"
 FILES = "files"
 RENDERS = "renders"
 OPEN = "open"
@@ -26,6 +27,9 @@ HELP_TEXT = """\
   /btw <something>   say it without asking the agent to stop what it is doing
   /btw               what is happening right now, answered here - the agent is not told
   /status            the same thing
+  /level             how far this study goes, and when you get asked
+  /level <word>      change one or both of them: sketch/standard/thorough,
+                     early/costly/never
   /files [path]      look at the workspace
   /renders           open the pictures folder and show the newest
   /open              open this study's folder in the file browser
@@ -46,6 +50,8 @@ _VERBS = {
     "/aside": ASIDE,
     "/status": STATUS,
     "/what": STATUS,
+    "/level": LEVEL,
+    "/levels": LEVEL,
     "/files": FILES,
     "/ls": FILES,
     "/renders": RENDERS,
@@ -97,6 +103,7 @@ def status_lines(
     local_files: int = 0,
     sync_age: float | None = None,
     token_totals: dict | None = None,
+    levels: tuple[str, str] | None = None,
 ) -> list[str]:
     """A picture of the session assembled from what the harness already knows.
 
@@ -107,6 +114,10 @@ def status_lines(
     lines = [f"study {session.study_id} on instance {session.instance_id[:8] or '?'}"]
     if stage:
         lines.append(f"right now: {stage}")
+    if levels:
+        # How far this study goes and when it comes back are settings like any other,
+        # and the reason they are named rather than prose is so this line can exist.
+        lines.append(f"ambition {levels[0]}, consent {levels[1]} (/level)")
     if tokens:
         lines.append(f"thread: {tokens:,} tokens")
     totals = token_totals or {}

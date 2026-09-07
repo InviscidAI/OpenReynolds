@@ -22,6 +22,7 @@ from conftest import ScriptedReader  # noqa: F401  (keeps conftest importable)
 from openreynolds import cli
 from openreynolds.backend.base import ExecResult, JobStatus
 from openreynolds.browse import Browser
+from openreynolds import levels
 from openreynolds.store import JobRecord
 from test_prompt import IMPERATIVE_PATTERNS
 
@@ -56,6 +57,24 @@ def every_shape_of_briefing(backend, store):
     # A resume re-reads every running job's status, so the backend has to know it too.
     backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
     yield "resumed with a job running", brief_for(backend, store, resuming=True)
+
+    # Nine combinations of the two levels, and each one is prose the model reads. A
+    # level is the harness saying what the person wants, which is a hair away from the
+    # harness saying what to do, so every one of them goes through the same sweep --
+    # including with a standing note beside them, which is where the sentence about
+    # which of the two wins appears.
+    store.session.jobs.clear()
+    a_workspace(backend)
+    for ambition in levels.AMBITION:
+        for consent in levels.CONSENT:
+            yield (
+                f"{ambition}/{consent}",
+                brief_for(backend, store, ambition=ambition, consent=consent),
+            )
+    yield "levels beside a note", brief_for(
+        backend, store, ambition="thorough", consent="never",
+        preferences="Render the mesh and look at it.",
+    )
 
 
 @pytest.mark.parametrize("pattern", IMPERATIVE_PATTERNS)
@@ -155,6 +174,58 @@ def test_no_note_means_no_mention_of_one(backend, store):
     assert "standing note" not in brief
 
 
+# -- the two levels ---------------------------------------------------------------
+
+
+def test_the_briefing_says_which_levels_the_user_picked(backend, store):
+    """Before this the only control over how ambitious a run is was a blank page, and
+    an empty one meant nothing was said -- which is not neutral. It is the ambitious
+    end, chosen by default and found out about afterwards."""
+    a_workspace(backend)
+
+    brief = brief_for(backend, store, ambition="sketch", consent="never")
+
+    assert "Ambition, `sketch`:" in brief
+    assert "Consent, `never`:" in brief
+    assert levels.AMBITION["sketch"] in brief
+    assert levels.CONSENT["never"] in brief
+
+
+def test_the_levels_are_there_even_when_nobody_set_them(backend, store):
+    """A default that is written down is a default someone can disagree with."""
+    a_workspace(backend)
+
+    brief = brief_for(backend, store)
+
+    assert "Ambition, `standard`:" in brief
+    assert "Consent, `costly`:" in brief
+
+
+def test_a_note_beside_the_levels_is_said_to_be_the_later_word(backend, store):
+    """Which of the two wins when they disagree is a decision, and an undecided one
+    would be discovered by whoever hit it first. The levels come off a menu; the note
+    is the person's own sentences, so the note is what they meant."""
+    a_workspace(backend)
+
+    brief = brief_for(
+        backend, store, ambition="sketch", preferences="Always mesh independence."
+    )
+
+    assert "the note is the one they wrote themselves" in brief
+    assert "Always mesh independence." in brief
+
+
+def test_an_unknown_level_is_shown_as_the_default_rather_than_relayed(backend, store):
+    """A typo in `OPENREYNOLDS_AMBITION` reaching the briefing would put a word in the
+    user's mouth that they never picked and the tool does not understand."""
+    a_workspace(backend)
+
+    brief = brief_for(backend, store, ambition="thorogh")
+
+    assert "thorogh" not in brief
+    assert "Ambition, `standard`:" in brief
+
+
 # -- what the other directories on the volume are ------------------------------
 
 
@@ -208,3 +279,56 @@ def test_a_study_that_owns_the_whole_workspace_is_told_nothing_about_neighbours(
     volume_with(backend)
     brief = brief_for(backend, store)
     assert "earlier sessions" not in brief
+
+
+# -- what survives a context refresh ----------------------------------------------
+
+
+def refreshed(backend, store, **settings):
+    from openreynolds.config import Config
+
+    return cli._fresh_thread_brief(store, backend, Config(**settings))
+
+
+def test_a_refreshed_thread_is_told_the_levels_again(backend, store):
+    """A refresh empties the thread, so the second half of a long study used to run on
+    defaults nobody chose: the levels were said once at session start and thrown away
+    at 80% of the window, while `/status` went on reporting them from the config."""
+    a_workspace(backend)
+
+    brief = refreshed(backend, store, ambition="sketch", consent="never")
+
+    assert "Ambition, `sketch`:" in brief
+    assert "Consent, `never`:" in brief
+
+
+def test_a_refreshed_thread_is_told_the_standing_note_again(backend, store):
+    """Same loss, and this one predates the levels: the note was relayed at session
+    start and never again. The workspace survives a refresh on disk; what the user
+    asked for only survives by being said."""
+    a_workspace(backend)
+
+    brief = refreshed(backend, store, preferences="Render the mesh and look at it.")
+
+    assert "Render the mesh and look at it." in brief
+
+
+def test_a_refreshed_thread_still_says_what_the_workspace_is(backend, store):
+    """The facts `situation()` carried are not displaced by the ones added to it."""
+    a_workspace(backend)
+
+    brief = refreshed(backend, store)
+
+    assert "fresh conversation thread" in brief
+
+
+@pytest.mark.parametrize("pattern", IMPERATIVE_PATTERNS)
+def test_the_refreshed_briefing_tells_the_model_nothing_to_do(pattern, backend, store):
+    a_workspace(backend)
+    brief = refreshed(
+        backend, store, ambition="thorough", consent="early",
+        preferences="Check the layer report.",
+    )
+
+    match = re.search(pattern, brief, re.IGNORECASE)
+    assert match is None, f"imperative language in the refreshed briefing: {match!r}"
