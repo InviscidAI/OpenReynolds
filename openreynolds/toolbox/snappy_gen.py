@@ -996,7 +996,10 @@ def control_dict(opts, flow, body_patch: str) -> str:
         control, delta = "timeStep", 1.0
         extra = []
     purge = case_gen.purge_write("transient" if study in TRANSIENT else "steady", opts)
-    lines = [f"application     {solver};", "", "startFrom       latestTime;",
+    # A mesh-only study has no solver, but gmshToFoam and checkMesh still read this
+    # dictionary and refuse a blank `application` (the 2026-09-07 penne run lost
+    # twenty turns to `application ;`). Name the steady solver they would run next.
+    lines = [f"application     {solver or 'simpleFoam'};", "", "startFrom       latestTime;",
              "startTime       0;", "stopAt          endTime;",
              f"endTime         {end:g};", f"deltaT          {delta:g};", "",
              f"writeControl    {control};", f"writeInterval   {write:g};",

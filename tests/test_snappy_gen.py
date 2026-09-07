@@ -722,3 +722,14 @@ def test_an_explicit_intensity_still_wins(tmp_path: Path, unit_box: Path):
     k = float((case / "0" / "k").read_text(encoding="utf-8")
               .split("internalField   uniform ")[1].split(";")[0])
     assert k == pytest.approx(1.5 * (0.001 * 6) ** 2, rel=1e-6)
+
+
+def test_a_mesh_only_case_still_names_an_application(monkeypatch):
+    """`gmshToFoam` and `checkMesh` read controlDict before any solver does, and a blank
+    `application ;` is a parse error to them. The 2026-09-07 penne re-measure lost
+    twenty turns to exactly that line."""
+    monkeypatch.setattr(snappy_gen, "function_objects", lambda opts, flow, body: "")
+    text = snappy_gen.control_dict({"study": "mesh", "iterations": 1, "writes": 1}, None, "body")
+    line = next(l for l in text.splitlines() if l.startswith("application"))
+    assert line.split()[1].rstrip(";"), line
+    assert "application     simpleFoam;" in text
