@@ -39,6 +39,16 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- A word in a comment is no longer a finish. The mesh desk's `MESH_DONE` was matched
+  anywhere in a bash block, and the brief hands the desk that token -- so a step whose
+  comment said `# will echo MESH_DONE once checkMesh passes` had its actual command
+  never run, and got the finish check's refusal as the answer to something it had not
+  asked. Found by reading the new code adversarially rather than by a run failing.
+- A picture is sent to the desk once per version of the file. A command that merely
+  mentioned a `.png` -- a `cat` of the build script, an `ls` -- used to have that file
+  attached to its output as though it had just been drawn.
+- A model call that fails with an overloaded or gateway status is retried once. A desk
+  five minutes into a mesh cannot resume; the next call starts a clean thread.
 - A user turn carrying a picture reaches an OpenAI-family model. The provider's renderer
   handled an image inside a tool result and dropped a bare `image` block in a user
   message, which is exactly the shape the mesh desk sends every render in: a model was
@@ -67,6 +77,22 @@ All notable changes to this project are recorded here. The format follows
   actually calls for, and leaves that script in the case so a person can change a number
   and re-run it. What is kept from all of it is the one lesson that paid: render and
   measure, never assert.
+- `toolbox/case_gen.py` dresses a mesh instead of building one. Its template half went
+  with the rest -- a dozen parameterised shapes, an O-grid tiler and a blockMeshDict
+  writer, and with them the habit of adding a thirteenth shape whenever a new case did
+  not fit. What is left reads the mesh in front of it (patch names and types from
+  `constant/polyMesh/boundary`, cells, bounding box and smallest cell from `checkMesh`,
+  each patch's area, centre and normal from `mesh_look.py`) and writes `0/`, `system/`
+  and `constant/` onto it. The three things that used to come from the template are now
+  measurements: the inlet's direction is its own normal with the side the fluid is on
+  probed off the mesh (the bounding-box rule it replaces is exactly backwards on a
+  U-duct, and worse on anything concave); the characteristic length is the inlet's
+  hydraulic diameter, 2w for a plane passage; and a wall patch that reaches at most one
+  of the domain's axes is a body in the flow rather than the flow's boundary, which is a
+  hundredfold in the free-stream turbulence. Every patch gets a role from what you name,
+  then from the mesh's own constraint types, then from its name -- and a name that says
+  nothing is a wall, which is the safe reading. Measured: the L-duct the mesh desk built,
+  dressed by this, solved 20 iterations of simpleFoam with residuals falling.
 
 ### Added
 
