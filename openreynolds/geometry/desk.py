@@ -704,13 +704,13 @@ class GeometryAgent:
             nonlocal last_built, last_script, last_clean, last_clean_script, last_png, last_text
             if outcome.png:
                 last_png = outcome.png
-            if outcome.rc in (0, 2):
-                last_text = outcome.text
             trace.event("geometry_lap", lap=laps, rc=outcome.rc, seconds=round(time.monotonic() - started, 1))
             units_finding = units_disagree(outcome, claims_set)
             if units_finding is not None and outcome.result is not None:
                 outcome.result.setdefault("lint", []).append(units_finding.as_dict())
                 outcome.text = units_finding.text() + "\n" + outcome.text
+            if outcome.rc in (0, 2):
+                last_text = outcome.text
             if outcome.rc in (3, 4, 5):
                 return _user(f"The tool refused it:\n{outcome.text[-6000:]}", outcome.png)
             last_built, last_script = outcome, script
@@ -727,9 +727,12 @@ class GeometryAgent:
             try:
                 turn = self._turn(messages, tokens)
             except ProviderError as exc:
-                return GeometryResult(error=f"the model call failed: {exc}", laps=laps,
-                                      seconds=time.monotonic() - started, tokens=tokens,
-                                      claims=claims_set, claims_seconds=result.claims_seconds)
+                # the laps so far are not lost with the call: the last picture and
+                # print-back go back with the words
+                result.error = f"the model call failed: {exc}"
+                result.laps, result.seconds, result.tokens = laps, time.monotonic() - started, tokens
+                result.outline_png, result.report = last_png, last_text
+                return result
             reply = extract_reply(turn.text, "script")
             if reply.kind == "script":
                 outcome = self._run_script(reply.script, work / f"lap{laps}", claims_path, reference_name)
@@ -770,10 +773,13 @@ class GeometryAgent:
                     commit_reply = reply
                     break
                 table = table_of(last_built)
-                ids = ", ".join(table.failing_ids()) if table is not None and table.failing_ids() else "c6, c8"
+                failing = table.failing_ids() if table is not None else []
                 head = reason if reason.lower().startswith("commit refused") else f"COMMIT refused: {reason}"
-                messages.append(_user(f"{head}. Fix it, or reply `COMMIT disagrees: {ids}` naming every "
-                                      "failing claim."))
+                # the disagreement is offered only when there is a failing row to name: an
+                # invented pair of ids would be refused next lap as "nothing to disagree with"
+                offer = (f" Fix it, or reply `COMMIT disagrees: {', '.join(failing)}` naming every failing claim."
+                         if failing else " Fix it; reply with the whole script.")
+                messages.append(_user(f"{head}.{offer}"))
             else:
                 messages.append(_user("That was not a script. Reply with ONLY a ```python block, a claims "
                                       "JSON, or COMMIT."))
@@ -807,9 +813,11 @@ class GeometryAgent:
                                 f"{seconds:.0f} s): the last script that built clean has no checkable claim "
                                 "to judge it by")
                 return result
-            if chosen.png:
-                result.outline_png = chosen.png
-            result.report = chosen.text
+        # the picture and the print-back handed back are the committed script's: a later
+        # refusal (rc 5 with a partial) drew its own picture, and that is not the shape
+        if chosen.png:
+            result.outline_png = chosen.png
+        result.report = chosen.text
         return self._commit_2d(result, chosen, chosen_script, findings_of(chosen), table_of(chosen),
                                claims_payload, commit_reply, study, case)
 
@@ -963,7 +971,10 @@ class GeometryAgent:
         in the result. Measured before this existed: the main agent spent four to six
         turns after "case written" finding out that nothing was meshed yet, that ./Allmesh
         had no exec bit, what the render tool's flags were. None of that is geometry."""
-        finish = case_mod.finish_on_instance(self.backend, remote, expected_patches, FINISH_TIMEOUT_S)
+        # a 2D case carries walls and frontAndBack unnamed; a cad_gen case has no z-flat faces
+        implicit = case_mod.IMPLICIT_PATCHES if result.mode == "2d" else ()
+        finish = case_mod.finish_on_instance(self.backend, remote, expected_patches, FINISH_TIMEOUT_S,
+                                             implicit=implicit)
         result.mesh_png = finish.mesh_png
         for name in finish.missing:
             listed = ", ".join(finish.boundary_patches) or "nothing"

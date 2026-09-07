@@ -151,3 +151,60 @@ def test_a_finish_without_a_log_or_a_boundary_says_what_it_has(backend):
 def test_a_backend_that_cannot_exec_is_a_finish_that_did_not_run():
     report = case.finish_on_instance(object(), "/work/s/cyl", ["inlet"], 240)
     assert report.rc == 1 and "was not run" in report.output
+
+
+BOUNDARY_3D = """\
+FoamFile
+{
+    version     2.0;
+    class       polyBoundaryMesh;
+    object      boundary;
+}
+
+4
+(
+    inlet
+    {
+        type            patch;
+    }
+    outlet
+    {
+        type            patch;
+    }
+    walls
+    {
+        type            wall;
+    }
+    body
+    {
+        type            wall;
+    }
+)
+"""
+"""cad_gen's patches: no z-flat faces, so no frontAndBack."""
+
+
+def test_a_3d_boundary_has_no_front_and_back_to_miss(backend):
+    """The implicit pair is the 2D extrusion's; a cad_gen case passes none, and its
+    boundary file (inlet, outlet, walls, the body) is not missing a patch."""
+    assert case.patches_agree(BOUNDARY_3D, []) == (["frontAndBack"], ["inlet", "outlet", "body"])
+    assert case.patches_agree(BOUNDARY_3D, [], implicit=()) == ([], ["inlet", "outlet", "walls", "body"])
+    backend.exec_result = ExecResult(0, "Mesh OK.", False, None)
+    backend.files["/work/s/penne/log.checkMesh"] = CHECKMESH_LOG.encode()
+    backend.files["/work/s/penne/constant/polyMesh/boundary"] = BOUNDARY_3D.encode()
+    report = case.finish_on_instance(backend, "/work/s/penne", [], 240, implicit=())
+    assert report.missing == [] and report.boundary_patches == ["inlet", "outlet", "walls", "body"]
+
+
+def test_the_writers_own_extent_wins_when_the_record_disagrees():
+    """`mesh2d.main` sizes the cell from its post-dilate bounding box, which is loose on
+    a lone arc until 3.17 edit 1 lands; the record measures tight bounds. The cell the
+    fitness table reports must be the writer's, so the writer's printed extent wins a
+    disagreement and the record's exact number is kept when they agree to the line's
+    four figures."""
+    record = {"measurements": {"extent": [13.019, 11.638]}}
+    loose = "geometry   spec\nextent     0.01763 x 0.0162 m   area 0.0001 m2"
+    assert case.extent_m(record, loose, 0.001) == pytest.approx((0.01763, 0.0162))
+    tight = "extent     0.01302 x 0.01164 m   area 0.0001 m2"
+    assert case.extent_m(record, tight, 0.001) == (pytest.approx(0.013019), pytest.approx(0.011638))
+    assert case.extent_m({"measurements": {"extent": [60, 14.25]}}, "extent 0.06 x 0.01425 m", 0.001) == (0.06, 0.01425)

@@ -34,7 +34,10 @@ TOOLBOX_DEST = "/work/.toolbox"
 
 IMPLICIT_PATCHES = ("walls", "frontAndBack")
 """The two patches every 2D case carries whether or not the record names them: mesh2d's
-`generate` puts every unnamed curve on `walls` and the two z-flat faces on `frontAndBack`."""
+`generate` puts every unnamed curve on `walls` and the two z-flat faces on `frontAndBack`.
+A 3D case (cad_gen) has no z-flat faces, so the 3D branch passes `implicit=()`: cad_gen
+names inlet, outlet, walls and the body, and expecting `frontAndBack` of its boundary
+file reported a patch missing from every 3D mesh."""
 
 _EXTENT_LINE = re.compile(r"extent\s+([0-9.eE+-]+)\s*x\s*([0-9.eE+-]+)")
 """mesh2d's summary line, in metres, read only when the record carries no measurements."""
@@ -76,15 +79,25 @@ def case_args(local: Path, study: str, scale: float, paths: CasePaths) -> list[s
 
 
 def extent_m(record: dict, tool_output: str, scale: float) -> tuple[float, float]:
-    """The built extent in metres: the record's measurement scaled, or, for a record
-    with no measurements (a hand-written spec), the extent the writer printed."""
+    """The built extent in metres: the record's measurement scaled, unless the extent
+    the writer printed disagrees with it, in which case the writer's line wins -- that
+    line is `built.extent`, the very tuple `mesh2d.main` handed `mesh_sizes2d`, so the
+    cell recomputed from it is the writer's whatever bounds the record measured (the
+    record's are tight from sampled curves; the writer's are `getBoundingBox` after the
+    dilate, loose on a lone arc until 3.17 edit 1 lands). The line prints four
+    significant figures, so the record's exact number is kept whenever the two agree to
+    that precision. A record with no measurements (a hand-written spec) uses the line."""
     m = record.get("measurements") if isinstance(record, dict) else None
     extent = (m or {}).get("extent") if isinstance(m, dict) else None
-    if extent and len(extent) == 2:
-        return float(extent[0]) * scale, float(extent[1]) * scale
     found = _EXTENT_LINE.search(tool_output)
-    if found:
-        return float(found.group(1)), float(found.group(2))
+    printed = (float(found.group(1)), float(found.group(2))) if found else None
+    if extent and len(extent) == 2:
+        measured = (float(extent[0]) * scale, float(extent[1]) * scale)
+        if printed is None or all(abs(a - b) <= 1e-3 * max(abs(a), abs(b), 1e-300) for a, b in zip(measured, printed)):
+            return measured
+        return printed
+    if printed is not None:
+        return printed
     raise RuntimeError("the record carries no measurements and the writer printed no extent line, so "
                        "the cell size it meshed with cannot be reproduced; a record from `cli build` "
                        "carries `measurements.extent`")
@@ -159,12 +172,14 @@ FINISH_CMD = ("sh Allmesh > log.Allmesh 2>&1; rc=$?; tail -12 log.Allmesh; "
               "|| tail -5 log.render; exit $rc")
 
 
-def finish_on_instance(backend, remote: str, expected_patches: list[str], timeout_s: int) -> FinishReport:
+def finish_on_instance(backend, remote: str, expected_patches: list[str], timeout_s: int,
+                       implicit: tuple[str, ...] = IMPLICIT_PATCHES) -> FinishReport:
     """Today's _finish exec, verbatim: `sh Allmesh > log.Allmesh 2>&1; rc=$?; tail -12
     log.Allmesh; python3 /work/.toolbox/render.py "$PWD" --scene mesh --out renders >
     log.render 2>&1 || tail -5 log.render; exit $rc`; then get_file(log.checkMesh) ->
     mesh_digest.parse/report; get_file(renders/mesh_z.png); get_file(constant/polyMesh/boundary)
-    -> patches_agree."""
+    -> patches_agree. `implicit` is the patches every case of this kind carries unnamed:
+    the 2D pair by default, nothing for a 3D case."""
     exec_ = getattr(backend, "exec", None)
     get_file = getattr(backend, "get_file", None)
     if exec_ is None or get_file is None:
@@ -198,7 +213,7 @@ def finish_on_instance(backend, remote: str, expected_patches: list[str], timeou
         boundary = None
     if boundary is not None:
         found = boundary_patch_names(boundary)
-        missing, extra = patches_agree(boundary, expected_patches)
+        missing, extra = patches_agree(boundary, expected_patches, implicit)
     return FinishReport(rc=rc, output=output, digest=digest, digest_data=data, mesh_png=mesh_png,
                         boundary_patches=found, missing=missing, extra=extra)
 
@@ -219,14 +234,15 @@ def boundary_patch_names(boundary_text: str) -> list[str]:
     return names
 
 
-def patches_agree(boundary_text: str, expected: list[str]) -> tuple[list[str], list[str]]:
+def patches_agree(boundary_text: str, expected: list[str],
+                  implicit: tuple[str, ...] = IMPLICIT_PATCHES) -> tuple[list[str], list[str]]:
     """(missing, extra): patch names in constant/polyMesh/boundary (regex `^\\s*(\\w+)\\s*$`
     followed by a line that is `{`) against the record's patch names plus `walls` and
-    `frontAndBack`. The T05 class (the cylinder lost in the extrusion) closes here, in the
-    same tool call."""
+    `frontAndBack` (the `implicit` pair; a 3D case passes none). The T05 class (the
+    cylinder lost in the extrusion) closes here, in the same tool call."""
     found = boundary_patch_names(boundary_text)
     wanted: list[str] = []
-    for name in [*expected, *IMPLICIT_PATCHES]:
+    for name in [*expected, *implicit]:
         if name not in wanted:
             wanted.append(name)
     missing = [name for name in wanted if name not in found]

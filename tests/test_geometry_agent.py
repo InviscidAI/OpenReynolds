@@ -442,6 +442,50 @@ def test_e_units_claims_when_the_sketch_and_the_claims_disagree_on_the_unit(back
     assert "(60 vs 60)" in lap and "Fix the errors" in lap
     assert "E-UNITS-CLAIMS" in last_text(agent._provider.calls[3])
     assert backend.trees == [] and result.error.startswith("no clean geometry")
+    assert result.report.startswith("!! ERROR  E-UNITS-CLAIMS"), "the print-back handed back carries the desk's line"
+
+
+def test_a_refusal_offers_a_disagreement_only_over_a_failing_row(backend, store, available):
+    """A COMMIT over a lint error with every claim passing is refused with the error; the
+    words never invent claim ids to disagree with (they would be refused next lap as
+    'nothing to disagree with'). Over a failing row the exact ids are offered."""
+    agent = Scripted(cfg(), backend, store, "/work/s", [CLAIMS_JSON, SCRIPT_REPLY, "COMMIT", SCRIPT_REPLY, "COMMIT"],
+                     outcomes=[outcome(2, errors=[("E-OVERLAP", (20.0, 5.0))]), outcome(0)])
+    agent.run("anything")
+    refused = last_text(agent._provider.calls[3])
+    assert refused.startswith("COMMIT refused") and "E-OVERLAP" in refused
+    assert "disagrees" not in refused and "c6, c8" not in refused and "whole script" in refused
+    agent = Scripted(cfg(), backend, store, "/work/s", [CLAIMS_JSON, SCRIPT_REPLY, "COMMIT", "COMMIT disagrees: c5, c9"],
+                     outcomes=[outcome(0, fails=("c5", "c9"))])
+    result = agent.run("anything")
+    assert "`COMMIT disagrees: c5, c9`" in last_text(agent._provider.calls[3])
+    assert result.disagrees == ["c5", "c9"] and result.error == ""
+
+
+def test_the_committed_picture_and_print_back_are_the_built_scripts(backend, store, available):
+    """A refusal after the clean build (rc 5 with a partial) draws its own picture; the
+    result hands back the committed script's picture and print-back, not the refusal's."""
+    built = outcome(0, png=PNG + b"built")
+    refused = outcome(5, png=PNG + b"partial", text="!! ERROR  E-ROW-FIT  Row 'loops': 5 do not fit")
+    agent = Scripted(cfg(), backend, store, "/work/s", [CLAIMS_JSON, SCRIPT_REPLY, f"```python\n{SCRIPT}# v2\n```", "COMMIT"],
+                     outcomes=[built, refused])
+    result = agent.run("anything", case="c")
+    assert result.agreed and result.laps == 3 and len(backend.trees) == 1
+    assert result.outline_png == PNG + b"built" and "VERDICT    ready to COMMIT" in result.report
+    assert result.source == SCRIPT.strip(), "the script that built, not the refused revision"
+
+
+def test_a_model_failure_mid_loop_keeps_the_laps_so_far(backend, store, available):
+    from openreynolds.llm.base import ProviderError
+
+    class DownLater(Scripted):
+        def _ask(self, messages):
+            if len(self._provider.calls) >= 2:
+                raise ProviderError("overloaded", 529)
+            return super()._ask(messages)
+    result = DownLater(cfg(), backend, store, "/work/s", [CLAIMS_JSON, SCRIPT_REPLY, "COMMIT"]).run("x")
+    assert "model call failed" in result.error and result.laps == 2 and backend.trees == []
+    assert result.outline_png == PNG and "VERDICT" in result.report and result.claims is not None
 
 
 def test_a_failed_commit_is_reported_not_raised(backend, store, available):
@@ -602,6 +646,21 @@ def test_a_3d_commit_carries_a_one_row_table_and_an_unmeasured_passage(backend, 
                             "geometry", {"request": "x", "mode": "3d"})
     text = out[-1]["text"]
     assert "across the smallest passage: not measured" in text and "Not yet an OpenFOAM mesh" not in text
+
+
+def test_the_3d_finish_expects_no_front_and_back(backend, store, available):
+    """cad_gen's boundary file lists inlet, outlet, walls and the body; the 2D pair
+    (walls, frontAndBack) is the extrusion's, and expecting it of a 3D mesh reported
+    a patch missing from every penne."""
+    from test_geometry_case import BOUNDARY_3D
+    meshed_backend(backend, case="penne", boundary=BOUNDARY_3D)
+    agent = Scripted(cfg(), backend, store, "/work/s", [json.dumps(GOOD3D), "COMMIT"])
+    result = agent.run("a penne", mode="3d", case="penne")
+    assert result.meshed and [f.code for f in result.lint] == []
+    # the 2D finish still wants both
+    meshed_backend(backend, case="flat", boundary=BOUNDARY_3D)
+    result = Scripted(cfg(), backend, store, "/work/s", [CLAIMS_JSON, SCRIPT_REPLY, "COMMIT"]).run("a duct", case="flat")
+    assert [f.code for f in result.lint] == ["E-MESH-PATCH"] and "frontAndBack" in result.lint[0].what
 
 
 def test_a_3d_commit_that_disagrees_keeps_its_words(backend, store, available):
