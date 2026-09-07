@@ -6,6 +6,24 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A mesh-only case names an application in `controlDict`. The 3D desk's finish ran Allmesh
+  on a case whose dictionary said `application ;` (a mesh-only study has no solver) and
+  gmshToFoam refused it; the 2026-09-07 penne re-measure spent twenty turns fixing that
+  line by hand after the desk had drawn the right solid in 34 seconds. `snappy_gen`'s
+  writer names `simpleFoam`, as `case_gen`'s already did.
+- The workspace mirror no longer stalls a session for minutes (F-54). The desk's uploaded
+  `Allrun`, a file nothing on the instance ever opens, made foamd's path probe time out
+  and answer 400, and the mirror read the 400 as one unresolvable file, split every batch
+  into single requests, and repeated that every cycle; a 27-second finish step waited five
+  minutes behind it. The mirror now remembers a path the service refused and names it,
+  splits a failed batch once to find the culprit, and stands aside while a tool call is in
+  flight (`mirror.Gate`, held by the loop around each call); each cycle reports its round
+  trips and seconds. Uploaded files keep their source mtime instead of 1970, so a file the
+  instance never opened is not mistaken for one never written. foamd's side (a timed-out
+  probe answered 504 with its paths) shipped as foamd `9b52d97`.
+
 ### Changed
 
 - Geometry is checked by machine before it is a case (`qa-runs/PLAN-geometry-revamp.md`,
