@@ -4,22 +4,36 @@ files read back.
 Stdlib only, and deliberately no kernel import: the parent process that hosts the desk
 stays free of gmsh state, and the child is where every kernel module loads. That is
 also why the result comes back as `result.json` (DESIGN.md 4.3), never as Python
-objects. Skeleton (U0): `RunOutcome` and the constants; `run_script` and `child_env`
-raise NotImplementedError until U4 lands.
+objects. The child is launched by path with `-I` (D3): isolated mode drops the parent's
+`sys.path` entries and `PYTHONPATH`, and the cli's `__main__` shim puts exactly the
+checkout root back, so the kernel has one module name in the child on every platform.
 """
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
-
-_U4 = ("not built in the U0 skeleton: U4 (preview + runner + cli) implements it against "
-       "DESIGN.md section 3.10")
 
 RUN_TIMEOUT_S = 90
 """A build is 1-3 s; the limit is for a script that loops."""
 
 ALLOWED_IMPORTS = {"math", "json"}
 """Plus the sketch API, which needs no import."""
+
+CLI = Path(__file__).resolve().with_name("cli.py")
+"""The child's entry point, run by path (D3)."""
+
+PASS_THROUGH = ("HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR", "SYSTEMROOT", "APPDATA",
+                "LOCALAPPDATA", "LANG", "LC_ALL")
+"""Parent variables the child may see. Everything else -- and PYTHONPATH in particular --
+stays behind; `-I` would ignore PYTHONPATH anyway, and the allowlist pins it twice."""
+
+EXIT_CODES = {0, 2, 3, 4, 5}
+"""0 built, lint clean; 2 lint errors; 3 the script raised; 4 timeout; 5 refused."""
 
 
 @dataclass
@@ -66,14 +80,18 @@ class RunOutcome:
                           result=d.get("result"), seconds=d.get("seconds", 0.0))
 
 
-def run_script(script: str, work: Path, claims_path: Path | None, reference: str | None,
-               timeout_s: float = RUN_TIMEOUT_S) -> RunOutcome:
-    """Writes work/script.py, runs [sys.executable, "-I", <geometry/cli.py>, "build",
-    "--script", ..., "--out", work, "--preview", work/preview.png, "--claims", claims_path,
-    "--reference", reference] with `child_env(work)`, capture_output, timeout. Reads
-    work/result.json and work/preview.png. On TimeoutExpired: rc 4 and the text 'the script
-    ran past 90 s and was stopped; a loop in the script is not terminating'."""
-    raise NotImplementedError(_U4)
+def command(script_path: Path, work: Path, claims_path: Path | None, reference: str | None,
+            timeout_s: float = RUN_TIMEOUT_S) -> list[str]:
+    """The child's argv: `python -I <cli.py> build --script ... --out ... --preview ...`
+    plus `--claims` and `--reference` when given and `--timeout` so the child can set its
+    own CPU limit where the platform has one."""
+    argv = [sys.executable, "-I", str(CLI), "build", "--script", str(script_path), "--out", str(work),
+            "--preview", str(work / "preview.png"), "--timeout", f"{timeout_s:g}"]
+    if claims_path is not None:
+        argv += ["--claims", str(claims_path)]
+    if reference:
+        argv += ["--reference", reference]
+    return argv
 
 
 def child_env(work: Path) -> dict[str, str]:
@@ -84,4 +102,65 @@ def child_env(work: Path) -> dict[str, str]:
     MPLBACKEND} alone `python -I -c "import gmsh, matplotlib.pyplot"` exits 1 with
     'RuntimeError: Could not determine home directory'; with MPLCONFIGDIR added it exits 0.
     PYTHONPATH is never passed (-I ignores it anyway; the test pins both)."""
-    raise NotImplementedError(_U4)
+    mpl = Path(work) / ".mpl"
+    mpl.mkdir(parents=True, exist_ok=True)
+    env = {"PATH": os.environ.get("PATH", ""), "PYTHONUTF8": "1", "MPLBACKEND": "Agg",
+           "MPLCONFIGDIR": str(mpl)}
+    for key in PASS_THROUGH:
+        if key in os.environ:
+            env[key] = os.environ[key]
+    return env
+
+
+def timeout_text(timeout_s: float) -> str:
+    return (f"the script ran past {timeout_s:g} s and was stopped; a loop in the script is not "
+            "terminating")
+
+
+def run_script(script: str, work: Path, claims_path: Path | None, reference: str | None,
+               timeout_s: float = RUN_TIMEOUT_S) -> RunOutcome:
+    """Writes work/script.py, runs [sys.executable, "-I", <geometry/cli.py>, "build",
+    "--script", ..., "--out", work, "--preview", work/preview.png, "--claims", claims_path,
+    "--reference", reference] with `child_env(work)`, capture_output, timeout. Reads
+    work/result.json and work/preview.png. On TimeoutExpired: rc 4 and the text 'the script
+    ran past 90 s and was stopped; a loop in the script is not terminating'."""
+    work = Path(work)
+    work.mkdir(parents=True, exist_ok=True)
+    for stale in ("result.json", "preview.png", "report.txt", "record.json"):
+        # a lap that writes nothing must not be read as the previous lap's files
+        try:
+            (work / stale).unlink()
+        except FileNotFoundError:
+            pass
+    script_path = work / "script.py"
+    script_path.write_text(script, encoding="utf-8")
+    argv = command(script_path, work, claims_path, reference, timeout_s)
+    t0 = time.monotonic()
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout_s, env=child_env(work), cwd=str(work))
+    except subprocess.TimeoutExpired:
+        return RunOutcome(rc=4, text=timeout_text(timeout_s), png=None, result=None,
+                          seconds=time.monotonic() - t0)
+    seconds = time.monotonic() - t0
+
+    result = None
+    result_path = work / "result.json"
+    if result_path.exists():
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            result = None
+    png_path = work / "preview.png"
+    png = png_path.read_bytes() if png_path.exists() and png_path.stat().st_size > 0 else None
+
+    rc = proc.returncode
+    if result is not None and isinstance(result.get("report"), str):
+        text = result["report"]
+        rc = int(result.get("rc", rc))
+    else:
+        tail = (proc.stdout + "\n" + proc.stderr).strip()[-3000:]
+        text = (f"the child interpreter exited {rc} without a result.json; nothing in the script "
+                f"to fix (reported to the desk)\n{tail}")
+        rc = rc if rc in EXIT_CODES and rc != 0 else 3
+    return RunOutcome(rc=rc, text=text, png=png, result=result, seconds=seconds)
