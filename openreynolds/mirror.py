@@ -55,14 +55,36 @@ from .browse import MAX_ENTRIES, Browser, Entry, human
 GATE_WAIT_S = 120.0
 """How long a background cycle will stand aside for a tool call before going anyway.
 
-The service runs the mirror's transfers and the model's commands on the same
+The service used to run the mirror's transfers and the model's commands on the same
 container, and a transfer that stalls there stalls the command behind it: a finish
-step timed at 27 s on the instance took 120, 236 and 323 s inside the tool call,
-each time with a cycle in flight. So a cycle waits for the tool call to end before
-it starts, and again before each round trip. Bounded, because a turn of back-to-back
-tool calls would otherwise never mirror at all -- and a bounded wait is a delay,
-which the cycle can afford, where an unbounded one is the twenty-five minutes the
-turn-end sync once cost."""
+step timed at 27 s on the instance took 120, 236 and 323 s inside the tool call, each
+time with a cycle in flight. That is still true of the listing (`browser.tree`, a
+`find` over the exec channel a tool call also uses), so a cycle still waits for the
+tool call to end before it starts one -- bounded, because a turn of back-to-back tool
+calls would otherwise never even list at all, and a bounded wait is a delay, which the
+cycle can afford, where an unbounded one is the twenty-five minutes the turn-end sync
+once cost. It is no longer true of a pull: `get_tree(..., via="volume")` reads the
+persistent volume directly, off the container a tool call uses, so a live cycle's
+round trips no longer wait on this at all (see `_pull_batch`) -- there is nothing left
+to stand aside for."""
+
+LIVE_PULL_TIMEOUT_S = 25.0
+"""How long a background cycle's own archive request may run before it gives up on it.
+
+Measured against the mesher acceptance runs (`qa-runs/LATENCY.md`): every ordinary
+round trip in that corpus, the smallest and the largest, finished in 18 s or less; the
+ones that did not finished in two to eleven *minutes* -- one path per cycle that the
+service takes about 120 s to answer 400 for (a jail probe timing out on a file this
+sandbox has never touched, `qa-runs/FINDINGS.md` F-55) and the transfer stalling in
+its company. 25 s clears every real transfer seen and cuts every one of those off
+early, at one attempt (see `max_attempts` on `Backend.get_tree`) rather than the
+five the transport retries by default -- five attempts at the ordinary 300 s timeout
+is how one awkward path turns a cycle into ten or twenty-five minutes of it, all spent
+on the same container a tool call is waiting to use. A cut-off file is not lost: it stays
+skipped, reported, and tried again next cycle, at the cost of this same 25 s again
+until it is either fetchable or the service answers its 400 fast enough to be
+remembered (`refused`) -- worse than F-55 being fixed, much better than not bounding
+this at all."""
 
 SLOW_CYCLE_S = 30.0
 """A cycle that pulled nothing and took longer than this still gets a line. Silence
@@ -173,6 +195,13 @@ class MirrorReport:
     seconds: float = 0.0
     """What it cost in time, listing included. Together these are the line that
     shows whether a cycle is a convenience or the reason a session is slow."""
+    gate_wait_seconds: float = 0.0
+    """Of `seconds`, how much was spent standing aside for a tool call in flight
+    (`Gate.clear`), as opposed to actually listing or transferring. Not shown in the
+    text report -- it is diagnostic, for telling "the cycle waited" from "the cycle
+    was slow" apart (`qa-runs/LATENCY.md` asked this question of a live cycle and had
+    no way to answer it directly; this is that way). Carried in the `mirror` trace
+    event as `gate_wait_seconds`."""
 
     def cost(self) -> str:
         trips = f"{self.round_trips} round trip{'s' if self.round_trips != 1 else ''}"
@@ -463,6 +492,16 @@ def _sync(
     report = MirrorReport(local_dir=store.fetch_dir(), study_id=store.session.study_id)
     root = path or browser.home or WORKSPACE_ROOT
 
+    # The gate was already asked once, in `LiveMirror._run`, before this cycle was
+    # let start -- but the listing below is itself a round trip (`browser.tree`,
+    # `find` over the exec channel), and a tool call can arrive in the gap between
+    # that first check and this one. Asked again here for the same reason `_pull_batch`
+    # asks again before every archive request: the wait is cheap, and skipping it
+    # is how a cycle that was clear to start ends up listing right through a call
+    # that started a moment later.
+    if gate is not None:
+        report.gate_wait_seconds += _timed_clear(gate, GATE_WAIT_S)
+
     try:
         entries = browser.tree(root, depth=DEPTH, background=background)
     except (BackendError, OSError) as exc:
@@ -655,11 +694,28 @@ def _pull_batch(
     file whose failure is a fact about the path is remembered and not asked for again
     this session. Which file it was is named, because the log never said.
     """
-    if gate is not None:
-        gate.clear(GATE_WAIT_S)
+    # `gate is not None` is exactly "this cycle shares a container with a tool call
+    # that may be running right now" (see `LiveMirror._cycle`). It used to mean
+    # waiting for the gate before every round trip, on the reasoning that a slow
+    # archive request here was a `bash` call stalled behind it -- true while building
+    # the archive meant running inside that same container. `via="volume"` asks the
+    # backend for a copy that does not (see `Backend.get_tree`, and `backend/hosted.py`
+    # for what it actually does): there is nothing left to stand aside for, and
+    # waiting anyway was pure delay -- up to GATE_WAIT_S of it, every batch, for a
+    # wait that protected nothing. So a live cycle now goes straight to the round
+    # trip. The bound stays regardless (`LIVE_PULL_TIMEOUT_S`, one attempt): the
+    # backend does not promise this alternate path is always fast
+    # (`qa-runs/LATENCY.md`), and this cycle still must not sit on one file for
+    # minutes even when nothing else is waiting on it.
     report.round_trips += 1
     try:
-        written = browser.backend.get_tree([entry.path for entry in batch], report.local_dir)
+        if gate is not None:
+            written = browser.backend.get_tree(
+                [entry.path for entry in batch], report.local_dir,
+                timeout=LIVE_PULL_TIMEOUT_S, max_attempts=1, via="volume",
+            )
+        else:
+            written = browser.backend.get_tree([entry.path for entry in batch], report.local_dir)
     except (BackendError, OSError) as exc:
         if len(batch) > 1:
             report.warnings.append(
@@ -743,9 +799,11 @@ class Gate:
     """Where a session says a tool call is in flight, so the mirror stays out of its way.
 
     The session's thread holds it around each tool call; the mirror's thread asks
-    `clear` before it starts a cycle and before each round trip, and waits -- bounded
-    by GATE_WAIT_S -- for the call to end. Nothing here ever blocks the session: the
-    session only counts, and the counting is a lock held for nanoseconds.
+    `clear` before it starts a cycle and before its listing, and waits -- bounded by
+    GATE_WAIT_S -- for the call to end (a live pull no longer asks at all; see
+    `GATE_WAIT_S`'s docstring and `_pull_batch`). Nothing here ever blocks the
+    session: the session only counts, and the counting is a lock held for
+    nanoseconds.
     """
 
     def __init__(self) -> None:
@@ -789,6 +847,21 @@ class Gate:
                 # In slices, so `unless` is looked at even when nobody notifies.
                 self._cond.wait(min(remaining, 0.5))
             return True
+
+
+def _timed_clear(gate: Gate, timeout: float) -> float:
+    """`gate.clear`, and how long it took -- so a cycle can say how much of its own
+    wall time was standing aside versus doing anything (`MirrorReport.gate_wait_seconds`,
+    asked for directly in `qa-runs/LATENCY.md`: whether the Gate was actually the
+    bottleneck, or just where the clock happened to be ticking, was not answerable
+    from the report before this).
+
+    `timeout` has no default on purpose: `GATE_WAIT_S` is read at the call site, not
+    captured here, so a test (or a future caller) that changes it after this module
+    loads is still honoured -- a default parameter value is bound once, at `def`."""
+    started = time.monotonic()
+    gate.clear(timeout)
+    return time.monotonic() - started
 
 
 class LiveMirror:
@@ -931,7 +1004,9 @@ class LiveMirror:
                     "mirror", background=background, pulled=len(report.pulled),
                     bytes=report.bytes_pulled, skipped=len(report.skipped),
                     unchanged=report.unchanged, round_trips=report.round_trips,
-                    seconds=round(report.seconds, 3), warnings=list(report.warnings),
+                    seconds=round(report.seconds, 3),
+                    gate_wait_seconds=round(report.gate_wait_seconds, 3),
+                    warnings=list(report.warnings),
                 )
             # Surface and assemble the pictures this cycle brought home. Inside the
             # lock is deliberate: it reads the same files the sync just wrote, and a

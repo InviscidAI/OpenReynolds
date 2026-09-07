@@ -135,7 +135,10 @@ class Backend(Protocol):
 
     def put_file(self, path: str, data: bytes) -> None: ...
 
-    def get_file(self, path: str, offset: int = 0, limit: int | None = None) -> bytes:
+    def get_file(
+        self, path: str, offset: int = 0, limit: int | None = None,
+        *, timeout: float = 300.0, max_attempts: int | None = None,
+    ) -> bytes:
         """Bytes from `path`, starting at `offset`.
 
         `limit` is not optional in the way it looks. A backend is free to answer with
@@ -145,14 +148,39 @@ class Backend(Protocol):
         unwritten cost a live bug -- renders between the page size and the attachment
         ceiling reached the model truncated, and a truncated PNG is not a smaller
         picture, it is a broken one.
+
+        `timeout`/`max_attempts` bound one request, the same contract as on `get_tree`
+        -- see there. A backend with no network to bound may accept and ignore them.
         """
         ...
 
-    def stat(self, path: str) -> Stat: ...
+    def stat(self, path: str, *, timeout: float = 300.0, max_attempts: int | None = None) -> Stat: ...
 
     def put_tree(self, local_dir: Path, remote_dir: str) -> None: ...
 
-    def get_tree(self, remote_paths: list[str], local_dir: Path) -> list[Path]: ...
+    def get_tree(
+        self,
+        remote_paths: list[str],
+        local_dir: Path,
+        *,
+        timeout: float = 300.0,
+        max_attempts: int | None = None,
+        via: str | None = None,
+    ) -> list[Path]:
+        """Pack and download the given paths.
+
+        `timeout` and `max_attempts` bound how long a single request may run and how
+        many times it may be retried; a backend with nothing to time out (the local
+        one) may accept and ignore them. Callers with work in flight alongside this
+        one -- the mirror's background cycles -- pass both; a caller with nothing
+        else running, like `openreynolds pull`, passes neither.
+
+        `via` names an alternate path a backend may offer for building the archive --
+        the hosted one accepts `"volume"`, which reads the persistent volume directly
+        instead of a container that a tool call might also be using, at the cost of
+        not preserving file mode. A backend with nothing to route around (the local
+        one) may accept and ignore it."""
+        ...
 
     def job_start(
         self,

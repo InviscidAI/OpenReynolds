@@ -43,6 +43,7 @@ class FakeBackend(Backend):
         self.started: list[dict] = []
         self.trees: list[tuple[Path, str]] = []
         self.fetched: list[str] = []
+        self.get_tree_calls: list[dict] = []
 
     def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
         self.last_exec = (cmd, cwd, timeout_s)
@@ -53,13 +54,15 @@ class FakeBackend(Backend):
     def put_file(self, path, data):
         self.files[path] = data
 
-    def get_file(self, path, offset=0, limit=None):
+    def get_file(self, path, offset=0, limit=None, *, timeout=300.0, max_attempts=None):
+        del timeout, max_attempts  # no network here to bound; see HostedBackend.get_file
         if path not in self.files:
             raise BackendError(f"no such path: {path}", code="not_found", status=404)
         data = self.files[path][offset:]
         return data[:limit] if limit is not None else data
 
-    def stat(self, path):
+    def stat(self, path, *, timeout=300.0, max_attempts=None):
+        del timeout, max_attempts
         if path in self.dirs:
             return Stat(path, "directory", 0, 0, self.dirs[path])
         if path not in self.files:
@@ -69,9 +72,16 @@ class FakeBackend(Backend):
     def put_tree(self, local_dir, remote_dir):
         self.trees.append((local_dir, remote_dir))
 
-    def get_tree(self, remote_paths, local_dir):
+    def get_tree(self, remote_paths, local_dir, *, timeout=300.0, max_attempts=None, via=None):
         """Mirrors the service: archive members are relative to the workspace root,
-        so a fetched file keeps the shape it had in the workspace."""
+        so a fetched file keeps the shape it had in the workspace.
+
+        `timeout`/`max_attempts`/`via` are accepted and ignored, the same as the
+        local backend -- there is no network here to bound or route around. A test
+        that cares which values the mirror passed reads `self.get_tree_calls`
+        instead of overriding this."""
+        self.get_tree_calls.append({"paths": list(remote_paths), "timeout": timeout,
+                                     "max_attempts": max_attempts, "via": via})
         self.fetched.extend(remote_paths)
         written = []
         for remote in remote_paths:

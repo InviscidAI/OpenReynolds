@@ -339,6 +339,7 @@ class FoamdClient:
         *,
         timeout: float | None = None,
         repeatable: bool | None = None,
+        max_attempts: int | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
         """Issue one request, retrying cold starts and transient failures.
@@ -351,12 +352,20 @@ class FoamdClient:
         proves the service did nothing (`_DECLINED_STATUSES`, or never connecting at
         all) is tried again; an ambiguous one is raised, because the alternative is
         doing the work twice and never finding out.
+
+        `max_attempts` overrides `_MAX_ATTEMPTS` for this call. Only a caller with a
+        reason to bound its own worst case passes it -- the mirror's background
+        cycles, which share the exec channel with whatever tool call is running and
+        so must not sit through five retries of a request that is timing out because
+        the service is stuck on it, not because it blinked (see `mirror.py`'s
+        `LIVE_PULL_TIMEOUT_S`). Left `None`, behaviour is exactly what it was.
         """
         repeat_ok = (
             method.upper() in _REPEATABLE_METHODS if repeatable is None else repeatable
         )
+        attempts = int(max_attempts) if max_attempts else _MAX_ATTEMPTS
         last_error: BackendError | None = None
-        for attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(attempts):
             response = None
             # Whether this failure leaves it unknown whether the service acted.
             ambiguous = False
@@ -395,7 +404,7 @@ class FoamdClient:
             if ambiguous and not repeat_ok:
                 raise last_error
 
-            if attempt < _MAX_ATTEMPTS - 1:
+            if attempt < attempts - 1:
                 time.sleep(_retry_delay(response, attempt))
 
         raise last_error or BackendError("request failed", code="unreachable")
@@ -559,18 +568,28 @@ class HostedBackend(Backend):
             timeout=300.0,
         )
 
-    def get_file(self, path: str, offset: int = 0, limit: int | None = None) -> bytes:
+    def get_file(
+        self, path: str, offset: int = 0, limit: int | None = None,
+        *, timeout: float = 300.0, max_attempts: int | None = None,
+    ) -> bytes:
+        """`timeout`/`max_attempts` bound one request the way `get_tree`'s do (see
+        there) -- unused by anything in this package today (`get_file` backs the
+        `fetch`/`read_file` tools, not the mirror), offered so a caller for whom this
+        request is sharing a container with something else can bound it the same way."""
         params: dict[str, Any] = {"path": path, "offset": offset}
         if limit is not None:
             params["limit"] = limit
         return self._client.request(
-            "GET", self._instance_path("/files"), params=params, timeout=300.0
+            "GET", self._instance_path("/files"), params=params,
+            timeout=timeout, max_attempts=max_attempts,
         ).content
 
-    def stat(self, path: str) -> Stat:
+    def stat(self, path: str, *, timeout: float = 300.0, max_attempts: int | None = None) -> Stat:
+        """See `get_file` above for what `timeout`/`max_attempts` are for."""
         body = _json(
             self._client.request(
-                "GET", self._instance_path("/files"), params={"path": path, "stat": 1}
+                "GET", self._instance_path("/files"), params={"path": path, "stat": 1},
+                timeout=timeout, max_attempts=max_attempts,
             )
         )
         return Stat(
@@ -598,14 +617,45 @@ class HostedBackend(Backend):
             repeatable=True,
         )
 
-    def get_tree(self, remote_paths: list[str], local_dir: Path) -> list[Path]:
+    def get_tree(
+        self,
+        remote_paths: list[str],
+        local_dir: Path,
+        *,
+        timeout: float = 300.0,
+        max_attempts: int | None = None,
+        via: str | None = None,
+    ) -> list[Path]:
+        """Pack and download the given paths.
+
+        `timeout` and `max_attempts` exist for the mirror's background cycles, which
+        (without `via="volume"`) run on the same container as whatever tool call the
+        model is mid-way through (see `mirror.py`): a request left at its ordinary
+        300 s / 5-attempt defaults can sit stuck on one awkward path for minutes, and
+        the tool call waits behind it the whole time. A caller in a hurry passes both
+        down; `openreynolds pull`, asked for explicitly and with nothing else running,
+        passes neither and gets the patient defaults it always had.
+
+        `via="volume"` asks the service to build the archive straight off the
+        persistent volume instead of running `tar` inside the sandbox that tool calls
+        also use -- the background mirror's own reason to contend with a tool call at
+        all, gone rather than waited around. Not the default: a volume-built archive
+        cannot carry the executable bit (a shebang script loses it), which is fine for
+        a background copy nobody is about to run and wrong for a file `fetch` was
+        asked for by name -- so `fetch`/`openreynolds pull` leave this unset and get
+        the sandbox path, unchanged.
+        """
         if not remote_paths:
             return []
+        params: dict[str, Any] = {"mode": "pack", "paths": remote_paths}
+        if via:
+            params["via"] = via
         response = self._client.request(
             "POST",
             self._instance_path("/tar"),
-            params={"mode": "pack", "paths": remote_paths},
-            timeout=300.0,
+            params=params,
+            timeout=timeout,
+            max_attempts=max_attempts,
             # A read wearing a POST, because the path list travels in the body.
             repeatable=True,
         )
