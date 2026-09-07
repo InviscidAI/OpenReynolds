@@ -1,0 +1,69 @@
+{
+ "scale": 0.001,
+ "ops": [
+  {
+   "op": "rect",
+   "name": "main",
+   "origin": [
+    0,
+    -1.5
+   ],
+   "size": [
+    60,
+    3
+   ]
+  },
+  {
+   "op": "channel",
+   "name": "bypass",
+   "width": 3,
+   "start": [
+    14,
+    1.0
+   ],
+   "heading": 25,
+   "path": [
+    {
+     "line": 5
+    },
+    {
+     "arc": {
+      "radius": 4.5,
+      "angle": 200
+     }
+    },
+    {
+     "line": 12.549
+    }
+   ]
+  },
+  {
+   "op": "repeat",
+   "name": "bypasses",
+   "target": "bypass",
+   "count": 4,
+   "step": [
+    13,
+    0
+   ]
+  },
+  {
+   "op": "fuse",
+   "name": "body",
+   "of": [
+    "main",
+    "bypasses"
+   ]
+  }
+ ],
+ "patches": [
+  {
+   "name": "inlet",
+   "at": "x:min"
+  },
+  {
+   "name": "outlet",
+   "at": "x:max"
+  }
+ ]
+}

@@ -586,3 +586,165 @@ def test_near_names_a_closed_curve_and_its_extruded_surface(mesh2d, tmp_path, ca
     assert re.search(r"patches\s+inlet \(1\), outlet \(1\), cylinder \(1\), walls \(2\), frontAndBack \(2\)", out), out
     assert re.search(r"entry0/cylinder/type\s+-set wall", (case / "Allmesh").read_text(encoding="utf-8"))
     assert re.search(r"cylinder\s*\{\s*type\s+noSlip", (case / "0" / "U").read_text(encoding="utf-8"))
+
+
+# -- the four edits of the geometry revamp (DESIGN.md 3.17) ------------------------------
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "geometry"
+
+
+def test_extent_is_tight_on_a_lone_clipped_bypass(mesh2d, tmp_path, capsys):
+    """Edit 1: `getBoundingBox` is tight at the scale a shape is drawn at and loose after
+    the dilate (0.01763 x 0.01620 on the lone loop at 0.001); the extent is read from the
+    sampled curves, and the old valve's `extent 0.06 x 0.011` regex still passes."""
+    pytest.importorskip("gmsh")
+    # the lone loop has no main to land on and no ports, so the checks fail (rc 2); the
+    # extent line is printed before them and is what this test reads
+    assert mesh2d.main(["--spec", str(FIXTURES / "t01b1.json"), "--scale", "0.001", "--dry-run"]) == 2
+    out = capsys.readouterr().out
+    assert re.search(r"extent\s+0\.01302 x 0\.01164", out), out
+    assert "0.01763" not in out
+    assert "lands at (3.024, 1.5)" in out, "the landing check runs on the unscaled face (edit 4a)"
+
+
+def test_the_toolbox_sampled_bounds_equal_the_kernels(mesh2d):
+    pytest.importorskip("gmsh")
+    import gmsh
+    from openreynolds.geometry import measure
+    ops, _ = mesh2d.parse_spec(json.loads((FIXTURES / "t01b1.json").read_text(encoding="utf-8")))
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    try:
+        face = mesh2d.build_face(gmsh, ops)
+        theirs, ours = mesh2d.sampled_bounds(gmsh, 2, face), measure.sampled_bounds(gmsh, 2, face)
+        assert theirs == pytest.approx(ours, abs=1e-12)
+        assert (theirs[2] - theirs[0], theirs[3] - theirs[1]) == pytest.approx((13.019, 11.637), abs=2e-3)
+        for c in {abs(t) for _, t in gmsh.model.getBoundary([(2, face)], oriented=False)}:
+            mx, my = mesh2d.curve_midpoint(gmsh, c)
+            b = gmsh.model.getParametrizationBounds(1, c)
+            on = gmsh.model.getValue(1, c, [(b[0][0] + b[1][0]) / 2])
+            assert (mx, my) == pytest.approx((on[0], on[1]), abs=1e-12), "the midpoint is a point ON the curve"
+    finally:
+        gmsh.finalize()
+
+
+def test_a_rotational_repeat_catches_a_non_consecutive_overlap(mesh2d):
+    """Edit 2: eight spokes at 60 degrees go round more than once, so copy 7 lands on
+    copy 1 and copy 8 on copy 2 while every consecutive pair is clear; all pairs are
+    checked when the count is 12 or fewer, so the coincidence is refused."""
+    pytest.importorskip("gmsh")
+    import gmsh
+    ops, _ = mesh2d.parse_spec([
+        {"op": "disk", "name": "hub", "center": [0, 0], "radius": 3.5},
+        {"op": "rect", "name": "spoke", "origin": [3, -0.3], "size": [7, 0.6]},
+        {"op": "repeat", "name": "spokes", "target": "spoke", "count": 8, "angle": 60, "about": [0, 0]},
+        {"op": "fuse", "name": "body", "of": ["hub", "spokes"]}])
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    try:
+        checks: list = []
+        mesh2d.build_face(gmsh, ops, checks=checks)
+    finally:
+        gmsh.finalize()
+    overlaps = [c for c in checks if "overlap" in c["what"]]
+    assert sorted(c["pair"] for c in overlaps) == [(1, 7), (2, 8)]
+    assert all(abs(c["pair"][0] - c["pair"][1]) != 1 for c in overlaps)
+    assert all(c["overlap"] == pytest.approx(4.2, abs=1e-6) for c in overlaps), "a whole copy's area"
+    assert not [c for c in checks if "touch" in c["what"]]
+
+
+def test_check_dicts_carry_pair_gap_overlap_and_instance_area(mesh2d):
+    """Edit 2: the numbers sit beside the sentence, so the package rewrites `copies 1
+    and 2` into `bypasses[0]` / `bypasses[1]` without parsing it; the sentence is unchanged."""
+    pytest.importorskip("gmsh")
+    import gmsh
+    ops, _ = mesh2d.parse_spec(json.loads((FIXTURES / "tesla_real_attempt3.json").read_text(encoding="utf-8")))
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    try:
+        checks: list = []
+        mesh2d.build_face(gmsh, ops, checks=checks)
+    finally:
+        gmsh.finalize()
+    overlaps = [c for c in checks if "overlap" in c["what"]]
+    assert [c["pair"] for c in overlaps] == [(1, 2), (2, 3), (3, 4)]
+    first = overlaps[0]
+    assert first["overlap"] == pytest.approx(23.9, abs=0.5) and first["instance_area"] == pytest.approx(99.8, abs=0.5)
+    assert first["footprint"][0] == pytest.approx(20.18, abs=0.02) and first["pitch"] == 12.0
+    assert re.search(r"repeat 'bypasses': copies 1 and 2 overlap by 2\d\.\d", first["what"])
+    assert 14 < first["where"][0] < 30 and 2 < first["where"][1] < 9, "the overlap's own centroid"
+    ops, _ = mesh2d.parse_spec(json.loads((FIXTURES / "t01_lap2c.json").read_text(encoding="utf-8")))
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    try:
+        checks = []
+        mesh2d.build_face(gmsh, ops, checks=checks)
+    finally:
+        gmsh.finalize()
+    (gap,) = [c for c in checks if "gap between copies" in c["what"]]
+    assert gap["pair"] == (1, 2) and gap["gap"] == pytest.approx(2.44, abs=0.01) and gap["level"] == "info"
+    assert gap["where"] is not None and gap["instance_area"] > 0
+
+
+def test_a_record_with_extra_keys_is_the_same_spec(mesh2d):
+    """Edit 3: `parse_spec` reads `ops` and `patches` and ignores the record's script,
+    claims, compliance, features and measurements (DESIGN.md 4.2)."""
+    bare = json.loads((FIXTURES / "t05.json").read_text(encoding="utf-8"))
+    record = dict(bare, format="openreynolds.geometry/1", units="mm", script="s = Sketch(units='mm')\n",
+                  script_sha256="abc", ports=[{"name": "inlet", "kind": "inlet", "edges": ["duct.left"]}],
+                  features={"duct": {"kind": "Rect"}}, instances={}, apart=[], claims={"claims": []},
+                  compliance={"rows": []}, lint=[], measurements={"extent": [300, 60]},
+                  built_with={"gmsh": "4.15.2"})
+    assert mesh2d.parse_spec(record) == mesh2d.parse_spec(bare)
+
+
+def test_landing_checks_run_before_the_dilate(mesh2d, tmp_path, capsys):
+    """Edit 4a: a T04 built with `to` legs lands its last leg at (0, 20) on nothing; at
+    --scale 0.001 the check used to run on the dilated face, where `isInside` answers 1
+    for everything, and passed by luck. It runs on the unscaled face now, so the error
+    shows at 0.001 too, and the accepted valve shows none."""
+    pytest.importorskip("gmsh")
+    t04 = json.loads((FIXTURES / "t04.json").read_text(encoding="utf-8"))
+    for op in t04["ops"]:
+        if op["op"] == "channel":
+            op["path"] = [{"line": {"to": "x:60"}}, op["path"][1], {"line": {"to": "x:0"}}]
+    spec = tmp_path / "t04_to.json"
+    spec.write_text(json.dumps(t04), encoding="utf-8")
+    assert mesh2d.main(["--spec", str(spec), "--scale", "0.001", "--dry-run"]) == 2
+    out = capsys.readouterr().out
+    assert re.search(r"!! ERROR\s+channel 'u': the leg to x=0 lands at \(0, 20\)", out), out
+    assert mesh2d.main(["--spec", str(FIXTURES / "t01_lap2c.json"), "--scale", "0.001", "--dry-run"]) == 0
+    assert "lands at" not in capsys.readouterr().out
+
+
+def _patch_counts(out: str) -> tuple[dict, dict]:
+    curves = re.search(r"patches\s+(.*?\bm\))\n", out).group(1)
+    surfaces = re.search(r"patches\s+((?:\w+ \(\d+\)(?:, )?)+)\n", out).group(1)
+    edges = {m.group(1): int(m.group(2)) for m in re.finditer(r"(\w+) \((\d+) edges?,", curves)}
+    faces = {m.group(1): int(m.group(2)) for m in re.finditer(r"(\w+) \((\d+)\)", surfaces)}
+    return edges, faces
+
+
+def test_every_lateral_surface_takes_its_base_curves_patch(mesh2d, tmp_path, capsys):
+    """Edit 4b: each extruded lateral surface is named by the curve on its own boundary,
+    so the surface count per patch equals the curve count per patch -- for the cylinder
+    in a channel and for a U duct whose outer arc alone is named `near` its
+    mid-parameter point (74, 10), 8 mm from the concentric inner arc's."""
+    pytest.importorskip("gmsh")
+    case = tmp_path / "cyl"
+    assert mesh2d.main([str(case), "--spec", str(FIXTURES / "t05.json"), "--scale", "0.001", "--cell", "0.003"]) == 0
+    edges, faces = _patch_counts(capsys.readouterr().out)
+    assert edges == {"inlet": 1, "outlet": 1, "cylinder": 1, "walls": 2}
+    assert faces == {**edges, "frontAndBack": 2}
+    assert '"cylinder"' in (case / "body.msh").read_text(encoding="utf-8")
+    u = json.loads((FIXTURES / "t04.json").read_text(encoding="utf-8"))
+    u["patches"].append({"name": "bend", "at": "near:74,10"})
+    spec = tmp_path / "u_bend.json"
+    spec.write_text(json.dumps(u), encoding="utf-8")
+    case = tmp_path / "u"
+    assert mesh2d.main([str(case), "--spec", str(spec), "--scale", "0.001", "--cell", "0.001"]) == 0
+    edges, faces = _patch_counts(capsys.readouterr().out)
+    assert edges == {"inlet": 1, "outlet": 1, "bend": 1, "walls": 7}
+    assert faces == {**edges, "frontAndBack": 2}
+    assert '"bend"' in (case / "body.msh").read_text(encoding="utf-8")

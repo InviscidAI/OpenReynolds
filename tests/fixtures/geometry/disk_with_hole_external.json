@@ -1,0 +1,15 @@
+{
+ "scale": 0.001,
+ "ops": [
+  {
+   "op": "annulus",
+   "name": "body",
+   "center": [
+    0,
+    0
+   ],
+   "r_inner": 3,
+   "r_outer": 5
+  }
+ ]
+}

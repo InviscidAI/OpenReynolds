@@ -1,0 +1,85 @@
+{
+ "scale": 0.001,
+ "ops": [
+  {
+   "op": "channel",
+   "name": "main",
+   "width": 3,
+   "start": [
+    0,
+    0
+   ],
+   "heading": 0,
+   "path": [
+    {
+     "line": 60
+    }
+   ]
+  },
+  {
+   "op": "channel",
+   "name": "branch",
+   "width": 3,
+   "start": [
+    20,
+    1.5
+   ],
+   "heading": 90,
+   "from": "y:1.5",
+   "path": [
+    {
+     "line": 6
+    },
+    {
+     "arc": {
+      "radius": 4,
+      "angle": -180
+     }
+    },
+    {
+     "line": {
+      "to": "y:1.5"
+     }
+    }
+   ]
+  },
+  {
+   "op": "fuse",
+   "name": "joined",
+   "of": [
+    "main",
+    "branch"
+   ]
+  },
+  {
+   "op": "rect",
+   "name": "blocker",
+   "origin": [
+    26.2,
+    1.5
+   ],
+   "size": [
+    3.6,
+    0.5
+   ]
+  },
+  {
+   "op": "cut",
+   "name": "body",
+   "from": "joined",
+   "take": [
+    "blocker"
+   ]
+  }
+ ],
+ "patches": [
+  {
+   "name": "inlet",
+   "at": "near:0,0"
+  },
+  {
+   "name": "outlet",
+   "at": "near:60,0"
+  }
+ ]
+}

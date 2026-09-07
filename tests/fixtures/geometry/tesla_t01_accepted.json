@@ -1,0 +1,65 @@
+{
+ "scale": 0.001,
+ "ops": [
+  {
+   "name": "main",
+   "op": "channel",
+   "width": 3,
+   "start": [
+    0,
+    1.5
+   ],
+   "heading": 0,
+   "path": [
+    {
+     "line": 60
+    }
+   ]
+  },
+  {
+   "name": "loop1",
+   "op": "channel",
+   "width": 3,
+   "start": [
+    12,
+    3
+   ],
+   "heading": 20,
+   "from": "y:3",
+   "path": [
+    {
+     "line": 3
+    },
+    {
+     "arc": {
+      "radius": 4.5,
+      "angle": 240
+     }
+    },
+    {
+     "line": {
+      "to": "y:3"
+     }
+    }
+   ]
+  },
+  {
+   "name": "loops",
+   "op": "repeat",
+   "target": "loop1",
+   "count": 4,
+   "step": [
+    13,
+    0
+   ]
+  },
+  {
+   "name": "body",
+   "op": "fuse",
+   "of": [
+    "main",
+    "loops"
+   ]
+  }
+ ]
+}

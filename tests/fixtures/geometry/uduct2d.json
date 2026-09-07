@@ -1,0 +1,29 @@
+{
+ "scale": 0.001,
+ "ops": [
+  {
+   "op": "channel",
+   "name": "u",
+   "width": 10,
+   "start": [
+    0,
+    0
+   ],
+   "heading": 0,
+   "path": [
+    {
+     "line": 100
+    },
+    {
+     "arc": {
+      "radius": 15,
+      "angle": 180
+     }
+    },
+    {
+     "line": 100
+    }
+   ]
+  }
+ ]
+}
