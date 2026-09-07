@@ -121,8 +121,16 @@ def parse_check(log: str) -> dict:
         elif stars:
             out["verdict"] = f"{len(stars)} failing checks"
         elif "FOAM FATAL" in log:
-            fatal = re.search(r"--> FOAM FATAL ERROR:?\s*\n?(.{0,200})", log, re.S)
-            out["verdict"] = "checkMesh stopped: " + " ".join((fatal.group(1) if fatal else "").split())
+            # An empty reason after the colon is what this reported on a live run --
+            # "checkMesh stopped: " and nothing after it, which tells the reader less
+            # than the raw log would have. The message can sit lines below the banner,
+            # so the tail stands in when the pattern catches nothing.
+            fatal = re.search(r"FOAM FATAL[^\n]*\n+(.{0,300})", log, re.S)
+            said = " ".join((fatal.group(1) if fatal else "").split())
+            if not said:
+                said = " ".join(log.strip().splitlines()[-3:])[:300]
+            out["verdict"] = (f"checkMesh stopped: {said}" if said else
+                              "checkMesh stopped and said nothing readable; read log.checkMesh")
         else:
             out["verdict"] = "no verdict in the checkMesh log"
         if stars:
