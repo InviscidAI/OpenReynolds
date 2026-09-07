@@ -387,3 +387,272 @@ def test_every_measure_sentence_and_predicate_docstring_carries_words_not_number
         assert fn.__doc__ and len(fn.__doc__.split()) >= 4, name
     assert claims.LENGTH_MEASURES <= set(claims.MEASURES) | {"leave_length"}
     assert set(claims.KINDS) == set(claims._REQUIRED)
+
+
+# ----------------------------------------------------------------------------- the worked examples' columns
+
+def test_lengths_print_four_significant_digits_and_never_an_exponent():
+    """3.000, 60.00, 300.0 as the worked rows print them; a four-digit length (a 1.5 m duct
+    in mm) prints 1500.0, never `1500.` or `1.5e+03`."""
+    assert [claims.fmt_len(v) for v in (3, 60, 300, 10, 0.5)] == ["3.000", "60.00", "300.0", "10.00", "0.5000"]
+    assert claims.fmt_len(1211) == "1211.0" and claims.fmt_len(1500) == "1500.0" and claims.fmt_len(12345) == "12345.0"
+    assert "e" not in claims.fmt_len(123456.7) and not claims.fmt_len(1000).endswith(".")
+
+
+def t05_measurements():
+    """T05 (7.4) by hand: a 300 x 60 duct with a 10 mm hole at (100, 30)."""
+    m = t01_measurements()
+    m.features = {
+        "duct": {"width": 60.0, "length": 300.0, "size_x": 300.0, "size_y": 60.0, "height": 60.0,
+                 "centre": [150, 30], "origin": [0, 0]},
+        "cyl": {"centre": [100, 30], "radius": 5.0, "diameter": 10.0, "circumference": 31.42, "curves": [5]},
+        "fluid": {"extent_x": 300.0, "extent_y": 60.0, "area": 17921.5, "islands": 1, "edges": 5},
+    }
+    m.patches = {"inlet": {"curves": [1], "n": 1, "length": 60.0, "midpoints": [[0, 30]]},
+                 "outlet": {"curves": [2], "n": 1, "length": 60.0, "midpoints": [[300, 30]]},
+                 "cylinder": {"curves": [5], "n": 1, "length": 31.42, "midpoints": [[95, 30]]},
+                 "walls": {"curves": [3, 4], "n": 2, "length": 600.0, "midpoints": [[150, 0], [150, 60]]}}
+    m.bounds, m.extent, m.islands, m.n_curves = (0.0, 0.0, 300.0, 60.0), (300.0, 60.0), 1, 5
+    m.rows, m.legs, m.junctions, m.reference_width = {}, {}, [], 10.0
+    m.holes = [m.holes[0]]
+    m.holes[0].centroid, m.holes[0].radius = (100.0, 30.0), 5.0
+    return m
+
+
+def t05_plan():
+    from openreynolds.geometry.compile import Plan, Solved
+    return Plan(units="mm", scale=0.001, ops=[], rules=[], ports=[], features={
+        "duct": Solved(kind="Rect", params={"origin": [0, 0], "size": [300, 60]}, solved={}, ops=["duct"]),
+        "cyl": Solved(kind="Disk", params={"centre": [100, 30], "diameter": 10}, solved={}, ops=["cyl"])},
+        instances={}, outlines={}, edge_targets={}, apart=[], declared_widths=[], expected=(1, 1), notes=[])
+
+
+def test_t05_rows_read_as_the_design_prints_them():
+    """7.4: the Disk's diameter row is the bare number (the curvature note is on its
+    FEATURES line), the mid-height row prints both centres to one decimal, the distance
+    row names the inlet's x."""
+    payload = t01()
+    payload["claims"] = [
+        {"id": "c1", "kind": "measure", "says": "a circular cylinder of 10 mm diameter", "measure": "diameter", "of": "cyl", "value": 10},
+        {"id": "c2", "kind": "measure", "says": "a channel 60 mm high", "measure": "height", "of": "duct", "value": 60},
+        {"id": "c3", "kind": "measure", "says": "300 mm long", "measure": "length", "of": "duct", "value": 300},
+        {"id": "c4", "kind": "predicate", "says": "centred 100 mm from the inlet", "predicate": "at_distance_from",
+         "of": "cyl", "args": {"patch": "inlet", "value": 100}},
+        {"id": "c5", "kind": "predicate", "says": "mid-height", "predicate": "at_mid_height", "of": "cyl", "args": {"of": "duct"}},
+        {"id": "c6", "kind": "patch", "says": "inlet at the left end", "patch": "inlet", "side": "left"},
+        {"id": "c7", "kind": "patch", "says": "outlet at the right end", "patch": "outlet", "side": "right"},
+        {"id": "c8", "kind": "predicate", "says": "the cylinder surface is its own patch named cylinder",
+         "predicate": "own_patch", "of": "cylinder", "args": {"of": "cyl"}},
+        {"id": "c9", "kind": "predicate", "says": "the channel's top and bottom are walls", "predicate": "walls_are",
+         "of": "walls", "args": {"except": ["cylinder"]}},
+        {"id": "c10", "kind": "count", "says": "one cylinder", "of": "holes", "value": 1},
+    ]
+    cs, _ = parse(payload)
+    table = comply(cs, t05_measurements(), [], t05_plan())
+    rows = {r.id: (r.measured, r.expected, r.verdict) for r in table.rows}
+    assert rows["c1"] == ("cyl.diameter = 10.00", "10 +/- 0.1", "pass")
+    assert rows["c2"] == ("duct.height = 60.00", "60 +/- 0.6", "pass")
+    assert rows["c3"] == ("duct.length = 300.0", "300 +/- 3", "pass")
+    assert rows["c4"] == ("cyl.centre (100, 30); inlet at x = 0: 100.0 from it", "100 +/- 1", "pass")
+    assert rows["c5"] == ("cyl.centre.y = 30.0 = duct mid-height 30.0", "+/- 0.6", "pass")
+    assert rows["c6"] == ("inlet at (0, 30), the left side", "left", "pass")
+    assert rows["c7"] == ("outlet at (300, 30), the right side", "right", "pass")
+    assert rows["c8"][0] == "patch 'cylinder' = the 1 curve of cyl.edge" and rows["c8"][2] == "pass"
+    assert rows["c9"][0] == "patch 'walls' = every curve not inlet/outlet/cylinder (2)" and rows["c9"][2] == "pass"
+    assert rows["c10"] == ("holes = 1", "1", "pass")
+    assert table.summary() == "10 claims: 10 pass"
+
+
+def t02_measurements_and_plan():
+    """T02 (7.2) by hand: four passes of 30 stacked in y, bends r 3, the outlet at (0, 18)."""
+    from openreynolds.geometry.compile import Plan, Solved
+    from openreynolds.geometry.measure import OpenEnd
+    m = t01_measurements()
+    legs = []
+    for k in range(4):
+        y = 6 * k
+        if k % 2 == 0:
+            legs.append({"kind": "line", "from": (0, y), "to": (30, y), "heading": 0, "length": 30})
+            if k < 3:
+                legs.append({"kind": "arc", "from": (30, y), "to": (30, y + 6), "heading": 0, "heading_out": 180,
+                             "centre": (30, y + 3), "radius": 3, "sweep": 180, "outer_radius": 4, "inner_radius": 2})
+        else:
+            legs.append({"kind": "line", "from": (30, y), "to": (0, y), "heading": 180, "length": 30})
+            if k < 3:
+                legs.append({"kind": "arc", "from": (0, y), "to": (0, y + 6), "heading": 180, "heading_out": 0,
+                             "centre": (0, y + 3), "radius": 3, "sweep": -180, "outer_radius": 4, "inner_radius": 2})
+    m.legs = {"snake": legs}
+    m.features = {"snake": {"width": 2.0, "passes": 4, "bends": 3, "pass_length": [30.0, 30.0, 30.0, 30.0],
+                            "bend_radius": [3.0, 3.0, 3.0], "pass_pitch": 6.0, "wall_between": 4.0,
+                            "start": [0, 0], "end": [0, 18], "end_side": "same", "extent": [38, 20],
+                            "pass_centrelines": [0.0, 6.0, 12.0, 18.0]},
+                  "fluid": {"extent_x": 38.0, "extent_y": 20.0, "area": 296.6, "islands": 0, "edges": 20}}
+    m.patches = {"inlet": {"curves": [1], "n": 1, "length": 2.0, "midpoints": [[0, 0]]},
+                 "outlet": {"curves": [2], "n": 1, "length": 2.0, "midpoints": [[0, 18]]},
+                 "walls": {"curves": list(range(3, 21)), "n": 18, "length": 296.5, "midpoints": []}}
+    m.bounds, m.extent, m.islands, m.n_curves, m.reference_width = (0.0, -1.0, 38.0, 19.0), (38.0, 20.0), 0, 20, 2.0
+    m.rows, m.junctions, m.holes = {}, [], []
+    m.open_ends = [OpenEnd(curve=1, centre=(0, 0), length=2.0, outward_normal=(-1, 0), depth=6.0, corner_angles=(90, 90), name="inlet"),
+                   OpenEnd(curve=2, centre=(0, 18), length=2.0, outward_normal=(-1, 0), depth=6.0, corner_angles=(90, 90), name="outlet")]
+    plan = Plan(units="mm", scale=0.001, ops=[], rules=[], ports=[], features={
+        "snake": Solved(kind="Serpentine", params={"width": 2, "passes": 4, "pass_length": 30, "bend_radius": 3,
+                                                   "start": [0, 0], "heading": 0, "stack": "+y"},
+                        solved={"legs": legs, "bends": 3, "pass_pitch": 6, "wall_between": 4, "end": [0, 18],
+                                "end_heading": 180, "ends_on_start_side": True}, ops=["snake"])},
+        instances={}, outlines={}, edge_targets={}, apart=[], declared_widths=[2], expected=(1, 1), notes=[])
+    return m, plan
+
+
+def test_t02_rows_judge_every_pass_and_the_outlet_row_explains_the_parity():
+    """7.2: a per-pass list value is judged on every pass and printed `30.00 (x4)`; the
+    bends `3.000 (x3)`; and the failing outlet row carries the design's two-line
+    explanation, which `disagree` returns verbatim as the disagreement text (D18)."""
+    payload = t01()
+    payload["claims"] = [
+        {"id": "c1", "kind": "measure", "says": "a passage 2 mm wide", "measure": "width", "of": "snake", "value": 2},
+        {"id": "c2", "kind": "count", "says": "four straight passes", "of": "passes", "value": 4},
+        {"id": "c3", "kind": "measure", "says": "passes 30 mm long", "measure": "pass_length", "of": "snake", "value": 30},
+        {"id": "c4", "kind": "count", "says": "three 180-degree U-bends", "of": "bends", "value": 3},
+        {"id": "c5", "kind": "predicate", "says": "180-degree U-bends", "predicate": "bends_are_u", "of": "snake"},
+        {"id": "c6", "kind": "measure", "says": "3 mm centreline radius", "measure": "bend_radius", "of": "snake", "value": 3},
+        {"id": "c7", "kind": "predicate", "says": "the passes stacked in y", "predicate": "stacked_in", "of": "snake",
+         "args": {"axis": "y", "count": 4}},
+        {"id": "c8", "kind": "patch", "says": "entering the first pass at its left end", "patch": "inlet", "at": [0, 0], "tol": 0.5},
+        {"id": "c9", "kind": "patch", "says": "leaving the last pass at its right end", "patch": "outlet", "side": "right"},
+        {"id": "c10", "kind": "not_measurable", "says": "mesh, checkMesh, render, results.json",
+         "not_measurable": "the finish and the main agent"},
+    ]
+    cs, _ = parse(payload)
+    m, plan = t02_measurements_and_plan()
+    table = comply(cs, m, [], plan)
+    rows = {r.id: (r.measured, r.expected, r.verdict) for r in table.rows}
+    assert rows["c1"] == ("snake.width = 2.000", "2 +/- 0.02", "pass")
+    assert rows["c2"] == ("passes = 4", "4", "pass")
+    assert rows["c3"] == ("snake.pass_length = 30.00 (x4)", "30 +/- 0.3", "pass")
+    assert rows["c4"] == ("bends = 3", "3", "pass")
+    assert rows["c5"] == ("sweeps 180, 180, 180 deg", "180 +/- 2", "pass")
+    assert rows["c6"] == ("snake.bend_radius = 3.000 (x3)", "3 +/- 0.03", "pass")
+    assert rows["c7"] == ("headings 0/180/0/180; centrelines y = 0, 6, 12, 18 (spacing 6)", "stacked in y, 4 passes", "pass")
+    assert rows["c8"] == ("inlet at (0, 0)", "(0, 0) +/- 0.5", "pass")
+    assert rows["c9"] == ("outlet at (0, 18): the LEFT end (x = 0 of 0..38)", "right", "fail")
+    c9 = table.by_id("c9")
+    assert c9.detail == ("an even number of passes ends on the inlet's side; 4 passes with 3 bends cannot end at the right.\n"
+                         "5 passes (4 bends) or 3 passes (2 bends) end on the right; the request fixes 4 and 3.")
+    assert table.summary() == "10 claims: 8 pass, 1 FAIL, 1 not measurable"
+    text = table.disagree(["c9"])
+    assert text.splitlines() == [
+        "c9   leaving the last pass at its right end   outlet at (0, 18): the LEFT end (x = 0 of 0..38)   right   disagreed",
+        "     an even number of passes ends on the inlet's side; 4 passes with 3 bends cannot end at the right.",
+        "     5 passes (4 bends) or 3 passes (2 bends) end on the right; the request fixes 4 and 3."]
+    assert table.summary() == "10 claims: 8 pass, 0 FAIL, 1 disagreed, 1 not measurable"
+    m.features["snake"]["pass_length"][2] = 28.0
+    table = comply(cs, m, [], plan)
+    assert table.by_id("c3").verdict == "fail"
+    assert table.by_id("c3").measured == "snake.pass_length = 30.00, 30.00, 28.00, 30.00"
+
+
+def test_t04_rows_list_the_straight_legs_and_the_spacing():
+    """7.3: `u.legs_straight = 2 (60.0, 60.0)`, the parallel legs' row, and both ends on -x."""
+    from openreynolds.geometry.compile import Plan, Solved
+    from openreynolds.geometry.measure import OpenEnd
+    m = t01_measurements()
+    legs = [{"kind": "line", "from": (0, 0), "to": (60, 0), "heading": 0, "length": 60},
+            {"kind": "arc", "from": (60, 0), "to": (60, 20), "heading": 0, "heading_out": 180, "centre": (60, 10),
+             "radius": 10, "sweep": 180, "outer_radius": 14, "inner_radius": 6},
+            {"kind": "line", "from": (60, 20), "to": (0, 20), "heading": 180, "length": 60}]
+    m.legs = {"u": legs}
+    m.features = {"u": {"width": 8.0, "length": 151.4, "legs": 3, "legs_straight": 2, "corners": 0, "bends": 1,
+                        "start": [0, 0], "end": [0, 20], "start_heading": 0.0, "end_heading": 180.0, "extent": [74, 28],
+                        "spacing": 20.0, "end_side": "same", "bend_radius": 10.0, "bend_sweep": 180.0},
+                  "fluid": {"extent_x": 74.0, "extent_y": 28.0, "area": 1211.0, "islands": 0, "edges": 10}}
+    m.patches = {"inlet": {"curves": [1], "n": 1, "length": 8.0, "midpoints": [[0, 0]]},
+                 "outlet": {"curves": [2], "n": 1, "length": 8.0, "midpoints": [[0, 20]]},
+                 "walls": {"curves": list(range(3, 11)), "n": 8, "length": 302.8, "midpoints": []}}
+    m.bounds, m.extent, m.islands, m.n_curves, m.reference_width = (0.0, -4.0, 74.0, 24.0), (74.0, 28.0), 0, 10, 8.0
+    m.rows, m.junctions, m.holes = {}, [], []
+    m.open_ends = [OpenEnd(curve=1, centre=(0, 0), length=8.0, outward_normal=(-1, 0), depth=24.0, corner_angles=(90, 90), name="inlet"),
+                   OpenEnd(curve=2, centre=(0, 20), length=8.0, outward_normal=(-1, 0), depth=24.0, corner_angles=(90, 90), name="outlet")]
+    plan = Plan(units="mm", scale=0.001, ops=[], rules=[], ports=[], features={
+        "u": Solved(kind="Passage", params={"width": 8, "start": [0, 0], "heading": 0},
+                    solved={"legs": legs, "length": 151.4, "end": [0, 20], "end_heading": 180}, ops=["u"])},
+        instances={}, outlines={}, edge_targets={}, apart=[], declared_widths=[8], expected=(1, 1), notes=[])
+    payload = t01()
+    payload["claims"] = [
+        {"id": "c1", "kind": "measure", "says": "a passage 8 mm wide", "measure": "width", "of": "u", "value": 8},
+        {"id": "c2", "kind": "measure", "says": "two straight parallel legs", "measure": "legs_straight", "of": "u", "value": 2},
+        {"id": "c3", "kind": "predicate", "says": "20 mm centreline spacing", "predicate": "parallel_legs", "of": "u", "args": {"spacing": 20}},
+        {"id": "c4", "kind": "count", "says": "joined by a 180-degree bend", "of": "bends", "value": 1},
+        {"id": "c5", "kind": "measure", "says": "10 mm centreline radius", "measure": "bend_radius", "of": "u", "value": 10},
+        {"id": "c6", "kind": "predicate", "says": "180-degree bend", "predicate": "bends_are_u", "of": "u"},
+        {"id": "c7", "kind": "patch", "says": "enters the lower leg at its left end", "patch": "inlet", "at": [0, 0]},
+        {"id": "c8", "kind": "patch", "says": "leaves the upper leg at its left end", "patch": "outlet", "at": [0, 20]},
+        {"id": "c9", "kind": "predicate", "says": "both ends on the left", "predicate": "ends_on_same_side", "of": "fluid", "args": {"side": "-x"}},
+    ]
+    cs, _ = parse(payload)
+    table = comply(cs, m, [], plan)
+    rows = {r.id: (r.measured, r.expected, r.verdict) for r in table.rows}
+    assert rows["c1"] == ("u.width = 8.000", "8 +/- 0.08", "pass")
+    assert rows["c2"] == ("u.legs_straight = 2 (60.0, 60.0)", "2", "pass")
+    assert rows["c3"] == ("legs 1 and 3: headings 0 / 180, 20.00 apart", "20 +/- 0.2", "pass")
+    assert rows["c4"] == ("bends = 1", "1", "pass")
+    assert rows["c5"] == ("u.bend_radius = 10.00", "10 +/- 0.1", "pass")
+    assert rows["c6"] == ("sweep 180 deg", "180 +/- 2", "pass")
+    assert rows["c7"] == ("inlet at (0, 0)", "(0, 0) +/- 4", "pass")
+    assert rows["c8"] == ("outlet at (0, 20)", "(0, 20) +/- 4", "pass")
+    assert rows["c9"] == ("open ends at (0, 0) facing -x and (0, 20) facing -x", "-x", "pass")
+    assert table.summary() == "9 claims: 9 pass"
+
+
+def test_sharp_corner_searches_within_one_width_of_near():
+    """7.5: the outer vertex is w/2 x sqrt 2 = 7.07 from the corner and is found within one
+    width (10); a vertex 1.2 widths away is not the corner asked about."""
+    from openreynolds.geometry.measure import VertexInfo
+    m = t01_measurements()
+    m.features = {"duct": {"width": 10.0, "legs": 3, "corners": 1}}
+    m.legs = {"duct": [{"kind": "line", "from": (0, 0), "to": (100, 0), "heading": 0, "length": 100},
+                       {"kind": "corner", "from": (100, 0), "to": (100, 0), "heading": 0, "turn": 90},
+                       {"kind": "line", "from": (100, 0), "to": (100, 80), "heading": 90, "length": 80}]}
+    m.reference_width = 10.0
+    m.vertices = [VertexInfo(at=(105, -5), curves=(1, 2), interior_deg=90.0, solid_deg=270.0, kind="convex"),
+                  VertexInfo(at=(95, 5), curves=(3, 4), interior_deg=270.0, solid_deg=90.0, kind="reflex")]
+    v = claims.sharp_corner(m, "duct", {"near": [100, 0], "angle": 90})
+    assert v.ok and v.measured == "corner at (100, 0): outer vertex (105, -5) interior 90.0, inner (95, 5) interior 270.0, both lines"
+    assert v.expected == "90 +/- 3"
+    m.vertices[0].at = (112, 0)
+    v = claims.sharp_corner(m, "duct", {"near": [100, 0], "angle": 90})
+    assert not v.ok and "no outer vertex of that angle within a width" in v.measured
+
+
+def test_junction_angles_fall_back_to_the_measured_junctions():
+    """A Passage that starts on a wall (start=(main.top, 30)) has no `leave_angle` in its
+    feature dict; the built angle is the Junction's `measured_angle` (3.5), so the
+    predicate reads it there, and the lip beside it from the Junction too."""
+    from openreynolds.geometry.measure import Junction
+    m = t01_measurements()
+    m.features["branch"] = {"width": 3.0, "legs": 2, "end_heading": 200.0}
+    m.junctions.append(Junction(channel="branch", where=(30, 1.5), wall_line="main.top", kind="leave",
+                                typed_angle=25.0, measured_angle=24.6, lip=((33.1, 1.5), 31.0), heading=25.0, against_flow=False))
+    m.junctions.append(Junction(channel="branch", where=(20, 1.5), wall_line="main.top", kind="return",
+                                typed_angle=70.0, measured_angle=69.5, lip=None, heading=200.0, against_flow=True))
+    v = claims.shallow_angle(m, "branch", {"_flow": "+x"})
+    assert v.ok and v.measured == "branch.leave_angle = 24.6 built at the leg's wall; lip 31.0 on the arc"
+    v = claims.steep_angle(m, "branch", {"_flow": "+x"})
+    assert v.ok and v.measured.startswith("branch angle at the wall = 69.5")
+    del m.features["branch"]["end_heading"]
+    v = claims.returns_against_flow(m, "branch", {"_flow": "+x"})
+    assert v.ok and v.measured.startswith("heading 200 deg, 160 deg from the flow (+x)")
+
+
+def test_can_commit_reads_a_comma_separated_disagrees_string_too():
+    """Today's desk keeps `disagrees` as the reply's text; the ids are read from it the
+    same way as from the list the v2 Reply carries."""
+    cs, _ = parse(t01())
+    m = t01_measurements()
+    m.patches["inlet"]["midpoints"] = [[0, 3]]
+    m.patches["outlet"]["midpoints"] = [[60, 3]]
+    table = comply(cs, m, [], t01_plan())
+    assert table.failing_ids() == ["c8", "c9"]
+    ok, why = can_commit([], table, SimpleNamespace(disagrees="c8, c9", accepts=[]))
+    assert ok and why == "COMMIT accepted, disagreeing with c8, c9"
+    ok, why = can_commit([], table, SimpleNamespace(disagrees="c8", accepts=[]))
+    assert not ok and why.startswith("COMMIT refused: c9 FAILS and is not named")

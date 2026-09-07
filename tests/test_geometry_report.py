@@ -237,8 +237,9 @@ def test_script_line_counts_prints_and_notes():
 
 
 def test_leg_lines_name_instances_zero_based():
-    frames = report.leg_frames(t01_plan(), T01_LEGS)
-    lines = report.leg_lines(T01_LEGS, frames)
+    loop_only = {"loop.raw": T01_LEGS["loop.raw"]}
+    frames = report.leg_frames(t01_plan(), loop_only)
+    lines = report.leg_lines(loop_only, frames)
     assert lines[0] == "loops[0] (anchor 7.24; loops[1..3] identical, shifted by 14.66)"
     assert len(lines) == 4
     joined = "\n".join(lines)
@@ -247,6 +248,43 @@ def test_leg_lines_name_instances_zero_based():
         assert re.fullmatch(r"\w+\[\d+(\.\.\d+)?\]", ref), ref
     plain = report.leg_lines({"snake": T01_LEGS["loop.raw"][:1]})
     assert plain[0] == "snake"
+
+
+def test_a_to_leg_names_the_wall_it_lands_on_not_the_landing_point():
+    """mesh2d's `to` record carries `lands` = the landing point; the print-back names the
+    wall from the feature's `solved["lands_on"]` (D28), never the point, and without a plan
+    the leg prints with no landing tail rather than a coordinate."""
+    frames = report.leg_frames(t01_plan(), T01_LEGS)
+    assert frames["loop.raw"]["lands_on"] == "main.top"
+    lines = report.leg_lines({"loop.raw": T01_LEGS["loop.raw"]}, frames)
+    assert lines[3].endswith("to (3.024, 1.5)   lands on main.top")
+    bare = report.leg_lines({"loop.raw": T01_LEGS["loop.raw"]})
+    assert bare[3].endswith("to (3.024, 1.5)") and "lands on" not in bare[3]
+    assert "(3.024026094486673" not in "\n".join(lines + bare)
+
+
+def test_a_one_straight_leg_channel_has_no_leg_table_and_a_solved_table_fills_in():
+    """`main` (one line leg) is summarised on its FEATURES line and prints no LEGS table
+    (7.1 prints only `loops[0]`); a Passage the build recorded no channel for (a mitred
+    corner compiles to rects, D36) prints its solved legs, with a corner leg's vertices."""
+    text = lap2_text()
+    assert "LEGS       loops[0] (anchor 7.24; loops[1..3] identical, shifted by 14.66)" in text
+    assert "\n           main\n" not in text and "leg 1  line 60" not in text
+    plan = t01_plan()
+    from openreynolds.geometry.compile import Solved
+    plan.features["duct"] = Solved(kind="Passage", params={"width": 10, "start": [0, 0], "heading": 0},
+                                   solved={"legs": [
+                                       {"kind": "line", "from": (0, 0), "to": (100, 0), "heading": 0, "length": 100},
+                                       {"kind": "corner", "from": (100, 0), "to": (100, 0), "heading": 0, "turn": 90,
+                                        "outer": (105, -5), "inner": (95, 5)},
+                                       {"kind": "line", "from": (100, 0), "to": (100, 80), "heading": 90, "length": 80}],
+                                       "length": 180, "end": [100, 80], "end_heading": 90}, ops=["duct.leg1", "duct.leg2"])
+    text = lap2_text(plan=plan)
+    assert "           duct\n" in text
+    assert "             leg 1  line 100   from (0, 0) heading 0 deg (+x) to (100, 0)" in text
+    assert "             leg 2  corner 90 deg left at (100, 0): outer vertex (105, -5), inner vertex (95, 5)" in text
+    assert "             leg 3  line 80    from (100, 0) heading 90 deg (+y) to (100, 80)" in text
+    assert "           main\n" not in text
 
 
 def test_reference_lines_show_the_approved_entry_beside_the_candidate():

@@ -37,14 +37,26 @@ T01_OPS = [
 ]
 
 T01_LEGS = {
+    "main": [
+        {"kind": "line", "from": (0.0, 0.0), "heading": 0.0, "length": 60.0, "to": (60.0, 0.0), "heading_out": 0.0},
+        {"kind": "ports", "start": (0.0, 0.0), "end": (60.0, 0.0), "width": 3.0, "heading_in": 0.0, "heading_out": 0.0},
+    ],
     "loop.raw": [
-        {"kind": "line", "from": (7.24, 1.5), "to": (10.06, 2.526), "heading": 20, "heading_out": 20, "length": 3},
-        {"kind": "arc", "from": (10.06, 2.526), "to": (4.088, 7.536), "heading": 20, "heading_out": 260,
-         "centre": (8.52, 6.755), "radius": 4.5, "outer_radius": 6, "inner_radius": 3, "sweep": 240},
-        {"kind": "to", "from": (4.088, 7.536), "to": (3.024, 1.5), "heading": 260, "heading_out": 260,
-         "line": "y:1.5", "lands": "main.top", "length": 6.13},
+        {"kind": "line", "from": (7.24, 1.5), "heading": 20.0, "from_line": "y=1.5", "length": 3.0,
+         "to": (10.059077862357725, 2.526060429977006), "heading_out": 20.0},
+        {"kind": "arc", "from": (10.059077862357725, 2.526060429977006), "heading": 20.0,
+         "centre": (8.519987217392217, 6.754677223513594), "radius": 4.5, "sweep": 240.0,
+         "outer_radius": 6.0, "inner_radius": 3.0, "to": (4.0883523288372805, 7.536094023014781), "heading_out": 260.0},
+        {"kind": "to", "from": (4.0883523288372805, 7.536094023014781), "heading": 260.0, "line": "y=1.5",
+         "lands": (3.024026094486673, 1.5), "length": 6.129210502813695, "to": (3.024026094486673, 1.5),
+         "heading_out": 260.0},
+        {"kind": "ports", "start": (7.24, 1.5), "end": (3.024026094486673, 1.5), "width": 3.0,
+         "heading_in": 20.0, "heading_out": 260.0},
     ],
 }
+"""mesh2d.build_face's leg records for t01_lap2c.json, verbatim (the `to` record's `lands`
+is the landing POINT; the wall it lands on is the Bypass's `solved["lands_on"]`), so the
+report is exercised on the shape the kernel really hands it."""
 
 
 def bypass_solved(return_angle: float = 80, sweep: float = 240, landing_u: float = -4.216,

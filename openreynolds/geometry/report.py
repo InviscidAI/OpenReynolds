@@ -53,11 +53,15 @@ def _pt(p) -> str:
 
 
 def _sense(heading: float, axis: int = 0) -> str:
-    """mesh2d's sense word for a heading: +x, -x, or across x."""
-    along = "xy"[axis]
+    """The sense word beside a heading: its sign along the flow axis (260 deg is `-x` on
+    T01, the return against the flow), and along the other axis when it runs exactly
+    across the flow (T03's second leg is `+y`), where mesh2d says `across x`."""
     h = float(heading) % 360
-    comp = math.cos(math.radians(h)) if axis == 0 else math.sin(math.radians(h))
-    return f"+{along}" if comp > 1e-9 else (f"-{along}" if comp < -1e-9 else f"across {along}")
+    cx, cy = math.cos(math.radians(h)), math.sin(math.radians(h))
+    comp, along = (cx, "x") if axis == 0 else (cy, "y")
+    if abs(comp) < 1e-9:
+        comp, along = (cy, "y") if axis == 0 else (cx, "x")
+    return f"+{along}" if comp > 0 else f"-{along}"
 
 
 # ----------------------------------------------------------------------------- SCRIPT
@@ -374,7 +378,10 @@ def feature_lines(plan: "Plan | None", m: Measurements | None, findings: list[Fi
 
 # ----------------------------------------------------------------------------- LEGS
 
-def _leg_line(i: int, r: dict) -> str:
+def _leg_line(i: int, r: dict, lands_on: str | None = None) -> str:
+    """One leg in the print-back's words. mesh2d's `to` record carries `lands`, the landing
+    POINT; the wall it lands on is the feature's `solved["lands_on"]`, passed in as
+    `lands_on` (a string `lands` in a hand-built record is read the same way)."""
     kind = r.get("kind")
     h = float(r.get("heading", 0)) % 360
     if kind == "arc":
@@ -398,8 +405,9 @@ def _leg_line(i: int, r: dict) -> str:
         what = f"line {_g(r.get('length', 0))}"
     line = (f"leg {i}  {what:<9}  from {_pt(r['from'])} heading {_g(h)} deg ({_sense(h)}) "
             f"to {_pt(r['to'])}")
-    if r.get("lands"):
-        line += f"   lands on {r['lands']}"
+    wall = lands_on if kind == "to" and lands_on else (r.get("lands") if isinstance(r.get("lands"), str) else None)
+    if wall:
+        line += f"   lands on {wall}"
     elif r.get("note"):
         line += f"   ({r['note']})"
     return line
@@ -412,11 +420,13 @@ def leg_lines(legs: dict, wall_frame: dict | None = None) -> list[str]:
     reads: {"<channel>": {"row": "loops", "count": 4, "anchor": 7.24, "pitch": 14.66}}
     prints `loops[0] (anchor 7.24; loops[1..3] identical, shifted by 14.66)`;
     {"<channel>": {"name": "loop", "anchor": 0}} prints `loop (one instance, anchor at
-    u = 0 for the table)`; every instance reference is `<row>[k]`, 0-based (D29)."""
+    u = 0 for the table)`; every instance reference is `<row>[k]`, 0-based (D29). A frame's
+    `lands_on` names the wall a `to` leg lands on (`solved["lands_on"]`, D28)."""
     frames = wall_frame or {}
     out: list[str] = []
     for channel, records in legs.items():
         frame = frames.get(channel) or {}
+        lands_on = frame.get("lands_on")
         if frame.get("row"):
             row, count = frame["row"], int(frame.get("count", 1))
             head = f"{row}[0]"
@@ -439,7 +449,7 @@ def leg_lines(legs: dict, wall_frame: dict | None = None) -> list[str]:
             if r.get("kind") == "ports":
                 continue
             i += 1
-            out.append(f"  {_leg_line(i, r)}")
+            out.append(f"  {_leg_line(i, r, lands_on)}")
     return out
 
 
@@ -470,13 +480,47 @@ def leg_frames(plan: "Plan | None", legs: dict) -> dict:
             frames[channel] = {"name": name, "single": True, "anchor": sol.params.get("at") or 0}
         else:
             frames[channel] = {"name": name}
+        lands_on = sol.solved.get("lands_on") if isinstance(sol.solved, dict) else None
+        if lands_on:
+            frames[channel]["lands_on"] = str(lands_on)
     return frames
 
 
+def _one_straight_leg(records: list[dict]) -> bool:
+    """A channel of one straight leg has no table to print: its FEATURES line already
+    says `one leg 60 along +x, start (0, 0) end (60, 0)` (7.1 prints only `loops[0]`)."""
+    real = [r for r in records if r.get("kind") != "ports"]
+    return len(real) == 1 and real[0].get("kind") == "line"
+
+
+def _solved_leg_tables(plan: "Plan | None", legs: dict) -> dict:
+    """Leg tables for the Passage / Serpentine / Bypass features the build recorded no
+    channel for (a mitred corner compiles to rects, D36), read from `solved["legs"]`."""
+    if plan is None:
+        return {}
+    out: dict = {}
+    owned = set()
+    for channel in legs:
+        for name, sol in plan.features.items():
+            if channel == name or channel in sol.ops:
+                owned.add(name)
+    for name, sol in plan.features.items():
+        if name in owned or sol.kind not in ("Passage", "Serpentine", "Bypass"):
+            continue
+        solved_legs = sol.solved.get("legs") if isinstance(sol.solved, dict) else None
+        if isinstance(solved_legs, list) and solved_legs:
+            out[name] = solved_legs
+    return out
+
+
 def _legs_block(plan: "Plan | None", legs: dict) -> list[str]:
-    if not legs:
+    tables = {name: records for name, records in (legs or {}).items() if not _one_straight_leg(records)}
+    for name, records in _solved_leg_tables(plan, legs or {}).items():
+        if not _one_straight_leg(records):
+            tables[name] = records
+    if not tables:
         return []
-    lines = leg_lines(legs, leg_frames(plan, legs))
+    lines = leg_lines(tables, leg_frames(plan, tables))
     out = [_section("LEGS", lines[0])]
     for line in lines[1:]:
         out.append(f"{INDENT}{line}" if not line.startswith("  ") else f"{INDENT}{line}")

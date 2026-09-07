@@ -122,6 +122,12 @@ COUNT_MEASURES: frozenset[str] = frozenset({
 })
 POINT_MEASURES: frozenset[str] = frozenset({"centre", "origin", "start", "end", "lip_at", "midpoint"})
 SWEEP_MEASURES: frozenset[str] = frozenset({"sweep", "bend_sweep"})
+PAIR_MEASURES: frozenset[str] = POINT_MEASURES | frozenset({"footprint", "span", "extent", "box"})
+"""Measures whose value is one pair; any other list value is one number per pass / bend /
+instance (a Serpentine's `pass_length` is four numbers), judged all together and printed
+`30.00 (x4)`."""
+LIST_MEASURES: frozenset[str] = frozenset({"anchors", "pass_centrelines"})
+"""Measures whose value is a list that is reported whole, never judged per element."""
 
 COUNT_WORDS = ("islands", "open_ends", "inlets", "outlets", "bends", "passes", "holes", "edges", "corners")
 """`of` words a count claim may name without a feature (DESIGN.md 4.1)."""
@@ -391,8 +397,13 @@ def kind_note(claims: ClaimSet, plan: "Plan | None") -> str | None:
 # ----------------------------------------------------------------------------- formatting
 
 def fmt_len(v: float) -> str:
-    """Lengths to four significant digits with the trailing zeros kept: 3.000, 60.00, 300.0."""
-    return f"{float(v):#.4g}"
+    """Lengths to four significant digits with the trailing zeros kept: 3.000, 60.00, 300.0;
+    from 1000 up one decimal (1500.0), never a bare trailing point or an exponent, since a
+    duct in mm is easily four digits long."""
+    text = f"{float(v):#.4g}"
+    if "e" in text or text.endswith("."):
+        return f"{float(v):.1f}"
+    return text
 
 
 def fmt_angle(v: float) -> str:
@@ -616,6 +627,25 @@ def _first(feat: dict, *keys):
     return None
 
 
+def _junction(m: Measurements, label: str, kind: str):
+    """The Junction of `kind` ("leave" / "return") recorded for the channel `label`, for a
+    feature whose dict carries no angle of its own (a Passage that starts on a wall or
+    ends on one has its built angle only in `m.junctions`)."""
+    for j in m.junctions:
+        if j.kind == kind and (j.channel == label or j.channel.split("[")[0] == label.split("[")[0]):
+            return j
+    return None
+
+
+def _junction_angle(m: Measurements, label: str, feat: dict, kind: str):
+    key = "leave_angle" if kind == "leave" else "return_angle"
+    angle = _first(feat, key, "junction_angle")
+    if angle is not None:
+        return float(angle)
+    j = _junction(m, label, kind)
+    return None if j is None else float(j.measured_angle)
+
+
 def _multi(values: list[str], count: int) -> str:
     """`3.000 (x4)` when every instance agrees, else the values listed."""
     if count == 1:
@@ -669,6 +699,9 @@ def _returns(m: Measurements, of: str, args: dict, against: bool) -> Verdict:
     for label_i, feat in insts:
         heading = _first(feat, "return_heading", "end_heading")
         if heading is None:
+            j = _junction(m, label_i, "return")
+            heading = None if j is None else j.heading
+        if heading is None:
             return Verdict(None, f"{label_i} has no return heading to judge (no Bypass or Passage end)")
         hx, hy = _unit(float(heading))
         comp = hx * flow[0] + hy * flow[1]
@@ -693,13 +726,16 @@ def shallow_angle(m: Measurements, of: str, args: dict) -> Verdict:
     limit, note = _margin(args, "max", 30.0, min)
     texts, oks, numbers = [], [], {}
     for label, feat in insts:
-        angle = _first(feat, "leave_angle", "junction_angle")
+        angle = _junction_angle(m, label, feat, "leave")
         if angle is None:
             return Verdict(None, f"{label} has no junction angle (no leg leaves a wall)")
-        oks.append(float(angle) <= limit)
+        oks.append(angle <= limit)
         texts.append(fmt_angle(angle))
-        numbers = {"angle": float(angle)}
+        numbers = {"angle": angle}
     lip = _first(insts[0][1], "lip_angle")
+    if lip is None:
+        j = _junction(m, insts[0][0], "leave")
+        lip = None if j is None or j.lip is None else j.lip[1]
     tail = " built at the leg's wall" + (f"; lip {fmt_angle(lip)} on the arc" if lip is not None else "")
     return Verdict(all(oks), f"{of}.leave_angle = {_multi(texts, len(insts))}{tail}{note}", numbers=numbers,
                    expected=f"<= {limit:g} deg")
@@ -713,12 +749,14 @@ def steep_angle(m: Measurements, of: str, args: dict) -> Verdict:
     limit, note = _margin(args, "min", 60.0, max)
     texts, oks, numbers = [], [], {}
     for label, feat in insts:
-        angle = _first(feat, "return_angle", "leave_angle", "junction_angle")
+        angle = _junction_angle(m, label, feat, "return")
+        if angle is None:
+            angle = _junction_angle(m, label, feat, "leave")
         if angle is None:
             return Verdict(None, f"{label} has no junction angle (no leg meets a wall)")
-        oks.append(float(angle) >= limit)
+        oks.append(angle >= limit)
         texts.append(fmt_angle(angle))
-        numbers = {"angle": float(angle)}
+        numbers = {"angle": angle}
     return Verdict(all(oks), f"{of} angle at the wall = {_multi(texts, len(insts))} built at the leg's wall{note}",
                    numbers=numbers, expected=f">= {limit:g} deg")
 
@@ -938,7 +976,7 @@ def centred_in(m: Measurements, of: str, args: dict) -> Verdict:
     tol = 0.01 * float(size)
     word = "mid-height" if axis == "y" else "mid-length"
     return Verdict(abs(c[i] - pc[i]) <= tol,
-                   f"{of}.centre.{axis} = {c[i]:.4g} = {parent_name} {word} {pc[i]:.4g}",
+                   f"{of}.centre.{axis} = {c[i]:.1f} = {parent_name} {word} {pc[i]:.1f}",
                    expected=f"+/- {tol:g}", numbers={"offset": c[i] - pc[i]})
 
 
@@ -997,9 +1035,9 @@ def sharp_corner(m: Measurements, of: str, args: dict) -> Verdict:
     corner_legs = [r for r in legs if r.get("kind") == "corner"
                    and math.dist((float(r["from"][0]), float(r["from"][1])), (nx, ny)) <= w
                    and abs(abs(float(r.get("turn", r.get("sweep", 0)))) - angle) <= 3.0]
-    outer = [v for v in m.vertices if math.dist(v.at, (nx, ny)) <= w * 1.5 and abs(v.interior_deg - angle) <= 3.0
+    outer = [v for v in m.vertices if math.dist(v.at, (nx, ny)) <= w and abs(v.interior_deg - angle) <= 3.0
              and _both_lines(m, v)]
-    inner = [v for v in m.vertices if math.dist(v.at, (nx, ny)) <= w * 1.5 and abs(v.interior_deg - (360 - angle)) <= 3.0
+    inner = [v for v in m.vertices if math.dist(v.at, (nx, ny)) <= w and abs(v.interior_deg - (360 - angle)) <= 3.0
              and _both_lines(m, v)]
     ok = bool(outer) and bool(inner) and (bool(corner_legs) or not legs)
     parts = [f"corner at ({nx:.4g}, {ny:.4g})"]
@@ -1299,7 +1337,7 @@ def _row_for(c: Claim, claims: ClaimSet, m: Measurements, findings: list[Finding
     if c.kind == "predicate":
         return _predicate_row(c, claims, m, findings, plan)
     if c.kind == "patch":
-        return _patch_row(c, m)
+        return _patch_row(c, m, plan)
     if c.kind == "count":
         return _count_row(c, m, plan)
     insts, why = resolve(c.of, m, plan)
@@ -1313,28 +1351,31 @@ def _row_for(c: Claim, claims: ClaimSet, m: Measurements, findings: list[Finding
             kind = _kind_of(label, plan)
             return _row(c, "not_measurable",
                         f"no measure named {c.measure} on {kind} '{label}'; it has: {', '.join(sorted(k for k in feat if not k.startswith('_')))}")
-        values.append(feat[c.measure])
+        values.extend(_per_instance(c.measure, feat[c.measure]))
     label = c.of
+    count = len(values)
     if c.kind == "report":
-        text = f"{label}.{c.measure} = {_multi([fmt_value(c.measure, v) for v in values], len(insts))}"
+        text = f"{label}.{c.measure} = {_multi([fmt_value(c.measure, v) for v in values], count)}"
         return _row(c, "pass", text, "reported", numbers={"values": _plain(values)})
     if not all(_is_number(v) for v in values):
-        text = f"{label}.{c.measure} = {_multi([fmt_value(c.measure, v) for v in values], len(insts))}"
+        text = f"{label}.{c.measure} = {_multi([fmt_value(c.measure, v) for v in values], count)}"
         return _row(c, "not_measurable", f"{text} is not a number to compare with {c.value}")
     span = _span(m)
     if c.kind == "range":
         lo, hi = float(c.min), float(c.max)
         ok = all(lo <= float(v) <= hi for v in values)
-        text = f"{label}.{c.measure} = {_multi([fmt_value(c.measure, v) for v in values], len(insts))}"
+        text = f"{label}.{c.measure} = {_multi([fmt_value(c.measure, v) for v in values], count)}"
         return _row(c, "pass" if ok else "fail", text, f"{lo:g}..{hi:g}", numbers={"values": _plain(values)})
     value = float(c.value)
     tol = _tol_for(c, value, span)
     ok = all(abs(float(v) - value) <= tol for v in values)
     note = _curvature_note(c.measure, _kind_of(insts[0][0], plan))
+    if c.measure == "legs_straight" and count == 1:
+        note = _straight_lengths(label, m, plan)
     shown = [fmt_value(c.measure, v) for v in values]
-    if len(insts) > 1 and len(set(shown)) == 1:
-        body = f"{shown[0]} (x{len(insts)}{', ' + note if note else ''})"
-    elif len(insts) > 1:
+    if count > 1 and len(set(shown)) == 1:
+        body = f"{shown[0]} (x{count}{', ' + note if note else ''})"
+    elif count > 1:
         body = ", ".join(shown) + (f" ({note})" if note else "")
     else:
         body = shown[0] + (f" ({note})" if note else "")
@@ -1348,6 +1389,23 @@ def _plain(values):
     return [float(v) if _is_number(v) else v for v in values]
 
 
+def _per_instance(measure: str, value) -> list:
+    """A feature value as the values a claim judges: a list of numbers on a measure that
+    is not a pair or a whole list is one number per pass / bend (T02's `pass_length` is
+    judged four times and printed `30.00 (x4)`); anything else is the one value."""
+    if (isinstance(value, (list, tuple)) and measure not in PAIR_MEASURES and measure not in LIST_MEASURES
+            and value and all(_is_number(v) for v in value)):
+        return list(value)
+    return [value]
+
+
+def _straight_lengths(label: str, m: Measurements, plan: "Plan | None") -> str:
+    """The straight legs' lengths beside a `legs_straight` count (7.3's `2 (60.0, 60.0)`)."""
+    legs = _legs_of(label, m, plan) or []
+    lengths = [float(r["length"]) for r in legs if r.get("kind") == "line" and _is_number(r.get("length"))]
+    return ", ".join(f"{v:.1f}" for v in lengths) if lengths else ""
+
+
 def _kind_of(label: str, plan: "Plan | None") -> str:
     name = label.split("[")[0].split(".")[0]
     if plan is not None and name in plan.features:
@@ -1356,12 +1414,12 @@ def _kind_of(label: str, plan: "Plan | None") -> str:
 
 
 def _curvature_note(measure: str, kind: str) -> str:
+    """The note beside a Bypass radius (7.1's c5); a Disk's radius says where it came from
+    on its FEATURES line and its claims row is the bare number (7.4's c1)."""
     if measure == "outer_radius":
         return "from the outer arc's curvature"
     if measure == "inner_radius":
         return "from the inner arc's curvature"
-    if measure in ("radius", "diameter") and kind == "Disk":
-        return "from the hole's curvature"
     return ""
 
 
@@ -1469,7 +1527,7 @@ def _names_something(of: str, m: Measurements, plan: "Plan | None") -> bool:
     return insts is not None
 
 
-def _patch_row(c: Claim, m: Measurements) -> ComplianceRow:
+def _patch_row(c: Claim, m: Measurements, plan: "Plan | None" = None) -> ComplianceRow:
     p = m.patches.get(c.patch)
     if p is None:
         return _row(c, "fail", f"no patch named '{c.patch}'; patches: {', '.join(m.patches) or 'none'}",
@@ -1490,7 +1548,7 @@ def _patch_row(c: Claim, m: Measurements) -> ComplianceRow:
         lo, hi = (x0, x1) if axis == "x" else (y0, y1)
         actual = _side_word(mid, m.bounds) if mid else "nowhere on the extent"
         text = f"{c.patch} at {at}: the {actual.upper()} end ({axis} = {float(mid[i]) if mid else 0:.4g} of {lo:.4g}..{hi:.4g})"
-        return _row(c, "fail", text, c.side, mid)
+        return _row(c, "fail", text, c.side, mid, detail=_serpentine_side_detail(c, m, plan))
     at = c.at
     if isinstance(at, (list, tuple)) and len(at) == 2:
         tol = float(c.tol) if _is_number(c.tol) else m.reference_width / 2
@@ -1506,6 +1564,29 @@ def _patch_row(c: Claim, m: Measurements) -> ComplianceRow:
         return _row(c, "not_measurable", f"the rule '{rule}' is not judged here (at: [x, y] or side: is)")
     text = f"{c.patch} ({n} edge{'s' if n != 1 else ''}) at {fmt_point(mid) if mid else '?'}" + ("" if ok else f" is not {rule}")
     return _row(c, "pass" if ok else "fail", text, rule, mid)
+
+
+def _serpentine_side_detail(c: Claim, m: Measurements, plan: "Plan | None") -> str:
+    """The explanation under T02's c9 (section 5, 7.2): the outlet of a Serpentine with an
+    even number of passes is on the inlet's side of the pass axis, whatever the request
+    says, and the counts that would end on the other side are named. Empty for any other
+    side failure."""
+    if plan is None or c.patch != "outlet" or c.side is None:
+        return ""
+    for name, sol in plan.features.items():
+        if getattr(sol, "kind", "") != "Serpentine":
+            continue
+        feat = m.features.get(name, {})
+        passes = feat.get("passes", sol.params.get("passes"))
+        stack = str(sol.params.get("stack") or "+y")
+        along_x = stack.endswith("y")
+        if not _is_number(passes) or int(passes) % 2 or (c.side in ("left", "right")) != along_x:
+            continue
+        n = int(passes)
+        return (f"an even number of passes ends on the inlet's side; {n} passes with {n - 1} bends cannot end "
+                f"at the {c.side}.\n{n + 1} passes ({n} bends) or {n - 1} passes ({n - 2} bends) end on the "
+                f"{c.side}; the request fixes {n} and {n - 1}.")
+    return ""
 
 
 def _patch_expected(c: Claim, m: Measurements) -> str:
@@ -1578,7 +1659,10 @@ def can_commit(findings: list[Finding], table: ComplianceTable | None, reply: "R
         named = ", ".join(f"{f.code}{_where(f)}" for f in errs)
         return False, (f"COMMIT refused: lint errors block: {named}; a lint error can never be disagreed with "
                        "-- fix the shape")
-    disagrees = [d.strip() for d in (getattr(reply, "disagrees", None) or []) if d and d.strip()]
+    named_ids = getattr(reply, "disagrees", None) or []
+    if isinstance(named_ids, str):
+        named_ids = named_ids.replace(";", ",").split(",")
+    disagrees = [d.strip() for d in named_ids if d and d.strip()]
     named = set(disagrees)
     failing = set(table.failing_ids())
     known = {r.id for r in table.rows}
