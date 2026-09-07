@@ -149,15 +149,18 @@ def test_the_scale_check_reaches_the_verdict():
 class Answering:
     workspace_root = "/work"
 
-    def __init__(self, output, raises=None):
+    def __init__(self, output, raises=None, raises_once=False):
         self.output = output
         self.raises = raises
+        self.raises_once = raises_once
         self.calls: list[tuple] = []
 
     def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
         self.calls.append((cmd, cwd, timeout_s))
         if self.raises:
             raise self.raises
+        if self.raises_once and len(self.calls) == 1:
+            raise RuntimeError("sandbox recycled")
         return ExecResult(0, self.output, False, None)
 
 
@@ -172,10 +175,40 @@ def test_the_check_runs_one_command_in_the_case_and_reads_its_json():
     assert check.ok and check.cells == 5
 
 
-def test_a_workspace_that_cannot_answer_is_a_failed_check_not_an_exception():
+def test_a_workspace_that_cannot_answer_is_a_failed_check_not_an_exception(monkeypatch):
+    monkeypatch.setattr("openreynolds.mesher.check.RETRY_PAUSE_S", 0)
     check = verify(Answering("", raises=RuntimeError("sandbox gone")), "/work/s/mesh", "mesh")
     assert not check.ok
+    assert check.unreachable
     assert "sandbox gone" in check.missing[0]
+    assert "may well be there" in check.missing[0]
+
+
+def test_the_check_is_asked_twice_before_it_gives_up(monkeypatch):
+    """A container that recycles mid-mesh is a Modal preemption: it comes back in
+    seconds and the Volume under it never went anywhere. Three real runs had a
+    finished mesh reported as missing because the one attempt landed in that window."""
+    monkeypatch.setattr("openreynolds.mesher.check.RETRY_PAUSE_S", 0)
+    backend = Answering('{"polymesh": true, "cells": 5, "checkmesh_ok": true, '
+                        '"patches": [{"name": "a", "nFaces": 1}, {"name": "b", "nFaces": 1}], '
+                        '"build": ["Allmesh"], "render": "r.png"}', raises_once=True)
+    check = verify(backend, "/work/s/mesh", "mesh")
+    assert check.ok and not check.unreachable
+    assert len(backend.calls) == 2
+
+
+def test_a_mesh_that_could_not_be_checked_is_not_reported_as_missing(monkeypatch):
+    """The tool result led with "NOT a usable mesh yet" when nothing at all was known,
+    and the calling agent believed it and rebuilt a mesh that was already there."""
+    from openreynolds.mesher.agent import MeshResult
+    from openreynolds.tools import mesh_text
+
+    monkeypatch.setattr("openreynolds.mesher.check.RETRY_PAUSE_S", 0)
+    check = verify(Answering("", raises=RuntimeError("sandbox recycled")), "/work/s/mesh", "mesh")
+    text = mesh_text(MeshResult(case_rel="mesh", check=check, seconds=60.0))
+    assert "could NOT BE CHECKED" in text
+    assert "not a statement about the mesh" in text.lower()
+    assert "NOT a usable mesh" not in text
 
 
 def test_output_with_no_json_says_what_to_run_by_hand():

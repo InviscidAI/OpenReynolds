@@ -93,6 +93,21 @@ class ToolContext:
     desk's steps -- so it lands in the same totals as the main loop's."""
 
 
+def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
+    """The tools this session can actually serve.
+
+    Only `mesh` is conditional: without a mesh desk behind it the tool can do nothing
+    but explain that, and a tool in the list that answers "not available" costs the
+    model a call to find out. Taking it out of the list is also what makes the
+    question answerable -- the same prompt run with the desk and without it, which is
+    the only honest way to settle whether a slow natural-language sub-agent beats the
+    bash the caller already has.
+    """
+    if ctx.mesher is not None:
+        return TOOLS
+    return [tool for tool in TOOLS if tool["name"] != "mesh"]
+
+
 FRESH_SHELL = (
     "Each call runs in a fresh shell: `cwd` carries between calls, nothing else does "
     "-- variables you export, files you source and shell options are gone by the next "
@@ -851,6 +866,17 @@ def mesh_text(result: Any) -> str:
     if result.ok and check is not None:
         lines.append(f"meshed: {result.case_rel}/constant/polyMesh is an OpenFOAM mesh "
                      "and checkMesh passes on it.")
+    elif check is not None and check.unreachable:
+        # Nothing is known: the workspace did not answer. Three runs had a finished
+        # mesh described as missing because a container recycled while it was being
+        # checked, and the caller believed it.
+        lines.append(
+            f"the mesh in {result.case_rel} could NOT BE CHECKED -- the workspace did "
+            f"not answer ({result.check.error}). This is not a statement about the "
+            "mesh: a container that recycles mid-run comes back and the Volume under "
+            f"it keeps the files, so look for yourself with `python3 "
+            f"{WORKSPACE_ROOT}/.toolbox/mesh_look.py {result.case_rel} --out look.png` "
+            "before building anything again.")
     elif check is not None and check.missing:
         why = "; ".join(check.missing)
         lines.append(f"NOT a usable mesh yet in {result.case_rel}: {why}")

@@ -423,6 +423,9 @@ def inlet_direction(entry: dict, mesh: MeshFacts, opts) -> tuple[float, float, f
             # point lands in a cell). Where that could not be answered, the middle of
             # the domain stands in -- right for a straight duct and for a U-bend,
             # wrong for a passage concave enough that the middle is not in the fluid.
+            # `mesh_look` reports a patch's normal pointing out of the fluid when it
+            # could measure which side the fluid is on, and says so with
+            # `inward = -1`; the flow into the domain is then the negated normal.
             sign = float(entry.get("inward") or 0)
             if not sign and len(centre) == 3:
                 toward = tuple(mesh.centre[i] - centre[i] for i in range(3))

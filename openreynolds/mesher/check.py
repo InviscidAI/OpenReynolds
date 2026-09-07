@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,6 +33,10 @@ RENDER_REL = "renders/mesh_look.png"
 JSON_REL = "renders/mesh_look.json"
 TIMEOUT_S = 280
 """checkMesh on a few million cells is a minute; the render is seconds."""
+
+RETRY_PAUSE_S = 10.0
+"""How long to wait before asking the workspace a second time. A recycled container is
+back in seconds and the Volume under it never went anywhere."""
 
 _UNNAMED = re.compile(r"^(patch|region|surface|volume)\d+$|^defaultFaces$")
 
@@ -58,6 +63,14 @@ class Check:
     """What the machine says about the mesh, and whether that is a finish."""
 
     ok: bool = False
+    unreachable: bool = False
+    """The check could not be run at all -- the workspace was gone or would not answer.
+
+    Different in kind from every other failure here, and the difference is what three
+    runs got wrong: a Sandbox recycled mid-mesh, the check could not reach it, and the
+    tool said "NOT a usable mesh" about a mesh that was built, checked and rendered and
+    was sitting on the Volume the whole time. Nothing is known either way in this case,
+    and saying so is the only honest answer."""
     missing: list[str] = field(default_factory=list)
     """The reasons it is not, in the words the agent is handed."""
     cells: int = 0
@@ -128,12 +141,23 @@ def verify(backend: Any, case_dir: str, case_rel: str, request: str = "") -> Che
     """
     cmd = (f"python3 {LOOK} . --out {RENDER_REL} --json {JSON_REL} >/dev/null 2>&1; "
            f"cat {JSON_REL}")
-    try:
-        outcome = backend.exec(cmd, cwd=case_dir, timeout_s=TIMEOUT_S)
-        payload = _json_in(outcome.output or "")
-    except Exception as exc:  # noqa: BLE001 - the workspace, not the mesh
-        return Check(ok=False, missing=[f"the check could not be run: {exc}"],
-                     error=str(exc))
+    outcome = None
+    for attempt in (1, 2):
+        try:
+            outcome = backend.exec(cmd, cwd=case_dir, timeout_s=TIMEOUT_S)
+            break
+        except Exception as exc:  # noqa: BLE001 - the workspace, not the mesh
+            if attempt == 2:
+                # A container that recycles mid-mesh is a Modal preemption and comes
+                # back in seconds; the mesh it was building is on the Volume and
+                # outlives it. One retry recovers the check; failing it outright
+                # reported three finished meshes as missing.
+                return Check(
+                    ok=False, unreachable=True, error=str(exc),
+                    missing=[f"the workspace did not answer, so the mesh could not be "
+                             f"checked -- it may well be there ({exc})"])
+            time.sleep(RETRY_PAUSE_S)
+    payload = _json_in(outcome.output or "")
     if payload is None:
         tail = (outcome.output or "").strip()[-800:]
         return Check(

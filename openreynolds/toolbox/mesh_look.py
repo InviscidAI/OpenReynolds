@@ -273,9 +273,15 @@ def measure_patches(entries: list[dict], surfaces: dict, bounds=None,
                 # closes on itself -- came out as a confident unit vector at 45
                 # degrees, reported next to "flat". Oriented consistently, a closed
                 # patch cancels and says so, and a flat one keeps its direction.
+                # Consistent, but NOT auto-oriented: `auto_orient_normals` is defined
+                # for a closed surface and a boundary patch is not one, so it flipped
+                # an outlet to face the same way as the inlet -- two opposing flat
+                # faces reported with the same normal, which is geometrically
+                # impossible and was noticed and dismissed as cosmetic in a real run.
+                # The sign is fixed below by asking the mesh which side the fluid is
+                # on, which is a measurement rather than a convention.
                 normals = surface.extract_surface().compute_normals(
-                    cell_normals=True, point_normals=False, consistent_normals=True,
-                    auto_orient_normals=True)
+                    cell_normals=True, point_normals=False, consistent_normals=True)
                 vectors = np.asarray(normals.cell_data["Normals"], dtype=float)
                 weight = areas / areas.sum() if areas.sum() and len(areas) == len(vectors) else None
                 mean = (np.average(vectors, axis=0, weights=weight) if weight is not None
@@ -284,8 +290,16 @@ def measure_patches(entries: list[dict], surfaces: dict, bounds=None,
                 row["normal"] = [float(v) for v in (mean / norm)] if norm > 1e-9 else [0.0, 0.0, 0.0]
                 row["flat"] = norm > 0.98
                 if row["normal"] != [0.0, 0.0, 0.0]:
-                    row["inward"] = inward_sign(internal, row["center"], row["normal"],
-                                                float(row["area"]))
+                    inward = inward_sign(internal, row["center"], row["normal"],
+                                         float(row["area"]))
+                    if inward:
+                        # Reported outward, away from the fluid, whichever way the
+                        # winding happened to run: the probe says which side the fluid
+                        # is on, so the normal is signed against it.
+                        row["normal"] = [-inward * v for v in row["normal"]]
+                        row["inward"] = -1
+                    else:
+                        row["inward"] = 0
             except Exception as exc:  # noqa: BLE001 - a measurement missing beats a report missing
                 row["measure_error"] = f"{type(exc).__name__}: {exc}"
         out.append(row)

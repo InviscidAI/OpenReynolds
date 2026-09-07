@@ -205,3 +205,14 @@ def test_the_facts_are_the_ones_the_finish_check_reads(tmp_path):
     assert check.ok, check.missing
     assert check.cells == 3750 and check.two_d
     assert [p["name"] for p in check.patches] == ["inlet", "outlet", "walls", "frontAndBack"]
+
+
+def test_a_patchs_normal_is_reported_out_of_the_fluid(tmp_path):
+    """An outlet came back with the same normal as the inlet -- two opposing flat
+    faces, which is geometrically impossible -- because `auto_orient_normals` is
+    defined for a closed surface and a boundary patch is not one. The winding is now
+    signed by asking the mesh which side the fluid is on."""
+    payload = mesh_look.look(case_with(tmp_path), None, check=False)
+    for patch in payload["patches"]:
+        if patch.get("inward"):
+            assert patch["inward"] == -1, "a measured normal must point out of the fluid"
