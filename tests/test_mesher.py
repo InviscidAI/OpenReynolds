@@ -305,6 +305,37 @@ def test_the_result_carries_the_mesh_facts_and_the_picture(backend, store):
     assert "Mesh OK." in joined
 
 
+def test_a_desk_that_has_not_meshed_anything_is_told_so(backend, store):
+    """The measured failure: on the hardest prompt the desk spent its whole budget
+    deriving tangent geometry in closed form and never ran a mesher at all -- 942 s,
+    eight commands, nothing on disk. The same model with bash alone built the correct
+    shape by drawing small scripts and checking each one."""
+    from openreynolds.mesher.agent import NUDGE_AT_STEP
+
+    desk = mesher(backend, store, [block("python3 -c 'print(1)'")],
+                  mesher_max_steps=NUDGE_AT_STEP + 1)
+    answers(backend, {"mesh_look.py": ExecResult(0, NOT_YET_JSON, False, None)})
+    desk.run("a valve")
+    said = [b.get("text", "") for call in desk.provider.calls
+            for m in call["messages"] if m["role"] == "user"
+            for b in m["content"] if isinstance(b, dict)]
+    assert any("nothing has been meshed yet" in text for text in said)
+    assert any("templates" in text for text in said)
+
+
+def test_a_desk_that_is_meshing_is_left_alone(backend, store):
+    from openreynolds.mesher.agent import NUDGE_AT_STEP
+
+    desk = mesher(backend, store, [block("gmsh -3 body.geo -o body.msh")],
+                  mesher_max_steps=NUDGE_AT_STEP + 1)
+    answers(backend, {"mesh_look.py": ExecResult(0, NOT_YET_JSON, False, None)})
+    desk.run("a valve")
+    said = [b.get("text", "") for call in desk.provider.calls
+            for m in call["messages"] if m["role"] == "user"
+            for b in m["content"] if isinstance(b, dict)]
+    assert not any("nothing has been meshed yet" in text for text in said)
+
+
 # -- budgets ------------------------------------------------------------------
 
 

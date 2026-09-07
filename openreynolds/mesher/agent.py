@@ -33,15 +33,16 @@ MAX_STEPS = 30
 """Enough for a shape, a look, two or three revisions, a refine and a finish. A run
 that has not converged by here is not one step from converging."""
 
-MAX_SECONDS = 1200.0
-"""Twenty minutes, and the step count is the real bound.
+MAX_SECONDS = 900.0
+"""Fifteen minutes, and it was briefly twenty, which the measurement then argued back.
 
-Measured over the six acceptance runs: five desks finished in 1.9 to 5.2 minutes, and
-the Tesla valve -- the request with the most clauses in it -- was still working at
-fourteen. A lap is 30-40 s and a meshing command can be minutes, so at fifteen the
-clock was cutting a run whose own step budget was nowhere near spent. What should stop
-a run is thirty commands without an answer, not a mesh that takes three minutes to
-build."""
+Every desk that succeeded finished inside eleven minutes -- 1.9 to 5.2 across the six
+2D and 3D acceptance runs, 10.6 for the aerofoil, which is the longest success on
+record. The one that failed ran 942 s and eight commands and produced nothing at all.
+So past roughly ten minutes this desk is not slow, it is stuck, and the cheapest thing
+to do with the caller's time is give it back: the caller has bash, the templates and
+`mesh_look.py`, and on the hardest prompt measured it did better with them than the
+desk did (`qa-runs/AB-MESH-TOOL.md`)."""
 
 STEP_TIMEOUT_S = 240
 """One command. Longer work goes in the background and is polled -- the brief says so."""
@@ -64,6 +65,16 @@ RETRY_STATUSES = {408, 429, 500, 502, 503, 504, 529}
 a 401 says the same thing twice."""
 
 RETRY_PAUSE_S = 5.0
+
+NUDGE_AT_STEP = 12
+"""When to say out loud that there is still no mesh.
+
+The failure this addresses, measured: on the hardest prompt the desk spent its whole
+budget deriving tangent geometry in closed form and never ran a mesher at all -- 942 s,
+eight commands, nothing on disk. Meanwhile the same model with bash alone built the
+correct shape by drawing small numbered scripts and checking each one. A desk that has
+not meshed anything after a dozen commands is answering the wrong question, and the
+answer is not more thinking, it is a coarse mesh to look at."""
 
 KEEP_IMAGES = 2
 """Pictures kept in the thread. Older observations keep their words and lose their
@@ -213,6 +224,8 @@ class Mesher:
 
             step = self._exec(cmd, case_dir, messages)
             result.steps.append(step)
+            if len(result.steps) == NUDGE_AT_STEP and not _has_mesh(result.steps):
+                _observe(messages, NUDGE)
             if self.on_step:
                 try:
                     self.on_step(step)
@@ -429,6 +442,29 @@ def _is_empty(block: Any) -> bool:
         return False
     text = block.get("text") if isinstance(block, dict) else getattr(block, "text", "")
     return not (text or "").strip()
+
+
+NUDGE = (
+    f"That is {NUDGE_AT_STEP} commands and nothing has been meshed yet. Whatever is "
+    "left to work out about the shape, work it out in the mesh rather than before it: "
+    "build the coarsest version that exists at all, run the mesher, and look at it. "
+    "`/work/.toolbox/templates/` has a working 2D and 3D script that go from an "
+    "outline to a checked polyMesh, and a shape that is 80% right and on disk is worth "
+    "more than one that is exact and is not.")
+
+
+def _has_mesh(steps: list[Step]) -> bool:
+    """Whether any command so far has actually run a mesher.
+
+    Read off the commands rather than asked of the workspace: a `test -f` would be
+    another round trip on the very path this is trying to make cheaper, and a desk that
+    has not typed `gmsh`, `blockMesh`, `snappyHexMesh`, `cartesianMesh` or `gmshToFoam`
+    has certainly not meshed anything.
+    """
+    meshers = ("gmshtofoam", "blockmesh", "snappyhexmesh", "cartesianmesh",
+               "cartesian2dmesh", "gmsh.model.mesh", "gmsh -", "foamymesh")
+    joined = " ".join(step.cmd.lower() for step in steps)
+    return any(name in joined for name in meshers)
 
 
 def _observe(messages: list[dict[str, Any]], text: str) -> None:
