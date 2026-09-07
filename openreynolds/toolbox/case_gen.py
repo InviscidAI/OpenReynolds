@@ -182,9 +182,27 @@ class MeshFacts:
         return {}
 
     @property
+    def thin_axis(self) -> int:
+        """Which axis a plane case is one cell thick in, measured not assumed.
+
+        `mesh_look.py` finds it by span ratio and so does this: nothing anywhere says
+        a 2D case must be extruded in z, and reading `bounds[5] - bounds[2]` on a case
+        extruded in y gives a real metre-scale extent where a cell width was meant,
+        which then divides the hydraulic diameter, the cell size, the time step and
+        the y+ estimate.
+        """
+        span = self.span
+        widest = max(span) if span else 0.0
+        if widest <= 0:
+            return 2
+        thinnest = min(range(3), key=lambda i: span[i])
+        return thinnest if span[thinnest] <= 0.05 * widest else 2
+
+    @property
     def thickness(self) -> float:
-        """The z extent -- the span a 2D case's coefficients are per."""
-        return (self.bounds[5] - self.bounds[2]) if len(self.bounds) == 6 else 0.0
+        """The extent across the thin direction -- the span a 2D case is per."""
+        span = self.span
+        return span[self.thin_axis] if span else 0.0
 
     @property
     def span(self) -> tuple[float, float, float]:
@@ -396,13 +414,21 @@ def inlet_direction(entry: dict, mesh: MeshFacts, opts) -> tuple[float, float, f
         return tuple(sign * c for c in axis)
     normal = entry.get("normal") or []
     centre = entry.get("center") or []
-    if len(normal) == 3 and any(normal) and len(centre) == 3:
-        inward = tuple(mesh.centre[i] - centre[i] for i in range(3))
-        facing = sum(normal[i] * inward[i] for i in range(3))
-        sign = 1.0 if facing > 0 else -1.0
+    if len(normal) == 3 and any(normal):
         length = math.sqrt(sum(c * c for c in normal))
-        if length > TOLERANCE:
-            return tuple(sign * c / length for c in normal)
+        unit = tuple(c / length for c in normal) if length > TOLERANCE else None
+        if unit:
+            # Which side of the patch the fluid is on, asked of the mesh itself
+            # (`mesh_look.inward_sign` steps off the face both ways and sees which
+            # point lands in a cell). Where that could not be answered, the middle of
+            # the domain stands in -- right for a straight duct and for a U-bend,
+            # wrong for a passage concave enough that the middle is not in the fluid.
+            sign = float(entry.get("inward") or 0)
+            if not sign and len(centre) == 3:
+                toward = tuple(mesh.centre[i] - centre[i] for i in range(3))
+                sign = 1.0 if sum(unit[i] * toward[i] for i in range(3)) > 0 else -1.0
+            if sign:
+                return tuple(sign * c for c in unit)
     return (1.0, 0.0, 0.0)
 
 
@@ -436,7 +462,14 @@ def characteristic_length(mesh: MeshFacts, roles: dict, opts) -> tuple[float, st
         area = float(mesh.patch(name).get("area") or 0.0)
         length = hydraulic_diameter(area, mesh.thickness, mesh.two_d)
         if length > 0:
-            return length, f"the hydraulic diameter of {name}"
+            # In 3D this is the diameter of a circle of the same area, not 4A/P: the
+            # perimeter of an arbitrary inlet is not something this script can see.
+            # For a round pipe the two agree; for a 100 x 5 mm slot they differ by
+            # 2.6x, and calling it the hydraulic diameter would put that error into
+            # the Reynolds number under a name that says it is exact.
+            what = ("the hydraulic diameter of" if mesh.two_d
+                    else "the equivalent circular diameter of")
+            return length, f"{what} {name}"
     raise SystemExit(
         "no characteristic length: this case has no inlet whose area could be "
         "measured, so give --length (the body's size across, or the passage's "
@@ -475,6 +508,18 @@ def build_plan(case: Path, opts) -> Plan:
     bodies = mesh.bodies()
     external = bool(opts.get("external")) or bool(bodies)
     notes = [f"length {length:.4g} m from {source}"]
+    for name, role in roles.items():
+        if role.get("kind") != "inlet":
+            continue
+        entry = mesh.patch(name)
+        if opts.get("direction"):
+            continue
+        if not (entry.get("normal") and any(entry.get("normal"))):
+            notes.append(f"{name}'s normal could not be measured, so the flow is set "
+                         "along +x -- `--direction` says otherwise")
+        elif not entry.get("inward"):
+            notes.append(f"which side of {name} the fluid is on could not be probed, so "
+                         "its direction was taken from the middle of the domain")
     if bodies:
         notes.append("body in the flow: " + ", ".join(bodies))
     if mesh.cell_is_estimate:

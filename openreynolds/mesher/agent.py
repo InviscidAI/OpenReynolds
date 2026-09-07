@@ -383,8 +383,20 @@ def parse_action(text: str) -> tuple[str, str]:
     return blocks[0], ""
 
 
+_FINISH = re.compile(rf"^echo\s+[\"']?{MESH_DONE}[\"']?$")
+
+
 def _is_finish(cmd: str) -> bool:
-    return bool(re.search(rf"\b{MESH_DONE}\b", cmd))
+    """Whether this block *is* the finish command, not whether it mentions it.
+
+    It used to be a search for the word anywhere in the block, and a model that
+    writes `# echo MESH_DONE once checkMesh passes` above a perfectly ordinary
+    command -- which is a very normal thing to write, since the brief hands it the
+    token -- had that command silently never run, and got the finish check's refusal
+    as the answer to something it had not asked. The token is a whole command or it
+    is a word in a comment.
+    """
+    return bool(_FINISH.match(cmd.strip()))
 
 
 def _summary(text: str) -> str:

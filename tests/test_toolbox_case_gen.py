@@ -128,6 +128,45 @@ def test_a_cell_size_is_available_even_where_checkmesh_is_not(case_gen, duct):
         assert mesh.smallest_cell == mesh.average_cell
 
 
+@pytest.mark.parametrize("bounds,axis,thickness", [
+    ([0, 0, 0, 0.3, 0.06, 0.001], 2, 0.001),      # the usual: extruded in z
+    ([0, 0, 0, 0.3, 0.001, 0.06], 1, 0.001),      # extruded in y, which nothing forbids
+    ([0, 0, 0, 0.001, 0.3, 0.06], 0, 0.001),      # and in x
+    ([0, 0, 0, 0.3, 0.2, 0.1], 2, 0.1),           # a real volume: no thin axis, z stands
+])
+def test_the_thin_direction_is_measured_not_assumed(case_gen, bounds, axis, thickness):
+    """`bounds[5] - bounds[2]` reads a metre-scale extent as a cell width on a case
+    extruded in y, and that number divides the hydraulic diameter, the cell size, the
+    time step and the y+ estimate."""
+    mesh = case_gen.MeshFacts(patches=[], bounds=bounds, cells=100, min_volume=0,
+                              two_d=True)
+    assert mesh.thin_axis == axis
+    assert mesh.thickness == pytest.approx(thickness)
+
+
+def test_a_body_in_the_flow_is_one_that_reaches_at_most_one_of_the_domains_axes(case_gen, duct):
+    """Three readings of this were wrong before this one: a cylinder in a plane case
+    is on both z faces like everything else, and an L-duct's own wall is not the
+    enclosure by the all-points test."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("mesh_look", TOOLBOX / "mesh_look.py")
+    mesh_look = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mesh_look)
+    box = [0, 0, 0, 0.3, 0.06, 0.001]
+    # a ring in mid-channel: reaches nothing
+    ring = [[0.1, 0.03, 0.0], [0.11, 0.03, 0.001], [0.1, 0.04, 0.0]]
+    assert mesh_look.box_contact(ring, box) == 0
+    # a body sitting on the floor: reaches y only
+    on_floor = [[0.1, 0.0, 0.0], [0.12, 0.0, 0.001], [0.11, 0.02, 0.0]]
+    assert mesh_look.box_contact(on_floor, box) == 1
+    # a passage wall: runs into the ends and the sides
+    wall = [[0.0, 0.0, 0.0], [0.3, 0.0, 0.001], [0.3, 0.06, 0.0]]
+    assert mesh_look.box_contact(wall, box) == 2
+    # the thin axis is never counted: in a plane case everything is on both z faces
+    assert mesh_look.box_contact([[0.1, 0.03, 0.0], [0.1, 0.03, 0.001]], box) == 0
+
+
 # -- what each patch is for --------------------------------------------------------
 
 
@@ -221,6 +260,21 @@ def test_the_length_is_the_inlets_hydraulic_diameter(case_gen):
     Reynolds number it reported."""
     assert case_gen.hydraulic_diameter(0.0006, 0.001, two_d=True) == pytest.approx(1.2)
     assert case_gen.hydraulic_diameter(0.0, 0.001, two_d=True) == 0.0
+
+
+def test_the_3d_reading_is_not_called_a_hydraulic_diameter(case_gen, tmp_path):
+    """In 3D it is the diameter of a circle of the same area -- for a 100 x 5 mm slot
+    that is 2.6x the true 4A/P, and the name is the only place a reader would learn
+    the difference."""
+    case = mesh_only(tmp_path, "volume")
+    rename_patches(case, {"movingWall": ("inlet", "patch"), "frontAndBack": ("side", "wall")})
+    mesh = case_gen.read_mesh(case)
+    roles = case_gen.roles_for(mesh, {})
+    _length, source = case_gen.characteristic_length(mesh, roles, {})
+    if mesh.two_d:
+        assert "hydraulic diameter" in source
+    else:
+        assert "equivalent circular diameter" in source
 
 
 def test_a_stated_length_wins_and_says_where_it_came_from(case_gen, duct):

@@ -33,6 +33,7 @@ import json
 import re
 import subprocess
 import sys
+import math
 from pathlib import Path
 
 PALETTE = [
@@ -206,7 +207,42 @@ def _is_time(name: str) -> bool:
     return True
 
 
-def measure_patches(entries: list[dict], surfaces: dict, bounds=None) -> list[dict]:
+def inward_sign(internal, centre, normal, area: float) -> int:
+    """+1 if the patch's normal points into the fluid, -1 if out of it, 0 if unknown.
+
+    Asked of the mesh rather than reasoned about: step a little way off the patch
+    along its normal, both ways, and see which point lands inside a cell. What this
+    replaces is "point it at the middle of the bounding box", which is right for a
+    straight duct and for a U-bend and wrong for anything concave enough that the
+    middle of the box is not in the fluid -- a C-shaped passage, a spiral, one loop
+    of a Tesla valve. Getting it wrong sets the inlet velocity backwards, and every
+    other check in the chain passes happily.
+    """
+    import numpy as np
+
+    if internal is None or not centre or not normal or area <= 0:
+        return 0
+    step = 0.25 * math.sqrt(area) if area > 0 else 0.0
+    if step <= 0:
+        return 0
+    point = np.asarray(centre, dtype=float)
+    direction = np.asarray(normal, dtype=float)
+    try:
+        forward = internal.find_containing_cell(point + step * direction)
+        backward = internal.find_containing_cell(point - step * direction)
+    except Exception:  # noqa: BLE001 - an answer of "unknown" is honest and cheap
+        return 0
+    forward = int(np.asarray(forward).ravel()[0])
+    backward = int(np.asarray(backward).ravel()[0])
+    if forward >= 0 and backward < 0:
+        return 1
+    if backward >= 0 and forward < 0:
+        return -1
+    return 0
+
+
+def measure_patches(entries: list[dict], surfaces: dict, bounds=None,
+                    internal=None) -> list[dict]:
     """The boundary table: the dictionary's names and counts, plus what the geometry says.
 
     Area, centre and mean normal come from the faces themselves. The normal is the one
@@ -247,6 +283,9 @@ def measure_patches(entries: list[dict], surfaces: dict, bounds=None) -> list[di
                 norm = float(np.linalg.norm(mean))
                 row["normal"] = [float(v) for v in (mean / norm)] if norm > 1e-9 else [0.0, 0.0, 0.0]
                 row["flat"] = norm > 0.98
+                if row["normal"] != [0.0, 0.0, 0.0]:
+                    row["inward"] = inward_sign(internal, row["center"], row["normal"],
+                                                float(row["area"]))
             except Exception as exc:  # noqa: BLE001 - a measurement missing beats a report missing
                 row["measure_error"] = f"{type(exc).__name__}: {exc}"
         out.append(row)
@@ -551,7 +590,7 @@ def look(case: Path, out_png: Path | None, check: bool = True) -> dict:
         if not payload["bounds"]:
             payload["bounds"] = as_box(internal.bounds)
     if surfaces:
-        payload["patches"] = measure_patches(entries, surfaces, payload["bounds"])
+        payload["patches"] = measure_patches(entries, surfaces, payload["bounds"], internal)
         # Which patches are the walls of the box rather than something inside it.
         # The picture uses it to draw the enclosure faint; `case_gen.py` uses it to
         # tell a body in open flow from a passage, which sets the free-stream

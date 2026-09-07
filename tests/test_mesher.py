@@ -240,6 +240,34 @@ def test_an_overloaded_endpoint_is_tried_once_more(backend, store, monkeypatch):
 # -- the finish ---------------------------------------------------------------
 
 
+def test_the_token_in_a_comment_is_not_a_finish(backend, store):
+    """The brief hands the desk the word, so it writes the word -- in a comment above
+    the command it actually wants run. Matching the word anywhere meant that command
+    was never executed and the check's refusal came back as the answer to it."""
+    desk = mesher(backend, store, [
+        block("# will echo MESH_DONE once checkMesh passes\npython3 build.py"),
+        block(f"echo {MESH_DONE}")])
+    answers(backend, {"build.py": ExecResult(0, "built", False, None),
+                      "mesh_look.py": ExecResult(0, OK_JSON, False, None)})
+    result = desk.run("a duct")
+    assert [s.cmd.splitlines()[-1] for s in result.steps] == ["python3 build.py"]
+    assert result.ok
+
+
+@pytest.mark.parametrize("cmd,finishes", [
+    (f"echo {MESH_DONE}", True),
+    (f'echo "{MESH_DONE}"', True),
+    (f"  echo   {MESH_DONE}  ", True),
+    (f"echo {MESH_DONE} && ls", False),
+    (f"echo 'not {MESH_DONE} yet'", False),
+    (f"# {MESH_DONE}\nls", False),
+])
+def test_what_counts_as_saying_done(cmd, finishes):
+    from openreynolds.mesher.agent import _is_finish
+
+    assert _is_finish(cmd) is finishes
+
+
 def test_done_is_checked_not_believed(backend, store):
     """The whole point of the gate: the desk says done, the machine says otherwise,
     and the run continues with the reason in front of it."""
