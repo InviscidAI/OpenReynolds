@@ -6,6 +6,34 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The geometry segment is a package, `openreynolds/geometry/`, and the desk authors in
+  Python instead of JSON (`qa-runs/geometry-design/DESIGN.md`, Phase 1). The old grammar
+  made overlap the default outcome: a turtle path plus a `repeat` with its own pitch asks
+  the model for arithmetic it does not do reliably, and the shape that came back had four
+  loops growing through each other. A script says what it means instead. `Row(bypass,
+  count=4, gap=2)` derives its pitch from the footprint the tool measures and refuses the
+  row with the two numbers when they do not fit; `Bypass(wall=main.top, at_x=14,
+  leave_angle=25, outer_radius=6, return_angle=45)` is solved in closed form and lands on
+  the wall it names; ports are declared by intent (`s.inlet = duct.left`) and resolved
+  against the built face, never by a bounding box. The lap ends in a print-back the model
+  reads: the features it built, the leg table, the lint findings with coordinates, the
+  measurements, and the compliance table.
+- A shape is judged against the request's own words. The desk's first lap writes claims --
+  every number with a tolerance, every clause a named predicate (`returns_against_flow`,
+  `shallow_angle`), the counts, where the inlet and outlet belong -- before it draws
+  anything, so the geometry is measured against the sentence and not against itself. It
+  cannot commit with a lint error or a failing claim; where a request cannot be met it
+  replies `COMMIT disagrees: <clause>` and the person sees which clause. Three invariants
+  are pinned by tests: no reference without a golden, no commit without a clean lint and a
+  compliance table, no mesh result without a fitness table.
+- A library of reference shapes (`geometry/library/`): the Tesla valve, a serpentine and a
+  T-junction, each parameterised code with a rendered golden and golden measurements. No
+  entry reaches the model until a person has looked at its render and approved it; a shape
+  described in a docstring and never drawn is how the wrong valve was copied into four
+  runs. All three are unapproved and invisible until then.
+
 ### Fixed
 
 - A mesh-only case names an application in `controlDict`. The 3D desk's finish ran Allmesh
