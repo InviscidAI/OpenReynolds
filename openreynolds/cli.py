@@ -1030,7 +1030,7 @@ def session(
         # It needs nothing in this process but a key -- the machine it works on is the
         # one the session is already talking to.
         ctx.on_tokens = loop.add_tokens
-        if not cfg.model_key_missing():
+        if cfg.mesh_tool and not cfg.model_key_missing():
             # `interject` is read late on purpose: the loop's own drain is attached a
             # few lines below, and the desk needs the same one. It is what lets a
             # person change the shape while it is being built instead of waiting out
@@ -1038,6 +1038,7 @@ def session(
             ctx.mesher = mesher.Mesher(
                 cfg, backend, store, store.session.home,
                 interject=lambda: loop.interject() if loop.interject else None,
+                on_step=lambda step: _mesh_desk_step(view, tracker, step),
             )
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
@@ -1290,6 +1291,28 @@ def _when(mtime: float) -> str:
     if not mtime:
         return "unknown"
     return time.strftime("%Y-%m-%d %H:%M", time.gmtime(mtime)) + "Z"
+
+
+def _mesh_desk_step(view: Any, tracker: Any, step: Any) -> None:
+    """Say what the mesh desk just did, while it is doing it.
+
+    The desk holds the session's one thread for minutes at a time, and until this
+    the screen said nothing about what was happening inside -- a reviewer's word for
+    it was "a black box", and the person watching had no way to tell a desk building
+    a mesh from a desk stuck. One line per command, the way a tool call is announced,
+    plus the bar's own narration so it survives the next redraw.
+    """
+    first = (step.cmd or "").strip().splitlines()[0][:90]
+    seen = "  <picture>" if step.image else ""
+    line = f"mesh desk [{step.exit_code}] {step.seconds:.0f}s  {first}{seen}"
+    try:
+        view.narration(line)
+        if tracker is not None:
+            # The bar's own activity, so the next redraw still says what the desk is
+            # on rather than reverting to "mesh" for the whole call.
+            tracker.begin("tool", "mesh desk", cmd=first)
+    except Exception:  # noqa: BLE001 - a progress line may never end a mesh
+        pass
 
 
 def _situation_brief(
