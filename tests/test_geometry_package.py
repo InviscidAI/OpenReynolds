@@ -207,13 +207,14 @@ def test_importing_the_package_loads_no_kernel_and_no_agent():
 
 def test_the_cli_runs_by_path_under_dash_i_through_the_shim():
     """`python -I openreynolds/geometry/cli.py` imports `openreynolds.geometry.cli` through
-    the parents[2] shim: the failure it reaches is the skeleton's own NotImplementedError,
-    never a ModuleNotFoundError for `openreynolds`."""
+    the parents[2] shim: the failure it reaches is the cli's own (argparse refusing a
+    `build` with no `--out` now that U4 built it; the skeleton's NotImplementedError
+    before), never a ModuleNotFoundError for `openreynolds`."""
     proc = subprocess.run([sys.executable, "-I", str(PACKAGE / "cli.py"), "build"], capture_output=True,
                           text=True, timeout=120, env={"PATH": "", "PYTHONUTF8": "1", "SYSTEMROOT": "C:\\Windows"})
     assert proc.returncode != 0
     assert "ModuleNotFoundError" not in proc.stderr, proc.stderr
-    assert "NotImplementedError" in proc.stderr and "U4" in proc.stderr
+    assert "geometry build" in proc.stderr and "--out" in proc.stderr, proc.stderr
 
 
 # -- the fixtures (8.1) -----------------------------------------------------------------
