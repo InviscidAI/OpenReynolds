@@ -150,6 +150,11 @@ class Config:
     arc's end and a row's pitch is arithmetic the model gets right one time in six at
     medium, and the hosted app runs the main loop at medium.
     `OPENREYNOLDS_MESHER_EFFORT` overrides."""
+    mesh_tool: bool = True
+    """Whether the `mesh` tool is offered at all (`OPENREYNOLDS_MESH_TOOL=0` takes it
+    away). It exists to be measured against: the argument that a slow natural-language
+    sub-agent is a worse interface than the bash the caller already has is settled by
+    running the same prompt both ways, not by preferring one."""
     mesher_max_steps: int = 0
     """Commands the mesh desk may run in one call; 0 takes the default (30).
     `OPENREYNOLDS_MESHER_MAX_STEPS`."""
@@ -235,6 +240,8 @@ class Config:
             ),
             mesher_model=pick("OPENREYNOLDS_MESHER_MODEL", "mesher_model"),
             mesher_effort=pick("OPENREYNOLDS_MESHER_EFFORT", "mesher_effort", "high"),
+            mesh_tool=str(pick("OPENREYNOLDS_MESH_TOOL", "mesh_tool", "1")).strip().lower()
+            not in ("0", "false", "no", "off"),
             mesher_max_steps=int(pick("OPENREYNOLDS_MESHER_MAX_STEPS", "mesher_max_steps", 0) or 0),
             mesher_max_seconds=float(pick("OPENREYNOLDS_MESHER_MAX_SECONDS", "mesher_max_seconds", 0) or 0),
             foamd_url=pick("FOAMD_URL", "foamd_url", DEFAULT_FOAMD_URL).rstrip("/"),

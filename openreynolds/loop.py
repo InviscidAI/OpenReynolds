@@ -18,7 +18,7 @@ from .config import CONTEXT_REFRESH_FRACTION, CONTEXT_WINDOW_TOKENS, Config
 from .llm import BadRequest, Listener, Turn, make_provider
 from .prompt import system_prompt
 from .store import Store
-from .tools import TOOLS, ToolContext, describe, dispatch
+from .tools import TOOLS, ToolContext, describe, dispatch, tools_for
 from .view import View
 
 MAX_TOKENS = 64_000
@@ -318,7 +318,7 @@ class Loop:
             model=self.cfg.model,
             system=system_prompt(),
             messages=self.messages,
-            tools=TOOLS,
+            tools=tools_for(self.ctx),
             effort=self.cfg.effort,
             max_tokens=MAX_TOKENS,
             listener=Listener(
