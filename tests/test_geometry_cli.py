@@ -195,6 +195,60 @@ def test_an_unreadable_claims_file_is_rc_5(tmp_path, monkeypatch):
     assert rc == 5 and result_of(work)["code"] == "E-CLAIMS"
 
 
+def test_a_picture_that_fails_does_not_lose_the_lap(tmp_path, monkeypatch):
+    """gmsh raises a plain Exception when the coarse triangulation fails; the build, the
+    measurements and the print-back stand, the lap notes the missing picture and exits
+    with the lint's code, and no half-written PNG is left for the runner to read."""
+    from openreynolds.geometry import preview
+
+    def refuse(*args, **kwargs):
+        raise Exception("Mesh generation failed (simulated)")
+
+    monkeypatch.setattr(preview, "_triangles", refuse)
+    work = tmp_path / "lap"
+    rc = cli.main(["build", "--spec", str(write_spec(tmp_path, T05_SPEC)), "--out", str(work)])
+    assert rc == 0
+    result = result_of(work)
+    assert result["ok"] is True and result["record"] is not None and result["measurements"]["islands"] == 1
+    assert result["preview"] is None and not (work / "preview.png").exists()
+    assert "note: no picture: Exception: Mesh generation failed (simulated)" in result["report"]
+    assert "MEASURED   extent 300 x 60 mm" in result["report"] and "VERDICT" in result["report"]
+
+
+def test_a_kernel_exception_is_rc_3_with_a_result_json(tmp_path, monkeypatch):
+    """Whatever the kernel raises outside the script (here the record writer), the child
+    still answers with result.json: rc 3, code E-KERNEL, the kernel's frames in
+    `traceback`, and a text that says nothing in the script is to be fixed."""
+    install(monkeypatch, plan=plan_of(T05_SPEC))
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("boom in the record")
+
+    monkeypatch.setattr(cli, "build_record", broken)
+    work = tmp_path / "lap"
+    rc = cli.exec_script('s = Sketch(units="mm")\nprint("kept")\n', work, None, None, work / "preview.png")
+    assert rc == 3
+    result = result_of(work)
+    assert result["ok"] is False and result["rc"] == 3 and result["code"] == "E-KERNEL"
+    assert result["error"] == "!! ERROR  E-KERNEL  the kernel failed: RuntimeError: boom in the record"
+    assert "(nothing in the script to fix: an internal error; reported to the desk)" in result["report"]
+    assert "           > kept" in result["report"]
+    assert "boom in the record" in result["traceback"] and "cli.py" in result["traceback"]
+    assert result["record"] is None and result["measurements"] is None
+    # the spec lap has the same net under it
+    monkeypatch.setattr(cli, "build_record", broken)
+    rc = cli.main(["build", "--spec", str(write_spec(tmp_path, T05_SPEC)), "--out", str(tmp_path / "spec")])
+    assert rc == 3 and result_of(tmp_path / "spec")["code"] == "E-KERNEL"
+
+
+def test_a_records_claims_go_into_the_work_dir_not_the_system_temp(tmp_path):
+    spec, scale, claims_file = cli._record_to_spec({"ops": T05_SPEC["ops"], "patches": T05_SPEC["patches"],
+                                                    "scale": 0.001, "claims": T01_CLAIMS}, tmp_path)
+    assert claims_file == tmp_path / "claims.json" and json.loads(claims_file.read_text(encoding="utf-8")) == T01_CLAIMS
+    assert scale == 0.001 and spec["ops"] == T05_SPEC["ops"]
+    assert cli._record_to_spec({"ops": [], "scale": 1.0}, tmp_path)[2] is None
+
+
 # -- check / preview ----------------------------------------------------------------------------
 
 

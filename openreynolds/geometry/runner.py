@@ -159,8 +159,11 @@ def run_script(script: str, work: Path, claims_path: Path | None, reference: str
         text = result["report"]
         rc = int(result.get("rc", rc))
     else:
+        # every path the cli owns writes result.json, so a child that left none died in
+        # the kernel (a crash, an unhandled exception): that is rc 3 whatever the exit
+        # code was, never rc 2 "lint errors" with no findings to show
         tail = (proc.stdout + "\n" + proc.stderr).strip()[-3000:]
         text = (f"the child interpreter exited {rc} without a result.json; nothing in the script "
                 f"to fix (reported to the desk)\n{tail}")
-        rc = rc if rc in EXIT_CODES and rc != 0 else 3
+        rc = 3
     return RunOutcome(rc=rc, text=text, png=png, result=result, seconds=seconds)

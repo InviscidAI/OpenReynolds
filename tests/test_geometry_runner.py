@@ -43,7 +43,7 @@ def test_import_os_is_refused_with_rc_5(tmp_path):
     out = run("import os\ns = Sketch(units='mm')\n", tmp_path)
     assert out.rc == 5 and out.png is None
     assert out.result["code"] == "E-IMPORT" and out.result["ok"] is False
-    assert "line 1: `import os` -- the script may import json and math only" in out.text
+    assert "line 1: `import os` -- the script may import math and json only" in out.text   # section 5's order
     assert "the API does the arithmetic" in out.text
     assert out.text.startswith("SCRIPT")
 
@@ -200,6 +200,30 @@ def test_a_lap_never_reads_the_previous_laps_files(tmp_path):
     (tmp_path / "preview.png").write_bytes(b"\x89PNG stale")
     out = run("while True:\n    pass\n", tmp_path, timeout_s=2)
     assert out.rc == 4 and out.result is None and out.png is None
+
+
+def test_a_child_that_dies_without_a_result_is_rc_3_whatever_its_exit_code(tmp_path, monkeypatch):
+    """Every path the cli owns writes result.json; a child that left none died in the
+    kernel. Its exit code is not a lap code: an exit 2 must not read as 'lint errors'."""
+    monkeypatch.setattr(runner, "command", lambda *a, **k: [sys.executable, "-I", "-c", "import sys; sys.exit(2)"])
+    out = run("s = 1\n", tmp_path)
+    assert out.rc == 3 and out.result is None and out.png is None
+    assert out.text.startswith("the child interpreter exited 2 without a result.json; nothing in the script to fix")
+
+
+def test_a_print_flood_is_clipped_in_the_print_back(tmp_path):
+    """The print-back reaches the model line for line: a loop's log is cut after
+    MAX_PRINT_LINES with one line saying how much was left out."""
+    from openreynolds.geometry import cli
+    out = run("for i in range(5000):\n    print('line', i)\n", tmp_path)
+    echoed = [ln for ln in out.text.splitlines() if ln.startswith("           > ")]
+    assert len(echoed) == cli.MAX_PRINT_LINES + 1, len(echoed)
+    assert echoed[0] == "           > line 0" and echoed[-2] == f"           > line {cli.MAX_PRINT_LINES - 1}"
+    assert echoed[-1] == f"           > ... {5000 - cli.MAX_PRINT_LINES} more lines not shown (the print-back is for numbers, not logs)"
+    assert len(out.text) < 20_000
+    # and a short print is shown whole
+    out = run("print('one')\nprint('two')\n", tmp_path)
+    assert "           > one\n           > two" in out.text and "not shown" not in out.text
 
 
 def test_run_outcome_reads_the_result_back(tmp_path):

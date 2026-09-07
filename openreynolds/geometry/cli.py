@@ -190,7 +190,8 @@ def import_refusal(exc: ImportRefused, src: str) -> tuple[str, str]:
     if api_spelling:
         return "E-IMPORT", _refusal_text("E-IMPORT", f"line {lineno}: `{statement}` -- the API needs no import",
                                          _bound_names())
-    allowed = " and ".join(sorted(runner.ALLOWED_IMPORTS))
+    # section 5's order ("math and json"), not the set's: the text is pinned
+    allowed = " and ".join(n for n in ("math", "json") if n in runner.ALLOWED_IMPORTS)
     return "E-IMPORT", _refusal_text("E-IMPORT", f"line {lineno}: `{statement}` -- the script may import {allowed} only",
                                      "the API does the arithmetic: footprints, landings and pitches are in the print-back")
 
@@ -225,6 +226,43 @@ def kernel_refusal(exc: BaseException) -> str:
     NotImplementedError): nothing in the script to fix, reported to the desk."""
     return _refusal_text("E-KERNEL", f"the kernel refused: {str(exc).splitlines()[0] if str(exc) else type(exc).__name__}",
                          "(nothing in the script to fix: an instrument is not built; reported to the desk)")
+
+
+def kernel_failure(lap: "Lap", exc: BaseException) -> int:
+    """rc 3 with a result.json for an exception the kernel raised outside the script (a
+    gmsh error, a bug in an instrument): the desk still gets a result and a text that says
+    nothing in the script is to be fixed. `traceback` carries the kernel's own frames here
+    -- the one case they are the useful ones -- trimmed to the last 4000 characters."""
+    first = str(exc).splitlines()[0] if str(exc) else ""
+    text = _refusal_text("E-KERNEL", f"the kernel failed: {type(exc).__name__}{': ' + first if first else ''}",
+                         "(nothing in the script to fix: an internal error; reported to the desk)")
+    tb = "".join(_traceback.format_exception(type(exc), exc, exc.__traceback__))[-4000:]
+    return lap.refuse("E-KERNEL", text, tb=tb, rc=EXIT_RAISED)
+
+
+MAX_PRINT_LINES = 100
+"""Script prints echoed under SCRIPT before '... N more lines': the print-back is for
+numbers, not for a loop's log, and every line of it reaches the model."""
+
+MAX_PRINT_CHARS = 8000
+
+
+def clip_prints(printed: str) -> str:
+    """The script's stdout as SCRIPT shows it: the first MAX_PRINT_LINES lines (and at most
+    MAX_PRINT_CHARS characters), then one line saying how much was cut."""
+    lines = printed.splitlines()
+    kept: list[str] = []
+    size = 0
+    for line in lines:
+        if len(kept) >= MAX_PRINT_LINES or size + len(line) > MAX_PRINT_CHARS:
+            break
+        kept.append(line)
+        size += len(line) + 1
+    if len(kept) == len(lines):
+        return printed
+    cut = len(lines) - len(kept)
+    kept.append(f"... {cut} more line{'s' if cut != 1 else ''} not shown (the print-back is for numbers, not logs)")
+    return "\n".join(kept) + "\n"
 
 
 def script_failure(exc: BaseException, src: str) -> tuple[str, str, str]:
@@ -847,8 +885,12 @@ def run_plan(gmsh, lap: Lap, plan: Plan, sk, claim_set, *, refusal: SketchError 
                 lap.reference.hausdorff = hausdorff
             preview.draw(gmsh, analysis.face, plan, m, findings, table, lap.preview_path, lap.reference)
             drawn = lap.preview_path.exists()
-        except ImportError as exc:
-            lap.notes.append(f"no picture: {exc}")
+        except Exception as exc:  # noqa: BLE001 - gmsh raises a plain Exception; the picture is never worth the lap
+            # the build, the measurements and the print-back stand on their own: a
+            # triangulation the mesher refuses or a missing matplotlib costs the picture only
+            lap.notes.append(f"no picture: {type(exc).__name__}: {str(exc).splitlines()[0][:160] if str(exc) else ''}".rstrip(": "))
+            with contextlib.suppress(OSError):
+                lap.preview_path.unlink(missing_ok=True)
     for note in analysis.transitional:
         lap.notes.append(f"{note}: through mesh2d until its unit lands")
     record = build_record(sk, plan, lap.script, m, findings, table, analysis.resolved_rules, lap.claims_payload, gmsh)
@@ -928,18 +970,21 @@ def exec_script(src: str, work: Path, claims_path: Path | None = None, reference
         with contextlib.redirect_stdout(captured), import_guard():
             exec(code, ns)   # noqa: S102 - the script is the model's reply, run in its own namespace
     except ImportRefused as exc:
-        lap.printed = captured.getvalue()
+        lap.printed = clip_prints(captured.getvalue())
         code_, text = import_refusal(exc, src)
         return lap.refuse(code_, text)
     except SketchError as exc:
-        lap.printed = captured.getvalue()
-        with _gmsh_session("geometry") as gmsh:
-            return refused_with_partial(gmsh, lap, exc)
+        lap.printed = clip_prints(captured.getvalue())
+        try:
+            with _gmsh_session("geometry") as gmsh:
+                return refused_with_partial(gmsh, lap, exc)
+        except Exception as inner:  # noqa: BLE001 - the kernel, not the script: rc 3 with a result.json
+            return kernel_failure(lap, inner)
     except (Exception, SystemExit) as exc:  # noqa: BLE001 - every failure of the script is rc 3 with its own frames
-        lap.printed = captured.getvalue()
+        lap.printed = clip_prints(captured.getvalue())
         code_, text, tb = script_failure(exc, src)
         return lap.refuse(code_, text, tb=tb, rc=EXIT_RAISED)
-    lap.printed = captured.getvalue()
+    lap.printed = clip_prints(captured.getvalue())
 
     try:
         sk = sketch.Sketch.current()
@@ -948,21 +993,24 @@ def exec_script(src: str, work: Path, claims_path: Path | None = None, reference
         return lap.refuse(exc.code, str(exc))
     except NotImplementedError as exc:
         return lap.refuse("E-KERNEL", kernel_refusal(exc), rc=EXIT_RAISED)
-    with _gmsh_session("geometry") as gmsh:
-        try:
-            plan = compile.plan(sk, claim_set, gmsh)
-        except SketchError as exc:
-            return refused_with_partial(gmsh, lap, exc)
-        except NotImplementedError as exc:
-            return lap.refuse("E-KERNEL", kernel_refusal(exc), rc=EXIT_RAISED)
-        try:
-            return run_plan(gmsh, lap, plan, sk, claim_set)
-        except SketchError as exc:
-            if exc.code == "E-KERNEL-STATE":
-                return lap.refuse(exc.code, str(exc), rc=EXIT_RAISED)
-            return lap.refuse(exc.code, str(exc))
-        except NotImplementedError as exc:
-            return lap.refuse("E-KERNEL", kernel_refusal(exc), rc=EXIT_RAISED)
+    try:
+        with _gmsh_session("geometry") as gmsh:
+            try:
+                plan = compile.plan(sk, claim_set, gmsh)
+            except SketchError as exc:
+                return refused_with_partial(gmsh, lap, exc)
+            except NotImplementedError as exc:
+                return lap.refuse("E-KERNEL", kernel_refusal(exc), rc=EXIT_RAISED)
+            try:
+                return run_plan(gmsh, lap, plan, sk, claim_set)
+            except SketchError as exc:
+                if exc.code == "E-KERNEL-STATE":
+                    return lap.refuse(exc.code, str(exc), rc=EXIT_RAISED)
+                return lap.refuse(exc.code, str(exc))
+            except NotImplementedError as exc:
+                return lap.refuse("E-KERNEL", kernel_refusal(exc), rc=EXIT_RAISED)
+    except Exception as exc:  # noqa: BLE001 - whatever else the kernel raised: the lap still answers, rc 3
+        return kernel_failure(lap, exc)
 
 
 def exec_spec(payload, work: Path, scale: float | None = None, claims_path: Path | None = None,
@@ -984,11 +1032,14 @@ def exec_spec(payload, work: Path, scale: float | None = None, claims_path: Path
     except SystemExit as exc:
         return lap.refuse("E-SPEC", _refusal_text("E-SPEC", f"spec: {exc}", "see the ops grammar in mesh2d.py"))
     lap.notes += claim_notes
-    with _gmsh_session("geometry") as gmsh:
-        try:
-            return run_plan(gmsh, lap, plan, None, claim_set)
-        except SketchError as exc:
-            return lap.refuse(exc.code, str(exc), rc=EXIT_RAISED if exc.code == "E-KERNEL-STATE" else EXIT_REFUSED)
+    try:
+        with _gmsh_session("geometry") as gmsh:
+            try:
+                return run_plan(gmsh, lap, plan, None, claim_set)
+            except SketchError as exc:
+                return lap.refuse(exc.code, str(exc), rc=EXIT_RAISED if exc.code == "E-KERNEL-STATE" else EXIT_REFUSED)
+    except Exception as exc:  # noqa: BLE001 - the kernel, not the spec: rc 3 with a result.json
+        return kernel_failure(lap, exc)
 
 
 # -- the subcommands ------------------------------------------------------------------------
@@ -998,15 +1049,15 @@ def _read_json(path: Path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _record_to_spec(record: dict) -> tuple[dict, float, Path | None]:
-    """A record (4.2) as the spec mesh2d reads plus its claims as a file for the lap."""
+def _record_to_spec(record: dict, work: Path) -> tuple[dict, float, Path | None]:
+    """A record (4.2) as the spec mesh2d reads plus its claims as a file for the lap,
+    written into `work` (a temporary directory the caller removes) so nothing is left
+    behind in the system temp."""
     spec = {"ops": record["ops"], "patches": record.get("patches") or [], "scale": record.get("scale", 1.0)}
     claims_file = None
     if record.get("claims"):
-        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
-        json.dump(record["claims"], handle)
-        handle.close()
-        claims_file = Path(handle.name)
+        claims_file = Path(work) / "claims.json"
+        claims_file.write_text(json.dumps(record["claims"]), encoding="utf-8")
     return spec, float(record.get("scale", 1.0)), claims_file
 
 
@@ -1072,7 +1123,7 @@ def cmd_preview(args) -> int:
                 except SketchError as exc:
                     return refused_with_partial(gmsh, lap, exc)
         if args.record:
-            payload, scale, claims_file = _record_to_spec(_read_json(args.record))
+            payload, scale, claims_file = _record_to_spec(_read_json(args.record), work)
         else:
             payload = _read_json(args.spec)
             scale = args.scale if args.scale is not None else (payload.get("scale", 1.0) if isinstance(payload, dict) else 1.0)
@@ -1089,7 +1140,7 @@ def cmd_check(args) -> int:
             src = Path(args.script).read_text(encoding="utf-8")
             return exec_script(src, work, Path(args.claims) if args.claims else None, None, work / "preview.png")
         if args.record:
-            payload, scale, claims_file = _record_to_spec(_read_json(args.record))
+            payload, scale, claims_file = _record_to_spec(_read_json(args.record), work)
             if args.claims:
                 claims_file = Path(args.claims)
         else:

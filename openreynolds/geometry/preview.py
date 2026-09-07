@@ -303,14 +303,16 @@ def _junction_windows(m: Measurements, plan: "Plan | None") -> list[tuple[str, t
 def _reference_shift(m: Measurements, reference: "ReferenceMatch") -> tuple[float, float]:
     """Translate the golden so the two inlet centres coincide; without an inlet on either
     side, the outlines' lower-left corners."""
-    mine = None
-    inlet = (m.patches or {}).get("inlet") or {}
-    if inlet.get("midpoints"):
-        mine = tuple(inlet["midpoints"][0])
-    theirs = None
-    ref_patches = (reference.measurements or {}).get("patches") or {}
-    if isinstance(ref_patches.get("inlet"), dict) and ref_patches["inlet"].get("midpoints"):
-        theirs = tuple(ref_patches["inlet"]["midpoints"][0])
+    def centre(patch) -> tuple[float, float] | None:
+        # the mean of the edge midpoints: an inlet of one edge is its midpoint, an inlet
+        # of several (a polyline mouth) is close to its centre; the first edge alone is not
+        mids = (patch or {}).get("midpoints") if isinstance(patch, dict) else None
+        if not mids:
+            return None
+        return (sum(p[0] for p in mids) / len(mids), sum(p[1] for p in mids) / len(mids))
+
+    mine = centre((m.patches or {}).get("inlet"))
+    theirs = centre(((reference.measurements or {}).get("patches") or {}).get("inlet"))
     if mine is None or theirs is None:
         points = [p for loop in reference.outline for p in loop]
         if not points:

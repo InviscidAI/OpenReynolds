@@ -181,6 +181,20 @@ def test_reference_panel_translates_the_golden_so_inlets_coincide(session):
         plt.close(fig)
 
 
+def test_the_reference_shift_uses_the_inlet_centre_not_its_first_edge(session):
+    """An inlet of several edges (a polyline mouth) is placed by the mean of its edge
+    midpoints; without an inlet on either side the outlines' lower-left corners meet."""
+    from openreynolds.geometry.library import ReferenceMatch
+    plan, a = analysis(session, T01_SPEC)
+    m = copy.deepcopy(a.m)
+    m.patches["inlet"]["midpoints"] = [[0.0, 0.5], [0.0, 2.5]]
+    ref = ReferenceMatch(entry="e", preset="p", approved_at="", outline=[[(10.0, 10.0), (20.0, 10.0), (20.0, 20.0)]],
+                         measurements={"patches": {"inlet": {"midpoints": [[5.0, 1.5]]}}}, hausdorff=None)
+    assert preview._reference_shift(m, ref) == pytest.approx((-5.0, 0.0), abs=1e-9)
+    ref.measurements = {}
+    assert preview._reference_shift(m, ref) == pytest.approx((m.bounds[0] - 10.0, m.bounds[1] - 10.0), abs=1e-9)
+
+
 def test_outline_polyline_round_trips_the_extent(session):
     plan, a = analysis(session, T01_SPEC)
     loops = preview.outline_polyline(session, a.face, max(a.m.extent) / 500)
