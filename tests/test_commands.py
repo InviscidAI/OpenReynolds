@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 
 from openreynolds import commands
-from openreynolds.commands import ASIDE, EXIT, FILES, HELP, OPEN, SAY, STATUS, parse
+from openreynolds.commands import (
+    ASIDE, EXIT, FILES, HELP, LEVEL, OPEN, SAY, STATUS, parse,
+)
 
 
 @pytest.mark.parametrize(
@@ -17,6 +19,9 @@ from openreynolds.commands import ASIDE, EXIT, FILES, HELP, OPEN, SAY, STATUS, p
         ("/bytheway hello", ASIDE),
         ("/btw", STATUS),
         ("/status", STATUS),
+        ("/level", LEVEL),
+        ("/level thorough", LEVEL),
+        ("/levels", LEVEL),
         ("/files", FILES),
         ("/ls /work/case", FILES),
         ("/open", OPEN),
@@ -87,8 +92,24 @@ def test_status_names_the_last_job_once_it_has_finished(store):
 
 def test_the_help_lists_every_verb_it_accepts():
     """A command nobody can discover is a command nobody uses."""
-    for verb in ("/btw", "/status", "/files", "/open", "/help", "/exit"):
+    for verb in ("/btw", "/status", "/level", "/files", "/open", "/help", "/exit"):
         assert verb in commands.HELP_TEXT
+
+
+def test_a_level_carries_the_words_that_follow_it():
+    assert commands.parse("/level thorough never").text == "thorough never"
+
+
+def test_status_says_where_the_study_stands_on_the_two_levels(store):
+    """The reason to name these rather than leave them in prose is so this line can
+    exist: a person can ask how far the run is meant to go without spending a turn."""
+    joined = "\n".join(commands.status_lines(store, levels=("thorough", "never")))
+
+    assert "ambition thorough, consent never" in joined
+
+
+def test_status_leaves_the_levels_out_when_it_was_not_told_them(store):
+    assert "ambition" not in "\n".join(commands.status_lines(store))
 
 
 def test_renders_verbs_parse():

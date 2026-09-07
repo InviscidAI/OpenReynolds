@@ -121,6 +121,34 @@ own voice from `preferences.md` beside your config. Say you want the mesh render
 checked before any solver time is spent, and that is what the agent is told you want.
 What it does about it is its call.
 
+## How far a study goes, and when you get asked
+
+Those are two different things, and a blank page made you say both at once. They are
+named settings now, and the defaults are written down rather than implied:
+
+| `--ambition` | how much work the study is worth |
+| --- | --- |
+| `sketch` | one mesh, a headline number, and an honest word about what it rests on |
+| `standard` | *(default)* one solid answer to the question as asked, checked as far as that answer needs |
+| `thorough` | mesh independence, transient where the physics wants it, a comparison against published data |
+
+| `--consent` | when to come back and ask |
+| --- | --- |
+| `early` | a word before solver time is spent at all |
+| `costly` | *(default)* a word before anything expensive — a long transient, a large mesh, a family of runs |
+| `never` | no interruptions; a run that goes the whole way and reports at the end |
+
+Separate axes, so `--ambition thorough --consent never` and `--ambition sketch
+--consent early` are both one line. They set intent, not a ceiling: nothing here is a
+budget the agent is stopped against, because the harness stopping the agent is the one
+thing this repository will not do.
+
+`openreynolds config` sets your usual pair, the two flags override them for a session,
+and `/level thorough never` changes them mid-study when the answer turns out to be more
+interesting than the question. `/level` on its own shows the menu without costing a
+turn. Where `preferences.md` and a level disagree, the note wins — you wrote it, the
+levels came off a menu.
+
 ## Bring your own model
 
 The agent calls your provider directly with your key; the workspace service never sees
@@ -213,9 +241,10 @@ costs nothing and a rule that is enforced costs everything.
 | `openreynolds video` | Assemble mirrored frames into a video, here. |
 | `openreynolds stop` | Stop this study's jobs and confirm they stopped. `--force` skips the prompt. |
 
-In a session, `/status` answers locally with no model turn, `/btw` says something
-without interrupting the work, and anything else you type reaches the model at its next
-step, so you can steer a run without stopping it. `/help` has the rest.
+In a session, `/status` answers locally with no model turn, `/level` shows and changes
+how far this study goes, `/btw` says something without interrupting the work, and
+anything else you type reaches the model at its next step, so you can steer a run
+without stopping it. `/help` has the rest.
 
 ## Configuration
 
@@ -231,6 +260,7 @@ containers want:
 | `OPENREYNOLDS_PROVIDER` | A preset name, or `reynolds` for the metered model. |
 | `OPENREYNOLDS_LLM_API_KEY` | The model key. The vendor's own name (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) is read too. |
 | `OPENREYNOLDS_MODEL` / `OPENREYNOLDS_EFFORT` | Which model, and how hard it is asked to think. |
+| `OPENREYNOLDS_AMBITION` / `OPENREYNOLDS_CONSENT` | How far a study goes, and when it comes back to ask. |
 | `FOAMD_URL` / `FOAMD_API_KEY` | The workspace service and this machine's key. |
 | `OPENREYNOLDS_MIRROR_INTERVAL_S` | How often files come home. `0` turns it off. |
 | `OPENREYNOLDS_NARRATE_EVERY_S` | How often a long run wakes the model. `0` turns it off. |

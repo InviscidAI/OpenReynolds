@@ -12,6 +12,7 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .levels import DEFAULT_AMBITION, DEFAULT_CONSENT, normalise as normalise_level
 from .llm.presets import FALLBACK_CONTEXT_WINDOW, preset_for
 
 DEFAULT_FOAMD_URL = "https://api.tryreynolds.com"
@@ -72,6 +73,8 @@ _CONFIG_KEYS = (
     "desk_model",
     "effort",
     "context_window",
+    "ambition",
+    "consent",
 )
 
 
@@ -159,8 +162,23 @@ class Config:
     studies_dir: Path = field(default_factory=lambda: Path.cwd() / "studies")
     preferences: str = ""
     """The standing note from `preferences_path()`, or empty when there is none."""
+    ambition: str = DEFAULT_AMBITION
+    """How much work a study is worth, as one of `levels.AMBITION`.
+
+    This and `consent` are the two things a standing note was nearly always saying at
+    once, split apart so either can be asked for without the other. Unlike the note
+    they come from a fixed menu, which is what lets `/status` and `/level` report where
+    a session stands rather than re-reading prose. `OPENREYNOLDS_AMBITION` overrides,
+    `--ambition` overrides that, and `/level` changes it mid-study."""
+    consent: str = DEFAULT_CONSENT
+    """When to come back and ask, as one of `levels.CONSENT`. `OPENREYNOLDS_CONSENT`,
+    `--consent`, `/level`."""
 
     def __post_init__(self) -> None:
+        # A typo in a config file or an environment variable is not a reason a session
+        # cannot start, and the corrected value is what `config` and `/level` print.
+        self.ambition = normalise_level(self.ambition, "ambition")
+        self.consent = normalise_level(self.consent, "consent")
         preset = preset_for(self.provider)
         # A preset's numbers apply when its endpoint is the one in use; an explicit
         # base URL pointing elsewhere is a vendor the table knows nothing about.
@@ -245,6 +263,8 @@ class Config:
             context_window=int(window) if window else 0,
             model=pick("OPENREYNOLDS_MODEL", "model", preset.model if preset else DEFAULT_MODEL),
             effort=pick("OPENREYNOLDS_EFFORT", "effort", DEFAULT_EFFORT),
+            ambition=pick("OPENREYNOLDS_AMBITION", "ambition", DEFAULT_AMBITION),
+            consent=pick("OPENREYNOLDS_CONSENT", "consent", DEFAULT_CONSENT),
             max_tool_output=int(max_output) if max_output else DEFAULT_MAX_TOOL_OUTPUT,
             llm_timeout_s=float(timeout) if timeout else DEFAULT_LLM_TIMEOUT_S,
             mirror_interval_s=(

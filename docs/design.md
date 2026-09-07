@@ -44,6 +44,16 @@ The agent decides everything about how to work. The harness is plumbing. Concret
 
 There is no gate DAG, no state machine, no lock, no watchdog with authority, no budget the model must reason about. If the agent wants to write itself a spec, tests, or a checklist, it can — and nothing verifies that it did.
 
+**What the user says is not a harness rule.** `preferences.md` is relayed verbatim, and
+the two named levels (`ambition`, `consent` — §11) are relayed as what the person picked
+off a menu. Both are facts about what someone wants, in the same class as "a person is
+at the terminal"; neither is checked, enforced or graded, and what to do about either
+stays the model's call. This is why the levels carry intent and not a ceiling: a spend
+or wall-clock cap the harness could check itself would be exactly the budget the
+paragraph above rules out. `test_briefing.py` sweeps every combination of the two
+through the imperative patterns for the same reason it sweeps every other shape of the
+briefing.
+
 These are the constraints the code has today and three tests hold it to them (`test_prompt.py`, `test_briefing.py`, `test_negative_obligation.py`). They are a thesis with evidence behind it (`found-by-using-it.md`), not a law: if a measured result argues for a different division of labour, change the tests together with the code rather than working around them.
 
 ---
@@ -220,9 +230,22 @@ This is the platform-value capture that makes the closed pieces worth building, 
 | `openreynolds --study <id>` | resume (fresh-thread reorientation) |
 | `openreynolds --instance <id>` | reuse an existing instance |
 | `openreynolds studies` | list local sessions |
-| `openreynolds config` | set `FOAMD_API_KEY`, `ANTHROPIC_API_KEY`, base URL, model |
+| `openreynolds config` | set `FOAMD_API_KEY`, `ANTHROPIC_API_KEY`, base URL, model, the two levels |
+| `--ambition sketch\|standard\|thorough` | how much work this study is worth |
+| `--consent early\|costly\|never` | when to come back and ask |
 
 Fetched PNGs print their local paths; inline terminal image display (iTerm2/kitty protocols) is an A5 nicety.
+
+**Ambition and consent are two axes, three levels each** (`levels.py`). They were one
+blank page — `preferences.md` — and an empty one meant nothing was said, which is not
+neutral: it is the ambitious end, picked by default and discovered afterwards. Whatever
+people wrote in that file was nearly always saying two separable things at once, so the
+useful combinations ("thorough, but check with me before real money") were hard to ask
+for. They live at three scopes: the config file for the usual pair, the two flags for a
+session, `/level` for a change mid-study. Where the free-text note and a level disagree
+the note wins, and the briefing says so — the note is the person's own sentences and
+the level came off a menu. `/status` reports the pair, which is the other half of why
+they are named rather than prose.
 
 **Two keys, two bills.** The workspace key covers compute and capture and is billed to
 the workspace account. The model key covers the model and is billed to you by your

@@ -41,7 +41,7 @@ from textual.widgets import (
     Tree,
 )
 
-from . import commands, images
+from . import commands, images, levels
 from .browse import Entry, human
 from .mirror import local_for
 from .progress import BAR_WIDTH, Progress
@@ -403,7 +403,13 @@ class OpenReynoldsApp(App):
             return
         log = self.query_one("#conversation", RichLog)
         command = commands.parse(text)
-        if command.kind in (commands.SAY, commands.ASIDE):
+        # `/level thorough` is the one local verb that also speaks: it changes what the
+        # study is set to do and says so in the thread. A bare `/level` does not, and
+        # neither does a word that is not on the menu.
+        speaks = command.kind in (commands.SAY, commands.ASIDE) or (
+            command.kind == commands.LEVEL and any(levels.chosen(command.text)[:2])
+        )
+        if speaks:
             log.write(f"\n[bold green]you[/bold green]  {_escape(text)}")
         else:
             # It is answered here and never reaches the model; echoing it as speech

@@ -131,6 +131,38 @@ async def test_typing_reaches_the_session_and_is_echoed():
     assert app.typed.get_nowait() == "that looks wrong"
 
 
+def _echoed(app) -> list[str]:
+    """What the conversation pane was told, as plain strings."""
+    from textual.widgets import RichLog
+
+    log = app.query_one("#conversation", RichLog)
+    return [str(getattr(line, "text", line)) for line in log.lines]
+
+
+async def test_a_level_change_is_echoed_as_speech_and_a_bare_one_is_not():
+    """The dim echo means "answered here, the agent was not told". `/level thorough`
+    does reach the model -- it changes what the study is set to do and says so in the
+    thread -- so echoing it dimly would claim the opposite. A bare `/level` is a
+    question answered locally, like `/status`, and stays dim."""
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.click("#prompt")
+        await pilot.press(*"/level thorough")
+        await pilot.press("enter")
+        await pilot.pause()
+        spoken = " ".join(_echoed(app))
+
+        await pilot.press(*"/level")
+        await pilot.press("enter")
+        await pilot.pause()
+        both = " ".join(_echoed(app))
+
+    assert app.typed.get_nowait() == "/level thorough"
+    assert app.typed.get_nowait() == "/level"
+    assert "you" in spoken, "a level change is the user speaking"
+    assert both.count("you") == 1, "a bare /level is answered here, not said"
+
+
 async def test_an_empty_line_is_not_a_turn():
     app = idle_app()
     async with running(app) as pilot:
