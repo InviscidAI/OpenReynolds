@@ -4,16 +4,24 @@
 case root (D24) and then runs `mesh2d.main` in a child so body.msh, the STEP, 0/, system/
 and Allmesh are the proven writers' output; `finish_on_instance` is today's `_finish`
 exec plus the boundary read-back that closes the T05 class (the patch lost in the
-extrusion) in the same tool call. Skeleton (U0): the types; the functions raise
-NotImplementedError until U5 lands.
+extrusion) in the same tool call.
+
+Why the mesh sizes are recomputed here rather than parsed from the writer's output:
+`mesh2d.main` decides the cell from the built extent and its options, and the same
+function with the same inputs gives the same number in this process. The fitness table
+then carries the writer's cell, not a guess, and the seam stays one function call wide.
 """
 from __future__ import annotations
 
+import json
+import re
+import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import _toolbox  # noqa: F401  (mesh2d.main by path writes the case)
+from . import _toolbox
 from .compile import Plan  # noqa: F401
 from .fitness import FitnessTable  # noqa: F401
 
@@ -21,8 +29,18 @@ if TYPE_CHECKING:
     from .claims import ComplianceTable
     from .strategy import Sizes
 
-_U5 = ("not built in the U0 skeleton: U5 (desk v2 + result + case + tools) implements it "
-       "against DESIGN.md section 3.13")
+TOOLBOX_DEST = "/work/.toolbox"
+"""Where the toolbox is refreshed to on the instance (cli.py), for the finish step."""
+
+IMPLICIT_PATCHES = ("walls", "frontAndBack")
+"""The two patches every 2D case carries whether or not the record names them: mesh2d's
+`generate` puts every unnamed curve on `walls` and the two z-flat faces on `frontAndBack`.
+A 3D case (cad_gen) has no z-flat faces, so the 3D branch passes `implicit=()`: cad_gen
+names inlet, outlet, walls and the body, and expecting `frontAndBack` of its boundary
+file reported a patch missing from every 3D mesh."""
+
+_EXTENT_LINE = re.compile(r"extent\s+([0-9.eE+-]+)\s*x\s*([0-9.eE+-]+)")
+"""mesh2d's summary line, in metres, read only when the record carries no measurements."""
 
 
 @dataclass
@@ -49,6 +67,42 @@ class CasePaths:
         return CasePaths(**{k: v for k, v in d.items() if k in CasePaths.__dataclass_fields__})
 
 
+def case_args(local: Path, study: str, scale: float, paths: CasePaths) -> list[str]:
+    """The commit: today's `mesh2d.py <case> --spec geometry.json --study ... --preview
+    outline.png --force [--scale s]`, in a child interpreter so a gmsh crash cannot take
+    the desk down."""
+    args = [sys.executable, str(_toolbox.TOOLBOX / "mesh2d.py"), str(local), "--spec", str(local / paths.record),
+            "--study", study, "--preview", str(local / paths.outline_png), "--force"]
+    if scale and scale != 1.0:
+        args += ["--scale", str(scale)]
+    return args
+
+
+def extent_m(record: dict, tool_output: str, scale: float) -> tuple[float, float]:
+    """The built extent in metres: the record's measurement scaled, unless the extent
+    the writer printed disagrees with it, in which case the writer's line wins -- that
+    line is `built.extent`, the very tuple `mesh2d.main` handed `mesh_sizes2d`, so the
+    cell recomputed from it is the writer's whatever bounds the record measured (the
+    record's are tight from sampled curves; the writer's are `getBoundingBox` after the
+    dilate, loose on a lone arc until 3.17 edit 1 lands). The line prints four
+    significant figures, so the record's exact number is kept whenever the two agree to
+    that precision. A record with no measurements (a hand-written spec) uses the line."""
+    m = record.get("measurements") if isinstance(record, dict) else None
+    extent = (m or {}).get("extent") if isinstance(m, dict) else None
+    found = _EXTENT_LINE.search(tool_output)
+    printed = (float(found.group(1)), float(found.group(2))) if found else None
+    if extent and len(extent) == 2:
+        measured = (float(extent[0]) * scale, float(extent[1]) * scale)
+        if printed is None or all(abs(a - b) <= 1e-3 * max(abs(a), abs(b), 1e-300) for a, b in zip(measured, printed)):
+            return measured
+        return printed
+    if printed is not None:
+        return printed
+    raise RuntimeError("the record carries no measurements and the writer printed no extent line, so "
+                       "the cell size it meshed with cannot be reproduced; a record from `cli build` "
+                       "carries `measurements.extent`")
+
+
 def write_case(local: Path, record: dict, script: str, claims: dict | None, table: "ComplianceTable | None",
                study: str, scale: float) -> tuple[CasePaths, "Sizes"]:
     """Writes geometry.json (the record), geometry.py, claims.json, compliance.json into
@@ -60,7 +114,30 @@ def write_case(local: Path, record: dict, script: str, claims: dict | None, tabl
     mesh was built with, computed in-process by `_toolbox.load("mesh2d").mesh_sizes2d(extent_m,
     opts)` from the record's measurements -- the same function `mesh2d.main` calls with the
     same inputs, so `fitness.from_digest` gets `cell_m` from the writer, not from a guess."""
-    raise NotImplementedError(_U5)
+    from .strategy import Sizes  # a return type only; the module graph keeps strategy beside case, not under it
+
+    paths = CasePaths()
+    # mesh2d copies the spec it reads into constant/geometry/body.json as it is, so the
+    # claims and the table ride on the record and the instance's copy carries them too
+    record = dict(record)
+    if claims is not None and "claims" not in record:
+        record["claims"] = claims
+    if table is not None and "compliance" not in record:
+        record["compliance"] = table.as_dict()
+    local.mkdir(parents=True, exist_ok=True)
+    (local / paths.record).write_text(json.dumps(record, indent=1), encoding="utf-8")
+    (local / paths.script).write_text(script or "", encoding="utf-8")
+    if claims is not None:
+        (local / paths.claims).write_text(json.dumps(claims, indent=1), encoding="utf-8")
+    if table is not None:
+        (local / paths.compliance).write_text(json.dumps(table.as_dict(), indent=1), encoding="utf-8")
+    proc = subprocess.run(case_args(local, study, scale, paths), capture_output=True, text=True, timeout=300)
+    output = (proc.stdout + proc.stderr).strip()
+    if proc.returncode != 0:
+        raise RuntimeError(output[-1500:] or f"exit {proc.returncode}")
+    mesh2d = _toolbox.load("mesh2d")
+    cell, wall_cell, thickness = mesh2d.mesh_sizes2d(extent_m(record, output, scale), {})
+    return paths, Sizes(cell=float(cell), wall_cell=float(wall_cell), thickness=float(thickness))
 
 
 @dataclass
@@ -88,18 +165,86 @@ class FinishReport:
                             extra=list(d.get("extra", [])))
 
 
-def finish_on_instance(backend, remote: str, expected_patches: list[str], timeout_s: int) -> FinishReport:
+FINISH_CMD = ("sh Allmesh > log.Allmesh 2>&1; rc=$?; tail -12 log.Allmesh; "
+              # the case by its absolute path, not `.`: render.py names its ParaView
+              # marker after the directory, and `.` gave it the name `.foam`
+              f"python3 {TOOLBOX_DEST}/render.py \"$PWD\" --scene mesh --out renders > log.render 2>&1 "
+              "|| tail -5 log.render; exit $rc")
+
+
+def finish_on_instance(backend, remote: str, expected_patches: list[str], timeout_s: int,
+                       implicit: tuple[str, ...] = IMPLICIT_PATCHES) -> FinishReport:
     """Today's _finish exec, verbatim: `sh Allmesh > log.Allmesh 2>&1; rc=$?; tail -12
     log.Allmesh; python3 /work/.toolbox/render.py "$PWD" --scene mesh --out renders >
     log.render 2>&1 || tail -5 log.render; exit $rc`; then get_file(log.checkMesh) ->
     mesh_digest.parse/report; get_file(renders/mesh_z.png); get_file(constant/polyMesh/boundary)
-    -> patches_agree."""
-    raise NotImplementedError(_U5)
+    -> patches_agree. `implicit` is the patches every case of this kind carries unnamed:
+    the 2D pair by default, nothing for a 3D case."""
+    exec_ = getattr(backend, "exec", None)
+    get_file = getattr(backend, "get_file", None)
+    if exec_ is None or get_file is None:
+        return FinishReport(rc=1, output="the backend cannot run commands or read files, so Allmesh was not run",
+                            digest="", digest_data=None, mesh_png=None, boundary_patches=[], missing=[], extra=[])
+    try:
+        run = exec_(FINISH_CMD, cwd=remote, timeout_s=timeout_s)
+    except Exception as exc:  # noqa: BLE001 - the words say what happened
+        return FinishReport(rc=1, output=f"the mesh was not built on the instance: {exc}", digest="",
+                            digest_data=None, mesh_png=None, boundary_patches=[], missing=[], extra=[])
+    output = (getattr(run, "output", "") or "").strip()
+    rc = getattr(run, "exit_code", 1)
+    digest, data = "", None
+    try:
+        log = get_file(f"{remote}/log.checkMesh", limit=400_000).decode("utf-8", "replace")
+        mesh_digest = _toolbox.load("mesh_digest")
+        data = mesh_digest.parse(log)
+        digest = mesh_digest.report(data).strip()
+    except Exception:  # noqa: BLE001 - no log means the mesh step did not get that far
+        digest, data = "", None
+    try:
+        mesh_png = get_file(f"{remote}/renders/mesh_z.png", limit=20_000_000)
+    except Exception:  # noqa: BLE001
+        mesh_png = None
+    found: list[str] = []
+    missing: list[str] = []
+    extra: list[str] = []
+    try:
+        boundary = get_file(f"{remote}/constant/polyMesh/boundary", limit=400_000).decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001 - no boundary file: gmshToFoam did not run, and rc says so
+        boundary = None
+    if boundary is not None:
+        found = boundary_patch_names(boundary)
+        missing, extra = patches_agree(boundary, expected_patches, implicit)
+    return FinishReport(rc=rc, output=output, digest=digest, digest_data=data, mesh_png=mesh_png,
+                        boundary_patches=found, missing=missing, extra=extra)
 
 
-def patches_agree(boundary_text: str, expected: list[str]) -> tuple[list[str], list[str]]:
+_NAME_LINE = re.compile(r"^\s*(\w+)\s*$")
+
+
+def boundary_patch_names(boundary_text: str) -> list[str]:
+    """The patch names in constant/polyMesh/boundary, in file order: a line that is one
+    word followed by a line that is `{`. The `FoamFile` header has the same shape and is
+    not a patch."""
+    lines = boundary_text.splitlines()
+    names: list[str] = []
+    for i, line in enumerate(lines[:-1]):
+        match = _NAME_LINE.match(line)
+        if match and lines[i + 1].strip() == "{" and match.group(1) != "FoamFile":
+            names.append(match.group(1))
+    return names
+
+
+def patches_agree(boundary_text: str, expected: list[str],
+                  implicit: tuple[str, ...] = IMPLICIT_PATCHES) -> tuple[list[str], list[str]]:
     """(missing, extra): patch names in constant/polyMesh/boundary (regex `^\\s*(\\w+)\\s*$`
     followed by a line that is `{`) against the record's patch names plus `walls` and
-    `frontAndBack`. The T05 class (the cylinder lost in the extrusion) closes here, in the
-    same tool call."""
-    raise NotImplementedError(_U5)
+    `frontAndBack` (the `implicit` pair; a 3D case passes none). The T05 class (the
+    cylinder lost in the extrusion) closes here, in the same tool call."""
+    found = boundary_patch_names(boundary_text)
+    wanted: list[str] = []
+    for name in [*expected, *implicit]:
+        if name not in wanted:
+            wanted.append(name)
+    missing = [name for name in wanted if name not in found]
+    extra = [name for name in found if name not in wanted]
+    return missing, extra

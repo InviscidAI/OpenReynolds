@@ -171,8 +171,9 @@ TOOLS: list[dict[str, Any]] = [
             "2D primitives and passages (or 3D primitives and STEP), draws it, "
             "measures it and revises it until the picture and the numbers match the "
             "request, then writes the case: geometry, mesh script (Allmesh), "
-            "controlDict, schemes, solution, fields. Meshing and solving are not run. "
-            "Takes about a minute."
+            "controlDict, schemes, solution, fields; returns a compliance table against "
+            "the request's claims and a mesh fitness table. Solving is not run. Takes "
+            "a few minutes."
         ),
         "input_schema": {
             "type": "object",
@@ -824,9 +825,9 @@ def _fetch(ctx: ToolContext, args: dict[str, Any]) -> str:
 
 
 def _geometry(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
-    """The geometry desk's answer as one tool result: the picture first, the words
+    """The geometry desk's answer as one tool result: the pictures first, the words
     second, so that when the picture is later evicted from the thread the caption
-    still carries the measurements and where the case is."""
+    still carries the measurements, the tables and where the case is."""
     if ctx.geometry is None:
         return (
             "the geometry desk is not available in this process (gmsh and matplotlib "
@@ -842,41 +843,7 @@ def _geometry(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     )
     if ctx.on_tokens and result.tokens:
         ctx.on_tokens(result.tokens)
-    lines = []
-    if result.error:
-        lines.append(f"geometry: {result.error}")
-    if result.case_rel and result.meshed:
-        lines.append(
-            f"case written to {result.case_rel} and meshed there: geometry.json is the spec, "
-            "outline.png the first picture above, constant/polyMesh the OpenFOAM mesh "
-            "(Allmesh ran gmshToFoam, retyped the patches and ran checkMesh; log.checkMesh), "
-            "renders/mesh_z.png the second picture. checkMesh:\n" + result.mesh_report +
-            "\nAn edited geometry.json rebuilds the case with "
-            f"`python3 {WORKSPACE_ROOT}/.toolbox/{result.script} . --spec geometry.json "
-            f"--scale {result.scale:g} --force && sh Allmesh`, or this tool again with the change in words."
-        )
-    elif result.case_rel:
-        lines.append(
-            f"case written to {result.case_rel}: geometry.json is the spec, outline.png "
-            "the picture above, body.msh the gmsh mesh. Not yet an OpenFOAM mesh"
-            + (f" ({result.mesh_report})" if result.mesh_report else "") + ": "
-            "`sh Allmesh` there runs gmshToFoam, retypes the patches and checkMesh "
-            "(log.checkMesh), and `python3 /work/.toolbox/render.py . --scene mesh` "
-            "draws the result. An edited geometry.json rebuilds the case with "
-            f"`python3 {WORKSPACE_ROOT}/.toolbox/{result.script} . --spec geometry.json "
-            f"--scale {result.scale:g} --force`, or this tool again with the change in words."
-        )
-    lines.append(f"laps {result.laps}, {result.seconds:.0f} s" + (
-        "" if result.agreed or result.error else (
-            f"; the desk committed without agreeing: {result.disagrees}"
-            if result.disagrees else
-            f"; the {result.capped or 'lap'} cap ended the laps, so this is the last spec "
-            "that built and NOT one the desk agreed matches the request -- the picture "
-            "and the report below say how far it is")))
-    if result.report:
-        lines.append("")
-        lines.append(result.report)
-    text = "\n".join(lines)
+    text = geometry_text(result)
     blocks: list[dict] = []
     if result.png:
         blocks.append(images.attachment(images.downscale(result.png, "image/png"), "image/png"))
@@ -885,6 +852,89 @@ def _geometry(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     if blocks:
         return blocks + [{"type": "text", "text": text}]
     return text
+
+
+def geometry_text(result: Any) -> str:
+    """The words of the geometry tool's answer, in the order DESIGN.md 6.4 fixes: where
+    the case is and whether it is meshed, what the finish found missing, the warnings
+    committed with, the laps, the disagreement, the CLAIMS block with the rows a person
+    must check first, the FITNESS block, then the print-back. When the finish did not
+    mesh, the text says what is still to do and how."""
+    lines = []
+    if result.error:
+        lines.append(f"geometry: {result.error}")
+    rebuild = (f"`python3 {WORKSPACE_ROOT}/.toolbox/{result.script} . --spec geometry.json "
+               f"--scale {result.scale:g} --force")
+    if result.case_rel and result.meshed:
+        lines.append(
+            f"case written to {result.case_rel} and meshed there: geometry.json is the spec, "
+            "outline.png the first picture above, constant/polyMesh the OpenFOAM mesh "
+            "(Allmesh ran gmshToFoam, retyped the patches and ran checkMesh; log.checkMesh), "
+            "renders/mesh_z.png the second picture. checkMesh:\n" + result.checkmesh +
+            "\nAn edited geometry.json rebuilds the case with "
+            + rebuild + " && sh Allmesh`, or this tool again with the change in words."
+        )
+    elif result.case_rel:
+        lines.append(
+            f"case written to {result.case_rel}: geometry.json is the spec, outline.png "
+            "the picture above, body.msh the gmsh mesh. Not yet an OpenFOAM mesh"
+            + (f" ({result.checkmesh})" if result.checkmesh else "") + ": still to do there, "
+            "`sh Allmesh` runs gmshToFoam, retypes the patches and checkMesh "
+            "(log.checkMesh), and `python3 /work/.toolbox/render.py . --scene mesh` "
+            "draws the result. An edited geometry.json rebuilds the case with "
+            + rebuild + "`, or this tool again with the change in words."
+        )
+    for finding in getattr(result, "lint", None) or []:
+        if getattr(finding, "code", "") == "E-MESH-PATCH":
+            lines.append(finding.text())
+    unaccepted = getattr(result, "warnings_unaccepted", None) or []
+    if unaccepted and result.case_rel:
+        where = "; ".join(
+            f"{f.code} at ({f.where[0]:g}, {f.where[1]:g})" if f.where else f.code for f in unaccepted)
+        lines.append(f"committed with {len(unaccepted)} warning{'s' if len(unaccepted) != 1 else ''}: {where}")
+    claims_note = f" (claims lap {result.claims_seconds:.0f} s)" if getattr(result, "claims_seconds", 0) else ""
+    accounting = f"laps {result.laps}{claims_note}, {result.seconds:.0f} s"
+    disagrees = list(getattr(result, "disagrees", None) or [])
+    disagreement = getattr(result, "disagreement_text", "") or ""
+    if not result.agreed and not result.error:
+        if disagrees or disagreement:
+            n = len(disagrees) or 1
+            accounting += (f"; the desk committed with {n} disagreement{'s' if n != 1 else ''} -- "
+                           + (disagreement or ", ".join(disagrees)))
+        else:
+            accounting += (
+                f"; the {result.capped or 'lap'} cap ended the laps, so this is the last shape "
+                "that built and NOT one the desk agreed matches the request -- the picture "
+                "and the report below say how far it is")
+    lines.append(accounting)
+    table = getattr(result, "compliance", None)
+    if table is not None and getattr(table, "rows", None):
+        lines.append("")
+        lines.extend(_claims_block(table))
+    fitness = getattr(result, "fitness", None)
+    if result.meshed and fitness is not None:
+        lines.append("")
+        lines.append("FITNESS")
+        lines.extend(f"  {line}" for line in fitness.lines())
+    if result.report:
+        lines.append("")
+        lines.append(result.report)
+    return "\n".join(lines)
+
+
+def _claims_block(table: Any) -> list[str]:
+    """The CLAIMS block with the rows a person must look at first: FAIL, disagreed, not
+    measurable and reported rows under one heading, the passing rows after."""
+    first = [r for r in table.rows if r.verdict != "pass" or r.kind == "report"]
+    rest = [r for r in table.rows if r not in first]
+    header = table.lines()[:1]
+    out = list(header)
+    if first:
+        out.append("  not measurable, for you to check:")
+        out.extend(f"  {line}" for line in type(table)(rows=first).lines()[1:])
+    if rest:
+        out.extend(f"  {line}" for line in type(table)(rows=rest).lines()[1:])
+    return out
 
 
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {

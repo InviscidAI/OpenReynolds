@@ -28,6 +28,17 @@ def test_tool_list_is_deterministic():
         assert tool["description"]
 
 
+def test_the_geometry_tool_describes_its_tables_without_an_imperative():
+    """DESIGN.md 3.18: the description gains one descriptive clause naming the two
+    tables the tool returns; the restraint test_prompt applies to the main prompt
+    applies here too, so the clause says what comes back and never what to do."""
+    description = next(t for t in TOOLS if t["name"] == "geometry")["description"]
+    assert "compliance table" in description and "fitness table" in description
+    lowered = description.lower()
+    for imperative in ("you must", "always ", "never ", "you should", "prefer "):
+        assert imperative not in lowered, imperative
+
+
 def test_unknown_tool_is_an_error_not_a_crash(ctx):
     content, is_error = dispatch(ctx, "run_gate", {})
     assert is_error
