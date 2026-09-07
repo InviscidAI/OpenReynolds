@@ -681,14 +681,15 @@ def _job_status(body: dict[str, Any]) -> JobStatus:
 
 
 def _tar_gz_of(local_dir: Path) -> bytes:
-    """Build a deterministic gzipped tar of a directory's contents."""
+    """Build a gzipped tar of a directory's contents, owned by root, with the source mtimes."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for item in sorted(local_dir.rglob("*")):
             if "__pycache__" in item.parts or item.name.endswith(".pyc"):
                 continue
             info = tar.gettarinfo(str(item), arcname=str(item.relative_to(local_dir).as_posix()))
-            info.mtime = 0
+            # The source's own mtime, not 0: a 1970 file on the instance is one the
+            # mirror cannot tell from a never-written one (F-54's `Allrun`).
             info.uid = info.gid = 0
             info.uname = info.gname = ""
             if item.is_file():
