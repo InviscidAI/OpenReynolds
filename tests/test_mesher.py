@@ -65,11 +65,17 @@ def block(cmd: str, prose: str = "") -> str:
     return f"{prose}\n```bash\n{cmd}\n```"
 
 
-def mesher(backend, store, texts, delay: float = 0.0, **cfg_kwargs):
+def mesher(backend, store, texts, delay: float = 0.0, interject=None, **cfg_kwargs):
     cfg = Config(llm_api_key="k", model="claude-opus-5", **cfg_kwargs)
-    desk = Mesher(cfg, backend, store, "/work/study")
+    desk = Mesher(cfg, backend, store, "/work/study", interject=interject)
     desk.provider = ScriptedProvider(texts, delay=delay)
     return desk
+
+
+def says(*lines):
+    """An `interject` that hands over one line per call, then nothing."""
+    pending = list(lines)
+    return lambda: pending.pop(0) if pending else None
 
 
 def answers(backend, mapping, default=ExecResult(0, "", False, None)):
@@ -287,6 +293,91 @@ def test_a_turn_with_words_and_an_empty_block_keeps_the_words(backend, store):
     desk.provider.stream = stream
     result = desk.run("a duct")
     assert [s.cmd for s in result.steps] == ["ls"]
+
+
+# -- the person ---------------------------------------------------------------
+
+
+def test_the_persons_own_words_travel_with_the_job(backend, store):
+    """The request is the calling agent's paraphrase. What the person typed is on
+    disk in the session's own transcript, and a detail dropped in the paraphrase used
+    to be one the desk could not recover and did not know was missing."""
+    store.append_message("user", "mesh me a tesla valve, 4 loops")
+    store.append_message("assistant", "I will call the mesh desk.")
+    store.append_message("user", "the loops must not touch each other")
+    desk = mesher(backend, store, [block(f"echo {MESH_DONE}")])
+    answers(backend, {"mesh_look.py": ExecResult(0, OK_JSON, False, None)})
+    desk.run("a valve with four bypass loops")
+
+    first = desk.provider.calls[0]["messages"][0]["content"][0]["text"]
+    assert "a valve with four bypass loops" in first          # the job
+    assert "mesh me a tesla valve, 4 loops" in first          # and their words
+    assert "the loops must not touch each other" in first
+    assert "I will call the mesh desk." not in first          # only the person's
+    assert "their own words" in first
+
+
+def test_a_session_with_no_transcript_still_meshes(backend, store):
+    class Broken:
+        def recent_messages(self, limit=30):
+            raise OSError("no transcript here")
+
+    desk = mesher(backend, Broken(), [block(f"echo {MESH_DONE}")])
+    answers(backend, {"mesh_look.py": ExecResult(0, OK_JSON, False, None)})
+    assert desk.run("a duct").ok
+
+
+def test_a_remark_typed_mid_run_reaches_the_desk_at_the_next_step(backend, store):
+    """Before this, a remark waited out the whole call -- up to fifteen minutes -- and
+    then went to the calling agent, which had to start the desk again from scratch."""
+    desk = mesher(backend, store, [block("python3 build.py"), block(f"echo {MESH_DONE}")],
+                  interject=says(None, "actually make it 2 mm wider"))
+    answers(backend, {"mesh_look.py": ExecResult(0, OK_JSON, False, None)})
+    result = desk.run("a duct")
+
+    assert result.remarks == ["actually make it 2 mm wider"]
+    thread = "\n".join(
+        b.get("text", "") for m in desk.provider.calls[-1]["messages"]
+        if isinstance(m.get("content"), list) for b in m["content"] if isinstance(b, dict)
+    )
+    assert "The person watching just said" in thread
+    assert "actually make it 2 mm wider" in thread
+    assert "takes precedence" in thread
+
+    from openreynolds.tools import mesh_text
+    assert "actually make it 2 mm wider" in mesh_text(result)
+    assert "the user said this to the mesh desk directly" in mesh_text(result)
+
+
+def test_a_remark_arriving_with_done_keeps_the_run_going(backend, store):
+    """Somebody speaking in the same breath as "done" is the newer instruction, so the
+    run does not close on a shape that was right one message ago."""
+    checks = {"n": 0}
+
+    def routed(cmd, cwd=None, timeout_s=120, *, background=False):
+        if "mesh_look.py" in cmd:
+            checks["n"] += 1
+        return ExecResult(0, OK_JSON if "mesh_look.py" in cmd else "", False, None)
+
+    backend.exec = routed
+    desk = mesher(backend, store, [block(f"echo {MESH_DONE}"), block("python3 build.py"),
+                                   block(f"echo {MESH_DONE}")],
+                  interject=says("no, 3 mm wide"))
+    result = desk.run("a duct")
+    assert result.ok
+    assert result.remarks == ["no, 3 mm wide"]
+    assert checks["n"] == 1          # the first "done" never reached the check
+    assert [s.cmd for s in result.steps] == ["python3 build.py"]
+
+
+def test_a_drain_that_throws_does_not_end_the_run(backend, store):
+    def broken():
+        raise RuntimeError("the reader is gone")
+
+    desk = mesher(backend, store, [block(f"echo {MESH_DONE}")], interject=broken)
+    answers(backend, {"mesh_look.py": ExecResult(0, OK_JSON, False, None)})
+    result = desk.run("a duct")
+    assert result.ok and result.remarks == []
 
 
 # -- the thread ---------------------------------------------------------------

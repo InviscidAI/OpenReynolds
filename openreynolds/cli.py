@@ -1031,7 +1031,14 @@ def session(
         # one the session is already talking to.
         ctx.on_tokens = loop.add_tokens
         if not cfg.model_key_missing():
-            ctx.mesher = mesher.Mesher(cfg, backend, store, store.session.home)
+            # `interject` is read late on purpose: the loop's own drain is attached a
+            # few lines below, and the desk needs the same one. It is what lets a
+            # person change the shape while it is being built instead of waiting out
+            # the whole call and asking the main agent to start again.
+            ctx.mesher = mesher.Mesher(
+                cfg, backend, store, store.session.home,
+                interject=lambda: loop.interject() if loop.interject else None,
+            )
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
         )

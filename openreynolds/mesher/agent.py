@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 from .. import images
 from ..llm import Listener, ProviderError, make_provider
-from .brief import MESH_DONE, system_prompt, task_message
+from .brief import MESH_DONE, remark_message, system_prompt, task_message
 from .check import Check, verify
 
 MAX_STEPS = 30
@@ -44,6 +44,13 @@ OUTPUT_CHARS = 6000
 """What comes back from one command. Mesh logs are long and repetitive, and the news is
 at both ends -- the command that failed and the summary that followed -- so a long
 output is cut in the middle rather than truncated."""
+
+TRANSCRIPT_ROWS = 40
+"""How far back into the session's transcript to look for the person's own words."""
+
+SAID_LINES = 6
+"""How many of them travel with the job. The last few are the ones that are about
+this mesh; a whole session's worth would bury the request in an older study's."""
 
 KEEP_IMAGES = 2
 """Pictures kept in the thread. Older observations keep their words and lose their
@@ -79,6 +86,9 @@ class MeshResult:
     seconds: float = 0.0
     tokens: dict[str, int] = field(default_factory=dict)
     error: str = ""
+    remarks: list[str] = field(default_factory=list)
+    """What the person said while this ran, in their words. Reported back so the
+    calling agent is not the last to hear about a change it did not make."""
     stopped: str = ""
     """Empty when it finished on its own terms; else 'steps', 'time' or 'provider'."""
 
@@ -91,12 +101,20 @@ class Mesher:
     """
 
     def __init__(self, cfg: Any, backend: Any, store: Any, home: str,
-                 on_step: Callable[[Step], None] | None = None):
+                 on_step: Callable[[Step], None] | None = None,
+                 interject: Callable[[], str | None] | None = None):
         self.cfg = cfg
         self.backend = backend
         self.store = store
+        """The session's transcript, read for what the person actually said."""
         self.home = (home or backend.workspace_root).rstrip("/")
         self.on_step = on_step
+        self.interject = interject
+        """Drains anything the person has typed since the last call, or None.
+
+        The same callable the main loop uses between its own tool calls. Held here as
+        well because this desk holds the thread for minutes at a time, and a remark
+        that waits that long is a remark that arrives after the thing it was about."""
         self.provider = make_provider(cfg)
         self.model = cfg.mesher_model or cfg.model
         self.effort = cfg.mesher_effort or "high"
@@ -120,7 +138,8 @@ class Mesher:
         system = system_prompt(STEP_TIMEOUT_S)
         messages: list[dict[str, Any]] = [
             {"role": "user", "content": [{"type": "text",
-                                          "text": task_message(request, case_dir, case_rel)}]}
+                                          "text": task_message(request, case_dir, case_rel,
+                                                               self._said())}]}
         ]
         last_text = ""
         turns = 0
@@ -158,9 +177,17 @@ class Mesher:
             messages.append(said)
             last_text = turn.text.strip() or last_text
 
+            remark = self._remark(messages, result)
+
             cmd, complaint = parse_action(turn.text)
             if complaint:
                 _observe(messages, complaint)
+                continue
+
+            if _is_finish(cmd) and remark:
+                # Somebody spoke in the same breath as "done". Their words are the
+                # newer instruction, so the run continues rather than closing on a
+                # shape that was right one message ago.
                 continue
 
             if _is_finish(cmd):
@@ -195,6 +222,37 @@ class Mesher:
             result.summary = _summary(last_text)
         result.png = self._render_bytes(result)
         return result
+
+    # -- the person ------------------------------------------------------------
+
+    def _said(self) -> list[str]:
+        """The last few things the person typed in this session, verbatim.
+
+        Read off the transcript the session is already writing, so nothing new has to
+        be plumbed through the calling agent, and what reaches the desk is the person's
+        own words rather than a paraphrase of them.
+        """
+        try:
+            rows = self.store.recent_messages(TRANSCRIPT_ROWS)
+        except Exception:  # noqa: BLE001 - no transcript is not a reason not to mesh
+            return []
+        said = [" ".join(str(row.get("content") or "").split())
+                for row in rows if row.get("role") == "user"]
+        return [line[:600] for line in said if line][-SAID_LINES:]
+
+    def _remark(self, messages: list[dict[str, Any]], result: "MeshResult") -> str:
+        """Anything the person has typed since the last step, put into the thread."""
+        if self.interject is None:
+            return ""
+        try:
+            text = self.interject()
+        except Exception:  # noqa: BLE001 - a remark that cannot be read may not end a run
+            return ""
+        if not (text or "").strip():
+            return ""
+        _observe(messages, remark_message(text))
+        result.remarks.append(text.strip())
+        return text.strip()
 
     # -- the machine -----------------------------------------------------------
 

@@ -856,6 +856,11 @@ def mesh_text(result: Any) -> str:
         lines.append(f"NOT a usable mesh yet in {result.case_rel}: {why}")
     else:
         lines.append(f"nothing was meshed in {result.case_rel}")
+    if getattr(result, "remarks", None):
+        lines.append("")
+        lines.append("while this ran, the user said this to the mesh desk directly, and it "
+                     "worked to it:")
+        lines.extend(f'  "{remark}"' for remark in result.remarks)
     if result.summary:
         lines.append("")
         lines.append("the mesh desk says:")

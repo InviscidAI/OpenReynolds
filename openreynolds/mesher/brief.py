@@ -131,13 +131,51 @@ def system_prompt(step_timeout_s: int) -> str:
     return MESHER_SYSTEM.format(step_timeout=step_timeout_s)
 
 
-def task_message(request: str, case_dir: str, case_rel: str) -> str:
-    """The one user message that starts the run."""
-    return (
-        f"Build this geometry and mesh it:\n\n{request.strip()}\n\n"
+def task_message(request: str, case_dir: str, case_rel: str,
+                 said: list[str] | None = None) -> str:
+    """The message that starts the run: the job, the directory, and the person's words.
+
+    The request is written by the agent that called this desk, which makes it a
+    paraphrase. The paraphrase used to be the whole of what the desk knew, so a detail
+    dropped between the person and the tool call was one the desk could not recover and
+    did not know was missing. What the person actually typed is on disk in the session's
+    own transcript, so it comes along verbatim -- as the authority on what is wanted,
+    with the request as the statement of the job.
+    """
+    parts = [f"Build this geometry and mesh it:\n\n{request.strip()}"]
+    if said:
+        quoted = "\n".join(f'  "{line}"' for line in said)
+        parts.append(
+            "What the person asked for, in their own words (the request above is "
+            "another agent's reading of this; where the two differ, these are what they "
+            "want, and if they differ in a way you cannot reconcile, build to these and "
+            "say so in your closing lines):\n" + quoted
+        )
+    parts.append(
         f"Your case directory is `{case_dir}` (it exists and is empty unless you put "
         f"something there; every bash block runs in it, and `{case_rel}` is how the "
-        "rest of the session refers to it). Work there and nowhere else.\n\n"
+        "rest of the session refers to it). Work there and nowhere else."
+    )
+    parts.append(
         "Start by deciding what the shape is and what the mesher for it is, then build "
         "the coarsest version of it and look at it."
+    )
+    return "\n\n".join(parts)
+
+
+def remark_message(text: str) -> str:
+    """A person speaking while the desk works. It changes the job, now.
+
+    Before this, a remark typed mid-run sat unread until the whole call finished -- up
+    to fifteen minutes -- and then reached the *calling* agent, which had to decide to
+    call this desk again from the start. So "make it 2 mm wider" cost a second build of
+    the whole thing. Now it lands in the thread at the next step, which is where a
+    person standing behind somebody at a terminal would have said it.
+    """
+    return (
+        f'The person watching just said:\n\n  "{text.strip()}"\n\n'
+        "That is a change to what you are building, or a question about it, and it "
+        "takes precedence over what you were told at the start. Act on it now rather "
+        "than finishing what you were doing first -- and if it changes the shape, "
+        "rebuild it and look at it again before you finish."
     )
