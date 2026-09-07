@@ -41,12 +41,33 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable, Iterator
 
+from . import trace
 from .backend.base import WORKSPACE_ROOT, BackendError
 from .browse import MAX_ENTRIES, Browser, Entry, human
+
+GATE_WAIT_S = 120.0
+"""How long a background cycle will stand aside for a tool call before going anyway.
+
+The service runs the mirror's transfers and the model's commands on the same
+container, and a transfer that stalls there stalls the command behind it: a finish
+step timed at 27 s on the instance took 120, 236 and 323 s inside the tool call,
+each time with a cycle in flight. So a cycle waits for the tool call to end before
+it starts, and again before each round trip. Bounded, because a turn of back-to-back
+tool calls would otherwise never mirror at all -- and a bounded wait is a delay,
+which the cycle can afford, where an unbounded one is the twenty-five minutes the
+turn-end sync once cost."""
+
+SLOW_CYCLE_S = 30.0
+"""A cycle that pulled nothing and took longer than this still gets a line. Silence
+is right for the ordinary empty cycle -- it runs every twenty seconds for the whole
+session -- and wrong for one that spent eight minutes finding that out."""
 
 MAX_FILE_BYTES = 500 * 1024 * 1024
 """No single file may be bigger than this.
@@ -147,15 +168,29 @@ class MirrorReport:
     skipped: list[Skip] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     """Things that went wrong, or listings that ran out of room. Never raised."""
+    round_trips: int = 0
+    """Archive requests made, retries included. What a cycle cost in calls."""
+    seconds: float = 0.0
+    """What it cost in time, listing included. Together these are the line that
+    shows whether a cycle is a convenience or the reason a session is slow."""
+
+    def cost(self) -> str:
+        trips = f"{self.round_trips} round trip{'s' if self.round_trips != 1 else ''}"
+        return f"{trips}, {took(self.seconds)}"
 
     def brief(self) -> list[str]:
-        """One or two lines for the end of a turn. Empty when nothing happened."""
+        """One or two lines for the end of a turn. Empty when nothing happened.
+
+        A cycle that pulled nothing but took minutes did happen, and says so: a
+        session's wall clock was going somewhere and the log had no line for it."""
         lines = []
         if self.pulled:
             lines.append(
                 f"mirrored {len(self.pulled)} file(s), {human(self.bytes_pulled)}"
-                f" -> {self.local_dir}"
+                f" -> {self.local_dir}  ({self.cost()})"
             )
+        elif self.seconds >= SLOW_CYCLE_S:
+            lines.append(f"mirror: nothing new after {self.cost()}")
         if self.skipped:
             lines.append(f"left on the instance: {grouped(self.skipped)}{self._hint()}")
         lines.extend(self.warnings)
@@ -195,6 +230,37 @@ class MirrorReport:
 LISTED_SKIPS = 40
 """Past this a list of refusals is scrolling, not information. The count and the
 grouped reasons above it still cover everything."""
+
+
+def took(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+    if seconds < 90:
+        return f"{seconds:.0f} s"
+    minutes, rest = divmod(int(round(seconds)), 60)
+    return f"{minutes} min {rest} s" if rest else f"{minutes} min"
+
+
+def is_a_fact_about_the_path(exc: BaseException) -> bool:
+    """Whether a failed copy will fail the same way if asked again.
+
+    A 400 is the service saying the request itself is wrong -- and for an archive
+    request the only thing in it is the paths. It answers that way for a path outside
+    the jail, and it answers the same way when its own jail probe (`realpath` and
+    `test -e` on the instance) runs past its two-minute timeout, which is what an
+    uploaded file nothing on the instance has opened yet does to it. From here the
+    two are the same fact: this path costs two minutes and yields nothing, and it
+    will tomorrow too. A connection that dropped or a service that blinked is not
+    that; those are tried again next cycle as they always were."""
+    return isinstance(exc, BackendError) and (
+        exc.status == 400 or exc.code == "bad_request"
+    )
+
+
+def refusal(exc: BaseException) -> str:
+    """The reason a refused path is left with, so the report can group it and a
+    reader can see the service's own words."""
+    said = getattr(exc, "message", None) or str(exc)
+    return f"the service refused it this session ({said})"
 
 
 def grouped(skips: list[Skip]) -> str:
@@ -352,6 +418,8 @@ def sync(
     background: bool = False,
     max_file_bytes: int = MAX_FILE_BYTES,
     max_total_bytes: int = MAX_TOTAL_BYTES,
+    refused: dict[str, str] | None = None,
+    gate: "Gate | None" = None,
 ) -> MirrorReport:
     """Copy down what has changed under the study's directory, and say what it did not.
 
@@ -361,7 +429,33 @@ def sync(
     `background=True` is the unattended cycle on the clock below, as opposed to a sync
     somebody asked for. It tells the backend this listing is a poll, so that a session
     nobody is using stops looking busy -- see LiveMirror.
+
+    `refused` is the caller's memory of paths the service has refused, path to reason.
+    Read here so they are not asked for again, written here when one is refused. The
+    background cycles share one across a session; `openreynolds pull` passes none and
+    so asks again, which is what "tries them again" in the report promises.
+
+    `gate` is where a session says a tool call is in flight; a cycle given one stands
+    aside for it before each round trip (see GATE_WAIT_S).
     """
+    started = time.monotonic()
+    report = _sync(browser, path, everything, live, background, max_file_bytes,
+                   max_total_bytes, refused, gate)
+    report.seconds = time.monotonic() - started
+    return report
+
+
+def _sync(
+    browser: Browser,
+    path: str,
+    everything: bool,
+    live: bool,
+    background: bool,
+    max_file_bytes: int,
+    max_total_bytes: int,
+    refused: dict[str, str] | None,
+    gate: "Gate | None",
+) -> MirrorReport:
     store = browser.store
     if store is None:
         return MirrorReport(local_dir=Path.cwd(), warnings=["no study directory to mirror into"])
@@ -396,8 +490,13 @@ def sync(
     if getattr(entries, "truncated", False):
         report.warnings.append(entries.notice)
 
-    candidates = _wanted(entries, root, report, everything, max_file_bytes, live=live)
-    _pull(browser, _within_budget(candidates, report, max_total_bytes), report)
+    candidates = _wanted(
+        entries, root, report, everything, max_file_bytes, live=live, refused=refused
+    )
+    _pull(
+        browser, _within_budget(candidates, report, max_total_bytes), report,
+        refused=refused, gate=gate,
+    )
     return report
 
 
@@ -425,12 +524,20 @@ def _wanted(
     everything: bool,
     max_file_bytes: int,
     live: bool = False,
+    refused: dict[str, str] | None = None,
 ) -> list[Entry]:
-    """Files worth asking for: not filtered out, not too big, not already here."""
+    """Files worth asking for: not filtered out, not too big, not already here, and
+    not refused by the service already this session."""
     wanted = []
     newest = newest_times(entries, root) if live else {}
     for entry in entries:
         if entry.is_dir:
+            continue
+        if refused and entry.path in refused:
+            # Named and counted like every other file left behind. This is the
+            # opposite of dropping it quietly: the path failed once, the reason is
+            # here, and the retry is a command away.
+            report.skipped.append(Skip(entry.path, refused[entry.path], entry.size))
             continue
         relative = _relative(entry.path, root)
         if live:
@@ -512,32 +619,69 @@ def _batches(wanted: list[Entry]) -> list[list[Entry]]:
     return batches
 
 
-def _pull(browser: Browser, wanted: list[Entry], report: MirrorReport) -> None:
+def _pull(
+    browser: Browser,
+    wanted: list[Entry],
+    report: MirrorReport,
+    refused: dict[str, str] | None = None,
+    gate: "Gate | None" = None,
+) -> None:
     """Fetch in batches, and treat a failed batch as a fact rather than an end.
 
-    A batch that fails is retried one file at a time before being given up on. The
-    usual cause is one awkward file in otherwise fine company, and losing the company
-    with it is how a mirror comes back empty from a study that had plenty worth
-    keeping -- which is exactly what a live run did.
+    A batch that fails is taken apart to find the file it failed on, and the rest
+    come down without it. The usual cause is one awkward file in otherwise fine
+    company, and losing the company with it is how a mirror comes back empty from a
+    study that had plenty worth keeping -- which is exactly what a live run did.
     """
     for batch in _batches(wanted):
-        try:
-            written = browser.backend.get_tree([entry.path for entry in batch], report.local_dir)
-        except (BackendError, OSError) as exc:
-            if len(batch) > 1:
-                report.warnings.append(
-                    f"a batch of {len(batch)} failed ({exc}); trying them one at a time"
-                )
-                for entry in batch:
-                    _pull(browser, [entry], report)
-                continue
-            report.warnings.append(f"could not copy {len(batch)} file(s): {exc}")
-            report.skipped.extend(
-                Skip(entry.path, "the copy failed", entry.size) for entry in batch
+        _pull_batch(browser, batch, report, refused, gate)
+
+
+def _pull_batch(
+    browser: Browser,
+    batch: list[Entry],
+    report: MirrorReport,
+    refused: dict[str, str] | None,
+    gate: "Gate | None",
+) -> bool:
+    """One archive request, and what to do when it fails. True when it came down.
+
+    The search for the file a batch failed on used to be every file on its own: a
+    round trip each, and on a service where the awkward one costs two minutes and the
+    ordinary ones four seconds, thirty files was six minutes -- then the same six
+    minutes on the next cycle, because the awkward file never arrived and so was
+    never "already here". Now it is: one at a time only until one fails, then the
+    remainder as a batch again (it was fine without the file it failed on), and a
+    file whose failure is a fact about the path is remembered and not asked for again
+    this session. Which file it was is named, because the log never said.
+    """
+    if gate is not None:
+        gate.clear(GATE_WAIT_S)
+    report.round_trips += 1
+    try:
+        written = browser.backend.get_tree([entry.path for entry in batch], report.local_dir)
+    except (BackendError, OSError) as exc:
+        if len(batch) > 1:
+            report.warnings.append(
+                f"a batch of {len(batch)} failed ({exc}); looking for the file it failed on"
             )
-            continue
-        report.pulled.extend(written)
-        report.bytes_pulled += sum(entry.size for entry in batch)
+            for index, entry in enumerate(batch):
+                if _pull_batch(browser, [entry], report, refused, gate):
+                    continue
+                rest = batch[index + 1 :]
+                if rest:
+                    _pull_batch(browser, rest, report, refused, gate)
+                return False
+            return True
+        entry = batch[0]
+        report.warnings.append(f"could not copy {entry.path}: {exc}")
+        report.skipped.append(Skip(entry.path, "the copy failed", entry.size))
+        if refused is not None and is_a_fact_about_the_path(exc):
+            refused[entry.path] = refusal(exc)
+        return False
+    report.pulled.extend(written)
+    report.bytes_pulled += sum(entry.size for entry in batch)
+    return True
 
 
 def _already_here(target: Path, entry: Entry) -> bool:
@@ -595,6 +739,58 @@ def _relative(path: str, root: str) -> str:
 # -- keeping it home while it happens ------------------------------------------
 
 
+class Gate:
+    """Where a session says a tool call is in flight, so the mirror stays out of its way.
+
+    The session's thread holds it around each tool call; the mirror's thread asks
+    `clear` before it starts a cycle and before each round trip, and waits -- bounded
+    by GATE_WAIT_S -- for the call to end. Nothing here ever blocks the session: the
+    session only counts, and the counting is a lock held for nanoseconds.
+    """
+
+    def __init__(self) -> None:
+        self._held = 0
+        self._cond = threading.Condition()
+
+    @contextmanager
+    def held(self) -> Iterator[None]:
+        self.enter()
+        try:
+            yield
+        finally:
+            self.exit()
+
+    def enter(self) -> None:
+        with self._cond:
+            self._held += 1
+
+    def exit(self) -> None:
+        with self._cond:
+            self._held = max(0, self._held - 1)
+            self._cond.notify_all()
+
+    @property
+    def busy(self) -> bool:
+        with self._cond:
+            return self._held > 0
+
+    def clear(self, timeout: float, unless: Callable[[], bool] | None = None) -> bool:
+        """Wait until nothing is in flight. True if it cleared, False if `timeout`
+        ran out first or `unless()` came true -- the mirror stopping, say, which a
+        wait must not outlive."""
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        with self._cond:
+            while self._held:
+                if unless is not None and unless():
+                    return False
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                # In slices, so `unless` is looked at even when nobody notifies.
+                self._cond.wait(min(remaining, 0.5))
+            return True
+
+
 class LiveMirror:
     """A background thread that runs `sync` for as long as the session lives.
 
@@ -624,6 +820,12 @@ class LiveMirror:
         """Surfaces and assembles renders from each cycle's arrivals (`delivery.py`).
         Set by the session; may be None. Runs on this thread, never raises."""
         self.last_report: MirrorReport | None = None
+        self.refused: dict[str, str] = {}
+        """Paths the service has refused this session, and its reason for each. Read
+        and written by every cycle (see `sync`), so a path that costs two minutes and
+        yields nothing costs it once. `openreynolds pull` does not consult it."""
+        self.gate = Gate()
+        """Held by the session around each tool call. Cycles stand aside for it."""
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -695,6 +897,13 @@ class LiveMirror:
             # listings an hour for as long as a session process stayed open -- so if
             # it counted as use, a hosted workspace could never be reclaimed and
             # billed until its 24-hour ceiling. It does not count.
+            #
+            # And not while the model is in a tool call: the cycle's listing and
+            # transfers run on the same container as the call, and the call waits
+            # behind them. Bounded, so a busy turn still gets mirrored eventually.
+            self.gate.clear(GATE_WAIT_S, unless=self._stop.is_set)
+            if self._stop.is_set():
+                return
             self._cycle(background=True)
 
     def _cycle(self, *, background: bool = False) -> MirrorReport:
@@ -703,13 +912,27 @@ class LiveMirror:
             if progress is not None:
                 progress.sync_begin()
             try:
-                report = sync(self.browser, live=True, background=background)
+                report = sync(
+                    self.browser, live=True, background=background,
+                    refused=self.refused,
+                    # Only an unattended cycle stands aside for tool calls. A sync
+                    # somebody asked for -- the close-down one -- is the thing being
+                    # waited on, and nothing is in flight to wait for.
+                    gate=self.gate if background else None,
+                )
             except Exception as exc:  # noqa: BLE001 - a convenience may not end a session
                 report = MirrorReport(
                     local_dir=Path.cwd(), warnings=[f"could not mirror: {exc}"]
                 )
             if progress is not None:
                 progress.sync_end(report)
+            if trace.on:
+                trace.event(
+                    "mirror", background=background, pulled=len(report.pulled),
+                    bytes=report.bytes_pulled, skipped=len(report.skipped),
+                    unchanged=report.unchanged, round_trips=report.round_trips,
+                    seconds=round(report.seconds, 3), warnings=list(report.warnings),
+                )
             # Surface and assemble the pictures this cycle brought home. Inside the
             # lock is deliberate: it reads the same files the sync just wrote, and a
             # second sync must not move them mid-assembly.

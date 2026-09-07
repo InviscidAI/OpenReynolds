@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any, Callable
 
 from .config import CONTEXT_REFRESH_FRACTION, CONTEXT_WINDOW_TOKENS, Config
@@ -70,6 +70,10 @@ class Loop:
         self.progress = progress
         """Told what this thread is doing -- thinking, writing, in a tool -- so the
         bar can say so with a clock on it. Presentation; it hears, never speaks."""
+        self.gate: Any | None = None
+        """Held around each tool call (`mirror.Gate`), so the background mirror can
+        stand aside for it: its transfers share the container with the command and
+        the command waited behind them -- a 27 s finish step took five minutes."""
 
         headers = {"X-Study-Id": store.session.study_id}
         # Without a timeout a stalled connection is indistinguishable from a model
@@ -339,7 +343,7 @@ class Loop:
             cwd=str(tool_input.get("cwd") or self.ctx.home or ""),
         )
         try:
-            with _ticking(self.view, block.name):
+            with _holding(self.gate), _ticking(self.view, block.name):
                 content, is_error = dispatch(self.ctx, block.name, tool_input)
         finally:
             self._unbusy()
@@ -442,6 +446,11 @@ class Loop:
 
 TICK_EVERY_S = 10.0
 """How often a running tool call says it is still running."""
+
+
+def _holding(gate: Any | None):
+    """The gate held for the duration, or nothing at all when there is no mirror."""
+    return gate.held() if gate is not None else nullcontext()
 
 
 @contextmanager

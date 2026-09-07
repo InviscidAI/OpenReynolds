@@ -892,3 +892,264 @@ def test_the_budget_is_still_spent_smallest_first(backend, store):
     )
     report = mirror.sync(browser_for(backend, store), live=True, max_total_bytes=5_000)
     assert sorted(Path(p).name for p in report.pulled) == ["controlDict", "fvSchemes"]
+
+
+# -- F-54: a cycle that cost minutes, every cycle, and blocked the tool call ----
+
+
+def _bad_request(message="cannot resolve path"):
+    return BackendError(message, code="bad_request", status=400)
+
+
+def _workspace_of(backend, names):
+    workspace(backend, *((f"{HOME}/{name}", 50) for name in names))
+
+
+def test_a_refused_path_is_named_and_not_asked_for_again_this_session(backend, store):
+    """The service answered a two-minute jail-probe timeout with the same 400 it gives
+    a path outside the jail; the mirror read it as one awkward file, asked for it again
+    every cycle, and paid the two minutes every cycle. The path was never in the log."""
+    from openreynolds.mirror import sync
+
+    names = ("geo/Allrun", "geo/Allmesh", "results.json")
+    _workspace_of(backend, names)
+    attempts = []
+    original = backend.get_tree
+
+    def service(paths, local_dir):
+        attempts.append(list(paths))
+        if any(p.endswith("geo/Allrun") for p in paths):
+            raise _bad_request("cannot resolve paths" if len(paths) > 1 else "cannot resolve path")
+        return original(paths, local_dir)
+
+    backend.get_tree = service
+    refused: dict[str, str] = {}
+
+    first = sync(browser_for(backend, store), live=True, refused=refused)
+    assert len(first.pulled) == 2
+    assert f"{HOME}/geo/Allrun" in refused, "a 400 is a fact about the path"
+    assert any(f"could not copy {HOME}/geo/Allrun" in w for w in first.warnings), first.warnings
+
+    before = len(attempts)
+    second = sync(browser_for(backend, store), live=True, refused=refused)
+    assert len(attempts) == before, "the refused path cost no round trip the second time"
+    assert not second.pulled and second.unchanged == 2
+    left = [skip for skip in second.skipped if skip.path.endswith("geo/Allrun")]
+    assert left and "refused" in left[0].reason and "cannot resolve path" in left[0].reason
+    assert "openreynolds pull" in second.brief()[0], "the retry is still a command away"
+
+
+def test_a_transient_failure_is_tried_again_next_cycle(backend, store):
+    """Only a 400 is remembered. A dropped connection says nothing about the path."""
+    from openreynolds.mirror import sync
+
+    _workspace_of(backend, ("a.md", "b.md"))
+    failures = {"n": 0}
+    original = backend.get_tree
+
+    def flaky(paths, local_dir):
+        if any(p.endswith("a.md") for p in paths) and failures["n"] < 2:
+            # The batch, then the single: a blink twice over, and then fine.
+            failures["n"] += 1
+            raise BackendError("peer closed connection", code="unreachable")
+        return original(paths, local_dir)
+
+    backend.get_tree = flaky
+    refused: dict[str, str] = {}
+    sync(browser_for(backend, store), live=True, refused=refused)
+    assert not refused
+    report = sync(browser_for(backend, store), live=True, refused=refused)
+    assert any(p.name == "a.md" for p in report.pulled)
+
+
+def test_a_failed_batch_finds_its_culprit_without_a_round_trip_per_file(backend, store):
+    """Thirty files one at a time was thirty round trips for one bad file. One at a
+    time only until the bad one, then the rest as the batch they were."""
+    from openreynolds.mirror import sync
+
+    names = [f"log.{i}" for i in range(8)]
+    _workspace_of(backend, names)
+    attempts = []
+    original = backend.get_tree
+
+    def service(paths, local_dir):
+        attempts.append(len(paths))
+        if any(p.endswith("log.2") for p in paths):
+            raise _bad_request()
+        return original(paths, local_dir)
+
+    backend.get_tree = service
+    report = sync(browser_for(backend, store), live=True, refused={})
+
+    assert len(report.pulled) == 7
+    # The batch, the singles up to and including the culprit, and the remainder once.
+    assert attempts == [8, 1, 1, 1, 5], attempts
+    assert report.round_trips == len(attempts)
+
+
+def test_two_culprits_in_one_batch_are_both_found(backend, store):
+    from openreynolds.mirror import sync
+
+    names = [f"f{i}" for i in range(6)]
+    _workspace_of(backend, names)
+    bad = {"f1", "f4"}
+    original = backend.get_tree
+
+    def service(paths, local_dir):
+        if any(p.rsplit("/", 1)[-1] in bad for p in paths):
+            raise _bad_request()
+        return original(paths, local_dir)
+
+    backend.get_tree = service
+    refused: dict[str, str] = {}
+    report = sync(browser_for(backend, store), live=True, refused=refused)
+    assert len(report.pulled) == 4
+    assert {p.rsplit("/", 1)[-1] for p in refused} == bad
+
+
+def test_a_report_says_what_the_cycle_cost(backend, store):
+    """One line per cycle with the count and the duration, so the next run can show
+    whether the cycles are a convenience or where the wall clock went."""
+    from openreynolds import mirror
+    from openreynolds.mirror import MirrorReport, sync
+
+    _workspace_of(backend, ("a.md", "b.md"))
+    report = sync(browser_for(backend, store), live=True)
+    assert report.round_trips == 1 and report.seconds >= 0.0
+    assert "1 round trip, 0 s" in report.brief()[0]
+
+    slow = MirrorReport(local_dir=Path("."), round_trips=3, seconds=8 * 60 + 5)
+    assert slow.brief() == ["mirror: nothing new after 3 round trips, 8 min 5 s"]
+    assert MirrorReport(local_dir=Path("."), seconds=2).brief() == []
+    assert mirror.took(125) == "2 min 5 s" and mirror.took(180) == "3 min"
+
+
+def test_the_terminal_names_the_cost_and_the_failed_path_as_they_happen():
+    """The batch failure used to reach the log at close-down only, without the path."""
+    import io
+
+    from rich.console import Console
+
+    from openreynolds.mirror import MirrorReport
+    from openreynolds.view import ConsoleView
+
+    out = io.StringIO()
+    view = ConsoleView(console=Console(file=out, width=200, force_terminal=False))
+    report = MirrorReport(
+        local_dir=Path("here"), round_trips=4, seconds=130,
+        warnings=[f"could not copy {HOME}/geo/Allrun: bad_request (400): cannot resolve path"],
+    )
+    view.mirrored(report)
+    text = out.getvalue()
+    assert "nothing new after 4 round trips, 2 min 10 s" in text
+    assert f"could not copy {HOME}/geo/Allrun" in text
+
+    out.truncate(0)
+    out.seek(0)
+    view.mirrored(MirrorReport(local_dir=Path("here"), seconds=1.0))
+    assert out.getvalue() == "", "an ordinary empty cycle still says nothing"
+
+
+def test_a_background_cycle_stands_aside_for_a_tool_call(backend, store):
+    """The cycle's transfers and the model's command share the container, and a 27 s
+    finish step took five minutes behind a cycle. So a cycle waits for the call."""
+    import time as _time
+
+    from openreynolds import mirror
+
+    _workspace_of(backend, ("a.md",))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=3600)
+    live.start()
+    try:
+        with live.gate.held():
+            live.poke()
+            _time.sleep(0.4)
+            assert live.last_report is None, "no cycle while the tool call is in flight"
+        for _ in range(50):
+            if live.last_report is not None:
+                break
+            _time.sleep(0.05)
+        assert live.last_report is not None and live.last_report.pulled
+    finally:
+        live.stop()
+
+
+def test_the_wait_for_a_tool_call_is_bounded(backend, store, monkeypatch):
+    """A turn of back-to-back tool calls must still get mirrored eventually."""
+    import time as _time
+
+    from openreynolds import mirror
+
+    monkeypatch.setattr(mirror, "GATE_WAIT_S", 0.2)
+    _workspace_of(backend, ("a.md",))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=3600)
+    live.start()
+    try:
+        with live.gate.held():
+            live.poke()
+            for _ in range(40):
+                if live.last_report is not None:
+                    break
+                _time.sleep(0.05)
+            assert live.last_report is not None, "the cycle went anyway once the bound ran out"
+    finally:
+        live.stop()
+
+
+def test_a_waiting_cycle_does_not_outlive_stop(backend, store):
+    """Close-down must not sit behind a held gate for two minutes."""
+    import time as _time
+
+    from openreynolds import mirror
+
+    _workspace_of(backend, ("a.md",))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=3600)
+    live.start()
+    live.gate.enter()
+    try:
+        live.poke()
+        _time.sleep(0.2)
+        started = _time.monotonic()
+        live.stop(timeout=5.0)
+        assert _time.monotonic() - started < 2.0
+        assert live._thread is None
+    finally:
+        live.gate.exit()
+
+
+def test_the_gate_counts_and_clears():
+    from openreynolds.mirror import Gate
+
+    gate = Gate()
+    assert gate.clear(0.01) and not gate.busy
+    with gate.held():
+        assert gate.busy
+        with gate.held():
+            assert gate.busy
+        assert gate.busy
+        assert not gate.clear(0.05)
+        assert not gate.clear(10.0, unless=lambda: True)
+    assert not gate.busy and gate.clear(0.01)
+
+
+def test_the_loop_holds_the_gate_around_a_tool_call(backend, store, view, monkeypatch):
+    from openreynolds import loop as loop_module
+    from openreynolds.mirror import Gate
+
+    loop = Loop(
+        Config(llm_api_key="k", model="claude-opus-5"),
+        ToolContext(backend=backend, store=store, max_output=1000),
+        store,
+        view,
+    )
+    loop.gate = Gate()
+    seen = []
+
+    def dispatch(ctx, name, tool_input):
+        seen.append(loop.gate.busy)
+        return "ok", False
+
+    monkeypatch.setattr(loop_module, "dispatch", dispatch)
+    block = SimpleNamespace(name="bash", input={"cmd": "ls"}, id="t1")
+    loop._run_tool(block)
+    assert seen == [True] and not loop.gate.busy

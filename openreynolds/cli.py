@@ -1021,6 +1021,10 @@ def session(
         live_mirror.start()
         view.workspace(browser)
         loop = Loop(cfg, ctx, store, view, capture=capture, progress=tracker)
+        # The mirror's cycles share the container with the model's commands, and a
+        # command waited minutes behind a cycle's transfers. Held around each tool
+        # call, this is how a cycle knows to stand aside (mirror.Gate).
+        loop.gate = live_mirror.gate
         # The geometry desk: a shape authored, drawn, measured and committed in one tool
         # call, with its own model client (geometry.py). Only where it can actually run --
         # gmsh and matplotlib in this process, a model key -- else the tool says why not.
