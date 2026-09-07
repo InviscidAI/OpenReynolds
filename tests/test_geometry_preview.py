@@ -3,9 +3,9 @@ through `preview._figure` -- inset titles, marker positions in data coordinates,
 caption lines, the reference shift -- and the PNG is judged by its size, never by its
 pixels (D17: a picture is regenerated, not diffed).
 
-Until U2 lands the measurements come through mesh2d by path (`cli.legacy_analysis`), so
-the junction insets are placed from the leg tables; once `measure.measure` records
-junctions the same windows come from there, and every assertion here holds either way.
+The measurements come from `measure.measure` through `cli.analyse` (the kernel's own
+pipeline); the junction insets are placed from the recorded junctions, or from the leg
+tables of a spec that records none, and every assertion here holds either way.
 """
 from __future__ import annotations
 

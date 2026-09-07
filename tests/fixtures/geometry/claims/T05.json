@@ -1,0 +1,96 @@
+{
+ "schema": "openreynolds.geometry/claims-1",
+ "unit": "mm",
+ "kind": "passage",
+ "flow": "+x",
+ "claims": [
+  {
+   "id": "c1",
+   "kind": "measure",
+   "says": "a circular cylinder of 10 mm diameter",
+   "measure": "diameter",
+   "of": "cyl",
+   "value": 10
+  },
+  {
+   "id": "c2",
+   "kind": "measure",
+   "says": "a channel 60 mm high",
+   "measure": "height",
+   "of": "duct",
+   "value": 60
+  },
+  {
+   "id": "c3",
+   "kind": "measure",
+   "says": "300 mm long",
+   "measure": "length",
+   "of": "duct",
+   "value": 300
+  },
+  {
+   "id": "c4",
+   "kind": "predicate",
+   "says": "centred 100 mm from the inlet",
+   "predicate": "at_distance_from",
+   "of": "cyl",
+   "args": {
+    "patch": "inlet",
+    "value": 100
+   }
+  },
+  {
+   "id": "c5",
+   "kind": "predicate",
+   "says": "mid-height",
+   "predicate": "at_mid_height",
+   "of": "cyl",
+   "args": {
+    "of": "duct"
+   }
+  },
+  {
+   "id": "c6",
+   "kind": "patch",
+   "says": "inlet at the left end",
+   "patch": "inlet",
+   "side": "left"
+  },
+  {
+   "id": "c7",
+   "kind": "patch",
+   "says": "outlet at the right end",
+   "patch": "outlet",
+   "side": "right"
+  },
+  {
+   "id": "c8",
+   "kind": "predicate",
+   "says": "the cylinder surface is its own patch named cylinder",
+   "predicate": "own_patch",
+   "of": "cylinder",
+   "args": {
+    "of": "cyl"
+   }
+  },
+  {
+   "id": "c9",
+   "kind": "predicate",
+   "says": "the channel's top and bottom are walls",
+   "predicate": "walls_are",
+   "of": "walls",
+   "args": {
+    "except": [
+     "cylinder"
+    ]
+   }
+  },
+  {
+   "id": "c10",
+   "kind": "count",
+   "says": "one cylinder",
+   "of": "holes",
+   "value": 1
+  }
+ ]
+}

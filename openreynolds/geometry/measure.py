@@ -994,14 +994,23 @@ def resolve_ports(gmsh, wk: Walk, plan: "Plan", open_ends: list[OpenEnd]) -> tup
     for c, name in curve_patch.items():
         wk.curves[c].patch = name
     resolved: list[dict] = []
-    for name in dict.fromkeys(curve_patch.values()):
+    # the record's `patches` (4.2) in the order the script declared its ports, every
+    # curve named by `near:` at its own midpoint (a point ON the curve), the kind only
+    # where the name does not already say it (inlet / outlet), so the record reads as the
+    # section-4.2 example and `mesh2d.py --spec` reproduces the classification
+    declared = [p.name for p in getattr(plan, "ports", None) or []]
+    order = list(dict.fromkeys([*declared, *curve_patch.values()]))
+    for name in order:
         if name == "walls" and "walls" not in kinds:
             continue
-        for c, n in curve_patch.items():
-            if n != name:
-                continue
+        for c in sorted(c for c, n in curve_patch.items() if n == name):
             mx, my = wk.curves[c].midpoint
-            resolved.append({"name": name, "kind": kinds.get(name, _port_kind(name, None)), "at": f"near:{mx:.6g},{my:.6g}"})
+            rule = {"name": name}
+            kind = kinds.get(name, _port_kind(name, None))
+            if kind and kind != name:
+                rule["kind"] = kind
+            rule["at"] = f"near:{mx:.6g},{my:.6g}"
+            resolved.append(rule)
     return curve_patch, resolved, findings
 
 
@@ -1402,7 +1411,10 @@ def _channel_shape(records: list[dict]) -> dict:
         r0 = float(arcs[0]["radius"])
         w = float(ports.get("width", 0.0))
         out["passes"] = len(lines)
-        out["pass_length"] = float(lines[0].get("length", 0.0))
+        # one number per pass and per bend: a `pass_length` claim is judged on every pass
+        # and printed `30.00 (x4)`, a `bend_radius` claim on every bend, `3.000 (x3)` (7.2)
+        out["pass_length"] = [float(r.get("length", 0.0)) for r in lines]
+        out["bend_radius"] = [float(r["radius"]) for r in arcs]
         out["pass_pitch"] = 2 * r0
         out["wall_between"] = 2 * r0 - w
         stack = (-math.sin(sh), math.cos(sh)) if float(arcs[0]["sweep"]) > 0 else (math.sin(sh), -math.cos(sh))
@@ -1431,11 +1443,17 @@ def measure(gmsh, face: int, plan: "Plan", wk: Walk, legs: dict, curve_patch: di
     shortest = min(wk.curves.values(), key=lambda c: c.length)
     patches: dict[str, dict] = {}
     for c, info in wk.curves.items():
-        p = patches.setdefault(info.patch, {"curves": [], "n": 0, "length": 0.0, "midpoints": []})
+        # `kinds` and `loops` sit beside `curves`, index for index: the claims' predicates
+        # (sharp_corner's "both lines") and the print-back (a closed patch) read the
+        # curves' kinds and loops from the Measurements, which does not carry the Walk
+        p = patches.setdefault(info.patch, {"curves": [], "n": 0, "length": 0.0, "midpoints": [], "kinds": [],
+                                            "loops": []})
         p["curves"].append(c)
         p["n"] += 1
         p["length"] += info.length
         p["midpoints"].append(list(info.midpoint))
+        p["kinds"].append(info.kind)
+        p["loops"].append(int(info.loop))
     flow = None
     inlet_curves = [c for c, n in curve_patch.items() if n == "inlet" and c in wk.curves]
     if inlet_curves:

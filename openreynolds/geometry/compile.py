@@ -170,6 +170,19 @@ class Plan:
 # -- small geometry: affines, points, outlines ------------------------------------------------
 
 
+SNAP_DECIMALS = 10
+"""Every number in an emitted op and in a leg record is rounded to this many decimals: a
+turtle walk through 180 degrees leaves sin(pi) = 1.2e-16 on a coordinate that is 0, and
+an op or a leg record that reads (-1.225e-16, 18) is noise the model would see (7.2
+prints (0, 18)). Ten decimals is 1e-10 of a sketch unit, far below anything the kernel
+measures at."""
+
+
+def _snap(v: float) -> float:
+    r = round(float(v), SNAP_DECIMALS)
+    return 0.0 if r == 0 else r
+
+
 def _jsonable(value):
     """Tuples to lists, recursively, so the plan and the record survive a JSON round trip
     unchanged and `recompile` compares like with like."""
@@ -177,6 +190,19 @@ def _jsonable(value):
         return {str(k): _jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_jsonable(v) for v in value]
+    return value
+
+
+def _snapped(value):
+    """`_jsonable` with every float snapped: what an op carries when it is emitted, so
+    the ops grammar never sees the walk's noise (the plan's other values are kept as
+    computed and printed to four figures)."""
+    if isinstance(value, dict):
+        return {str(k): _snapped(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_snapped(v) for v in value]
+    if isinstance(value, float):
+        return _snap(value)
     return value
 
 
@@ -314,13 +340,14 @@ def _transform_records(records: list[dict], T: Affine) -> list[dict]:
         r = dict(rec)
         for key in ("from", "to", "centre", "lands", "at", "outer_vertex", "inner_vertex"):
             if r.get(key) is not None:
-                r[key] = _apply(T, r[key])
+                x, y = _apply(T, r[key])
+                r[key] = (_snap(x), _snap(y))
         for key in ("heading", "heading_out"):
             if r.get(key) is not None:
-                r[key] = _heading_under(T, r[key])
+                r[key] = _snap(_heading_under(T, r[key]))
         for key in ("sweep", "deg"):
             if r.get(key) is not None:
-                r[key] = flip * r[key]
+                r[key] = _snap(flip * r[key])
         out.append(r)
     return out
 
@@ -556,7 +583,7 @@ class _Compiler:
         return name
 
     def _emit(self, op: dict) -> str:
-        self.ops.append(_jsonable(op))
+        self.ops.append(_snapped(op))
         return op["name"]
 
     def _feature_key(self, feature: Feature, opname: str) -> str:
@@ -1272,7 +1299,10 @@ class _Compiler:
         value that lives in the sketch frame follows: a Passage's leg records, end and
         heading; a Serpentine's end and heading; a Bypass's wall line; a Row's step. The
         values in a wall's own frame (a Bypass's P1, C, landing, footprint; a Row's anchors)
-        are unchanged by construction."""
+        are unchanged by construction, and so are a Serpentine's `pass_centrelines`: they
+        are each pass's offset along the stack direction from the start, which a rigid
+        transform or a mirror moves with the passes (measure reads the same offsets off
+        the built legs, so `stacked_in` judges one number either way)."""
         node = self._shift_node(inner, T)
         for key in node.passages:
             feature = self.features[key]
@@ -1389,17 +1419,23 @@ class _Compiler:
                 seen.add(k)
                 pairs.append((k[0], k[1], gap))
 
-        key_of = {id(f): k for f, k in self.named}
+        # a feature inside a mirrored(keep=True) subtree is compiled twice (under its
+        # name and under <name>.mirror), so s.apart(a, b) names every copy of each
+        keys_of: dict[int, list[str]] = {}
+        for f, k in self.named:
+            keys_of.setdefault(id(f), []).append(k)
         for row, key, host in self.rows:
-            key_of[id(row)] = key
+            keys_of.setdefault(id(row), []).append(key)
         if sketch is not None:
             for a, b, gap in sketch._apart:
-                ka, kb = key_of.get(id(a)), key_of.get(id(b))
-                if ka is None or kb is None:
-                    missing = a if ka is None else b
+                ka, kb = keys_of.get(id(a)), keys_of.get(id(b))
+                if not ka or not kb:
+                    missing = a if not ka else b
                     raise SketchError("E-ARGS", "Sketch", f"s.apart names {label(missing)}, which is not part of s.fluid",
                                       "apart parts are features of the fluid: s.apart(top_loops, bottom_loops)")
-                add(ka, kb, gap)
+                for key_a in ka:
+                    for key_b in kb:
+                        add(key_a, key_b, gap)
         items = {id(row.item) for row, _, _ in self.rows}
         for row, key, host in self.rows:
             for other, other_key, other_host in self.rows:
@@ -1478,7 +1514,26 @@ def plan_feature(feature: Feature, gmsh=None) -> Plan:
     scale = sketch.scale if sketch is not None else sk.SCALE["mm"]
     plan_ = c.finish(root, None, units, scale)
     plan_.notes = []
+    host = _host_feature(feature)
+    if host is not None:
+        # the wall the item leaves is solved beside it (section 7.1 lap 1 prints `main`
+        # above `loop`), through its own compiler so none of its ops join the partial's;
+        # its Solved carries no ops, which is how build and lint know it was not built
+        h = _Compiler(sketch, ports, None, gmsh)
+        try:
+            h.visit(host, IDENTITY, root=True)
+        except SketchError:
+            return plan_
+        context = {key: Solved(s.kind, s.params, s.solved, []) for key, s in h.features.items()}
+        plan_.features = {**context, **{k: v for k, v in plan_.features.items() if k not in context}}
     return plan_
+
+
+def _host_feature(feature: Feature) -> Feature | None:
+    """The feature whose wall a Bypass leaves (`loop.wall.feature`), or None."""
+    wall = getattr(feature, "wall", None)
+    host = getattr(wall, "feature", None)
+    return host if isinstance(host, Feature) and host is not feature else None
 
 
 def sampled_bounds(gmsh, dim: int, tag: int, n: int = ARC_POINTS) -> tuple[float, float, float, float]:
@@ -1548,14 +1603,96 @@ def build(gmsh, plan: Plan) -> tuple[int, dict, list[dict]]:
     try:
         face = mesh2d.build_face(gmsh, ops, scale=1.0, legs=legs, checks=checks)
         if plan.external:
-            face, _ = mesh2d.external_face(gmsh, face, plan.external)
+            _refuse_a_hollow_body(gmsh, face, plan)
+            # the box is cut round a COPY of the body so the body's own face survives
+            # the cut: lint.judge_body reads E-PORT-ON-BODY (and E-VOID again) off it
+            body_face = face
+            (_, tool), = gmsh.model.occ.copy([(2, face)])
+            gmsh.model.occ.synchronize()
+            face, _ = mesh2d.external_face(gmsh, tool, plan.external)
+            for solved in plan.features.values():
+                if solved.kind == "BodyInBox":
+                    solved.solved["body_face"] = int(body_face)
     except SystemExit as err:
         text = str(err)
         code = "E-DISJOINT" if "separate faces" in text else "E-BUILD"
         raise SketchError(code, "fluid", text.split(":")[0] if code == "E-DISJOINT" else text,
                           *([text.split(": ", 1)[1]] if code == "E-DISJOINT" and ": " in text else [])) from None
+    orphans = orphan_landings(plan)
+    if orphans:
+        # a `to` leg is judged against the wall it lands on (3.6, E-LAND); a feature
+        # built alone after a Row refusal (plan_feature) has no host in the plan, so
+        # mesh2d's own landing check on it says nothing about the shape and is dropped
+        checks[:] = [c for c in checks
+                     if not any(str(c.get("what", "")).startswith(f"channel {name!r}: the leg to") for name in orphans)]
     canary(gmsh, face)
     return face, legs, checks
+
+
+def _refuse_a_hollow_body(gmsh, body: int, plan: Plan) -> None:
+    """E-VOID (section 5) on a BodyInBox body that carries an inner loop: the fluid was
+    drawn instead of the solid. Judged here, before the box is cut, because the box
+    minus a hollow body is two faces and `mesh2d.external_face` refuses with a sentence
+    about the box; the lint's own E-VOID (judge_body) needs a face that never gets
+    built. The hole's area and centroid are read off its sampled loop."""
+    loops, curves = gmsh.model.occ.getCurveLoops(body)
+    if len(loops) < 2:
+        return
+    name = next((key for key, s in plan.features.items() if s.kind == "BodyInBox"), "body")
+    measured = []
+    for tags in curves:
+        pts: list[Point] = []
+        for c in tags:
+            c = abs(int(c))
+            (t0,), (t1,) = gmsh.model.getParametrizationBounds(1, c)
+            params = [t0 + (t1 - t0) * i / ARC_POINTS for i in range(ARC_POINTS + 1)]
+            xyz = gmsh.model.getValue(1, c, params)
+            pts.extend(zip(xyz[0::3], xyz[1::3]))
+        area = abs(_signed_area(pts))
+        measured.append((area, _centroid(pts)))
+    # the outer loop is the largest; every other loop is a hole, the largest named
+    measured.sort(key=lambda h: -h[0])
+    holes = measured[1:]
+    area, (cx, cy) = holes[0]
+    raise SketchError("E-VOID", f"BodyInBox '{name}'",
+                      f"the body has an enclosed hole of {area:.1f} {plan.units}2 at ({fmt(cx)}, {fmt(cy)})",
+                      "the fluid was drawn instead of the solid; the tool cuts the flow box itself",
+                      numbers={"area": area, "where": (cx, cy), "holes": len(holes)})
+
+
+def _centroid(pts: list[Point]) -> Point:
+    """The area centroid of a closed sampled loop (the vertex mean is biased by where
+    the samples crowd)."""
+    a = cx = cy = 0.0
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]):
+        cross = x0 * y1 - x1 * y0
+        a += cross
+        cx += (x0 + x1) * cross
+        cy += (y0 + y1) * cross
+    if abs(a) < 1e-30:
+        return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+    return (cx / (3 * a), cy / (3 * a))
+
+
+def orphan_landings(plan: Plan) -> set[str]:
+    """The channel op names whose recorded `lands_on` names a feature that is not in the
+    plan: a partial (a Row's item drawn alone, 3.15) lands on a wall of a host that was
+    never compiled with it, so nothing can judge that landing until the whole sketch
+    builds. Empty for every whole-sketch plan."""
+    out: set[str] = set()
+    names = {op.get("name") for op in plan.ops}
+    for key, solved in plan.features.items():
+        host = str(solved.solved.get("lands_on") or "")
+        if not host:
+            continue
+        host_solved = plan.features.get(host.split(".", 1)[0])
+        # a host that is not in the plan at all is an ops-grammar sidecar's (the lint
+        # judges the samples, 3.6 clause d is skipped); a host solved with no ops is
+        # plan_feature's context, and the landing on it cannot be judged
+        if host_solved is not None and not any(name in names for name in host_solved.ops):
+            out.update(name for name in solved.ops if any(op.get("name") == name and op.get("op") == "channel"
+                                                          for op in plan.ops))
+    return out
 
 
 def _as_dict(value):
@@ -1598,7 +1735,7 @@ def record(sketch: Sketch, plan: Plan, script: str, m: "Measurements", findings:
         version = getattr(gmsh, "__version__", "unknown")
     except ImportError:
         version = "unavailable"
-    return {
+    out = {
         "format": "openreynolds.geometry/1",
         "units": plan.units, "scale": plan.scale,
         "ops": _jsonable(plan.ops),
@@ -1615,6 +1752,13 @@ def record(sketch: Sketch, plan: Plan, script: str, m: "Measurements", findings:
         "measurements": _as_dict(m),
         "built_with": {"gmsh": version, "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
     }
+    if plan.external:
+        # a BodyInBox record's ops end in the BODY; the flow box round it is built by
+        # mesh2d.external_face from these sizes (body lengths) here, and on the instance
+        # by `mesh2d.py --spec geometry.json --external --ahead ...`, which the case
+        # writer and the rebuild command read from this key
+        out["external"] = _jsonable(plan.external)
+    return out
 
 
 def run_script(script: str) -> Sketch:

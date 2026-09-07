@@ -480,6 +480,14 @@ def _void_and_body(gmsh, plan, wk: Walk, m: Measurements, cfg: LintConfig, units
             continue
         body_face = s.solved.get("body_face")
         if body_face is not None:
+            if walk_or_none(gmsh, int(body_face)) is None:
+                # compile.build keeps the body's face alive through the box cut; a tag
+                # that no longer walks is an internal error, never a clean body
+                out.append(Finding(level="error", code="E-KERNEL-STATE", subject=f"BodyInBox '{name}'",
+                                   what=f"the body face {int(body_face)} recorded for the void check is not in the "
+                                        "model, so E-VOID and E-PORT-ON-BODY were not judged",
+                                   fix="(an internal error: nothing in the script to fix; reported to the desk)"))
+                continue
             out += judge_body(gmsh, int(body_face), name, units, m.reference_width, cfg)
             continue
         # On the fluid the body is a hole loop, and a passage drawn into it reads as an
@@ -522,7 +530,7 @@ def _row_gaps(plan, m: Measurements, legacy: list[Finding], cfg: LintConfig, w: 
         elif not inst.get("gap_declared") and measured < cfg.thin_wall_rel * w:
             out.append(render("warn", "W-GAP", f"Row '{name}'", where=first.where, a=a, b=b, gap=measured, w=w))
         if declared is not None and not inst.get("gap_declared"):
-            first.what = TEXTS["I-GAP"].format(gap=measured, solved_text=f" (solved gap {float(declared):.4g} is along the wall's bounding footprint)")
+            first.what = TEXTS["I-GAP"].format(gap=measured, solved_text=f" (solved gap {float(declared):.2f} is along the wall's bounding footprint)")
         # The build measured the wall distance with OCC (`_instances_apart`, edit 2) and
         # `measure` never sees the check dicts, so the row's `gap_measured` is written
         # here, where both are in hand; the claims (c11's "walls 2.44 apart") read it.
@@ -709,8 +717,18 @@ def _landing_channels(plan, m: Measurements) -> list[tuple[str, dict]]:
         if name is None:
             continue
         s = solved[name]
-        if s.solved.get("lands_on"):
-            out.append((channel, s.solved))
+        host = str(s.solved.get("lands_on") or "")
+        # a landing is judged against its host; a partial built alone (3.15) carries the
+        # host as context (solved, with none of its ops in the plan), and a landing on a
+        # wall that was not built cannot be judged. A host absent from the features is
+        # an ops-grammar sidecar's: the samples judge it (3.6, clause d skipped).
+        if not host:
+            continue
+        host_solved = solved.get(host.split(".", 1)[0])
+        built_names = {op.get("name") for op in (getattr(plan, "ops", None) or [])}
+        if host_solved is not None and not any(op in built_names for op in host_solved.ops):
+            continue
+        out.append((channel, s.solved))
     return out
 
 
@@ -804,6 +822,20 @@ def _landings(gmsh, face: int, plan, wk: Walk, m: Measurements, cfg: LintConfig,
     return out
 
 
+def _axis_index(axis, default: int) -> int:
+    """The record's `wall_line.axis` is the letter of the wall's line ("y" for a wall on
+    y = 1.5, section 4.2); an ops-grammar sidecar may write the index. Either reads to
+    0 (x) or 1 (y); None is the leg's own axis."""
+    if axis is None:
+        return default
+    if isinstance(axis, str):
+        letter = axis.strip().lower()
+        if letter in ("x", "y"):
+            return "xy".index(letter)
+        return int(letter)
+    return int(axis)
+
+
 def _wall_line(wall, axis: int, value: float) -> tuple[int, float, tuple, tuple] | None:
     """The record's `wall_line` as (axis, value, flow, outward), whether U1 wrote it as a
     dict with those keys or as the tuple 3.4 lists (axis, value, flow, outward, span);
@@ -812,12 +844,12 @@ def _wall_line(wall, axis: int, value: float) -> tuple[int, float, tuple, tuple]
     if wall is None:
         return None
     if isinstance(wall, dict):
-        w_axis = int(wall.get("axis", axis))
+        w_axis = _axis_index(wall.get("axis"), axis)
         w_value = float(wall.get("value", value))
         flow, outward = wall.get("flow"), wall.get("outward")
     else:
         parts = list(wall)
-        w_axis = int(parts[0]) if len(parts) > 0 and parts[0] is not None else axis
+        w_axis = _axis_index(parts[0] if len(parts) > 0 else None, axis)
         w_value = float(parts[1]) if len(parts) > 1 and parts[1] is not None else value
         flow = parts[2] if len(parts) > 2 else None
         outward = parts[3] if len(parts) > 3 else None

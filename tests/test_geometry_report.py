@@ -153,9 +153,9 @@ def test_the_refusal_alone_under_one_script_line():
     refusal = ("!! ERROR  E-IMPORT  line 1: `import numpy` -- the script may import math and json only\n"
                "          the API does the arithmetic: footprints, landings and pitches are in the print-back")
     text = report.text("", [], 0.3, [], None, None, {}, None, None, refusal=refusal)
-    assert text == ("SCRIPT     ran in 0.3 s; no prints\n"
-                    "           !! ERROR  E-IMPORT  line 1: `import numpy` -- the script may import math and json only\n"
-                    "                     the API does the arithmetic: footprints, landings and pitches are in the print-back")
+    # the refusal verbatim, in the section-5 format the API wrote it in (3.8: "the whole
+    # text is `refusal` under one SCRIPT line"; 4.3: the model sees it verbatim)
+    assert text == "SCRIPT     ran in 0.3 s; no prints\n" + refusal
     assert "LINT" not in text and "VERDICT" not in text
 
 

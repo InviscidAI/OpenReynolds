@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 
 from openreynolds.geometry import claims as claims_mod
+from openreynolds.geometry import compile as compile_mod
 from openreynolds.geometry import fitness as fitness_mod
 from openreynolds.geometry.claims import (
     CHECKABLE_KINDS, KINDS, LENGTH_MEASURES, Claim, ClaimSet, ClaimsError, ComplianceRow, ComplianceTable,
@@ -127,6 +128,21 @@ def measurements_dict(extent=(60.0, 14.25), passage_min: float | None = 2.98, un
     }
 
 
+_OPS_OF: dict[str, list[dict]] = {}
+
+
+def ops_of(script: str, extent=(60.0, 14.25)) -> list[dict]:
+    """The ops a canned record carries: the compiler's own for `script` (the record must
+    recompile to its recorded ops, 8.2), cached per script; a script the compiler
+    refuses falls back to one rect of the extent."""
+    if script not in _OPS_OF:
+        try:
+            _OPS_OF[script] = compile_mod.plan(compile_mod.run_script(script)).ops
+        except Exception:  # noqa: BLE001 - a fixture script that does not compile is still a fixture
+            _OPS_OF[script] = [{"op": "rect", "name": "fluid", "origin": [0, -1.5], "size": [extent[0], 3]}]
+    return copy.deepcopy(_OPS_OF[script])
+
+
 def rows_for(claims: dict, fails=(), unmeasurable=()) -> list[dict]:
     rows = []
     for c in claims["claims"]:
@@ -178,7 +194,7 @@ def outcome(rc: int = 0, *, errors=(), warns=(), fails=(), claims: dict | None =
     ])
     record = {
         "format": "openreynolds.geometry/1", "units": units, "scale": 0.001,
-        "ops": [{"op": "rect", "name": "fluid", "origin": [0, -1.5], "size": [extent[0], 3]}],
+        "ops": ops_of(script, extent),
         "patches": [{"name": "inlet", "at": "near:0,0"}, {"name": "outlet", "at": f"near:{extent[0]:g},0"}],
         "ports": [{"name": "inlet", "kind": "inlet", "edges": ["main.start"]},
                   {"name": "outlet", "kind": "outlet", "edges": ["main.end"]}],

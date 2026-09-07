@@ -510,10 +510,16 @@ def _figure(gmsh, face: int, plan: "Plan | None", m: Measurements, findings: lis
                 cx, cy, r = d["circle"]
                 ax.add_patch(Circle((cx, cy), r, fill=False, color=LEVEL_COLOURS.get(f.level, ANNOTATION), lw=1.0))
             elif "ray" in d:
+                # lint draws a ray as its two end points ([from, to]); a dict with
+                # from / dir / length is the other spelling the marks grammar allows
                 ray = d["ray"]
-                (px, py), (dx, dy) = ray.get("from", (0, 0)), ray.get("dir", (1, 0))
-                L = float(ray.get("length", w_ref))
-                ax.annotate("", xy=(px + dx * L, py + dy * L), xytext=(px, py),
+                if isinstance(ray, dict):
+                    (px, py), (dx, dy) = ray.get("from", (0, 0)), ray.get("dir", (1, 0))
+                    L = float(ray.get("length", w_ref))
+                    tip = (px + dx * L, py + dy * L)
+                else:
+                    (px, py), tip = ray[0], ray[1]
+                ax.annotate("", xy=tip, xytext=(px, py),
                             arrowprops=dict(arrowstyle="->", color=LEVEL_COLOURS.get(f.level, ANNOTATION), lw=1.0))
         if f.where is None or f.level not in LEVEL_COLOURS:
             continue

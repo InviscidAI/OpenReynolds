@@ -863,8 +863,11 @@ def geometry_text(result: Any) -> str:
     lines = []
     if result.error:
         lines.append(f"geometry: {result.error}")
+    # a BodyInBox record rebuilds with the flow-box flags the case writer used (the spec
+    # grammar has no key for the box); a passage's command is today's, unchanged
+    external = " ".join(_external_flags((getattr(result, "record", None) or {}).get("external")))
     rebuild = (f"`python3 {WORKSPACE_ROOT}/.toolbox/{result.script} . --spec geometry.json "
-               f"--scale {result.scale:g} --force")
+               + (external + " " if external else "") + f"--scale {result.scale:g} --force")
     if result.case_rel and result.meshed:
         lines.append(
             f"case written to {result.case_rel} and meshed there: geometry.json is the spec, "
@@ -920,6 +923,15 @@ def geometry_text(result: Any) -> str:
         lines.append("")
         lines.append(result.report)
     return "\n".join(lines)
+
+
+def _external_flags(external: Any) -> list[str]:
+    """`case.external_flags` without importing the geometry package at module load (the
+    kernel loads gmsh lazily; the tool text must not)."""
+    if not external:
+        return []
+    from openreynolds.geometry.case import external_flags
+    return external_flags(external)
 
 
 def _claims_block(table: Any) -> list[str]:

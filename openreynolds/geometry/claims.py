@@ -410,12 +410,23 @@ def fmt_angle(v: float) -> str:
     return f"{float(v):.1f}"
 
 
+ZERO_BELOW = 1e-9
+"""A printed number this close to zero is zero: the kernel's turtle leaves sin(pi) =
+1.2e-16 on coordinates that are 0, and a table that reads (-1.225e-16, 18) says nothing
+a person or the model can use (7.2 prints (0, 18))."""
+
+
+def _clean(v: float) -> float:
+    v = float(v)
+    return 0.0 if abs(v) < ZERO_BELOW else v
+
+
 def fmt_g(v: float) -> str:
-    return f"{float(v):.4g}"
+    return f"{_clean(v):.4g}"
 
 
 def fmt_point(p) -> str:
-    return f"({float(p[0]):.4g}, {float(p[1]):.4g})"
+    return f"({_clean(p[0]):.4g}, {_clean(p[1]):.4g})"
 
 
 def _fmt_at(at) -> str:
@@ -868,7 +879,7 @@ def _ends_by_name(m: Measurements) -> list:
 def ends_on_same_side(m: Measurements, of: str, args: dict) -> Verdict:
     """Both open ends' outward normals lie within 20 degrees of the same axis direction
     (`side`, when given: -x, +x, -y, +y)."""
-    ends = _ends_by_name(m)
+    ends = sorted(_ends_by_name(m), key=lambda e: (round(e.centre[0], 6), round(e.centre[1], 6)))
     if len(ends) < 2:
         return Verdict(False, f"{len(ends)} open end(s); two are needed", expected=str(args.get("side", "same side")))
     words = [_dir_word(e.outward_normal) for e in ends]
@@ -1546,8 +1557,17 @@ def _patch_row(c: Claim, m: Measurements, plan: "Plan | None" = None) -> Complia
             text = f"{c.patch} at {at}, the {c.side} side"
             return _row(c, "pass", text, c.side, mid)
         lo, hi = (x0, x1) if axis == "x" else (y0, y1)
-        actual = _side_word(mid, m.bounds) if mid else "nowhere on the extent"
-        text = f"{c.patch} at {at}: the {actual.upper()} end ({axis} = {float(mid[i]) if mid else 0:.4g} of {lo:.4g}..{hi:.4g})"
+        # the end is named along the claim's own axis (left / right for x, bottom / top for
+        # y): the request said "right", so the answer is which of the two it is
+        if mid is None:
+            actual = "nowhere on the extent"
+        else:
+            low, high = ("left", "right") if axis == "x" else ("bottom", "top")
+            actual = low if float(mid[i]) <= (lo + hi) / 2 else high
+        # the extent's ends to three figures: the sampled bounds (3.5) miss an arc's apex
+        # by a thousandth, and "-4..34" is the range a person reads, not "-3.999..34"
+        text = (f"{c.patch} at {at}: the {actual.upper()} end ({axis} = {fmt_g(mid[i]) if mid else 0} of "
+                f"{_clean(lo):.3g}..{_clean(hi):.3g})")
         return _row(c, "fail", text, c.side, mid, detail=_serpentine_side_detail(c, m, plan))
     at = c.at
     if isinstance(at, (list, tuple)) and len(at) == 2:

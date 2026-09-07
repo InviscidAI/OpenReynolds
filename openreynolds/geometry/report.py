@@ -14,7 +14,7 @@ import math
 from typing import TYPE_CHECKING
 
 from . import _toolbox  # noqa: F401  (mesh2d.leg_lines by path, for the plain leg table)
-from .claims import ComplianceTable, fmt_angle, fmt_point
+from .claims import ComplianceTable, fmt_angle, fmt_g, fmt_point
 from .lint import Finding, errors as _errors, warnings as _warnings
 from .measure import Measurements
 
@@ -41,11 +41,20 @@ def _section(word: str, first: str) -> str:
 
 
 def _g(v) -> str:
-    return f"{float(v):.4g}"
+    return fmt_g(v)
+
+
+def _len(v) -> str:
+    """A length to four significant figures with at least one decimal, the way section 7
+    prints a patch's length: 3.0, 60.0, 31.42, 294.6, 600.0."""
+    text = f"{float(v):.4g}"
+    if "e" in text:
+        return text
+    return text if "." in text else text + ".0"
 
 
 def _f2(v) -> str:
-    return f"{float(v):.2f}"
+    return f"{float(v):.2f}".replace("-0.00", "0.00")
 
 
 def _pt(p) -> str:
@@ -267,13 +276,41 @@ def _passage_summary(name: str, sol, m: Measurements | None) -> list[str]:
     out = [line]
     extras = []
     if feat.get("spacing") is not None:
-        extras.append(f"parallel straight legs {_g(feat['spacing'])} apart")
+        pair = _parallel_pair(legs)
+        which = f"straight legs {pair[0]} and {pair[1]} parallel" if pair else "parallel straight legs"
+        extras.append(f"{which}, {_g(feat['spacing'])} apart")
     if feat.get("end_side") == "same" and start is not None:
-        extras.append(f"both ends on x = {_g(start[0])}")
+        extras.append(f"both ends on x = {_g(start[0])}" + _end_side_word(start, m))
     if extras:
         out[0] += ";"
         out.append("; ".join(extras))
     return out
+
+
+def _parallel_pair(legs: list[dict]) -> tuple[int, int] | None:
+    """The 1-based indices of the two longest straight legs whose headings are 180
+    degrees apart within 2 (the pair `spacing` is measured between)."""
+    lines = [(i + 1, r) for i, r in enumerate(legs) if r.get("kind") == "line"]
+    best = None
+    for a_i, a in lines:
+        for b_i, b in lines:
+            if b_i <= a_i:
+                continue
+            turn = abs((float(a.get("heading", 0)) - float(b.get("heading", 0)) + 180) % 360 - 180)
+            if abs(turn - 180) > 2:
+                continue
+            length = float(a.get("length", 0)) + float(b.get("length", 0))
+            if best is None or length > best[0]:
+                best = (length, a_i, b_i)
+    return (best[1], best[2]) if best else None
+
+
+def _end_side_word(start, m: Measurements | None) -> str:
+    """' (the left)' / ' (the right)' for two ends on one x, read off the extent."""
+    if m is None:
+        return ""
+    x0, _, x1, _ = m.bounds
+    return " (the left)" if float(start[0]) <= (x0 + x1) / 2 else " (the right)"
 
 
 def _serpentine_summary(name: str, sol, m: Measurements | None) -> list[str]:
@@ -328,7 +365,45 @@ def _disk_summary(name: str, sol, m: Measurements | None) -> list[str]:
     return [line.lstrip(", ")]
 
 
+def _boolean_summary(name: str, sol, m: Measurements | None) -> list[str] | None:
+    """A Fuse / Cut / Intersect fluid: its operands, one face, and its islands named
+    by the features whose outlines sit inside them (7.4: `duct - cyl: one face, 1
+    island (cyl)`); None when the Solved is not a boolean's."""
+    operands = (sol.solved or {}).get("of") or [(sol.params or {}).get("a"), (sol.params or {}).get("b")]
+    if sol.kind not in ("Fuse", "Cut", "Intersect") or not all(operands):
+        return None
+    sign = {"Fuse": " | ", "Cut": " - ", "Intersect": " & "}[sol.kind]
+    feat = (m.features.get(name) if m is not None else None) or {}
+    islands = feat.get("islands", m.islands if m is not None else None)
+    line = f"{sign.join(str(o) for o in operands)}: one face"
+    if islands is not None:
+        n = int(islands)
+        named = []
+        if m is not None and n:
+            for h in m.holes or []:
+                cx, cy = h.centroid
+                for fname, f in m.features.items():
+                    c = f.get("centre")
+                    if f.get("radius") is None or not _is_point(c):
+                        continue
+                    if abs(float(c[0]) - cx) < 1e-6 * _span_of(m) + 1e-9 and abs(float(c[1]) - cy) < 1e-6 * _span_of(m) + 1e-9:
+                        named.append(fname)
+        line += f", {n} island{'s' if n != 1 else ''}" + (f" ({', '.join(named)})" if named and len(named) == n else "")
+    return [line]
+
+
+def _is_point(c) -> bool:
+    return isinstance(c, (list, tuple)) and len(c) == 2 and all(isinstance(v, (int, float)) for v in c)
+
+
+def _span_of(m: Measurements) -> float:
+    return max(float(m.extent[0]), float(m.extent[1]), 1e-9)
+
+
 def _generic_summary(name: str, sol, m: Measurements | None) -> list[str]:
+    boolean = _boolean_summary(name, sol, m)
+    if boolean is not None:
+        return boolean
     feat = (m.features.get(name) if m is not None else None) or {}
     parts = []
     for key in ("width", "length", "extent", "islands", "area"):
@@ -576,7 +651,7 @@ def _port_source(name: str, plan: "Plan | None") -> str:
 def _patch_text(name: str, p: dict, plan: "Plan | None") -> str:
     n = int(p.get("n", len(p.get("curves", []))))
     length = p.get("length")
-    text = f"{name} ({n} edge{'s' if n != 1 else ''}" + (f", {float(length):.1f})" if length is not None else ")")
+    text = f"{name} ({n} edge{'s' if n != 1 else ''}" + (f", {_len(length)})" if length is not None else ")")
     mids = p.get("midpoints") or []
     if n == 1 and mids:
         text += f" at {_pt(mids[0])}"
@@ -673,7 +748,10 @@ def text(printed: str, notes: list[str], seconds: float, findings: list[Finding]
     out = script_lines(printed, notes, seconds)
     if m is None and plan is None:
         if refusal:
-            out.extend(f"{INDENT}{line}" if line.strip() else "" for line in refusal.rstrip().splitlines())
+            # the whole text is the refusal, as the API wrote it in the section-5 format
+            # (3.8 and 4.3: the model sees it verbatim); the print-back's column applies
+            # to a refusal only when it sits under LINT beside a partial
+            out.extend(refusal.rstrip().splitlines())
         elif findings:
             out.extend(lint_lines(findings))
         return "\n".join(out)

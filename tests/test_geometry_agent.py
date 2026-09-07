@@ -311,8 +311,8 @@ def test_a_lint_error_lap_asks_for_the_whole_script_and_never_commits_as_is(back
 
 
 def test_the_claims_lap_retries_once_on_a_malformed_file(backend, store, available):
-    bad = json.dumps({"unit": "mm", "kind": "passage", "flow": "+x", "claims": [{"id": "c1", "kind": "measure",
-                                                                                   "says": "3 mm wide", "measure": "width", "of": "main"}]})
+    bad = json.dumps({"schema": "openreynolds.geometry/claims-1", "unit": "mm", "kind": "passage", "flow": "+x",
+                      "claims": [{"id": "c1", "kind": "measure", "says": "3 mm wide", "measure": "width", "of": "main"}]})
     agent = Scripted(cfg(), backend, store, "/work/s", [bad, CLAIMS_JSON, SCRIPT_REPLY, "COMMIT"])
     result = agent.run("anything")
     assert result.agreed and result.laps == 2
@@ -721,6 +721,20 @@ def test_the_tool_without_a_desk_says_where_the_same_thing_is(ctx):
     out, failed = tools.dispatch(ctx, "geometry", {"request": "a tesla valve"})
     assert not failed
     assert isinstance(out, str) and "mesh2d.py --spec" in out
+
+
+def test_the_rebuild_command_carries_a_body_in_box_flow_box():
+    """A BodyInBox record rebuilds on the instance with the flags the case writer used
+    (the spec grammar has no key for the box); a passage's command is today's."""
+    external = {"ahead": 2, "behind": 5, "above": 2, "below": 2, "far": "slip", "body": "wing"}
+    boxed = GeometryResult(report="", png=PNG, case_rel="/work/s/wing", laps=1, seconds=1.0, agreed=True, scale=0.001,
+                           record={"ops": [], "external": external})
+    text = tools.geometry_text(boxed)
+    assert ("/work/.toolbox/mesh2d.py . --spec geometry.json --external --ahead 2 --behind 5 --above 2 --below 2 "
+            "--far slip --scale 0.001 --force") in text
+    plain = GeometryResult(report="", png=PNG, case_rel="/work/s/valve", laps=1, seconds=1.0, agreed=True, scale=0.001,
+                           record={"ops": []})
+    assert "/work/.toolbox/mesh2d.py . --spec geometry.json --scale 0.001 --force" in tools.geometry_text(plain)
 
 
 def test_the_tool_reports_a_desk_that_did_not_agree(ctx):

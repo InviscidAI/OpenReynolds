@@ -25,11 +25,10 @@ the text the API wrote; a Row refusal carries a `partial`, and the lap still get
 single instance built, measured and drawn (3.15); anything else the script raises is rc 3
 with the traceback trimmed to the script's own lines.
 
-Where a kernel instrument is not built yet (a unit still lands in parallel and its
-function raises NotImplementedError), the build and the measure run through
-`toolbox/mesh2d.py` by path -- the same ops, the same OCC build, mesh2d's own checks turned
-into Findings -- so `--spec` works today and each instrument takes over the moment it
-exists. Those fallbacks are marked `transitional` and go with Phase 1's integration.
+Every instrument is the kernel's own: compile.build, measure, lint.judge, claims.comply,
+report.text, preview.draw and compile.record. The one path that is not a script's is
+`--spec` (a fixture or a record's ops through `plan_from_spec`), which runs the same lap
+with the ops as written so the record rebuilds through `mesh2d.py --spec` unchanged.
 """
 from __future__ import annotations
 
@@ -60,7 +59,7 @@ from dataclasses import dataclass, field  # noqa: E402
 from . import _toolbox, claims, compile, library, lint, measure, preview, report, runner, sketch  # noqa: E402
 from .compile import Plan, Solved  # noqa: E402
 from .lint import Finding  # noqa: E402
-from .measure import Measurements, RowMeasure  # noqa: E402
+from .measure import Measurements  # noqa: E402
 from .sketch import PortIntent, SketchError  # noqa: E402
 
 EXIT_OK, EXIT_LINT, EXIT_RAISED, EXIT_TIMEOUT, EXIT_REFUSED = 0, 2, 3, 4, 5
@@ -221,13 +220,6 @@ def _constructor_hint(message: str) -> str | None:
     return None
 
 
-def kernel_refusal(exc: BaseException) -> str:
-    """rc 3 for a kernel instrument that is not there (a unit still landing raises
-    NotImplementedError): nothing in the script to fix, reported to the desk."""
-    return _refusal_text("E-KERNEL", f"the kernel refused: {str(exc).splitlines()[0] if str(exc) else type(exc).__name__}",
-                         "(nothing in the script to fix: an instrument is not built; reported to the desk)")
-
-
 def kernel_failure(lap: "Lap", exc: BaseException) -> int:
     """rc 3 with a result.json for an exception the kernel raised outside the script (a
     gmsh error, a bug in an instrument): the desk still gets a result and a text that says
@@ -289,8 +281,6 @@ def script_failure(exc: BaseException, src: str) -> tuple[str, str, str]:
             hint = "(the API does the arithmetic: footprints, landings and pitches are in the print-back)"
         elif isinstance(exc, NameError):
             hint = _bound_names()
-        elif isinstance(exc, NotImplementedError):
-            hint = "(nothing in the script to fix: the kernel refused; reported to the desk)"
         else:
             hint = "see the reference card"
     lines = []
@@ -307,41 +297,6 @@ def script_failure(exc: BaseException, src: str) -> tuple[str, str, str]:
 
 
 # -- specs (the ops grammar) as plans -------------------------------------------------------
-
-
-def _record_rules(rules: list[dict]) -> list[dict]:
-    """Rules as the record writes them: `{"name", "at": "x:min" | "near:x,y"}` or
-    `{"name", "box": [..]}`, whichever form they came in."""
-    out = []
-    for r in rules or []:
-        item = {"name": r["name"]}
-        if r.get("kind") and r["kind"] not in ("inlet", "outlet") or (r.get("kind") and r["kind"] != r["name"]
-                                                                      and r["name"] not in ("inlet", "outlet")):
-            item["kind"] = r["kind"]
-        at = r.get("at")
-        if isinstance(at, str):
-            item["at"] = at
-        elif isinstance(at, (list, tuple)) and len(at) == 3:
-            axis, how, value = at
-            if how == "near":
-                item["at"] = f"near:{value[0]:g},{value[1]:g}"
-            elif how in ("min", "max"):
-                item["at"] = f"{'xy'[axis]}:{how}"
-            else:
-                item["at"] = f"{'xy'[axis]}:{value:g}"
-        elif r.get("box") is not None:
-            item["box"] = [float(v) for v in r["box"]]
-        out.append(item)
-    return out
-
-
-def _mesh2d_rules(rules: list[dict]) -> list[dict]:
-    """Rules in mesh2d's parsed form, whichever form the plan carries."""
-    mesh2d = _toolbox.load("mesh2d")
-    parsed = [r for r in rules or [] if isinstance(r.get("at"), tuple) or isinstance(r.get("box"), tuple)]
-    if len(parsed) == len(rules or []):
-        return list(rules or [])
-    return mesh2d.parse_rules(_record_rules(rules))
 
 
 def mirror_baked(ops: list[dict]) -> bool:
@@ -420,30 +375,6 @@ class Analysis:
     table: object | None
     curve_patch: dict[int, str]
     resolved_rules: list[dict]
-    transitional: list[str] = field(default_factory=list)
-    """Which instruments ran through mesh2d instead of the kernel (empty once every unit landed)."""
-
-
-def build_face(gmsh, plan: Plan) -> tuple[int, dict, list[dict], bool]:
-    """compile.build, or (transitional) mesh2d.build_face on the plan's ops at scale 1
-    with mesh2d's own landing check; returns (face, legs, checks, transitional)."""
-    try:
-        face, legs, checks = compile.build(gmsh, plan)
-        return face, legs, list(checks), False
-    except NotImplementedError:
-        pass
-    mesh2d = _toolbox.load("mesh2d")
-    ops, _ = mesh2d.parse_spec({"ops": plan.ops, "patches": []})
-    legs: dict = {}
-    checks: list = []
-    try:
-        face = mesh2d.build_face(gmsh, ops, scale=1.0, legs=legs, checks=checks)
-    except SystemExit as exc:
-        text = str(exc)
-        code = "E-DISJOINT" if "separate faces" in text else "E-BUILD"
-        raise SketchError(code, "fluid", text) from None
-    mesh2d.landing_checks(gmsh, face, legs, 1.0, checks)
-    return face, legs, checks, True
 
 
 def _reference_w_min(gmsh, face: int, plan: Plan) -> float:
@@ -453,275 +384,30 @@ def _reference_w_min(gmsh, face: int, plan: Plan) -> float:
     return max(min(x1 - x0, y1 - y0) / 10.0, 1e-9)
 
 
-def _findings_from_checks(checks: list[dict], plan: Plan) -> list[Finding]:
-    """mesh2d's check dicts as Findings (transitional: lint.from_legacy is U2's): the
-    codes of section 5 by the sentence each check writes, every instance reference
-    rewritten to `<row>[k]`, 0-based (D29)."""
-    out = []
-    for c in checks:
-        what, level, where = c["what"], c["level"], c.get("where")
-        m = re.match(r"(repeat|channel) '([^']+)': (.*)", what, re.S)
-        subject_kind, subject_name, rest = (m.group(1), m.group(2), m.group(3)) if m else ("", "", what)
-        subject = {"repeat": f"Row '{subject_name}'", "channel": f"Passage '{subject_name}'"}.get(subject_kind, "fluid")
-        numbers: dict = {}
-        if "overlap by" in what:
-            code = "E-OVERLAP"
-            area = re.search(r"overlap by ([\d.eE+-]+)", what)
-            numbers["area"] = float(area.group(1)) if area else 0.0
-        elif "touch (gap 0)" in what:
-            code = "E-TOUCH"
-            numbers["gap"] = 0.0
-        elif "gap between copies" in what:
-            code = "I-GAP"
-            gap = re.search(r"gap between copies ([\d.eE+-]+)", what)
-            numbers["gap"] = float(gap.group(1)) if gap else 0.0
-        elif "lands at" in what:
-            code = "E-LAND"
-        elif "was read as a wall" in what:
-            code = "E-PORT-OPEN"
-        elif re.search(r"\d+ (inlet|outlet) edges", what):
-            code = "E-PORT-COUNT"
-        else:
-            code = {"error": "E-CHECK", "warn": "W-CHECK", "info": "I-CHECK"}[level]
-        if subject_kind == "repeat":
-            rest = re.sub(r"copies (\d+) and (\d+)", lambda mm: f"{subject_name}[{int(mm.group(1)) - 1}] and "
-                                                              f"{subject_name}[{int(mm.group(2)) - 1}]", rest)
-        out.append(Finding(level=level, code=code, subject=subject, what=rest,
-                           where=None if where is None else (float(where[0]), float(where[1])), numbers=numbers))
-    return out
-
-
-def legacy_analysis(gmsh, face: int, plan: Plan, legs: dict, checks: list[dict]) -> Analysis:
-    """The measure and the judge through mesh2d by path (transitional: the kernel's
-    `measure`/`lint` are U2's): mesh2d's classification for the patches, its port and
-    count checks, its short edges as W-/E-SHORT-EDGE against a thirtieth and a third of
-    the reference width, and a Measurements record of what it reads."""
-    mesh2d = _toolbox.load("mesh2d")
-    rules = _mesh2d_rules(plan.rules)
-    w_min = _reference_w_min(gmsh, face, plan)
-    built = mesh2d.measure2d(gmsh, face, short_below=w_min / 3.0)
-    axis = mesh2d.longest_axis2d(built.extent)
-    curve_patch = mesh2d.classify_curves(gmsh, built, axis, rules)
-    checks = list(checks)
-    mesh2d.port_checks(gmsh, built, curve_patch, legs, 1.0, checks)
-    mesh2d.count_checks(gmsh, built, curve_patch, rules, checks)
-    findings = _findings_from_checks(checks, plan)
-    for c, length in built.short:
-        mx, my = mesh2d.curve_midpoint(gmsh, c)
-        error = length < w_min / 30.0
-        findings.append(Finding(
-            level="error" if error else "warn", code="E-SHORT-EDGE" if error else "W-SHORT-EDGE", subject="fluid",
-            what=(f"edge of {length:.2g} at ({mx:.4g}, {my:.4g}): shorter than a "
-                  f"{'thirtieth' if error else 'third'} of the {w_min:g} passage ({w_min / (30 if error else 3):.2g})"),
-            fix="a sliver no cell can sit on" if error else
-                "a corner poking through a wall, or a leg shorter than the channel is wide; the cells there will be poor",
-            where=(mx, my), numbers={"length": float(length)}))
-    order = {"error": 0, "warn": 1, "info": 2}
-    findings.sort(key=lambda f: order.get(f.level, 3))
-    patches: dict[str, dict] = {}
-    for c in built.curves:
-        name = curve_patch.get(c, "walls")
-        entry = patches.setdefault(name, {"curves": [], "n": 0, "length": 0.0, "midpoints": []})
-        entry["curves"].append(int(c))
-        entry["n"] += 1
-        entry["length"] += float(built.lengths[c])
-        entry["midpoints"].append(list(mesh2d.curve_midpoint(gmsh, c)))
-    shortest_tag = min(built.curves, key=lambda c: built.lengths[c]) if built.curves else None
-    shortest = ((float(built.lengths[shortest_tag]), tuple(mesh2d.curve_midpoint(gmsh, shortest_tag)))
-                if shortest_tag is not None else (0.0, (0.0, 0.0)))
-    features = {name: {"kind": s.kind, **{k: v for k, v in (s.solved or {}).items()}} for name, s in plan.features.items()}
-    features["fluid"] = {"extent_x": built.extent[0], "extent_y": built.extent[1], "area": built.area,
-                         "islands": built.islands, "edges": len(built.curves), "narrowest_passage": None}
-    rows: dict[str, RowMeasure] = {}
-    gaps = {f.subject: f.numbers.get("gap") for f in findings if f.code == "I-GAP"}
-    for name, info in plan.instances.items():
-        step = info.get("step") or (0.0, 0.0)
-        fp = info.get("footprint") or (0.0, 0.0)
-        rows[name] = RowMeasure(name=name, count=int(info.get("count", 0)), pitch=math.hypot(*step),
-                                footprint=(float(fp[0]), float(fp[1])), gap=info.get("gap"),
-                                gap_measured=gaps.get(f"Row '{name}'"), anchors=[],
-                                span=(float(built.bounds[0]), float(built.bounds[2])))
-    channels = [op["name"] for op in plan.ops if op.get("op") == "channel"]
-    m = Measurements(
-        units=plan.units, scale=plan.scale, bounds=tuple(float(v) for v in built.bounds),
-        extent=(float(built.extent[0]), float(built.extent[1])), area=float(built.area), islands=int(built.islands),
-        n_curves=len(built.curves), shortest_edge=shortest, patches=patches, legs=legs, features=features,
-        rows=rows, open_ends=[], junctions=[], vertices=[], passage=None, reference_width=w_min,
-        reference_width_from=(f"declared by '{channels[0]}'" if plan.declared_widths and channels else "extent / 10"),
-        holes=[], flow=None)
-    return Analysis(face=face, legs=legs, checks=checks, m=m, findings=findings, table=None, curve_patch=curve_patch,
-                    resolved_rules=_record_rules(plan.rules), transitional=["measure", "lint"])
-
-
 def analyse(gmsh, plan: Plan, claim_set, face: int | None = None, legs: dict | None = None,
             checks: list | None = None) -> Analysis:
-    """Build (unless a face is given), walk, resolve the ports, measure, judge, comply."""
-    transitional: list[str] = []
+    """Build (unless a face is given), walk, resolve the ports, measure, judge, comply:
+    the kernel's pipeline in the order section 3 fixes it. The port findings
+    (E-PORT-*) that `resolve_ports` returns join the judge's unless it already carries
+    the same one."""
     if face is None:
-        face, legs, checks, fallback = build_face(gmsh, plan)
-        if fallback:
-            transitional.append("build")
+        face, legs, checks = compile.build(gmsh, plan)
     legs = legs or {}
     checks = list(checks or [])
-    try:
-        w_min = _reference_w_min(gmsh, face, plan)
-        wk = measure.walk(gmsh, face, w_min)
-        ends = measure.open_ends(gmsh, wk, w_min, None)
-        curve_patch, resolved_rules, port_findings = measure.resolve_ports(gmsh, wk, plan, ends)
-        m = measure.measure(gmsh, face, plan, wk, legs, curve_patch, claim_set)
-        findings = list(lint.judge(gmsh, face, plan, wk, m, checks, claim_set))
-        seen = {(f.code, f.subject, f.what) for f in findings}
-        findings += [f for f in port_findings if (f.code, f.subject, f.what) not in seen]
-        analysis = Analysis(face=face, legs=legs, checks=checks, m=m, findings=findings, table=None,
-                            curve_patch=curve_patch, resolved_rules=resolved_rules, transitional=transitional)
-    except NotImplementedError:
-        analysis = legacy_analysis(gmsh, face, plan, legs, checks)
-        analysis.transitional = transitional + analysis.transitional
-    if claim_set is not None:
-        try:
-            analysis.table = claims.comply(claim_set, analysis.m, analysis.findings, plan)
-        except NotImplementedError:
-            analysis.table = None
-            analysis.transitional.append("claims")
-    return analysis
+    w_min = _reference_w_min(gmsh, face, plan)
+    wk = measure.walk(gmsh, face, w_min)
+    ends = measure.open_ends(gmsh, wk, w_min, None)
+    curve_patch, resolved_rules, port_findings = measure.resolve_ports(gmsh, wk, plan, ends)
+    m = measure.measure(gmsh, face, plan, wk, legs, curve_patch, claim_set)
+    findings = list(lint.judge(gmsh, face, plan, wk, m, checks, claim_set))
+    seen = {(f.code, f.subject, f.what) for f in findings}
+    findings += [f for f in port_findings if (f.code, f.subject, f.what) not in seen]
+    table = None if claim_set is None else claims.comply(claim_set, m, findings, plan)
+    return Analysis(face=face, legs=legs, checks=checks, m=m, findings=findings, table=table,
+                    curve_patch=curve_patch, resolved_rules=resolved_rules)
 
 
 # -- the print-back, the verdict, the record -------------------------------------------------
-
-
-def _table_lines(table) -> list[str]:
-    try:
-        return list(table.lines())
-    except NotImplementedError:
-        pass
-    n = len(table.rows)
-    lines = [f"{n} claims: {table.passed} pass, {table.failed} FAIL, {table.unmeasurable} not measurable"]
-    for r in table.rows:
-        verdict = "FAIL" if r.verdict == "fail" else r.verdict.replace("_", " ")
-        lines.append(f"{r.id:<4} {r.says[:34]:<34} {r.measured[:44]:<44} {r.expected[:16]:<16} {verdict}")
-        if r.detail:
-            lines.append(f"     {r.detail}")
-    return lines
-
-
-def verdict(findings: list[Finding], table) -> tuple[str, bool]:
-    """report.verdict, or (transitional) the same rule: ready only with no lint error and
-    a table that is ok; 'not ready: no claims' without a table."""
-    try:
-        return report.verdict(findings, table)
-    except NotImplementedError:
-        pass
-    parts = []
-    codes = [f.code for f in findings if f.level == "error"]
-    if codes:
-        parts.append("LINT " + ", ".join(dict.fromkeys(codes)))
-    if table is None:
-        parts.append("no claims")
-    else:
-        failing = table.failing_ids()
-        if failing:
-            ids = ", ".join(failing)
-            parts.append(f"claims {ids} FAIL   (COMMIT disagrees: {ids} records it)")
-        elif not table.ok():
-            parts.append("no checkable claim was recorded")
-    if not parts:
-        return "ready to COMMIT", True
-    return "not ready: " + "; ".join(parts), False
-
-
-def _feature_summary(s: Solved) -> str:
-    source = s.solved or s.params or {}
-    bits = []
-    for k, v in source.items():
-        if isinstance(v, (dict, list, tuple)) and len(str(v)) > 40:
-            continue
-        if isinstance(v, float):
-            bits.append(f"{k} {v:.4g}")
-        else:
-            bits.append(f"{k} {v}")
-    text = ", ".join(bits)
-    return text if len(text) <= 110 else text[:107] + "..."
-
-
-def render_report(printed: str, notes: list[str], seconds: float, findings: list[Finding], plan: Plan | None,
-                  m: Measurements | None, legs: dict, table, reference, refusal: str | None = None) -> str:
-    """report.text, or (transitional) the section-6.1 layout for what this unit has."""
-    try:
-        return report.text(printed, notes, seconds, findings, plan, m, legs, table, reference, refusal=refusal)
-    except NotImplementedError:
-        pass
-    printed_lines = [ln for ln in (printed or "").splitlines() if ln.strip()]
-    counts = []
-    counts.append(f"{len(printed_lines)} print{'s' if len(printed_lines) != 1 else ''}" if printed_lines else "no prints")
-    if notes:
-        counts.append(f"{len(notes)} note{'s' if len(notes) != 1 else ''}")
-    out = [f"SCRIPT     ran in {seconds:.1f} s; {', '.join(counts)}"]
-    out += [f"           > {ln}" for ln in printed_lines]
-    out += [f"           note: {n}" for n in notes]
-    if m is None:
-        if refusal:
-            out += refusal.splitlines()
-        return "\n".join(out)
-    errors = [f for f in findings if f.level == "error"]
-    warns = [f for f in findings if f.level == "warn"]
-    if errors or warns:
-        head = ", ".join(x for x in (f"{len(errors)} error{'s' if len(errors) != 1 else ''}" if errors else "",
-                                     f"{len(warns)} warning{'s' if len(warns) != 1 else ''}" if warns else "") if x)
-        out.append(f"LINT       {head}" + (" (errors block)" if errors else ""))
-    else:
-        out.append("LINT       clean")
-    order = {"error": 0, "warn": 1, "info": 2}
-    for f in sorted(findings, key=lambda f: order.get(f.level, 3)):
-        out += [f"           {ln}" for ln in f.text().splitlines()]
-    if plan is not None and plan.features:
-        first = True
-        for name, s in plan.features.items():
-            lead = "FEATURES   " if first else "           "
-            out.append(f"{lead}{name:<9} {s.kind:<10} {_feature_summary(s)}")
-            first = False
-    if legs:
-        mesh2d = _toolbox.load("mesh2d")
-        axis = 0 if m.extent[0] >= m.extent[1] else 1
-        first = True
-        for ln in mesh2d.leg_lines(legs, axis):
-            out.append(("LEGS       " if first else "           ") + ln)
-            first = False
-    w, h = m.extent
-    scale = m.scale or 1.0
-    unit = m.units
-    passage = f"narrowest passage {m.passage.min:.4g}   " if m.passage else ""
-    out.append(f"MEASURED   extent {w:.4g} x {h:.4g} {unit} ({w * scale:.4g} x {h * scale:.4g} m)   area {m.area:.4g} {unit}2   "
-               f"islands {m.islands}   {passage}{m.n_curves} edges, shortest {m.shortest_edge[0]:.4g} at "
-               f"({m.shortest_edge[1][0]:.4g}, {m.shortest_edge[1][1]:.4g})")
-    cells = []
-    for name, info in m.patches.items():
-        n = info.get("n", len(info.get("curves", [])))
-        mids = info.get("midpoints") or []
-        where = f" at ({mids[0][0]:.4g}, {mids[0][1]:.4g})" if len(mids) == 1 else ""
-        cells.append(f"{name} ({n} edge{'s' if n != 1 else ''}, {info.get('length', 0.0):.4g}){where}")
-    out.append("PATCHES    " + "     ".join(cells))
-    if table is not None:
-        first = True
-        for ln in _table_lines(table):
-            out.append(("CLAIMS     " if first else "           ") + ln)
-            first = False
-    elif refusal:
-        out.append("CLAIMS     not evaluated: the sketch did not build")
-    else:
-        out.append("CLAIMS     none (no claims file)")
-    if reference is not None:
-        hd = f"Hausdorff {reference.hausdorff:.4g}" if reference.hausdorff is not None else "Hausdorff not measured"
-        out.append(f"REFERENCE  library {reference.entry} (preset {reference.preset}, approved {reference.approved_at}): {hd}")
-    else:
-        out.append("REFERENCE  none (no approved library entry matches)")
-    if refusal:
-        # the sketch did not build: the claims were never evaluated, so the verdict names
-        # the refusal alone (section 6.1), never "no claims"
-        codes = ", ".join(dict.fromkeys(f.code for f in findings if f.level == "error"))
-        out.append(f"VERDICT    not ready: LINT {codes}")
-    else:
-        out.append(f"VERDICT    {verdict(findings, table)[0]}")
-    return "\n".join(out)
 
 
 def _json_safe(value):
@@ -732,34 +418,6 @@ def _json_safe(value):
     if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
         return None
     return value
-
-
-def build_record(sk, plan: Plan, script: str, m: Measurements, findings: list[Finding], table,
-                 resolved_rules: list[dict], claims_payload: dict | None, gmsh=None) -> dict:
-    """compile.record, or (transitional, and for a spec with no Sketch) the record of
-    section 4.2 assembled here."""
-    if sk is not None:
-        try:
-            return compile.record(sk, plan, script, m, findings, table, resolved_rules)
-        except NotImplementedError:
-            pass
-    version = ""
-    if gmsh is not None:
-        try:
-            version = gmsh.option.getString("General.Version")
-        except Exception:  # noqa: BLE001 - the version is decoration
-            version = ""
-    return _json_safe({
-        "format": "openreynolds.geometry/1", "units": plan.units, "scale": plan.scale,
-        "ops": plan.ops, "patches": resolved_rules or _record_rules(plan.rules),
-        "ports": [p.as_dict() for p in plan.ports], "script": script,
-        "script_sha256": hashlib.sha256(script.encode("utf-8")).hexdigest() if script else "",
-        "features": {k: v.as_dict() for k, v in plan.features.items()}, "instances": plan.instances,
-        "apart": [list(a) for a in plan.apart], "claims": claims_payload,
-        "compliance": None if table is None else table.as_dict(),
-        "lint": [f.as_dict() for f in findings], "measurements": m.as_dict(),
-        "built_with": {"gmsh": version, "at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
-    })
 
 
 # -- the reference gate ---------------------------------------------------------------------
@@ -780,6 +438,8 @@ def reference_gate(name: str | None):
             raise Refusal("E-REFERENCE-UNAPPROVED", refusal)
         golden = json.loads((library.GOLDEN / f"{entry.name}.json").read_text(encoding="utf-8"))
     except (NotImplementedError, KeyError, FileNotFoundError, OSError, ValueError):
+        # NotImplementedError: the library is U0's stub until U6 lands, and a library
+        # that is not built approves nothing (D32)
         raise Refusal("E-REFERENCE-UNAPPROVED", refusal) from None
     return library.ReferenceMatch(entry=entry.name, preset=str(golden.get("preset") or approval.get("preset") or ""),
                                   approved_at=str(approval.get("at", "")),
@@ -798,8 +458,8 @@ class Refusal(Exception):
 
 
 def load_claims(path: Path | None) -> tuple[object | None, dict | None, list[str]]:
-    """(ClaimSet, the payload, the parse notes); a claims lap that the parser (U3) does
-    not yet judge leaves the set None with a note, so the lap still builds."""
+    """(ClaimSet, the payload, the parse notes: one line per claim, the claims-lap answer
+    of 6.2, printed under SCRIPT so the model sees what was judged)."""
     if path is None:
         return None, None, []
     try:
@@ -809,8 +469,6 @@ def load_claims(path: Path | None) -> tuple[object | None, dict | None, list[str
                                                 "the claims lap writes a JSON object in the claims schema")) from None
     try:
         claim_set, lines = claims.parse(payload)
-    except NotImplementedError:
-        return None, payload, ["claims not evaluated: the compliance judge is not built yet"]
     except claims.ClaimsError as exc:
         raise Refusal("E-CLAIMS", _refusal_text("E-CLAIMS", f"claims file: {exc}",
                                                 "every claim needs id, kind and says; see the claims schema")) from None
@@ -858,8 +516,8 @@ class Lap:
         return rc
 
     def refuse(self, code: str, text: str, tb: str | None = None, rc: int = EXIT_REFUSED) -> int:
-        report_text = render_report(self.printed, self.notes, self.seconds(), [], None, None, {}, None,
-                                    self.reference, refusal=text)
+        report_text = report.text(self.printed, self.notes, self.seconds(), [], None, None, {}, None,
+                                  self.reference, refusal=text)
         return self.write(rc=rc, record=None, m=None, findings=[], table=None, report_text=report_text,
                           verdict_text=f"not ready: {code}", ready=False, drawn=False,
                           error=text.splitlines()[0] if text else code, tb=tb, code=code)
@@ -891,32 +549,32 @@ def run_plan(gmsh, lap: Lap, plan: Plan, sk, claim_set, *, refusal: SketchError 
             lap.notes.append(f"no picture: {type(exc).__name__}: {str(exc).splitlines()[0][:160] if str(exc) else ''}".rstrip(": "))
             with contextlib.suppress(OSError):
                 lap.preview_path.unlink(missing_ok=True)
-    for note in analysis.transitional:
-        lap.notes.append(f"{note}: through mesh2d until its unit lands")
-    record = build_record(sk, plan, lap.script, m, findings, table, analysis.resolved_rules, lap.claims_payload, gmsh)
-    report_text = render_report(lap.printed, lap.notes, lap.seconds(), findings, plan, m, analysis.legs, table,
-                                lap.reference, refusal=None if refusal is None else str(refusal))
+    record = _json_safe(compile.record(sk, plan, lap.script, m, findings, table, analysis.resolved_rules,
+                                       claims=lap.claims_payload))
+    report_text = report.text(lap.printed, lap.notes, lap.seconds(), findings, plan, m, analysis.legs, table,
+                              lap.reference, refusal=None if refusal is None else str(refusal))
     if refusal is not None:
         verdict_text, ready = f"not ready: LINT {refusal.code}", False
         return lap.write(rc=EXIT_REFUSED, record=record, m=m, findings=findings, table=None, report_text=report_text,
                          verdict_text=verdict_text, ready=False, drawn=drawn, error=str(refusal).splitlines()[0],
                          tb=None, code=refusal.code, hausdorff=hausdorff)
-    verdict_text, ready = verdict(findings, table)
+    verdict_text, ready = report.verdict(findings, table)
     rc = EXIT_LINT if lint.has_errors(findings) else EXIT_OK
     return lap.write(rc=rc, record=record, m=m, findings=findings, table=table, report_text=report_text,
                      verdict_text=verdict_text, ready=ready, drawn=drawn, error=None, tb=None, code=None,
                      hausdorff=hausdorff)
 
 
-def refused_with_partial(gmsh, lap: Lap, exc: SketchError) -> int:
+def refused_with_partial(gmsh, lap: Lap, exc: SketchError, sk=None) -> int:
     """The rc-5 path (3.15): with a `partial`, the single instance is planned by
-    `compile.plan_feature`, built, measured and drawn with the refusal under LINT; without
-    one, or when the partial cannot be built either, the refusal alone."""
+    `compile.plan_feature`, built, measured and drawn with the refusal under LINT (the
+    record is the partial's, written against the sketch that exists); without one, or
+    when the partial cannot be built either, the refusal alone."""
     if exc.partial is not None:
         try:
             plan_p = compile.plan_feature(exc.partial, gmsh)
-            return run_plan(gmsh, lap, plan_p, None, None, refusal=exc)
-        except (NotImplementedError, SketchError, SystemExit, ValueError, KeyError, TypeError) as inner:
+            return run_plan(gmsh, lap, plan_p, sk if sk is not None else sketch._current_or_none(), None, refusal=exc)
+        except (SketchError, SystemExit, ValueError, KeyError, TypeError) as inner:
             lap.notes.append(f"the refused item could not be drawn alone: {str(inner).splitlines()[0][:120]}")
     return lap.refuse(exc.code, str(exc))
 
@@ -956,13 +614,11 @@ def exec_script(src: str, work: Path, claims_path: Path | None = None, reference
               started=time.monotonic(), script=src)
     try:
         lap.reference = reference_gate(reference)
-        claim_set, lap.claims_payload, claim_notes = load_claims(claims_path)
+        claim_set, lap.claims_payload, _ = load_claims(claims_path)
     except Refusal as exc:
         return lap.refuse(exc.code, exc.text)
-    lap.notes += claim_notes
 
-    with contextlib.suppress(NotImplementedError):
-        sketch.Sketch._reset()
+    sketch.Sketch._reset()
     captured = io.StringIO()
     try:
         code = builtins.compile(src, "script.py", "exec")
@@ -977,7 +633,7 @@ def exec_script(src: str, work: Path, claims_path: Path | None = None, reference
         lap.printed = clip_prints(captured.getvalue())
         try:
             with _gmsh_session("geometry") as gmsh:
-                return refused_with_partial(gmsh, lap, exc)
+                return refused_with_partial(gmsh, lap, exc, sketch._current_or_none())
         except Exception as inner:  # noqa: BLE001 - the kernel, not the script: rc 3 with a result.json
             return kernel_failure(lap, inner)
     except (Exception, SystemExit) as exc:  # noqa: BLE001 - every failure of the script is rc 3 with its own frames
@@ -987,28 +643,22 @@ def exec_script(src: str, work: Path, claims_path: Path | None = None, reference
     lap.printed = clip_prints(captured.getvalue())
 
     try:
-        sk = sketch.Sketch.current()
+        sk = sketch.Sketch.only()   # E-NO-SKETCH / E-MANY-SKETCHES before anything about its fluid
         lap.notes += list(getattr(sk, "notes", []) or [])
     except SketchError as exc:
         return lap.refuse(exc.code, str(exc))
-    except NotImplementedError as exc:
-        return lap.refuse("E-KERNEL", kernel_refusal(exc), rc=EXIT_RAISED)
     try:
         with _gmsh_session("geometry") as gmsh:
             try:
                 plan = compile.plan(sk, claim_set, gmsh)
             except SketchError as exc:
-                return refused_with_partial(gmsh, lap, exc)
-            except NotImplementedError as exc:
-                return lap.refuse("E-KERNEL", kernel_refusal(exc), rc=EXIT_RAISED)
+                return refused_with_partial(gmsh, lap, exc, sk)
             try:
                 return run_plan(gmsh, lap, plan, sk, claim_set)
             except SketchError as exc:
                 if exc.code == "E-KERNEL-STATE":
                     return lap.refuse(exc.code, str(exc), rc=EXIT_RAISED)
                 return lap.refuse(exc.code, str(exc))
-            except NotImplementedError as exc:
-                return lap.refuse("E-KERNEL", kernel_refusal(exc), rc=EXIT_RAISED)
     except Exception as exc:  # noqa: BLE001 - whatever else the kernel raised: the lap still answers, rc 3
         return kernel_failure(lap, exc)
 
@@ -1023,7 +673,7 @@ def exec_spec(payload, work: Path, scale: float | None = None, claims_path: Path
               script=script)
     try:
         lap.reference = reference_gate(reference)
-        claim_set, lap.claims_payload, claim_notes = load_claims(claims_path)
+        claim_set, lap.claims_payload, _ = load_claims(claims_path)
         plan = plan_from_spec(payload, scale)
     except Refusal as exc:
         return lap.refuse(exc.code, exc.text)
@@ -1031,7 +681,6 @@ def exec_spec(payload, work: Path, scale: float | None = None, claims_path: Path
         return lap.refuse(exc.code, str(exc))
     except SystemExit as exc:
         return lap.refuse("E-SPEC", _refusal_text("E-SPEC", f"spec: {exc}", "see the ops grammar in mesh2d.py"))
-    lap.notes += claim_notes
     try:
         with _gmsh_session("geometry") as gmsh:
             try:
@@ -1288,11 +937,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--approve NAME needs --by <who>")
     handler = {"build": cmd_build, "preview": cmd_preview, "check": cmd_check,
                "reference": cmd_reference, "golden": cmd_golden}[args.command]
-    try:
-        return handler(args)
-    except NotImplementedError as exc:
-        print(f"not available yet: {exc}")
-        return 1
+    return handler(args)
 
 
 if __name__ == "__main__":

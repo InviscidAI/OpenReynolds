@@ -112,6 +112,20 @@ def test_case_args_are_todays_writer_call(tmp_path):
     assert "--scale" not in case.case_args(tmp_path, "mesh", 1.0, case.CasePaths())
 
 
+def test_case_args_carry_a_body_in_box_flow_box(tmp_path):
+    """A BodyInBox record's `external` (4.2) becomes mesh2d's --external flags, before
+    --scale; a passage's command is unchanged."""
+    external = {"ahead": 2, "behind": 5, "above": 2, "below": 2, "far": "slip", "body": "wing"}
+    assert case.external_flags(external) == ["--external", "--ahead", "2", "--behind", "5", "--above", "2",
+                                             "--below", "2", "--far", "slip"]
+    assert case.external_flags(None) == []
+    args = case.case_args(tmp_path, "mesh", 0.001, case.CasePaths(), external=external)
+    assert args[args.index("--force") + 1:] == ["--external", "--ahead", "2", "--behind", "5", "--above", "2",
+                                                "--below", "2", "--far", "slip", "--scale", "0.001"]
+    assert case.case_args(tmp_path, "mesh", 0.001, case.CasePaths(), external=None) == \
+        case.case_args(tmp_path, "mesh", 0.001, case.CasePaths())
+
+
 def test_patches_agree_on_a_boundary_file():
     assert case.boundary_patch_names(BOUNDARY) == ["inlet", "outlet", "walls", "frontAndBack"]
     assert case.patches_agree(BOUNDARY, ["inlet", "outlet"]) == ([], [])

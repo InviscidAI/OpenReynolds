@@ -67,12 +67,29 @@ class CasePaths:
         return CasePaths(**{k: v for k, v in d.items() if k in CasePaths.__dataclass_fields__})
 
 
-def case_args(local: Path, study: str, scale: float, paths: CasePaths) -> list[str]:
+def external_flags(external: dict | None) -> list[str]:
+    """mesh2d's flow-box flags for a BodyInBox record (the record's `external` key, 4.2):
+    `--external --ahead 2 --behind 5 --above 2 --below 2 --far slip`. The spec grammar
+    has no key for the box, so the writer and the rebuild command both carry it this way;
+    an empty list for a passage."""
+    if not external:
+        return []
+    flags = ["--external"]
+    for name in ("ahead", "behind", "above", "below"):
+        if external.get(name) is not None:
+            flags += [f"--{name}", f"{float(external[name]):g}"]
+    if external.get("far"):
+        flags += ["--far", str(external["far"])]
+    return flags
+
+
+def case_args(local: Path, study: str, scale: float, paths: CasePaths, external: dict | None = None) -> list[str]:
     """The commit: today's `mesh2d.py <case> --spec geometry.json --study ... --preview
-    outline.png --force [--scale s]`, in a child interpreter so a gmsh crash cannot take
-    the desk down."""
+    outline.png --force [--external ...] [--scale s]`, in a child interpreter so a gmsh
+    crash cannot take the desk down. `external` is the record's flow box (a BodyInBox)."""
     args = [sys.executable, str(_toolbox.TOOLBOX / "mesh2d.py"), str(local), "--spec", str(local / paths.record),
             "--study", study, "--preview", str(local / paths.outline_png), "--force"]
+    args += external_flags(external)
     if scale and scale != 1.0:
         args += ["--scale", str(scale)]
     return args
@@ -131,7 +148,8 @@ def write_case(local: Path, record: dict, script: str, claims: dict | None, tabl
         (local / paths.claims).write_text(json.dumps(claims, indent=1), encoding="utf-8")
     if table is not None:
         (local / paths.compliance).write_text(json.dumps(table.as_dict(), indent=1), encoding="utf-8")
-    proc = subprocess.run(case_args(local, study, scale, paths), capture_output=True, text=True, timeout=300)
+    proc = subprocess.run(case_args(local, study, scale, paths, external=record.get("external")),
+                          capture_output=True, text=True, timeout=300)
     output = (proc.stdout + proc.stderr).strip()
     if proc.returncode != 0:
         raise RuntimeError(output[-1500:] or f"exit {proc.returncode}")

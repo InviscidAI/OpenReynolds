@@ -75,8 +75,8 @@ def test_build_writes_result_json_report_record_and_preview(tmp_path, capsys):
     order = [line.split()[0] for line in report.splitlines() if line[:1].isupper()]
     assert order == ["SCRIPT", "LINT", "FEATURES", "LEGS", "MEASURED", "PATCHES", "CLAIMS", "REFERENCE", "VERDICT"]
     assert "MEASURED   extent 60 x 14.25 mm (0.06 x 0.01425 m)" in report and "islands 4" in report
-    assert re.search(r"leg 3  to y=1\.5  from \(4\.088, 7\.536\) heading 260 deg \(-x\) to \(3\.024, 1\.5\)", report)
-    assert "inlet (1 edge, 3) at (0, 0)" in report and "outlet (1 edge, 3) at (60, 0)" in report
+    assert re.search(r"leg 3  to y=1\.5\s+from \(4\.088, 7\.536\) heading 260 deg \(-x\) to \(3\.024, 1\.5\)", report)
+    assert "inlet (1 edge, 3.0) at (0, 0)" in report and "outlet (1 edge, 3.0) at (60, 0)" in report
 
 
 def test_build_rc_2_on_lint_errors_still_draws(tmp_path):
@@ -163,9 +163,10 @@ def test_build_rc_5_with_a_partial_draws_the_instance_and_prints_features_and_le
     assert "           !! ERROR  E-ROW-FIT  Row 'loops': 4 x Bypass 'loop' do not fit on main.top (60 long)" in report
     assert "4 x 19.74 = 78.96 needed before any gap; 60 - 2 x margin 1.5 = 57 available" in report
     assert re.search(r"^FEATURES   loop\s+Bypass", report, re.M)
-    assert re.search(r"leg 1  line 3  from \(0, 1\.5\) heading 20 deg \(\+x\) to \(2\.819, 2\.526\)", report)
+    # the leg table in the design's own padding (7.1: "line 3     from", "to y=1.5   from")
+    assert re.search(r"leg 1  line 3\s+from \(0, 1\.5\) heading 20 deg \(\+x\) to \(2\.819, 2\.526\)", report)
     assert re.search(r"leg 2  arc  r 4\.5 \(outer 6, inner 3\) centre \(1\.28, 6\.755\) 205 deg left: heading 20 -> 225", report)
-    assert re.search(r"leg 3  to y=1\.5  from \(-1\.9\d*, 9\.9\d*\) heading 225 deg \(-x\) to \(-10\.3\d, 1\.5\)", report)
+    assert re.search(r"leg 3  to y=1\.5\s+from \(-1\.9\d*, 9\.9\d*\) heading 225 deg \(-x\) to \(-10\.3\d, 1\.5\)", report)
     assert "CLAIMS     not evaluated: the sketch did not build" in report
     assert report.splitlines()[-1] == "VERDICT    not ready: LINT E-ROW-FIT"
     assert result["verdict"] == {"text": "not ready: LINT E-ROW-FIT", "ready": False}
@@ -224,7 +225,7 @@ def test_a_kernel_exception_is_rc_3_with_a_result_json(tmp_path, monkeypatch):
     def broken(*args, **kwargs):
         raise RuntimeError("boom in the record")
 
-    monkeypatch.setattr(cli, "build_record", broken)
+    monkeypatch.setattr(cli.compile, "record", broken)
     work = tmp_path / "lap"
     rc = cli.exec_script('s = Sketch(units="mm")\nprint("kept")\n', work, None, None, work / "preview.png")
     assert rc == 3
@@ -236,7 +237,7 @@ def test_a_kernel_exception_is_rc_3_with_a_result_json(tmp_path, monkeypatch):
     assert "boom in the record" in result["traceback"] and "cli.py" in result["traceback"]
     assert result["record"] is None and result["measurements"] is None
     # the spec lap has the same net under it
-    monkeypatch.setattr(cli, "build_record", broken)
+    monkeypatch.setattr(cli.compile, "record", broken)
     rc = cli.main(["build", "--spec", str(write_spec(tmp_path, T05_SPEC)), "--out", str(tmp_path / "spec")])
     assert rc == 3 and result_of(tmp_path / "spec")["code"] == "E-KERNEL"
 
@@ -260,8 +261,8 @@ def test_check_on_the_t05_record_prints_the_tables_and_exits_0(tmp_path, capsys)
     out = capsys.readouterr().out
     assert rc == 0
     assert "MEASURED   extent 300 x 60 mm (0.3 x 0.06 m)" in out and "islands 1" in out
-    assert "cylinder (1 edge, 31.42)" in out and "inlet (1 edge, 60) at (0, 30)" in out
-    assert "outlet (1 edge, 60) at (300, 30)" in out and "walls (2 edges, 600)" in out
+    assert "cylinder (1 edge, 31.42)" in out and "inlet (1 edge, 60.0) at (0, 30)" in out
+    assert "outlet (1 edge, 60.0) at (300, 30)" in out and "walls (2 edges, 600.0)" in out
     assert "LINT       clean" in out
     assert "FEATURES   duct      Rect" in out and re.search(r"^\s+cyl\s+Disk", out, re.M)
 
@@ -412,10 +413,13 @@ FEATURES   main      Passage    width 3, one leg 60 along +x, start (0, 0) end (
                                 lands 10.34 upstream of its anchor, footprint -12.46..+7.28, height 11.25
            loops     Row        NOT SOLVED (E-ROW-FIT)
 LEGS       loop (one instance, anchor at u = 0 for the table)
-             leg 1  line 3     from (0, 1.5) heading 20 deg (+x) to (2.82, 2.53)
-             leg 2  arc  r 4.5 (outer 6, inner 3) centre (1.28, 6.75) 205 deg left: heading 20 -> 225
-             leg 3  to y=1.5   from (-1.90, 9.94) heading 225 deg (-x) to (-10.34, 1.5)   lands on main.top
+             leg 1  line 3     from (0, 1.5) heading 20 deg (+x) to (2.819, 2.526)
+             leg 2  arc  r 4.5 (outer 6, inner 3) centre (1.28, 6.755) 205 deg left: heading 20 -> 225
+             leg 3  to y=1.5   from (-1.902, 9.937) heading 225 deg (-x) to (-10.34, 1.5)   lands on main.top
 """
+    # the leg numbers are the design's to four significant figures (7.1 lap 2 is the
+    # "exact tool output": (10.06, 2.526), (8.52, 6.755)); the lap-1 block of the design
+    # rounds the same points by hand (2.82, 2.53, 6.75, -1.90, 9.94)
     squash = lambda text: [" ".join(line.split()) for line in text.strip().splitlines()]  # noqa: E731
     report = squash(result["report"])
     for line in squash(expected):

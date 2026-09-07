@@ -144,6 +144,11 @@ class FakeSketch:
         return FakeSketch._made[0]
 
     @staticmethod
+    def only() -> "FakeSketch":
+        """The one sketch a script made (the real registry's name for it)."""
+        return FakeSketch.current()
+
+    @staticmethod
     def _reset() -> None:
         FakeSketch._made.clear()
 

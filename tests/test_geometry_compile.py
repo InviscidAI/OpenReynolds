@@ -376,9 +376,11 @@ def test_t01_builds_to_the_measured_numbers(gm):
     assert b.area == pytest.approx(513.7, abs=0.1)
     assert b.extent == pytest.approx((60, 14.25), abs=0.005)
     shortest = min(b.lengths, key=b.lengths.get)
-    assert b.lengths[shortest] == pytest.approx(1.501, abs=0.001)
+    # the shortest edge is the row's margin, w/2 = 1.5 exactly in the closed form; the
+    # design's 1.501 is the probe's, whose anchor is the rounded 7.24 (7.2391 solved)
+    assert b.lengths[shortest] == pytest.approx(1.501, abs=0.0015)
     sx0, sy0, _, sx1, sy1, _ = gm.model.getBoundingBox(1, shortest)
-    assert (sx0, sy0, sy1) == pytest.approx((0, 1.5, 1.5), abs=1e-6) and sx1 == pytest.approx(1.501, abs=0.001)
+    assert (sx0, sy0, sy1) == pytest.approx((0, 1.5, 1.5), abs=1e-6) and sx1 == pytest.approx(1.501, abs=0.0015)
     assert b.short == []
     assert len(checks) == 1 and checks[0]["level"] == "info"
     assert re.search(r"gap between copies 2\.43[78]", checks[0]["what"])
@@ -412,7 +414,10 @@ def test_t02_to_t05_build_to_the_measured_numbers(gm):
         face, legs, checks, b = built(gm, plan_, name)
         assert len(b.curves) == edges, name
         assert b.area == pytest.approx(area, abs=0.5), name
-        assert b.islands == islands and b.extent == pytest.approx(extent, abs=1e-6), name
+        # the built extent comes from 64 samples per curve (3.5): an outer arc of radius r
+        # sampled that way misses its apex by r (1 - cos(90 deg / 63)), 0.0012 on T02's
+        # r = 4 bends, so the section-7 numbers are pinned to 2e-3
+        assert b.islands == islands and b.extent == pytest.approx(extent, abs=2e-3), name
         assert min(b.lengths.values()) == pytest.approx(shortest, abs=1e-6), name
         assert checks == [], name
         # the closed-form outline agrees with the built bounds
@@ -479,6 +484,67 @@ s.wall(box.body_edge, name="wing")
     assert plan_.edge_targets["box.body"]["kind"] == "loop" and len(plan_.edge_targets["box.body"]["points"]) == 64
     assert [r["name"] for r in plan_.rules] == ["inlet", "outlet", "farfield", "wing"]
     assert plan_.features["box"].kind == "BodyInBox"
+
+
+def test_a_body_in_a_box_records_its_flow_box_and_keeps_its_body_face(gm):
+    """The record carries the box (4.2's `external`, read by the case writer and the
+    rebuild command: the ops grammar has no key for it), and `build` cuts the box round a
+    copy so the body's face survives for lint.judge_body (`solved["body_face"]`)."""
+    plan_ = plan_of(BODY_IN_BOX)
+    gm.model.add("body_in_box")
+    face, legs, checks = gc.build(gm, plan_)
+    body_face = plan_.features["box"].solved["body_face"]
+    assert isinstance(body_face, int) and body_face != face
+    assert gm.model.occ.getMass(2, body_face) == pytest.approx(math.pi * 25, rel=1e-6)
+    x0, y0, x1, y1 = gc.sampled_bounds(gm, 2, face)
+    # the box is sized from the body's sampled bounds (3.17 edit 1): 64 samples on a
+    # circle of radius 5 sit 0.002 inside its extremes, and the box scales that by 2..5
+    assert (x0, y0, x1, y1) == pytest.approx((-25, -25, 55, 25), abs=0.05)
+    record = gc.record(Sketch.current(), plan_, BODY_IN_BOX, None, [], None, [])
+    assert record["external"] == {"ahead": 2, "behind": 5, "above": 2, "below": 2, "far": "slip", "body": "wing"}
+    assert "external" not in gc.record(Sketch.current(), plan_of(scripts.T05), scripts.T05, None, [], None, [])
+
+
+def test_a_hollow_body_in_a_box_is_refused_as_a_void(gm):
+    """E-VOID before the box is cut (the box minus an annulus is two faces): the hole's
+    area and centroid, and the fix of section 5."""
+    plan_ = plan_of(BODY_IN_BOX.replace('wing = s.disk(centre=(0, 0), radius=5, name="wing")',
+                                        'wing = s.annulus(centre=(0, 0), r_inner=2, r_outer=5, name="wing")'))
+    gm.model.add("hollow_body")
+    with pytest.raises(SketchError) as err:
+        gc.build(gm, plan_)
+    assert err.value.code == "E-VOID" and err.value.feature == "BodyInBox 'box'"
+    assert err.value.numbers["area"] == pytest.approx(math.pi * 4, rel=2e-3)
+    assert err.value.numbers["where"] == pytest.approx((0, 0), abs=1e-6)
+    # the hole's area is its 64-point polygon's (12.55 for pi r2 = 12.57): the loop is a
+    # curve, not a face OCC can weigh
+    assert "enclosed hole of 12.5 mm2 at (0, 0)" in str(err.value)
+    assert "the fluid was drawn instead of the solid; the tool cuts the flow box itself" in str(err.value)
+
+
+def test_apart_names_every_copy_of_a_feature_under_a_kept_mirror():
+    """s.apart(a, b) on a feature inside mirrored(keep=True) records the pair for the
+    original and for its `.mirror` copy (each is a part beside the other)."""
+    plan_ = plan_of(scripts.T01 + '''
+baffle = s.rect(origin=(20, 20), size=(5, 5), name="baffle")
+s.fluid = (main | loops | baffle).mirrored("x", at=60, keep=True)
+s.apart(loops, baffle, gap=1.0)
+''')
+    declared = {(a, b) for a, b, gap in plan_.apart if gap == 1.0}
+    assert declared == {("baffle", "loops"), ("baffle", "loops.mirror"), ("baffle.mirror", "loops"),
+                        ("baffle.mirror", "loops.mirror")}
+
+
+BODY_IN_BOX = '''
+s = Sketch(units="mm")
+wing = s.disk(centre=(0, 0), radius=5, name="wing")
+box = BodyInBox(wing, ahead=2, behind=5, above=2, below=2, name="box")
+s.fluid = box
+s.inlet(box.inlet)
+s.outlet(box.outlet)
+s.patch(box.farfield, name="farfield", kind="slip")
+s.wall(box.body_edge, name="wing")
+'''
 
 
 def test_a_mirrored_keep_copy_keeps_both_features():
