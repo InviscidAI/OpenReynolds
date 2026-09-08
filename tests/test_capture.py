@@ -95,6 +95,49 @@ def test_a_persistent_failure_is_dropped_with_a_warning():
     assert any("local mirror is complete" in w for w in warnings)
 
 
+def test_the_warning_names_what_was_lost(tmp_path):
+    """F-44. The count answered the wrong question: a dropped message leaves a gap
+    in the transcript on the web, a dropped artifact leaves a picture that exists on
+    the laptop and nowhere else, and "1 item" cannot tell them apart."""
+    warnings: list[str] = []
+    client = FakeClient(fail_times=99)
+    capture = Capture(client, "remote-1", warn=warnings.append)
+    png = tmp_path / "mesh_z.png"
+    png.write_bytes(b"png-bytes")
+
+    capture.message(41, "assistant", "hello")
+    capture.artifact(png, kind="render")
+    capture.result({"passed": True})
+    capture.close(timeout=5)
+
+    said = "; ".join(warnings)
+    assert "message seq 41 (assistant)" in said
+    assert "artifact mesh_z.png" in said
+    assert "the end-of-study result" in said
+
+
+def test_a_long_outage_is_counted_by_kind_rather_than_listed():
+    """Past a handful the names stop being readable, and the kinds are what is left
+    to act on. The first is still named, because it dates the outage."""
+    warnings: list[str] = []
+    capture = Capture(FakeClient(fail_times=99), "remote-1", warn=warnings.append)
+    for seq in range(20):
+        capture.message(seq, "assistant", "x")
+    capture.close(timeout=5)
+
+    said = warnings[0]
+    assert "dropped 20 item(s)" in said
+    assert "20 message(s)" in said
+    assert "first was message seq 0 (assistant)" in said
+    assert "seq 7" not in said, "the middle of a long outage is summarised, not listed"
+
+
+def test_nothing_dropped_says_nothing():
+    warnings: list[str] = []
+    Capture(FakeClient(), "remote-1", warn=warnings.append).close(timeout=5)
+    assert warnings == []
+
+
 def test_submitting_never_blocks_the_caller():
     """The study must not wait on the platform, even when it hangs."""
     gate = threading.Event()

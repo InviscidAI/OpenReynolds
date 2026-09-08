@@ -30,6 +30,13 @@ from .backend.hosted import FoamdClient
 _CONTENT_CAP = 20_000
 """Characters of any single captured message body. The local mirror keeps the full text."""
 
+_NAME_AT_MOST = 6
+"""How many dropped items are named individually before the warning counts kinds instead."""
+
+_REMEMBER_AT_MOST = 200
+"""A ceiling on the labels kept, so a platform that is down for a whole study cannot
+turn this into a second copy of the transcript in memory."""
+
 
 class Capture:
     """A fire-and-forget uploader for one study."""
@@ -44,8 +51,10 @@ class Capture:
         self.client = client
         self.study_id = study_id
         self._warn = warn or (lambda _msg: None)
-        self._queue: queue.Queue[Callable[[], None] | None] = queue.Queue()
+        self._queue: queue.Queue[tuple[str, Callable[[], None]] | None] = queue.Queue()
         self._dropped = 0
+        self._lost: list[str] = []
+        """What was dropped, by name, up to `_REMEMBER_AT_MOST` of them (F-44)."""
         self._worker = threading.Thread(target=self._drain, name="capture", daemon=True)
         self._worker.start()
 
@@ -83,7 +92,8 @@ class Capture:
 
     def message(self, seq: int, role: str, content: Any) -> None:
         payload = {"seq": seq, "role": role, "content": _cap_content(content)}
-        self._submit(lambda: self.client.post_messages(self.study_id, [payload]))
+        self._submit(f"message seq {seq} ({role})",
+                     lambda: self.client.post_messages(self.study_id, [payload]))
 
     def artifact(self, path: Path, kind: str | None = None) -> None:
         def send() -> None:
@@ -91,22 +101,46 @@ class Capture:
             mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
             self.client.post_artifact(self.study_id, path.name, data, kind or mime)
 
-        self._submit(send)
+        self._submit(f"artifact {path.name}", send)
 
     def result(self, payload: Any) -> None:
-        self._submit(lambda: self.client.post_result(self.study_id, payload))
+        self._submit("the end-of-study result",
+                     lambda: self.client.post_result(self.study_id, payload))
 
     def close(self, timeout: float = 10.0) -> None:
         """Drain what is queued, then stop. Bounded, so it cannot hang an exit."""
         self._queue.put(None)
         self._worker.join(timeout=timeout)
         if self._dropped:
-            self._warn(f"capture dropped {self._dropped} item(s) — the local mirror is complete")
+            self._warn(self._dropped_line())
+
+    def _dropped_line(self) -> str:
+        """What was lost, by name (F-44).
+
+        The count alone answered the wrong question. The behaviour it reports is
+        right -- capture is fire-and-forget by design and must never delay or fail a
+        study -- and the warning was honest that something went missing, but the only
+        question a person has on reading it is *what*, and a dropped message leaves a
+        gap in the web transcript while a dropped artifact leaves a picture that
+        exists on the laptop and nowhere else. Those are not the same loss. The queue
+        already held a callable per item, so a label alongside it costs nothing.
+
+        Long runs are summarised rather than listed: past a handful the names stop
+        being readable and the kinds are what is left to act on.
+        """
+        head = f"capture dropped {self._dropped} item(s) — the local mirror is complete"
+        if len(self._lost) <= _NAME_AT_MOST:
+            return f"{head}: {', '.join(self._lost)}"
+        kinds: dict[str, int] = {}
+        for label in self._lost:
+            kinds[label.split(" ", 1)[0]] = kinds.get(label.split(" ", 1)[0], 0) + 1
+        counted = ", ".join(f"{n} {kind}(s)" for kind, n in sorted(kinds.items()))
+        return f"{head}: {counted}; first was {self._lost[0]}"
 
     # -- worker ----------------------------------------------------------------
 
-    def _submit(self, task: Callable[[], None]) -> None:
-        self._queue.put(task)
+    def _submit(self, label: str, task: Callable[[], None]) -> None:
+        self._queue.put((label, task))
 
     def _drain(self) -> None:
         """Post each item once, and let go of whatever will not go.
@@ -120,13 +154,16 @@ class Capture:
         transcript can see; a message posted twice is a thing nobody sees.
         """
         while True:
-            task = self._queue.get()
-            if task is None:
+            item = self._queue.get()
+            if item is None:
                 return
+            label, task = item
             try:
                 task()
             except Exception:
                 self._dropped += 1
+                if len(self._lost) < _REMEMBER_AT_MOST:
+                    self._lost.append(label)
 
 
 def _cap_content(content: Any) -> Any:
