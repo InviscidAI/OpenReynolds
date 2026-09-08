@@ -111,6 +111,83 @@ repair rather than with a log; `first_look.py` puts the geometry, the whole mesh
 close-up on whatever was refined, the named patches and the counts on one contact sheet,
 which is one `read_file` rather than five.
 
+## Which mesher puts layers on a wall, and what each one costs
+
+snappyHexMesh's layer stage is a loop: it shrinks the mesh back from the wall, inserts
+prisms into the void, and then deletes them wherever a quality metric fails, `nLayerIter`
+times over. On the Wigley hull on 2026-08-31 that loop reached **88.6% coverage on its
+first growth iteration and eroded to 66.7% by its fiftieth** — and then printed 66.7% and
+exited 0. cfMesh's `cartesianMesh` extrudes a boundary-layer sheet over the patch and
+optimises quality *afterwards*, so nothing in it can un-extrude a face; on the same hull
+it covered 100.0%. Both numbers are the same measurement, `layer_report.py` in this
+directory, which is the only reason they can sit in one table: snappy reports its own
+layer table, cfMesh reports nothing comparable, and the hybrid route reports nothing at
+all. Where snappy does report a number the measurement agreed with it, 65.2% against
+66.7%, which is what licenses believing the 100.0%.
+
+Four rounds of that replication read the missing layers as a dictionary problem and spent
+their budget on layer parameters. They are not a dictionary problem, and the measurements
+say so in both directions: ESI's own `airfoilWithLayers` settings copied wholesale give
+**0%** on this hull rather than fixing it — its *thickness spec* is the poison
+(`relativeSizes true`, `minThickness 0.1`), because on this background a thickness
+expressed as a fraction of the local cell is larger than the cell it has to fit in — while
+the *termination controls* everyone expects to be the answer (`featureAngle 180`,
+`maxFaceThicknessRatio 1000`, `nGrow -1`, `slipFeatureAngle 10`) are worth **+1.6 points**,
+66.7% → 68.3%. They are worth adopting and they are not the missing ingredient.
+
+Which to reach for is a real choice with a real cost either way:
+
+- **snappyHexMesh** is the only one of the two that takes an absolute first-layer
+  thickness, so it is the only one where a **y⁺ target** can be *asked for*. Its coverage
+  then has to be measured rather than read off its own report.
+- **cfMesh `cartesianMesh`** covers the wall, and has **no y⁺ control at all**: the stack
+  is sized from the local cell, first cell = `edge / (1 + r + … + r^(n-1))`, and
+  `maxFirstLayerThickness` is a cap on that rather than a target. The 1.21 mm first cell
+  measured on the Wigley hull is a consequence of the cell size. Its octree is isotropic,
+  so a fine wall is fine everywhere, and the domain box is *geometry* — a closed
+  multi-solid surface, no `locationInMesh`, no `blockMesh`.
+- **The hybrid** — snappy's geometry with cfMesh's `generateBoundaryLayers` — reached
+  86.9% at a 10.68 mm first cell, took 21 minutes on a 246k-cell mesh, and left a mesh
+  that had to be repaired before anything would open it.
+
+cfMesh is **already on the image**, prebuilt in the `openfoam2512` package: no build, no
+volume, no exports. It was there for all four rounds. `cfmesh.py` in this directory is the
+route — `where` says whether it is still true of the image you are on, `box` writes the
+body and its domain box as one closed STL, `case` writes the `meshDict`, `prepare` makes
+an existing snappy mesh readable, and `check` reads back what the mesh actually got.
+
+Two things about that `meshDict` cost a round each and are worth carrying separately,
+because neither announces itself:
+
+- **The keys and the `surfaceFile` decide each other.** `surfaceFeatureEdges` splits
+  each solid at the feature angle and renames the pieces `<solid>_<index>`, so against
+  the `.ftr` it writes, every key has to be the regex `"hull_.*"` — a literal matches
+  nothing, warns *once* on the mesh side and **nothing at all** on the surface side
+  (that warning is compiled out), then meshes with no refinement and no layers at exit
+  0. Against a **raw** `.stl` or `.fms` the opposite holds: no rename has happened, the
+  solid names arrive verbatim, the literal is the right key, and `"hull_.*"` is the one
+  that misses. Most of cfMesh's own tutorials are the second kind. Read `surfaceFile`
+  before judging a key; `cfmesh.py check` does.
+- **`renameBoundary` merges everything it was not told about.** Because `defaultName` is
+  present, cfMesh folds every unnamed solid into *one* patch — added only where a solid
+  is in fact left unnamed, so naming all of them leaves no `farField` at all — and a
+  dictionary that names only the hull produces a **two-patch mesh**: `hull` and a `farField`
+  carrying all six domain-box faces, pointing six ways. There is then no inlet and no
+  outlet to attach a directional boundary condition to, and `case_gen.py`, which infers
+  the inlet from a patch's own normal aimed at the domain centre, cannot recover them.
+  Name the faces the case needs (`--patch xMin:patch`, `--symmetry yMin`) at the moment
+  the dictionary is written. A mesh that cannot be given an inlet and an outlet is not
+  the basis of the grid-convergence study the rest of this section is arguing for.
+
+The reason any of this matters beyond one hull: the erosion is **silent and monotonic**,
+so a study reads snappy's own number, calls it a mesh-quality problem and re-tunes. An
+earlier grid study had to be thrown away because coverage varied 75/88/91% across its
+members while Cv/Cf drifted 1.009 → 1.159 — it had measured mesh-dependent wall treatment
+and called it discretisation error. **Until layer coverage is reproducible across a grid
+family there is no defensible grid-convergence study on any body with a thin trailing edge
+or a sharp bilge**, which is most of marine and most of external aero. Measure coverage on
+every member of a ladder before extrapolating anything from it.
+
 ## Before a solve
 
 The mesh being built is not the same question as the case being runnable, and the
@@ -231,6 +308,92 @@ under-relaxation makes a marginally stable steady solve diverge, that is not a n
 failure to be patched; it is among the strongest evidence available that the steady
 formulation was holding an unsteady flow together by numerical damping.
 
+## When the picture and the answer say different numbers
+
+Three studies have now shipped a deliverable that contradicted itself, and all three
+failed the same way: the claim and the artefact that was supposed to support it were
+produced by different code, and nothing ever put the two numbers side by side.
+
+**The backward-facing step.** The reattachment length was computed twice, by two
+scripts written in the same session. One walked the wall shear, found sign changes at
+0.21, 6.32, 7.86 and 9.97, and read x_r/h = 6.32 — right; 0.21 is the corner eddy,
+6.32 closes the primary bubble, and it is 4% above Gartling's 6.1. The other, the one
+that drew the delivered figure, read 7.5667 — 24% above the benchmark. The written
+answer quoted 6.4, pointed the reader at the figure, and the figure was annotated
+"reattachment x/h=7.57" with a green line drawn there. Nothing reconciled the three
+numbers. A reader who trusts the picture — which is what a picture is for — came away
+with the wrong one, and both numbers had been printed minutes apart in the same
+session's tool output.
+
+**The ONERA M6 round-1 notes** said the upper-surface contour "shows the classic
+lambda-shock herringbone pattern clearly". It does not. The structure in that image is
+a trailing-edge numerical artefact, on the wrong part of the chord and running the
+wrong way, and only a person looking at the picture caught it. That is the expensive
+version: it turns a clean negative result into a false positive.
+
+**The Tesla-valve geometry** passed its island count and violated every geometric
+clause it had been given — the branch was 60° where shallow was asked for, the return
+ran with the flow instead of against it, the outer radius was 4 mm instead of 6.
+It passed because the report measured none of those three properties, so there was
+nothing for a reviewer to disagree with.
+
+What follows from that, concretely:
+
+- **A figure should carry the number it was drawn from.** `claims.py` stamps it into
+  the PNG as a `tEXt` chunk, where it survives everything that moves the file's bytes
+  around -- fetching it to a laptop, renaming it, mailing it, embedding it in
+  `gallery.html`, whose images are the file's own bytes in base64. It does not survive
+  anything that *redraws* the picture, and the contact sheet redraws every panel, so
+  the sheet carries pixels and no claim. `claims.py check` then puts every claim next
+  to every other claim of the same quantity and next to what the written answer says.
+  A contradiction inside one deliverable is arithmetic, not judgement, and it is cheap
+  to find.
+- **Two numbers only compare if they are in the same units, and a unit nobody measured
+  is worse than no unit at all.** The first version of `reattach.py` stamped "m" onto
+  a number it had no way to know the unit of; `claims.py` will not compare across a
+  unit mismatch, so that one invented word silently switched off the very comparison
+  both files existed for, and the report printed its all-clear over the F-36 pair. A
+  pair that cannot be compared is now printed as not compared. Neither tool guesses a
+  conversion, and neither is allowed to be quiet about declining.
+- **A report of a shape is worth what it measured.** If the brief says shallow, the
+  report says what angle. If it says 6 mm, the report says what radius came out.
+  A property nobody measured cannot be disagreed with, and an unmeasured property is
+  where a wrong answer sits comfortably.
+- **A picture is a claim.** Saying an image shows something is an assertion about the
+  image, and it can be wrong on its own — read the picture again against what would
+  have to be true for the claim to hold (where on the chord, running which way) before
+  writing the sentence.
+
+## Wall shear, reattachment, and the sign you do not have to know
+
+Reattachment and separation are read off the sign changes of the streamwise wall shear
+along the wall. The crossings are the easy part; what to do with four of them is not,
+and it is where the step study lost its number:
+
+- The **first** sign change on a backward-facing step is the corner eddy — the small
+  counter-rotating structure in the step corner, which gives the floor back to the
+  recirculation at around 0.2 h. It is a separation, not the reattachment.
+- The **last** is the downstream end of a secondary bubble, if the wall carries one.
+- The **primary reattachment** is the downstream end of the longest reversed-flow run.
+  That is a rule, not a law: where the downstream separation is the longer one -- a
+  diffuser, a stalled aerofoil with a long trailing bubble -- it names that instead,
+  so a wall carrying more than one bubble is a wall where the rule has to be stated.
+- A bubble still reversed at the last face on the patch has not reattached anywhere the
+  mesh can see, and there is no number to report: the domain is too short for the
+  question.
+
+Which sign of tau means attached flow is a convention, not physics. OpenFOAM's
+`wallShearStress` function object and a hand-computed `nu dU/dy` do not agree about it,
+which is why wrong-signed wall plots keep turning up. You do not have to know it: along
+one wall tau tracks the near-wall velocity up to a single constant sign, so the sign
+relation is measurable off `U` — and which way downstream is comes from the mean
+velocity over the *whole* domain, not off the wall, because a wall truncated before its
+flow reattaches is mostly bubble and anything that asks the wall gets it backwards.
+`reattach.py` does all of that, prints the two naive answers beside the primary one,
+reports the local face spacing as the resolution of the number, and rounds the answer
+to what the wall can actually see. 7.5667 asserts a ten-thousandth of a step height on
+a wall that could not place it better than a face.
+
 ## Reading a mesh's quality
 
 Warn-tier metrics couple to numerics rather than being pass/fail: high non-orthogonality
@@ -263,7 +426,10 @@ the wetted area on the surfaces that matter sits in the wall treatment's valid r
 Grid convergence: Richardson extrapolation presumes monotone convergence, and real triplets
 often do not deliver it. If the sign of the change reverses across three grids, the honest
 output is the spread across the ladder as an interval, labelled oscillatory — not a
-grid-convergence percentage that presumes the thing it is missing.
+grid-convergence percentage that presumes the thing it is missing. It also presumes the
+wall treatment is the same on every member, which snappy's layer erosion quietly breaks —
+measure coverage on each grid before extrapolating across them, and see "Which mesher puts
+layers on a wall" above.
 
 ## Per-class starting points
 

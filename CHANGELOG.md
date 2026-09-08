@@ -37,8 +37,69 @@ All notable changes to this project are recorded here. The format follows
   change in words. It replaces the CAD-spec editor, whose spec language went with the
   toolbox that read it.
 
+### Added
+
+- `toolbox/disk.py` -- what is filling the workspace and what of it is safe to delete
+  (F-56). There is one disk: an account is capped at one instance, a new study joins the
+  existing one, and every study ever run is a sibling directory under `/work` sharing a
+  single 20 GB quota, with no retention policy and no owner. Measured 2026-09-08 at
+  30.8 GB used against that quota, with a live 24 MB study unable to write; 24.5 GB of it
+  was regenerable scratch. `report` ranks by size and says how much of each directory
+  could be produced again; `prune` removes only that and never an input, a log, a result,
+  a figure or an `Allrun`. Dry run unless `--apply`, refuses to guess which study, and
+  never deletes a whole study directory.
+- `casebundle.py` -- the case itself, captured at session end. The capture plane has
+  always carried the conversation and never the work: measured over 215 production
+  studies, the transcript is there for essentially all of them, an artifact for 40%, a
+  results payload for 12%, and the case definition, mesh and solver logs for **none**. So
+  every mesh and every `Allrun` this product has made lived in exactly one place, on that
+  shared disk. The bundle is built from the local mirror (no extra network) in tiers,
+  irreplaceable first -- definition, record, notes, geometry, then mesh and latest fields,
+  which a resume can rebuild and re-solve. `definition + record` is about 4 MB a study, so
+  the part that cannot be reproduced always fits. Nothing is dropped silently: the report
+  and the `MANIFEST.json` inside the archive both name what was left out and why.
+- `toolbox/cfmesh.py` -- cfMesh reachable from the toolbox, with the four traps that each
+  cost a round encoded so they cannot be walked into (F-53). snappy's layer coverage
+  erodes 88.6% -> 66.7% over fifty iterations on a thin hull while cfMesh covers 100% of
+  the same wall at its defaults, and cfMesh has been prebuilt in the image all along.
+  What it costs is stated rather than glossed: no y+ control.
+- `toolbox/reattach.py` and `toolbox/claims.py` -- one blessed reattachment implementation,
+  and the number a figure was drawn from stamped into the figure (F-36). A study once
+  delivered a figure annotated 7.57 beside an answer that said 6.4 and reconciled neither.
+
 ### Fixed
 
+- A redirect on a request carrying a body is no longer followed blind (F-47). httpx
+  re-issues a 301/302/303 on a POST as a **GET with no body**, so the blanket
+  `follow_redirects=True` added for F-45 made any redirect on an upload a body-losing
+  event. 307/308 and bodyless requests are followed; a 303 is followed and *remembered*,
+  so a 4xx collected through a hop the body did not travel on is treated as ambiguous
+  rather than as a fact about the request; 301/302 on a body-carrying request are refused
+  and named. And `put_tree` still holds the archive it built, so on a `400 not a valid
+  tar.gz archive` it opens those bytes and, if they are a readable gzipped tar, says so:
+  the bytes that arrived are not the bytes that were sent. The message used to point at
+  the wrong party, and the wrong party is the only one that can prove it.
+- `describe_job` no longer labels every `killed_by` "matched kill_on line". That was right
+  while a `kill_on` regex was the only writer; foamd now writes the field on every
+  terminal state that is a kill, and only one of six producers is a log line. The old
+  label would have told the model a vanished container was a regex match.
+- A session no longer stops a workspace with somebody else's work still running on it
+  (F-46). Teardown asked only whether another session had the instance up when this one
+  joined it, which is the wrong question about a detached job: jobs outlive sessions by
+  design, and a job started outside any session leaves no flag anywhere, so the next
+  session to start the instance also owned it and stopped it on the way out. A detached
+  rendering job died that way with six of its eight steps done and its two animation
+  passes holding empty output directories. `Backend.active_jobs()` asks the service what
+  is actually running -- one read of the job rows, which starts no container -- and the
+  workspace is left up, and named, when anything is. A listing that fails answers
+  "nothing" and says so, because a workspace left up on an unanswerable question bills
+  until a reaper notices.
+- The capture warning says what it lost (F-44). `capture dropped 1 item(s)` reported a
+  count and nothing else, and the only question a person has on reading it is *what*: a
+  dropped message leaves a gap in the transcript on the web, a dropped artifact leaves a
+  picture that exists on the laptop and nowhere else. Up to six items are now named
+  (`artifact mesh_z.png`, `message seq 41 (assistant)`); past that the kinds are counted
+  and the first is named, because the middle of a long outage is not readable.
 - A word in a comment is no longer a finish. The mesh desk's `MESH_DONE` was matched
   anywhere in a bash block, and the brief hands the desk that token -- so a step whose
   comment said `# will echo MESH_DONE once checkMesh passes` had its actual command

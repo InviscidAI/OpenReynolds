@@ -10,6 +10,7 @@ import io
 import tarfile
 import threading
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -148,22 +149,200 @@ def _json(response: httpx.Response) -> Any:
 
 
 def _redirect_error(response: httpx.Response) -> BackendError:
-    """A 3xx that reached a decoder is a client that was built without redirects.
+    """A 3xx that reached a decoder is a redirect nothing could do anything with.
 
     The service issues no redirects of its own; the edge in front of it does, and
     answers a request that ran past its window with a bare `303` and an empty body.
     Followed, that redirect returns the real result. Unfollowed, the empty body used
     to surface as `bad_response (303): the body was empty` -- true, and useless: it
     named the symptom and hid the one thing a reader can act on. So it is named.
+
+    `_send_following_safe_redirects` follows the ones it can, so most of what reaches
+    here from `FoamdClient.request` is a 3xx with no `Location` at all -- nowhere to go,
+    and a body that is not the answer either. Not all of it: `has_redirect_location`
+    (`httpx2/_models.py:770`) counts only 301/302/303/307/308, so a 300, 304 or 305
+    arrives here with its `Location` intact and unfollowed. Both shapes are covered
+    below -- `where` names the destination when there is one, and `why` explains the
+    absence when there is not. The `Location` limb is also for the
+    other way in: `_json` is handed responses directly (by tests, and by anything
+    that gets a response without going through the follower), and a named redirect
+    beats a JSON traceback there too.
+    """
+    location = response.headers.get("location", "")
+    where = f" to {location}" if location else ""
+    why = "" if location else "; it carried no Location header, so there was nowhere to follow it to"
+    return BackendError(
+        f"the service answered {response.status_code} with a redirect{where} that this "
+        f"client did not follow{why}",
+        code="redirect_not_followed",
+        status=response.status_code,
+    )
+
+
+# -- redirects, followed only where following them cannot lose the request -------------
+#
+# F-45 was a redirect this client did not follow. The fix was a blanket
+# `follow_redirects=True`, and that is broader than the fact it was built on: httpx
+# follows a 303 (and a 302, and a 301 on a POST) by re-issuing the request as a **GET
+# with no body** -- `_redirect_method` and `_redirect_stream` in httpx2 2.12.0, whose own
+# comment for the 302 case reads "Do what the browsers do, despite standards". So each
+# hop is decided here instead, on what the status actually means:
+#
+#   * the method survives the hop (307/308, or any redirect on a request with no body
+#     to lose) -- followed, because the request that arrives is the request that was
+#     made;
+#   * a **303** on a request that did carry a body -- followed. Not a concession: 303 is
+#     defined (RFC 9110 15.4.4) as "the answer to your request is at this other URI,
+#     fetch it with GET". The origin has already received and acted on the request; the
+#     hop collects a result, and dropping the body on it is what the status asks for
+#     rather than something being lost. It is also the one redirect this stack is known
+#     to produce -- Modal's edge answers a request past its 150 s window this way -- and
+#     F-45's live measurement agrees with the reading: following it returned `sleep
+#     200`'s own rc=0 and its output at 203.9 s, which only the origin that ran the
+#     command could have supplied. The two alternatives were considered and are worse.
+#     Refusing it outright is F-45 restored: the command ran and the caller is told it
+#     failed. Re-sending the original POST instead of fetching the named URI is the
+#     double-execution `_REPEATABLE_METHODS` exists to prevent -- the measurement above
+#     says the first POST *ran the command*, so a second one runs it again, and 203.9 s
+#     of `sleep 200` becomes 400 s of it. That stays true for a caller that passed
+#     `repeatable=True`: `put_tree`'s archive is safe to unpack twice, but the hop it
+#     would be replacing is the leg carrying the answer, so replaying the POST does not
+#     collect the answer, it asks the question again;
+#   * a **301/302** on a request that carried a body -- refused, and named. Those say
+#     "the resource moved", not "the answer is over there", so httpx's downgrade to a
+#     bodyless GET turns a write into a read with nothing anywhere saying so. The
+#     service issues none of these, so this only ever fires on infrastructure nobody
+#     here has seen, which is exactly when a loud error beats a plausible one.
+#
+# What this narrowing is NOT: an explanation of F-47. F-47 is one `bad_request (400):
+# not a valid tar.gz archive` for an archive that opened cleanly on the machine that
+# sent it. The redirect this stack is known to produce cannot be where those bytes went:
+# a 303 is what an origin answers *after* it has received and acted on the request, so
+# the POST carrying the archive goes out whole and the hop that follows collects a
+# result rather than re-sending anything. There is no body to lose on that path.
+#
+# The relocation variant (301/302) is a different matter, and nothing measured rules it
+# out. An earlier draft of this comment said the route table did: `OpenFoam_Instance/
+# app/files.py` mounts `/v1/instances/{id}/tar` as a POST and nothing else, so "the
+# bodyless GET answers 405, not the 400 that was seen". That does not follow. httpx
+# re-issues a redirect at its **`Location`**, not at the path that was asked, so the 405
+# arrives only if the `Location` names the tar route back again; aimed anywhere else the
+# hop gets whatever lives there, 400 included. No `Location` has ever been captured for
+# a 3xx on this path -- the edge's 303 is modelled in `tests/test_hosted.py`
+# (`_edge_with_a_150s_redirect`) as pointing somewhere else entirely -- so the route
+# table settles nothing here on its own. The claim that survives is the narrow one: the
+# redirect anyone has actually observed does not drop a body, and the one that could is
+# refused below instead of followed.
+#
+# The half of this change that answers the observation is in `put_tree`, which checks
+# the claim the service is making about bytes it is still holding; this half is here so
+# that a 301 or 302 can never quietly become a read, which is a different (and so far
+# hypothetical) way to be told a true thing about the wrong request.
+#
+# Read the scope honestly: for the 303 -- the only redirect anything here has ever seen
+# -- this is byte-for-byte what `follow_redirects=True` did. What changed is 301 and 302,
+# which nobody has observed. So this half narrows a hazard; it does not remove the one
+# F-47 recorded, and no comment below should be read as saying it does.
+
+_MAX_REDIRECTS = 5
+"""Hops to follow before giving up. The one redirect anything here is known to produce
+comes from the edge in front of the service rather than the service itself -- foamd
+issues none -- and it resolves in a single hop; the cap is here so a loop cannot become
+an infinite one.
+
+Exactly this many hops are *allowed*, so a chain of five that ends in an answer returns
+the answer. Getting that boundary wrong is not a rounding error: an exec whose result
+arrived after the last permitted hop would be reported as a hard failure for a command
+that ran and succeeded, which is F-45's whole cost reintroduced at the bound."""
+
+
+def _carries_a_body(request: httpx.Request) -> bool:
+    """Whether this request has a body a redirect could quietly drop.
+
+    Read off the request that was actually sent rather than the arguments that built
+    it: `content=`, `json=`, `data=` and `files=` all end up as one stream with a
+    length on it, and it is the length that decides whether anything is at stake.
+
+    An unreadable `Content-Length` answers `True`. httpx always writes a parseable one,
+    so this is unreachable in practice, but the default has to point at "assume there
+    is something to lose": the failure this function guards is a body dropped without
+    anyone noticing, and "I could not tell" must not resolve to "nothing was at stake".
+    """
+    if request.headers.get("transfer-encoding"):
+        return True
+    try:
+        return int(request.headers.get("content-length", "0")) > 0
+    except ValueError:
+        return True
+
+
+def _redirect_would_lose_the_body(response: httpx.Response) -> BackendError:
+    """A 301/302 on a body-carrying request: refused rather than followed.
+
+    Following it means httpx re-sending the request as a GET with the stream dropped
+    (`_redirect_method`, `_redirect_stream`), so whatever comes back is an answer about
+    a request the caller never made -- true, specific, and about the wrong thing.
+
+    Not known to be F-47's mechanism, and not excluded as it either: where the bodyless
+    GET lands is decided by the redirect's `Location`, and no `Location` has ever been
+    captured for a 3xx on the tar path. (The service mounts that path POST-only, so a
+    GET aimed *back at it* answers 405 rather than the 400 that was seen -- but that is
+    one of the places the hop could go, not all of them.) This is the loud version of a
+    failure mode nobody has observed, kept loud because the quiet version is a write
+    that silently became a read.
     """
     location = response.headers.get("location", "")
     where = f" to {location}" if location else ""
     return BackendError(
-        f"the service answered {response.status_code} with a redirect{where} that this "
-        f"client did not follow; the client must be built with follow_redirects=True",
-        code="redirect_not_followed",
+        f"the service answered {response.status_code} with a redirect{where}, which "
+        f"would be followed by re-sending this request as a GET with its body dropped; "
+        f"refused, because the answer to that is an answer about a different request",
+        code="redirect_would_lose_the_body",
         status=response.status_code,
     )
+
+
+def _send_following_safe_redirects(
+    client: httpx.Client, method: str, url: str, **kwargs: Any
+) -> httpx.Response:
+    """Send one request, following only the redirects that cannot corrupt it.
+
+    `follow_redirects=False` is passed on the first send rather than relied on from the
+    client's constructor: it is the whole safety property of this function, and a
+    client handed in with redirects enabled would make it a no-op that says nothing --
+    httpx would follow the 302 itself and `next_request` would be `None` on every hop.
+    Tests replace `FoamdClient._client` outright, so the constructor is not a place
+    this can be guaranteed from. It is positional-by-name rather than merged into
+    `kwargs`, so a caller that passes its own `follow_redirects` gets a `TypeError`
+    instead of an override -- deliberate: overriding it silently disables the only
+    thing this function does.
+
+    With it off, httpx hands back the redirect request it *would* have sent as
+    `response.next_request`, so the decision of which hops to take is made here while
+    httpx keeps the URL joining, the cross-origin `Authorization` stripping and the
+    header fixups that go with it.
+    """
+    response = client.request(method, url, follow_redirects=False, **kwargs)
+    for _ in range(_MAX_REDIRECTS):
+        hop = response.next_request
+        if hop is None:
+            return response
+        sent = response.request
+        if hop.method != sent.method and _carries_a_body(sent):
+            if response.status_code != 303:
+                raise _redirect_would_lose_the_body(response)
+        response = client.send(hop, follow_redirects=False)
+    # Checked here and not at the top of the loop: the response to the last permitted
+    # hop is an answer, and an answer is never thrown away for being late in a chain.
+    # Reaching this line means a sixth hop was being asked for, which is what the
+    # message says.
+    if response.next_request is not None:
+        raise BackendError(
+            f"the service redirected more than {_MAX_REDIRECTS} times",
+            code="too_many_redirects",
+            status=response.status_code,
+        )
+    return response
 
 
 def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
@@ -189,15 +368,21 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
 # These four helpers pre-date `FoamdClient` and each build their own client. They ask
 # short questions, but the edge in front of the service does not know that, so they
 # follow redirects for the same reason `FoamdClient` does -- and because a client that
-# does not is the mistake this module has already made once.
+# does not is the mistake this module has already made once. They follow them the same
+# way, too: through `_send_following_safe_redirects`, so that a `301 Moved` on a sign-in
+# POST is named rather than silently re-sent as a GET with the credentials dropped and
+# answered as if it had been asked properly. A 303 is still followed here, as everywhere
+# in this module, because 303 means the answer is elsewhere and not that the POST needs
+# re-sending.
 
 
 def _post_json(base_url: str, path: str, body: dict[str, Any], *, headers: dict[str, str] | None = None,
                transport: Any = None) -> httpx.Response:
     with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport,
-                      follow_redirects=True) as client:
+                      follow_redirects=False) as client:
         try:
-            return client.post(path, json=body, headers=headers or {})
+            return _send_following_safe_redirects(
+                client, "POST", path, json=body, headers=headers or {})
         except httpx.HTTPError as exc:
             raise BackendError(f"cannot reach {base_url}: {exc}", code="unreachable") from exc
 
@@ -206,9 +391,10 @@ def auth_config(base_url: str, *, transport: Any = None) -> dict[str, Any]:
     """Where the service's identity provider is. Public by design: it is what the
     service's own sign-in page fetches, so a terminal can sign in the same way."""
     with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport,
-                      follow_redirects=True) as client:
+                      follow_redirects=False) as client:
         try:
-            response = client.get("/dashboard/config.json")
+            response = _send_following_safe_redirects(
+                client, "GET", "/dashboard/config.json")
         except httpx.HTTPError as exc:
             raise BackendError(f"cannot reach the service: {exc}", code="unreachable") from exc
     if response.status_code >= 400:
@@ -283,9 +469,11 @@ def device_code(base_url: str, name: str | None = None, *, transport: Any = None
     The one request made with no key at all: the answer carries the code to show, the
     address to approve it at, and how patiently to poll. `transport` is for tests."""
     with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport,
-                      follow_redirects=True) as client:
+                      follow_redirects=False) as client:
         try:
-            response = client.post("/v1/device/code", json={"name": name} if name else {})
+            response = _send_following_safe_redirects(
+                client, "POST", "/v1/device/code",
+                json={"name": name} if name else {})
         except httpx.HTTPError as exc:
             raise BackendError(f"cannot reach the service: {exc}", code="unreachable") from exc
     if response.status_code >= 400:
@@ -299,9 +487,10 @@ def device_token(base_url: str, code: str, *, transport: Any = None) -> dict[str
     The service hands the plaintext over exactly once, so a caller that gets a dict
     must save it then and there."""
     with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport,
-                      follow_redirects=True) as client:
+                      follow_redirects=False) as client:
         try:
-            response = client.post("/v1/device/token", json={"device_code": code})
+            response = _send_following_safe_redirects(
+                client, "POST", "/v1/device/token", json={"device_code": code})
         except httpx.HTTPError as exc:
             raise BackendError(f"cannot reach the service: {exc}", code="unreachable") from exc
     if response.status_code == 428:
@@ -319,14 +508,20 @@ class FoamdClient:
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=httpx.Timeout(60.0, connect=connect_timeout),
-            # Redirects are followed. The service itself issues none, but the edge in
-            # front of it does: a long `POST .../exec` comes back as a bare `303` with an
-            # empty body, which this client turned into `bad_response (303): the body was
-            # empty`. The command has usually *run* by then, so the caller is left unable
-            # to tell a failure from a success -- a render that had already been written
-            # looked like a render that had not, and the same picture came back three
-            # times while the code that drew it was being changed underneath it.
-            follow_redirects=True,
+            # Redirects are still followed -- by `_send_following_safe_redirects`,
+            # not by httpx. The service issues none; the edge in front of it does,
+            # answering a long `POST .../exec` with a bare `303` and an empty body,
+            # which this client once turned into `bad_response (303): the body was
+            # empty` -- the command having usually *run* by then, so a render that had
+            # already been written looked like a render that had not, four times over
+            # (F-45: "I changed the rendering script four times and pulled a
+            # byte-identical PNG each time"). Off here is not "do not follow": it is
+            # what makes httpx hand each
+            # redirect back as `next_request` so the follower can tell a 303 (fetch the
+            # answer elsewhere) from a 302 (httpx would re-send this POST as a bodyless
+            # GET). The follower passes it explicitly too, so this line is a default
+            # and not the guarantee.
+            follow_redirects=False,
         )
 
     def close(self) -> None:
@@ -370,7 +565,9 @@ class FoamdClient:
             # Whether this failure leaves it unknown whether the service acted.
             ambiguous = False
             try:
-                response = self._client.request(method, path, timeout=timeout, **kwargs)
+                response = _send_following_safe_redirects(
+                    self._client, method, path, timeout=timeout, **kwargs
+                )
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                 # Nothing was ever handed over, so repeating this repeats no effect --
                 # true whatever the method is.
@@ -383,11 +580,14 @@ class FoamdClient:
                 ambiguous = True
             else:
                 if 300 <= response.status_code < 400:
-                    # Unreachable while this client follows redirects, and kept because
-                    # of what happens when one does not: a bare 303 is under 400, so it
-                    # used to be handed back as a success and died three frames later in
-                    # the JSON decoder. Not retried -- how the client was built does not
-                    # change between attempts.
+                    # A redirect the follower did not take: no `Location` at all, or a
+                    # 3xx httpx2 does not count as one (300/304/305), which can carry a
+                    # `Location` -- `_redirect_error` names it either way. Kept because
+                    # of what happens when
+                    # this is missing -- a bare 303 is under 400, so it used to be
+                    # handed back as a success and died three frames later in the JSON
+                    # decoder. Not retried: a redirect with nowhere to go is not a
+                    # thing a second attempt improves.
                     raise _redirect_error(response)
                 if response.status_code < 400:
                     return response
@@ -397,6 +597,18 @@ class FoamdClient:
                 # cannot reach Modal at all until somebody renews a token".
                 if last_error.code in _NO_RETRY_CODES:
                     raise last_error
+                # A 4xx collected through a 303 hop gets no special treatment here, and
+                # an earlier draft of the F-47 fix that gave it some was wrong: it made
+                # every 4xx behind a hop "ambiguous", which retried a 401/403/413 like a
+                # transient and, worse, pre-empted the `_DECLINED_STATUSES` refinement
+                # below so that a 429 arriving through the edge's redirect raised on the
+                # first answer instead of backing off -- a regression aimed squarely at
+                # the long-exec path F-45 exists for. It rested on reading the 303 as
+                # "the service may not have got your body", which contradicts the
+                # reading that licenses following it at all (see the redirect note
+                # above): a 303 says the origin has the request and the answer is
+                # elsewhere. So the answer collected through it is the service's real
+                # answer about the real request, and it is treated like any other.
                 if response.status_code not in _RETRY_STATUSES:
                     raise last_error
                 ambiguous = response.status_code not in _DECLINED_STATUSES
@@ -625,18 +837,78 @@ class HostedBackend(Backend):
 
     def put_tree(self, local_dir: Path, remote_dir: str) -> None:
         archive = _tar_gz_of(local_dir)
-        self._client.request(
-            "POST",
-            self._instance_path("/tar"),
-            params={"mode": "extract", "dest": remote_dir},
-            content=archive,
-            headers={"Content-Type": "application/gzip"},
-            timeout=300.0,
-            # A POST by method, idempotent in fact: it unpacks the same archive over
-            # the same directory, so a second one leaves the workspace as the first
-            # did. Said here so an upload over a flaky link still gets its retries.
-            repeatable=True,
-        )
+        for attempt in range(2):
+            try:
+                self._client.request(
+                    "POST",
+                    self._instance_path("/tar"),
+                    params={"mode": "extract", "dest": remote_dir},
+                    content=archive,
+                    headers={"Content-Type": "application/gzip"},
+                    timeout=300.0,
+                    # A POST by method, idempotent in fact: it unpacks the same archive
+                    # over the same directory, so a second one leaves the workspace as
+                    # the first did. Said here so an upload over a flaky link still gets
+                    # its retries.
+                    repeatable=True,
+                )
+                return
+            except BackendError as exc:
+                # F-47, from the only vantage point that can settle it. The service
+                # answered `bad_request (400): not a valid tar.gz archive` for
+                # 1,324,532 bytes this method had built seconds earlier, which opened
+                # cleanly on this machine and uploaded cleanly on the next attempt --
+                # one occurrence in five. A 400 is the service saying the request was
+                # wrong, and `_RETRY_STATUSES` rightly leaves it alone; but this caller
+                # is holding the archive the service is complaining about, so it can
+                # check the claim instead of believing it. If the bytes in hand are a
+                # readable gzipped tar, then whatever reached the far end was not the
+                # thing that was sent, and that is a transport failure wearing a client
+                # error's clothes: worth exactly one more attempt, and then worth
+                # saying plainly rather than pointing at the packing.
+                #
+                # Only that one claim, and the gate is the sentence rather than the
+                # status. `mode=extract` in `OpenFoam_Instance/app/files.py` answers 400
+                # for a family of other reasons, each with its own wording: `extract
+                # requires ?dest=`, `path escapes the /work jail` and `cannot resolve
+                # path: ...` from `resolve_in_jail`, `cannot parse tar listing entry:
+                # ...`, `cannot parse tar member size: ...`, `tar member escapes jail:
+                # ...`, `tar member is a link (not allowed): ...`, `tar member is a
+                # special file (not allowed): ...`, and `extraction failed: ...` when the
+                # listing read fine and the unpack did not. Every one of those is a true
+                # statement about an archive that arrived intact. (The unpacked-size cap
+                # is deliberately not in that list: `validate_tar_listing` raises
+                # `payload_too_large` for it -- **413**, `request body exceeds the N MB
+                # limit` -- so it never reaches the sentence test at all, the
+                # `exc.status != 400` limb turns it away first. An earlier version of
+                # this comment and of the test beside it called it a 400.) Gating on the
+                # status alone
+                # uploads a 1.3 MB archive a second time to be told the same thing, and
+                # then contradicts a correct service with "what arrived was not what was
+                # sent", which is F-47's own defect -- a message accusing the wrong
+                # party -- with the parties swapped. The link case is not theoretical:
+                # `_tar_gz_of` uses `tar.gettarinfo`, so a symlink in a case directory
+                # becomes a member the service refuses by design.
+                #
+                # The gate is therefore the service's own sentence, which couples this
+                # to `files.py`'s wording. That coupling fails safe: if the wording
+                # changes, the check stops firing and the service's error is passed
+                # through untouched, which is where this started.
+                if exc.status != 400 or not _is_about_the_archives_bytes(exc.message):
+                    raise
+                described = _archive_opens_here(archive)
+                if described is None:
+                    raise
+                if attempt == 0:
+                    time.sleep(_SERVER_ERROR_RETRY_S)
+                    continue
+                raise BackendError(
+                    f"the service could not read the upload ({exc.message}), twice, "
+                    f"but these exact bytes open here as a gzipped tar ({described}): "
+                    f"what arrived at the service was not what was sent",
+                    code="archive_did_not_arrive",
+                    status=exc.status,
+                ) from exc
 
     def get_tree(
         self,
@@ -775,6 +1047,62 @@ def _tar_gz_of(local_dir: Path) -> bytes:
             else:
                 tar.addfile(info)
     return buf.getvalue()
+
+
+_ARCHIVE_UNREADABLE = "not a valid tar.gz archive"
+"""The service's words for the one 400 that is a claim about the bytes themselves.
+
+`OpenFoam_Instance/app/files.py:486` raises it when `tar tvzf` on the staged upload
+exits non-zero, i.e. the upload would not open. Every other 400 on `mode=extract` is
+about the request or about what a perfectly readable archive *contains* -- see
+`put_tree`, which is why the gate is this sentence and not the status."""
+
+
+def _is_about_the_archives_bytes(message: str) -> bool:
+    """Whether a 400 is the service saying it could not read the upload at all.
+
+    The service appends `tar`'s own stderr, so this is a prefix test rather than an
+    equality one.
+    """
+    return message.startswith(_ARCHIVE_UNREADABLE)
+
+
+def _archive_opens_here(data: bytes) -> str | None:
+    """One line about the archive in hand, or `None` if it is not one.
+
+    The whole of the evidence `put_tree` needs to answer a `not a valid tar.gz
+    archive` from the far end: it walks the member headers of bytes already in memory,
+    which for the 1.3 MB archive F-47 was about is a decompress and no I/O at all.
+    Spent only on that one 400, after the message has been read -- an earlier draft
+    called it before the status was checked and paid the decompress on every failure,
+    a timeout and a 404 included.
+
+    `zlib.error` is in the catch because it is not an `OSError` and because it really
+    does escape `tarfile.open`. Fuzzing an archive with three random byte flips and
+    reopening it, it came out of this call on 147 of 12,000 trials -- 1.2%, six seeds x
+    2,000 flips of one 30,436-byte tar.gz, CPython 3.12.10. Read the reachability and
+    not the rate: it moves with the archive and the seed, and no seed was ever recorded
+    for the 1.3 MB archive the finding was about. The frame is the stable part. The
+    innermost was `gzip.py:554` (`self._decompressor.decompress(b"", size)`) on all 147;
+    the `TarFile.next` statement above it was `if not self.fileobj.read(1)`
+    (`tarfile.py:2636`) on 130 and the `self.fileobj.seek(self.offset - 1)` on the line
+    before it (`:2635`) on 17 -- both outside the block tarfile turns into a
+    `ReadError`.
+
+    That is the reachability of *this function on corrupt bytes*, which is not the
+    reachability of the only caller: `put_tree` hands it an archive `_tar_gz_of` built
+    moments earlier in the same process, and that cannot be a corrupt deflate stream.
+    The catch earns its place from the contract rather than the odds -- a description or
+    `None`, never an exception. This runs inside an `except` block, where anything
+    escaping replaces the service's own error with a traceback about the client's
+    evidence-gathering.
+    """
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            members = sum(1 for _ in tar)
+    except (tarfile.TarError, OSError, EOFError, zlib.error):
+        return None
+    return f"{len(data)} bytes, {members} members"
 
 
 def _extract_tar_gz(data: bytes, local_dir: Path) -> list[Path]:

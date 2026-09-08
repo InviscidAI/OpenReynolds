@@ -992,7 +992,21 @@ def describe_job(status: Any) -> str:
         parts.append(running_for)
     line = " ".join(parts)
     if status.killed_by:
-        line += f"\nmatched kill_on line: {status.killed_by.strip()}"
+        # Not "matched kill_on line" any more. That label was right for as long as
+        # a `kill_on` regex was the only thing that ever wrote `killed_by`; F-48
+        # made the service write it on every terminal state that is a kill, from
+        # six producers, and only one of them is a log line. The others are
+        # sentences: the container was gone, the process group was gone, the state
+        # could not be read, a client sent a signal. Keeping the old label would
+        # have told the model that a container which vanished was a regex match --
+        # a wrong label on the one field that exists to stop it guessing why its
+        # solve died, which is the whole of F-48.
+        #
+        # `end_reason` already says which kind this is (`kill_on_match` for the
+        # log line), so this does not repeat it and does not parse the text: the
+        # service's wording changes with what it can measure, and it is meant to
+        # be read rather than matched on.
+        line += f"\nwhy it ended: {status.killed_by.strip()}"
     return line
 
 

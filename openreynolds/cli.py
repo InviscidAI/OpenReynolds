@@ -21,6 +21,7 @@ from .backend import hosted
 from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT
 from .browse import Browser
+from . import casebundle
 from .capture import Capture
 from . import commands, images, mesher
 from .config import Config, config_path
@@ -1093,6 +1094,7 @@ def session(
         live_mirror.view = None
         _final_sync(live_mirror, ConsoleView(console))
         if capture:
+            _capture_the_case(capture, store, ConsoleView(console))
             capture.close()
         _close_down(backend, store, keep_alive=keep_alive)
         backend.close()
@@ -1361,6 +1363,43 @@ def _situation_brief(
             "can arrive, so a question asked here will not be seen."
         )
     return "\n".join(lines)
+
+
+def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
+    """Upload the case itself, once, at the end of a session.
+
+    The capture plane has always carried the conversation and never the work. Measured
+    2026-09-08 over 215 production studies: the transcript is there for essentially all
+    of them, an artifact for 40%, a results payload for 12%, and the case definition,
+    the mesh and the solver logs for **none**. So every mesh and every `Allrun` this
+    product has produced lives on one shared Volume with no retention and no second
+    copy -- which on that same day stood at 30.8 GB against a 20 GB quota with a live
+    study unable to write (F-56).
+
+    It runs after `_final_sync` and before `capture.close()`, and both halves of that
+    matter. After the sync, because the bundle is built from the local mirror rather
+    than from the instance: the files are already here, so this costs no network and
+    cannot stall behind a workspace being torn down. Before the close, because `close`
+    is what drains the queue -- and the drain is bounded, so a bundle queued after it
+    would be dropped without ever being attempted.
+
+    Never raises. `build` returns a report rather than throwing, the upload goes
+    through `Capture`, which is fire-and-forget by contract, and a study that could not
+    be bundled captures exactly what it captured before.
+    """
+    root = store.fetch_dir()
+    blob, report = casebundle.build(root, study_id=store.session.study_id)
+    for line in report.brief():
+        view.info(line) if not report.error else view.warn(line)
+    if blob is None:
+        return
+    path = store.dir / "case-bundle.tar.gz"
+    try:
+        path.write_bytes(blob)
+    except OSError as exc:
+        view.warn(f"could not write the case bundle: {exc}")
+        return
+    capture.artifact(path, kind="case-bundle")
 
 
 def _final_sync(live: LiveMirror, view: View) -> None:

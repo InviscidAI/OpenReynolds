@@ -333,8 +333,21 @@ def first_cell_heights(mesh: dict, patch: str) -> tuple[np.ndarray, np.ndarray]:
 def face_spacing(mesh: dict, patch: str) -> float:
     """A patch's in-plane length scale, `sqrt(median face area)`.
 
-    Used only to size the buckets for the reference lookup, where the answer only
-    has to be right to a factor of two.
+    Two callers, and they want different things of it. `nearest` below uses it to size
+    the hash buckets for the reference lookup, where it only has to be right to a
+    factor of two. `cfmesh.py`'s `check_refinement` uses it as a length in its own
+    right, comparing it in log2 against the `cellSize` a dictionary asked for and the
+    floor the wall falls back to -- a decision it refuses to make when those two are
+    less than one octree halving, a factor of two, apart.
+
+    That second use is sound on a hex wall and is not sound in general: on faces that
+    are squares -- which is what a cfMesh or snappyHexMesh octree leaves on a patch --
+    `sqrt(area)` is the cell edge exactly, and the median makes it robust to the
+    handful of split faces at a feature edge. On a wall of long thin faces, or one
+    carrying two cell sizes in comparable numbers, it is a single number over a
+    distribution that has no single number, and no caller should read a factor-of-two
+    decision off it. It is the median and not the mean for that reason, and nothing
+    here reports the spread; a caller that needs the spread has to measure it.
     """
     entry = mesh["boundary"][patch]
     faces = np.arange(entry["startFace"], entry["startFace"] + entry["nFaces"])
