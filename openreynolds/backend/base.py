@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 WORKSPACE_ROOT = "/work"
 """The persistent directory every backend presents to the model."""
@@ -197,5 +197,21 @@ class Backend(Protocol):
         ...
 
     def job_kill(self, job_id: str, signal: str = "TERM") -> JobStatus: ...
+
+    def active_jobs(self) -> list[dict[str, Any]]:
+        """Every job still running on this workspace, whoever started it.
+
+        Not the same question as "which of MY jobs are running", which the local
+        study record already answers. A job started outside any session -- a
+        detached render launched from a shell, a solve left by a session that has
+        since exited -- appears in no session's record, and shutting the workspace
+        down under it kills it. That is F-46: a rendering job lost two animation
+        passes to a study session that started after it, ran, and stopped the
+        instance on the way out.
+
+        A backend with no shared lifecycle to protect answers with an empty list,
+        and so does one whose service cannot be asked: a shutdown must not be
+        blocked by a listing that failed."""
+        return []
 
     def close(self) -> None: ...

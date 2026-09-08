@@ -908,6 +908,89 @@ def test_a_session_that_started_the_workspace_still_puts_it_down(store, quiet_co
     assert backend.stopped == 1
 
 
+# -- F-46: the shutdown half asks what is running, not who started it ----------
+
+
+class Busy(Stoppable):
+    """A backend whose service reports jobs still running on the workspace."""
+
+    def __init__(self, rows=(), fail=None, **kw):
+        super().__init__(**kw)
+        self.rows = list(rows)
+        self.fail = fail
+
+    def active_jobs(self):
+        if self.fail is not None:
+            raise self.fail
+        return list(self.rows)
+
+
+def _said(monkeypatch):
+    import io as _io
+
+    from rich.console import Console
+
+    out = _io.StringIO()
+    monkeypatch.setattr(cli, "console", Console(file=out, force_terminal=False, width=100))
+    return out
+
+
+def test_a_detached_job_nobody_in_this_session_started_keeps_the_workspace_up(
+        store, monkeypatch):
+    """F-46. Jobs outlive sessions by design -- the system prompt says so -- but a
+    job started outside any session leaves no flag anywhere, so the next session to
+    start the instance also owned it and stopped it on the way out. A detached
+    rendering job died that way with six of its eight steps done."""
+    out = _said(monkeypatch)
+    backend = Busy(rows=[{"id": "job-9", "name": "render", "status": "running"}])
+
+    cli._close_down(backend, store)
+
+    assert backend.stopped == 0, "something else is still running on it"
+    said = out.getvalue()
+    assert "render" in said, "and the person is told what"
+    assert "openreynolds stop" in said, "and how to end it themselves"
+
+
+def test_this_sessions_own_jobs_do_not_keep_the_workspace_up(store, quiet_console):
+    """They have just been stopped, two lines above. Counting them would mean a
+    session that ran a single solve could never put its own instance down."""
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend = Busy(rows=[{"id": "job-1", "name": "solve", "status": "running"}])
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    cli._close_down(backend, store)
+
+    assert backend.stopped == 1
+
+
+def test_an_idle_workspace_is_still_put_down(store, quiet_console):
+    backend = Busy(rows=[])
+    cli._close_down(backend, store)
+    assert backend.stopped == 1
+
+
+def test_a_listing_that_fails_does_not_keep_the_workspace_up(store, monkeypatch):
+    """The asymmetry is deliberate. A workspace left up on an unanswerable question
+    bills until a reaper notices; the shutdown is the safe default, and the failure
+    is said out loud rather than turned into a refusal to exit."""
+    out = _said(monkeypatch)
+    backend = Busy(fail=BackendError("gateway down", code="unavailable", status=503))
+
+    cli._close_down(backend, store)
+
+    assert backend.stopped == 1
+    assert "could not check" in out.getvalue()
+
+
+def test_a_backend_with_no_such_question_is_unaffected(store, quiet_console):
+    """The local backend has no shared lifecycle and answers nothing."""
+    backend = Stoppable()
+    assert not hasattr(backend, "active_jobs") or backend.active_jobs() == []
+    cli._close_down(backend, store)
+    assert backend.stopped == 1
+
+
 def test_the_exit_sweep_is_scoped_to_this_study(store, quiet_console):
     """`_close_down` used to pass force=True, which is the instance-wide pkill by name."""
     import inspect

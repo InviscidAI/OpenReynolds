@@ -499,6 +499,27 @@ class HostedBackend(Backend):
         """Put the container down. The volume is untouched, so nothing is lost."""
         self._client.stop_instance(self.instance_id)
 
+    def active_jobs(self) -> list[dict[str, Any]]:
+        """What is still running on this instance, whoever started it (F-46).
+
+        `?active=1` is one read of the jobs rows and starts no container -- the
+        service answers it without reconciling, deliberately, so asking what is on
+        an instance is never the thing that boots one.
+
+        A failure answers "nothing", not an exception: this is asked on the way out
+        of a session, and a listing that could not be fetched must not be what stops
+        a workspace being put down. The cost of the wrong answer is asymmetric only
+        in the other direction -- a shutdown that runs anyway kills the job -- so the
+        one line of warning `_close_down` prints on a failure is the honest place
+        for it, not a refusal to exit."""
+        try:
+            return _json(self._client.request(
+                "GET", self._instance_path("/jobs"), params={"active": 1}))
+        except BackendError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a bad body is not worth an exit failing
+            raise BackendError(f"could not list this workspace's jobs: {exc}") from exc
+
     def close(self) -> None:
         self._client.close()
 

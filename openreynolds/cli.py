@@ -1431,6 +1431,26 @@ def _interrupt_note(keep_alive: bool) -> str:
     )
 
 
+def _still_running_on_the_instance(backend: Backend, store: Store) -> list[dict]:
+    """Jobs still running on the workspace that this session did not start.
+
+    The study's own jobs are excluded because `_close_down` has just stopped them
+    and is about to report on that; what is left is work belonging to somebody else
+    -- another session, or no session at all. A backend that cannot be asked, or a
+    listing that fails, answers "nothing": the shutdown is the safe default when the
+    question cannot be put, and the warning below says the question failed.
+    """
+    if not hasattr(backend, "active_jobs"):
+        return []
+    try:
+        rows = backend.active_jobs()
+    except BackendError as exc:
+        console.print(f"[yellow]could not check for other running jobs ({exc})[/]")
+        return []
+    mine = {job.job_id for job in store.session.jobs.values()}
+    return [row for row in rows if str(row.get("id") or "") not in mine]
+
+
 def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> None:
     """End the session: stop the work, then put the container down.
 
@@ -1476,6 +1496,7 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     for line in report.lines():
         console.print(f"  [{'green' if report.clean else 'yellow'}]{line}[/]")
 
+    running = _still_running_on_the_instance(backend, store)
     if shared:
         # Somebody else's session had this workspace up before this one joined it, so
         # it is theirs to stop. `_release` has said so for every read-only command
@@ -1484,6 +1505,22 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
             "[dim]this workspace was already running when this session joined it, "
             "so it is left up[/]"
         )
+    elif running:
+        # F-46. `was_already_running` asks who STARTED this workspace, and that is the
+        # wrong question to ask about a detached job: jobs outlive sessions by design
+        # ("the job keeps running after your turn ends, and after this session closes"),
+        # and a job started outside any session leaves no flag anywhere, so the next
+        # session to start the instance also owns it and stops it on the way out. A
+        # detached rendering job was lost exactly that way -- six of its eight steps
+        # done, the two animation passes left holding empty output directories, and the
+        # job reported `killed / sandbox_expired` with nothing saying who did it.
+        names = ", ".join(
+            str(job.get("name") or str(job.get("id") or "")[:8]) for job in running)
+        console.print(
+            f"[yellow]{len(running)} job(s) still running on this workspace:[/] {names}"
+        )
+        console.print("[dim]it is left up, and keeps costing, until they finish[/]")
+        console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
     else:
         try:
             shutdown = getattr(backend, "shutdown", None)
