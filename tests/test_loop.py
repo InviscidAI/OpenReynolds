@@ -146,6 +146,60 @@ def test_refresh_warns_the_model_then_starts_a_fresh_thread(loop):
     assert "study s1" in loop.messages[0]["content"]
 
 
+def tool_result(loop, tool_use_id: str) -> str:
+    """What went back for one tool call, wherever in the thread it ended up."""
+    for msg in loop.messages:
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("tool_use_id") == tool_use_id:
+                return block["content"]
+    raise AssertionError(f"no tool result for {tool_use_id}")
+
+
+@pytest.fixture
+def roomy_loop(backend, store, view):
+    """A loop whose output cap is above the echo threshold, so a large repeat is
+    actually large by the time it is compared."""
+    ctx = ToolContext(backend=backend, store=store, max_output=50_000)
+    return Loop(Config(llm_api_key="test-key", model="claude-opus-5"), ctx, store, view)
+
+
+def test_a_repeat_after_a_refresh_gets_the_bytes_and_not_a_pointer(roomy_loop, backend):
+    """The echo pointer says the bytes are still in this conversation. A refresh
+    empties the conversation, and `ctx.echoes` outlived it -- so a study long enough
+    to refresh, which is any study worth running, answered the model's first re-read
+    on the far side with a reference to a call that was no longer there. It never
+    recovered: asking again matched the same stale digest."""
+    log = "Solving for Ux, Initial residual = 1e-04\n" * 140   # ~5.6 KB
+    backend.files["/work/log.simpleFoam"] = log.encode()
+    read = {"path": "/work/log.simpleFoam"}
+
+    install(roomy_loop, [
+        message([tool_block("read_file", read, "tu1")], stop_reason="tool_use"),
+        message([text_block("read it")]),
+        message([text_block("noted")]),          # the turn refresh() runs before resetting
+        message([tool_block("read_file", read, "tu2")], stop_reason="tool_use"),
+        message([text_block("read it again")]),
+    ])
+
+    roomy_loop.say("read the log")
+    roomy_loop.run()
+    assert log in tool_result(roomy_loop, "tu1")
+
+    roomy_loop.refresh("study s1 on instance i1. Jobs still running: none.")
+
+    roomy_loop.say("read the log again")
+    roomy_loop.run()
+    again = tool_result(roomy_loop, "tu2")
+
+    assert "identical, byte for byte" not in again, (
+        "the thread that pointer indexes into was emptied by the refresh"
+    )
+    assert log in again
+
+
 def test_every_turn_is_mirrored_locally(loop, store):
     install(
         loop,
