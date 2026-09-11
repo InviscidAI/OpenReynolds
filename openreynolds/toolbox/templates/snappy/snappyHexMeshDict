@@ -1,0 +1,167 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  A starting snappyHexMeshDict. Copy into <case>/system/, run
+  `python3 patch_entries.py <case> --insert system/snappyHexMeshDict` to fill the
+  three marked lists from constant/triSurface/, replace locationInMesh, run
+  blockMesh, surfaceFeatureExtract, snappyHexMesh, checkMesh.
+
+  Every number here is a literal with a comment beside it. None of them is imported
+  from anywhere and none of them is right for every case; they are a defensible
+  start that says what it assumes, so changing one is editing a number rather than
+  guessing what a default was.
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      snappyHexMeshDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Three stages, run in this order in one pass. Each reads the mesh the previous one
+// wrote, and snappyHexMesh exits 0 after a stage that achieved nothing -- a snap that
+// did not converge and a layer stage that inserted layers and then deleted them again
+// both look like a successful run from the shell. What the mesh is has to be measured
+// off the mesh afterwards: checkMesh for quality, layer_report.py for coverage.
+castellatedMesh true;
+snap            true;
+addLayers       false;   // turn on once castellate+snap gives a clean checkMesh
+
+geometry
+{
+    // PATCH-ENTRIES-BEGIN geometry
+    // PATCH-ENTRIES-END
+}
+
+castellatedMeshControls
+{
+    // Cells between successive refinement levels. 3 is the tutorial value and is
+    // what keeps a 2:1 transition from stacking onto the wall; 1 makes a mesh that
+    // checkMesh passes and the schemes dislike.
+    nCellsBetweenLevels 3;
+
+    // Refinement driven by the .eMesh files surfaceFeatureExtract wrote. level 0
+    // resolves the edge at the background size; raise it to match the surface level
+    // where a crease is being rounded off.
+    features
+    (
+        // PATCH-ENTRIES-BEGIN features
+        // PATCH-ENTRIES-END
+    );
+
+    // (min max) refinement level per surface, and the patch each surface becomes.
+    // The patchInfo type is what decides whether the patch can carry a wall function
+    // and a layer; getting it from the manifest's role is the point of the enumerator.
+    refinementSurfaces
+    {
+        // PATCH-ENTRIES-BEGIN refinementSurfaces
+        // PATCH-ENTRIES-END
+    }
+
+    // Volume refinement regions. Empty is a real answer: a wake box is a decision
+    // about where the answer is, not a default.
+    refinementRegions
+    {
+    }
+
+    // THE point that says which side of the surface is fluid. There is no defensible
+    // default: a wrong point meshes the outside of a duct, or the inside of a body,
+    // and snappyHexMesh exits 0 either way. It must be strictly inside the fluid,
+    // off any surface and off any cell face of the background mesh.
+    //   python3 domain_probe.py <case> --suggest
+    locationInMesh (CHANGE_ME CHANGE_ME CHANGE_ME);
+
+    // Below here: sizing, not geometry.
+    maxLocalCells       1000000;    // per processor, before the mesh is redistributed
+    maxGlobalCells      2000000;    // the ceiling on the whole castellated mesh; raise
+                                    // it deliberately, having predicted the count with
+                                    // cells_estimate.py, not after hitting it
+    minRefinementCells  10;         // stop refining when fewer than this are left
+    resolveFeatureAngle 30;         // refine to the surface level where the surface
+                                    // turns by more than this
+    allowFreeStandingZoneFaces true;
+}
+
+snapControls
+{
+    nSmoothPatch    3;      // smoothing passes over the patch before projection
+    tolerance       2.0;    // how far a point may be pulled, in local cell sizes
+    nSolveIter      30;     // mesh displacement iterations; 30 is generous, 0 disables
+                            // the smoothing that keeps the cells behind the wall sane
+    nRelaxIter      5;      // snapping attempts, each with a looser quality bar
+    nFeatureSnapIter 10;    // feature-edge snapping passes
+    implicitFeatureSnap     false;  // use the .eMesh files, not snappy's own guess
+    explicitFeatureSnap     true;
+    multiRegionFeatureSnap  false;  // true only when surfaces of several regions meet
+}
+
+addLayersControls
+{
+    // Thicknesses below are fractions of the local cell size.
+    relativeSizes       true;
+
+    layers
+    {
+        // One entry per patch that is to carry a layer, by name or by regex. A patch
+        // that is not named here gets no layer and no warning. Coverage is what was
+        // achieved, not what was asked for:
+        //   python3 layer_report.py <case> --patch <wall> --ref <the same case, no layers>
+        //
+        // "walls"
+        // {
+        //     nSurfaceLayers 3;
+        // }
+    }
+
+    expansionRatio      1.2;    // growth between successive layers
+    finalLayerThickness 0.5;    // outermost layer, as a fraction of the local cell
+    minThickness        0.1;    // below this the layer is deleted rather than thinned;
+                                // this is the knob that turns a coverage number into
+                                // a smaller one without saying so
+    nGrow               0;
+
+    featureAngle            130;    // do not extrude across a corner sharper than this
+    slipFeatureAngle        30;
+    nRelaxIter              5;
+    nSmoothSurfaceNormals   1;
+    nSmoothNormals          3;
+    nSmoothThickness        10;
+    maxFaceThicknessRatio   0.5;
+    maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle      90;
+    nBufferCellsNoExtrude   0;
+    nLayerIter              50;     // snappy stops here and reports whatever it reached
+}
+
+meshQualityControls
+{
+    maxNonOrtho         65;     // preflight warns at 70 and fails at 85, so a mesh
+                                // that passes this passes preflight's checkmesh check
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;      // preflight warns at 4 and fails at 10
+    maxConcave          80;
+    minVol              1e-13;
+    minTetQuality       1e-15;  // -1e30 disables the tet test; it is disabled in
+                                // tutorials that would otherwise not mesh at all, and
+                                // it disables the check that catches inverted cells
+    minArea             -1;
+    minTwist            0.02;
+    minDeterminant      0.001;
+    minFaceWeight       0.02;
+    minVolRatio         0.01;
+    minTriangleTwist    -1;
+    nSmoothScale        4;
+    errorReduction      0.75;
+}
+
+// Merge tolerance, as a fraction of the bounding box of the initial mesh.
+mergeTolerance 1e-6;
+
+// snappyHexMesh writes each stage as its own time directory -- 1/ castellated,
+// 2/ snapped, 3/ layered -- unless it is run with -overwrite, which writes the final
+// mesh over constant/polyMesh and keeps nothing. When the layer stage ruins a mesh
+// the snapped mesh is the thing to look at, so run without -overwrite while a case
+// is being built and add it once the recipe is settled.
+debug 0;
+
+// ************************************************************************* //

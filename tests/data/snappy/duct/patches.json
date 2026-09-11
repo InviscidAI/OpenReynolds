@@ -1,0 +1,32 @@
+{
+  "unit_metres": 1.0,
+  "source": "duct.py",
+  "patches": [
+    {
+      "name": "inlet",
+      "file": "inlet.stl",
+      "triangles": 2,
+      "area_m2": 0.0025000000000000005,
+      "role": "inlet"
+    },
+    {
+      "name": "outlet",
+      "file": "outlet.stl",
+      "triangles": 2,
+      "area_m2": 0.0025000000000000005,
+      "role": "outlet"
+    },
+    {
+      "name": "walls",
+      "file": "walls.stl",
+      "triangles": 8,
+      "area_m2": 0.06,
+      "role": "wall"
+    }
+  ],
+  "location_in_mesh": [
+    0.15,
+    0.025,
+    0.025
+  ]
+}
