@@ -1,0 +1,83 @@
+{
+  "note": "Analytic answers for the synthetic fixtures, in metres and cubic metres. Written and re-checked by tests/data/cad/build_synthetic.py; every number here was compared against the solid before the file was written.",
+  "unit": "metre",
+  "fixtures": {
+    "box_with_duct": {
+      "box_m": [
+        0.2,
+        0.1,
+        0.1
+      ],
+      "duct_radius_m": 0.02,
+      "duct_axis_yz_m": [
+        0.05,
+        0.05
+      ],
+      "duct_length_m": 0.2,
+      "fluid_volume_m3": 0.0002513274122871835,
+      "solid_volume_m3": 0.001748672587712817,
+      "solids": 1,
+      "faces": 7,
+      "file": "box_with_duct.step",
+      "file_unit": "millimetre, declared",
+      "volume_read_back_m3": 0.0017486725877128076
+    },
+    "three_solids": {
+      "cube_edge_m": 0.1,
+      "second_offset_x_m": 0.08,
+      "third_offset_x_m": 0.4,
+      "solids": 3,
+      "each_volume_m3": 0.0010000000000000002,
+      "summed_volume_m3": 0.003000000000000001,
+      "overlap_volume_m3": 0.00020000000000000006,
+      "faces": 18,
+      "file": "three_solids.step",
+      "file_unit": "millimetre, declared",
+      "volume_read_back_m3": 0.0029999999999999996
+    },
+    "hollow_box": {
+      "outer_m": [
+        0.1,
+        0.08,
+        0.06
+      ],
+      "inner_m": [
+        0.09,
+        0.074,
+        0.052
+      ],
+      "wall_thicknesses_m": [
+        0.0050000000000000044,
+        0.0030000000000000027,
+        0.004
+      ],
+      "min_wall_thickness_m": 0.0030000000000000027,
+      "min_wall_measured_m": 0.0030000000000000027,
+      "volume_m3": 0.00013368000000000006,
+      "solids": 1,
+      "faces": 12,
+      "file": "hollow_box.step",
+      "file_unit": "millimetre, declared",
+      "volume_read_back_m3": 0.00013368
+    },
+    "filleted_block": {
+      "box_m": [
+        0.08,
+        0.05,
+        0.06
+      ],
+      "fillet_radius_m": 0.005,
+      "fillet_edge_length_m": 0.06,
+      "fillet_edge_angle_deg": 90.0,
+      "plain_box_volume_m3": 0.00023999999999999998,
+      "volume_m3": 0.00023967809724509615,
+      "fillet_removed_volume_m3": 3.219027549038276e-07,
+      "cylindrical_faces": 1,
+      "solids": 1,
+      "faces": 7,
+      "file": "filleted_block.step",
+      "file_unit": "millimetre, declared",
+      "volume_read_back_m3": 0.00023967809724509642
+    }
+  }
+}
