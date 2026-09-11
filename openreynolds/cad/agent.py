@@ -66,7 +66,21 @@ RECOVERY_TIMEOUT_S = 900
 """How long the replay of the accepted log is given after a kernel died. Longer than a
 step, because it is every accepted cell at once and nobody is waiting on a turn."""
 
-MAX_REPLY_TOKENS = 8000
+MAX_REPLY_TOKENS = 24000
+"""One reply's token budget -- **thinking and words share it**.
+
+`llm/anthropic_api.py` asks for `thinking={"type": "adaptive"}`, so the model decides how
+much to reason and that reasoning is spent out of this same allowance. At 8,000 a hard
+authoring prompt spent the whole budget thinking and was cut off before it opened a text
+block: measured on the Tesla valve, sixteen turns out of sixteen came back
+`stop_reason=max_tokens` with `block_types=['thinking']` and **zero characters of text**,
+so there was no fenced cell, nothing ran, and the run burned its clock in silence. The
+easy prompts never saw it -- a box is transcribed rather than solved, and their replies
+sat at 600-2,700 tokens.
+
+Raised so that reasoning cannot starve the sentence that carries the work. It is a
+ceiling, not a target: a reply that needs 700 tokens still costs 700.
+"""
 OUTPUT_CHARS = 6000
 """What comes back from one cell. Mesh logs are long and repetitive, and the news is at
 both ends -- the traceback and the summary after it -- so a long output is cut in the
@@ -221,6 +235,10 @@ class CadDesk:
         desk that answers with prose, or says done to a check that refuses it, is
         spending the same minutes and would otherwise loop until the clock."""
 
+        empty_turns = 0
+        """Consecutive replies that were all reasoning and no words. The dropped turn
+        cannot carry this, so `_ran_out_of_room` says it out loud instead."""
+
         while True:
             if turns >= self.max_steps:
                 result.stopped = "steps"
@@ -241,10 +259,16 @@ class CadDesk:
                 # A turn that is all reasoning and no words. Sending it back verbatim
                 # is a 400 from the Messages API ("text content blocks must be
                 # non-empty") which killed a whole run mid-mesh, so the empty turn is
-                # dropped and the desk is asked for the cell it did not send.
-                _observe(messages, "That message arrived empty. Send one fenced "
-                                   "```python block with the cell you want run.")
+                # dropped -- but dropping it alone is what made the failure permanent.
+                # The thread the desk reads back has no record of the attempt, so it
+                # starts over, reasons past the budget again, and says nothing again.
+                # Measured: sixteen turns of sixteen, each re-deriving the same geometry
+                # from scratch, three of them opening "I should first explore the
+                # environment". The count is what the dropped turn cannot carry.
+                empty_turns += 1
+                _observe(messages, _ran_out_of_room(empty_turns))
                 continue
+            empty_turns = 0
             messages.append(said)
             last_text = turn.text.strip() or last_text
 
@@ -680,6 +704,24 @@ RECOVERY_FAILED = (
     "The kernel died ({why}) and replaying the accepted cells into its replacement "
     "failed: {error}. The session is not what the script says it is. Re-establish what "
     "you need explicitly before you build on it.")
+
+
+def _ran_out_of_room(count: int) -> str:
+    """What to say to a desk whose reply was all reasoning and no words.
+
+    It cannot see its own dropped turn, so the count goes here or nowhere. Saying *why*
+    the message was empty matters as much as saying that it was: a desk told only "that
+    arrived empty" reads it as a transport hiccup and sends the same enormous reply
+    again, where one told it ran out of room while thinking has something to act on.
+    """
+    if count == 1:
+        return ("That message arrived empty. Send one fenced ```python block with the "
+                "cell you want run.")
+    return (f"That message arrived empty again -- {count} times now. The whole reply "
+            "was spent reasoning and it was cut off before any words were written, so "
+            "nothing ran and nothing of it reached this thread. Do not solve the rest "
+            "of the problem before answering: send one short cell that makes a little "
+            "progress, look at what it prints, and build on it next turn.")
 
 
 def _observe(messages: list[dict[str, Any]], text: str) -> None:

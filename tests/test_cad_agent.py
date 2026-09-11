@@ -580,6 +580,57 @@ def test_an_empty_turn_is_not_sent_back_to_the_api(backend, store, monkeypatch):
     assert "arrived empty" in sent[-1]["content"][0]["text"]
 
 
+def test_a_repeated_empty_turn_is_told_it_ran_out_of_room_and_how_often(
+    backend, store, monkeypatch
+):
+    """The dropped turn is the right call and it is not enough on its own.
+
+    An all-reasoning reply cannot be sent back -- the Messages API refuses the empty
+    text block -- so the turn is dropped. But then the thread the desk reads carries no
+    record that it ever tried, and it starts over: sixteen turns of sixteen on the Tesla
+    valve, each re-deriving the same arc geometry, three of them opening "I should first
+    explore the environment", none of them aware they had been cut off. Two harness
+    faults compounded into a loop with no exit -- the reply budget covering thinking as
+    well as words, and the attempt leaving no trace. This pins the second.
+    """
+    checking(monkeypatch, PASSES)
+    kernelled(backend)
+    made = desk(backend, store, ["", "", "", DONE])
+    result = made.run("a duct")
+    assert result.ok
+
+    nudges = [
+        block["text"]
+        for call in made.provider.calls
+        for message in call["messages"]
+        if message["role"] == "user"
+        for block in message["content"]
+        if block.get("type") == "text" and "arrived empty" in block.get("text", "")
+    ]
+    assert nudges, "an empty turn must still be answered"
+
+    # The first is the plain one; a repeat has to say why and how many times.
+    assert "3 times now" in nudges[-1], nudges[-1]
+    assert "reasoning" in nudges[-1] and "cut off" in nudges[-1]
+    assert "one short cell" in nudges[-1], "it needs something to do differently"
+
+    # And the assistant turn is still dropped, because the API still refuses it.
+    for call in made.provider.calls:
+        assert all(m["role"] != "assistant" for m in call["messages"])
+
+
+def test_the_reply_budget_leaves_room_to_speak_after_thinking(backend, store):
+    """`thinking={"type": "adaptive"}` spends the reply's own allowance, so a budget
+    tight enough for a hard prompt's reasoning leaves nothing for the sentence that
+    carries the cell. Measured at 8,000: every reply came back `max_tokens` with
+    `block_types=['thinking']` and zero characters of text, so nothing ever ran."""
+    from openreynolds.cad import agent
+
+    assert agent.MAX_REPLY_TOKENS >= 16000, (
+        "thinking and words share this budget; 8,000 starved the words on hard prompts"
+    )
+
+
 def test_a_turn_with_words_and_an_empty_block_keeps_the_words(backend, store, monkeypatch):
     checking(monkeypatch, REFUSES)
     kernelled(backend)
