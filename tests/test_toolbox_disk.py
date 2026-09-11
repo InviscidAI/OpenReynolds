@@ -183,13 +183,13 @@ def test_a_symlink_is_not_followed_and_not_counted_twice(work):
     side: an OpenFOAM tree is full of internal links, and following them reports a
     directory as bigger than it is and invites deleting the wrong one."""
     c = work / "study-a" / "cyl"
+    without = disk.scan(work, study="study-a")[0].bytes
     try:
         (c / "0.link").symlink_to(c / "0", target_is_directory=True)
     except (OSError, NotImplementedError):
         pytest.skip("this filesystem does not allow symlinks without elevation")
     usages = disk.scan(work, study="study-a")
-    plain = disk._tree_bytes(c / "0")
-    assert usages[0].bytes < 10 * plain, "the link's target was counted again"
+    assert usages[0].bytes == without, "the link's target was counted again"
     assert not any(c.path.name == "0.link" for c in usages[0].candidates)
 
 
