@@ -563,10 +563,21 @@ def test_the_gmsh_templates_are_kept_and_the_index_says_who_they_are_for():
 
 def test_the_desks_nudge_still_names_a_path_that_exists():
     """C8's step-12 nudge points the desk at `templates/` by path. Whichever way the
-    templates went, the sentence has to stay true."""
+    templates went, the sentence has to stay true.
+
+    The path is no longer written into the sentence. It is filled from the backend's
+    own workspace root, because the literal `/work` was true on the image and false
+    under `LocalBackend`, where it sent a desk hunting for a directory that was not
+    there -- seven steps of one run, including a filesystem-wide `find`. So the
+    assertion is made twice: the sentence carries the placeholder, and the placeholder
+    resolves to the old literal on the workspace the old literal described."""
+    from openreynolds.backend.base import WORKSPACE_ROOT
     from openreynolds.cad.agent import NUDGE
 
-    assert "/work/.toolbox/templates/" in NUDGE
+    assert "{toolbox}/templates/" in NUDGE
+    assert "/work/.toolbox/templates/" in NUDGE.format(
+        toolbox=f"{WORKSPACE_ROOT}/.toolbox"
+    )
     assert (TOOLBOX / "templates" / "prep" / "README.md").is_file()
     assert (TOOLBOX / "templates" / "snappy" / "snappyHexMeshDict").is_file()
 
