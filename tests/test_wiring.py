@@ -196,22 +196,6 @@ def backend_methods() -> list[str]:
     raise AssertionError("no Backend protocol")
 
 
-DRIVEN_BY_A_LATER_CHUNK = {
-    # The cell channel is the transport for the CAD desk, and the desk is a separate
-    # chunk: the kernel landed first so the loop could be written against a signature
-    # rather than against a plan. Named one at a time, because "nothing calls it" is
-    # exactly what this test exists to catch and a blanket exemption would catch
-    # nothing. They are not unexercised -- the clause below holds them to their gate --
-    # and when the loop lands it calls them, the first clause passes, and this set is
-    # dead weight to delete.
-    "kernel_start",
-    "kernel_run",
-    "kernel_poll",
-    "kernel_interrupt",
-    "kernel_restart",
-}
-
-
 @pytest.mark.parametrize("method", backend_methods())
 def test_every_backend_method_is_used(method):
     """The protocol is the whole independence story: every method on it is a promise
@@ -221,18 +205,8 @@ def test_every_backend_method_is_used(method):
         for path in sorted(PACKAGE.rglob("*.py"))
         if "backend" not in path.parts
     )
-    if re.search(rf"backend\.{method}\(", callers):
-        return
-    assert method in DRIVEN_BY_A_LATER_CHUNK, (
+    assert re.search(rf"backend\.{method}\(", callers), (
         f"Backend.{method} is on the protocol and nothing above it calls it"
-    )
-    gate = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in sorted(Path(__file__).resolve().parent.glob("test_*.py"))
-    )
-    assert re.search(rf"\.{method}\(", gate), (
-        f"Backend.{method} has no caller above the protocol and no test driving it "
-        f"either, which makes it a promise for nothing"
     )
 
 
