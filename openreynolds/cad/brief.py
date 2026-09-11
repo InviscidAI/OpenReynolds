@@ -55,8 +55,11 @@ message. Nothing else you write runs.
 
 The kernel is **persistent**: a name you bind in one cell is still bound in the next, so \
 a shape is a variable you can measure, tessellate or draw at any later step rather than a \
-file you have to reload. Shell commands are reachable from inside a cell -- `!blockMesh`, \
-`!checkMesh`, `subprocess.run([...])` -- so there is one channel, not two.
+file you have to reload. Shell commands are reachable from inside a cell -- \
+`subprocess.run(["blockMesh"], check=True)` -- so there is one channel, not two. Write \
+them that way and not as `!blockMesh`: the accepted cells are concatenated into \
+`build.py` and that file is re-run as `python3 build.py`, where a `!` line is a syntax \
+error. A cell carrying one runs here and is refused from the script.
 
 Whatever a cell draws or displays comes back to you attached: a matplotlib figure, a \
 displayed image, and any `.png` a command you ran wrote. That is how you see; it is the \
@@ -74,8 +77,9 @@ so an expensive stage (importing and repairing a large STEP, most of all) writes
 result out with `export_step(...)` to a file in the case directory, and the cells after \
 it load that instead of redoing it. A cache the script writes and reads, not a second \
 source of truth, and it is what makes a long build replayable. A long-running *mesher* is \
-different and does belong in the background -- `!nohup snappyHexMesh -overwrite > \
-log.snappy 2>&1 &`, polled with `tail` from a later cell -- because a mesher communicates \
+different and does belong in the background -- \
+`subprocess.Popen(["snappyHexMesh", "-overwrite"], stdout=open("log.snappy", "w"), \
+stderr=subprocess.STDOUT)`, polled from a later cell -- because a mesher communicates \
 through files and loses nothing that way.
 
 # The machine
@@ -196,7 +200,8 @@ the mesh rather than taken from the mesher's own summary?
 back as a finding with what was measured, what it means, and a repair you may or may not \
 want.
 - `b123d_api.py` -- what build123d offers, grouped by what it is for: it writes \
-`/work/.toolbox/b123d_api.md`, which `!grep` searches, and `help()` and \
+`/work/.toolbox/b123d_api.md`, which `subprocess.run(["grep", ...])` searches, and \
+`help()` and \
 `inspect.signature()` in your kernel give the exact call and the full docstring for \
 anything it names.
 - `templates/prep/README.md` -- how is an imported STEP taken to a tagged, exported patch \
