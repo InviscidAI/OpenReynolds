@@ -1,0 +1,291 @@
+{
+  "arm": "desk",
+  "prompt": "T2",
+  "title": "T2 \u2014 body in a flow box",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A 40 mm diameter sphere in an open air flow, for an external aerodynamics solve. Put it in a domain that extends 5 diameters upstream, 15 downstream, and 5 to each side and above and below. Name the inlet, the outlet, the far field and the sphere separately. Resolve the boundary layer on the sphere with prism layers.",
+  "properties": [
+    "sphere diameter, 40 mm",
+    "domain extent in diameters, upstream / downstream / lateral: 5 / 15 / 5",
+    "blockage ratio \u2014 sphere frontal area over domain cross-section",
+    "achieved layer coverage on the sphere, as a percentage, **read off the mesh**",
+    "the four patches, each with its area and mean normal"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T10:14:35",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": false,
+    "stopped": "steps",
+    "error": "",
+    "summary": "",
+    "case_dir": "/work/accept-t2",
+    "seconds": 1086.1,
+    "desk_seconds": 522.3,
+    "steps": 29,
+    "tokens": {
+      "input": 60,
+      "cache_read": 651335,
+      "cache_write": 31914,
+      "output": 16069
+    },
+    "usd": 0.3709,
+    "script_lines": 412,
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "the build script did not re-run from empty: [timed out after 280s] (exit 124)"
+      ],
+      "regions": [
+        ""
+      ],
+      "cells": 16000,
+      "two_d": false,
+      "patches": [
+        "inlet",
+        "outlet",
+        "farfield"
+      ],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "ok",
+          "measured": "16,000 cells, 50,000 faces, 18,081 points"
+        },
+        {
+          "check": "checkmesh",
+          "status": "ok",
+          "measured": "Mesh OK. -- max non-orthogonality 0 (under 70), max skewness 2.46783e-14 (under 4), max aspect-ratio 1 (under 1000)"
+        },
+        {
+          "check": "patches",
+          "status": "ok",
+          "measured": "3 boundary patch(es) with faces, all named: inlet, outlet, farfield"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "no cellZones in this mesh"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: system/blockMeshDict, system/snappyHexMeshDict"
+        },
+        {
+          "check": "render",
+          "status": "ok",
+          "measured": "a picture of the mesh is at accept-t2/renders/mesh_look.png"
+        },
+        {
+          "check": "scale",
+          "status": "ok",
+          "measured": "the mesh is 0.8 m across and the request's largest dimension is 0.04 m"
+        },
+        {
+          "check": "cad_audit.manifest",
+          "status": "ok",
+          "measured": "1 patches, each with its file on disk and no unlisted STL beside them: sphere"
+        },
+        {
+          "check": "cad_audit.scale",
+          "status": "ok",
+          "measured": "the union spans 0.03988 x 0.03995 x 0.04 m"
+        },
+        {
+          "check": "cad_audit.closure",
+          "status": "ok",
+          "measured": "0 open edges in the union of 1 patch files (1,386 triangles); per file: sphere 0"
+        },
+        {
+          "check": "cad_audit.manifold",
+          "status": "ok",
+          "measured": "0 non-manifold edges in the union"
+        },
+        {
+          "check": "cad_audit.normals",
+          "status": "ok",
+          "measured": "0 same-direction edges in the union"
+        },
+        {
+          "check": "cad_audit.degenerate",
+          "status": "ok",
+          "measured": "0 triangles with a repeated corner"
+        },
+        {
+          "check": "cad_audit.coverage",
+          "status": "ok",
+          "measured": "1 patches over 1,386 triangles (sphere 1,386); every face in exactly one patch"
+        },
+        {
+          "check": "cad_audit.self_intersection",
+          "status": "ok",
+          "measured": "0 triangles in 0 crossing pairs, out of 8,375 pairs whose boxes overlap"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: [timed out after 280s]"
+        },
+        {
+          "check": "replay",
+          "status": "fail",
+          "measured": "the build script did not re-run from empty: [timed out after 280s] (exit 124)"
+        }
+      ],
+      "replay": {
+        "ran": true,
+        "exit_code": 124,
+        "before": {
+          "patches": {
+            "sphere": {
+              "triangles": 1386,
+              "area_m2": 0.0050041762899034475
+            }
+          },
+          "volume_m3": 3.324043942318217e-05,
+          "bounds": [
+            -0.019935069105,
+            -0.01996987268,
+            -0.02,
+            0.019944075944,
+            0.0199783172,
+            0.02
+          ],
+          "triangles": 1386
+        },
+        "after": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "output_tail": "\n[timed out after 280s]"
+      }
+    },
+    "artifacts": [
+      "build.py",
+      "constant/polyMesh/boundary",
+      "constant/triSurface/patches.json",
+      "constant/triSurface/sphere.stl",
+      "renders/mesh_look.json",
+      "renders/mesh_look.png",
+      "build.py",
+      "check.json",
+      "render.png",
+      "steps.json"
+    ]
+  },
+  "seconds": 1086.6,
+  "verdict": "check-not-ok",
+  "recheck": {
+    "ran": true,
+    "check": {
+      "ran": true,
+      "ok": true,
+      "unreachable": false,
+      "missing": [],
+      "regions": [
+        ""
+      ],
+      "cells": 16000,
+      "two_d": false,
+      "patches": [
+        "inlet",
+        "outlet",
+        "farfield"
+      ],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "ok",
+          "measured": "16,000 cells, 50,000 faces, 18,081 points"
+        },
+        {
+          "check": "checkmesh",
+          "status": "ok",
+          "measured": "Mesh OK. -- max non-orthogonality 0 (under 70), max skewness 2.46783e-14 (under 4), max aspect-ratio 1 (under 1000)"
+        },
+        {
+          "check": "patches",
+          "status": "ok",
+          "measured": "3 boundary patch(es) with faces, all named: inlet, outlet, farfield"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "no cellZones in this mesh"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: build.py, system/blockMeshDict, system/snappyHexMeshDict"
+        },
+        {
+          "check": "render",
+          "status": "ok",
+          "measured": "a picture of the mesh is at accept-t2/renders/mesh_look.png"
+        },
+        {
+          "check": "scale",
+          "status": "ok",
+          "measured": "the mesh is 0.8 m across and the request's largest dimension is 0.04 m"
+        },
+        {
+          "check": "cad_audit.manifest",
+          "status": "ok",
+          "measured": "1 patches, each with its file on disk and no unlisted STL beside them: sphere"
+        },
+        {
+          "check": "cad_audit.scale",
+          "status": "ok",
+          "measured": "the union spans 0.03988 x 0.03995 x 0.04 m"
+        },
+        {
+          "check": "cad_audit.closure",
+          "status": "ok",
+          "measured": "0 open edges in the union of 1 patch files (1,386 triangles); per file: sphere 0"
+        },
+        {
+          "check": "cad_audit.manifold",
+          "status": "ok",
+          "measured": "0 non-manifold edges in the union"
+        },
+        {
+          "check": "cad_audit.normals",
+          "status": "ok",
+          "measured": "0 same-direction edges in the union"
+        },
+        {
+          "check": "cad_audit.degenerate",
+          "status": "ok",
+          "measured": "0 triangles with a repeated corner"
+        },
+        {
+          "check": "cad_audit.coverage",
+          "status": "ok",
+          "measured": "1 patches over 1,386 triangles (sphere 1,386); every face in exactly one patch"
+        },
+        {
+          "check": "cad_audit.self_intersection",
+          "status": "ok",
+          "measured": "0 triangles in 0 crossing pairs, out of 8,375 pairs whose boxes overlap"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: [timed out after 280s]"
+        }
+      ],
+      "replay": {
+        "ran": false
+      }
+    }
+  }
+}

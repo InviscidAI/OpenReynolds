@@ -1,0 +1,145 @@
+{
+  "ok": false,
+  "unreachable": false,
+  "missing": [
+    "there is no constant/polyMesh in accept-t5 -- nothing has been meshed yet",
+    "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+    "the mesh has no boundary patch with any faces on it",
+    "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+    "no picture of the mesh was drawn"
+  ],
+  "regions": [],
+  "cells": 0,
+  "bounds": [],
+  "patches": [],
+  "checkmesh": "",
+  "metrics": {},
+  "two_d": false,
+  "build": [],
+  "error": "",
+  "findings": [
+    {
+      "check": "mesh",
+      "status": "fail",
+      "measured": "there is no constant/polyMesh in accept-t5 -- nothing has been meshed yet",
+      "meaning": "neither a single-region mesh nor any constant/<region>/polyMesh is on disk",
+      "repair": "mesh it and leave the script that did: blockMesh, snappyHexMesh or cartesianMesh, then checkMesh"
+    },
+    {
+      "check": "checkmesh",
+      "status": "fail",
+      "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+      "meaning": "the mesh OpenFOAM was given is one OpenFOAM refuses",
+      "repair": "fix the checks checkMesh names -- it lists them by name with cell counts in log.checkMesh -- and run it again"
+    },
+    {
+      "check": "patches",
+      "status": "fail",
+      "measured": "the mesh has no boundary patch with any faces on it",
+      "meaning": "a mesh with no boundary is a mesh nothing can be solved on",
+      "repair": "name the surfaces where they are built, and check the mesher wrote a boundary file with faces in it"
+    },
+    {
+      "check": "cellzones",
+      "status": "ok",
+      "measured": "no cellZones in this mesh",
+      "meaning": "nothing is driven from inside the domain: every source this case has is on a boundary",
+      "repair": ""
+    },
+    {
+      "check": "build",
+      "status": "fail",
+      "measured": "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+      "meaning": "a mesh that cannot be rebuilt cannot be changed, and a run's artifact is the script rather than the polyMesh",
+      "repair": "leave the script that built this mesh in the case under one of: Allbuild, Allclean, Allmesh, Allpost, Allprep, Allrun, build.py, build.sh, cad.py, case.foam, make.py, model.py, prep.py"
+    },
+    {
+      "check": "render",
+      "status": "fail",
+      "measured": "no picture of the mesh was drawn",
+      "meaning": "a mesh nobody has seen is a mesh nobody has checked the shape of",
+      "repair": "run `python3 /tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/mesh_look.py . --out renders/mesh_look.png --json renders/mesh_look.json` and keep the PNG"
+    },
+    {
+      "check": "cad_audit",
+      "status": "skipped",
+      "measured": "cad_audit did not report: no patch set",
+      "meaning": "either no patch set has been exported yet, or the script did not run",
+      "repair": ""
+    },
+    {
+      "check": "domain_probe",
+      "status": "skipped",
+      "measured": "domain_probe did not report: no patch set",
+      "meaning": "either no patch set has been exported yet, or the script did not run",
+      "repair": ""
+    },
+    {
+      "check": "replay",
+      "status": "ok",
+      "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3",
+      "meaning": "the concatenated cells are runnable top to bottom by somebody who was not there, which is what makes the script the artifact",
+      "repair": ""
+    }
+  ],
+  "lines": [
+    "checks: 5 fail, 2 ok, 2 skipped",
+    "  fail: mesh -- there is no constant/polyMesh in accept-t5 -- nothing has been meshed yet",
+    "  fail: checkmesh -- checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+    "  fail: patches -- the mesh has no boundary patch with any faces on it",
+    "  fail: build -- there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+    "  fail: render -- no picture of the mesh was drawn"
+  ],
+  "raw": {
+    "regions": {
+      "": {
+        "look": {
+          "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t5",
+          "polymesh": false,
+          "patches": [],
+          "build": [],
+          "cells": 0,
+          "faces": 0,
+          "points": 0,
+          "bounds": [],
+          "two_d": false,
+          "checkmesh": "",
+          "checkmesh_ok": false,
+          "metrics": {},
+          "render": ""
+        },
+        "output": "{\n \"case\": \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t5\",\n \"polymesh\": false,\n \"patches\": [],\n \"build\": [],\n \"cells\": 0,\n \"faces\": 0,\n \"points\": 0,\n \"bounds\": [],\n \"two_d\": false,\n \"checkmesh\": \"\",\n \"checkmesh_ok\": false,\n \"metrics\": {},\n \"render\": \"\"\n}",
+        "cellzones": []
+      }
+    },
+    "meshed": false,
+    "cad": [
+      {
+        "script": "cad_audit",
+        "unavailable": "no patch set"
+      },
+      {
+        "script": "domain_probe",
+        "unavailable": "no patch set"
+      }
+    ],
+    "replay": {
+      "ran": true,
+      "script": "\"\"\"Built by the CAD desk, one accepted cell at a time.\n\nThis file is not a record written beside the work; it is the work. Every cell below ran\nin the desk's kernel, in this order, and was accepted only after the names it uses were\nshown to be bound by a cell above it. It is run from empty at the finish, and what it\nmakes there is compared against what is in the case directory.\n\nThe prose above each cell is the desk's own reasoning for it, carried with the action\nrather than thrown away -- it is the only record of why this shape is this shape.\n\"\"\"\n\n# -- cell 1 -------------------------------------------------------------------------\nimport os\nos.chdir(\"/work/accept-t5\")\nprint(os.getcwd())\nprint(os.listdir(\".\"))\n\nfrom build123d import *\n\nstep_path = \"/work/.accept/assembly.step\"\nimported = import_step(step_path)\nprint(type(imported))\nprint(imported)\n\n# -- cell 2 -------------------------------------------------------------------------\nfrom build123d import export_stl\nexport_stl(imported, \"/tmp/assembly_preview.stl\")\nprint(\"exported preview\")\n\n# also check children labels\nfor c in imported.children:\n    print(c.label, type(c), len(c.solids()) if hasattr(c,'solids') else None)\n\n# -- cell 3 -------------------------------------------------------------------------\nimport pyvista as pv\npv.start_xvfb() if hasattr(pv, \"start_xvfb\") else None\n\nmesh = pv.read(\"/tmp/assembly_preview.stl\")\nplotter = pv.Plotter(off_screen=True, window_size=(900,700))\nplotter.add_mesh(mesh, color=\"lightblue\", show_edges=False)\nplotter.camera_position = 'iso'\nplotter.screenshot(\"/tmp/assembly_view1.png\")\nprint(\"done\")\n\n# -- cell 4 -------------------------------------------------------------------------\nimport os\nos.environ[\"PYVISTA_OFF_SCREEN\"] = \"true\"\nos.environ[\"PYOPENGL_PLATFORM\"] = \"osmesa\"\n\nimport importlib\nimport pyvista as pv\nimportlib.reload(pv)\n\npv.OFF_SCREEN = True\n\nmesh = pv.read(\"/tmp/assembly_preview.stl\")\nplotter = pv.Plotter(off_screen=True, window_size=(900,700))\nplotter.add_mesh(mesh, color=\"lightblue\", show_edges=True)\nplotter.camera_position = 'iso'\nplotter.screenshot(\"/tmp/assembly_view1.png\")\nprint(\"done\")\n\n# -- cell 5 -------------------------------------------------------------------------\nfrom PIL import Image\nimg = Image.open(\"/tmp/assembly_view1.png\")\nprint(img.size)\nimg\n\n# -- cell 6 -------------------------------------------------------------------------\nbase, emitter, body = [c for c in imported.children]\nprint(base.label, base.solids()[0].volume)\nprint(emitter.label, emitter.solids()[0].volume)\nprint(body.label, body.solids()[0].volume)\n\n# bounding boxes of each\nfor c in imported.children:\n    print(c.label, c.bounding_box())\n\n# -- cell 7 -------------------------------------------------------------------------\n# Let's look at cross-sections of the whole assembly at various z-heights to understand internal cavities.\nimport numpy as np\n\nfor z in [0.5, 2, 5, 10, 15, 18, 19.5, 20.5, 22, 25, 28, 30]:\n    plane_normal = (0,0,1)\n    try:\n        section = imported.section(Plane(origin=(0,0,z), normal=(0,0,1)))\n        print(z, \"faces:\", len(section.faces()) if hasattr(section,'faces') else None, \"type\", type(section))\n    except Exception as e:\n        print(z, \"ERR\", e)\n\n# -- cell 8 -------------------------------------------------------------------------\nimport subprocess\nresult = subprocess.run([\"grep\", \"-i\", \"-n\", \"section\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/b123d_api.md\"], capture_output=True, text=True)\nprint(result.stdout[:3000])\n\n# -- cell 9 -------------------------------------------------------------------------\nimport inspect\nfrom build123d import section\nprint(inspect.signature(section))\nprint(section.__doc__)\n\n# -- cell 10 ------------------------------------------------------------------------\n# Check pairwise interference between the three solids\ns_base = base.solids()[0]\ns_body = body.solids()[0]\ns_emit = emitter.solids()[0]\n\nfor (na,sa),(nb,sb) in [((\"base\",s_base),(\"body\",s_body)), ((\"body\",s_body),(\"emitter\",s_emit)), ((\"base\",s_base),(\"emitter\",s_emit))]:\n    inter = sa & sb\n    vol = inter.volume if inter is not None else 0.0\n    print(na, nb, \"intersection volume:\", vol)\n\n# -- cell 11 ------------------------------------------------------------------------\nimport matplotlib.pyplot as plt\n\nzs = [1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 18.0, 19.5, 21.0, 25.0, 28.0, 30.0]\nfig, axes = plt.subplots(3,4, figsize=(16,12))\nfor ax, z in zip(axes.flat, zs):\n    plane = Plane(origin=(0,0,z), z_dir=(0,0,1))\n    sk = section(imported, section_by=plane)\n    for f in sk.faces():\n        try:\n            pts = f.outer_wire().vertices()\n            xs = [p.X for p in pts]\n            ys = [p.Y for p in pts]\n            ax.fill(xs, ys, alpha=0.5)\n        except Exception as e:\n            pass\n    ax.set_title(f\"z={z}\")\n    ax.set_aspect('equal')\nplt.tight_layout()\nplt.savefig(\"/tmp/sections.png\", dpi=100)\nprint(\"saved\")\n\n# -- cell 12 ------------------------------------------------------------------------\nfrom IPython.display import Image\nImage(\"/tmp/sections.png\")\n\n# -- cell 13 ------------------------------------------------------------------------\n# Union of the three solids\nfused = s_base + s_body + s_emit\nprint(\"num solids in fused:\", len(fused.solids()))\nprint(\"fused volume:\", fused.volume)\nprint(\"sum of individual volumes:\", s_base.volume + s_body.volume + s_emit.volume)\nprint(\"is_valid:\", fused.is_valid)\n\n# -- cell 14 ------------------------------------------------------------------------\n# investigate fuse odd result - try explicit boolean union via topology\nu1 = s_base.fuse(s_body)\nprint(\"u1 solids:\", len(u1.solids()), \"volume:\", u1.volume)\n\nu2 = u1.fuse(s_emit)\nprint(\"u2 solids:\", len(u2.solids()), \"volume:\", u2.volume)\n\n# -- cell 15 ------------------------------------------------------------------------\nprint(type(u1))\nub = s_body.fuse(s_emit)\nprint(\"body+emit solids:\", len(ub.solids()), \"volume:\", ub.volume, \"expected\", s_body.volume+s_emit.volume)\n\nua = s_base.fuse(s_emit)\nprint(\"base+emit solids:\", len(ua.solids()), \"volume:\", ua.volume, \"expected\", s_base.volume+s_emit.volume)\n\n# -- cell 16 ------------------------------------------------------------------------\nu3 = ub.fuse(s_base)\nprint(\"(body+emit)+base solids:\", len(u3.solids()), \"volume:\", u3.volume, \"expected:\", s_base.volume+s_body.volume+s_emit.volume)\n\n# -- cell 17 ------------------------------------------------------------------------\n# Build overall bounding box slightly padded, subtract the union of the three solids,\n# and look at what disjoint air regions result (to search for an enclosed internal cavity).\nbb = imported.bounding_box()\npad = 2.0\nbox = Box(bb.size.X + 2*pad, bb.size.Y + 2*pad, bb.size.Z + 2*pad)\nbox = Pos(bb.center()) * box\n\nair = box - s_base - s_body - s_emit\nprint(\"num solids in air:\", len(air.solids()))\nfor i, s in enumerate(air.solids()):\n    print(i, \"volume:\", s.volume, \"bbox:\", s.bounding_box())\n\n# -- cell 18 ------------------------------------------------------------------------\n# Re-verify without padding, using exact bbox, and check solid count / volumes precisely.\nbox_tight = Pos(bb.center()) * Box(bb.size.X, bb.size.Y, bb.size.Z)\nair_tight = box_tight - s_base - s_body - s_emit\nprint(\"num solids (tight box):\", len(air_tight.solids()))\nfor i, s in enumerate(air_tight.solids()):\n    print(i, \"volume:\", s.volume)\n\n# Also check shell count on each original solid (does any part enclose an internal void itself?)\nfor name, s in [(\"base\", s_base), (\"body\", s_body), (\"emit\", s_emit)]:\n    shells = s.shells()\n    print(name, \"num shells:\", len(shells))\n\n# -- cell 19 ------------------------------------------------------------------------\nwith open(\"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/prep/README.md\") as f:\n    print(f.read())\n\n# -- cell 20 ------------------------------------------------------------------------\nwith open(\"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/prep/README.md\") as f:\n    content = f.read()\nprint(content[2000:6500])\n\n# -- cell 21 ------------------------------------------------------------------------\nprint(content[6500:9500])\n\n# -- cell 22 ------------------------------------------------------------------------\nprint(content[9500:13000])\n\n# -- cell 23 ------------------------------------------------------------------------\n# Repair the STEP using gmsh's healShapes recipe (sewFaces=False, as the README found\n# sewing is what silently destroys a multi-solid assembly), then checkpoint to a file\n# so later cells don't redo this. Units: the file is unmeasured yet -- check the\n# bounding box after import (already ~54 mm across) confirms millimetres, so we tell\n# gmsh the source unit explicitly rather than guess after the fact.\nimport gmsh, os\n\nos.makedirs(\"prep\", exist_ok=True)\n\ngmsh.initialize()\ngmsh.option.setNumber(\"General.Terminal\", 0)\ngmsh.option.setString(\"Geometry.OCCTargetUnit\", \"M\")   # STEP declares mm -> convert to m on import\ngmsh.model.add(\"prep\")\ngmsh.model.occ.importShapes(\"/work/.accept/assembly.step\")\ngmsh.model.occ.synchronize()\nbefore = len(gmsh.model.getEntities(3))\n\ngmsh.model.occ.healShapes(\n    fixDegenerated=True, fixSmallEdges=True, fixSmallFaces=True,\n    sewFaces=False,\n    makeSolids=True,\n)\ngmsh.model.occ.synchronize()\nafter = len(gmsh.model.getEntities(3))\nnfaces = len(gmsh.model.getEntities(2))\nprint(f\"solids {before} -> {after}, surfaces {nfaces}\")\n\ngmsh.write(\"prep/healed.step\")\ngmsh.finalize()\n\n# -- cell 24 ------------------------------------------------------------------------\n# Check what the healed.step file actually contains dimensionally, since the README\n# warns OCCTargetUnit=\"M\" can leave the writer also emitting metre-scale numbers under\n# a millimetre declaration -- a hazard that survives gmsh.finalize().\npart_check = import_step(\"prep/healed.step\")\nprint(\"num solids:\", len(part_check.solids()))\nprint(\"bbox:\", part_check.bounding_box())\n\n# -- cell 25 ------------------------------------------------------------------------\n# Load the checkpointed, repaired STEP and convert to metres (file numbers are mm).\npart = import_step(\"prep/healed.step\").scale(1e-3)\nprint(len(part.solids()), \"solids\")\nprint(\"volume (m^3):\", part.volume)\nprint(\"bbox (m):\", part.bounding_box())\n\n# -- cell 26 ------------------------------------------------------------------------\nfrom OCP.BRepAdaptor import BRepAdaptor_Surface\n\ncyl_radii = []\ntor_radii = []\nfor face in part.faces():\n    surf = BRepAdaptor_Surface(face.wrapped)\n    kind = str(surf.GetType()).rsplit(\"_\", 1)[-1]\n    if kind == \"Cylinder\":\n        cyl_radii.append(surf.Cylinder().Radius())\n    elif kind == \"Torus\":\n        tor_radii.append(surf.Torus().MinorRadius())\n\nimport numpy as np\ncyl_radii = np.array(sorted(cyl_radii))\ntor_radii = np.array(sorted(tor_radii))\nprint(\"num cylindrical faces:\", len(cyl_radii))\nprint(\"cyl radii (mm):\", np.round(cyl_radii*1000, 4))\nprint(\"num toroidal faces:\", len(tor_radii))\nprint(\"tor minor radii (mm):\", np.round(tor_radii*1000, 4))\n",
+      "before": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      },
+      "exit_code": 0,
+      "output": "e flow volume is a body that plugs the passage and runs past both open\nends; the subtraction cuts it to the passage, and the faces where it was cut off flat are\nthe **capping faces** that become inlet and outlet.\n\n```python\nduct  = Cylinder(radius=0.02, height=0.20, rotation=(0, 90, 0)).locate(Location((0.1, 0.05, 0.05)))\nfluid = duct - part                                  # the passage, capped by the ends\nprint(fluid.volume, \"m^3\")\n```\n\nTwo checks cost nothing and catch the boolean that silently did nothing:\n\n- `fluid.volume` against `flow_volume.volume - part.volume` where the part is wholly\n  inside the flow volume \u2014 arithmetic, to a fraction of a per cent.\n- each capping face `is_planar` with the area you can compute by hand. A cap that came\n  out curved is a cap taken off the wrong surface.\n\n**Thin walls are where this operation is known to be weak.** A large subtraction against\nthin-walled fin geometry is OCCT's documented soft spot, and the failure is not always an\nexception \u2014 it can be a result with a face missing or a wall gone. `domain_probe.py`\nmeasures minimum wall thickness on the material between two shells, which is the number\nthat predicts it, and `cad_audit.py` will find an open union afterwards. Report what\nhappened either way: a boolean that failed on a thin fin is information, and a\ntessellated fallback exists for exactly that case.\n\n## Tag: selectors re-derived on this run\n\nPatch names are chosen where the surface is created. A face is named for what it is \u2014\nthe cap at the upstream end, the wall of the passage, the plane of symmetry \u2014 and the\nselector that finds it is written against geometry, never against a face index carried\nover from a previous run. Face order is OpenCASCADE's: it is a property of the file and\nof every operation that has touched it since, so an export keyed on index is correct\nuntil the model changes and quietly wrong afterwards.\n\n```python\nfaces  = fluid.faces()\ninlet  = faces.filter_by_position(Axis.X, -1e-6, 1e-6)\noutlet = faces.filter_by_position(Axis.X, 0.2 - 1e-6, 0.2 + 1e-6)\nwalls  = [f for f in faces if f not in list(inlet) + list(outlet)]\n```\n\n`filter_by(GeomType.PLANE)`, `filter_by(Axis.Z)`, `sort_by(Axis.X)`, `group_by()` and\n`filter_by_position()` are the rest of that vocabulary; `b123d_api.md` has them with\ntheir signatures. Two runs of the same selectors on the same geometry give the same\npartition, and a rigid transform of the model moves every face centre through the\ntransform and changes nothing about who is in which patch. That property is what makes\nthe export reproducible, and it is the one worth a check of your own.\n\n## Export\n\n```python\nimport sys\nsys.path.insert(0, \"/work/.toolbox\")\nimport cad_convert\n\nexport_step(fluid, \"prep/fluid.step\", unit=Unit.M)\n\nkey = lambda fs: [tuple(f.center(CenterOf.MASS)) for f in fs]\nreport = cad_convert.export_patches(\n \u001b[32;1m\n*******************************************************************\n******        Statistics on Transfer (Write)                 ******\u001b[0m\n\u001b[32;1m\n*******************************************************************\n******        Transfer Mode = 0  I.E.  As Is       ******\u001b[0m\n\u001b[32;1m******        Transferring Shape, ShapeType = 0                      ******\u001b[0m\n\u001b[32;1m** WorkSession : Sending all data\u001b[0m\n\u001b[32;1m Step File Name : prep/healed.step(6196 ents)  Write  Done\u001b[0m\n\nsolids 3 -> 3, surfaces 78\nnum solids: 3\nbbox: bbox: -26.975000100000006 <= x <= 26.975000099999992, -19.418991148451 <= y <= 26.871008951549005, -1e-07 <= z <= 31.300000100000002\n3 solids\nvolume (m^3): 4.119415909208399e-05\nbbox (m): bbox: -0.026975100000000012 <= x <= 0.02697509999999999, -0.01941899114845049 <= y <= 0.026871108851549034, -1e-07 <= z <= 0.031300100000000004\nnum cylindrical faces: 28\ncyl radii (mm): [0.1   0.1   0.1   0.5   0.5   0.5   0.5   1.25  1.25  1.25  2.25  2.25\n 2.25  3.575 3.575 3.575 5.    5.    5.    5.    5.    5.    5.    5.\n 5.    5.    5.    5.   ]\nnum toroidal faces: 2\ntor minor radii (mm): [0.5 0.5]\n",
+      "after": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      }
+    }
+  }
+}

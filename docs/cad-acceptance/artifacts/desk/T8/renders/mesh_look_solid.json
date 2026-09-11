@@ -1,0 +1,158 @@
+{
+ "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t8",
+ "polymesh": true,
+ "patches": [
+  {
+   "name": "solidBottom",
+   "type": "wall",
+   "nFaces": 12,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.0011999999463558203,
+   "center": [
+    0.09999999776482585,
+    0.014999999664723875,
+    -0.009999999776482584
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "solidSideY0",
+   "type": "wall",
+   "nFaces": 4,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.00039999998211860677,
+   "center": [
+    0.09999999776482583,
+    0.0,
+    -0.004999999888241292
+   ],
+   "normal": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "solidSideY1",
+   "type": "wall",
+   "nFaces": 4,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.00039999998211860677,
+   "center": [
+    0.09999999776482583,
+    0.029999999329447753,
+    -0.004999999888241292
+   ],
+   "normal": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "solidStepXNeg",
+   "type": "wall",
+   "nFaces": 3,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.0002999999865889551,
+   "center": [
+    0.07999999821186066,
+    0.014999999664723871,
+    -0.004999999888241291
+   ],
+   "normal": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "solidStepXPos",
+   "type": "wall",
+   "nFaces": 3,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.0002999999865889551,
+   "center": [
+    0.11999999731779099,
+    0.014999999664723871,
+    -0.004999999888241291
+   ],
+   "normal": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "solid_to_fluid",
+   "type": "mappedWall",
+   "nFaces": 12,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.0011999999463558203,
+   "center": [
+    0.09999999776482583,
+    0.014999999664723877,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "flat": true,
+   "inward": -1
+  }
+ ],
+ "build": [
+  "system/blockMeshDict"
+ ],
+ "cells": 12,
+ "faces": 55,
+ "points": 40,
+ "bounds": [
+  0.08,
+  0.0,
+  -0.01,
+  0.12,
+  0.03,
+  0.0
+ ],
+ "two_d": false,
+ "checkmesh": "Mesh OK.",
+ "checkmesh_ok": true,
+ "metrics": {
+  "max_non_orthogonality": 0.0,
+  "max_skewness": 8.00748e-15,
+  "max_aspect_ratio": 1.0,
+  "min_volume": 1e-06
+ },
+ "render": "renders/mesh_look_solid.png",
+ "enclosure": [
+  "solidBottom",
+  "solidSideY0",
+  "solidSideY1",
+  "solidStepXNeg",
+  "solidStepXPos",
+  "solid_to_fluid"
+ ]
+}

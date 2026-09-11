@@ -1,0 +1,442 @@
+{
+  "ok": true,
+  "unreachable": false,
+  "missing": [],
+  "regions": [
+    ""
+  ],
+  "cells": 1920,
+  "bounds": [
+    0.0,
+    0.0,
+    0.0,
+    0.1,
+    0.06,
+    0.04
+  ],
+  "patches": [
+    {
+      "name": "floor",
+      "type": "wall",
+      "nFaces": 240,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.005999999955296514,
+      "center": [
+        0.05000000074505807,
+        0.02999999932944776,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "ceiling",
+      "type": "wall",
+      "nFaces": 240,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.005999999955296514,
+      "center": [
+        0.05000000074505807,
+        0.02999999932944776,
+        0.03999999910593028
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "xmin",
+      "type": "wall",
+      "nFaces": 96,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.0023999998927116406,
+      "center": [
+        0.0,
+        0.029999999329447746,
+        0.01999999955296516
+      ],
+      "normal": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "xmax",
+      "type": "wall",
+      "nFaces": 96,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.0023999998927116406,
+      "center": [
+        0.10000000149011605,
+        0.029999999329447746,
+        0.01999999955296516
+      ],
+      "normal": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "ymin",
+      "type": "wall",
+      "nFaces": 160,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.003999999970197676,
+      "center": [
+        0.05000000074505804,
+        0.0,
+        0.019999999552965178
+      ],
+      "normal": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "ymax",
+      "type": "wall",
+      "nFaces": 160,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.003999999970197676,
+      "center": [
+        0.05000000074505804,
+        0.05999999865889541,
+        0.019999999552965178
+      ],
+      "normal": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    }
+  ],
+  "checkmesh": "Mesh OK.",
+  "metrics": {
+    "max_non_orthogonality": 0.0,
+    "max_skewness": 1.66533e-14,
+    "max_aspect_ratio": 1.0,
+    "min_volume": 1.25e-07
+  },
+  "two_d": false,
+  "build": [
+    "system/blockMeshDict"
+  ],
+  "error": "",
+  "findings": [
+    {
+      "check": "mesh",
+      "status": "ok",
+      "measured": "1,920 cells, 6,256 faces, 2,457 points",
+      "meaning": "3D",
+      "repair": ""
+    },
+    {
+      "check": "checkmesh",
+      "status": "ok",
+      "measured": "Mesh OK. -- max non-orthogonality 0 (under 70), max skewness 1.66533e-14 (under 4), max aspect-ratio 1 (under 1000)",
+      "meaning": "checkMesh accepts this mesh; the thresholds beside the numbers are there to read them by and do not overrule it, because it has already judged them",
+      "repair": ""
+    },
+    {
+      "check": "patches",
+      "status": "ok",
+      "measured": "6 boundary patch(es) with faces, all named: floor, ceiling, xmin, xmax, ymin, ymax",
+      "meaning": "the names are somebody's choice rather than a mesher's default",
+      "repair": ""
+    },
+    {
+      "check": "cellzones",
+      "status": "ok",
+      "measured": "2 cellZone(s): heater 64 cells, cooler 64 cells",
+      "meaning": "a zone is where a volumetric source, a porous region or a solid region acts",
+      "repair": ""
+    },
+    {
+      "check": "build",
+      "status": "ok",
+      "measured": "rebuilds with: system/blockMeshDict",
+      "meaning": "the bundle captures these, so the script leaves with the case",
+      "repair": ""
+    },
+    {
+      "check": "render",
+      "status": "ok",
+      "measured": "a picture of the mesh is at accept-t7/renders/mesh_look.png",
+      "meaning": "somebody can look at this mesh without opening ParaView",
+      "repair": ""
+    },
+    {
+      "check": "scale",
+      "status": "ok",
+      "measured": "the mesh is 0.1 m across and the request's largest dimension is 0.1 m",
+      "meaning": "within the factor of 100 a flow box round a small body needs",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit",
+      "status": "skipped",
+      "measured": "cad_audit did not report: no patch set",
+      "meaning": "either no patch set has been exported yet, or the script did not run",
+      "repair": ""
+    },
+    {
+      "check": "domain_probe",
+      "status": "skipped",
+      "measured": "domain_probe did not report: no patch set",
+      "meaning": "either no patch set has been exported yet, or the script did not run",
+      "repair": ""
+    },
+    {
+      "check": "replay",
+      "status": "ok",
+      "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3",
+      "meaning": "the concatenated cells are runnable top to bottom by somebody who was not there, which is what makes the script the artifact",
+      "repair": ""
+    }
+  ],
+  "lines": [
+    "1,920 cells, 6,256 faces, 2,457 points, 3D",
+    "bounds 0.1 x 0.06 x 0.04 m (x 0..0.1, y 0..0.06, z 0..0.04)",
+    "checkMesh: Mesh OK.",
+    "  max_aspect_ratio 1, max_non_orthogonality 0, max_skewness 1.66533e-14, min_volume 1.25e-07",
+    "patches:",
+    "  floor wall 240 faces area 0.006 m2 normal (+0.00 +0.00 -1.00) at (0.05 0.03 0)",
+    "  ceiling wall 240 faces area 0.006 m2 normal (+0.00 +0.00 +1.00) at (0.05 0.03 0.04)",
+    "  xmin wall 96 faces area 0.0024 m2 normal (-1.00 +0.00 +0.00) at (0 0.03 0.02)",
+    "  xmax wall 96 faces area 0.0024 m2 normal (+1.00 +0.00 +0.00) at (0.1 0.03 0.02)",
+    "  ymin wall 160 faces area 0.004 m2 normal (+0.00 -1.00 +0.00) at (0.05 0 0.02)",
+    "  ymax wall 160 faces area 0.004 m2 normal (+0.00 +1.00 +0.00) at (0.05 0.06 0.02)",
+    "rebuilds with: system/blockMeshDict",
+    "checks: 8 ok, 2 skipped"
+  ],
+  "raw": {
+    "regions": {
+      "": {
+        "look": {
+          "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t7",
+          "polymesh": true,
+          "patches": [
+            {
+              "name": "floor",
+              "type": "wall",
+              "nFaces": 240,
+              "inGroups": "1(wall)",
+              "touches": 3,
+              "area": 0.005999999955296514,
+              "center": [
+                0.05000000074505807,
+                0.02999999932944776,
+                0.0
+              ],
+              "normal": [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              "flat": true,
+              "inward": -1
+            },
+            {
+              "name": "ceiling",
+              "type": "wall",
+              "nFaces": 240,
+              "inGroups": "1(wall)",
+              "touches": 3,
+              "area": 0.005999999955296514,
+              "center": [
+                0.05000000074505807,
+                0.02999999932944776,
+                0.03999999910593028
+              ],
+              "normal": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "flat": true,
+              "inward": -1
+            },
+            {
+              "name": "xmin",
+              "type": "wall",
+              "nFaces": 96,
+              "inGroups": "1(wall)",
+              "touches": 3,
+              "area": 0.0023999998927116406,
+              "center": [
+                0.0,
+                0.029999999329447746,
+                0.01999999955296516
+              ],
+              "normal": [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              "flat": true,
+              "inward": -1
+            },
+            {
+              "name": "xmax",
+              "type": "wall",
+              "nFaces": 96,
+              "inGroups": "1(wall)",
+              "touches": 3,
+              "area": 0.0023999998927116406,
+              "center": [
+                0.10000000149011605,
+                0.029999999329447746,
+                0.01999999955296516
+              ],
+              "normal": [
+                1.0,
+                0.0,
+                0.0
+              ],
+              "flat": true,
+              "inward": -1
+            },
+            {
+              "name": "ymin",
+              "type": "wall",
+              "nFaces": 160,
+              "inGroups": "1(wall)",
+              "touches": 3,
+              "area": 0.003999999970197676,
+              "center": [
+                0.05000000074505804,
+                0.0,
+                0.019999999552965178
+              ],
+              "normal": [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              "flat": true,
+              "inward": -1
+            },
+            {
+              "name": "ymax",
+              "type": "wall",
+              "nFaces": 160,
+              "inGroups": "1(wall)",
+              "touches": 3,
+              "area": 0.003999999970197676,
+              "center": [
+                0.05000000074505804,
+                0.05999999865889541,
+                0.019999999552965178
+              ],
+              "normal": [
+                0.0,
+                1.0,
+                0.0
+              ],
+              "flat": true,
+              "inward": -1
+            }
+          ],
+          "build": [
+            "system/blockMeshDict"
+          ],
+          "cells": 1920,
+          "faces": 6256,
+          "points": 2457,
+          "bounds": [
+            0.0,
+            0.0,
+            0.0,
+            0.1,
+            0.06,
+            0.04
+          ],
+          "two_d": false,
+          "checkmesh": "Mesh OK.",
+          "checkmesh_ok": true,
+          "metrics": {
+            "max_non_orthogonality": 0.0,
+            "max_skewness": 1.66533e-14,
+            "max_aspect_ratio": 1.0,
+            "min_volume": 1.25e-07
+          },
+          "render": "renders/mesh_look.png",
+          "enclosure": [
+            "ceiling",
+            "floor",
+            "xmax",
+            "xmin",
+            "ymax",
+            "ymin"
+          ]
+        },
+        "output": "d\": -1\n  },\n  {\n   \"name\": \"ymax\",\n   \"type\": \"wall\",\n   \"nFaces\": 160,\n   \"inGroups\": \"1(wall)\",\n   \"touches\": 3,\n   \"area\": 0.003999999970197676,\n   \"center\": [\n    0.05000000074505804,\n    0.05999999865889541,\n    0.019999999552965178\n   ],\n   \"normal\": [\n    0.0,\n    1.0,\n    0.0\n   ],\n   \"flat\": true,\n   \"inward\": -1\n  }\n ],\n \"build\": [\n  \"system/blockMeshDict\"\n ],\n \"cells\": 1920,\n \"faces\": 6256,\n \"points\": 2457,\n \"bounds\": [\n  0.0,\n  0.0,\n  0.0,\n  0.1,\n  0.06,\n  0.04\n ],\n \"two_d\": false,\n \"checkmesh\": \"Mesh OK.\",\n \"checkmesh_ok\": true,\n \"metrics\": {\n  \"max_non_orthogonality\": 0.0,\n  \"max_skewness\": 1.66533e-14,\n  \"max_aspect_ratio\": 1.0,\n  \"min_volume\": 1.25e-07\n },\n \"render\": \"renders/mesh_look.png\",\n \"enclosure\": [\n  \"ceiling\",\n  \"floor\",\n  \"xmax\",\n  \"xmin\",\n  \"ymax\",\n  \"ymin\"\n ]\n}",
+        "cellzones": [
+          [
+            "heater",
+            64
+          ],
+          [
+            "cooler",
+            64
+          ]
+        ]
+      }
+    },
+    "meshed": true,
+    "cad": [
+      {
+        "script": "cad_audit",
+        "unavailable": "no patch set"
+      },
+      {
+        "script": "domain_probe",
+        "unavailable": "no patch set"
+      }
+    ],
+    "replay": {
+      "ran": true,
+      "script": "\"\"\"Built by the CAD desk, one accepted cell at a time.\n\nThis file is not a record written beside the work; it is the work. Every cell below ran\nin the desk's kernel, in this order, and was accepted only after the names it uses were\nshown to be bound by a cell above it. It is run from empty at the finish, and what it\nmakes there is compared against what is in the case directory.\n\nThe prose above each cell is the desk's own reasoning for it, carried with the action\nrather than thrown away -- it is the only record of why this shape is this shape.\n\"\"\"\n\n# -- cell 1 -------------------------------------------------------------------------\nimport subprocess, os\nos.chdir('/work/accept-t7')\nprint(subprocess.run(['ls','-la'], capture_output=True, text=True).stdout)\nprint(subprocess.run(['python3', '/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/b123d_api.py','--help'], capture_output=True, text=True).stdout[:2000])\n\n# -- cell 2 -------------------------------------------------------------------------\n# Let me check the toolbox templates for guidance on the simple-box + cellZone pattern before committi\nimport subprocess\ntoolbox = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/\"\nprint(subprocess.run([\"ls\", toolbox], capture_output=True, text=True).stdout)\nprint(subprocess.run([\"cat\", toolbox+\"templates/prep/README.md\"], capture_output=True, text=True).stdout[:3000])\n\n# -- cell 3 -------------------------------------------------------------------------\nimport subprocess\ntoolbox = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/\"\nr = subprocess.run([\"grep\",\"-ril\",\"cellZone\", toolbox], capture_output=True, text=True)\nprint(r.stdout)\nr2 = subprocess.run([\"grep\",\"-rn\",\"cellZone\", toolbox+\"templates\"], capture_output=True, text=True)\nprint(r2.stdout[:3000])\n\n# -- cell 4 -------------------------------------------------------------------------\nimport subprocess\ntoolbox = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/\"\nr = subprocess.run([\"grep\",\"-n\",\"-B3\",\"-A15\",\"cellZone\", toolbox+\"notes/openfoam-field-notes.md\"], capture_output=True, text=True)\nprint(r.stdout[:6000])\n\n# -- cell 5 -------------------------------------------------------------------------\n# Now let me set up the geometry parameters and build a build123d model purely to visualize the box an\nimport subprocess, os\nos.chdir('/work/accept-t7')\n\nfrom build123d import Box, Pos, Compound, export_step\n\n# ---- Cavity dimensions (metres) ----\nLX_M = 0.100   # length (x)\nLY_M = 0.060   # width  (y)\nLZ_M = 0.040   # height (z), z=0 floor, z=LZ ceiling\n\n# ---- Heater / cooler cube (metres) ----\nCUBE_M = 0.020\n\n# Heater: near floor, near x=0 end, centred in y\nheater_x0, heater_x1 = 0.010, 0.030\nheater_y0, heater_y1 = 0.020, 0.040\nheater_z0, heater_z1 = 0.000, 0.020   # touches floor\n\n# Cooler: near ceiling, near x=LX end, centred in y\ncooler_x0, cooler_x1 = 0.070, 0.090\ncooler_y0, cooler_y1 = 0.020, 0.040\ncooler_z0, cooler_z1 = 0.020, 0.040   # touches ceiling\n\ncavity = Pos(LX_M/2, LY_M/2, LZ_M/2) * Box(LX_M, LY_M, LZ_M)\n\nheater_box = Pos((heater_x0+heater_x1)/2, (heater_y0+heater_y1)/2, (heater_z0+heater_z1)/2) * Box(CUBE_M, CUBE_M, CUBE_M)\ncooler_box = Pos((cooler_x0+cooler_x1)/2, (cooler_y0+cooler_y1)/2, (cooler_z0+cooler_z1)/2) * Box(CUBE_M, CUBE_M, CUBE_M)\n\nprint(\"cavity bbox:\", cavity.bounding_box())\nprint(\"heater bbox:\", heater_box.bounding_box())\nprint(\"cooler bbox:\", cooler_box.bounding_box())\n\n# -- cell 6 -------------------------------------------------------------------------\n# Now let's render a quick look at the geometry (box plus the two marker cubes) before committing to t\nimport subprocess, os\nos.chdir('/work/accept-t7')\nfrom build123d import export_stl\n\nos.makedirs(\"look_stl\", exist_ok=True)\nexport_stl(cavity, \"look_stl/cavity.stl\")\nexport_stl(heater_box, \"look_stl/heater.stl\")\nexport_stl(cooler_box, \"look_stl/cooler.stl\")\n\nimport pyvista as pv\npv.OFF_SCREEN = True\nplotter = pv.Plotter(off_screen=True, window_size=(900,600))\ncav = pv.read(\"look_stl/cavity.stl\")\nhea = pv.read(\"look_stl/heater.stl\")\ncoo = pv.read(\"look_stl/cooler.stl\")\nplotter.add_mesh(cav, color=\"lightgray\", opacity=0.25, show_edges=True)\nplotter.add_mesh(hea, color=\"red\", opacity=0.9)\nplotter.add_mesh(coo, color=\"blue\", opacity=0.9)\nplotter.add_axes()\nplotter.camera_position = \"iso\"\nplotter.reset_camera()\nplotter.screenshot(\"look_geometry.png\")\nprint(\"wrote look_geometry.png\")\n\n# -- cell 7 -------------------------------------------------------------------------\nfrom IPython.display import Image\nImage(filename=\"look_geometry.png\")\n\n# -- cell 8 -------------------------------------------------------------------------\n# The iso view makes height differences hard to judge. Let me check with axis-aligned views (front and\nimport pyvista as pv\npv.OFF_SCREEN = True\n\nplotter = pv.Plotter(off_screen=True, window_size=(1200,500), shape=(1,2))\n\ncav = pv.read(\"look_stl/cavity.stl\")\nhea = pv.read(\"look_stl/heater.stl\")\ncoo = pv.read(\"look_stl/cooler.stl\")\n\nplotter.subplot(0,0)\nplotter.add_mesh(cav, color=\"lightgray\", opacity=0.15, show_edges=True)\nplotter.add_mesh(hea, color=\"red\")\nplotter.add_mesh(coo, color=\"blue\")\nplotter.add_axes()\nplotter.camera_position = 'xz'   # looking along -y, see x (length) vs z (height)\nplotter.add_text(\"front: x (length) vs z (height)\", font_size=10)\nplotter.reset_camera()\n\nplotter.subplot(0,1)\nplotter.add_mesh(cav, color=\"lightgray\", opacity=0.15, show_edges=True)\nplotter.add_mesh(hea, color=\"red\")\nplotter.add_mesh(coo, color=\"blue\")\nplotter.add_axes()\nplotter.camera_position = 'yz'   # looking along x, see y (width) vs z (height)\nplotter.add_text(\"side: y (width) vs z (height)\", font_size=10)\nplotter.reset_camera()\n\nplotter.screenshot(\"look_geometry_ortho.png\")\nprint(\"wrote look_geometry_ortho.png\")\n\n# -- cell 9 -------------------------------------------------------------------------\nfrom IPython.display import Image\nImage(filename=\"look_geometry_ortho.png\")\n\n# -- cell 10 ------------------------------------------------------------------------\n# The geometry checks out: heater sits at the floor near x=0, cooler at the ceiling near x=100mm, both\nimport os\nos.chdir('/work/accept-t7')\n\nfor d in [\"system\", \"constant\", \"0\"]:\n    os.makedirs(d, exist_ok=True)\n\n# ---- Grid: 5 mm cells so the 20 mm cube boundaries land exactly on nodes ----\nCELL_M = 0.005\nNX = round(LX_M / CELL_M)   # 20\nNY = round(LY_M / CELL_M)   # 12\nNZ = round(LZ_M / CELL_M)   # 8\nprint(\"cells:\", NX, NY, NZ, \"total\", NX*NY*NZ)\n\n# sanity: cube boundaries must be multiples of CELL_M\nfor name, (a,b) in {\n    \"heater_x\": (heater_x0, heater_x1), \"heater_y\": (heater_y0, heater_y1), \"heater_z\": (heater_z0, heater_z1),\n    \"cooler_x\": (cooler_x0, cooler_x1), \"cooler_y\": (cooler_y0, cooler_y1), \"cooler_z\": (cooler_z0, cooler_z1),\n}.items():\n    ra, rb = a/CELL_M, b/CELL_M\n    assert abs(ra-round(ra)) < 1e-9 and abs(rb-round(rb)) < 1e-9, (name, a, b)\nprint(\"cube boundaries all align with the 5 mm grid\")\n\nblockMeshDict = f\"\"\"FoamFile\n{{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object blockMeshDict;\n}}\n\nconvertToMeters 1.0;\n\nvertices\n(\n    (0        0        0)\n    ({LX_M}   0        0)\n    ({LX_M}   {LY_M}   0)\n    (0        {LY_M}   0)\n    (0        0        {LZ_M})\n    ({LX_M}   0        {LZ_M})\n    ({LX_M}   {LY_M}   {LZ_M})\n    (0        {LY_M}   {LZ_M})\n);\n\nblocks\n(\n    hex (0 1 2 3 4 5 6 7) ({NX} {NY} {NZ}) simpleGrading (1 1 1)\n);\n\nedges\n(\n);\n\nboundary\n(\n    floor\n    {{\n        type wall;\n        faces ((0 1 2 3));\n    }}\n    ceiling\n    {{\n        type wall;\n        faces ((4 5 6 7));\n    }}\n    xmin\n    {{\n        type wall;\n        faces ((0 4 7 3));\n    }}\n    xmax\n    {{\n        type wall;\n        faces ((1 5 6 2));\n    }}\n    ymin\n    {{\n        type wall;\n        faces ((0 1 5 4));\n    }}\n    ymax\n    {{\n        type wall;\n        faces ((3 2 6 7));\n    }}\n);\n\nmergePatchPairs\n(\n);\n\"\"\"\n\nwith open(\"system/blockMeshDict\", \"w\") as f:\n    f.write(blockMeshDict)\n\nprint(\"wrote system/blockMeshDict\")\nprint(blockMeshDict)\n\n# -- cell 11 ------------------------------------------------------------------------\n# Now the minimal controlDict/fvSchemes/fvSolution that OpenFOAM utilities need to run, and topoSetDic\nimport os\nos.chdir('/work/accept-t7')\n\ncontrolDict = \"\"\"FoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object controlDict;\n}\napplication     buoyantSimpleFoam;\nstartFrom       startTime;\nstartTime       0;\nstopAt          endTime;\nendTime         1;\ndeltaT          1;\nwriteControl    timeStep;\nwriteInterval   1;\npurgeWrite      0;\nwriteFormat     ascii;\nwritePrecision  6;\nwriteCompression off;\ntimeFormat      general;\ntimePrecision   6;\nrunTimeModifiable true;\n\"\"\"\nwith open(\"system/controlDict\", \"w\") as f:\n    f.write(controlDict)\n\nfvSchemes = \"\"\"FoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object fvSchemes;\n}\nddtSchemes { default steadyState; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\n\"\"\"\nwith open(\"system/fvSchemes\", \"w\") as f:\n    f.write(fvSchemes)\n\nfvSolution = \"\"\"FoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object fvSolution;\n}\nsolvers\n{\n}\n\"\"\"\nwith open(\"system/fvSolution\", \"w\") as f:\n    f.write(fvSolution)\n\n# ---- topoSetDict: two cellZones aligned to the grid ----\ntopoSetDict = f\"\"\"FoamFile\n{{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object topoSetDict;\n}}\n\nactions\n(\n    {{\n        name    heater;\n        type    cellZoneSet;\n        action  new;\n        source  boxToCell;\n        box     ({heater_x0} {heater_y0} {heater_z0}) ({heater_x1} {heater_y1} {heater_z1});\n    }}\n    {{\n        name    cooler;\n        type    cellZoneSet;\n        action  new;\n        source  boxToCell;\n        box     ({cooler_x0} {cooler_y0} {cooler_z0}) ({cooler_x1} {cooler_y1} {cooler_z1});\n    }}\n);\n\"\"\"\nwith open(\"system/topoSetDict\", \"w\") as f:\n    f.write(topoSetDict)\n\nprint(\"wrote system/controlDict, fvSchemes, fvSolution, topoSetDict\")\n\n# -- cell 12 ------------------------------------------------------------------------\n# Now run blockMesh, then topoSet to tag the two cell zones.\nimport subprocess, os\nos.chdir('/work/accept-t7')\n\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.stdout[-3000:])\nprint(\"STDERR:\", r.stderr[-2000:])\nr.check_returncode()\n\n# -- cell 13 ------------------------------------------------------------------------\n# blockMesh created 1920 cells and the expected bounding box (0.1\u00d70.06\u00d70.04 m). Now run topoSet to tag\nimport subprocess, os\nos.chdir('/work/accept-t7')\n\nr = subprocess.run([\"topoSet\"], capture_output=True, text=True)\nprint(r.stdout[-3000:])\nprint(\"STDERR:\", r.stderr[-1000:])\nr.check_returncode()\n\n# -- cell 14 ------------------------------------------------------------------------\n# Each zone got exactly 64 cells (4\u00d74\u00d74 at 5 mm resolution = the 20 mm cube, exactly), confirming clea\nimport subprocess, os\nos.chdir('/work/accept-t7')\n\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(r.stdout[-4000:])\nprint(\"STDERR:\", r.stderr[-1000:])\n\n# -- cell 15 ------------------------------------------------------------------------\n# checkMesh reports \"Mesh OK.\" and both cellZones have exactly the volume of a 20 mm cube (8\u00d710\u207b\u2078 m\u00b3..\nimport subprocess, os\ntoolbox = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/\"\nos.chdir('/work/accept-t7')\n\nr = subprocess.run([\"python3\", toolbox+\"mesh_look.py\", \"--case\", \".\", \"--json\"],\n                    capture_output=True, text=True)\nprint(r.stdout[-4000:])\nprint(\"STDERR:\", r.stderr[-2000:])\n\n# -- cell 16 ------------------------------------------------------------------------\nimport subprocess, os\ntoolbox = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/\"\nos.chdir('/work/accept-t7')\n\nr = subprocess.run([\"python3\", toolbox+\"mesh_look.py\", \".\", \"--json\", \"look.json\"],\n                    capture_output=True, text=True)\nprint(r.stdout[-4000:])\nprint(\"STDERR:\", r.stderr[-2000:])\n\n# -- cell 17 ------------------------------------------------------------------------\nfrom IPython.display import Image\nImage(filename=\"look.png\")\n\n# -- cell 18 ------------------------------------------------------------------------\n# Let me add one more visual check: render the actual mesh with the two cellZones highlighted (not jus\nimport subprocess, os\nos.chdir('/work/accept-t7')\n\nr = subprocess.run([\"foamToVTK\", \"-cellSet\", \"heater\", \"-cellSet\", \"cooler\"], capture_output=True, text=True)\nprint(r.stdout[-2000:])\nprint(\"STDERR:\", r.stderr[-1500:])\nprint(subprocess.run([\"find\", \"VTK\", \"-maxdepth\", \"3\"], capture_output=True, text=True).stdout)\n\n# -- cell 19 ------------------------------------------------------------------------\n# That only exported cellSet cooler (the second `-cellSet` flag overrode the first, it seems). Let me \nimport subprocess, os\nos.chdir('/work/accept-t7')\n\nr = subprocess.run([\"foamToVTK\", \"-cellSet\", \"heater\"], capture_output=True, text=True)\nprint(r.stdout[-1200:])\nprint(\"STDERR:\", r.stderr[-500:])\nprint(subprocess.run([\"find\", \"VTK\", \"-maxdepth\", \"2\"], capture_output=True, text=True).stdout)\n\n# -- cell 20 ------------------------------------------------------------------------\n# Also export the full domain internal mesh so I can show the zones in context.\nimport subprocess, os\nos.chdir('/work/accept-t7')\n\nr = subprocess.run([\"foamToVTK\"], capture_output=True, text=True)\nprint(r.stdout[-800:])\nprint(\"STDERR:\", r.stderr[-500:])\nprint(subprocess.run([\"find\", \"VTK\", \"-maxdepth\", \"2\"], capture_output=True, text=True).stdout)\n\n# -- cell 21 ------------------------------------------------------------------------\nimport pyvista as pv\npv.OFF_SCREEN = True\n\nwhole = pv.read(\"VTK/accept-t7_0/internal.vtu\")\nheater_v = pv.read(\"VTK/heater_0/internal.vtu\")\ncooler_v = pv.read(\"VTK/cooler_0/internal.vtu\")\n\nprint(\"whole cells:\", whole.n_cells, \"heater cells:\", heater_v.n_cells, \"cooler cells:\", cooler_v.n_cells)\nprint(\"heater bounds:\", heater_v.bounds)\nprint(\"cooler bounds:\", cooler_v.bounds)\n\nplotter = pv.Plotter(off_screen=True, window_size=(1000,700))\nplotter.add_mesh(whole, color=\"lightgray\", opacity=0.12, show_edges=True, edge_color=\"gray\")\nplotter.add_mesh(heater_v, color=\"red\", show_edges=True, label=\"heater\")\nplotter.add_mesh(cooler_v, color=\"blue\", show_edges=True, label=\"cooler\")\nplotter.add_axes()\nplotter.camera_position = \"iso\"\nplotter.reset_camera()\nplotter.add_legend()\nplotter.screenshot(\"look_cellzones.png\")\nprint(\"wrote look_cellzones.png\")\n\n# -- cell 22 ------------------------------------------------------------------------\nfrom IPython.display import Image\nImage(filename=\"look_cellzones.png\")\n",
+      "before": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      },
+      "exit_code": 0,
+      "output": "eater_0\nVTK/heater_0/boundary.vtm\nVTK/heater_0/boundary\nVTK/heater_0/boundary/ymax.vtp\nVTK/heater_0/boundary/ymin.vtp\nVTK/heater_0/boundary/xmax.vtp\nVTK/heater_0/boundary/xmin.vtp\nVTK/heater_0/boundary/ceiling.vtp\nVTK/heater_0/boundary/floor.vtp\nVTK/heater_0/internal.vtu\nVTK/cooler.vtm.series\nVTK/cooler_0.vtm\nVTK/cooler_0\nVTK/cooler_0/boundary.vtm\nVTK/cooler_0/boundary\nVTK/cooler_0/boundary/ymax.vtp\nVTK/cooler_0/boundary/ymin.vtp\nVTK/cooler_0/boundary/xmax.vtp\nVTK/cooler_0/boundary/xmin.vtp\nVTK/cooler_0/boundary/ceiling.vtp\nVTK/cooler_0/boundary/floor.vtp\nVTK/cooler_0/internal.vtu\n\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t7\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nConverting cellSet heater only. New outside faces as \"oldInternalFaces\".\nInitial memory 223680 kB\nCreate mesh for time = 0\n\nVTK mesh topology: 0 s, 224264 kB\nTime: 0\n    Internal  : \"VTK/heater_0/internal.vtu\"\n    Boundary  : \"VTK/heater_0/boundary/floor.vtp\"\n    Boundary  : \"VTK/heater_0/boundary/ceiling.vtp\"\n    Boundary  : \"VTK/heater_0/boundary/xmin.vtp\"\n    Boundary  : \"VTK/heater_0/boundary/xmax.vtp\"\n    Boundary  : \"VTK/heater_0/boundary/ymin.vtp\"\n    Boundary  : \"VTK/heater_0/boundary/ymax.vtp\"\nWrote in 0 s, 224396 kB\n\nEnd: 0 s, 285784 kB (peak)\n\n\nSTDERR: \nVTK\nVTK/accept-t7.vtm.series\nVTK/accept-t7_0.vtm\nVTK/accept-t7_0\nVTK/accept-t7_0/boundary.vtm\nVTK/accept-t7_0/boundary\nVTK/accept-t7_0/internal.vtu\nVTK/heater.vtm.series\nVTK/heater_0.vtm\nVTK/heater_0\nVTK/heater_0/boundary.vtm\nVTK/heater_0/boundary\nVTK/heater_0/internal.vtu\nVTK/cooler.vtm.series\nVTK/cooler_0.vtm\nVTK/cooler_0\nVTK/cooler_0/boundary.vtm\nVTK/cooler_0/boundary\nVTK/cooler_0/internal.vtu\n\nhecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nInitial memory 223680 kB\nCreate mesh for time = 0\n\nVTK mesh topology: 0 s, 224116 kB\nTime: 0\n    Internal  : \"VTK/accept-t7_0/internal.vtu\"\n    Boundary  : \"VTK/accept-t7_0/boundary/floor.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/ceiling.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/xmin.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/xmax.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/ymin.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/ymax.vtp\"\nWrote in 0.01 s, 225356 kB\n\nEnd: 0.01 s, 285784 kB (peak)\n\n\nSTDERR: \nVTK\nVTK/accept-t7.vtm.series\nVTK/accept-t7_0.vtm\nVTK/accept-t7_0\nVTK/accept-t7_0/boundary.vtm\nVTK/accept-t7_0/boundary\nVTK/accept-t7_0/internal.vtu\nVTK/heater.vtm.series\nVTK/heater_0.vtm\nVTK/heater_0\nVTK/heater_0/boundary.vtm\nVTK/heater_0/boundary\nVTK/heater_0/internal.vtu\nVTK/cooler.vtm.series\nVTK/cooler_0.vtm\nVTK/cooler_0\nVTK/cooler_0/boundary.vtm\nVTK/cooler_0/boundary\nVTK/cooler_0/internal.vtu\n\nwhole cells: 1920 heater cells: 64 cooler cells: 64\nheater bounds: BoundsTuple(x_min = 0.009999999776482582,\n            x_max = 0.029999999329447746,\n            y_min = 0.019999999552965164,\n            y_max = 0.03999999910593033,\n            z_min = 0.0,\n            z_max = 0.019999999552965164)\ncooler bounds: BoundsTuple(x_min = 0.07000000029802322,\n            x_max = 0.09000000357627869,\n            y_min = 0.019999999552965164,\n            y_max = 0.03999999910593033,\n            z_min = 0.019999999552965164,\n            z_max = 0.03999999910593033)\nwrote look_cellzones.png\n",
+      "after": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "arm": "desk",
+  "prompt": "T1",
+  "title": "T1 \u2014 2D U-bend",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A plane (2D) U-bend duct in water. The passage is 10 mm wide throughout. Both legs run horizontally, 120 mm long, and are joined by a 180 degree bend whose centreline radius is 15 mm. The inlet is the open end of the lower leg and the outlet is the open end of the upper leg. Mesh it for an incompressible solve.",
+  "properties": [
+    "passage width, 10 mm, at the inlet, at mid-leg and at the crown of the bend",
+    "leg length, 120 mm, both legs",
+    "centreline bend radius, 15 mm",
+    "included angle of the bend, 180 degrees",
+    "the mesh is exactly one cell thick, and both side patches are typed `empty`"
+  ],
+  "geometry": "",
+  "attempts": 2,
+  "started_at": "2026-09-11T09:58:48",
+  "completed": false,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "previous": [
+    {
+      "arm": "desk",
+      "prompt": "T1",
+      "title": "T1 \u2014 2D U-bend",
+      "max_seconds": 0.0,
+      "max_steps": 0,
+      "request": "A plane (2D) U-bend duct in water. The passage is 10 mm wide throughout. Both legs run horizontally, 120 mm long, and are joined by a 180 degree bend whose centreline radius is 15 mm. The inlet is the open end of the lower leg and the outlet is the open end of the upper leg. Mesh it for an incompressible solve.",
+      "properties": [
+        "passage width, 10 mm, at the inlet, at mid-leg and at the crown of the bend",
+        "leg length, 120 mm, both legs",
+        "centreline bend radius, 15 mm",
+        "included angle of the bend, 180 degrees",
+        "the mesh is exactly one cell thick, and both side patches are typed `empty`"
+      ],
+      "geometry": "",
+      "attempts": 1,
+      "started_at": "2026-09-11T09:36:35",
+      "completed": true,
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "run": {
+        "ok": false,
+        "stopped": "steps",
+        "error": "",
+        "summary": "",
+        "case_dir": "/work/accept-t1",
+        "seconds": 373.3,
+        "desk_seconds": 354.2,
+        "steps": 27,
+        "tokens": {
+          "input": 60,
+          "cache_read": 709659,
+          "cache_write": 44833,
+          "output": 22660
+        },
+        "usd": 0.4807,
+        "script_lines": 365,
+        "check": {
+          "ran": true,
+          "ok": false,
+          "unreachable": false,
+          "missing": [
+            "there is no constant/polyMesh in accept-t1 -- nothing has been meshed yet",
+            "the check wrote no readable answer",
+            "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+            "no picture of the mesh was drawn"
+          ],
+          "regions": [],
+          "cells": 0,
+          "two_d": false,
+          "patches": [],
+          "findings": [
+            {
+              "check": "mesh",
+              "status": "fail",
+              "measured": "there is no constant/polyMesh in accept-t1 -- nothing has been meshed yet"
+            },
+            {
+              "check": "look",
+              "status": "fail",
+              "measured": "the check wrote no readable answer"
+            },
+            {
+              "check": "build",
+              "status": "fail",
+              "measured": "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh"
+            },
+            {
+              "check": "render",
+              "status": "fail",
+              "measured": "no picture of the mesh was drawn"
+            },
+            {
+              "check": "cad_audit",
+              "status": "skipped",
+              "measured": "cad_audit did not report: no patch set"
+            },
+            {
+              "check": "domain_probe",
+              "status": "skipped",
+              "measured": "domain_probe did not report: no patch set"
+            },
+            {
+              "check": "replay",
+              "status": "ok",
+              "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3"
+            }
+          ],
+          "replay": {
+            "ran": true,
+            "exit_code": 0,
+            "before": {
+              "patches": {},
+              "volume_m3": 0.0,
+              "bounds": [],
+              "triangles": 0
+            },
+            "after": {
+              "patches": {},
+              "volume_m3": 0.0,
+              "bounds": [],
+              "triangles": 0
+            },
+            "output_tail": "run/docker\u2019: Permission denied\nfind: \u2018/run/containerd\u2019: Permission denied\nfind: \u2018/run/snapd\u2019: Permission denied\nfind: \u2018/run/chrony\u2019: Permission denied\nfind: \u2018/run/user/1001/systemd/inaccessible/dir\u2019: Permission denied\nfind: \u2018/run/sudo\u2019: Permission denied\nfind: \u2018/run/cloud-init/share\u2019: Permission denied\nfind: \u2018/run/credentials/getty@tty1.service\u2019: Permission denied\nfind: \u2018/run/credentials/serial-getty@ttyS0.service\u2019: Permission denied\nfind: \u2018/run/credentials/systemd-networkd.service\u2019: Permission denied\nfind: \u2018/run/credentials/systemd-resolved.service\u2019: Permission denied\nfind: \u2018/run/credentials/systemd-journald.service\u2019: Permission denied\nfind: \u2018/run/systemd/empty\u2019: Permission denied\nfind: \u2018/run/systemd/ask-password-block\u2019: Permission denied\nfind: \u2018/run/systemd/propagate/systemd-logind.service\u2019: Permission denied\nfind: \u2018/run/systemd/propagate/chrony.service\u2019: Permission denied\nfind: \u2018/run/systemd/propagate/systemd-networkd.service\u2019: Permission denied\nfind: \u2018/run/systemd/propagate/systemd-udevd.service\u2019: Permission denied\nfind: \u2018/run/systemd/propagate/systemd-resolved.service\u2019: Permission denied\nfind: \u2018/run/systemd/inaccessible/dir\u2019: Permission denied\n\n\n\nwrote duct2d.msh 248622 bytes\n"
+          }
+        },
+        "artifacts": [
+          "build.py",
+          "check.json",
+          "steps.json"
+        ]
+      },
+      "seconds": 374.4,
+      "verdict": "check-not-ok"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "arm": "replay",
+  "prompt": "T7",
+  "completed": true,
+  "started_at": "2026-09-11T11:32:44",
+  "run": {
+    "ran": true,
+    "seconds": 6.7,
+    "script_exit": "0",
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "there is no constant/polyMesh in replay-t7 -- nothing has been meshed yet",
+        "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+        "the mesh has no boundary patch with any faces on it",
+        "no picture of the mesh was drawn"
+      ],
+      "regions": [],
+      "cells": 0,
+      "two_d": false,
+      "patches": [],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "fail",
+          "measured": "there is no constant/polyMesh in replay-t7 -- nothing has been meshed yet"
+        },
+        {
+          "check": "checkmesh",
+          "status": "fail",
+          "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks"
+        },
+        {
+          "check": "patches",
+          "status": "fail",
+          "measured": "the mesh has no boundary patch with any faces on it"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "no cellZones in this mesh"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: build.py"
+        },
+        {
+          "check": "render",
+          "status": "fail",
+          "measured": "no picture of the mesh was drawn"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        }
+      ],
+      "replay": {
+        "ran": false
+      }
+    },
+    "output_tail": "exit=0\nVTK/cooler_0/internal.vtu\n\nhecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nInitial memory 223680 kB\nCreate mesh for time = 0\n\nVTK mesh topology: 0.01 s, 224116 kB\nTime: 0\n    Internal  : \"VTK/accept-t7_0/internal.vtu\"\n    Boundary  : \"VTK/accept-t7_0/boundary/floor.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/ceiling.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/xmin.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/xmax.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/ymin.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/ymax.vtp\"\nWrote in 0 s, 225356 kB\n\nEnd: 0.01 s, 285784 kB (peak)\n\n\nSTDERR: \nVTK\nVTK/accept-t7.vtm.series\nVTK/accept-t7_0.vtm\nVTK/accept-t7_0\nVTK/accept-t7_0/boundary.vtm\nVTK/accept-t7_0/boundary\nVTK/accept-t7_0/internal.vtu\nVTK/heater.vtm.series\nVTK/heater_0.vtm\nVTK/heater_0\nVTK/heater_0/boundary.vtm\nVTK/heater_0/boundary\nVTK/heater_0/internal.vtu\nVTK/cooler.vtm.series\nVTK/cooler_0.vtm\nVTK/cooler_0\nVTK/cooler_0/boundary.vtm\nVTK/cooler_0/boundary\nVTK/cooler_0/internal.vtu\n\nwhole cells: 1920 heater cells: 64 cooler cells: 64\nheater bounds: BoundsTuple(x_min = 0.009999999776482582,\n            x_max = 0.029999999329447746,\n            y_min = 0.019999999552965164,\n            y_max = 0.03999999910593033,\n            z_min = 0.0,\n            z_max = 0.019999999552965164)\ncooler bounds: BoundsTuple(x_min = 0.07000000029802322,\n            x_max = 0.09000000357627869,\n            y_min = 0.019999999552965164,\n            y_max = 0.03999999910593033,\n            z_min = 0.019999999552965164,\n            z_max = 0.03999999910593033)\nwrote look_cellzones.png\n"
+  }
+}

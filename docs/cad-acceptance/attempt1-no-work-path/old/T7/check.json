@@ -1,0 +1,301 @@
+{
+  "ok": true,
+  "missing": [],
+  "cells": 1920,
+  "patches": [
+    {
+      "name": "westWall",
+      "type": "wall",
+      "nFaces": 96,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.0023999998927116406,
+      "center": [
+        0.0,
+        0.029999999329447746,
+        0.01999999955296516
+      ],
+      "normal": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "eastWall",
+      "type": "wall",
+      "nFaces": 96,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.0023999998927116406,
+      "center": [
+        0.10000000149011605,
+        0.029999999329447746,
+        0.01999999955296516
+      ],
+      "normal": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "southWall",
+      "type": "wall",
+      "nFaces": 160,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.003999999970197676,
+      "center": [
+        0.05000000074505804,
+        0.0,
+        0.019999999552965178
+      ],
+      "normal": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "northWall",
+      "type": "wall",
+      "nFaces": 160,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.003999999970197676,
+      "center": [
+        0.05000000074505804,
+        0.05999999865889541,
+        0.019999999552965178
+      ],
+      "normal": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "floor",
+      "type": "wall",
+      "nFaces": 240,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.005999999955296514,
+      "center": [
+        0.05000000074505807,
+        0.02999999932944776,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "ceiling",
+      "type": "wall",
+      "nFaces": 240,
+      "inGroups": "1(wall)",
+      "touches": 3,
+      "area": 0.005999999955296514,
+      "center": [
+        0.05000000074505807,
+        0.02999999932944776,
+        0.03999999910593028
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "flat": true,
+      "inward": -1
+    }
+  ],
+  "lines": [
+    "1,920 cells, 6,256 faces, 2,457 points, 3D",
+    "bounds 0.1 x 0.06 x 0.04 m (x 0..0.1, y 0..0.06, z 0..0.04)",
+    "checkMesh: Mesh OK.",
+    "  max_aspect_ratio 1, max_non_orthogonality 0, max_skewness 1.66533e-14, min_volume 1.25e-07",
+    "patches:",
+    "  westWall wall 96 faces area 0.0024 m2 normal (-1.00 +0.00 +0.00) at (0 0.03 0.02)",
+    "  eastWall wall 96 faces area 0.0024 m2 normal (+1.00 +0.00 +0.00) at (0.1 0.03 0.02)",
+    "  southWall wall 160 faces area 0.004 m2 normal (+0.00 -1.00 +0.00) at (0.05 0 0.02)",
+    "  northWall wall 160 faces area 0.004 m2 normal (+0.00 +1.00 +0.00) at (0.05 0.06 0.02)",
+    "  floor wall 240 faces area 0.006 m2 normal (+0.00 +0.00 -1.00) at (0.05 0.03 0)",
+    "  ceiling wall 240 faces area 0.006 m2 normal (+0.00 +0.00 +1.00) at (0.05 0.03 0.04)",
+    "rebuilds with: Allmesh, build.py, system/blockMeshDict"
+  ],
+  "raw": {
+    "case": "/home/qiuzi/PycharmProjects/OpenReynolds-wt/c10/.accept-work/old-t7",
+    "polymesh": true,
+    "patches": [
+      {
+        "name": "westWall",
+        "type": "wall",
+        "nFaces": 96,
+        "inGroups": "1(wall)",
+        "touches": 3,
+        "area": 0.0023999998927116406,
+        "center": [
+          0.0,
+          0.029999999329447746,
+          0.01999999955296516
+        ],
+        "normal": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "flat": true,
+        "inward": -1
+      },
+      {
+        "name": "eastWall",
+        "type": "wall",
+        "nFaces": 96,
+        "inGroups": "1(wall)",
+        "touches": 3,
+        "area": 0.0023999998927116406,
+        "center": [
+          0.10000000149011605,
+          0.029999999329447746,
+          0.01999999955296516
+        ],
+        "normal": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "flat": true,
+        "inward": -1
+      },
+      {
+        "name": "southWall",
+        "type": "wall",
+        "nFaces": 160,
+        "inGroups": "1(wall)",
+        "touches": 3,
+        "area": 0.003999999970197676,
+        "center": [
+          0.05000000074505804,
+          0.0,
+          0.019999999552965178
+        ],
+        "normal": [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        "flat": true,
+        "inward": -1
+      },
+      {
+        "name": "northWall",
+        "type": "wall",
+        "nFaces": 160,
+        "inGroups": "1(wall)",
+        "touches": 3,
+        "area": 0.003999999970197676,
+        "center": [
+          0.05000000074505804,
+          0.05999999865889541,
+          0.019999999552965178
+        ],
+        "normal": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "flat": true,
+        "inward": -1
+      },
+      {
+        "name": "floor",
+        "type": "wall",
+        "nFaces": 240,
+        "inGroups": "1(wall)",
+        "touches": 3,
+        "area": 0.005999999955296514,
+        "center": [
+          0.05000000074505807,
+          0.02999999932944776,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "flat": true,
+        "inward": -1
+      },
+      {
+        "name": "ceiling",
+        "type": "wall",
+        "nFaces": 240,
+        "inGroups": "1(wall)",
+        "touches": 3,
+        "area": 0.005999999955296514,
+        "center": [
+          0.05000000074505807,
+          0.02999999932944776,
+          0.03999999910593028
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "flat": true,
+        "inward": -1
+      }
+    ],
+    "build": [
+      "Allmesh",
+      "build.py",
+      "system/blockMeshDict"
+    ],
+    "cells": 1920,
+    "faces": 6256,
+    "points": 2457,
+    "bounds": [
+      0.0,
+      0.0,
+      0.0,
+      0.1,
+      0.06,
+      0.04
+    ],
+    "two_d": false,
+    "checkmesh": "Mesh OK.",
+    "checkmesh_ok": true,
+    "metrics": {
+      "max_non_orthogonality": 0.0,
+      "max_skewness": 1.66533e-14,
+      "max_aspect_ratio": 1.0,
+      "min_volume": 1.25e-07
+    },
+    "render": "renders/mesh_look.png",
+    "enclosure": [
+      "ceiling",
+      "eastWall",
+      "floor",
+      "northWall",
+      "southWall",
+      "westWall"
+    ]
+  }
+}

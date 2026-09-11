@@ -1,0 +1,18 @@
+{
+  "unit_metres": 1.0,
+  "source": "cavity.step",
+  "patches": [
+    {
+      "name": "walls",
+      "file": "walls.stl",
+      "triangles": 9344,
+      "area_m2": 0.02479999999999991,
+      "role": "wall"
+    }
+  ],
+  "location_in_mesh": [
+    0.05,
+    0.03,
+    0.02
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "arm": "oldcheck",
+  "prompt": "T8",
+  "case_dir": "/work/accept-t8",
+  "completed": true,
+  "run": {
+    "ok": false,
+    "missing": [
+      "there is no constant/polyMesh in accept-t8 -- nothing has been meshed yet",
+      "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+      "the mesh has 0 boundary patch(es) with faces on them; a flow case needs at least an inlet, an outlet and walls",
+      "no picture of the mesh was drawn"
+    ],
+    "cells": 0,
+    "patches": [],
+    "lines": [
+      "rebuilds with: build.py, system/blockMeshDict"
+    ]
+  }
+}

@@ -35,3 +35,6 @@ reynolds-verification/
 
 # editor/agent scratch
 .claude/
+
+# the acceptance harness's local workspace (scripts/cad_accept.py --local)
+.accept-work/

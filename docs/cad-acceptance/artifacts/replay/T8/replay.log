@@ -1,0 +1,61 @@
+exit=0
+            plotter.reset_camera()
+            plotter.camera.zoom(1.3)
+
+    def patches_panel(title: str) -> None:
+        plotter.add_text(title, font_size=9)
+        if two_d and internal is not None:
+            plotter.add_mesh(internal.extract_surface(), color="#ececec",
+                             show_edges=False, lighting=False)
+        for name, surface in shown.items():
+            faint = name in enclosure
+            if two_d:
+                # Looking down z, a side patch is a quad seen exactly edge-on: as a
+                # filled surface it is zero pixels wide and the panel comes back blank.
+                # Drawn as a thick wireframe it is the coloured line it should be.
+                plotter.add_mesh(surface, color=colours[name], style="wireframe",
+                                 line_width=7, render_lines_as_tubes=True,
+                                 lighting=False, label=name)
+            else:
+                plotter.add_mesh(surface, color=colours[name],
+                                 opacity=0.10 if faint else 1.0, show_edges=False,
+                                 label=name)
+        if shown:
+            try:
+                plotter.add_legend(bcolor="white", size=(0.26, 0.045 * max(2, len(shown))),
+                                   loc="upper right", face="rectangle")
+            except Exception:  # noqa: BLE001 - the legend is a nicety
+                pass
+        frame("xy" if two_d else "yz")
+        if not two_d:
+            plotter.camera_position = "iso"
+            plotter.camera.zoom(1.2)
+
+    def cut_panel(normal: str, title: str) -> None:
+        plotter.add_text(title, font_size=9)
+        if internal is None:
+            return
+        try:
+            cut = internal.slice(normal=normal)
+            plotter.add_mesh(cut, color="#dddddd", show_edges=True, edge_color="#3b3b3b",
+                             line_width=1)
+        except Exception:  # noqa: BLE001
+            plotter.add_mesh(internal.extract_surface(), color="#dddddd", show_edges=True)
+        frame({"x": "yz", "y": "zx", "z": "xy"}[normal])
+
+    if two_d:
+        plotter.subplot(0, 0)
+        patches_panel("boundary patches (looking down z; front and back left out)")
+        plotter.subplot(0, 1)
+        cut_panel("z", "cells")
+    else:
+        plotter.subplot(0, 0)
+        patches_panel("boundary patches" + (" (the enclosure faint)" if enclosure else ""))
+        for index, normal in enumerate("xyz"):
+            plotter.subplot((index + 1) // 2, (index + 1) % 2)
+            cut_panel(normal, f"cells, cut through {normal}")
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    plotter.screenshot(str(out_png))
+    plotter.close()
+    return str(out_png)
+

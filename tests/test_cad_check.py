@@ -774,20 +774,29 @@ mergePatchPairs ();
 class Mapped:
     """A local workspace that answers to `/work` in command text as well as in paths.
 
-    The instance carries the toolbox at `/work/.toolbox`, which is the path the finish
-    check names; this machine's workspace is somewhere a test can write. `LocalBackend`
-    already treats `/work` as an alias for its root when it resolves a path, and this
-    does the same for the text of a command, so the check under test runs unmodified
-    with the constant it ships with.
+    `LocalBackend` already treats `/work` as an alias for its root when it *resolves a
+    path*, and this does the same for the text of a command, which nothing else does.
+    It remains here for any command text that still names the hosted root; the finish
+    check no longer needs it, because it now asks the backend where its toolbox is
+    rather than assuming `/work/.toolbox`.
+
+    The substitution is anchored deliberately. These roots are `tmp_path / "work"`, so
+    an unanchored `.replace("/work/", root)` also rewrites the `/work/` *inside* the
+    root it just substituted, and the command comes back pointing at a path made of two
+    roots glued together. That is a shim bug, not a check bug, and it only became
+    reachable once the check started naming real paths.
     """
+
+    _HOSTED = re.compile(r"(?<![\w/])/work/")
 
     def __init__(self, backend):
         self._backend = backend
         self.workspace_root = backend.workspace_root
 
     def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
-        return self._backend.exec(cmd.replace("/work/", f"{self.workspace_root}/"),
-                                  cwd=cwd, timeout_s=timeout_s, background=background)
+        return self._backend.exec(
+            self._HOSTED.sub(f"{self.workspace_root}/", cmd),
+            cwd=cwd, timeout_s=timeout_s, background=background)
 
     def __getattr__(self, name):
         return getattr(self._backend, name)

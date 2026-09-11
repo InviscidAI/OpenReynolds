@@ -1,0 +1,14 @@
+{
+  "unit_metres": 1.0,
+  "source": "sphere_m.step",
+  "patches": [
+    {
+      "name": "sphere",
+      "file": "sphere.stl",
+      "triangles": 1386,
+      "area_m2": 0.005004176289903445,
+      "role": "wall"
+    }
+  ],
+  "location_in_mesh": null
+}

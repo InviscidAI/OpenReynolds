@@ -1,0 +1,236 @@
+{
+  "arm": "desk",
+  "prompt": "T1",
+  "title": "T1 \u2014 2D U-bend",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A plane (2D) U-bend duct in water. The passage is 10 mm wide throughout. Both legs run horizontally, 120 mm long, and are joined by a 180 degree bend whose centreline radius is 15 mm. The inlet is the open end of the lower leg and the outlet is the open end of the upper leg. Mesh it for an incompressible solve.",
+  "properties": [
+    "passage width, 10 mm, at the inlet, at mid-leg and at the crown of the bend",
+    "leg length, 120 mm, both legs",
+    "centreline bend radius, 15 mm",
+    "included angle of the bend, 180 degrees",
+    "the mesh is exactly one cell thick, and both side patches are typed `empty`"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T10:06:58",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": false,
+    "stopped": "steps",
+    "error": "",
+    "summary": "",
+    "case_dir": "/work/accept-t1",
+    "seconds": 455.6,
+    "desk_seconds": 403.6,
+    "steps": 27,
+    "tokens": {
+      "input": 60,
+      "cache_read": 746557,
+      "cache_write": 58171,
+      "output": 30772
+    },
+    "usd": 0.6026,
+    "script_lines": 311,
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "there is no constant/polyMesh in accept-t1 -- nothing has been meshed yet",
+        "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+        "the mesh has no boundary patch with any faces on it",
+        "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+        "no picture of the mesh was drawn"
+      ],
+      "regions": [],
+      "cells": 0,
+      "two_d": false,
+      "patches": [],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "fail",
+          "measured": "there is no constant/polyMesh in accept-t1 -- nothing has been meshed yet"
+        },
+        {
+          "check": "checkmesh",
+          "status": "fail",
+          "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks"
+        },
+        {
+          "check": "patches",
+          "status": "fail",
+          "measured": "the mesh has no boundary patch with any faces on it"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "no cellZones in this mesh"
+        },
+        {
+          "check": "build",
+          "status": "fail",
+          "measured": "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh"
+        },
+        {
+          "check": "render",
+          "status": "fail",
+          "measured": "no picture of the mesh was drawn"
+        },
+        {
+          "check": "cad_audit.manifest",
+          "status": "ok",
+          "measured": "5 patches, each with its file on disk and no unlisted STL beside them: inlet, outlet, wall, front, back"
+        },
+        {
+          "check": "cad_audit.scale",
+          "status": "ok",
+          "measured": "the union spans 0.14 x 0.04 x 0.002 m"
+        },
+        {
+          "check": "cad_audit.closure",
+          "status": "ok",
+          "measured": "0 open edges in the union of 5 patch files (66,458 triangles); per file: inlet 48, outlet 48, wall 2314, front 1189, back 1189"
+        },
+        {
+          "check": "cad_audit.manifold",
+          "status": "ok",
+          "measured": "0 non-manifold edges in the union"
+        },
+        {
+          "check": "cad_audit.normals",
+          "status": "ok",
+          "measured": "0 same-direction edges in the union"
+        },
+        {
+          "check": "cad_audit.degenerate",
+          "status": "ok",
+          "measured": "0 triangles with a repeated corner"
+        },
+        {
+          "check": "cad_audit.coverage",
+          "status": "ok",
+          "measured": "5 patches over 66,458 triangles (inlet 210, outlet 208, wall 11,956, front 27,039, back 27,045); every face in exactly one patch"
+        },
+        {
+          "check": "cad_audit.self_intersection",
+          "status": "ok",
+          "measured": "0 triangles in 0 crossing pairs, out of 407,152 pairs whose boxes overlap"
+        },
+        {
+          "check": "domain_probe.location_in_mesh",
+          "status": "ok",
+          "measured": "-0.06 0 0.001 (patches.json) is inside, 0.001 m from the nearest triangle, in a domain 0.002 m wide there"
+        },
+        {
+          "check": "domain_probe.min_width",
+          "status": "ok",
+          "measured": "narrowest of 111 measured samples is 0.00199708 m, at -0.0214114 0.0289516 0.00185181 (9 further samples set aside as corners)"
+        },
+        {
+          "check": "domain_probe.min_wall_thickness",
+          "status": "skipped",
+          "measured": "the union is one connected shell of 66,458 triangles"
+        },
+        {
+          "check": "replay",
+          "status": "ok",
+          "measured": "the build script re-ran clean from empty and produced the same geometry: 5 patch(es), 66,458 triangles, union volume 5.74248e-06 m3"
+        }
+      ],
+      "replay": {
+        "ran": true,
+        "exit_code": 0,
+        "before": {
+          "patches": {
+            "back": {
+              "triangles": 27045,
+              "area_m2": 0.002871238891968088
+            },
+            "front": {
+              "triangles": 27039,
+              "area_m2": 0.002871238891968062
+            },
+            "inlet": {
+              "triangles": 210,
+              "area_m2": 2.000000000000001e-05
+            },
+            "outlet": {
+              "triangles": 208,
+              "area_m2": 2.000000000000001e-05
+            },
+            "wall": {
+              "triangles": 11956,
+              "area_m2": 0.001148488440959882
+            }
+          },
+          "volume_m3": 5.742476684679053e-06,
+          "bounds": [
+            -0.12,
+            -0.005,
+            0.0,
+            0.02,
+            0.035,
+            0.002
+          ],
+          "triangles": 66458
+        },
+        "after": {
+          "patches": {
+            "back": {
+              "triangles": 27045,
+              "area_m2": 0.002871238891968088
+            },
+            "front": {
+              "triangles": 27039,
+              "area_m2": 0.002871238891968062
+            },
+            "inlet": {
+              "triangles": 210,
+              "area_m2": 2.000000000000001e-05
+            },
+            "outlet": {
+              "triangles": 208,
+              "area_m2": 2.000000000000001e-05
+            },
+            "wall": {
+              "triangles": 11956,
+              "area_m2": 0.001148488440959882
+            }
+          },
+          "volume_m3": 5.742476684679053e-06,
+          "bounds": [
+            -0.12,
+            -0.005,
+            0.0,
+            0.02,
+            0.035,
+            0.002
+          ],
+          "triangles": 66458
+        },
+        "output_tail": "nded off.\n    features\n    (\n        // PATCH-ENTRIES-BEGIN features\n        // PATCH-ENTRIES-END\n    );\n\n    // (min max) refinement level per surface, and the patch each surface becomes.\n    // The patchInfo type is what decides whether the patch can carry a wall function\n    // and a layer; getting it from the manifest's role is the point of the enumerator.\n    refinementSurfaces\n    {\n        // PATCH-ENTRIES-BEGIN refinementSurfaces\n        // PATCH-ENTRIES-END\n    }\n\n    // Volume refinement regions. Empty is a real answer: a wake box is a decision\n    // about where the answer is, not a default.\n    refinementRegions\n    {\n    }\n\n    // THE point that says which side of the surface is fluid. There is no defensible\n    // default: a wrong point meshes the outside of a duct, or the inside of a body,\n    // and snappyHexMesh exits 0 either way. It must be strictly inside the fluid,\n    // off any surface and off any cell face of the background mesh.\n    //   python3 domain_probe.py <case> --suggest\n    locationInMesh (CHANGE_ME CHANGE_ME CHANGE_ME);\n\n    // Below here: sizing, not geometry.\n    maxLocalCells       1000000;    // per processor, before the mesh is redistributed\n\n"
+      }
+    },
+    "artifacts": [
+      "build.py",
+      "constant/triSurface/back.stl",
+      "constant/triSurface/front.stl",
+      "constant/triSurface/inlet.stl",
+      "constant/triSurface/outlet.stl",
+      "constant/triSurface/patches.json",
+      "constant/triSurface/wall.stl",
+      "profile_check.png",
+      "renders/mesh_look.json",
+      "build.py",
+      "check.json",
+      "steps.json"
+    ]
+  },
+  "seconds": 456.7,
+  "verdict": "check-not-ok"
+}

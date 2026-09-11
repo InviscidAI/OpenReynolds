@@ -1,0 +1,218 @@
+{
+  "arm": "desk",
+  "prompt": "T7",
+  "title": "T7 \u2014 sealed cavity driven by cell zones",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A sealed rectangular cavity of air, 100 mm x 60 mm x 40 mm, for a natural convection solve. There is no inlet and no outlet \u2014 every boundary is an adiabatic wall. Inside it, mark two cell zones I can put a heat source and a heat sink on: a 20 mm cube near the floor at one end called `heater`, and a matching one near the ceiling at the other end called `cooler`.",
+  "properties": [
+    "cavity dimensions, 100 x 60 x 40 mm",
+    "both cell zones present by name, with their cell counts and their centroids",
+    "zone size, 20 mm cube each, and their positions relative to floor and ceiling",
+    "the boundary is a single named patch covering the whole cavity"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T10:58:59",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": true,
+    "stopped": "",
+    "error": "",
+    "summary": "The mesh is built and verified. Summary:\n**Geometry**: A sealed rectangular cavity, 100 \u00d7 60 \u00d7 40 mm (0.100 \u00d7 0.060 \u00d7 0.040 m \u2014 built in metres directly, no unit conversion needed since I authored it from the description rather than importing a file). All six faces are boundary patches typed `wall` (floor, ceiling, xmin, xmax, ymin, ymax) \u2014 no inlet/outlet patches exist, matching \"every boundary is an adiabatic wall.\" I did not set any BC values, only patch geometry/type, per the desk's scope.\n**Cell zones**: Two 20 mm cubes tagged as `cellZone`s via `topoSet`/`boxToCell`:\n- `heater`: x\u2208[10,30] mm, y\u2208[20,40] mm, z\u2208[0,20] mm \u2014 touches the floor, near the x=0 end.\n- `cooler`: x\u2208[70,90] mm, y\u2208[20,40] mm, z\u2208[20,40] mm \u2014 touches the ceiling, near the x=100 mm end.\nSince the domain is a plain box with no internal solids or complex boundary surfaces to snap to, I used `blockMesh` directly (grid at 5 mm resolution, chosen so every cube face lands exactly on a node) rather than the snappyHexMesh/STL-patch pipeline \u2014 that pipeline is for tagging surfaces on non-trivial geometry, and there is none here.\n**Measurements against the request**:\n- Bounding box: (0,0,0)\u2013(0.1, 0.06, 0.04) m \u2014 matches 100\u00d760\u00d740 mm exactly.\n- `heater` cellZone: 64 cells, volume 8\u00d710\u207b\u2076 m\u00b3 = 0.02\u00b3 m\u00b3 exactly, bounding box exactly the intended cube, sitting on the floor (z_min=0) at the x=0 end.\n- `cooler` cellZone: 64 cells, volume 8\u00d710\u207b\u2076 m\u00b3 exactly, sitting on the ceiling (z_max=0.04) at the far end \u2014 verified both from `checkMesh`'s cellZone report and from a direct `foamToVTK -cellSet` extraction rendered against the full mesh.\n- All 6 patches are type `wall`, outward normals confirmed correct (\u2212z floor, +z ceiling, \u2213x, \u2213y) via `mesh_look.py`, areas match the six face areas of the box exactly (0.006, 0.0024, 0.004 m\u00b2 pairs).\n- `checkMesh`: **Mesh OK** \u2014 max aspect ratio 1, max non-orthogonality 0, max skewness ~1.7e-14, boundary closed, total volume 0.00024 m\u00b3 = 100\u00d760\u00d740 mm exactly.\n**What I did not check**: I did not export STL surfaces or run `cad_audit`/`patch_entries` since this build never produced STL-based patches (blockMesh generates the boundary directly); those tools are for the STEP/snappy path and don't apply here. I did not add any prism/boundary layers since no BC or turbulence model was requested and the desk's scope stops at mesh, not solver setup.",
+    "case_dir": "/work/accept-t7",
+    "seconds": 202.6,
+    "desk_seconds": 202.6,
+    "steps": 22,
+    "tokens": {
+      "input": 48,
+      "cache_read": 380160,
+      "cache_write": 74749,
+      "output": 16312
+    },
+    "usd": 0.4261,
+    "script_lines": 442,
+    "check": {
+      "ran": true,
+      "ok": true,
+      "unreachable": false,
+      "missing": [],
+      "regions": [
+        ""
+      ],
+      "cells": 1920,
+      "two_d": false,
+      "patches": [
+        "floor",
+        "ceiling",
+        "xmin",
+        "xmax",
+        "ymin",
+        "ymax"
+      ],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "ok",
+          "measured": "1,920 cells, 6,256 faces, 2,457 points"
+        },
+        {
+          "check": "checkmesh",
+          "status": "ok",
+          "measured": "Mesh OK. -- max non-orthogonality 0 (under 70), max skewness 1.66533e-14 (under 4), max aspect-ratio 1 (under 1000)"
+        },
+        {
+          "check": "patches",
+          "status": "ok",
+          "measured": "6 boundary patch(es) with faces, all named: floor, ceiling, xmin, xmax, ymin, ymax"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "2 cellZone(s): heater 64 cells, cooler 64 cells"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: system/blockMeshDict"
+        },
+        {
+          "check": "render",
+          "status": "ok",
+          "measured": "a picture of the mesh is at accept-t7/renders/mesh_look.png"
+        },
+        {
+          "check": "scale",
+          "status": "ok",
+          "measured": "the mesh is 0.1 m across and the request's largest dimension is 0.1 m"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        },
+        {
+          "check": "replay",
+          "status": "ok",
+          "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3"
+        }
+      ],
+      "replay": {
+        "ran": true,
+        "exit_code": 0,
+        "before": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "after": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "output_tail": " \"VTK/accept-t7_0/boundary/xmax.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/ymin.vtp\"\n    Boundary  : \"VTK/accept-t7_0/boundary/ymax.vtp\"\nWrote in 0.01 s, 225356 kB\n\nEnd: 0.01 s, 285784 kB (peak)\n\n\nSTDERR: \nVTK\nVTK/accept-t7.vtm.series\nVTK/accept-t7_0.vtm\nVTK/accept-t7_0\nVTK/accept-t7_0/boundary.vtm\nVTK/accept-t7_0/boundary\nVTK/accept-t7_0/internal.vtu\nVTK/heater.vtm.series\nVTK/heater_0.vtm\nVTK/heater_0\nVTK/heater_0/boundary.vtm\nVTK/heater_0/boundary\nVTK/heater_0/internal.vtu\nVTK/cooler.vtm.series\nVTK/cooler_0.vtm\nVTK/cooler_0\nVTK/cooler_0/boundary.vtm\nVTK/cooler_0/boundary\nVTK/cooler_0/internal.vtu\n\nwhole cells: 1920 heater cells: 64 cooler cells: 64\nheater bounds: BoundsTuple(x_min = 0.009999999776482582,\n            x_max = 0.029999999329447746,\n            y_min = 0.019999999552965164,\n            y_max = 0.03999999910593033,\n            z_min = 0.0,\n            z_max = 0.019999999552965164)\ncooler bounds: BoundsTuple(x_min = 0.07000000029802322,\n            x_max = 0.09000000357627869,\n            y_min = 0.019999999552965164,\n            y_max = 0.03999999910593033,\n            z_min = 0.019999999552965164,\n            z_max = 0.03999999910593033)\nwrote look_cellzones.png\n"
+      }
+    },
+    "artifacts": [
+      "build.py",
+      "constant/polyMesh/boundary",
+      "look.json",
+      "look.png",
+      "look_cellzones.png",
+      "look_geometry.png",
+      "look_geometry_ortho.png",
+      "look_stl/cavity.stl",
+      "look_stl/cooler.stl",
+      "look_stl/heater.stl",
+      "renders/mesh_look.json",
+      "renders/mesh_look.png",
+      "build.py",
+      "check.json",
+      "render.png",
+      "steps.json"
+    ]
+  },
+  "seconds": 203.1,
+  "verdict": "check-ok",
+  "recheck": {
+    "ran": true,
+    "check": {
+      "ran": true,
+      "ok": true,
+      "unreachable": false,
+      "missing": [],
+      "regions": [
+        ""
+      ],
+      "cells": 1920,
+      "two_d": false,
+      "patches": [
+        "floor",
+        "ceiling",
+        "xmin",
+        "xmax",
+        "ymin",
+        "ymax"
+      ],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "ok",
+          "measured": "1,920 cells, 6,256 faces, 2,457 points"
+        },
+        {
+          "check": "checkmesh",
+          "status": "ok",
+          "measured": "Mesh OK. -- max non-orthogonality 0 (under 70), max skewness 1.66533e-14 (under 4), max aspect-ratio 1 (under 1000)"
+        },
+        {
+          "check": "patches",
+          "status": "ok",
+          "measured": "6 boundary patch(es) with faces, all named: floor, ceiling, xmin, xmax, ymin, ymax"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "2 cellZone(s): heater 64 cells, cooler 64 cells"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: build.py, system/blockMeshDict"
+        },
+        {
+          "check": "render",
+          "status": "ok",
+          "measured": "a picture of the mesh is at accept-t7/renders/mesh_look.png"
+        },
+        {
+          "check": "scale",
+          "status": "ok",
+          "measured": "the mesh is 0.1 m across and the request's largest dimension is 0.1 m"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        }
+      ],
+      "replay": {
+        "ran": false
+      }
+    }
+  }
+}

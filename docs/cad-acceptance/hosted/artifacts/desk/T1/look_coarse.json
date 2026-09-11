@@ -1,0 +1,108 @@
+{
+ "case": "/__modal/volumes/vo-bOyNivKMQsmb07ENeEbuUg/accept-t1",
+ "polymesh": true,
+ "patches": [
+  {
+   "name": "frontAndBack",
+   "type": "empty",
+   "nFaces": 1744,
+   "touches": 2,
+   "area": 0.00574247461911051,
+   "center": [
+    0.07146986335061925,
+    0.015000366941047331,
+    0.0010000000474974513
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "flat": false
+  },
+  {
+   "name": "wall",
+   "type": "wall",
+   "nFaces": 288,
+   "touches": 2,
+   "area": 0.0011483442683314906,
+   "center": [
+    0.07157910593260972,
+    0.015000000111132642,
+    0.0010000000474974509
+   ],
+   "normal": [
+    1.0,
+    -5.254394431221275e-10,
+    0.0
+   ],
+   "flat": false,
+   "inward": 0
+  },
+  {
+   "name": "outlet",
+   "type": "patch",
+   "nFaces": 6,
+   "touches": 2,
+   "area": 2.000000050291417e-05,
+   "center": [
+    0.0,
+    0.03000000026077032,
+    0.0010000000474974513
+   ],
+   "normal": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "inlet",
+   "type": "patch",
+   "nFaces": 6,
+   "touches": 2,
+   "area": 2.000000050291417e-05,
+   "center": [
+    0.0,
+    -1.3552527156068805e-19,
+    0.0010000000474974513
+   ],
+   "normal": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  }
+ ],
+ "build": [],
+ "cells": 872,
+ "faces": 3638,
+ "points": 2046,
+ "bounds": [
+  0.0,
+  -0.005,
+  0.0,
+  0.14,
+  0.035,
+  0.002
+ ],
+ "two_d": true,
+ "checkmesh": "Mesh OK.",
+ "checkmesh_ok": true,
+ "metrics": {
+  "max_non_orthogonality": 52.5464,
+  "max_skewness": 1.06127,
+  "max_aspect_ratio": 3.0664,
+  "min_volume": 2.37062e-09
+ },
+ "render": "look_coarse.png",
+ "enclosure": [
+  "frontAndBack",
+  "inlet",
+  "outlet"
+ ]
+}

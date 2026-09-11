@@ -1,0 +1,177 @@
+{
+ "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t8",
+ "polymesh": true,
+ "patches": [
+  {
+   "name": "inlet",
+   "type": "patch",
+   "nFaces": 9,
+   "touches": 3,
+   "area": 0.0008999999597668652,
+   "center": [
+    0.0,
+    0.014999999664723873,
+    0.014999999664723873
+   ],
+   "normal": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "outlet",
+   "type": "patch",
+   "nFaces": 9,
+   "touches": 3,
+   "area": 0.0008999999597668652,
+   "center": [
+    0.20000000298023224,
+    0.014999999664723873,
+    0.014999999664723873
+   ],
+   "normal": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "fluidTop",
+   "type": "wall",
+   "nFaces": 60,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.005999999955296514,
+   "center": [
+    0.10000000149011613,
+    0.014999999664723866,
+    0.029999999329447732
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "fluidSideY0",
+   "type": "wall",
+   "nFaces": 60,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.005999999955296514,
+   "center": [
+    0.10000000149011613,
+    0.0,
+    0.014999999664723866
+   ],
+   "normal": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "fluidSideY1",
+   "type": "wall",
+   "nFaces": 60,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.005999999955296514,
+   "center": [
+    0.10000000149011613,
+    0.029999999329447732,
+    0.014999999664723866
+   ],
+   "normal": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "fluidFloor",
+   "type": "wall",
+   "nFaces": 48,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.004800000008940694,
+   "center": [
+    0.10000000242143864,
+    0.014999999664723868,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "fluid_to_solid",
+   "type": "mappedWall",
+   "nFaces": 12,
+   "inGroups": "1(wall)",
+   "touches": 2,
+   "area": 0.0011999999463558203,
+   "center": [
+    0.09999999776482583,
+    0.014999999664723877,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "flat": true,
+   "inward": -1
+  }
+ ],
+ "build": [
+  "system/blockMeshDict"
+ ],
+ "cells": 180,
+ "faces": 669,
+ "points": 336,
+ "bounds": [
+  0.0,
+  0.0,
+  0.0,
+  0.2,
+  0.03,
+  0.03
+ ],
+ "two_d": false,
+ "checkmesh": "Mesh OK.",
+ "checkmesh_ok": true,
+ "metrics": {
+  "max_non_orthogonality": 0.0,
+  "max_skewness": 1.63206e-14,
+  "max_aspect_ratio": 1.0,
+  "min_volume": 1e-06
+ },
+ "render": "renders/mesh_look_fluid.png",
+ "enclosure": [
+  "fluidFloor",
+  "fluidSideY0",
+  "fluidSideY1",
+  "fluidTop",
+  "fluid_to_solid",
+  "inlet",
+  "outlet"
+ ]
+}

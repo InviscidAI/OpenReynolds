@@ -1,0 +1,158 @@
+{
+ "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t7",
+ "polymesh": true,
+ "patches": [
+  {
+   "name": "floor",
+   "type": "wall",
+   "nFaces": 240,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.005999999955296514,
+   "center": [
+    0.05000000074505807,
+    0.02999999932944776,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "ceiling",
+   "type": "wall",
+   "nFaces": 240,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.005999999955296514,
+   "center": [
+    0.05000000074505807,
+    0.02999999932944776,
+    0.03999999910593028
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "xmin",
+   "type": "wall",
+   "nFaces": 96,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.0023999998927116406,
+   "center": [
+    0.0,
+    0.029999999329447746,
+    0.01999999955296516
+   ],
+   "normal": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "xmax",
+   "type": "wall",
+   "nFaces": 96,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.0023999998927116406,
+   "center": [
+    0.10000000149011605,
+    0.029999999329447746,
+    0.01999999955296516
+   ],
+   "normal": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "ymin",
+   "type": "wall",
+   "nFaces": 160,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.003999999970197676,
+   "center": [
+    0.05000000074505804,
+    0.0,
+    0.019999999552965178
+   ],
+   "normal": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "ymax",
+   "type": "wall",
+   "nFaces": 160,
+   "inGroups": "1(wall)",
+   "touches": 3,
+   "area": 0.003999999970197676,
+   "center": [
+    0.05000000074505804,
+    0.05999999865889541,
+    0.019999999552965178
+   ],
+   "normal": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  }
+ ],
+ "build": [
+  "system/blockMeshDict"
+ ],
+ "cells": 1920,
+ "faces": 6256,
+ "points": 2457,
+ "bounds": [
+  0.0,
+  0.0,
+  0.0,
+  0.1,
+  0.06,
+  0.04
+ ],
+ "two_d": false,
+ "checkmesh": "Mesh OK.",
+ "checkmesh_ok": true,
+ "metrics": {
+  "max_non_orthogonality": 0.0,
+  "max_skewness": 1.66533e-14,
+  "max_aspect_ratio": 1.0,
+  "min_volume": 1.25e-07
+ },
+ "render": "renders/mesh_look.png",
+ "enclosure": [
+  "ceiling",
+  "floor",
+  "xmax",
+  "xmin",
+  "ymax",
+  "ymin"
+ ]
+}

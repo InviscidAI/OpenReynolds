@@ -1,0 +1,145 @@
+{
+  "ok": false,
+  "unreachable": false,
+  "missing": [
+    "there is no constant/polyMesh in accept-t3 -- nothing has been meshed yet",
+    "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+    "the mesh has no boundary patch with any faces on it",
+    "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+    "no picture of the mesh was drawn"
+  ],
+  "regions": [],
+  "cells": 0,
+  "bounds": [],
+  "patches": [],
+  "checkmesh": "",
+  "metrics": {},
+  "two_d": false,
+  "build": [],
+  "error": "",
+  "findings": [
+    {
+      "check": "mesh",
+      "status": "fail",
+      "measured": "there is no constant/polyMesh in accept-t3 -- nothing has been meshed yet",
+      "meaning": "neither a single-region mesh nor any constant/<region>/polyMesh is on disk",
+      "repair": "mesh it and leave the script that did: blockMesh, snappyHexMesh or cartesianMesh, then checkMesh"
+    },
+    {
+      "check": "checkmesh",
+      "status": "fail",
+      "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+      "meaning": "the mesh OpenFOAM was given is one OpenFOAM refuses",
+      "repair": "fix the checks checkMesh names -- it lists them by name with cell counts in log.checkMesh -- and run it again"
+    },
+    {
+      "check": "patches",
+      "status": "fail",
+      "measured": "the mesh has no boundary patch with any faces on it",
+      "meaning": "a mesh with no boundary is a mesh nothing can be solved on",
+      "repair": "name the surfaces where they are built, and check the mesher wrote a boundary file with faces in it"
+    },
+    {
+      "check": "cellzones",
+      "status": "ok",
+      "measured": "no cellZones in this mesh",
+      "meaning": "nothing is driven from inside the domain: every source this case has is on a boundary",
+      "repair": ""
+    },
+    {
+      "check": "build",
+      "status": "fail",
+      "measured": "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+      "meaning": "a mesh that cannot be rebuilt cannot be changed, and a run's artifact is the script rather than the polyMesh",
+      "repair": "leave the script that built this mesh in the case under one of: Allbuild, Allclean, Allmesh, Allpost, Allprep, Allrun, build.py, build.sh, cad.py, case.foam, make.py, model.py, prep.py"
+    },
+    {
+      "check": "render",
+      "status": "fail",
+      "measured": "no picture of the mesh was drawn",
+      "meaning": "a mesh nobody has seen is a mesh nobody has checked the shape of",
+      "repair": "run `python3 /tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/mesh_look.py . --out renders/mesh_look.png --json renders/mesh_look.json` and keep the PNG"
+    },
+    {
+      "check": "cad_audit",
+      "status": "skipped",
+      "measured": "cad_audit did not report: no patch set",
+      "meaning": "either no patch set has been exported yet, or the script did not run",
+      "repair": ""
+    },
+    {
+      "check": "domain_probe",
+      "status": "skipped",
+      "measured": "domain_probe did not report: no patch set",
+      "meaning": "either no patch set has been exported yet, or the script did not run",
+      "repair": ""
+    },
+    {
+      "check": "replay",
+      "status": "ok",
+      "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3",
+      "meaning": "the concatenated cells are runnable top to bottom by somebody who was not there, which is what makes the script the artifact",
+      "repair": ""
+    }
+  ],
+  "lines": [
+    "checks: 5 fail, 2 ok, 2 skipped",
+    "  fail: mesh -- there is no constant/polyMesh in accept-t3 -- nothing has been meshed yet",
+    "  fail: checkmesh -- checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+    "  fail: patches -- the mesh has no boundary patch with any faces on it",
+    "  fail: build -- there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+    "  fail: render -- no picture of the mesh was drawn"
+  ],
+  "raw": {
+    "regions": {
+      "": {
+        "look": {
+          "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t3",
+          "polymesh": false,
+          "patches": [],
+          "build": [],
+          "cells": 0,
+          "faces": 0,
+          "points": 0,
+          "bounds": [],
+          "two_d": false,
+          "checkmesh": "",
+          "checkmesh_ok": false,
+          "metrics": {},
+          "render": ""
+        },
+        "output": "{\n \"case\": \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t3\",\n \"polymesh\": false,\n \"patches\": [],\n \"build\": [],\n \"cells\": 0,\n \"faces\": 0,\n \"points\": 0,\n \"bounds\": [],\n \"two_d\": false,\n \"checkmesh\": \"\",\n \"checkmesh_ok\": false,\n \"metrics\": {},\n \"render\": \"\"\n}",
+        "cellzones": []
+      }
+    },
+    "meshed": false,
+    "cad": [
+      {
+        "script": "cad_audit",
+        "unavailable": "no patch set"
+      },
+      {
+        "script": "domain_probe",
+        "unavailable": "no patch set"
+      }
+    ],
+    "replay": {
+      "ran": true,
+      "script": "\"\"\"Built by the CAD desk, one accepted cell at a time.\n\nThis file is not a record written beside the work; it is the work. Every cell below ran\nin the desk's kernel, in this order, and was accepted only after the names it uses were\nshown to be bound by a cell above it. It is run from empty at the finish, and what it\nmakes there is compared against what is in the case directory.\n\nThe prose above each cell is the desk's own reasoning for it, carried with the action\nrather than thrown away -- it is the only record of why this shape is this shape.\n\"\"\"\n\n# -- cell 1 -------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"grep\", \"-n\", \"-i\", \"-E\", \"offset|sweep|thicken\", \n                       \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/b123d_api.md\"],\n                      capture_output=True, text=True).stdout[:6000])\n\n# -- cell 2 -------------------------------------------------------------------------\nimport subprocess\nres = subprocess.run([\"sed\", \"-n\", \"40,100p\",\n                       \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/b123d_api.md\"],\n                      capture_output=True, text=True)\nprint(res.stdout)\n\n# -- cell 3 -------------------------------------------------------------------------\nfrom build123d import *\n\n# Quick test: does offset(side=BOTH) on an open edge give a closed face (a \"band\") directly?\ntest_line = Edge.make_line((0,0,0),(20,0,0))\ntry:\n    band = offset(test_line, amount=3, side=Side.BOTH)\n    print(type(band), band)\nexcept Exception as e:\n    print(\"error:\", e)\n\n# -- cell 4 -------------------------------------------------------------------------\nedges = band.edges()\nprint(len(edges))\nfor e in edges:\n    print(e, e.start_point(), e.end_point())\n\n# -- cell 5 -------------------------------------------------------------------------\nres = subprocess.run([\"grep\", \"-n\", \"-i\", \"spline\\|make_spline\\|tangent\", \n                       \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/b123d_api.md\"],\n                      capture_output=True, text=True)\nprint(res.stdout)\n\n# -- cell 6 -------------------------------------------------------------------------\nres = subprocess.run([\"grep\", \"-n\", \"Arc\\\\|CenterArc\\\\|RadiusArc\", \n                       \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/b123d_api.md\"],\n                      capture_output=True, text=True)\nprint(res.stdout)\n\n# -- cell 7 -------------------------------------------------------------------------\nimport numpy as np\n\n# geometry test for one teardrop loop centerline using CenterArc\nW = 6.0      # channel width, mm (will convert to metres at export)\nLneck = 6.0  # gap between branch and rejoin points along x (mm) -- how close the loop's neck is\nH = 12.0     # how far the loop bulges from the main centerline (mm), to the far point of the loop\n\n# circle passing through branch (xc-d,0) and rejoin (xc+d,0), bulging up to yc+R = H\nd = Lneck/2.0\n# choose yc (center height) and solve R from d^2 + yc^2 = R^2, and yc+R = H\n# R = H - yc  -> d^2 + yc^2 = (H-yc)^2 = H^2 -2H yc + yc^2  -> d^2 = H^2 -2H yc -> yc = (H^2-d^2)/(2H)\nyc = (H**2 - d**2) / (2*H)\nR = H - yc\nprint(\"yc=\",yc,\"R=\",R,\"check R^2=\",R**2,\"d^2+yc^2=\",d**2+yc**2)\n\nang1 = np.degrees(np.arctan2(0-yc, -d - 0))   # branch point relative angle\nang2 = np.degrees(np.arctan2(0-yc, d - 0))    # rejoin point relative angle\nang1 = ang1 % 360\nang2 = ang2 % 360\nprint(\"ang1 (branch)=\",ang1,\"ang2 (rejoin)=\",ang2)\n\n# short way (through bottom) difference:\nshort_diff = (ang2 - ang1) % 360\nprint(\"short_diff (ccw from ang1 to ang2) =\", short_diff)\n# long way (through top) is going clockwise (negative) from ang1 by (360-short_diff)\nlong_arc_size = -(360 - short_diff)\nprint(\"long_arc_size (clockwise, through top) =\", long_arc_size)\n\n# -- cell 8 -------------------------------------------------------------------------\n# exit 0 (1 s)\n# edge start: Vector: (X=30.0000000000000004 begin display commands with the actual raw text of your r\nfrom build123d import *\nimport numpy as np\n\nxc = 30.0  # arbitrary test location along x for branch/rejoin center\ncenter_pt = (xc, yc, 0)\nloop_edge = CenterArc(center=center_pt, radius=R, start_angle=ang1, arc_size=long_arc_size)\n\nbranch_pt = (xc-d, 0, 0)\nrejoin_pt = (xc+d, 0, 0)\nprint(\"edge start:\", loop_edge.edges()[0].start_point())\nprint(\"edge end:  \", loop_edge.edges()[0].end_point())\nprint(\"expected branch:\", branch_pt, \"expected rejoin:\", rejoin_pt)\n\n# -- cell 9 -------------------------------------------------------------------------\nimport matplotlib.pyplot as plt\n\ne = loop_edge.edges()[0]\nts = np.linspace(0, 1, 200)\npts = np.array([tuple(e.position_at(t)) for t in ts])\n\nfig, ax = plt.subplots(figsize=(5,5))\nax.plot(pts[:,0], pts[:,1], '-')\nax.plot([xc-d, xc+d], [0,0], 'ro')\nax.plot([xc-15, xc+15], [0,0], 'k--', lw=0.5)\nax.set_aspect('equal')\nax.set_title(\"single teardrop loop centerline\")\nplt.savefig(\"test_loop.png\", dpi=110)\nplt.show()\nprint(\"saved\")\n\n# -- cell 10 ------------------------------------------------------------------------\nfig\n\n# -- cell 11 ------------------------------------------------------------------------\n# check tangent directions at branch and rejoin to gauge merge angle with main channel (should be shallow-ish)\ne = loop_edge.edges()[0]\ntang_start = e.tangent_at(0)\ntang_end = e.tangent_at(1)\nprint(\"tangent at branch (t=0):\", tang_start)\nprint(\"tangent at rejoin (t=1):\", tang_end)\nimport numpy as np\nang_start_deg = np.degrees(np.arctan2(tang_start.Y, tang_start.X))\nang_end_deg = np.degrees(np.arctan2(tang_end.Y, tang_end.X))\nprint(\"angle vs +x axis: branch=\", ang_start_deg, \"rejoin=\", ang_end_deg)\n\n# -- cell 12 ------------------------------------------------------------------------\n# thicken the loop centerline into a channel band of width W, and inspect it\nband_loop = offset(loop_edge, amount=W/2, side=Side.BOTH)\nprint(type(band_loop), len(band_loop.edges()))\nface_loop = make_face(band_loop.edges())\nprint(\"loop band face area (mm^2):\", face_loop.area)\n\nfig2, ax2 = plt.subplots(figsize=(5,5))\nfor f in face_loop.faces():\n    for w in [f.outer_wire()] + f.inner_wires():\n        pts_w = np.array([tuple(w.position_at(t)) for t in np.linspace(0,1,300)])\n        ax2.plot(pts_w[:,0], pts_w[:,1], '-')\nax2.set_aspect('equal')\nax2.set_title(\"thickened teardrop loop (band, W=6mm)\")\nfig2\n\n# -- cell 13 ------------------------------------------------------------------------\nres = subprocess.run([\"cat\", \n   \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/prep/README.md\"],\n   capture_output=True, text=True)\nprint(res.stdout)\n\n# -- cell 14 ------------------------------------------------------------------------\nres = subprocess.run([\"cat\", \n   \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/snappy/README.md\"],\n   capture_output=True, text=True)\nprint(res.stdout)\n\n# -- cell 15 ------------------------------------------------------------------------\nfrom build123d import *\nimport numpy as np\n\n# ---------- parameters (mm, will scale to metres once, right before export) ----------\nW        = 6.0     # channel width, mm  (request: 6 mm)\nTOTAL_L  = 120.0    # overall main-channel length, mm (request: ~120 mm)\nLEAD_IN  = 20.0     # straight lead length before first loop, mm\nLEAD_OUT = 14.0     # straight lead length after last loop, mm\nN_LOOPS  = 4\nUNIT_L   = (TOTAL_L - LEAD_IN - LEAD_OUT) / N_LOOPS   # spacing between loop centres, mm\nNECK     = 6.0      # gap between a loop's branch and rejoin points on the centreline, mm\nBULGE_H  = 12.0     # how far each loop bulges from the centreline, mm\n\ndef teardrop_loop_edge(xc, sign=1.0):\n    \"\"\"Centreline edge of one teardrop bypass loop, centred at x=xc on the main\n    centreline (y=0). sign=+1 bulges up (+y), sign=-1 bulges down (-y).\"\"\"\n    d  = NECK / 2.0\n    yc = (BULGE_H**2 - d**2) / (2 * BULGE_H)\n    R  = BULGE_H - yc\n    ang1 = np.degrees(np.arctan2(0 - yc, -d)) % 360\n    ang2 = np.degrees(np.arctan2(0 - yc,  d)) % 360\n    short_diff = (ang2 - ang1) % 360\n    long_arc_size = -(360 - short_diff)     # go the long way, through the far side\n    center_pt = (xc, sign * yc, 0)\n    edge = CenterArc(center=center_pt, radius=R, start_angle=sign*0 + (ang1 if sign > 0 else -ang1),\n                      arc_size=long_arc_size if sign > 0 else -long_arc_size)\n    return edge.edges()[0]\n\n# quick sanity check for the mirrored (sign=-1) branch before using it in the assembly\ne_plus  = teardrop_loop_edge(30.0, sign=1.0)\ne_minus = teardrop_loop_edge(30.0, sign=-1.0)\nprint(\"plus  start/end:\", e_plus.start_point(), e_plus.end_point())\nprint(\"minus start/end:\", e_minus.start_point(), e_minus.end_point())\n\n# -- cell 16 ------------------------------------------------------------------------\n# visualize both to confirm mirroring bulges the correct direction\nfig3, ax3 = plt.subplots(figsize=(5,5))\nfor e, lbl in [(e_plus, \"sign=+1 (bulge up)\"), (e_minus, \"sign=-1 (bulge down)\")]:\n    ts = np.linspace(0,1,200)\n    pts = np.array([tuple(e.position_at(t)) for t in ts])\n    ax3.plot(pts[:,0], pts[:,1], '-', label=lbl)\nax3.axhline(0, color='k', lw=0.5, ls='--')\nax3.legend()\nax3.set_aspect('equal')\nfig3\n\n# -- cell 17 ------------------------------------------------------------------------\n# Both loop orientations mirror correctly. Now assemble the full 2D outline: main channel + 4 alternat\nfrom build123d import *\n\n# ---------- loop centre positions along the main channel, alternating sides ----------\nloop_xc = [LEAD_IN + UNIT_L*(i + 0.5) for i in range(N_LOOPS)]\nloop_sign = [1.0, -1.0, 1.0, -1.0]\nprint(\"loop centres (x, mm):\", loop_xc, \" unit spacing:\", UNIT_L)\n\n# ---------- main channel centreline, thickened to width W ----------\nmain_edge = Edge.make_line((0, 0, 0), (TOTAL_L, 0, 0))\nmain_band = make_face(offset(main_edge, amount=W/2, side=Side.BOTH).edges())\n\n# ---------- 4 loop bands ----------\nloop_bands = []\nfor xc, s in zip(loop_xc, loop_sign):\n    le = teardrop_loop_edge(xc, sign=s)\n    band = make_face(offset(le, amount=W/2, side=Side.BOTH).edges())\n    loop_bands.append(band)\n\n# ---------- union everything into one planar face ----------\nvalve_face_mm = main_band\nfor b in loop_bands:\n    valve_face_mm = valve_face_mm + b\n\nprint(\"valve face (mm units): area=\", valve_face_mm.area, \"faces:\", len(valve_face_mm.faces()))\nbb = valve_face_mm.bounding_box()\nprint(\"bounding box (mm):\", bb.min, bb.max)\n\n# -- cell 18 ------------------------------------------------------------------------\nbb_main = main_band.bounding_box()\nprint(\"main_band bbox (mm):\", bb_main.min, bb_main.max)\nprint(\"main_band area:\", main_band.area, \"expected:\", TOTAL_L*W)\n\n# -- cell 19 ------------------------------------------------------------------------\nedges_main = main_band.edges()\nprint(len(edges_main))\nfor e in edges_main:\n    print(e.geom_type, e.start_point(), e.end_point())\n\n# -- cell 20 ------------------------------------------------------------------------\ntest_line2 = Edge.make_line((0,0,0),(20,0,0))\nfor k in [Kind.ARC, Kind.INTERSECTION, Kind.TANGENT]:\n    b = offset(test_line2, amount=3, side=Side.BOTH, kind=k)\n    es = b.edges()\n    types = [e.geom_type for e in es]\n    bbox = b.bounding_box()\n    print(k, \"-> n_edges=\",len(es), types, \"bbox:\", bbox.min, bbox.max)\n\n# -- cell 21 ------------------------------------------------------------------------\nfrom build123d import *\n\n# main channel: a flat rectangle (flat, perpendicular end caps -- needed for inlet/outlet)\nmain_band = Pos(TOTAL_L/2, 0, 0) * Rectangle(TOTAL_L, W)\nbb_main = main_band.bounding_box()\nprint(\"main_band (rectangle) bbox:\", bb_main.min, bb_main.max, \" area:\", main_band.area,\n      \" expected area:\", TOTAL_L*W)\n\n# rebuild the full valve outline: main rectangle + 4 teardrop loop bands, unioned\nloop_bands = []\nfor xc, s in zip(loop_xc, loop_sign):\n    le = teardrop_loop_edge(xc, sign=s)\n    band = make_face(offset(le, amount=W/2, side=Side.BOTH).edges())\n    loop_bands.append(band)\n\nvalve_face_mm = main_band\nfor b in loop_bands:\n    valve_face_mm = valve_face_mm + b\n\nprint(\"valve_face_mm: n_faces=\", len(valve_face_mm.faces()), \"area=\", valve_face_mm.area)\nbb = valve_face_mm.bounding_box()\nprint(\"overall bbox (mm):\", bb.min, bb.max)\n\n# -- cell 22 ------------------------------------------------------------------------\n# Overall bounding box now exactly `[0,120] x [-15,15]`, confirming: main channel length = 120 mm (mat\nimport matplotlib.pyplot as plt\nimport numpy as np\n\nfig4, ax4 = plt.subplots(figsize=(14,4))\nfor f in valve_face_mm.faces():\n    for w in [f.outer_wire()] + f.inner_wires():\n        pts_w = np.array([tuple(w.position_at(t)) for t in np.linspace(0,1,600)])\n        ax4.plot(pts_w[:,0], pts_w[:,1], '-', color='C0')\nax4.set_aspect('equal')\nax4.set_title(f\"Tesla valve outline (mm): L={TOTAL_L}, W={W}, 4 teardrop loops\")\nfig4\n\n# -- cell 23 ------------------------------------------------------------------------\nfrom build123d import *\n\n# ---------- convert to metres (build123d numbers above were mm; scale once, here) ----------\nMM_TO_M = 0.001\nvalve_face_m = scale(valve_face_mm, by=MM_TO_M)\nbb_m = valve_face_m.bounding_box()\nprint(\"valve_face_m bbox (m):\", bb_m.min, bb_m.max)\n\nDEPTH_M = 0.002   # slab thickness for the \"2D\" extrusion, metres (one background cell in Z)\nvalve_solid = extrude(valve_face_m, amount=DEPTH_M)\nprint(\"solid volume (m^3):\", valve_solid.volume, \" expected approx:\", valve_face_mm.area*1e-6*DEPTH_M)\nbbs = valve_solid.bounding_box()\nprint(\"solid bbox (m):\", bbs.min, bbs.max)\n\n# -- cell 24 ------------------------------------------------------------------------\n# Volume matches the planar area \u00d7 depth exactly, and the bounding box confirms 120 mm length in metre\nfaces = valve_solid.faces()\n\nX_TOL = 1e-6\ninlet  = faces.filter_by_position(Axis.X, -X_TOL, X_TOL)\noutlet = faces.filter_by_position(Axis.X, 0.12 - X_TOL, 0.12 + X_TOL)\n# front/back are the flat z-normal planar faces at z=0 and z=DEPTH_M -- these will be\n# declared \"empty\" directly in blockMeshDict, not tessellated as a snappy patch.\nfrontback = faces.filter_by(Axis.Z).filter_by(GeomType.PLANE)\nwalls = [f for f in faces if f not in list(inlet) + list(outlet) + list(frontback)]\n\nprint(\"inlet faces:\", len(inlet), \" outlet faces:\", len(outlet),\n      \" frontback faces:\", len(frontback), \" wall faces:\", len(walls),\n      \" total faces:\", len(faces))\n\n# sanity: inlet/outlet should each be a flat rectangle W x DEPTH\nfor name, grp in [(\"inlet\", inlet), (\"outlet\", outlet)]:\n    a = sum(f.area for f in grp)\n    print(name, \"area (m^2):\", a, \" expected W*DEPTH =\", (W*MM_TO_M)*DEPTH_M)\n\n# -- cell 25 ------------------------------------------------------------------------\nimport os, sys\nos.makedirs(\"prep\", exist_ok=True)\nos.makedirs(\"case/constant/triSurface\", exist_ok=True)\n\nsys.path.insert(0, \"/work/accept-t3/.toolbox\")\nsys.path.insert(0, \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\")\nimport cad_convert\n\nexport_step(valve_solid, \"prep/valve.step\", unit=Unit.M)\n\nkey = lambda fs: [tuple(f.center(CenterOf.MASS)) for f in fs]\n\n# clmax: about half the finest wall cell size for the coarse pass; background dx ~ 0.0015 m.\nCLMAX_M = 0.00075\n\nfrontback_list = list(frontback)\nwalls_list = list(walls)\n\nreport = cad_convert.export_patches(\n    \"prep/valve.step\",\n    {\"inlet\":     {\"role\": \"inlet\",  \"faces\": key(inlet)},\n     \"outlet\":    {\"role\": \"outlet\", \"faces\": key(outlet)},\n     \"walls\":     {\"role\": \"wall\",   \"faces\": key(walls_list)},\n     \"frontBack\": {\"role\": \"wall\",   \"faces\": key(frontback_list)}},\n    \"case/constant/triSurface\",\n    clmax=CLMAX_M,\n    location_in_mesh=[0.005, 0.0, 0.001],\n)\nprint(cad_convert.render(report))\n\n# -- cell 26 ------------------------------------------------------------------------\n# Export succeeded, every B-rep face assigned, bounding box 0.12 \u00d7 0.03 \u00d7 0.002 m confirms 120 mm leng\nimport subprocess\nres = subprocess.run(\n    [\"python3\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/cad_audit.py\",\n     \"case\", \"--json\"],\n    capture_output=True, text=True)\nprint(res.stdout[-4000:])\nprint(\"STDERR\", res.stderr[-2000:])\n\n# -- cell 27 ------------------------------------------------------------------------\nres = subprocess.run(\n    [\"python3\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/cad_audit.py\",\n     \"--help\"], capture_output=True, text=True)\nprint(res.stdout)\n",
+      "before": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      },
+      "exit_code": 0,
+      "output": "ea= 1332.0594096448397\noverall bbox (mm): Vector: (X=0, Y=-15, Z=0) Vector: (X=120, Y=15, Z=0)\nvalve_face_m bbox (m): Vector: (X=0, Y=-0.015, Z=0) Vector: (X=0.12, Y=0.015, Z=0)\nsolid volume (m^3): 2.664118819289691e-06  expected approx: 2.664118819289679e-06\nsolid bbox (m): Vector: (X=0, Y=-0.015, Z=0) Vector: (X=0.12, Y=0.015, Z=0.002)\ninlet faces: 1  outlet faces: 1  frontback faces: 2  wall faces: 18  total faces: 22\ninlet area (m^2): 1.2e-05  expected W*DEPTH = 1.2e-05\noutlet area (m^2): 1.2e-05  expected W*DEPTH = 1.2e-05\nprep/valve.step  ->  case/constant/triSurface\n  format              STEP\n  unit                file declares millimetre (STEP SI_UNIT(.MILLI.,.METRE.)); Geometry.OCCTargetUnit = M converts it to metres\n  entities            1 volumes, 22 surfaces, 60 curves, 40 points\n  bounding box        0.12 x 0.03 x 0.002 m (diagonal 0.123709 m)\n  clmax               0.00075 m  (Mesh.MeshSizeMax)\n  curvature           20  (Mesh.MeshSizeFromCurvature)\n  tolerance           1e-08  (Geometry.Tolerance)\n  tightest curve      R = 0.003375 m on curve 41 (24 samples per curve, so: found, not proved)\n  implied sagitta     2.08333e-05 m  = clmax^2 / (8R) -- the worst a chord of clmax could depart from that curve\n                      curvature refinement puts the real chords below clmax there, so this is a ceiling\n  facets              15,722 triangles, 7,855 nodes\n  edges produced      longest 0.00104243 m, mean 0.00071785 m over 47,166 triangle edges\n  patches             4 over 22 B-rep faces, every face in exactly one\n    inlet              inlet         1 faces        56 triangles  1.2e-05 m^2  -> inlet.stl\n    outlet             outlet        1 faces        56 triangles  1.2e-05 m^2  -> outlet.stl\n    walls              wall         18 faces     3,534 triangles  0.000780865 m^2  -> walls.stl\n    frontBack          wall          2 faces    12,076 triangles  0.00266448 m^2  -> frontBack.stl\n  location_in_mesh    0.005, 0, 0.001\n  manifest            case/constant/triSurface/patches.json\n  written             3,582,201 bytes\n  gmsh calls, in order:\n    gmsh.initialize()\n    gmsh.option.setNumber('Geometry.Tolerance', 1e-08)\n    gmsh.option.setString('Geometry.OCCTargetUnit', 'M')\n    gmsh.model.occ.importShapes('prep/valve.step')\n    gmsh.model.occ.synchronize()\n    gmsh.option.setNumber('Mesh.MeshSizeMax', 0.00075)\n    gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 20.0)\n    gmsh.model.mesh.generate(2)\n    gmsh.model.addPhysicalGroup(2, [1], name='inlet'); gmsh.write('case/constant/triSurface/inlet.stl')\n    gmsh.model.addPhysicalGroup(2, [7], name='outlet'); gmsh.write('case/constant/triSurface/outlet.stl')\n    gmsh.model.addPhysicalGroup(2, [2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], name='walls'); gmsh.write('case/constant/triSurface/walls.stl')\n    gmsh.model.addPhysicalGroup(2, [21, 22], name='frontBack'); gmsh.write('case/constant/triSurface/frontBack.stl')\n    <wrote 'case/constant/triSurface/patches.json'>\n    gmsh.option.setString('Geometry.OCCTargetUnit', 'MM'); gmsh.model.occ.importShapes(<one-point seed>)  # release the OCC static\n    gmsh.finalize()\n\nSTDERR refused: no patches.json in case. The patch set is the manifest plus the files it names; without it there is no way to tell which STLs are patches of one surface. Write one, or export with cad_convert.py.\n\nusage: cad_audit.py [-h] [--json] [--surface-check] directory\n\nThe exported patch set measured -- closure of the union, not of the parts.\n\npositional arguments:\n  directory        a <case>/constant/triSurface with patches.json in it\n\noptions:\n  -h, --help       show this help message and exit\n  --json           the report as JSON\n  --surface-check  also run OpenFOAM's surfaceCheck on each patch file\n\nThe union of the patch files is what has to be closed, manifold and\nconsistently wound; the files one at a time are open surfaces and their\nopen-edge counts are printed only so that is visible.\nExit code is 0 whatever is found.\n\n",
+      "after": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      }
+    }
+  }
+}

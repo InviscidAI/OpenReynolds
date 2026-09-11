@@ -182,6 +182,15 @@ class CadDesk:
         self.store = store
         """The session's transcript, read for what the person actually said."""
         self.home = (home or backend.workspace_root).rstrip("/")
+        self.toolbox = f"{str(backend.workspace_root).rstrip('/')}/.toolbox"
+        """Where `cli.py` put the toolbox on *this* backend.
+
+        Read off the backend rather than written down, because the two backends do not
+        agree on it: the hosted workspace is `/work` and a local one is wherever it was
+        rooted. The brief and the nudge both name this path, and naming it wrongly is
+        not an error the desk can see -- it looks like a missing file, and it is
+        answered by the desk going looking, which costs steps out of the budget the run
+        is judged on."""
         self.on_step = on_step
         self.interject = interject
         """Drains anything the person has typed since the last call, or None.
@@ -222,7 +231,7 @@ class CadDesk:
             result.seconds = time.monotonic() - started
             return result
 
-        system = system_prompt(STEP_TIMEOUT_S)
+        system = system_prompt(STEP_TIMEOUT_S, toolbox=self.toolbox)
         messages: list[dict[str, Any]] = [
             {"role": "user",
              "content": [{"type": "text",
@@ -299,7 +308,7 @@ class CadDesk:
             step = self._cell(source, _summary(turn.text), messages)
             result.steps.append(step)
             if len(result.steps) == NUDGE_AT_STEP and not self._has_mesh():
-                _observe(messages, NUDGE)
+                _observe(messages, NUDGE.format(toolbox=self.toolbox))
             if self.on_step:
                 try:
                     self.on_step(step)
@@ -683,7 +692,7 @@ NUDGE = (
     f"That is {NUDGE_AT_STEP} cells and nothing in the case directory has been meshed "
     "yet. Whatever is left to work out about the shape, work it out in the mesh rather "
     "than before it: build the coarsest version that exists at all, run the mesher, and "
-    "look at it. `/work/.toolbox/templates/` has a prep recipe and a working snappy "
+    "look at it. `{toolbox}/templates/` has a prep recipe and a working snappy "
     "dictionary set that go from an outline to a checked polyMesh, and a shape that is "
     "80% right and on disk is worth more than one that is exact and is not.")
 

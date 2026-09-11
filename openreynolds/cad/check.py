@@ -55,11 +55,23 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
+from openreynolds.backend.base import WORKSPACE_ROOT
 from openreynolds.casebundle import DEFINITION_DIRS, DEFINITION_NAMES
 
-LOOK = "/work/.toolbox/mesh_look.py"
-CAD_AUDIT = "/work/.toolbox/cad_audit.py"
-DOMAIN_PROBE = "/work/.toolbox/domain_probe.py"
+TOOLBOX = f"{WORKSPACE_ROOT}/.toolbox"
+"""The hosted workspace's toolbox directory, and the default everywhere below.
+
+These three paths are handed to a shell, and a shell gets the literal string: nothing
+translates `/work` for it. On the hosted backend that is correct and this is the whole
+story. On `LocalBackend` -- which is what the stack is developed against -- the root is
+somewhere else, `python3 /work/.toolbox/mesh_look.py` finds nothing, and the check
+reports **"the check wrote no readable answer"** about a mesh it never opened: a silent
+wrong verdict rather than an error. So the directory is a parameter with the hosted
+value as its default, and `verify` passes the one its backend reports."""
+
+LOOK = f"{TOOLBOX}/mesh_look.py"
+CAD_AUDIT = f"{TOOLBOX}/cad_audit.py"
+DOMAIN_PROBE = f"{TOOLBOX}/domain_probe.py"
 SURFACE_REL = "constant/triSurface"
 MANIFEST_REL = f"{SURFACE_REL}/patches.json"
 RENDER_REL = "renders/mesh_look.png"
@@ -327,7 +339,13 @@ print(json.dumps([[m.group(1), int(m.group(2))] for m in found]))
 """
 
 
-def _region_command(region: str) -> str:
+def toolbox_for(backend: Any) -> str:
+    """This backend's toolbox directory, or the hosted one if it will not say."""
+    root = str(getattr(backend, "workspace_root", "") or WORKSPACE_ROOT).rstrip("/")
+    return f"{root}/.toolbox"
+
+
+def _region_command(region: str, toolbox: str = TOOLBOX) -> str:
     """Draw the mesh, measure it, run checkMesh, read the cell zones, print both.
 
     One command per region rather than one per question: a workspace round trip is the
@@ -339,7 +357,8 @@ def _region_command(region: str) -> str:
     zones = f"constant/{region}/polyMesh/cellZones" if region else "constant/polyMesh/cellZones"
     flag = f" --region {shlex.quote(region)}" if region else ""
     return (
-        f"python3 {LOOK} . --out {render} --json {payload}{flag} >/dev/null 2>&1\n"
+        f"python3 {toolbox}/mesh_look.py . --out {render} --json {payload}{flag}"
+        f" >/dev/null 2>&1\n"
         f"echo '@@CELLZONES@@'\n"
         f"python3 - {shlex.quote(zones)} <<'ORZONES'\n{_ZONES_SNIPPET}ORZONES\n"
         f"echo '@@JSON@@'\n"
@@ -361,15 +380,17 @@ def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
     `unreachable` set -- never a pass, never a verdict about the mesh, and never an
     exception into the middle of a tool call.
     """
+    toolbox = toolbox_for(backend)
     try:
         regions = mesh_regions(backend, case_dir)
         composite: dict[str, Any] = {"regions": {}, "meshed": bool(regions),
                                      "cad": [], "replay": {}}
         for region in regions or [""]:
-            outcome = _ask(backend, _region_command(region), case_dir)
+            outcome = _ask(backend, _region_command(region, toolbox), case_dir)
             composite["regions"][region] = _region_entry(outcome.output or "")
-        for name, path in (("cad_audit", CAD_AUDIT), ("domain_probe", DOMAIN_PROBE)):
-            composite["cad"].append(_cad_entry(backend, case_dir, name, path))
+        for name in ("cad_audit", "domain_probe"):
+            composite["cad"].append(
+                _cad_entry(backend, case_dir, name, f"{toolbox}/{name}.py"))
         if script:
             composite["replay"] = _replay(backend, case_dir, script)
     except _Unreachable as gone:
@@ -382,8 +403,8 @@ def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
                 f"the workspace did not answer twice in a row ({gone})",
                 "nothing is known about the mesh either way; a container that recycles "
                 "mid-run comes back and the Volume under it keeps the files",
-                f"look for yourself: {look_command(case_dir)}")])
-    return read(composite, case_rel, case_dir, request)
+                f"look for yourself: {look_command(case_dir, toolbox)}")])
+    return read(composite, case_rel, case_dir, request, toolbox)
 
 
 def _region_entry(output: str) -> dict[str, Any]:
@@ -532,7 +553,7 @@ def fingerprint(backend: Any, case_dir: str) -> dict:
 
 
 def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "",
-         request: str = "") -> Check:
+         request: str = "", toolbox: str = TOOLBOX) -> Check:
     """The answers `verify` gathered, turned into a verdict.
 
     Takes either the composite `verify` builds -- `{"regions": {...}, "cad": [...],
@@ -559,7 +580,8 @@ def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "",
                 "look", "fail",
                 f"{where}the check wrote no readable answer" + (f" -- {tail}" if tail else ""),
                 "mesh_look.py did not print its JSON, so nothing about this mesh was read",
-                f"run `python3 {LOOK} . --out {RENDER_REL} --json {JSON_REL}"
+                f"run `python3 {toolbox}/mesh_look.py . --out {RENDER_REL} "
+                f"--json {JSON_REL}"
                 + (f" --region {region}" if region else "") + "` yourself and fix what it says"))
             continue
         findings.extend(_region_findings(look, entry, region, where, case_rel))
@@ -597,7 +619,7 @@ def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "",
     if not regions or not composite.get("meshed", True):
         if not any(f.check == "mesh" and f.status == "fail" for f in findings):
             findings.insert(0, _nothing_meshed(case_rel))
-    findings.extend(_case_findings(check, request))
+    findings.extend(_case_findings(check, request, toolbox))
     findings.extend(_cad_findings(composite.get("cad") or []))
     findings.extend(_replay_findings(composite.get("replay") or {}))
 
@@ -787,7 +809,7 @@ def _cellzone_finding(entry: dict[str, Any], where: str) -> Finding:
         "a zone is where a volumetric source, a porous region or a solid region acts")
 
 
-def _case_findings(check: Check, request: str) -> list[Finding]:
+def _case_findings(check: Check, request: str, toolbox: str = TOOLBOX) -> list[Finding]:
     """What is true of the case as a whole rather than of one region's mesh."""
     findings: list[Finding] = []
     findings.append(_build_finding(check.build))
@@ -799,7 +821,8 @@ def _case_findings(check: Check, request: str) -> list[Finding]:
         findings.append(Finding(
             "render", "fail", "no picture of the mesh was drawn",
             "a mesh nobody has seen is a mesh nobody has checked the shape of",
-            f"run `python3 {LOOK} . --out {RENDER_REL} --json {JSON_REL}` and keep the PNG"))
+            f"run `python3 {toolbox}/mesh_look.py . --out {RENDER_REL} "
+            f"--json {JSON_REL}` and keep the PNG"))
     off = _scale_measured(request, check.bounds)
     if off:
         findings.append(Finding("scale", "fail", off,
@@ -1110,6 +1133,7 @@ def _json_in_list(text: str) -> list | None:
     return payload if isinstance(payload, list) else None
 
 
-def look_command(case_dir: str) -> str:
+def look_command(case_dir: str, toolbox: str = TOOLBOX) -> str:
     """The command a person or an agent runs by hand to see the same thing."""
-    return f"python3 {LOOK} {shlex.quote(case_dir)} --out {RENDER_REL} --json {JSON_REL}"
+    return (f"python3 {toolbox}/mesh_look.py {shlex.quote(case_dir)} "
+            f"--out {RENDER_REL} --json {JSON_REL}")

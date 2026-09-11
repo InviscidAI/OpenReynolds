@@ -1,0 +1,451 @@
+{
+  "ok": false,
+  "unreachable": false,
+  "missing": [
+    "there is no constant/polyMesh in accept-t6 -- nothing has been meshed yet",
+    "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+    "the mesh has no boundary patch with any faces on it",
+    "no picture of the mesh was drawn",
+    "the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: inlet, outlet, walls; in the replay but not on disk: none; union volume 0.000248619 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable"
+  ],
+  "regions": [],
+  "cells": 0,
+  "bounds": [],
+  "patches": [],
+  "checkmesh": "",
+  "metrics": {},
+  "two_d": false,
+  "build": [
+    "system/blockMeshDict",
+    "system/snappyHexMeshDict"
+  ],
+  "error": "",
+  "findings": [
+    {
+      "check": "mesh",
+      "status": "fail",
+      "measured": "there is no constant/polyMesh in accept-t6 -- nothing has been meshed yet",
+      "meaning": "neither a single-region mesh nor any constant/<region>/polyMesh is on disk",
+      "repair": "mesh it and leave the script that did: blockMesh, snappyHexMesh or cartesianMesh, then checkMesh"
+    },
+    {
+      "check": "checkmesh",
+      "status": "fail",
+      "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+      "meaning": "the mesh OpenFOAM was given is one OpenFOAM refuses",
+      "repair": "fix the checks checkMesh names -- it lists them by name with cell counts in log.checkMesh -- and run it again"
+    },
+    {
+      "check": "patches",
+      "status": "fail",
+      "measured": "the mesh has no boundary patch with any faces on it",
+      "meaning": "a mesh with no boundary is a mesh nothing can be solved on",
+      "repair": "name the surfaces where they are built, and check the mesher wrote a boundary file with faces in it"
+    },
+    {
+      "check": "cellzones",
+      "status": "ok",
+      "measured": "no cellZones in this mesh",
+      "meaning": "nothing is driven from inside the domain: every source this case has is on a boundary",
+      "repair": ""
+    },
+    {
+      "check": "build",
+      "status": "ok",
+      "measured": "rebuilds with: system/blockMeshDict, system/snappyHexMeshDict",
+      "meaning": "the bundle captures these, so the script leaves with the case",
+      "repair": ""
+    },
+    {
+      "check": "render",
+      "status": "fail",
+      "measured": "no picture of the mesh was drawn",
+      "meaning": "a mesh nobody has seen is a mesh nobody has checked the shape of",
+      "repair": "run `python3 /tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/mesh_look.py . --out renders/mesh_look.png --json renders/mesh_look.json` and keep the PNG"
+    },
+    {
+      "check": "cad_audit.manifest",
+      "status": "ok",
+      "measured": "3 patches, each with its file on disk and no unlisted STL beside them: inlet, outlet, walls",
+      "meaning": "every triangle in this directory belongs to a named patch",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.scale",
+      "status": "ok",
+      "measured": "the union spans 0.2 x 0.03994 x 0.04 m",
+      "meaning": "the bounding box is the size of a thing OpenFOAM meshes in metres",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.closure",
+      "status": "ok",
+      "measured": "0 open edges in the union of 3 patch files (1,902 triangles); per file: inlet 21, outlet 21, walls 42",
+      "meaning": "the union is watertight -- the per-file counts are the seams between patches and are what a correct export looks like",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.manifold",
+      "status": "ok",
+      "measured": "0 non-manifold edges in the union",
+      "meaning": "every edge has exactly one or two triangles on it",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.normals",
+      "status": "ok",
+      "measured": "0 same-direction edges in the union",
+      "meaning": "every shared edge is walked one way by one triangle and the other way by its neighbour, so the normals agree",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.degenerate",
+      "status": "ok",
+      "measured": "0 triangles with a repeated corner",
+      "meaning": "every triangle has three corners and some area",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.coverage",
+      "status": "ok",
+      "measured": "3 patches over 1,902 triangles (inlet 99, outlet 99, walls 1,704); every face in exactly one patch",
+      "meaning": "the partition is exhaustive and disjoint, so every face of the meshed domain takes the boundary condition somebody chose for it",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.self_intersection",
+      "status": "ok",
+      "measured": "0 triangles in 0 crossing pairs, out of 11,738 pairs whose boxes overlap",
+      "meaning": "no triangle meets a triangle it is not a neighbour of",
+      "repair": ""
+    },
+    {
+      "check": "domain_probe.location_in_mesh",
+      "status": "ok",
+      "measured": "0.1 0.05 0.05 (patches.json) is inside, 0.0197641 m from the nearest triangle, in a domain 0.0395544 m wide there",
+      "meaning": "the point is in the region snappyHexMesh will keep.",
+      "repair": ""
+    },
+    {
+      "check": "domain_probe.min_width",
+      "status": "ok",
+      "measured": "narrowest of 103 measured samples is 0.0394605 m, at 0.151319 0.0420689 0.0421734 (17 further samples set aside as corners)",
+      "meaning": "the diameter of the largest sphere that fits in the domain and holds the sample -- found, not proved: it is the narrowest place sampling reached.",
+      "repair": "raise --width-samples to search harder for a narrower one"
+    },
+    {
+      "check": "domain_probe.min_wall_thickness",
+      "status": "skipped",
+      "measured": "the union is one connected shell of 1,902 triangles",
+      "meaning": "wall thickness is the width of material between two surfaces, and one shell has no material between anything. If these surfaces bound the part rather than the fluid, min_width above is the part's thinnest section.",
+      "repair": ""
+    },
+    {
+      "check": "replay",
+      "status": "fail",
+      "measured": "the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: inlet, outlet, walls; in the replay but not on disk: none; union volume 0.000248619 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable",
+      "meaning": "the script exits 0 and is still not the artifact it claims to be: what is on disk was made by a session that held state the script does not rebuild -- a cell run twice, or one that edits a file in place",
+      "repair": "make every cell rebuild its own inputs rather than modifying what is already there, then re-run the log from empty and compare"
+    }
+  ],
+  "lines": [
+    "rebuilds with: system/blockMeshDict, system/snappyHexMeshDict",
+    "checks: 5 fail, 12 ok, 1 skipped",
+    "  fail: mesh -- there is no constant/polyMesh in accept-t6 -- nothing has been meshed yet",
+    "  fail: checkmesh -- checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+    "  fail: patches -- the mesh has no boundary patch with any faces on it",
+    "  fail: render -- no picture of the mesh was drawn",
+    "  fail: replay -- the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: inlet, outlet, walls; in the replay but not on disk: none; union volume 0.000248619 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable"
+  ],
+  "raw": {
+    "regions": {
+      "": {
+        "look": {
+          "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t6",
+          "polymesh": false,
+          "patches": [],
+          "build": [
+            "system/blockMeshDict",
+            "system/snappyHexMeshDict"
+          ],
+          "cells": 0,
+          "faces": 0,
+          "points": 0,
+          "bounds": [],
+          "two_d": false,
+          "checkmesh": "",
+          "checkmesh_ok": false,
+          "metrics": {},
+          "render": ""
+        },
+        "output": "{\n \"case\": \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t6\",\n \"polymesh\": false,\n \"patches\": [],\n \"build\": [\n  \"system/blockMeshDict\",\n  \"system/snappyHexMeshDict\"\n ],\n \"cells\": 0,\n \"faces\": 0,\n \"points\": 0,\n \"bounds\": [],\n \"two_d\": false,\n \"checkmesh\": \"\",\n \"checkmesh_ok\": false,\n \"metrics\": {},\n \"render\": \"\"\n}",
+        "cellzones": []
+      }
+    },
+    "meshed": false,
+    "cad": [
+      {
+        "script": "cad_audit",
+        "ok": true,
+        "findings": [
+          {
+            "check": "manifest",
+            "status": "ok",
+            "measured": "3 patches, each with its file on disk and no unlisted STL beside them: inlet, outlet, walls",
+            "means": "every triangle in this directory belongs to a named patch",
+            "repair": ""
+          },
+          {
+            "check": "scale",
+            "status": "ok",
+            "measured": "the union spans 0.2 x 0.03994 x 0.04 m",
+            "means": "the bounding box is the size of a thing OpenFOAM meshes in metres",
+            "repair": ""
+          },
+          {
+            "check": "closure",
+            "status": "ok",
+            "measured": "0 open edges in the union of 3 patch files (1,902 triangles); per file: inlet 21, outlet 21, walls 42",
+            "means": "the union is watertight -- the per-file counts are the seams between patches and are what a correct export looks like",
+            "repair": ""
+          },
+          {
+            "check": "manifold",
+            "status": "ok",
+            "measured": "0 non-manifold edges in the union",
+            "means": "every edge has exactly one or two triangles on it",
+            "repair": ""
+          },
+          {
+            "check": "normals",
+            "status": "ok",
+            "measured": "0 same-direction edges in the union",
+            "means": "every shared edge is walked one way by one triangle and the other way by its neighbour, so the normals agree",
+            "repair": ""
+          },
+          {
+            "check": "degenerate",
+            "status": "ok",
+            "measured": "0 triangles with a repeated corner",
+            "means": "every triangle has three corners and some area",
+            "repair": ""
+          },
+          {
+            "check": "coverage",
+            "status": "ok",
+            "measured": "3 patches over 1,902 triangles (inlet 99, outlet 99, walls 1,704); every face in exactly one patch",
+            "means": "the partition is exhaustive and disjoint, so every face of the meshed domain takes the boundary condition somebody chose for it",
+            "repair": ""
+          },
+          {
+            "check": "self_intersection",
+            "status": "ok",
+            "measured": "0 triangles in 0 crossing pairs, out of 11,738 pairs whose boxes overlap",
+            "means": "no triangle meets a triangle it is not a neighbour of",
+            "repair": ""
+          }
+        ],
+        "measured": {
+          "directory": "constant/triSurface",
+          "manifest": {
+            "source": "fluid.step",
+            "unit_metres": 1.0,
+            "location_in_mesh": [
+              0.1,
+              0.05,
+              0.05
+            ],
+            "patches": 3
+          },
+          "patches": [
+            {
+              "name": "inlet",
+              "file": "inlet.stl",
+              "triangles": 99,
+              "open_edges": 21,
+              "non_manifold_edges": 0,
+              "flipped_edges": 0
+            },
+            {
+              "name": "outlet",
+              "file": "outlet.stl",
+              "triangles": 99,
+              "open_edges": 21,
+              "non_manifold_edges": 0,
+              "flipped_edges": 0
+            },
+            {
+              "name": "walls",
+              "file": "walls.stl",
+              "triangles": 1704,
+              "open_edges": 42,
+              "non_manifold_edges": 0,
+              "flipped_edges": 0
+            }
+          ],
+          "triangles": 1902,
+          "vertices": 953,
+          "union_topology": {
+            "triangles": 1902,
+            "computed": true,
+            "open_edges": 0,
+            "non_manifold_edges": 0,
+            "flipped_edges": 0,
+            "degenerate_triangles": 0
+          },
+          "topology_triangle_limit": 400000,
+          "worst": "ok",
+          "counts": {
+            "fail": 0,
+            "warn": 0,
+            "ok": 8,
+            "skipped": 0
+          },
+          "bounding_box": {
+            "min": [
+              0.0,
+              0.03000834829095614,
+              0.03
+            ],
+            "max": [
+              0.2,
+              0.06994407594362362,
+              0.07
+            ]
+          },
+          "self_intersection": {
+            "pairs": 0,
+            "triangles": 0,
+            "pairs_tested": 0,
+            "box_overlapping_pairs": 11738,
+            "triangle_ids": []
+          }
+        }
+      },
+      {
+        "script": "domain_probe",
+        "ok": true,
+        "findings": [
+          {
+            "check": "location_in_mesh",
+            "status": "ok",
+            "measured": "0.1 0.05 0.05 (patches.json) is inside, 0.0197641 m from the nearest triangle, in a domain 0.0395544 m wide there",
+            "means": "the point is in the region snappyHexMesh will keep.",
+            "repair": ""
+          },
+          {
+            "check": "min_width",
+            "status": "ok",
+            "measured": "narrowest of 103 measured samples is 0.0394605 m, at 0.151319 0.0420689 0.0421734 (17 further samples set aside as corners)",
+            "means": "the diameter of the largest sphere that fits in the domain and holds the sample -- found, not proved: it is the narrowest place sampling reached.",
+            "repair": "raise --width-samples to search harder for a narrower one"
+          },
+          {
+            "check": "min_wall_thickness",
+            "status": "skipped",
+            "measured": "the union is one connected shell of 1,902 triangles",
+            "means": "wall thickness is the width of material between two surfaces, and one shell has no material between anything. If these surfaces bound the part rather than the fluid, min_width above is the part's thinnest section.",
+            "repair": ""
+          }
+        ],
+        "measured": {
+          "directory": "constant/triSurface",
+          "files": [
+            "inlet.stl",
+            "outlet.stl",
+            "walls.stl"
+          ],
+          "triangles": 1902,
+          "shells": 1,
+          "bounds": [
+            0.0,
+            0.03000834829095614,
+            0.03,
+            0.2,
+            0.06994407594362362,
+            0.07
+          ],
+          "diagonal_m": 0.20783373725925258,
+          "band_m": 2.0783373725925257e-07,
+          "margin_m": 0.00020783373725925258,
+          "manifest": true,
+          "manifest_point": [
+            0.1,
+            0.05,
+            0.05
+          ],
+          "point": [
+            0.1,
+            0.05,
+            0.05
+          ],
+          "point_source": "patches.json",
+          "classification": "inside",
+          "clearance_m": 0.019764068654531803,
+          "width_at_point_m": 0.03955437623900389,
+          "suggested_point": null,
+          "suggested_radius_m": null,
+          "width": {
+            "samples": 120,
+            "draws": 240,
+            "qualified": 103,
+            "converging": 17,
+            "min_width": 0.03946048952145062,
+            "min_width_at": [
+              0.15131928350192758,
+              0.04206888467353295,
+              0.042173413771658036
+            ],
+            "min_width_any": 0.007112104070939761,
+            "max_inscribed_radius": 0.01983325304048115,
+            "max_inscribed_at": [
+              0.17931224545299654,
+              0.05000102498907666,
+              0.050001325884712636
+            ],
+            "min_wall_thickness": null,
+            "min_wall_thickness_at": null
+          }
+        }
+      }
+    ],
+    "replay": {
+      "ran": true,
+      "script": "\"\"\"Built by the CAD desk, one accepted cell at a time.\n\nThis file is not a record written beside the work; it is the work. Every cell below ran\nin the desk's kernel, in this order, and was accepted only after the names it uses were\nshown to be bound by a cell above it. It is run from empty at the finish, and what it\nmakes there is compared against what is in the case directory.\n\nThe prose above each cell is the desk's own reasoning for it, carried with the action\nrather than thrown away -- it is the only record of why this shape is this shape.\n\"\"\"\n\n# -- cell 1 -------------------------------------------------------------------------\nimport os\nos.chdir(\"/work/accept-t6\")\nprint(os.getcwd())\nprint(os.listdir(\".\"))\nprint(os.path.exists(\"/work/.accept/customer_part.step\"))\n\n# -- cell 2 -------------------------------------------------------------------------\nimport subprocess\n# Cheap look at the STEP file header before importing - unit declaration, etc.\nresult = subprocess.run([\"grep\", \"-a\", \"-i\", \"-E\", \"FILE_SCHEMA|FILE_NAME|FILE_DESCRIPTION|SI_UNIT|CONVERSION_BASED_UNIT|LENGTH_UNIT|NAMED_UNIT\", \"/work/.accept/customer_part.step\"],\n                         capture_output=True, text=True)\nprint(result.stdout[:3000])\nprint(\"----STDERR----\")\nprint(result.stderr[:1000])\n\n# -- cell 3 -------------------------------------------------------------------------\nimport subprocess\nresult = subprocess.run([\"grep\", \"-a\", \"-n\", \"-E\", \"#426|#42[0-9]|CONVERSION_BASED_UNIT|MEASURE_WITH_UNIT|LENGTH_MEASURE\", \"/work/.accept/customer_part.step\"],\n                         capture_output=True, text=True)\nprint(result.stdout[:3000])\n\n# -- cell 4 -------------------------------------------------------------------------\nimport subprocess\nresult = subprocess.run([\"grep\", \"-a\", \"-n\", \"SI_UNIT\", \"/work/.accept/customer_part.step\"],\n                         capture_output=True, text=True)\nprint(result.stdout)\n\n# -- cell 5 -------------------------------------------------------------------------\nfrom build123d import *\nimport numpy as np\nimport matplotlib.pyplot as plt\nfrom mpl_toolkits.mplot3d.art3d import Poly3DCollection\nfrom IPython.display import display\n\nSTEP_PATH = \"/work/.accept/customer_part.step\"\nimported = import_step(STEP_PATH)\n\nsolids = imported.solids()\nbb = imported.bounding_box()\nprint(\"num solids:\", len(solids))\nprint(\"bbox min\", bb.min, \"max\", bb.max, \"size\", bb.size)\nprint(\"is_valid:\", imported.is_valid)\nprint(\"volume:\", imported.volume)\nprint(\"area:\", imported.area)\n\nverts, tris = imported.tessellate(tolerance=0.5, angular_tolerance=0.3)\nverts_np = np.array([(v.X, v.Y, v.Z) for v in verts])\ntris_np = np.array(tris)\n\nfig = plt.figure(figsize=(10, 8))\nax = fig.add_subplot(111, projection='3d')\nmesh = Poly3DCollection(verts_np[tris_np], alpha=0.6, edgecolor='k', linewidths=0.1)\nax.add_collection3d(mesh)\nax.set_xlim(verts_np[:, 0].min(), verts_np[:, 0].max())\nax.set_ylim(verts_np[:, 1].min(), verts_np[:, 1].max())\nax.set_zlim(verts_np[:, 2].min(), verts_np[:, 2].max())\nax.set_box_aspect((np.ptp(verts_np[:, 0]), np.ptp(verts_np[:, 1]), np.ptp(verts_np[:, 2])))\nax.set_xlabel('X'); ax.set_ylabel('Y'); ax.set_zlabel('Z')\nax.set_title(\"Imported customer_part.step (raw declared units, unscaled)\")\ndisplay(fig)\n\n# -- cell 6 -------------------------------------------------------------------------\nfrom build123d import *\nimport numpy as np\n\n# Inspect faces of the imported solid to understand the bore geometry:\n# is there a cylindrical face, what is its axis/radius, and are there planar\n# end-caps at x=0 and x=200 (i.e. is the bore open at both ends)?\nfaces = imported.faces()\nprint(\"total faces:\", len(faces))\n\nfor f in faces:\n    surf_type = f.geom_type\n    print(surf_type, \"area=%.2f\" % f.area, \"center=\", tuple(round(c,2) for c in f.center()))\n\n# -- cell 7 -------------------------------------------------------------------------\nfrom build123d import *\n\n# Get precise cylinder geometry (axis position, direction, radius) for the bore face\nfaces = imported.faces()\ncyl_face = [f for f in faces if f.geom_type == GeomType.CYLINDER][0]\n\n# build123d Face wraps OCP; get the underlying surface via topods / BRep tools\nfrom OCP.BRep import BRep_Tool\nfrom OCP.BRepAdaptor import BRepAdaptor_Surface\n\nadaptor = BRepAdaptor_Surface(cyl_face.wrapped)\ncyl = adaptor.Cylinder()\nloc = cyl.Location()\nax = cyl.Axis()\nprint(\"radius:\", cyl.Radius())\nprint(\"axis location:\", loc.X(), loc.Y(), loc.Z())\nprint(\"axis direction:\", ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z())\n\n# Also confirm end faces (planes with holes) are at x=0 and x=200\nend_faces = [f for f in faces if f.geom_type == GeomType.PLANE and f.area < 9000]\nfor f in end_faces:\n    print(\"end face center:\", f.center(), \"area:\", f.area, \"normal:\", f.normal_at())\n\n# -- cell 8 -------------------------------------------------------------------------\nfrom build123d import *\n\n# The block's bounding box exactly bounds a rectangular stock, and the solid\n# is that stock minus a straight cylindrical bore (radius 20, axis along X at\n# y=50, z=50, from x=0 to x=200), confirmed above via BRepAdaptor_Surface.\n# The fluid domain is that missing cylinder: (bounding box) - (customer solid).\nBBOX_L, BBOX_W, BBOX_H = 200.0, 100.0, 100.0  # raw units as declared in the file\nstock = Pos(BBOX_L/2, BBOX_W/2, BBOX_H/2) * Box(BBOX_L, BBOX_W, BBOX_H)\n\nfluid_raw = stock - imported\nprint(\"fluid solids:\", len(fluid_raw.solids()))\nprint(\"fluid volume:\", fluid_raw.volume)\n\nimport math\nexpected_vol = math.pi * 20.0**2 * 200.0\nprint(\"expected cylinder volume:\", expected_vol)\nprint(\"bbox of fluid:\", fluid_raw.bounding_box().min, fluid_raw.bounding_box().max)\n\n# -- cell 9 -------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"cat\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/prep/README.md\"],\n                      capture_output=True, text=True).stdout)\n\n# -- cell 10 ------------------------------------------------------------------------\nimport subprocess\nresult = subprocess.run([\"grep\", \"-n\", \"-A3\", \"def scale\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/b123d_api.md\"],\n                         capture_output=True, text=True)\nprint(result.stdout[:2000])\n\n# -- cell 11 ------------------------------------------------------------------------\nimport subprocess\nresult = subprocess.run([\"grep\", \"-n\", \"-i\", \"scale\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/b123d_api.md\"],\n                         capture_output=True, text=True)\nprint(result.stdout[:3000])\n\n# -- cell 12 ------------------------------------------------------------------------\nfrom build123d import *\n\n# Scale the fluid domain from the file's raw (millimetre) units to metres.\n# The bounding box was 200x100x100 raw units; as millimetres that is a\n# sensible 200mm x 100mm x 100mm block with a 40mm-diameter bore -- a\n# plausible bench-top part. As metres it would be a 200m block, which is not.\nMM_TO_M = 0.001\nfluid_m = scale(fluid_raw, by=MM_TO_M)\n\nbb = fluid_m.bounding_box()\nprint(\"fluid bbox (m):\", bb.min, bb.max, \"size:\", bb.size)\nprint(\"fluid volume (m^3):\", fluid_m.volume)\n\nimport math\nexpected_vol_m3 = math.pi * 0.02**2 * 0.2\nprint(\"expected cylinder volume (m^3):\", expected_vol_m3)\nprint(\"num solids:\", len(fluid_m.solids()))\n\n# -- cell 13 ------------------------------------------------------------------------\n# Scale confirmed: fluid domain is 0.2 m long, 0.04 m diameter bore (radius 0.02 m), volume matches a \nimport os\nos.makedirs(\"prep\", exist_ok=True)\nexport_step(fluid_m, \"prep/fluid.step\")\nprint(\"wrote prep/fluid.step\", os.path.getsize(\"prep/fluid.step\"), \"bytes\")\n\n# -- cell 14 ------------------------------------------------------------------------\nfrom build123d import *\n\n# Work from the checkpointed file, not the live session object, per the prep recipe.\nfluid = import_step(\"prep/fluid.step\")\nprint(\"solids:\", len(fluid.solids()), \"faces:\", len(fluid.faces()))\n\nfaces = fluid.faces()\nX_MIN, X_MAX = 0.0, 0.2\nTOL = 1e-6\n\ninlet  = faces.filter_by_position(Axis.X, X_MIN - TOL, X_MIN + TOL)\noutlet = faces.filter_by_position(Axis.X, X_MAX - TOL, X_MAX + TOL)\nwalls  = [f for f in faces if f not in list(inlet) + list(outlet)]\n\nprint(\"inlet faces:\", len(inlet), [f.geom_type for f in inlet])\nprint(\"outlet faces:\", len(outlet), [f.geom_type for f in outlet])\nprint(\"wall faces:\", len(walls), [f.geom_type for f in walls])\n\nfor name, group in [(\"inlet\", inlet), (\"outlet\", outlet), (\"walls\", walls)]:\n    for f in group:\n        c = f.center(CenterOf.MASS)\n        print(name, f.geom_type, \"area=%.6g\" % f.area, \"centroid=\", tuple(round(v,5) for v in c))\n\n# -- cell 15 ------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"cat\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/snappy/README.md\"],\n                      capture_output=True, text=True).stdout)\n\n# -- cell 16 ------------------------------------------------------------------------\nimport subprocess, sys\nresult = subprocess.run(\n    [\"python3\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/domain_probe.py\",\n     \"prep/fluid.step\", \"--suggest\", \"--json\"],\n    capture_output=True, text=True)\nprint(\"STDOUT:\", result.stdout[:3000])\nprint(\"STDERR:\", result.stderr[:2000])\n\n# -- cell 17 ------------------------------------------------------------------------\n# The checkpoint STEP was written without declaring its unit as metres, so gmsh (which honours the STE\nfrom build123d import *\n\nexport_step(fluid_m, \"prep/fluid.step\", unit=Unit.M)\n\n# Reload and confirm the checkpoint now declares/reads back consistently in metres.\nfluid = import_step(\"prep/fluid.step\")\nbb = fluid.bounding_box()\nprint(\"reloaded bbox (m):\", bb.min, bb.max, \"size:\", bb.size)\nprint(\"num solids:\", len(fluid.solids()), \"num faces:\", len(fluid.faces()))\n\nfaces = fluid.faces()\nX_MIN, X_MAX = 0.0, 0.2\nTOL = 1e-6\ninlet  = faces.filter_by_position(Axis.X, X_MIN - TOL, X_MIN + TOL)\noutlet = faces.filter_by_position(Axis.X, X_MAX - TOL, X_MAX + TOL)\nwalls  = [f for f in faces if f not in list(inlet) + list(outlet)]\n\nfor name, group in [(\"inlet\", inlet), (\"outlet\", outlet), (\"walls\", walls)]:\n    for f in group:\n        c = f.center(CenterOf.MASS)\n        print(name, f.geom_type, \"area=%.6g\" % f.area, \"centroid=\", tuple(round(v,6) for v in c))\n\n# -- cell 18 ------------------------------------------------------------------------\n# Let me stop guessing between tools and just read the actual STEP file bytes to see what raw coordina\nimport subprocess\nresult = subprocess.run([\"grep\", \"-a\", \"-n\", \"-E\", \"CARTESIAN_POINT|SI_UNIT|LENGTH_UNIT|CONVERSION_BASED\", \"prep/fluid.step\"],\n                         capture_output=True, text=True)\nprint(result.stdout)\n\n# -- cell 19 ------------------------------------------------------------------------\n# The reload confusion is now clear: build123d's `import_step` returns raw stored numbers unconverted \nfrom build123d import *\n\nfaces = fluid_m.faces()\nprint(\"num faces:\", len(faces))\n\nX_MIN, X_MAX = 0.0, 0.2\nTOL = 1e-6\ninlet  = faces.filter_by_position(Axis.X, X_MIN - TOL, X_MIN + TOL)\noutlet = faces.filter_by_position(Axis.X, X_MAX - TOL, X_MAX + TOL)\nwalls  = [f for f in faces if f not in list(inlet) + list(outlet)]\n\nfor name, group in [(\"inlet\", inlet), (\"outlet\", outlet), (\"walls\", walls)]:\n    for f in group:\n        c = f.center(CenterOf.MASS)\n        print(name, f.geom_type, \"area(m^2)=%.6g\" % f.area, \"centroid(m)=\", tuple(round(v,6) for v in c))\n\n# -- cell 20 ------------------------------------------------------------------------\n# Good \u2014 inlet, outlet, wall centroids all in metres as expected. Now export the patches to STL via gm\nimport sys\nsys.path.insert(0, \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\")\nimport cad_convert\n\nkey = lambda fs: [tuple(f.center(CenterOf.MASS)) for f in fs]\n\nCLMAX_M = 0.006  # metres, coarse first pass: ~21 facets around the 0.04 m diameter bore\n\nreport = cad_convert.export_patches(\n    \"prep/fluid.step\",\n    {\"inlet\":  {\"role\": \"inlet\",  \"faces\": key(inlet)},\n     \"outlet\": {\"role\": \"outlet\", \"faces\": key(outlet)},\n     \"walls\":  {\"role\": \"wall\",   \"faces\": key(walls)}},\n    \"constant/triSurface\",\n    clmax=CLMAX_M,\n    location_in_mesh=[0.1, 0.05, 0.05],\n)\nprint(cad_convert.render(report))\n\n# -- cell 21 ------------------------------------------------------------------------\n# Bounding box `0.2 x 0.0399... x 0.04 m` matches the expected physical size (length 0.2 m, bore diame\nimport subprocess\nresult = subprocess.run(\n    [\"python3\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/cad_audit.py\",\n     \"constant/triSurface\", \"--json\"],\n    capture_output=True, text=True)\nprint(\"STDOUT:\", result.stdout[:4000])\nprint(\"STDERR:\", result.stderr[:2000])\n\n# -- cell 22 ------------------------------------------------------------------------\n# Surface is closed, manifold, consistently oriented, disjoint patches. Now verify the `locationInMesh\nimport subprocess\nresult = subprocess.run(\n    [\"python3\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/domain_probe.py\",\n     \"constant/triSurface\", \"--point\", \"0.1\", \"0.05\", \"0.05\", \"--json\"],\n    capture_output=True, text=True)\nprint(\"STDOUT:\", result.stdout[:3000])\nprint(\"STDERR:\", result.stderr[:2000])\n\n# -- cell 23 ------------------------------------------------------------------------\n# Location confirmed inside the fluid with 0.0197641 m clearance in a passage 0.0395544 m wide (matche\nimport subprocess, os\n\nos.makedirs(\"system\", exist_ok=True)\nr = subprocess.run([\"cp\",\n    \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/snappy/blockMeshDict\",\n    \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/snappy/surfaceFeatureExtractDict\",\n    \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/snappy/snappyHexMeshDict\",\n    \"system/\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout, r.stderr)\nprint(os.listdir(\"system\"))\n\n# -- cell 24 ------------------------------------------------------------------------\nimport subprocess\nfor f in [\"system/blockMeshDict\", \"system/surfaceFeatureExtractDict\", \"system/snappyHexMeshDict\"]:\n    print(\"=\"*20, f, \"=\"*20)\n    print(open(f).read())\n",
+      "before": {
+        "patches": {
+          "inlet": {
+            "triangles": 99,
+            "area_m2": 0.0012379717325257979
+          },
+          "outlet": {
+            "triangles": 99,
+            "area_m2": 0.0012379717325257979
+          },
+          "walls": {
+            "triangles": 1704,
+            "area_m2": 0.025065380167397552
+          }
+        },
+        "volume_m3": 0.0002486194015628831,
+        "bounds": [
+          0.0,
+          0.030008348291,
+          0.03,
+          0.2,
+          0.069944075944,
+          0.07
+        ],
+        "triangles": 1902
+      },
+      "exit_code": 0,
+      "output": "d mesh; raise\n                                    // it deliberately, having predicted the count with\n                                    // cells_estimate.py, not after hitting it\n    minRefinementCells  10;         // stop refining when fewer than this are left\n    resolveFeatureAngle 30;         // refine to the surface level where the surface\n                                    // turns by more than this\n    allowFreeStandingZoneFaces true;\n}\n\nsnapControls\n{\n    nSmoothPatch    3;      // smoothing passes over the patch before projection\n    tolerance       2.0;    // how far a point may be pulled, in local cell sizes\n    nSolveIter      30;     // mesh displacement iterations; 30 is generous, 0 disables\n                            // the smoothing that keeps the cells behind the wall sane\n    nRelaxIter      5;      // snapping attempts, each with a looser quality bar\n    nFeatureSnapIter 10;    // feature-edge snapping passes\n    implicitFeatureSnap     false;  // use the .eMesh files, not snappy's own guess\n    explicitFeatureSnap     true;\n    multiRegionFeatureSnap  false;  // true only when surfaces of several regions meet\n}\n\naddLayersControls\n{\n    // Thicknesses below are fractions of the local cell size.\n    relativeSizes       true;\n\n    layers\n    {\n        // One entry per patch that is to carry a layer, by name or by regex. A patch\n        // that is not named here gets no layer and no warning. Coverage is what was\n        // achieved, not what was asked for:\n        //   python3 layer_report.py <case> --patch <wall> --ref <the same case, no layers>\n        //\n        // \"walls\"\n        // {\n        //     nSurfaceLayers 3;\n        // }\n    }\n\n    expansionRatio      1.2;    // growth between successive layers\n    finalLayerThickness 0.5;    // outermost layer, as a fraction of the local cell\n    minThickness        0.1;    // below this the layer is deleted rather than thinned;\n                                // this is the knob that turns a coverage number into\n                                // a smaller one without saying so\n    nGrow               0;\n\n    featureAngle            130;    // do not extrude across a corner sharper than this\n    slipFeatureAngle        30;\n    nRelaxIter              5;\n    nSmoothSurfaceNormals   1;\n    nSmoothNormals          3;\n    nSmoothThickness        10;\n    maxFaceThicknessRatio   0.5;\n    maxThicknessToMedialRatio 0.3;\n    minMedialAxisAngle      90;\n    nBufferCellsNoExtrude   0;\n    nLayerIter              50;     // snappy stops here and reports whatever it reached\n}\n\nmeshQualityControls\n{\n    maxNonOrtho         65;     // preflight warns at 70 and fails at 85, so a mesh\n                                // that passes this passes preflight's checkmesh check\n    maxBoundarySkewness 20;\n    maxInternalSkewness 4;      // preflight warns at 4 and fails at 10\n    maxConcave          80;\n    minVol              1e-13;\n    minTetQuality       1e-15;  // -1e30 disables the tet test; it is disabled in\n                                // tutorials that would otherwise not mesh at all, and\n                                // it disables the check that catches inverted cells\n    minArea             -1;\n    minTwist            0.02;\n    minDeterminant      0.001;\n    minFaceWeight       0.02;\n    minVolRatio         0.01;\n    minTriangleTwist    -1;\n    nSmoothScale        4;\n    errorReduction      0.75;\n}\n\n// Merge tolerance, as a fraction of the bounding box of the initial mesh.\nmergeTolerance 1e-6;\n\n// snappyHexMesh writes each stage as its own time directory -- 1/ castellated,\n// 2/ snapped, 3/ layered -- unless it is run with -overwrite, which writes the final\n// mesh over constant/polyMesh and keeps nothing. When the layer stage ruins a mesh\n// the snapped mesh is the thing to look at, so run without -overwrite while a case\n// is being built and add it once the recipe is settled.\ndebug 0;\n\n// ************************************************************************* //\n\n",
+      "after": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      }
+    }
+  }
+}

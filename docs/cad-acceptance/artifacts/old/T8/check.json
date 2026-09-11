@@ -1,0 +1,92 @@
+{
+  "ok": false,
+  "missing": [
+    "no picture of the mesh was drawn"
+  ],
+  "cells": 14346,
+  "patches": [
+    {
+      "name": "solidWall",
+      "type": "wall",
+      "nFaces": 332
+    },
+    {
+      "name": "inlet",
+      "type": "patch",
+      "nFaces": 164
+    },
+    {
+      "name": "fluidWall",
+      "type": "wall",
+      "nFaces": 3400
+    },
+    {
+      "name": "outlet",
+      "type": "patch",
+      "nFaces": 164
+    }
+  ],
+  "lines": [
+    "14,346 cells, 30,722 faces, 3,399 points, 3D",
+    "bounds 0.2 x 0.03 x 0.03 m (x 0..0.2, y 0..0.03, z 0..0.03)",
+    "checkMesh: Mesh OK.",
+    "  max_aspect_ratio 7.95288, max_non_orthogonality 67.1263, max_skewness 0.790609, min_volume 2.5714e-09",
+    "patches:",
+    "  solidWall wall 332 faces",
+    "  inlet patch 164 faces",
+    "  fluidWall wall 3,400 faces",
+    "  outlet patch 164 faces",
+    "rebuilds with: Allmesh, build.py"
+  ],
+  "raw": {
+    "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/old-t8",
+    "polymesh": true,
+    "patches": [
+      {
+        "name": "solidWall",
+        "type": "wall",
+        "nFaces": 332
+      },
+      {
+        "name": "inlet",
+        "type": "patch",
+        "nFaces": 164
+      },
+      {
+        "name": "fluidWall",
+        "type": "wall",
+        "nFaces": 3400
+      },
+      {
+        "name": "outlet",
+        "type": "patch",
+        "nFaces": 164
+      }
+    ],
+    "build": [
+      "Allmesh",
+      "build.py"
+    ],
+    "cells": 14346,
+    "faces": 30722,
+    "points": 3399,
+    "bounds": [
+      0.0,
+      0.0,
+      0.0,
+      0.2,
+      0.03,
+      0.03
+    ],
+    "two_d": false,
+    "checkmesh": "Mesh OK.",
+    "checkmesh_ok": true,
+    "metrics": {
+      "max_non_orthogonality": 67.1263,
+      "max_skewness": 0.790609,
+      "max_aspect_ratio": 7.95288,
+      "min_volume": 2.5714e-09
+    },
+    "render": ""
+  }
+}
