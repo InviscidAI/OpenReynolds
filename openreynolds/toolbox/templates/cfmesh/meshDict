@@ -1,0 +1,87 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  A starting meshDict for cfMesh's `cartesianMesh`. Copy into <case>/system/,
+  replace the CHANGE_ME surface file, run `cartesianMesh`, then `checkMesh`.
+
+  cfMesh reads ONE surface file, not a directory of them, and it takes the patch
+  names from the `solid <name>` records inside it. A per-patch export (I3's
+  constant/triSurface/<patch>.stl) is therefore concatenated first -- an ASCII STL
+  is a sequence of solids, so `cat inlet.stl outlet.stl walls.stl > duct.stl` is a
+  legal multi-solid surface and the three names survive into the mesh.
+
+  Every number here is a literal with a comment beside it, imported from nowhere.
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      meshDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// The one surface. Nothing can guess its name, and cfMesh meshes the INSIDE of a
+// closed surface: for an external flow the body has to be enclosed in a box first
+// and the union handed over as one file (cfmesh.py --box does that, and says what
+// it did). There is no locationInMesh here; closure is what decides inside.
+surfaceFile "CHANGE_ME";
+
+// The background cell size, metres. cfMesh subdivides down from this the way snappy
+// refines up from a background block, so this is the same number blockMeshDict's dx
+// would have been.
+maxCellSize     0.005;
+
+// Cell size at the boundary. Left commented because the default -- maxCellSize --
+// is a real answer, and a boundary size that is not a power-of-two fraction of
+// maxCellSize is quietly rounded to one.
+// boundaryCellSize 0.0025;
+
+// Per-patch refinement, by name or regex against the solid names in the surface
+// file. A key that matches no patch is a WARNING and an exit code of 0: cfMesh
+// meshes without the refinement it was asked for and says so in one line of log.
+// cfmesh.py --check reads the log for exactly that line.
+localRefinement
+{
+    // "walls"
+    // {
+    //     cellSize 0.0025;
+    // }
+}
+
+// Layers. cfMesh extrudes a sheet and then optimises it, where snappy inserts
+// prisms and deletes the ones a quality metric rejects -- which is why a cfMesh
+// layer usually covers more of the wall. Measure it either way:
+//   python3 layer_report.py <case> --patch walls --ref <the same case, no layers>
+boundaryLayers
+{
+    nLayers             0;      // 0 is no layer at all; set it per patch below
+    thicknessRatio      1.2;    // growth between successive layers
+
+    patchBoundaryLayers
+    {
+        // "walls"
+        // {
+        //     nLayers           3;
+        //     thicknessRatio    1.2;
+        //     maxFirstLayerThickness 0.0025;
+        // }
+    }
+
+    // optimiseLayer true;      // on by default; it is what makes the sheet survive
+}
+
+// The patch names in the mesh come from the surface file's solids. This block is
+// how a name or a type is changed afterwards; `defaultType wall` is the one that
+// matters, because a patch nobody named is where unassigned faces land.
+renameBoundary
+{
+    defaultName     walls;
+    defaultType     wall;
+
+    newPatchNames
+    {
+        // "inlet"  { newName inlet;  type patch; }
+        // "outlet" { newName outlet; type patch; }
+    }
+}
+
+// ************************************************************************* //
