@@ -23,7 +23,7 @@ from .backend.base import Backend, BackendError, WORKSPACE_ROOT
 from .browse import Browser
 from . import casebundle
 from .capture import Capture
-from . import commands, images, mesher
+from . import cad, commands, images
 from .config import Config, config_path
 from .delivery import Gallery
 from .llm import PRESETS, ProviderError, make_provider, preset_for
@@ -1026,20 +1026,20 @@ def session(
         # command waited minutes behind a cycle's transfers. Held around each tool
         # call, this is how a cycle knows to stand aside (mirror.Gate).
         loop.gate = live_mirror.gate
-        # The mesh desk: geometry and its mesh built by a second agent on this same
-        # workspace, one bash block at a time, with its own model client (mesher/).
-        # It needs nothing in this process but a key -- the machine it works on is the
-        # one the session is already talking to.
+        # The CAD desk: geometry and its mesh built by a second agent on this same
+        # workspace, one python cell at a time in a kernel there, with its own model
+        # client (cad/). It needs nothing in this process but a key -- the machine it
+        # works on is the one the session is already talking to.
         ctx.on_tokens = loop.add_tokens
         if cfg.mesh_tool and not cfg.model_key_missing():
             # `interject` is read late on purpose: the loop's own drain is attached a
             # few lines below, and the desk needs the same one. It is what lets a
             # person change the shape while it is being built instead of waiting out
             # the whole call and asking the main agent to start again.
-            ctx.mesher = mesher.Mesher(
+            ctx.cad = cad.CadDesk(
                 cfg, backend, store, store.session.home,
                 interject=lambda: loop.interject() if loop.interject else None,
-                on_step=lambda step: _mesh_desk_step(view, tracker, step),
+                on_step=lambda step: _cad_desk_step(view, tracker, step),
             )
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
@@ -1295,24 +1295,24 @@ def _when(mtime: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.gmtime(mtime)) + "Z"
 
 
-def _mesh_desk_step(view: Any, tracker: Any, step: Any) -> None:
-    """Say what the mesh desk just did, while it is doing it.
+def _cad_desk_step(view: Any, tracker: Any, step: Any) -> None:
+    """Say what the CAD desk just did, while it is doing it.
 
     The desk holds the session's one thread for minutes at a time, and until this
     the screen said nothing about what was happening inside -- a reviewer's word for
     it was "a black box", and the person watching had no way to tell a desk building
-    a mesh from a desk stuck. One line per command, the way a tool call is announced,
+    a mesh from a desk stuck. One line per cell, the way a tool call is announced,
     plus the bar's own narration so it survives the next redraw.
     """
     first = (step.cmd or "").strip().splitlines()[0][:90]
     seen = "  <picture>" if step.image else ""
-    line = f"mesh desk [{step.exit_code}] {step.seconds:.0f}s  {first}{seen}"
+    line = f"cad desk [{step.exit_code}] {step.seconds:.0f}s  {first}{seen}"
     try:
         view.narration(line)
         if tracker is not None:
             # The bar's own activity, so the next redraw still says what the desk is
-            # on rather than reverting to "mesh" for the whole call.
-            tracker.begin("tool", "mesh desk", cmd=first)
+            # on rather than reverting to "cad" for the whole call.
+            tracker.begin("tool", "cad desk", cmd=first)
     except Exception:  # noqa: BLE001 - a progress line may never end a mesh
         pass
 

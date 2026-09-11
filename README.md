@@ -247,7 +247,7 @@ or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
 | `cli.py` | Entry point, session assembly, subcommands. |
 | `loop.py` | The tool-use loop: streaming, interjections, thread refresh. |
 | `tools.py` | The eight tool schemas and their handlers. |
-| `geometry/` | The geometry segment: `desk.py` is the desk behind the `geometry` tool (its own brief, its own model client, laps of build → draw → measure → revise in-process, then the case committed to the workspace); the modules beside it are the kernel that runs anywhere gmsh does. |
+| `cad/` | The CAD desk behind the `cad` tool: its own brief, its own model client, and one python cell a step in a kernel on the workspace — build or import the shape, tag it, mesh it, look at it, revise. `check.py` is the finish line it does not declare for itself, and `cells.py` decides which cells become the script the run leaves behind. Nothing here imports a CAD kernel into this process. |
 | `watch.py` | Job polling, wake facts, progress, narration. |
 | `mirror.py` / `store.py` | Files home, and the local `./studies/<id>/` record. |
 | `backend/` | The `Backend` protocol. `hosted.py` is the only module that knows the service exists. |

@@ -361,7 +361,13 @@ def test_the_toolbox_sticks_to_what_the_image_provides():
     # binary had been there all along, importable by nothing. It is imported inside the
     # functions that need it, so the refusals stay readable on a machine that has none
     # of this.
-    third_party = {"numpy", "matplotlib", "pandas", "pyvista", "imageio", "gmsh"}
+    # build123d is on the image too -- the system prompt and `ENVIRONMENT.md` both
+    # name it, and `b123d_api.py` is the script that reads it. It reached the library
+    # through `importlib.import_module` to stay inside this list while the list was
+    # wrong; the list is what was wrong, so it is fixed here rather than worked around
+    # there. Whether the indirection stays is that script's own business.
+    third_party = {"numpy", "matplotlib", "pandas", "pyvista", "imageio", "gmsh",
+                   "build123d"}
     siblings = {script.stem for script in TOOLBOX.glob("*.py")}
     allowed = set(sys.stdlib_module_names) | third_party | siblings | {"__future__"}
     for script in sorted(TOOLBOX.glob("*.py")):

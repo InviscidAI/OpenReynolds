@@ -4,10 +4,13 @@ There is no `run_gate`, no `amend_spec`, no `ask_user` — asking is just talkin
 here inspects what the model is doing or refuses it on policy grounds. The handlers cap
 output and report facts; that is the whole job.
 
-The eighth, `mesh`, delegates to the mesh desk (`mesher/`) rather than straight to the
+The eighth, `cad`, delegates to the CAD desk (`cad/`) rather than straight to the
 backend: it is the one tool whose work is a model loop of its own — an agent with one
-bash block a step, on the same workspace — and this module still knows nothing about
-how that loop reaches its model.
+python cell a step, in a kernel on the same workspace — and this module still knows
+nothing about how that loop reaches its model. What it does know is the one fact the
+desk cannot check for itself in time: whether the `geometry` file it was pointed at is
+there and readable. That is asked before the run starts, because a path that is wrong
+is worth a sentence rather than nine steps and a model bill.
 """
 
 from __future__ import annotations
@@ -99,28 +102,28 @@ class ToolContext:
     A render the model just examined is exactly the file the user wants on their
     machine right now, not at the next mirror cycle. The hook must not block and
     must not fail the read -- it is a nudge, and the picture matters more."""
-    mesher: Any = None
-    """The mesh desk (`mesher.Mesher`), when there is a model key to run one with.
-    None means the `mesh` tool answers with why not, and meshing is the caller's own
-    work like any other command."""
+    cad: Any = None
+    """The CAD desk (`cad.CadDesk`), when there is a model key to run one with.
+    None means the `cad` tool answers with why not, and CAD and meshing are the
+    caller's own work like any other command."""
     on_tokens: Callable[[dict], None] | None = None
-    """Called with the model usage a tool spent on the session's behalf -- the mesh
+    """Called with the model usage a tool spent on the session's behalf -- the CAD
     desk's steps -- so it lands in the same totals as the main loop's."""
 
 
 def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     """The tools this session can actually serve.
 
-    Only `mesh` is conditional: without a mesh desk behind it the tool can do nothing
+    Only `cad` is conditional: without a desk behind it the tool can do nothing
     but explain that, and a tool in the list that answers "not available" costs the
     model a call to find out. Taking it out of the list is also what makes the
     question answerable -- the same prompt run with the desk and without it, which is
     the only honest way to settle whether a slow natural-language sub-agent beats the
     bash the caller already has.
     """
-    if ctx.mesher is not None:
+    if ctx.cad is not None:
         return TOOLS
-    return [tool for tool in TOOLS if tool["name"] != "mesh"]
+    return [tool for tool in TOOLS if tool["name"] != "cad"]
 
 
 FRESH_SHELL = (
@@ -173,6 +176,55 @@ TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["cmd"],
+        },
+    },
+    {
+        "name": "cad",
+        "description": (
+            "Describe a geometry in words, or point at a CAD file already on the "
+            "workspace, and get back an OpenFOAM mesh of it there. A separate agent "
+            "does the work on this same machine — it builds or imports the shape, "
+            "repairs and tags it, chooses the mesher (snappyHexMesh, cfMesh, gmsh "
+            "body-fitted, blockMesh), renders the mesh and measures it, and revises "
+            "until checkMesh passes and the shape measures up to what was asked for. "
+            "You get the picture, the patch table with each patch's area and normal, "
+            "checkMesh's verdict, the script that rebuilds it, and where the case is. "
+            "It is a MESH only: no fields, no boundary conditions, no solver settings "
+            "and no solve — those stay with you. Takes a few minutes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request": {
+                    "type": "string",
+                    "description": (
+                        "The shape in words: its sizes with units, which end is the "
+                        "inlet and which the outlet, whether it is a plane (2D) case "
+                        "or a volume, and any property that has to be right — an "
+                        "angle, a radius, a gap, a count. Anything you leave out is "
+                        "the desk's to choose. With a `geometry` file it is what to "
+                        "make of that file instead: which region is the fluid, what "
+                        "to call each patch, what to leave out."
+                    ),
+                },
+                "case": {
+                    "type": "string",
+                    "description": (
+                        "Directory name for the case under the study (default 'mesh')."
+                    ),
+                },
+                "geometry": {
+                    "type": "string",
+                    "description": (
+                        "Absolute path to a .step, .stp, .iges or .igs file under "
+                        f"{WORKSPACE_ROOT}, when the shape already exists as CAD. It "
+                        "is read on this machine; there is no upload here, so the "
+                        "file has to be on the volume already. Checked for existence "
+                        "and readability before anything starts."
+                    ),
+                },
+            },
+            "required": ["request"],
         },
     },
     {
@@ -275,42 +327,6 @@ TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["cmd"],
-        },
-    },
-    {
-        "name": "mesh",
-        "description": (
-            "Describe a geometry in words and get back an OpenFOAM mesh of it on the "
-            "workspace. A separate agent builds it on this same machine — it chooses "
-            "the mesher (gmsh body-fitted, blockMesh, snappyHexMesh, cfMesh), writes "
-            "the geometry as a script, renders the mesh and measures it, and revises "
-            "until checkMesh passes and the shape measures up to what was asked for. "
-            "You get the picture, the patch table with each patch's area and normal, "
-            "checkMesh's verdict, and where the case is. It is a MESH only: no fields, "
-            "no boundary conditions, no solver settings and no solve — those stay with "
-            "you. Takes a few minutes."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "request": {
-                    "type": "string",
-                    "description": (
-                        "The shape in words: its sizes with units, which end is the "
-                        "inlet and which the outlet, whether it is a plane (2D) case "
-                        "or a volume, and any property that has to be right — an "
-                        "angle, a radius, a gap, a count. Anything you leave out is "
-                        "the mesh desk's to choose."
-                    ),
-                },
-                "case": {
-                    "type": "string",
-                    "description": (
-                        "Directory name for the case under the study (default 'mesh')."
-                    ),
-                },
-            },
-            "required": ["request"],
         },
     },
     {
@@ -846,27 +862,88 @@ def _fetch(ctx: ToolContext, args: dict[str, Any]) -> str:
     return f"copied {len(written)} file(s) to the user's machine:\n{listing}"
 
 
-def _mesh(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
-    """The mesh desk's answer as one tool result: the picture first, the words second,
+GEOMETRY_SUFFIXES = (".step", ".stp", ".iges", ".igs")
+"""What the `geometry` property may name. B-rep, and nothing else: a `.stl` is
+triangles somebody already chose the size of, and the desk's whole first act on an
+imported file is choosing that size against the flow."""
+
+GEOMETRY_PROBE_BYTES = 1
+"""How much of the file is read to find out whether it can be read at all. The
+question is whether the volume will hand the bytes over, not what is in them."""
+
+
+def _refuse_geometry(ctx: ToolContext, path: str) -> str | None:
+    """Why this `geometry` path cannot be worked from, or None to go ahead.
+
+    Asked here rather than inside the desk, and before the desk is started, because
+    everything the desk does costs model time: a path with a typo in it discovered on
+    step nine is a refusal that took nine steps and a bill to write. This one costs a
+    `stat` and one byte.
+    """
+    root = getattr(ctx.backend, "workspace_root", WORKSPACE_ROOT).rstrip("/")
+    if not path.startswith("/"):
+        return (f"{path} is not an absolute path; the geometry file is named by its "
+                f"full path on the workspace, under {root}/")
+    if not (path == root or path.startswith(root + "/")):
+        return (f"{path} is not under {root}/, which is the only filesystem this "
+                "session can reach; there is no upload from your machine here")
+    suffix = path[path.rfind("."):].lower() if "." in path.rsplit("/", 1)[-1] else ""
+    if suffix not in GEOMETRY_SUFFIXES:
+        return (f"{path} is not a CAD file this reads: the suffix is "
+                f"{suffix or 'absent'} and it takes one of "
+                f"{', '.join(GEOMETRY_SUFFIXES)}. A surface that is already triangles "
+                "is work for bash and the toolbox, not for this")
+    try:
+        info = ctx.backend.stat(path)
+    except BackendError as exc:
+        return f"{path} could not be read: {exc}"
+    except Exception as exc:  # noqa: BLE001 - the workspace answered badly; say which
+        return f"{path} could not be read: {type(exc).__name__}: {exc}"
+    if info.type == "directory":
+        return f"{path} is a directory, not a CAD file"
+    if not info.size:
+        return f"{path} is empty (0 bytes), so there is no geometry in it to import"
+    try:
+        data = ctx.backend.get_file(path, offset=0, limit=GEOMETRY_PROBE_BYTES)
+    except BackendError as exc:
+        return f"{path} is there and could not be opened: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        return f"{path} is there and could not be opened: {type(exc).__name__}: {exc}"
+    if not data:
+        return f"{path} is there and gave back no bytes when it was read"
+    return None
+
+
+def _cad(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    """The CAD desk's answer as one tool result: the picture first, the words second,
     so that when the picture is later evicted from the thread the caption still carries
     the patch table, the verdict and where the case is."""
-    if ctx.mesher is None:
+    if ctx.cad is None:
         return (
-            "the mesh desk is not available in this session (it needs a model key of "
-            "its own to run); meshing here is yours to do with bash like anything else"
+            "the CAD desk is not available in this session (it needs a model key of "
+            "its own to run); geometry and meshing here are yours to do with bash "
+            "like anything else"
         )
-    result = ctx.mesher.run(str(args.get("request", "")), case=args.get("case"))
+    geometry = str(args.get("geometry") or "").strip()
+    if geometry:
+        refusal = _refuse_geometry(ctx, geometry)
+        if refusal:
+            # Nothing has started: no kernel, no thread, no model call. The path and
+            # what is wrong with it are the whole answer.
+            return f"nothing was run: {refusal}"
+    result = ctx.cad.run(str(args.get("request", "")), case=args.get("case"),
+                         geometry=geometry)
     if ctx.on_tokens and result.tokens:
         ctx.on_tokens(result.tokens)
-    text = mesh_text(result)
+    text = cad_text(result)
     if result.png:
         return [images.attachment(images.downscale(result.png, "image/png"), "image/png"),
                 {"type": "text", "text": text}]
     return text
 
 
-def mesh_text(result: Any) -> str:
-    """The words of the mesh tool's answer: whether it is a mesh, what the mesh is,
+def cad_text(result: Any) -> str:
+    """The words of the CAD tool's answer: whether it is a mesh, what the mesh is,
     what the desk says it built, what is still to do, and how to change it.
 
     The order is deliberate. A tool result that opened with "case written" was once
@@ -876,9 +953,9 @@ def mesh_text(result: Any) -> str:
     check = result.check
     lines: list[str] = []
     if result.error and not result.ok:
-        lines.append(f"the mesh desk stopped: {result.error}")
+        lines.append(f"the CAD desk stopped: {result.error}")
     elif result.error:
-        lines.append(f"the mesh desk stopped ({result.error}) -- but the mesh it had "
+        lines.append(f"the CAD desk stopped ({result.error}) -- but the mesh it had "
                      "already built is there and passes:")
     if result.ok and check is not None:
         lines.append(f"meshed: {result.case_rel}/constant/polyMesh is an OpenFOAM mesh "
@@ -901,18 +978,18 @@ def mesh_text(result: Any) -> str:
         lines.append(f"nothing was meshed in {result.case_rel}")
     if getattr(result, "remarks", None):
         lines.append("")
-        lines.append("while this ran, the user said this to the mesh desk directly, and it "
+        lines.append("while this ran, the user said this to the CAD desk directly, and it "
                      "worked to it:")
         lines.extend(f'  "{remark}"' for remark in result.remarks)
     if result.summary:
         lines.append("")
-        lines.append("the mesh desk says:")
+        lines.append("the CAD desk says:")
         lines.extend(f"  {line}" for line in result.summary.splitlines())
     if check is not None and check.lines():
         lines.append("")
         lines.extend(check.lines())
     lines.append("")
-    lines.append(_mesh_accounting(result))
+    lines.append(_cad_accounting(result))
     lines.append(
         f"this is a mesh and nothing else: no 0/ fields, no boundary conditions, no "
         f"solver settings, nothing solved. Look at it again yourself with "
@@ -923,7 +1000,13 @@ def mesh_text(result: Any) -> str:
     return "\n".join(lines)
 
 
-def _mesh_accounting(result: Any) -> str:
+mesh_text = cad_text
+"""The name this was called while the desk was called `mesher`. Kept because
+`cad/check.py`'s tests render a `Check` through it, and a rename of a private
+formatter is not worth a test edit in a file this chunk does not own."""
+
+
+def _cad_accounting(result: Any) -> str:
     steps = len(getattr(result, "steps", []) or [])
     line = f"{steps} step{'s' if steps != 1 else ''}, {result.seconds / 60:.1f} min"
     if result.stopped == "steps":
@@ -937,8 +1020,8 @@ def _mesh_accounting(result: Any) -> str:
 
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "bash": _bash,
+    "cad": _cad,
     "fetch": _fetch,
-    "mesh": _mesh,
     "job_check": _job_check,
     "job_kill": _job_kill,
     "job_start": _job_start,
