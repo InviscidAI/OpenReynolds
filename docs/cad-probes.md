@@ -267,9 +267,16 @@ is off. It is not a tolerance to tune. Sewing a **multi-solid assembly** merges 
 across bodies that were never meant to be one shell, the shells stop closing, and
 `makeSolids` cannot put back what sewing took apart.
 
-The volume is unchanged to nine figures in both cases, which is the trap: a downstream
-check that compares volumes sees nothing wrong while every solid has become a loose bag
-of faces. Solid count and free-edge count are what catch it.
+The volume barely moves in either case, which is the trap: a downstream check that
+compares volumes sees nothing worth reporting while every solid has become a loose bag of
+faces. The two numbers above agree to six significant figures and differ by **five parts
+in ten million** (4.9 x 10^-7 relative) -- far inside any tolerance a volume check would
+be written with. Solid count and free-edge count are what catch it.
+
+*Measure the shape, not the entity list.* Asked of gmsh's remaining 3D entities the
+volume after the defaults is **zero**, because there are none left; that reads as an
+obvious failure and is not the trap. The near-equal numbers above are the shape's volume
+as written to STEP and read back, which is what a downstream check would actually see.
 
 ### What this means for the plan
 
