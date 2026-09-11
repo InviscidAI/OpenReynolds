@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:  # the cell channel's machinery, and only its names, live next door
+    from .kernel import CellResult
 
 WORKSPACE_ROOT = "/work"
 """The persistent directory every backend presents to the model."""
@@ -213,5 +216,49 @@ class Backend(Protocol):
         and so does one whose service cannot be asked: a shutdown must not be
         blocked by a listing that failed."""
         return []
+
+    # -- the cell channel ------------------------------------------------------
+    #
+    # A long-lived kernel in the workspace, beside `exec` rather than instead of it.
+    # `exec` runs a command and forgets it; a desk building geometry needs the
+    # bindings to survive the step, and needs what a cell drew handed back as bytes
+    # rather than as a filename someone had to guess. The kernel is another thing
+    # running in the workspace: nothing here names where it is or how it is reached,
+    # and `CellResult` carries no handle to it.
+
+    def kernel_start(self, cwd: str) -> str:
+        """Bring a kernel up in `cwd`; return the session id.
+
+        One kernel per run, started in the case directory and put down with the run
+        (`close`). Asking twice returns the same id rather than a second kernel."""
+        ...
+
+    def kernel_run(self, code: str, timeout_s: int) -> CellResult:
+        """Run one cell and wait up to `timeout_s` seconds for it.
+
+        **The window expires; the cell is not killed.** `timeout_s` bounds the wait,
+        never the work: on expiry the result comes back with `still_running` set, the
+        elapsed time, and whatever streamed so far, and the caller polls or interrupts
+        deliberately. Under bash a timeout lost nothing because state lived on disk; in
+        a kernel it would lose every binding.
+
+        `timeout_s` is the caller's, from configuration. Nothing in `code` can widen
+        it, and there is no request field that would let it."""
+        ...
+
+    def kernel_poll(self) -> CellResult:
+        """Whether the current cell is still going, and what it printed since the
+        last look."""
+        ...
+
+    def kernel_interrupt(self) -> None:
+        """Interrupt the running cell. An agent action, not a reflex -- the kernel and
+        every binding in it survive."""
+        ...
+
+    def kernel_restart(self) -> None:
+        """A fresh kernel. Every binding is gone, which is what makes the cell log the
+        source of truth rather than the kernel."""
+        ...
 
     def close(self) -> None: ...

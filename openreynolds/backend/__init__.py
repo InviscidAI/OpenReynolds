@@ -9,9 +9,11 @@ from .base import (
     JobStatus,
     Stat,
 )
+from .kernel import CellResult
 
 __all__ = [
     "Backend",
+    "CellResult",
     "BackendError",
     "ExecResult",
     "JobStatus",
