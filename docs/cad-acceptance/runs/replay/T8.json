@@ -1,0 +1,72 @@
+{
+  "arm": "replay",
+  "prompt": "T8",
+  "completed": true,
+  "started_at": "2026-09-11T11:32:52",
+  "run": {
+    "ran": true,
+    "seconds": 5.7,
+    "script_exit": "0",
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "there is no constant/polyMesh in replay-t8 -- nothing has been meshed yet",
+        "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+        "the mesh has no boundary patch with any faces on it",
+        "no picture of the mesh was drawn"
+      ],
+      "regions": [],
+      "cells": 0,
+      "two_d": false,
+      "patches": [],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "fail",
+          "measured": "there is no constant/polyMesh in replay-t8 -- nothing has been meshed yet"
+        },
+        {
+          "check": "checkmesh",
+          "status": "fail",
+          "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks"
+        },
+        {
+          "check": "patches",
+          "status": "fail",
+          "measured": "the mesh has no boundary patch with any faces on it"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "no cellZones in this mesh"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: build.py"
+        },
+        {
+          "check": "render",
+          "status": "fail",
+          "measured": "no picture of the mesh was drawn"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        }
+      ],
+      "replay": {
+        "ran": false
+      }
+    },
+    "output_tail": "er.add_mesh(surface, color=colours[name], style=\"wireframe\",\n                                 line_width=7, render_lines_as_tubes=True,\n                                 lighting=False, label=name)\n            else:\n                plotter.add_mesh(surface, color=colours[name],\n                                 opacity=0.10 if faint else 1.0, show_edges=False,\n                                 label=name)\n        if shown:\n            try:\n                plotter.add_legend(bcolor=\"white\", size=(0.26, 0.045 * max(2, len(shown))),\n                                   loc=\"upper right\", face=\"rectangle\")\n            except Exception:  # noqa: BLE001 - the legend is a nicety\n                pass\n        frame(\"xy\" if two_d else \"yz\")\n        if not two_d:\n            plotter.camera_position = \"iso\"\n            plotter.camera.zoom(1.2)\n\n    def cut_panel(normal: str, title: str) -> None:\n        plotter.add_text(title, font_size=9)\n        if internal is None:\n            return\n        try:\n            cut = internal.slice(normal=normal)\n            plotter.add_mesh(cut, color=\"#dddddd\", show_edges=True, edge_color=\"#3b3b3b\",\n                             line_width=1)\n        except Exception:  # noqa: BLE001\n            plotter.add_mesh(internal.extract_surface(), color=\"#dddddd\", show_edges=True)\n        frame({\"x\": \"yz\", \"y\": \"zx\", \"z\": \"xy\"}[normal])\n\n    if two_d:\n        plotter.subplot(0, 0)\n        patches_panel(\"boundary patches (looking down z; front and back left out)\")\n        plotter.subplot(0, 1)\n        cut_panel(\"z\", \"cells\")\n    else:\n        plotter.subplot(0, 0)\n        patches_panel(\"boundary patches\" + (\" (the enclosure faint)\" if enclosure else \"\"))\n        for index, normal in enumerate(\"xyz\"):\n            plotter.subplot((index + 1) // 2, (index + 1) % 2)\n            cut_panel(normal, f\"cells, cut through {normal}\")\n    out_png.parent.mkdir(parents=True, exist_ok=True)\n    plotter.screenshot(str(out_png))\n    plotter.close()\n    return str(out_png)\n\n"
+  }
+}

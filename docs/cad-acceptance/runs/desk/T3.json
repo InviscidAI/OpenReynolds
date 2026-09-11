@@ -1,0 +1,128 @@
+{
+  "arm": "desk",
+  "prompt": "T3",
+  "title": "T3 \u2014 Tesla valve",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A Tesla valve: a straight main channel with four teardrop-shaped bypass loops branching off it and rejoining it downstream, so that flow one way runs straight through and flow the other way is diverted into the loops and opposes itself. Channel width 6 mm, overall length about 120 mm, plane (2D). Inlet at one end, outlet at the other.",
+  "properties": [
+    "number of bypass loops, 4",
+    "channel width, 6 mm, in the main channel and in a loop",
+    "overall length, ~120 mm",
+    "**every loop both branches from and rejoins the main channel** \u2014 the fluid domain is one connected region with no isolated pocket and no loop that dead-ends",
+    "the mesh is one cell thick with both side patches `empty`"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T10:32:41",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": false,
+    "stopped": "steps",
+    "error": "",
+    "summary": "",
+    "case_dir": "/work/accept-t3",
+    "seconds": 466.8,
+    "desk_seconds": 459.5,
+    "steps": 30,
+    "tokens": {
+      "input": 60,
+      "cache_read": 903753,
+      "cache_write": 117292,
+      "output": 37142
+    },
+    "usd": 0.8455,
+    "script_lines": 374,
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "there is no constant/polyMesh in accept-t3 -- nothing has been meshed yet",
+        "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+        "the mesh has no boundary patch with any faces on it",
+        "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+        "no picture of the mesh was drawn"
+      ],
+      "regions": [],
+      "cells": 0,
+      "two_d": false,
+      "patches": [],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "fail",
+          "measured": "there is no constant/polyMesh in accept-t3 -- nothing has been meshed yet"
+        },
+        {
+          "check": "checkmesh",
+          "status": "fail",
+          "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks"
+        },
+        {
+          "check": "patches",
+          "status": "fail",
+          "measured": "the mesh has no boundary patch with any faces on it"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "no cellZones in this mesh"
+        },
+        {
+          "check": "build",
+          "status": "fail",
+          "measured": "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh"
+        },
+        {
+          "check": "render",
+          "status": "fail",
+          "measured": "no picture of the mesh was drawn"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        },
+        {
+          "check": "replay",
+          "status": "ok",
+          "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3"
+        }
+      ],
+      "replay": {
+        "ran": true,
+        "exit_code": 0,
+        "before": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "after": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "output_tail": "/constant/triSurface/walls.stl')\n    gmsh.model.addPhysicalGroup(2, [21, 22], name='frontBack'); gmsh.write('case/constant/triSurface/frontBack.stl')\n    <wrote 'case/constant/triSurface/patches.json'>\n    gmsh.option.setString('Geometry.OCCTargetUnit', 'MM'); gmsh.model.occ.importShapes(<one-point seed>)  # release the OCC static\n    gmsh.finalize()\n\nSTDERR refused: no patches.json in case. The patch set is the manifest plus the files it names; without it there is no way to tell which STLs are patches of one surface. Write one, or export with cad_convert.py.\n\nusage: cad_audit.py [-h] [--json] [--surface-check] directory\n\nThe exported patch set measured -- closure of the union, not of the parts.\n\npositional arguments:\n  directory        a <case>/constant/triSurface with patches.json in it\n\noptions:\n  -h, --help       show this help message and exit\n  --json           the report as JSON\n  --surface-check  also run OpenFOAM's surfaceCheck on each patch file\n\nThe union of the patch files is what has to be closed, manifold and\nconsistently wound; the files one at a time are open surfaces and their\nopen-edge counts are printed only so that is visible.\nExit code is 0 whatever is found.\n\n"
+      }
+    },
+    "artifacts": [
+      "build.py",
+      "renders/mesh_look.json",
+      "build.py",
+      "check.json",
+      "steps.json"
+    ]
+  },
+  "seconds": 467.3,
+  "verdict": "check-not-ok"
+}

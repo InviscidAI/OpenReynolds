@@ -1,0 +1,21 @@
+{
+  "arm": "desk",
+  "prompt": "T3",
+  "title": "T3 \u2014 Tesla valve",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A Tesla valve: a straight main channel with four teardrop-shaped bypass loops branching off it and rejoining it downstream, so that flow one way runs straight through and flow the other way is diverted into the loops and opposes itself. Channel width 6 mm, overall length about 120 mm, plane (2D). Inlet at one end, outlet at the other.",
+  "properties": [
+    "number of bypass loops, 4",
+    "channel width, 6 mm, in the main channel and in a loop",
+    "overall length, ~120 mm",
+    "**every loop both branches from and rejoins the main channel** \u2014 the fluid domain is one connected region with no isolated pocket and no loop that dead-ends",
+    "the mesh is one cell thick with both side patches `empty`"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T09:47:28",
+  "completed": false,
+  "model": "claude-sonnet-5",
+  "effort": "high"
+}

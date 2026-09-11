@@ -1,0 +1,46 @@
+{
+  "unit_metres": 1.0,
+  "source": "duct_m.step",
+  "patches": [
+    {
+      "name": "inlet",
+      "file": "inlet.stl",
+      "triangles": 210,
+      "area_m2": 2.0000000000000015e-05,
+      "role": "inlet"
+    },
+    {
+      "name": "outlet",
+      "file": "outlet.stl",
+      "triangles": 208,
+      "area_m2": 2.0000000000000015e-05,
+      "role": "outlet"
+    },
+    {
+      "name": "wall",
+      "file": "wall.stl",
+      "triangles": 11956,
+      "area_m2": 0.0011484884409598878,
+      "role": "wall"
+    },
+    {
+      "name": "front",
+      "file": "front.stl",
+      "triangles": 27039,
+      "area_m2": 0.00287123889196806,
+      "role": "wall"
+    },
+    {
+      "name": "back",
+      "file": "back.stl",
+      "triangles": 27045,
+      "area_m2": 0.0028712388919680818,
+      "role": "wall"
+    }
+  ],
+  "location_in_mesh": [
+    -0.06,
+    0.0,
+    0.001
+  ]
+}

@@ -1,0 +1,423 @@
+{
+  "ok": false,
+  "unreachable": false,
+  "missing": [
+    "there is no constant/polyMesh in accept-t7 -- nothing has been meshed yet",
+    "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+    "the mesh has no boundary patch with any faces on it",
+    "no picture of the mesh was drawn",
+    "the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: walls; in the replay but not on disk: none; union volume 0.00024 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable"
+  ],
+  "regions": [],
+  "cells": 0,
+  "bounds": [],
+  "patches": [],
+  "checkmesh": "",
+  "metrics": {},
+  "two_d": false,
+  "build": [
+    "system/blockMeshDict"
+  ],
+  "error": "",
+  "findings": [
+    {
+      "check": "mesh",
+      "status": "fail",
+      "measured": "there is no constant/polyMesh in accept-t7 -- nothing has been meshed yet",
+      "meaning": "neither a single-region mesh nor any constant/<region>/polyMesh is on disk",
+      "repair": "mesh it and leave the script that did: blockMesh, snappyHexMesh or cartesianMesh, then checkMesh"
+    },
+    {
+      "check": "checkmesh",
+      "status": "fail",
+      "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+      "meaning": "the mesh OpenFOAM was given is one OpenFOAM refuses",
+      "repair": "fix the checks checkMesh names -- it lists them by name with cell counts in log.checkMesh -- and run it again"
+    },
+    {
+      "check": "patches",
+      "status": "fail",
+      "measured": "the mesh has no boundary patch with any faces on it",
+      "meaning": "a mesh with no boundary is a mesh nothing can be solved on",
+      "repair": "name the surfaces where they are built, and check the mesher wrote a boundary file with faces in it"
+    },
+    {
+      "check": "cellzones",
+      "status": "ok",
+      "measured": "no cellZones in this mesh",
+      "meaning": "nothing is driven from inside the domain: every source this case has is on a boundary",
+      "repair": ""
+    },
+    {
+      "check": "build",
+      "status": "ok",
+      "measured": "rebuilds with: system/blockMeshDict",
+      "meaning": "the bundle captures these, so the script leaves with the case",
+      "repair": ""
+    },
+    {
+      "check": "render",
+      "status": "fail",
+      "measured": "no picture of the mesh was drawn",
+      "meaning": "a mesh nobody has seen is a mesh nobody has checked the shape of",
+      "repair": "run `python3 /work/.toolbox/mesh_look.py . --out renders/mesh_look.png --json renders/mesh_look.json` and keep the PNG"
+    },
+    {
+      "check": "cad_audit.manifest",
+      "status": "ok",
+      "measured": "1 patches, each with its file on disk and no unlisted STL beside them: walls",
+      "meaning": "every triangle in this directory belongs to a named patch",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.scale",
+      "status": "ok",
+      "measured": "the union spans 0.1 x 0.06 x 0.04 m",
+      "meaning": "the bounding box is the size of a thing OpenFOAM meshes in metres",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.closure",
+      "status": "ok",
+      "measured": "0 open edges in the union of 1 patch files (9,344 triangles); per file: walls 0",
+      "meaning": "the union is watertight -- the per-file counts are the seams between patches and are what a correct export looks like",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.manifold",
+      "status": "ok",
+      "measured": "0 non-manifold edges in the union",
+      "meaning": "every edge has exactly one or two triangles on it",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.normals",
+      "status": "ok",
+      "measured": "0 same-direction edges in the union",
+      "meaning": "every shared edge is walked one way by one triangle and the other way by its neighbour, so the normals agree",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.degenerate",
+      "status": "ok",
+      "measured": "0 triangles with a repeated corner",
+      "meaning": "every triangle has three corners and some area",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.coverage",
+      "status": "ok",
+      "measured": "1 patches over 9,344 triangles (walls 9,344); every face in exactly one patch",
+      "meaning": "the partition is exhaustive and disjoint, so every face of the meshed domain takes the boundary condition somebody chose for it",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.self_intersection",
+      "status": "ok",
+      "measured": "0 triangles in 0 crossing pairs, out of 62,571 pairs whose boxes overlap",
+      "meaning": "no triangle meets a triangle it is not a neighbour of",
+      "repair": ""
+    },
+    {
+      "check": "domain_probe.location_in_mesh",
+      "status": "ok",
+      "measured": "0.05 0.03 0.02 (patches.json) is inside, 0.02 m from the nearest triangle, in a domain 0.04 m wide there",
+      "meaning": "the point is in the region snappyHexMesh will keep.",
+      "repair": ""
+    },
+    {
+      "check": "domain_probe.min_width",
+      "status": "ok",
+      "measured": "narrowest of 79 measured samples is 0.039941 m, at 0.0484915 0.0339345 0.00690108 (41 further samples set aside as corners)",
+      "meaning": "the diameter of the largest sphere that fits in the domain and holds the sample -- found, not proved: it is the narrowest place sampling reached.",
+      "repair": "raise --width-samples to search harder for a narrower one"
+    },
+    {
+      "check": "domain_probe.min_wall_thickness",
+      "status": "skipped",
+      "measured": "the union is one connected shell of 9,344 triangles",
+      "meaning": "wall thickness is the width of material between two surfaces, and one shell has no material between anything. If these surfaces bound the part rather than the fluid, min_width above is the part's thinnest section.",
+      "repair": ""
+    },
+    {
+      "check": "replay",
+      "status": "fail",
+      "measured": "the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: walls; in the replay but not on disk: none; union volume 0.00024 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable",
+      "meaning": "the script exits 0 and is still not the artifact it claims to be: what is on disk was made by a session that held state the script does not rebuild -- a cell run twice, or one that edits a file in place",
+      "repair": "make every cell rebuild its own inputs rather than modifying what is already there, then re-run the log from empty and compare"
+    }
+  ],
+  "lines": [
+    "rebuilds with: system/blockMeshDict",
+    "checks: 5 fail, 12 ok, 1 skipped",
+    "  fail: mesh -- there is no constant/polyMesh in accept-t7 -- nothing has been meshed yet",
+    "  fail: checkmesh -- checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+    "  fail: patches -- the mesh has no boundary patch with any faces on it",
+    "  fail: render -- no picture of the mesh was drawn",
+    "  fail: replay -- the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: walls; in the replay but not on disk: none; union volume 0.00024 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable"
+  ],
+  "raw": {
+    "regions": {
+      "": {
+        "look": {
+          "case": "/__modal/volumes/vo-bOyNivKMQsmb07ENeEbuUg/accept-t7",
+          "polymesh": false,
+          "patches": [],
+          "build": [
+            "system/blockMeshDict"
+          ],
+          "cells": 0,
+          "faces": 0,
+          "points": 0,
+          "bounds": [],
+          "two_d": false,
+          "checkmesh": "",
+          "checkmesh_ok": false,
+          "metrics": {},
+          "render": ""
+        },
+        "output": "{\n \"case\": \"/__modal/volumes/vo-bOyNivKMQsmb07ENeEbuUg/accept-t7\",\n \"polymesh\": false,\n \"patches\": [],\n \"build\": [\n  \"system/blockMeshDict\"\n ],\n \"cells\": 0,\n \"faces\": 0,\n \"points\": 0,\n \"bounds\": [],\n \"two_d\": false,\n \"checkmesh\": \"\",\n \"checkmesh_ok\": false,\n \"metrics\": {},\n \"render\": \"\"\n}",
+        "cellzones": []
+      }
+    },
+    "meshed": false,
+    "cad": [
+      {
+        "script": "cad_audit",
+        "ok": true,
+        "findings": [
+          {
+            "check": "manifest",
+            "status": "ok",
+            "measured": "1 patches, each with its file on disk and no unlisted STL beside them: walls",
+            "means": "every triangle in this directory belongs to a named patch",
+            "repair": ""
+          },
+          {
+            "check": "scale",
+            "status": "ok",
+            "measured": "the union spans 0.1 x 0.06 x 0.04 m",
+            "means": "the bounding box is the size of a thing OpenFOAM meshes in metres",
+            "repair": ""
+          },
+          {
+            "check": "closure",
+            "status": "ok",
+            "measured": "0 open edges in the union of 1 patch files (9,344 triangles); per file: walls 0",
+            "means": "the union is watertight -- the per-file counts are the seams between patches and are what a correct export looks like",
+            "repair": ""
+          },
+          {
+            "check": "manifold",
+            "status": "ok",
+            "measured": "0 non-manifold edges in the union",
+            "means": "every edge has exactly one or two triangles on it",
+            "repair": ""
+          },
+          {
+            "check": "normals",
+            "status": "ok",
+            "measured": "0 same-direction edges in the union",
+            "means": "every shared edge is walked one way by one triangle and the other way by its neighbour, so the normals agree",
+            "repair": ""
+          },
+          {
+            "check": "degenerate",
+            "status": "ok",
+            "measured": "0 triangles with a repeated corner",
+            "means": "every triangle has three corners and some area",
+            "repair": ""
+          },
+          {
+            "check": "coverage",
+            "status": "ok",
+            "measured": "1 patches over 9,344 triangles (walls 9,344); every face in exactly one patch",
+            "means": "the partition is exhaustive and disjoint, so every face of the meshed domain takes the boundary condition somebody chose for it",
+            "repair": ""
+          },
+          {
+            "check": "self_intersection",
+            "status": "ok",
+            "measured": "0 triangles in 0 crossing pairs, out of 62,571 pairs whose boxes overlap",
+            "means": "no triangle meets a triangle it is not a neighbour of",
+            "repair": ""
+          }
+        ],
+        "measured": {
+          "directory": "constant/triSurface",
+          "manifest": {
+            "source": "cavity.step",
+            "unit_metres": 1.0,
+            "location_in_mesh": [
+              0.05,
+              0.03,
+              0.02
+            ],
+            "patches": 1
+          },
+          "patches": [
+            {
+              "name": "walls",
+              "file": "walls.stl",
+              "triangles": 9344,
+              "open_edges": 0,
+              "non_manifold_edges": 0,
+              "flipped_edges": 0
+            }
+          ],
+          "triangles": 9344,
+          "vertices": 4674,
+          "union_topology": {
+            "triangles": 9344,
+            "computed": true,
+            "open_edges": 0,
+            "non_manifold_edges": 0,
+            "flipped_edges": 0,
+            "degenerate_triangles": 0
+          },
+          "topology_triangle_limit": 400000,
+          "worst": "ok",
+          "counts": {
+            "fail": 0,
+            "warn": 0,
+            "ok": 8,
+            "skipped": 0
+          },
+          "bounding_box": {
+            "min": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "max": [
+              0.1,
+              0.06,
+              0.04
+            ]
+          },
+          "self_intersection": {
+            "pairs": 0,
+            "triangles": 0,
+            "pairs_tested": 0,
+            "box_overlapping_pairs": 62571,
+            "triangle_ids": []
+          }
+        }
+      },
+      {
+        "script": "domain_probe",
+        "ok": true,
+        "findings": [
+          {
+            "check": "location_in_mesh",
+            "status": "ok",
+            "measured": "0.05 0.03 0.02 (patches.json) is inside, 0.02 m from the nearest triangle, in a domain 0.04 m wide there",
+            "means": "the point is in the region snappyHexMesh will keep.",
+            "repair": ""
+          },
+          {
+            "check": "min_width",
+            "status": "ok",
+            "measured": "narrowest of 79 measured samples is 0.039941 m, at 0.0484915 0.0339345 0.00690108 (41 further samples set aside as corners)",
+            "means": "the diameter of the largest sphere that fits in the domain and holds the sample -- found, not proved: it is the narrowest place sampling reached.",
+            "repair": "raise --width-samples to search harder for a narrower one"
+          },
+          {
+            "check": "min_wall_thickness",
+            "status": "skipped",
+            "measured": "the union is one connected shell of 9,344 triangles",
+            "means": "wall thickness is the width of material between two surfaces, and one shell has no material between anything. If these surfaces bound the part rather than the fluid, min_width above is the part's thinnest section.",
+            "repair": ""
+          }
+        ],
+        "measured": {
+          "directory": "constant/triSurface",
+          "files": [
+            "walls.stl"
+          ],
+          "triangles": 9344,
+          "shells": 1,
+          "bounds": [
+            0.0,
+            0.0,
+            0.0,
+            0.1,
+            0.06,
+            0.04
+          ],
+          "diagonal_m": 0.12328828005937953,
+          "band_m": 1.2328828005937952e-07,
+          "margin_m": 0.00012328828005937954,
+          "manifest": true,
+          "manifest_point": [
+            0.05,
+            0.03,
+            0.02
+          ],
+          "point": [
+            0.05,
+            0.03,
+            0.02
+          ],
+          "point_source": "patches.json",
+          "classification": "inside",
+          "clearance_m": 0.020000000000000004,
+          "width_at_point_m": 0.04000000000000001,
+          "suggested_point": null,
+          "suggested_radius_m": null,
+          "width": {
+            "samples": 120,
+            "draws": 120,
+            "qualified": 79,
+            "converging": 41,
+            "min_width": 0.039940982458943446,
+            "min_width_at": [
+              0.04849147489428185,
+              0.033934451142044776,
+              0.006901075419450718
+            ],
+            "min_width_any": 0.004425515711220393,
+            "max_inscribed_radius": 0.019999945404190148,
+            "max_inscribed_at": [
+              0.0698567374352421,
+              0.0321142686532791,
+              0.020000054595809853
+            ],
+            "min_wall_thickness": null,
+            "min_wall_thickness_at": null
+          }
+        }
+      }
+    ],
+    "replay": {
+      "ran": true,
+      "script": "\"\"\"Built by the CAD desk, one accepted cell at a time.\n\nThis file is not a record written beside the work; it is the work. Every cell below ran\nin the desk's kernel, in this order, and was accepted only after the names it uses were\nshown to be bound by a cell above it. It is run from empty at the finish, and what it\nmakes there is compared against what is in the case directory.\n\nThe prose above each cell is the desk's own reasoning for it, carried with the action\nrather than thrown away -- it is the only record of why this shape is this shape.\n\"\"\"\n\n# -- cell 1 -------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"python3\", \"/work/.toolbox/cad_convert.py\", \"--help\"], capture_output=True, text=True).stdout)\nprint(subprocess.run([\"python3\", \"/work/.toolbox/cad_audit.py\", \"--help\"], capture_output=True, text=True).stdout)\nprint(subprocess.run([\"python3\", \"/work/.toolbox/mesh_look.py\", \"--help\"], capture_output=True, text=True).stdout)\nprint(subprocess.run([\"python3\", \"/work/.toolbox/domain_probe.py\", \"--help\"], capture_output=True, text=True).stdout)\n\n# -- cell 2 -------------------------------------------------------------------------\n# Given the geometry is a plain rectangular box with two internal cell zones (not separate solids), th\nfrom build123d import *\nimport os\n\nCASE_DIR = \"/work/accept-t7\"\nos.chdir(CASE_DIR)\n\n# Cavity dimensions, metres (spec given in mm -> convert here, once)\nLX_M, LY_M, LZ_M = 0.100, 0.060, 0.040\n\n# Box built with one corner at the origin: x in [0,LX], y in [0,LY], z in [0,LZ]\n# z is the vertical axis: z=0 floor, z=LZ ceiling.\ncavity = Pos(LX_M / 2, LY_M / 2, LZ_M / 2) * Box(LX_M, LY_M, LZ_M)\n\nbb = cavity.bounding_box()\nprint(\"bounds:\", bb.min, bb.max)\nprint(\"volume (m^3):\", cavity.volume, \"expected:\", LX_M * LY_M * LZ_M)\nprint(\"num faces:\", len(cavity.faces()))\n\n# -- cell 3 -------------------------------------------------------------------------\nimport subprocess\n# Inspect cad_convert.py to see how export_patches is invoked (module import vs CLI)\nprint(subprocess.run([\"sed\", \"-n\", \"1,60p\", \"/work/.toolbox/cad_convert.py\"], capture_output=True, text=True).stdout)\n\n# -- cell 4 -------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"grep\", \"-n\", \"def export_patches\", \"-A\", \"40\", \"/work/.toolbox/cad_convert.py\"], capture_output=True, text=True).stdout)\n\n# -- cell 5 -------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"cat\", \"/work/.toolbox/templates/prep/README.md\"], capture_output=True, text=True).stdout)\n\n# -- cell 6 -------------------------------------------------------------------------\nimport sys\nsys.path.insert(0, \"/work/.toolbox\")\nimport cad_convert\n\n# All six faces of the sealed cavity are the same BC type (adiabatic wall) --\n# one patch group \"walls\" covering every face, named where the surface is made.\nexport_step(cavity, \"cavity.step\", unit=Unit.M)\n\nfaces = cavity.faces()\nkey = lambda fs: [tuple(f.center(CenterOf.MASS)) for f in fs]\n\n# clmax chosen to follow the blockMesh cell size we will use (5 mm cubes):\n# ~0.5 * dx_surface = 0.0025 m\nCLMAX_M = 0.0025\n\nreport = cad_convert.export_patches(\n    \"cavity.step\",\n    {\"walls\": {\"role\": \"wall\", \"faces\": key(faces)}},\n    \"constant/triSurface\",\n    clmax=CLMAX_M,\n    location_in_mesh=[0.05, 0.03, 0.02],  # geometric centre of the cavity, all fluid\n)\nprint(cad_convert.render(report))\n\n# -- cell 7 -------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"python3\", \"/work/.toolbox/cad_audit.py\", \"constant/triSurface\"], capture_output=True, text=True).stdout)\n\n# -- cell 8 -------------------------------------------------------------------------\n# Surface export is closed, manifold, watertight, and disjoint \u2014 good record of the geometry. Now let'\nimport subprocess\nr = subprocess.run([\"python3\", \"/work/.toolbox/domain_probe.py\", \"constant/triSurface\",\n                     \"--point\", \"0.05\", \"0.03\", \"0.02\"], capture_output=True, text=True)\nprint(r.stdout)\nprint(r.stderr)\n\n# -- cell 9 -------------------------------------------------------------------------\nimport os\n\nos.makedirs(\"system\", exist_ok=True)\nos.makedirs(\"constant\", exist_ok=True)\n\nLX_M, LY_M, LZ_M = 0.100, 0.060, 0.040\nDX_M = 0.005  # 5 mm cells, coarse first pass\nNX, NY, NZ = round(LX_M / DX_M), round(LY_M / DX_M), round(LZ_M / DX_M)\nprint(\"cells:\", NX, NY, NZ, \"total\", NX * NY * NZ)\n\nblockMeshDict = f\"\"\"\\\nFoamFile\n{{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      blockMeshDict;\n}}\n\nconvertToMeters 1.0;\n\nvertices\n(\n    (0        0        0       )   // 0\n    ({LX_M}   0        0       )   // 1\n    ({LX_M}   {LY_M}   0       )   // 2\n    (0        {LY_M}   0       )   // 3\n    (0        0        {LZ_M} )   // 4\n    ({LX_M}   0        {LZ_M} )   // 5\n    ({LX_M}   {LY_M}   {LZ_M} )   // 6\n    (0        {LY_M}   {LZ_M} )   // 7\n);\n\nblocks\n(\n    hex (0 1 2 3 4 5 6 7) ({NX} {NY} {NZ}) simpleGrading (1 1 1)\n);\n\nedges ();\n\n// Sealed cavity: every boundary is the same adiabatic-wall type, so one patch\n// group \"walls\" carries all six faces of the box.\nboundary\n(\n    walls\n    {{\n        type wall;\n        faces\n        (\n            (0 3 2 1)   // z = 0    floor\n            (4 5 6 7)   // z = LZ   ceiling\n            (0 1 5 4)   // y = 0\n            (3 7 6 2)   // y = LY\n            (0 4 7 3)   // x = 0\n            (1 2 6 5)   // x = LX\n        );\n    }}\n);\n\nmergePatchPairs ();\n\"\"\"\n\nwith open(\"system/blockMeshDict\", \"w\") as f:\n    f.write(blockMeshDict)\n\nprint(blockMeshDict)\n",
+      "before": {
+        "patches": {
+          "walls": {
+            "triangles": 9344,
+            "area_m2": 0.02479999999999803
+          }
+        },
+        "volume_m3": 0.00024000000000001166,
+        "bounds": [
+          0.0,
+          0.0,
+          0.0,
+          0.1,
+          0.06,
+          0.04
+        ],
+        "triangles": 9344
+      },
+      "exit_code": 0,
+      "output": "on'>\n    gmsh.option.setString('Geometry.OCCTargetUnit', 'MM'); gmsh.model.occ.importShapes(<one-point seed>)  # release the OCC static\n    gmsh.finalize()\n# cad_audit constant/triSurface\nok 8\n\nOK       manifest\n  measured  1 patches, each with its file on disk and no unlisted STL beside them: walls\n  means     every triangle in this directory belongs to a named patch\n\nOK       scale\n  measured  the union spans 0.1 x 0.06 x 0.04 m\n  means     the bounding box is the size of a thing OpenFOAM meshes in metres\n\nOK       closure\n  measured  0 open edges in the union of 1 patch files (9,344 triangles); per file: walls 0\n  means     the union is watertight -- the per-file counts are the seams between patches and are what a correct export looks like\n\nOK       manifold\n  measured  0 non-manifold edges in the union\n  means     every edge has exactly one or two triangles on it\n\nOK       normals\n  measured  0 same-direction edges in the union\n  means     every shared edge is walked one way by one triangle and the other way by its neighbour, so the normals agree\n\nOK       degenerate\n  measured  0 triangles with a repeated corner\n  means     every triangle has three corners and some area\n\nOK       coverage\n  measured  1 patches over 9,344 triangles (walls 9,344); every face in exactly one patch\n  means     the partition is exhaustive and disjoint, so every face of the meshed domain takes the boundary condition somebody chose for it\n\nOK       self_intersection\n  measured  0 triangles in 0 crossing pairs, out of 62,571 pairs whose boxes overlap\n  means     no triangle meets a triangle it is not a neighbour of\n\nEvery topological number above is the union's. The patch files are open surfaces one at a time, and that is what a correct export looks like.\n\ndomain_probe  constant/triSurface\n  surface             9,344 triangles in 1 file(s), 1 shell(s)\n  bounds              0..0.1 0..0.06 0..0.04  (diagonal 0.123288 m)\n  on-surface band     1.23e-07 m (1e-06 of the diagonal)\n  width samples       120 interior points from 120 draws\n\n  [     ok] location_in_mesh\n            0.05 0.03 0.02 (--point) is inside, 0.02 m from the nearest triangle, in a domain 0.04 m wide there\n            means: the point is in the region snappyHexMesh will keep.\n  [     ok] min_width\n            narrowest of 79 measured samples is 0.039941 m, at 0.0484915 0.0339345 0.00690108 (41 further samples set aside as corners)\n            means: the diameter of the largest sphere that fits in the domain and holds the sample -- found, not proved: it is the narrowest place sampling reached.\n            try:   raise --width-samples to search harder for a narrower one\n  [skipped] min_wall_thickness\n            the union is one connected shell of 9,344 triangles\n            means: wall thickness is the width of material between two surfaces, and one shell has no material between anything. If these surfaces bound the part rather than the fluid, min_width above is the part's thinnest section.\n\n\ncells: 20 12 8 total 1920\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      blockMeshDict;\n}\n\nconvertToMeters 1.0;\n\nvertices\n(\n    (0        0        0       )   // 0\n    (0.1   0        0       )   // 1\n    (0.1   0.06   0       )   // 2\n    (0        0.06   0       )   // 3\n    (0        0        0.04 )   // 4\n    (0.1   0        0.04 )   // 5\n    (0.1   0.06   0.04 )   // 6\n    (0        0.06   0.04 )   // 7\n);\n\nblocks\n(\n    hex (0 1 2 3 4 5 6 7) (20 12 8) simpleGrading (1 1 1)\n);\n\nedges ();\n\n// Sealed cavity: every boundary is the same adiabatic-wall type, so one patch\n// group \"walls\" carries all six faces of the box.\nboundary\n(\n    walls\n    {\n        type wall;\n        faces\n        (\n            (0 3 2 1)   // z = 0    floor\n            (4 5 6 7)   // z = LZ   ceiling\n            (0 1 5 4)   // y = 0\n            (3 7 6 2)   // y = LY\n            (0 4 7 3)   // x = 0\n            (1 2 6 5)   // x = LX\n        );\n    }\n);\n\nmergePatchPairs ();\n\n",
+      "after": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,61 @@
+exit=0
+VTK/cooler_0/internal.vtu
+
+hecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Initial memory 223680 kB
+Create mesh for time = 0
+
+VTK mesh topology: 0.01 s, 224116 kB
+Time: 0
+    Internal  : "VTK/accept-t7_0/internal.vtu"
+    Boundary  : "VTK/accept-t7_0/boundary/floor.vtp"
+    Boundary  : "VTK/accept-t7_0/boundary/ceiling.vtp"
+    Boundary  : "VTK/accept-t7_0/boundary/xmin.vtp"
+    Boundary  : "VTK/accept-t7_0/boundary/xmax.vtp"
+    Boundary  : "VTK/accept-t7_0/boundary/ymin.vtp"
+    Boundary  : "VTK/accept-t7_0/boundary/ymax.vtp"
+Wrote in 0 s, 225356 kB
+
+End: 0.01 s, 285784 kB (peak)
+
+
+STDERR: 
+VTK
+VTK/accept-t7.vtm.series
+VTK/accept-t7_0.vtm
+VTK/accept-t7_0
+VTK/accept-t7_0/boundary.vtm
+VTK/accept-t7_0/boundary
+VTK/accept-t7_0/internal.vtu
+VTK/heater.vtm.series
+VTK/heater_0.vtm
+VTK/heater_0
+VTK/heater_0/boundary.vtm
+VTK/heater_0/boundary
+VTK/heater_0/internal.vtu
+VTK/cooler.vtm.series
+VTK/cooler_0.vtm
+VTK/cooler_0
+VTK/cooler_0/boundary.vtm
+VTK/cooler_0/boundary
+VTK/cooler_0/internal.vtu
+
+whole cells: 1920 heater cells: 64 cooler cells: 64
+heater bounds: BoundsTuple(x_min = 0.009999999776482582,
+            x_max = 0.029999999329447746,
+            y_min = 0.019999999552965164,
+            y_max = 0.03999999910593033,
+            z_min = 0.0,
+            z_max = 0.019999999552965164)
+cooler bounds: BoundsTuple(x_min = 0.07000000029802322,
+            x_max = 0.09000000357627869,
+            y_min = 0.019999999552965164,
+            y_max = 0.03999999910593033,
+            z_min = 0.019999999552965164,
+            z_max = 0.03999999910593033)
+wrote look_cellzones.png

@@ -1,0 +1,21 @@
+{
+  "arm": "bash",
+  "prompt": "T4",
+  "title": "T4 \u2014 cold plate with fins",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A liquid cold plate: a 60 mm x 40 mm x 8 mm aluminium block with a serpentine channel milled through it, 4 mm wide and 5 mm deep, making three passes across the plate with 3 mm of metal between passes. Mesh the water side only. Inlet and outlet are the two open ends of the channel.",
+  "properties": [
+    "plate footprint, 60 x 40 x 8 mm",
+    "channel width 4 mm and depth 5 mm, measured at more than one station",
+    "number of passes, 3",
+    "wall thickness between passes, 3 mm \u2014 **measured, as the minimum over the solid**",
+    "minimum local width of the fluid domain"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T12:02:11",
+  "completed": false,
+  "model": "claude-sonnet-5",
+  "effort": "high"
+}

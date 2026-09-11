@@ -1,0 +1,91 @@
+{
+ "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t2",
+ "polymesh": true,
+ "patches": [
+  {
+   "name": "inlet",
+   "type": "patch",
+   "nFaces": 400,
+   "touches": 3,
+   "area": 0.16000000476837162,
+   "center": [
+    -0.20000000298023182,
+    5.421010862427522e-20,
+    -7.37257477290143e-18
+   ],
+   "normal": [
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "outlet",
+   "type": "patch",
+   "nFaces": 400,
+   "touches": 3,
+   "area": 0.16000000476837162,
+   "center": [
+    0.6000000238418589,
+    5.421010862427522e-20,
+    -7.37257477290143e-18
+   ],
+   "normal": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "flat": true,
+   "inward": -1
+  },
+  {
+   "name": "farfield",
+   "type": "patch",
+   "nFaces": 3200,
+   "touches": 3,
+   "area": 1.2800000619888312,
+   "center": [
+    0.20000001043081275,
+    2.1914436411363258e-17,
+    2.1169047417779474e-17
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "flat": false
+  }
+ ],
+ "build": [
+  "system/blockMeshDict",
+  "system/snappyHexMeshDict"
+ ],
+ "cells": 16000,
+ "faces": 50000,
+ "points": 18081,
+ "bounds": [
+  -0.2,
+  -0.2,
+  -0.2,
+  0.6,
+  0.2,
+  0.2
+ ],
+ "two_d": false,
+ "checkmesh": "Mesh OK.",
+ "checkmesh_ok": true,
+ "metrics": {
+  "max_non_orthogonality": 0.0,
+  "max_skewness": 2.46783e-14,
+  "max_aspect_ratio": 1.0,
+  "min_volume": 8e-06
+ },
+ "render": "renders/mesh_look.png",
+ "enclosure": [
+  "inlet",
+  "outlet"
+ ]
+}

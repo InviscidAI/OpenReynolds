@@ -1,0 +1,271 @@
+{
+  "arm": "desk",
+  "prompt": "T8",
+  "title": "T8 \u2014 conjugate two-region case",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A 30 mm square duct 200 mm long with a solid copper block set into its floor halfway along \u2014 40 mm long, 30 mm wide, 10 mm thick \u2014 for a conjugate heat transfer solve. I need the fluid and the solid as separate mesh regions with a conformal interface between them, so I can run `chtMultiRegionFoam` on it. Inlet and outlet at the two ends of the duct.",
+  "properties": [
+    "duct cross-section 30 x 30 mm and length 200 mm",
+    "block dimensions 40 x 30 x 10 mm, and its position along the duct",
+    "both regions present, named, with their cell counts",
+    "the interface between them is conformal \u2014 matching faces, no gap and no overlap",
+    "`checkMesh` passes **for every region**"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T11:02:22",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": true,
+    "stopped": "steps",
+    "error": "",
+    "summary": "",
+    "case_dir": "/work/accept-t8",
+    "seconds": 489.8,
+    "desk_seconds": 479.4,
+    "steps": 28,
+    "tokens": {
+      "input": 60,
+      "cache_read": 1194869,
+      "cache_write": 69360,
+      "output": 42123
+    },
+    "usd": 0.8337,
+    "script_lines": 562,
+    "check": {
+      "ran": true,
+      "ok": true,
+      "unreachable": false,
+      "missing": [],
+      "regions": [
+        "fluid",
+        "solid"
+      ],
+      "cells": 192,
+      "two_d": false,
+      "patches": [
+        "inlet",
+        "outlet",
+        "fluidTop",
+        "fluidSideY0",
+        "fluidSideY1",
+        "fluidFloor",
+        "fluid_to_solid",
+        "solidBottom",
+        "solidSideY0",
+        "solidSideY1",
+        "solidStepXNeg",
+        "solidStepXPos",
+        "solid_to_fluid"
+      ],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "ok",
+          "measured": "region fluid: 180 cells, 669 faces, 336 points"
+        },
+        {
+          "check": "checkmesh",
+          "status": "ok",
+          "measured": "region fluid: Mesh OK. -- max non-orthogonality 0 (under 70), max skewness 1.63206e-14 (under 4), max aspect-ratio 1 (under 1000)"
+        },
+        {
+          "check": "patches",
+          "status": "ok",
+          "measured": "region fluid: 7 boundary patch(es) with faces, all named: inlet, outlet, fluidTop, fluidSideY0, fluidSideY1, fluidFloor, fluid_to_solid"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "region fluid: 2 cellZone(s): fluid 180 cells, solid 0 cells"
+        },
+        {
+          "check": "mesh",
+          "status": "ok",
+          "measured": "region solid: 12 cells, 55 faces, 40 points"
+        },
+        {
+          "check": "checkmesh",
+          "status": "ok",
+          "measured": "region solid: Mesh OK. -- max non-orthogonality 0 (under 70), max skewness 8.00748e-15 (under 4), max aspect-ratio 1 (under 1000)"
+        },
+        {
+          "check": "patches",
+          "status": "ok",
+          "measured": "region solid: 6 boundary patch(es) with faces, all named: solidBottom, solidSideY0, solidSideY1, solidStepXNeg, solidStepXPos, solid_to_fluid"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "region solid: 2 cellZone(s): fluid 0 cells, solid 12 cells"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: system/blockMeshDict"
+        },
+        {
+          "check": "render",
+          "status": "ok",
+          "measured": "a picture of the mesh is at accept-t8/renders/mesh_look_fluid.png"
+        },
+        {
+          "check": "scale",
+          "status": "ok",
+          "measured": "the mesh is 0.2 m across and the request's largest dimension is 0.2 m"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        },
+        {
+          "check": "replay",
+          "status": "ok",
+          "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3"
+        }
+      ],
+      "replay": {
+        "ran": true,
+        "exit_code": 0,
+        "before": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "after": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "output_tail": "\"\n            plotter.camera.zoom(1.2)\n\n    def cut_panel(normal: str, title: str) -> None:\n        plotter.add_text(title, font_size=9)\n        if internal is None:\n            return\n        try:\n            cut = internal.slice(normal=normal)\n            plotter.add_mesh(cut, color=\"#dddddd\", show_edges=True, edge_color=\"#3b3b3b\",\n                             line_width=1)\n        except Exception:  # noqa: BLE001\n            plotter.add_mesh(internal.extract_surface(), color=\"#dddddd\", show_edges=True)\n        frame({\"x\": \"yz\", \"y\": \"zx\", \"z\": \"xy\"}[normal])\n\n    if two_d:\n        plotter.subplot(0, 0)\n        patches_panel(\"boundary patches (looking down z; front and back left out)\")\n        plotter.subplot(0, 1)\n        cut_panel(\"z\", \"cells\")\n    else:\n        plotter.subplot(0, 0)\n        patches_panel(\"boundary patches\" + (\" (the enclosure faint)\" if enclosure else \"\"))\n        for index, normal in enumerate(\"xyz\"):\n            plotter.subplot((index + 1) // 2, (index + 1) % 2)\n            cut_panel(normal, f\"cells, cut through {normal}\")\n    out_png.parent.mkdir(parents=True, exist_ok=True)\n    plotter.screenshot(str(out_png))\n    plotter.close()\n    return str(out_png)\n\n"
+      }
+    },
+    "artifacts": [
+      "build.py",
+      "constant/fluid/polyMesh/boundary",
+      "constant/solid/polyMesh/boundary",
+      "look_fluid.png",
+      "renders/mesh_look_fluid.json",
+      "renders/mesh_look_fluid.png",
+      "renders/mesh_look_solid.json",
+      "renders/mesh_look_solid.png",
+      "build.py",
+      "check.json",
+      "render.png",
+      "steps.json"
+    ]
+  },
+  "seconds": 490.3,
+  "verdict": "check-ok",
+  "recheck": {
+    "ran": true,
+    "check": {
+      "ran": true,
+      "ok": true,
+      "unreachable": false,
+      "missing": [],
+      "regions": [
+        "fluid",
+        "solid"
+      ],
+      "cells": 192,
+      "two_d": false,
+      "patches": [
+        "inlet",
+        "outlet",
+        "fluidTop",
+        "fluidSideY0",
+        "fluidSideY1",
+        "fluidFloor",
+        "fluid_to_solid",
+        "solidBottom",
+        "solidSideY0",
+        "solidSideY1",
+        "solidStepXNeg",
+        "solidStepXPos",
+        "solid_to_fluid"
+      ],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "ok",
+          "measured": "region fluid: 180 cells, 669 faces, 336 points"
+        },
+        {
+          "check": "checkmesh",
+          "status": "ok",
+          "measured": "region fluid: Mesh OK. -- max non-orthogonality 0 (under 70), max skewness 1.63206e-14 (under 4), max aspect-ratio 1 (under 1000)"
+        },
+        {
+          "check": "patches",
+          "status": "ok",
+          "measured": "region fluid: 7 boundary patch(es) with faces, all named: inlet, outlet, fluidTop, fluidSideY0, fluidSideY1, fluidFloor, fluid_to_solid"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "region fluid: 2 cellZone(s): fluid 180 cells, solid 0 cells"
+        },
+        {
+          "check": "mesh",
+          "status": "ok",
+          "measured": "region solid: 12 cells, 55 faces, 40 points"
+        },
+        {
+          "check": "checkmesh",
+          "status": "ok",
+          "measured": "region solid: Mesh OK. -- max non-orthogonality 0 (under 70), max skewness 8.00748e-15 (under 4), max aspect-ratio 1 (under 1000)"
+        },
+        {
+          "check": "patches",
+          "status": "ok",
+          "measured": "region solid: 6 boundary patch(es) with faces, all named: solidBottom, solidSideY0, solidSideY1, solidStepXNeg, solidStepXPos, solid_to_fluid"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "region solid: 2 cellZone(s): fluid 0 cells, solid 12 cells"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: build.py, system/blockMeshDict"
+        },
+        {
+          "check": "render",
+          "status": "ok",
+          "measured": "a picture of the mesh is at accept-t8/renders/mesh_look_fluid.png"
+        },
+        {
+          "check": "scale",
+          "status": "ok",
+          "measured": "the mesh is 0.2 m across and the request's largest dimension is 0.2 m"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        }
+      ],
+      "replay": {
+        "ran": false
+      }
+    }
+  }
+}

@@ -1,0 +1,184 @@
+{
+  "arm": "desk",
+  "prompt": "T7",
+  "title": "T7 \u2014 sealed cavity driven by cell zones",
+  "request": "A sealed rectangular cavity of air, 100 mm x 60 mm x 40 mm, for a natural convection solve. There is no inlet and no outlet \u2014 every boundary is an adiabatic wall. Inside it, mark two cell zones I can put a heat source and a heat sink on: a 20 mm cube near the floor at one end called `heater`, and a matching one near the ceiling at the other end called `cooler`.",
+  "properties": [
+    "cavity dimensions, 100 x 60 x 40 mm",
+    "both cell zones present by name, with their cell counts and their centroids",
+    "zone size, 20 mm cube each, and their positions relative to floor and ceiling",
+    "the boundary is a single named patch covering the whole cavity"
+  ],
+  "geometry": "",
+  "attempts": 2,
+  "started_at": "2026-09-11T08:27:01",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": false,
+    "stopped": "time",
+    "error": "",
+    "summary": "",
+    "case_dir": "/work/accept-t7",
+    "seconds": 1067.6,
+    "desk_seconds": 986.3,
+    "steps": 9,
+    "tokens": {
+      "input": 20,
+      "cache_read": 130064,
+      "cache_write": 20547,
+      "output": 9740
+    },
+    "usd": 0.1748,
+    "script_lines": 155,
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "there is no constant/polyMesh in accept-t7 -- nothing has been meshed yet",
+        "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+        "the mesh has no boundary patch with any faces on it",
+        "no picture of the mesh was drawn",
+        "the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: walls; in the replay but not on disk: none; union volume 0.00024 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable"
+      ],
+      "regions": [],
+      "cells": 0,
+      "two_d": false,
+      "patches": [],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "fail",
+          "measured": "there is no constant/polyMesh in accept-t7 -- nothing has been meshed yet"
+        },
+        {
+          "check": "checkmesh",
+          "status": "fail",
+          "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks"
+        },
+        {
+          "check": "patches",
+          "status": "fail",
+          "measured": "the mesh has no boundary patch with any faces on it"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "no cellZones in this mesh"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: system/blockMeshDict"
+        },
+        {
+          "check": "render",
+          "status": "fail",
+          "measured": "no picture of the mesh was drawn"
+        },
+        {
+          "check": "cad_audit.manifest",
+          "status": "ok",
+          "measured": "1 patches, each with its file on disk and no unlisted STL beside them: walls"
+        },
+        {
+          "check": "cad_audit.scale",
+          "status": "ok",
+          "measured": "the union spans 0.1 x 0.06 x 0.04 m"
+        },
+        {
+          "check": "cad_audit.closure",
+          "status": "ok",
+          "measured": "0 open edges in the union of 1 patch files (9,344 triangles); per file: walls 0"
+        },
+        {
+          "check": "cad_audit.manifold",
+          "status": "ok",
+          "measured": "0 non-manifold edges in the union"
+        },
+        {
+          "check": "cad_audit.normals",
+          "status": "ok",
+          "measured": "0 same-direction edges in the union"
+        },
+        {
+          "check": "cad_audit.degenerate",
+          "status": "ok",
+          "measured": "0 triangles with a repeated corner"
+        },
+        {
+          "check": "cad_audit.coverage",
+          "status": "ok",
+          "measured": "1 patches over 9,344 triangles (walls 9,344); every face in exactly one patch"
+        },
+        {
+          "check": "cad_audit.self_intersection",
+          "status": "ok",
+          "measured": "0 triangles in 0 crossing pairs, out of 62,571 pairs whose boxes overlap"
+        },
+        {
+          "check": "domain_probe.location_in_mesh",
+          "status": "ok",
+          "measured": "0.05 0.03 0.02 (patches.json) is inside, 0.02 m from the nearest triangle, in a domain 0.04 m wide there"
+        },
+        {
+          "check": "domain_probe.min_width",
+          "status": "ok",
+          "measured": "narrowest of 79 measured samples is 0.039941 m, at 0.0484915 0.0339345 0.00690108 (41 further samples set aside as corners)"
+        },
+        {
+          "check": "domain_probe.min_wall_thickness",
+          "status": "skipped",
+          "measured": "the union is one connected shell of 9,344 triangles"
+        },
+        {
+          "check": "replay",
+          "status": "fail",
+          "measured": "the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: walls; in the replay but not on disk: none; union volume 0.00024 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable"
+        }
+      ],
+      "replay": {
+        "ran": true,
+        "exit_code": 0,
+        "before": {
+          "patches": {
+            "walls": {
+              "triangles": 9344,
+              "area_m2": 0.02479999999999803
+            }
+          },
+          "volume_m3": 0.00024000000000001166,
+          "bounds": [
+            0.0,
+            0.0,
+            0.0,
+            0.1,
+            0.06,
+            0.04
+          ],
+          "triangles": 9344
+        },
+        "after": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "output_tail": "of material between two surfaces, and one shell has no material between anything. If these surfaces bound the part rather than the fluid, min_width above is the part's thinnest section.\n\n\ncells: 20 12 8 total 1920\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      blockMeshDict;\n}\n\nconvertToMeters 1.0;\n\nvertices\n(\n    (0        0        0       )   // 0\n    (0.1   0        0       )   // 1\n    (0.1   0.06   0       )   // 2\n    (0        0.06   0       )   // 3\n    (0        0        0.04 )   // 4\n    (0.1   0        0.04 )   // 5\n    (0.1   0.06   0.04 )   // 6\n    (0        0.06   0.04 )   // 7\n);\n\nblocks\n(\n    hex (0 1 2 3 4 5 6 7) (20 12 8) simpleGrading (1 1 1)\n);\n\nedges ();\n\n// Sealed cavity: every boundary is the same adiabatic-wall type, so one patch\n// group \"walls\" carries all six faces of the box.\nboundary\n(\n    walls\n    {\n        type wall;\n        faces\n        (\n            (0 3 2 1)   // z = 0    floor\n            (4 5 6 7)   // z = LZ   ceiling\n            (0 1 5 4)   // y = 0\n            (3 7 6 2)   // y = LY\n            (0 4 7 3)   // x = 0\n            (1 2 6 5)   // x = LX\n        );\n    }\n);\n\nmergePatchPairs ();\n\n"
+      }
+    },
+    "artifacts": [
+      "build.py",
+      "constant/triSurface/patches.json",
+      "constant/triSurface/walls.stl",
+      "renders/mesh_look.json",
+      "build.py",
+      "check.json",
+      "steps.json"
+    ]
+  },
+  "seconds": 1093.4,
+  "verdict": "check-not-ok"
+}

@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "missing": [
+    "the check wrote no readable answer -- run `python3 /work/.toolbox/mesh_look.py . --out renders/mesh_look.png --json renders/mesh_look.json` yourself and fix what it says\n  cat: renders/mesh_look.json: No such file or directory (os error 2)"
+  ],
+  "cells": 0,
+  "patches": [],
+  "lines": [],
+  "raw": {}
+}

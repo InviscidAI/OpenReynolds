@@ -32,6 +32,18 @@ system can enforce it and a sentence in this brief is the whole of the mechanism
 
 from __future__ import annotations
 
+from ..backend.base import WORKSPACE_ROOT
+
+TOOLBOX = f"{WORKSPACE_ROOT}/.toolbox"
+"""Where the toolbox is on the workspace the product ships against.
+
+The default, and only the default. The brief used to say `/work/.toolbox` in two places
+as literal text, which is true on the hosted image and false on every other backend --
+`LocalBackend` is rooted wherever it was told to be, and the whole stack is developed
+against it. A desk told the wrong path spends its opening steps looking for the tools it
+was just handed; measured on a local T1 run, seven of twenty-seven. So the path is a
+parameter, this is its hosted value, and `CadDesk` passes the one its backend reports."""
+
 CAD_DONE = "CAD_DONE"
 """The word that ends the run -- checked by the harness, not taken on trust."""
 
@@ -170,7 +182,7 @@ is worth more than a verdict you implied.
 
 # The instruments
 
-They are in `/work/.toolbox/`, they take `--help`, and most take `--json`. They are \
+They are in `{{toolbox}}/`, they take `--help`, and most take `--json`. They are \
 offered, not imposed -- but an instrument nobody is told about is an instrument nobody \
 runs, so here is what each one answers.
 
@@ -200,7 +212,7 @@ the mesh rather than taken from the mesher's own summary?
 back as a finding with what was measured, what it means, and a repair you may or may not \
 want.
 - `b123d_api.py` -- what build123d offers, grouped by what it is for: it writes \
-`/work/.toolbox/b123d_api.md`, which `subprocess.run(["grep", ...])` searches, and \
+`{{toolbox}}/b123d_api.md`, which `subprocess.run(["grep", ...])` searches, and \
 `help()` and \
 `inspect.signature()` in your kernel give the exact call and the full docstring for \
 anything it names.
@@ -238,8 +250,12 @@ and a check that could not run says so instead of guessing.
 """
 
 
-def system_prompt(step_timeout_s: int) -> str:
-    return CAD_SYSTEM.format(step_timeout=step_timeout_s)
+def system_prompt(step_timeout_s: int, toolbox: str = TOOLBOX) -> str:
+    """The brief, with the workspace's own toolbox path in it.
+
+    `toolbox` defaults to the hosted path, so a caller that does not pass one renders
+    exactly the text this file has always rendered."""
+    return CAD_SYSTEM.format(step_timeout=step_timeout_s, toolbox=toolbox.rstrip("/"))
 
 
 def task_message(request: str, case_dir: str, case_rel: str,

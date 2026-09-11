@@ -1,0 +1,33 @@
+{
+  "arm": "oldcheck",
+  "prompt": "T7",
+  "case_dir": "/work/accept-t7",
+  "completed": true,
+  "run": {
+    "ok": true,
+    "missing": [],
+    "cells": 1920,
+    "patches": [
+      "floor",
+      "ceiling",
+      "xmin",
+      "xmax",
+      "ymin",
+      "ymax"
+    ],
+    "lines": [
+      "1,920 cells, 6,256 faces, 2,457 points, 3D",
+      "bounds 0.1 x 0.06 x 0.04 m (x 0..0.1, y 0..0.06, z 0..0.04)",
+      "checkMesh: Mesh OK.",
+      "  max_aspect_ratio 1, max_non_orthogonality 0, max_skewness 1.66533e-14, min_volume 1.25e-07",
+      "patches:",
+      "  floor wall 240 faces area 0.006 m2 normal (+0.00 +0.00 -1.00) at (0.05 0.03 0)",
+      "  ceiling wall 240 faces area 0.006 m2 normal (+0.00 +0.00 +1.00) at (0.05 0.03 0.04)",
+      "  xmin wall 96 faces area 0.0024 m2 normal (-1.00 +0.00 +0.00) at (0 0.03 0.02)",
+      "  xmax wall 96 faces area 0.0024 m2 normal (+1.00 +0.00 +0.00) at (0.1 0.03 0.02)",
+      "  ymin wall 160 faces area 0.004 m2 normal (+0.00 -1.00 +0.00) at (0.05 0 0.02)",
+      "  ymax wall 160 faces area 0.004 m2 normal (+0.00 +1.00 +0.00) at (0.05 0.06 0.02)",
+      "rebuilds with: build.py, system/blockMeshDict"
+    ]
+  }
+}

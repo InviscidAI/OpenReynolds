@@ -1,0 +1,192 @@
+{
+  "arm": "desk",
+  "prompt": "T6",
+  "title": "T6 \u2014 STEP that declares no unit",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "Mesh the fluid volume in this STEP file. It came from a customer.",
+  "properties": [],
+  "geometry": "/work/.accept/customer_part.step",
+  "attempts": 1,
+  "started_at": "2026-09-11T10:49:12",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": false,
+    "stopped": "steps",
+    "error": "",
+    "summary": "",
+    "case_dir": "/work/accept-t6",
+    "seconds": 586.8,
+    "desk_seconds": 417.8,
+    "steps": 30,
+    "tokens": {
+      "input": 60,
+      "cache_read": 591896,
+      "cache_write": 44366,
+      "output": 26912
+    },
+    "usd": 0.4985,
+    "script_lines": 319,
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "there is no constant/polyMesh in accept-t6 -- nothing has been meshed yet",
+        "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+        "the mesh has no boundary patch with any faces on it",
+        "no picture of the mesh was drawn",
+        "the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: inlet, outlet, walls; in the replay but not on disk: none; union volume 0.000248619 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable"
+      ],
+      "regions": [],
+      "cells": 0,
+      "two_d": false,
+      "patches": [],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "fail",
+          "measured": "there is no constant/polyMesh in accept-t6 -- nothing has been meshed yet"
+        },
+        {
+          "check": "checkmesh",
+          "status": "fail",
+          "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks"
+        },
+        {
+          "check": "patches",
+          "status": "fail",
+          "measured": "the mesh has no boundary patch with any faces on it"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "no cellZones in this mesh"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: system/blockMeshDict, system/snappyHexMeshDict"
+        },
+        {
+          "check": "render",
+          "status": "fail",
+          "measured": "no picture of the mesh was drawn"
+        },
+        {
+          "check": "cad_audit.manifest",
+          "status": "ok",
+          "measured": "3 patches, each with its file on disk and no unlisted STL beside them: inlet, outlet, walls"
+        },
+        {
+          "check": "cad_audit.scale",
+          "status": "ok",
+          "measured": "the union spans 0.2 x 0.03994 x 0.04 m"
+        },
+        {
+          "check": "cad_audit.closure",
+          "status": "ok",
+          "measured": "0 open edges in the union of 3 patch files (1,902 triangles); per file: inlet 21, outlet 21, walls 42"
+        },
+        {
+          "check": "cad_audit.manifold",
+          "status": "ok",
+          "measured": "0 non-manifold edges in the union"
+        },
+        {
+          "check": "cad_audit.normals",
+          "status": "ok",
+          "measured": "0 same-direction edges in the union"
+        },
+        {
+          "check": "cad_audit.degenerate",
+          "status": "ok",
+          "measured": "0 triangles with a repeated corner"
+        },
+        {
+          "check": "cad_audit.coverage",
+          "status": "ok",
+          "measured": "3 patches over 1,902 triangles (inlet 99, outlet 99, walls 1,704); every face in exactly one patch"
+        },
+        {
+          "check": "cad_audit.self_intersection",
+          "status": "ok",
+          "measured": "0 triangles in 0 crossing pairs, out of 11,738 pairs whose boxes overlap"
+        },
+        {
+          "check": "domain_probe.location_in_mesh",
+          "status": "ok",
+          "measured": "0.1 0.05 0.05 (patches.json) is inside, 0.0197641 m from the nearest triangle, in a domain 0.0395544 m wide there"
+        },
+        {
+          "check": "domain_probe.min_width",
+          "status": "ok",
+          "measured": "narrowest of 103 measured samples is 0.0394605 m, at 0.151319 0.0420689 0.0421734 (17 further samples set aside as corners)"
+        },
+        {
+          "check": "domain_probe.min_wall_thickness",
+          "status": "skipped",
+          "measured": "the union is one connected shell of 1,902 triangles"
+        },
+        {
+          "check": "replay",
+          "status": "fail",
+          "measured": "the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: inlet, outlet, walls; in the replay but not on disk: none; union volume 0.000248619 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable"
+        }
+      ],
+      "replay": {
+        "ran": true,
+        "exit_code": 0,
+        "before": {
+          "patches": {
+            "inlet": {
+              "triangles": 99,
+              "area_m2": 0.0012379717325257979
+            },
+            "outlet": {
+              "triangles": 99,
+              "area_m2": 0.0012379717325257979
+            },
+            "walls": {
+              "triangles": 1704,
+              "area_m2": 0.025065380167397552
+            }
+          },
+          "volume_m3": 0.0002486194015628831,
+          "bounds": [
+            0.0,
+            0.030008348291,
+            0.03,
+            0.2,
+            0.069944075944,
+            0.07
+          ],
+          "triangles": 1902
+        },
+        "after": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "output_tail": "   maxInternalSkewness 4;      // preflight warns at 4 and fails at 10\n    maxConcave          80;\n    minVol              1e-13;\n    minTetQuality       1e-15;  // -1e30 disables the tet test; it is disabled in\n                                // tutorials that would otherwise not mesh at all, and\n                                // it disables the check that catches inverted cells\n    minArea             -1;\n    minTwist            0.02;\n    minDeterminant      0.001;\n    minFaceWeight       0.02;\n    minVolRatio         0.01;\n    minTriangleTwist    -1;\n    nSmoothScale        4;\n    errorReduction      0.75;\n}\n\n// Merge tolerance, as a fraction of the bounding box of the initial mesh.\nmergeTolerance 1e-6;\n\n// snappyHexMesh writes each stage as its own time directory -- 1/ castellated,\n// 2/ snapped, 3/ layered -- unless it is run with -overwrite, which writes the final\n// mesh over constant/polyMesh and keeps nothing. When the layer stage ruins a mesh\n// the snapped mesh is the thing to look at, so run without -overwrite while a case\n// is being built and add it once the recipe is settled.\ndebug 0;\n\n// ************************************************************************* //\n\n"
+      }
+    },
+    "artifacts": [
+      "build.py",
+      "constant/triSurface/inlet.stl",
+      "constant/triSurface/outlet.stl",
+      "constant/triSurface/patches.json",
+      "constant/triSurface/walls.stl",
+      "look_raw.png",
+      "renders/mesh_look.json",
+      "build.py",
+      "check.json",
+      "steps.json"
+    ]
+  },
+  "seconds": 587.3,
+  "verdict": "check-not-ok"
+}
