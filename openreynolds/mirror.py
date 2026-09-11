@@ -147,6 +147,12 @@ KEEP_SUFFIXES = frozenset(
         # What the agent wrote to do the work. Small, and the record of how a number
         # was arrived at.
         ".py", ".sh",
+        # The shape itself. A `.step` handed to a study is the input nothing on this
+        # machine can reproduce, and the per-patch `.stl` set the CAD desk exports is
+        # what the mesher reads -- `casebundle.build()` packs from this mirror, so a
+        # suffix missing here is an artifact that can never be bundled. They are also
+        # the two the hosted viewer draws a case from.
+        ".step", ".stp", ".iges", ".igs", ".stl",
     }
 )
 
@@ -429,6 +435,12 @@ def reason_by_size(relative: str, size: int) -> str | None:
     mesh. The same `0/U` on a half-million-cell mesh is nine megabytes, and it is
     field data whatever directory it is sitting in. Keeping it by location alone
     turned a 43-file mirror into 42 MB of it.
+
+    The suffix escape hatch is what carries the CAD desk's output: a per-patch
+    `constant/triSurface/*.stl` is routinely larger than a dictionary ever is, and it
+    is geometry rather than field data. It is kept because `.stl` is in
+    `KEEP_SUFFIXES`, not because of where it sits, which is the same rule a `log.` or
+    a `.png` in the same directory is kept by.
     """
     if size <= DICTIONARY_BYTES:
         return None

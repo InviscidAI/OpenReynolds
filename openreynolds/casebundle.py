@@ -28,10 +28,10 @@ each could be produced again:
 
 | tier | share | rebuildable? |
 |---|---|---|
-| `definition` -- `system/`, `constant/` (not polyMesh), `0/`, `0.orig/`, `Allrun`, `Allmesh`, `build.py` | 6.7% | **no** |
+| `definition` -- `system/`, `constant/` (not polyMesh, not geometry), `0/`, `0.orig/`, `Allrun`, `Allmesh`, `build.py` | 6.7% | **no** |
 | `record` -- `log.*`, `postProcessing/` | 6.4% | **no** |
 | `notes` -- `*.md`, `.reynolds/` | small | **no** |
-| `geometry` -- `*.stl`, `*.obj`, `*.step` | in `other` | only if the source is kept |
+| `geometry` -- `*.stl`, `*.obj`, `*.step`, wherever they sit | in `other` | only if the source is kept |
 | `mesh` -- `constant/polyMesh` | 47.3% | yes, from `Allmesh` + geometry, at minutes of cost |
 | `fields` -- the latest time directory | 16.8% | only by re-solving |
 
@@ -74,7 +74,22 @@ _PROCESSOR = re.compile(r"^processor\d+$")
 
 MEDIA_SUFFIXES = {".png", ".gif", ".mp4", ".webm", ".svg", ".pdf"}
 GEOMETRY_SUFFIXES = {".stl", ".obj", ".step", ".stp", ".igs", ".iges"}
-DEFINITION_NAMES = {"Allrun", "Allmesh", "Allclean", "Allpost", "build.py", "case.foam"}
+DEFINITION_NAMES = {
+    "Allrun", "Allmesh", "Allclean", "Allpost", "Allbuild", "Allprep",
+    "build.py", "build.sh", "cad.py", "make.py", "model.py", "prep.py",
+    "case.foam",
+}
+"""The names a rebuild script may travel under.
+
+Wider than `build.py` on purpose. A desk that writes its geometry as a script chooses
+the filename, and a name nobody listed used to fall through every branch of
+`classify()` and return `None` -- the artifact dropped silently, which is the one
+outcome this module exists to prevent.
+
+The known risk of a permissive set is the desk inventing a name that is still not in
+it. That is closed on the other side rather than here: `cad/check.py` imports this set
+and refuses to finish a run whose rebuild script is not captured by it, so an
+unlisted name fails the run loudly instead of losing the artifact quietly."""
 DEFINITION_DIRS = {"system", "0", "0.orig"}
 
 TIERS = ("definition", "record", "notes", "geometry", "mesh", "fields")
@@ -165,10 +180,16 @@ def classify(path: Path, root: Path, latest: set[Path]) -> str | None:
         return "notes"
     if name in DEFINITION_NAMES or any(p in DEFINITION_DIRS for p in parts[:-1]):
         return "definition"
-    if "constant" in parts:
-        return "definition"
+    # Before `constant/`, and that order is the whole point. A CAD desk exports one
+    # STL per patch into `constant/triSurface/`, and a chassis is twenty of them; on
+    # the other order they were `definition` -- tier 0, which travels even when it is
+    # oversized -- so a geometry set would inflate exactly the tier the design
+    # guarantees will survive. Here they are `geometry`, where they are budgeted and
+    # can be reported as skipped.
     if suffix in GEOMETRY_SUFFIXES:
         return "geometry"
+    if "constant" in parts:
+        return "definition"
     if suffix in MEDIA_SUFFIXES:
         # Renders already travel one by one through `Capture.artifact`, so they are
         # not repeated here; a figure that was never rendered through the tool is

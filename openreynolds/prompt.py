@@ -79,10 +79,10 @@ the answer for up to 300 s until the job ends, returning early if the user says 
 something. Pacing with `sleep` in `bash` counts against its time cap; `wait_s` does \
 not. `job_kill` stops one.
 - `fetch` copies files out to the user's own machine and prints the local paths.
-- `mesh` takes a shape described in words — a Tesla valve, a branched duct, a body in \
-a flow — and returns an OpenFOAM mesh of it here: a picture, the patch table, \
-checkMesh's verdict. A second agent builds it, revising until it checks out. Fields, \
-boundary conditions and the solve stay with you.
+- `cad` takes a shape in words — a Tesla valve, a branched duct, a body in a flow — \
+or the path of a `.step`/`.iges` file on the volume, and returns an OpenFOAM mesh of \
+it here: a picture, the patch table, checkMesh's verdict. A second agent builds it, \
+revising until it checks out. Fields, boundary conditions and the solve stay with you.
 
 When a job is running you can end your turn. You will be woken with what happened — \
 the job's name, its exit code, its end reason, and the tail of its log. While a run is \

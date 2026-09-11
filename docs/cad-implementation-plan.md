@@ -1421,6 +1421,45 @@ nothing silently stops travelling.
   asserts the kernel channel's imports are all in the manifest — the discipline
   `tests/test_toolbox.py` already applies to toolbox scripts.
 
+### What C9 decided, written down where C10 will read it
+
+- **`openreynolds/mesher/` is NOT deleted.** The deletion waits on C10, which measures its
+  baseline against the old desk and runs T7/T8 against it to show they are new. The gate
+  item exists as `test_nothing_imports_the_desk_being_replaced`, marked
+  `xfail(strict=True)`: it flips to a plain assertion — delete the marker, keep the test —
+  the day the package goes. What remains at that point is the package itself,
+  `tests/test_mesher.py`, `tests/test_mesher_check.py`, and the comparison imports in
+  `tests/test_cad_check.py` and `tests/test_toolbox_mesh_look.py`.
+- **The two gmsh templates are kept**, and `toolbox/README.md` says who for: the desk no
+  longer copies and edits them, but a person and the main agent work in bash and have no
+  kernel, and a recipe that runs is still the shortest route to a plane case. C8's step-12
+  nudge names `templates/` by path and stays true unedited — what it points at, the prep
+  recipe and the snappy dictionary set, is still there.
+- **`toolbox/b123d_api.md` keeps C7's arrangement**: generated, committed, and byte-compared
+  against a fresh generation by `test_cad_brief.py`. Generating it at image-build time was
+  the alternative and is worse — the toolbox reaches the instance as a file copy of the
+  distribution, so a file made at image-build time would not be in the thing that is
+  copied, and it could not be diffed in review. Committing it is how it can drift; the
+  byte-compare is why it cannot.
+- **`build123d` is now in `tests/test_toolbox.py`'s third-party allowlist.** It is on the
+  image, the system prompt and `ENVIRONMENT.md` both say so, and the allowlist is a
+  statement about the image. `b123d_api.py` reaching it through `importlib.import_module`
+  was working around a list that was wrong; the list is fixed, and whether that indirection
+  stays is that script's own business.
+- **`render_tessellation()` is cured of the `Geometry.OCCTargetUnit` leak**, the same way
+  and with the same helper C5 used in `export_patches()`, measured against the same control
+  (`tests/test_cad_wiring.py`). It is the most innocent call in `cad_convert.py`, four
+  scripts import it, and it left every later STEP write in the process a thousand times too
+  large while still declaring millimetres.
+- **The prompt cap held.** The bullet is 339 characters against the 297 it replaced and the
+  prompt is 5,989 against the 6,000 limit — 11 characters of headroom, down from 53. The
+  next thing that wants space there will have to raise the cap with a reason; there is no
+  longer room to add a fact by trimming one.
+- **C7's brief measures 2,945 tokens**, against the "~1.5k" this plan estimated. Recorded
+  here because C10's cost accounting prices every step of every run against it: it is the
+  cached prefix of a thirty-step loop, so an estimate off by roughly 2x is a number in the
+  A/B rather than a note about a file.
+
 ---
 
 # C10 — Acceptance

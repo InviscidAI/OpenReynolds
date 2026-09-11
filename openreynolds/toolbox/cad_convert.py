@@ -887,11 +887,13 @@ def render_tessellation(path: Path, directory: Path) -> Path:
     out = directory / (path.stem + ".render.stl")
 
     declared = declared_unit(path)
+    target_unit_set = False
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         if declared["metres"] is not None:
             gmsh.option.setString("Geometry.OCCTargetUnit", "M")
+            target_unit_set = True
         gmsh.model.add(path.stem)
         gmsh.model.occ.importShapes(str(path))
         gmsh.model.occ.synchronize()
@@ -902,6 +904,14 @@ def render_tessellation(path: Path, directory: Path) -> Path:
         gmsh.model.mesh.generate(2)
         gmsh.write(str(out))
     finally:
+        # The same leak `export_patches()` cures, for the same reason and by the same
+        # lever. Drawing a picture is the most innocent thing in this file and it sets
+        # the identical OpenCASCADE static: a session that renders a STEP declaring
+        # millimetres and later writes one gets coordinates a thousand times too large
+        # with `MILLI` still written in the header. Four scripts import this function
+        # and none of them is in a position to know that happened.
+        if target_unit_set:
+            _release_occ_target_unit(gmsh)
         gmsh.finalize()
     return out
 

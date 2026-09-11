@@ -47,9 +47,21 @@ dev = [
     "numpy>=1.24",
     "matplotlib>=3.7",
     "pandas>=2.0",
+    # The kernel channel's own tests run a real kernel against `LocalBackend`.
+    "ipykernel>=6.29",
+    "jupyter_client>=8.6",
 ]
 # `openreynolds video` prefers a real ffmpeg on PATH; imageio is the fallback encoder.
 video = ["imageio>=2.31"]
+# The cell channel the CAD desk works in. These belong to the *workspace image*, not to
+# this package: `backend/kernel.py` writes a driver into the workspace and the driver
+# imports `jupyter_client` and starts an `ipykernel` there, on the far side of the
+# protocol. They are declared here so the image has one place that says what it owes,
+# and so a developer running the kernel tests against a local backend gets them.
+kernel = [
+    "ipykernel>=6.29",
+    "jupyter_client>=8.6",
+]
 # The toolbox scripts run on the instance, where these are already installed. This
 # extra is for running them on the user's own machine.
 toolbox = [

@@ -32,6 +32,13 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
   and extrudes it one cell thick into hexahedra with the two z faces typed `empty`, which is
   how a plane case is meshed here. Name a physical group per surface as you build it and the
   patch names come out of the geometry rather than out of where a face happens to sit.
+- **ipykernel** and **jupyter_client** — an IPython kernel and the client that talks to
+  one. This is what the `cad` tool's desk works in: a kernel started in the case
+  directory that stays up for a run, so a B-rep costs a minute once instead of once per
+  question asked of it, and so a figure a cell draws comes back as the picture rather
+  than as a filename somebody had to remember to save. Nothing needs to be arranged to
+  use them from a shell either: `python3 -m ipykernel` is here, and `jupyter_client`'s
+  `KernelManager` starts the `python3` kernel spec.
 - **build123d** — parametric CAD in readable Python on the same OpenCASCADE kernel (via OCP):
   `Cylinder(5, 40) - Cylinder(4, 40)` is a penne, `export_step(part, "body.step")` writes the
   B-rep gmsh imports with `merge`/`importShapes` and meshes. This is the editable layer: a
