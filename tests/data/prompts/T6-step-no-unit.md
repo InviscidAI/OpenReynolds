@@ -11,6 +11,8 @@ stripped, committed beside C1's.
 
 ## What a pass looks like
 
+**Passes as:** `refused`
+
 **The desk does not finish, and that is the correct outcome.** It reports up with the
 reason — the file declares no length unit, none was supplied, and the numbers could be
 millimetres or metres — and returns that to the caller. It does **not** guess, and it does

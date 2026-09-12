@@ -198,6 +198,7 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     entry = record.Record(
         run_id=identifier, case=case, arm="core", model=cfg.mesher_model or cfg.model,
         workspace=str(workspace), case_dir=str(workspace / case.lower()),
+        expects=str(prompt.get("expects") or "done"),
         started_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
     record.save(run_dir, entry)
 
@@ -273,15 +274,21 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     entry.checkmesh_ok = bool(result.check and result.check.ok)
     entry.why = "; ".join(result.check.missing) if result.check else ""
     entry.properties = [{"property": text, "measured": None} for text in prompt["properties"]]
+    # Did this run do what its case asked? For nearly every case that is the mesh; for a
+    # refusal case it is the decline, and the two are opposites. Scoring on
+    # `checkmesh_ok` alone is what recorded T6's guess as a success.
+    entry.passed = (entry.stopped == "refused" if entry.expects == "refused"
+                    else entry.stopped == "done" and entry.checkmesh_ok)
     record.save(run_dir, entry)
     if result.script:
         (run_dir / "build.py").write_text(result.script, encoding="utf-8")
 
     print(f"  {entry.stopped} in {entry.seconds}s, {entry.n_steps} cells, "
-          f"${entry.usd:.2f}, checkMesh {'ok' if entry.checkmesh_ok else 'not ok'}")
+          f"${entry.usd:.2f}, checkMesh {'ok' if entry.checkmesh_ok else 'not ok'}"
+          f", {'passed' if entry.passed else 'failed'} (wants {entry.expects})")
     print(f"  now: python3 scripts/cad_supervise.py observe {run_dir} "
           f"--case {entry.case_dir}")
-    return 0 if entry.checkmesh_ok else 1
+    return 0 if entry.passed else 1
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -41,7 +41,9 @@
       "why": "",
       "contaminated": false,
       "completed": true,
-      "fired": []
+      "fired": [],
+      "expects": "done",
+      "passed": true
     },
     {
       "case": "T2",
@@ -68,7 +70,9 @@
       "fired": [
         "location_in_mesh",
         "normals"
-      ]
+      ],
+      "expects": "done",
+      "passed": true
     },
     {
       "case": "T3",
@@ -92,7 +96,9 @@
       "why": "checkMesh wrote no verdict this run could read",
       "contaminated": false,
       "completed": true,
-      "fired": []
+      "fired": [],
+      "expects": "done",
+      "passed": false
     },
     {
       "case": "T4",
@@ -118,7 +124,9 @@
       "completed": true,
       "fired": [
         "normals"
-      ]
+      ],
+      "expects": "done",
+      "passed": true
     },
     {
       "case": "T5",
@@ -145,7 +153,9 @@
       "fired": [
         "normals",
         "self_intersection"
-      ]
+      ],
+      "expects": "done",
+      "passed": false
     },
     {
       "case": "T6",
@@ -169,7 +179,9 @@
       "why": "",
       "contaminated": false,
       "completed": true,
-      "fired": []
+      "fired": [],
+      "expects": "refused",
+      "passed": false
     },
     {
       "case": "T7",
@@ -193,7 +205,9 @@
       "why": "",
       "contaminated": false,
       "completed": true,
-      "fired": []
+      "fired": [],
+      "expects": "done",
+      "passed": true
     },
     {
       "case": "T8",
@@ -217,7 +231,9 @@
       "why": "",
       "contaminated": false,
       "completed": true,
-      "fired": []
+      "fired": [],
+      "expects": "done",
+      "passed": true
     }
   ],
   "ended_at": "2026-09-12T09:02:07"

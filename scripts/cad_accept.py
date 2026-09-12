@@ -110,9 +110,25 @@ def load_prompts() -> dict[str, dict[str, Any]]:
             "request": _blockquote(text, "## Request"),
             "properties": _bullets(text, "## Properties the desk must measure and print"),
             "false_pass": _section(text, "## A pass that is really a failure"),
+            "expects": _expects(text),
             "geometry": _geometry_for(name),
         }
     return out
+
+
+_EXPECTS = re.compile(r"^\*\*Passes as:\*\*\s*`([a-z-]+)`", re.M)
+
+
+def _expects(text: str) -> str:
+    """The terminal state this case counts as a pass. `done` unless it says otherwise.
+
+    Read off the prompt rather than kept in a table here, for the same reason the request
+    and the properties are: the case's definition is the case's file. Only T6 says
+    anything but `done`, and T6 is the reason this exists -- its pass is the desk
+    declining, and the harness had no way to know that, so it scored the guess as the
+    corpus's sixth success."""
+    found = _EXPECTS.search(text or "")
+    return found.group(1) if found else "done"
 
 
 def _geometry_for(name: str) -> str:

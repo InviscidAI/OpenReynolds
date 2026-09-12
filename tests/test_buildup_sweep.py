@@ -39,6 +39,15 @@ def make_sweep(tmp_path: Path, name: str, runs: dict[str, dict], **manifest) -> 
     directory = tmp_path / name
     (directory / "runs").mkdir(parents=True)
     for case, fields in runs.items():
+        # `passed` is what a sweep scores on, and `drive` computes it from the case's
+        # own criterion. A fixture that says `checkmesh_ok=True` means "this run did what
+        # was asked", so derive it the same way rather than leaving every fixture on the
+        # dataclass default and quietly scoring the whole suite as failures.
+        fields = dict(fields)
+        fields.setdefault("stopped", "done")
+        fields.setdefault("passed", (
+            fields["stopped"] == "refused" if fields.get("expects") == "refused"
+            else fields["stopped"] == "done" and bool(fields.get("checkmesh_ok"))))
         record.save(directory / "runs" / case,
                     record.Record(case=case, arm="core", **fields))
     (directory / "sweep.json").write_text(json.dumps(
@@ -104,7 +113,7 @@ def test_a_contaminated_run_is_discarded_from_the_baseline_not_averaged_in(tmp_p
     sweep.table(str(directory))
     out = capsys.readouterr().out
     assert "CONTAMINATED, discarded from the baseline: T2" in out
-    assert "total: 1/1 checkMesh ok" in out
+    assert "total: 1/1 passed" in out
 
 
 def test_a_sweep_whose_model_moved_is_not_a_comparison_and_says_so(tmp_path, capsys):

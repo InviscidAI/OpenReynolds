@@ -29,9 +29,16 @@ from typing import Any
 RECORD = "record.json"
 REPLIES = "replies.jsonl"
 
-TERMINAL = ("done", "steps", "time", "provider", "wedged", "no-progress", "starved",
-            "contaminated")
-"""Every way a run is allowed to end. `done` is the only one that is a result."""
+TERMINAL = ("done", "refused", "steps", "time", "provider", "wedged", "no-progress",
+            "starved", "contaminated")
+"""Every way a run is allowed to end. `done` and `refused` are the two that are results.
+
+`refused` is the desk saying the request cannot be answered correctly, and why. It was
+missing, and its absence is not a gap in the vocabulary so much as a gap in what the
+harness could measure: a desk that correctly declined had to land in `steps`, which is
+indistinguishable from failing, and a desk that guessed landed in `done`. T6 of the first
+baseline guessed a length unit off a STEP that declares none, shipped a mesh `checkMesh`
+passed, and was recorded as the corpus's sixth success."""
 
 
 @dataclass
@@ -58,6 +65,16 @@ class Record:
     tokens: dict[str, int] = field(default_factory=dict)
     stopped: str = ""
     """One of `TERMINAL`, always."""
+    expects: str = "done"
+    """What this case counts as a pass -- `done` for nearly all of them, `refused` for a
+    case whose whole point is that the desk should decline. Read off the prompt, so the
+    criterion lives with the case rather than in the thing scoring it."""
+    passed: bool = False
+    """Whether the run did what its case asked, which is not the same as `checkmesh_ok`.
+
+    For an ordinary case the two agree. For a refusal case they are opposites: T6 ended
+    `done` with `checkmesh_ok: true` and failed, and a correct T6 run will end `refused`
+    with no mesh at all and pass. Anything scoring a sweep should read this."""
     why: str = ""
     contaminated: bool = False
     completed: bool = False

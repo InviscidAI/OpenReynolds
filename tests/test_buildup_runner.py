@@ -206,3 +206,42 @@ def test_opus_and_sonnet_do_not_price_the_same_run_the_same(tmp_path):
     assert round(sonnet, 4) == 0.6646
     assert round(opus, 4) == 1.6615
     assert round(opus / sonnet, 2) == 2.50
+
+
+def test_a_case_whose_pass_is_a_refusal_is_scored_on_that_and_not_on_checkmesh():
+    """The scoring half of T6. `checkmesh_ok` and `passed` are opposites here.
+
+    The record used to carry only `checkmesh_ok`, so a case whose correct outcome is not
+    finishing was scored by whether it finished -- and T6's guess, which produced a
+    perfectly valid mesh of a part whose scale nobody established, counted as the
+    corpus's sixth success.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from cad_accept import load_prompts
+
+    prompts = load_prompts()
+    assert prompts["T6"]["expects"] == "refused", "T6 declares its criterion in its file"
+    assert {name for name, p in prompts.items() if p["expects"] != "done"} == {"T6"}
+
+    def scored(expects, stopped, checkmesh_ok):
+        return (stopped == "refused" if expects == "refused"
+                else stopped == "done" and checkmesh_ok)
+
+    # The run that actually happened: finished, meshed, and failed the case.
+    assert scored("refused", "done", True) is False
+    # The run the case asks for: no mesh at all, and a pass.
+    assert scored("refused", "refused", False) is True
+    # And an ordinary case is unaffected by any of it.
+    assert scored("done", "done", True) is True
+    assert scored("done", "done", False) is False
+    assert scored("done", "refused", False) is False
+
+
+def test_refused_is_a_terminal_state_the_record_will_accept():
+    """A run that ends outside `TERMINAL` is a bug, not a result -- so the refusal path
+    is not usable until the vocabulary has a word for it."""
+    from openreynolds.buildup import record
+
+    assert "refused" in record.TERMINAL
+    assert record.classify("refused") == "refused"
