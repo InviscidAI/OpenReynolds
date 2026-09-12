@@ -51,9 +51,22 @@ so they cannot wait for the build-up loop to surface them.
 
 The resolution is to **separate detection from delivery**.
 
-**On every evaluation run, the harness probes for every known silent failure.** The agent is
-not told, the checks are not in its brief, and nothing is mounted in its workspace. The probe
-result is graded into the run record only.
+**The supervisor probes for every known silent failure — not the harness, and nothing inside
+the loop.** The supervisor is the process defined in §5: out-of-band, watching the run from
+outside, already the owner of liveness and the alarms. Silent-failure probing belongs to it
+for the same reason the alarms do, and putting it there buys a hard boundary that a note in
+the code cannot.
+
+The distinction is load-bearing. A check that lives in the harness is one refactor away from
+being in the desk's path, and then the thing being measured has quietly become the thing doing
+the measuring. A check that lives in the supervisor **cannot** reach the agent by accident: it
+runs in a different process, reads the case as it stands on disk, and has no channel into the
+conversation. The agent is not told, the checks are not in its brief, and nothing is mounted in
+its workspace. The probe result is graded into the run record only.
+
+So the rule for the whole phase is: **one out-of-band observer.** Anything that looks at the
+run without being part of it — liveness, silent-failure probes, contamination checks, property
+grading — is the supervisor's, and nothing else observes.
 
 **A check is activated for the agent only once its probe has actually fired** — that is, once
 some run has produced a silently-wrong result of that kind. On that trigger, and not before:
@@ -71,7 +84,7 @@ Keep one file, `docs/cad-silent-failures.md`, with a row per probe:
 |---|---|
 | `id` | stable name, cited from run records |
 | `catches` | the silent failure, stated as what goes wrong and why nothing errors |
-| `detect` | how the harness measures it, on the case as left on disk |
+| `detect` | how the supervisor measures it, on the case as left on disk |
 | `state` | `dormant` or `active` |
 | `triggered` | first run id and date that fired it, empty while dormant |
 | `activated` | what was given to the agent in response |
@@ -92,8 +105,9 @@ Start the registry with at least these, all `dormant`:
 - **`self_intersection`** — the exported surface crosses itself.
 
 The implementations already exist and are tested — `cad_audit.py`, `domain_probe.py` and
-`surfaces.py` from the previous round. **Use them harness-side.** They do not go near the
-agent until their probe fires.
+`surfaces.py` from the previous round. **The supervisor imports them; the workspace does not
+contain them.** They do not go near the agent until their probe fires, and §3's contamination
+check is what proves it.
 
 ---
 
@@ -139,28 +153,56 @@ outcome is **not finishing**, like a STEP with no declared unit, where a mesh is
 and reporting up is the pass. Judge every run on its named properties, not only on the finish
 check: a property you did not measure is a property you did not build.
 
-**Promote successes into the library.** When a case passes, its accepted cell log is a worked
-example of a recipe that actually ran. Save it with its provenance — model, core version,
-date, run id — and the properties it satisfied.
+**Promote successes into the template library.** When a case passes, what it leaves behind is a
+recipe that demonstrably ran. Store it as a folder, two files:
+
+```
+templates/solved/<case-id>/README.md        what it is, and what the session learned
+templates/solved/<case-id>/session.ipynb    each accepted cell and its output
+```
+
+**The notebook is code and output, and nothing else.** Every accepted cell in order, each with
+what it actually printed — bounds, face counts, cell counts, the `checkMesh` verdict, the
+pictures it drew. **Strip the reasoning.** The model's prose and thinking do not go in: they are
+the largest part of the transcript, they are the part most specific to one run, and a library
+that carries them teaches the next desk to imitate deliberation rather than method. What
+transfers is the sequence of operations and the numbers each one produced.
+
+Outputs are the reason this beats a script. A `.py` file shows what was done; a notebook with
+outputs shows what it produced, so a reader can tell a step that worked from a step that merely
+ran.
+
+**The README is not the prompt.** Start from the request, but the useful half is what the
+session discovered that nobody knew going in — that this assembly needs `sewFaces=False` or the
+solids vanish, that the file declares metres and is millimetres, that the fluid boolean on these
+fins holds, that the mesher wanted a dictionary nobody expected. Those are the lines that were
+paid for once and should not be paid for again. Write them as findings with their numbers, next
+to the cell that hit them. Carry the provenance too: model, core version, date, run id, and the
+properties the run satisfied.
 
 Two constraints on promotion, both learned the hard way:
 
-- **Replay before promoting.** Re-run the saved script from empty and compare the geometry it
-  produces against what was accepted. A log that only works because a checkpoint file survived
-  is not a recipe. One prompt in the last round produced a correct mesh and failed exactly
-  this check.
-- **Store worked examples, not scripts to copy and edit.** The copy-modify-run template is the
-  pattern the kernel decision removed, and the desk went looking for one anyway when it got
-  stuck. A promoted case is reference material the agent may read, not a parameterised file it
-  edits and runs.
+- **Replay before promoting.** Re-run the accepted log from empty and compare the geometry
+  against what was accepted. A log that only works because a checkpoint file survived is not a
+  recipe. One prompt in the last round produced a correct mesh and failed exactly this check.
+- **It is reference material, not a file to copy and edit.** A notebook is runnable, which is
+  precisely the hazard: the copy-modify-run template is the pattern the kernel decision removed,
+  and the desk went hunting for one anyway when it got stuck. The framing that keeps it
+  reference is the README — the folder is the record of how a case *was* solved, read for its
+  method and its gotchas, not a parameterised artifact to re-point at a new geometry.
 
-And a promoted template is a tool like any other, so it lives under the same rule: it earns
-its place if having it measurably reduces steps on related cases. If the library grows without
-that check, it becomes the discovery cost this whole phase exists to remove.
+And a promoted folder is a tool like any other, so it lives under the same rule: it earns its
+place if having it measurably reduces steps on related cases. If the library grows without that
+check, it becomes the discovery cost this whole phase exists to remove.
 
 ---
 
-## 5. Babysitting, done properly
+## 5. The supervisor
+
+One process, outside the run, and the only thing that observes it. It owns liveness and the
+alarms below, the silent-failure probes of §2, the contamination check of §3, and the grading
+of each case against its named properties. Nothing else looks at the run, which is what keeps
+the measurement from leaking into the thing measured.
 
 The supervision used in the last round was unreliable and should not be copied. Its two
 failures are worth stating because both are easy to repeat:
@@ -194,7 +236,7 @@ run out and reporting `time`.
 
 **Every terminal state is classified and recorded**: `done`, `steps`, `time`, `provider`,
 `wedged`, `no-progress`, `starved`, `contaminated`. A run that ends without a classification is
-a bug in the harness, not a result.
+a bug in the supervisor, not a result.
 
 ### Run records
 
