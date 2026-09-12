@@ -208,6 +208,67 @@ def downscale(data: bytes, media: str, max_edge: int = ATTACH_MAX_EDGE) -> bytes
     return smaller if 0 < len(smaller) < len(data) else data
 
 
+def incomplete(data: bytes, media: str) -> str | None:
+    """Why these bytes are not a whole picture, or None when they are.
+
+    THE INCIDENT. On 2026-09-12 two long sessions died, two and a half hours apart,
+    with `400 invalid_request_error: Could not process image` from the model API, both
+    immediately after the agent redrew a matplotlib figure and read it back. A refusal
+    is not retryable by waiting, so each one ended a run: 27 minutes in one case and
+    2 h 23 m in the other.
+
+    `attachment` below base64-encodes whatever it is handed. Base64 of half a PNG is
+    perfectly well-formed base64, so nothing between the disk and the API could tell
+    the difference, and the API is the first thing in the chain able to say no.
+
+    `_read_file` already refuses a read the TRANSPORT cut short (`len(data) <
+    info.size`). That is a different failure and it does not cover this one: a figure
+    caught mid-write is complete as far as `stat` is concerned, because the size it
+    reports is the size the file has at that instant. The read agrees with the stat and
+    both are wrong together.
+
+    So this asks the only question that actually matters: does the file carry the
+    marker that says it ENDED? Every format here has one, and every one of them is the
+    last few bytes, which is exactly what a half-written file is missing.
+
+      PNG   the IEND chunk, always the final 12 bytes
+      JPEG  the EOI marker FF D9
+      GIF   the trailer byte 0x3B
+      WEBP  a RIFF length field that has to agree with the file's real length
+
+    It is a structural check and not a decode: no image library is a runtime dependency
+    of this package, Pillow is optional, and a check that only runs where Pillow is
+    installed would have let this through on the very machines it matters on. It cannot
+    catch a file that is corrupt in the middle and whole at both ends. It catches
+    truncation, which is the one that happened.
+    """
+    if not data:
+        return "the file is empty"
+    if media == "image/png":
+        if data[:8] != b"\x89PNG\r\n\x1a\n":
+            return "it does not start with a PNG header"
+        if not data.rstrip().endswith(b"IEND\xaeB`\x82"):
+            return "the PNG has no IEND marker, so it was still being written"
+    elif media == "image/jpeg":
+        if data[:2] != b"\xff\xd8":
+            return "it does not start with a JPEG header"
+        if not data.rstrip(b"\x00").endswith(b"\xff\xd9"):
+            return "the JPEG has no end-of-image marker, so it was still being written"
+    elif media == "image/gif":
+        if data[:6] not in (b"GIF87a", b"GIF89a"):
+            return "it does not start with a GIF header"
+        if not data.endswith(b"\x3b"):
+            return "the GIF has no trailer byte, so it was still being written"
+    elif media == "image/webp":
+        if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+            return "it does not start with a WebP header"
+        declared = int.from_bytes(data[4:8], "little") + 8
+        if declared > len(data):
+            return (f"the WebP header declares {declared} bytes and only {len(data)} "
+                    "are here, so it was still being written")
+    return None
+
+
 def attachment(data: bytes, media: str) -> dict:
     """One image content block."""
     return {

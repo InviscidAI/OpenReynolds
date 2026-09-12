@@ -23,7 +23,20 @@ PNG_HEADER = base64.b64decode(
     b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
     b"YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 )
-"""A real PNG header, so the shape reported alongside the picture is a real shape."""
+"""A real, complete 1x1 PNG, so the shape reported alongside the picture is a real shape
+AND `images.incomplete` recognises it as a finished file."""
+
+
+def padded_png(filler: int) -> bytes:
+    """The 1x1 PNG above grown to a plausible render size, still a whole PNG.
+
+    The padding goes BEFORE the final IEND chunk rather than after it. Since the
+    2026-09-12 truncation fix a PNG that does not end in IEND is reported as still being
+    written instead of attached, which is the correct answer to bytes that really are
+    truncated and the wrong thing to hand a smoke test that means "here is a render".
+    """
+    head, tail = PNG_HEADER[:-12], PNG_HEADER[-12:]
+    return head + b"\x00" * filler + tail
 
 SMOKE = Path(__file__).resolve().parents[1] / "scripts" / "smoke.py"
 
@@ -71,8 +84,8 @@ r/geometry.png
         self.dirs["/work/.smoke"] = ["lines.txt", "plot.py", "plot.png"]
         self.dirs["/work/.toolbox"] = ["log_digest.py", "mesh_digest.py", "cells_estimate.py"]
         self.files[self.BIG_LOG] = b"A" * 200_000
-        self.files["/work/.smoke/plot.png"] = PNG_HEADER + b"\x00" * 2000
-        self.files["/work/.smoke/r/geometry.png"] = PNG_HEADER + b"\x00" * 4000
+        self.files["/work/.smoke/plot.png"] = padded_png(2000)
+        self.files["/work/.smoke/r/geometry.png"] = padded_png(4000)
         self.loose_solver = False
         """A solver outside any job's process group, as `mpirun` leaves behind."""
         self._polls: dict[str, int] = {}

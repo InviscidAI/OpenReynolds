@@ -104,6 +104,14 @@ class Loop:
         """Consecutive model-API failures. Reset on any turn that completes; used to
         escalate from "the thread is intact" to a plain explanation once it is clearly
         not a one-off (a rate limit, a usage cap) rather than a blip."""
+        self.images_dropped = False
+        """Whether this stretch of failures has already had its pictures stripped.
+
+        `drop_images` is a one-shot repair, not a retry policy. If a turn still fails
+        after every image is gone then the images were not the problem, and trying the
+        same thing again would be the twenty-six-minute loop `blocked_reason` exists to
+        prevent. Cleared by any turn that completes, so a later refusal in a longer
+        session gets its own attempt."""
         self.blocked_reason: str | None = None
         """Why the model service refused the last call, when waiting cannot fix it.
 
@@ -430,6 +438,60 @@ class Loop:
                 ],
             }
         )
+
+    def drop_images(self) -> int:
+        """Replace every image in the thread with a note saying it was dropped.
+
+        Returns how many were replaced, so the caller can tell "there was something to
+        fix" from "this 400 was about something else".
+
+        WHY THIS EXISTS. One picture the API will not accept used to cost a whole
+        session. On 2026-09-12 a 2 h 23 m run ended on `400 invalid_request_error:
+        Could not process image`, and the harness was right that a 400 is not
+        survivable by WAITING -- the same bytes get the same answer forever -- but
+        wrong that it is not survivable at all. The bad bytes are sitting in the
+        thread, and a thread is a thing this process owns and can edit. Take the image
+        out and the very next call goes through.
+
+        EVERY image goes, not the guilty one, because the API does not say which it
+        objected to and guessing wrong means another refused call. Images are the
+        cheapest thing in a thread to lose: the file is still on the instance and the
+        path is still in the text beside it, so the model can look again on purpose.
+        What it must NOT do is silently lose the knowledge that it ever looked, which
+        is why each one leaves a sentence behind rather than a hole.
+
+        `images.incomplete` (images.py) is the other half of the same fix and the one
+        that should keep this from being needed: it stops a half-written figure being
+        attached in the first place. This is the backstop for every other reason an
+        image can be refused, including the ones nobody has met yet.
+        """
+        dropped = 0
+
+        def clean(content: Any) -> Any:
+            nonlocal dropped
+            if not isinstance(content, list):
+                return content
+            out = []
+            for block in content:
+                kind = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+                if kind == "image":
+                    dropped += 1
+                    out.append({
+                        "type": "text",
+                        "text": "[an image was here. The model API refused it, so it was "
+                                "removed to keep this session alive. The file is still on "
+                                "the instance: read the path again to look at it.]",
+                    })
+                elif kind == "tool_result" and isinstance(block, dict):
+                    out.append({**block, "content": clean(block.get("content"))})
+                else:
+                    out.append(block)
+            return out
+
+        for message in self.messages:
+            if isinstance(message, dict):
+                message["content"] = clean(message.get("content"))
+        return dropped
 
     def restart(self, blurb: str) -> None:
         """Begin a fresh thread from a factual situation blurb."""

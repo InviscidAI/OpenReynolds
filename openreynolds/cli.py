@@ -2162,6 +2162,17 @@ rate limit. Everything else the API answers with a 4xx is about this account or
 this request -- the budget, the key, the model id -- and answers the same way in a
 minute."""
 
+_IMAGE_REFUSAL = re.compile(r"could not process image|invalid image|image.*(?:corrupt|malformed)",
+                            re.IGNORECASE)
+"""A 400 whose text says the picture was the problem.
+
+Matched on the message rather than on a code, because the API has one code for every
+bad request and only the sentence distinguishes "your key is wrong" from "that PNG is
+half a PNG". The exact string seen in production on 2026-09-12, twice, was
+`{'type': 'invalid_request_error', 'message': 'Could not process image'}`; the
+alternatives are here because a provider is free to reword its own error and the cost
+of matching one word too widely is a single retried turn."""
+
 _REFUSALS = {
     400: "the request itself was rejected",
     401: "the key was not accepted",
@@ -2188,14 +2199,17 @@ def _run_turn(loop: Loop, view: View) -> bool:
     """
     status: int | None = None
     said = ""
+    exc_message = ""
     try:
         loop.run()
         loop.api_failures = 0
         loop.blocked_reason = None
+        loop.images_dropped = False
         return True
     except ProviderError as exc:
         loop.api_failures += 1
         status = exc.status_code
+        exc_message = exc.message or ""
         if status:
             said = f"The model API returned {status}: {exc.message}"
         else:
@@ -2208,6 +2222,23 @@ def _run_turn(loop: Loop, view: View) -> bool:
         view.notice(said)
 
     loop.settle()
+
+    # A 400 about an image is the one refusal this process can repair, because the
+    # thing the API objected to is in a thread this process owns. Take the pictures
+    # out and try once more; the session continues having lost a picture instead of
+    # two hours. See Loop.drop_images for the incident and why all of them go.
+    if status == 400 and _IMAGE_REFUSAL.search(exc_message) and not loop.images_dropped:
+        loop.images_dropped = True
+        dropped = loop.drop_images()
+        if dropped:
+            console.print(
+                f"[yellow]The model API refused an image, so {dropped} picture(s) were "
+                "taken out of the thread and the turn is being retried. The files are "
+                "untouched on the instance.[/]"
+            )
+            view.notice("an image was refused; it was dropped and the turn retried")
+            return _run_turn(loop, view)
+
     refused = bool(status) and 400 <= status < 500 and status not in RETRYABLE_MODEL_STATUSES
     study = loop.store.session.study_id
     if refused:

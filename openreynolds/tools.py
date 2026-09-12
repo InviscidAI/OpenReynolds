@@ -586,6 +586,21 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
             f"{path} — {media}, {info.size} bytes, but only {len(data)} came back. "
             "A part of an image is not a smaller image, so it is not attached."
         )
+    # The check above catches a read the transport cut short. This one catches a file
+    # that was whole when it was measured and half-written when it was made: a figure
+    # read back while matplotlib is still saving it stats at its current size, reads
+    # back exactly that many bytes, and agrees with itself all the way to the API,
+    # which refuses it with a 400 and ends the session. images.incomplete carries the
+    # incident. Saying so as text is strictly better than attaching it: the model finds
+    # out the picture is not ready and can simply look again.
+    why = images.incomplete(data, media)
+    if why is not None:
+        return (
+            f"{path} — {media}, {len(data)} bytes, but not a whole image: {why}. "
+            "Nothing is attached, because a partial image is refused by the model API "
+            "rather than shown. If something is still writing this file, wait for it "
+            "to finish and read the path again."
+        )
     if ctx.on_render is not None:
         try:
             ctx.on_render(path)

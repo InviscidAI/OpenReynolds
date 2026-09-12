@@ -158,7 +158,12 @@ class Paged(dict):
 
 
 def paging_backend(ctx, size=2_200_000, page=1_000_000):
-    ctx.backend.files["/work/big.png"] = b"\x89PNG\r\n\x1a\n" + b"\x00" * (size - 8)
+    # A real PNG tail, not just a header: since `images.incomplete` this file has to be
+    # a whole picture to be attached at all, and this test is about the PAGE SIZE rather
+    # than about validity. Filler with no IEND would now be refused for the right reason
+    # by the wrong test, which would hide the paging bug this exists to hold closed.
+    ctx.backend.files["/work/big.png"] = (
+        b"\x89PNG\r\n\x1a\n" + b"\x00" * (size - 16) + b"IEND\xaeB`\x82")
     original = ctx.backend.get_file
 
     def get_file(path, offset=0, limit=None, **kwargs):
