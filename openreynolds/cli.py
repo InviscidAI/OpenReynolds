@@ -1040,6 +1040,45 @@ def _check_terminal() -> tuple[str, bool, str]:
 # -- the session ---------------------------------------------------------------
 
 
+def _join_notice(instance_id: str, instances_held: int) -> str:
+    """What to say when this session joined a workspace that was already up.
+
+    Joining is the right default and it used to be completely silent. Two terminals,
+    or a terminal and the web app, then shared four cores with nothing said on either
+    screen -- one live pair ran at a fifth of the throughput each had alone, and both
+    were billed for it. That is the first sentence, and it is unchanged.
+
+    The second sentence is newer, and it exists because the reasoning behind the first
+    one has expired. It used to be that the account was capped at one instance, so
+    `acquire()` joined the only workspace there was and there was nothing to choose
+    between. The cap is no longer 1: an account can hold several workspaces, each on
+    its own Volume with its own files, and `acquire()` picks the most recently active
+    one. Unsaid, that picking is the worst kind of silence -- the session opens on a
+    workspace where the study's files simply are not, which reads as a workspace that
+    lost them rather than as the wrong workspace. So when there is more than one, the
+    notice names how many there are and how to ask for a different one.
+
+    `--instance` and the remembered `store.session.instance_id` already do the asking,
+    so this is a message and not a mechanism.
+    """
+    line = (
+        f"[yellow]joining the workspace already running on {instance_id[:8]}[/] "
+        "- another session may be using it, so they share its cores"
+    )
+    if instances_held > 1:
+        others = instances_held - 1
+        rest = (
+            "the other one has its own files"
+            if others == 1
+            else f"the other {others} have their own files"
+        )
+        line += (
+            f"; this account holds {instances_held} workspaces and {rest}"
+            " - `--instance` picks a different one"
+        )
+    return line
+
+
 def session(
     cfg: Config,
     *,
@@ -1106,14 +1145,8 @@ def session(
         raise SystemExit(1) from exc
 
     if getattr(backend, "was_already_running", False):
-        # The account is capped at one instance and `acquire()` joins the one that is
-        # already there, which is the right default and was completely silent. Two
-        # terminals, or a terminal and the web app, then shared four cores with nothing
-        # said on either screen -- one live pair ran at a fifth of the throughput each
-        # had alone, and both were billed for it.
         console.print(
-            f"[yellow]joining the workspace already running on {resolved_instance[:8]}[/] "
-            "- another session may be using it, so they share its cores"
+            _join_notice(resolved_instance, getattr(backend, "instances_held", 0))
         )
     store.session.instance_id = resolved_instance
     store.session.model = cfg.model
@@ -1840,10 +1873,10 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     started_it_here = not bool(getattr(backend, "was_already_running", False))
     """Whether this session is the one that started the workspace.
 
-    An account is capped at one instance and `acquire()` joins the existing one without
-    saying so, so a second terminal -- or the web app, or `openreynolds files` -- lands in
-    the same container. Stopping it, or sweeping it, then reaches work this session never
-    started. One live run lost a 22-minute solve to exactly that."""
+    `acquire()` joins an existing workspace rather than making a second, so a second
+    terminal -- or the web app, or `openreynolds files` -- lands in the same container.
+    Stopping it, or sweeping it, then reaches work this session never started. One live
+    run lost a 22-minute solve to exactly that."""
     console.print(f"\n[dim]this study's files are in {store.dir}[/]")
     console.print(f"[dim]on the instance they are at {home}[/]")
 

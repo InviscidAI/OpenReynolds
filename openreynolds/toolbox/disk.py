@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """What is filling the workspace, and what of it is safe to delete.
 
-There is one disk. An account is capped at one instance, `acquire()` joins the
-existing one rather than making a second, and one instance is one Modal Volume
-mounted at `/work` -- so every study the account has ever run is a sibling
-directory in it. The quota (`FOAMD_VOLUME_QUOTA_GB`, 20 GB) is measured over the
-whole Volume by `du -sm -H /work`, not per study. So a study that is 24 MB can be
+There is one disk here. `acquire()` joins an existing instance rather than making a
+second, and one instance is one Volume mounted at `/work` -- so every study that
+joined this workspace is a sibling directory in it. (An account may now hold several
+instances, and each is a separate Volume this script cannot see; the accounting below
+is about the one it is running on.) The quota (`FOAMD_VOLUME_QUOTA_GB`, 100 GB as of
+2026-09-12) is measured over the whole Volume by `du -sm -H /work`, not per study. So a study that is 24 MB can be
 refused because an animation run three weeks ago left 3 GB of frames next door,
 and nothing in the product ever cleaned any of it up.
 

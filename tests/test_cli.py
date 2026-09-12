@@ -2016,3 +2016,33 @@ def test_recover_session_survives_a_service_without_the_route(store):
     store.session.home = ""
     cli._recover_session(store, _StudyClient(boom=True), "s")
     assert store.session.home == ""                  # unchanged, no exception
+
+
+# -- saying which of several workspaces was joined ------------------------------
+
+
+def test_the_join_notice_names_the_instance_it_chose_when_there_was_more_than_one():
+    """The service's cap on concurrent instances is no longer 1, so `acquire()` picking
+    the most recently active workspace is a choice and not an only option. Silent, that
+    choice opens a session on a Volume where the study's files are not, which reads as a
+    workspace that lost them. The notice therefore says how many the account holds and
+    that `--instance` picks a different one -- the flag already exists, so this is a
+    sentence, not a mechanism."""
+    notice = cli._join_notice("iid-abcdefgh-and-more", 5)
+
+    assert "iid-abcd" in notice, "the one it took is named"
+    assert "5 workspaces" in notice
+    assert "the other 4 have their own files" in notice
+    assert "--instance" in notice
+
+
+def test_the_join_notice_says_nothing_about_others_when_there_is_only_one():
+    """The sharing warning is the old message word for word, because the account that
+    holds one workspace is every account today and its notice must not grow a sentence
+    about workspaces it does not have. A count of 0 means nobody counted -- `acquire()`
+    was told which instance to use -- and is treated the same way."""
+    for held in (0, 1):
+        notice = cli._join_notice("iid-abcdefgh", held)
+        assert "another session may be using it" in notice
+        assert "workspaces" not in notice
+        assert "--instance" not in notice

@@ -73,9 +73,12 @@ def running_solvers(backend: Backend) -> list[str]:
     Matched against `ps` output rather than `pgrep -f`, because a pattern search also
     matches the shell that is doing the searching.
 
-    Instance-wide, and that is the problem with it: the workspace service caps an
-    account at one instance and `acquire()` joins the existing one, so "what is
-    running here" is not the same question as "what did this study start". Use
+    Instance-wide, and that is the problem with it: `acquire()` joins an existing
+    workspace rather than making a second, so "what is running here" is not the same
+    question as "what did this study start". (It used to be that the service capped an
+    account at one instance, which made the sharing certain; the cap is no longer 1, so
+    the sharing is merely the default -- which changes nothing here, because one shared
+    container is all it takes.) Use
     `own_solvers` for anything that is about to kill something.
     """
     try:
@@ -187,9 +190,9 @@ def stop_everything(
 
     `home` is this study's own directory, and giving it is what keeps the sweep to this
     study's work. Without it the survivor check is `ps` across the whole instance and the
-    escalation is `pkill -9 -x <name>` -- and because an account is capped at one instance
-    and `acquire()` joins the one that is already there, "the whole instance" regularly
-    means somebody else's solve. A session that had started no jobs at all still reached
+    escalation is `pkill -9 -x <name>` -- and because `acquire()` joins a workspace that
+    is already there rather than making a second, "the whole instance" regularly means
+    somebody else's solve. A session that had started no jobs at all still reached
     that branch and killed another study's mpirun; that is what this argument closes.
 
     With `home`, survivors are the solver processes whose working directory is under it

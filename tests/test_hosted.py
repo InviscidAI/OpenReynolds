@@ -1115,3 +1115,168 @@ def test_a_service_that_does_not_say_leaves_the_old_answer_standing(monkeypatch)
 
     stopped = _acquired(monkeypatch, "stopped", {"id": "iid-1", "status": "running"})
     assert stopped.was_already_running is False
+
+
+# -- which of several workspaces gets joined -----------------------------------
+
+
+class _Several:
+    """A service answering for an account that holds more than one instance.
+
+    The rows come back in an order that is deliberately not the order they should be
+    chosen in. Nothing asks the service to sort `GET /v1/instances`, so the listing
+    arrives in whatever order the database hands over -- which is what made
+    `existing[0]` a coin toss rather than a choice.
+    """
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.started = []
+        self.created = 0
+        self.closed = False
+
+    def list_instances(self):
+        return list(self.rows)
+
+    def create_instance(self):
+        self.created += 1
+        return "iid-new"
+
+    def start_instance(self, instance_id):
+        self.started.append(instance_id)
+        return {"id": instance_id, "status": "running", "started_new": False}
+
+    def close(self):
+        self.closed = True
+
+
+def _acquire_against(monkeypatch, rows):
+    client = _Several(rows)
+    monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: client)
+    backend, _client, instance_id = hosted_mod.acquire("https://svc.example", "of_live_test")
+    return client, backend, instance_id
+
+
+def test_acquire_joins_the_most_recently_active_instance_when_the_account_holds_several(
+    monkeypatch,
+):
+    """The service's cap on concurrent instances is no longer 1, so an account can
+    hold several workspaces at once and each one is a separate Volume with its own
+    files. `existing[0]` on an unsorted listing attached a resumed session to an
+    arbitrary one of them, and the study's case directory then simply was not there --
+    a failure that reads as a workspace that lost its files, not as the wrong
+    workspace. The ordering is `coalesce(last_active_at, created_at) desc, created_at
+    desc`, which is what `OpenFoam_Instance/sql/schema_f16.sql`'s repair step uses to
+    pick the row a client is most likely still holding; the two have to agree."""
+    client, backend, chosen = _acquire_against(
+        monkeypatch,
+        [
+            {"id": "iid-oldest", "status": "running",
+             "created_at": "2026-09-01T00:00:00+00:00",
+             "last_active_at": "2026-09-02T00:00:00+00:00"},
+            {"id": "iid-newest", "status": "running",
+             "created_at": "2026-09-03T00:00:00+00:00",
+             "last_active_at": "2026-09-11T23:59:00+00:00"},
+            {"id": "iid-middle", "status": "stopped",
+             "created_at": "2026-09-05T00:00:00+00:00",
+             "last_active_at": "2026-09-06T00:00:00+00:00"},
+        ],
+    )
+
+    assert chosen == "iid-newest"
+    assert backend.instance_id == "iid-newest"
+    assert client.started == ["iid-newest"], "and it is the one that was started"
+    assert client.created == 0, "joining, never a sixth workspace nobody asked for"
+    assert backend.instances_held == 3, (
+        "the count is carried out so the session can say which of several it took"
+    )
+
+
+def test_acquire_falls_back_to_created_at_when_an_instance_has_never_been_active(
+    monkeypatch,
+):
+    """`last_active_at` is null on a row that has never been started, which is exactly
+    the workspace a user made a minute ago and is about to open. Ordering on the raw
+    column would sort that null against real timestamps; the coalesce is why a
+    brand-new instance is preferred over one last touched a week ago."""
+    _client, _backend, chosen = _acquire_against(
+        monkeypatch,
+        [
+            {"id": "iid-stale", "status": "stopped",
+             "created_at": "2026-09-01T00:00:00+00:00",
+             "last_active_at": "2026-09-04T00:00:00+00:00"},
+            {"id": "iid-fresh", "status": "stopped",
+             "created_at": "2026-09-12T08:00:00+00:00",
+             "last_active_at": None},
+        ],
+    )
+
+    assert chosen == "iid-fresh"
+
+
+def test_acquire_ignores_deleted_rows_when_it_counts_and_when_it_chooses(monkeypatch):
+    """A deleted instance's Volume is gone, so joining one is joining nothing -- and
+    counting one would make the notice claim workspaces the account no longer has."""
+    _client, backend, chosen = _acquire_against(
+        monkeypatch,
+        [
+            {"id": "iid-gone", "status": "deleted",
+             "created_at": "2026-09-11T00:00:00+00:00",
+             "last_active_at": "2026-09-12T09:00:00+00:00"},
+            {"id": "iid-live", "status": "running",
+             "created_at": "2026-09-01T00:00:00+00:00",
+             "last_active_at": "2026-09-02T00:00:00+00:00"},
+        ],
+    )
+
+    assert chosen == "iid-live"
+    assert backend.instances_held == 1
+
+
+def test_acquire_still_joins_the_only_instance_when_the_account_holds_one(monkeypatch):
+    """The case every session took before the cap moved, unchanged: one live row, and
+    it is joined rather than added to. The count says one, so the session says nothing
+    about other workspaces -- there are none to mention."""
+    client, backend, chosen = _acquire_against(
+        monkeypatch,
+        [
+            {"id": "iid-1", "status": "running",
+             "created_at": "2026-09-01T00:00:00+00:00",
+             "last_active_at": "2026-09-02T00:00:00+00:00"},
+        ],
+    )
+
+    assert chosen == "iid-1"
+    assert client.started == ["iid-1"]
+    assert client.created == 0
+    assert backend.instances_held == 1
+
+
+def test_acquire_told_which_instance_to_use_never_lists_and_reports_no_count(monkeypatch):
+    """`--instance` and the remembered session id are an answer, not a question, so
+    there is nothing to choose between and nothing to count. The count reads 0 for
+    "nobody counted", which is why the notice checks for more than one rather than
+    for anything else."""
+    client = _Several([])
+    monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: client)
+
+    def refuse():
+        raise AssertionError("it was told which workspace to use")
+
+    client.list_instances = refuse
+    backend, _client, chosen = hosted_mod.acquire(
+        "https://svc.example", "of_live_test", "iid-asked-for"
+    )
+
+    assert chosen == "iid-asked-for"
+    assert backend.instances_held == 0
+
+
+def test_acquire_creates_one_workspace_when_the_account_holds_none(monkeypatch):
+    """And reports holding exactly the one it just made, so a first session does not
+    announce workspaces that do not exist."""
+    client, backend, chosen = _acquire_against(monkeypatch, [])
+
+    assert chosen == "iid-new"
+    assert client.created == 1
+    assert backend.instances_held == 1

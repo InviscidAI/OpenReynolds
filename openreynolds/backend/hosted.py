@@ -706,6 +706,18 @@ class HostedBackend(Backend):
         self.instance_id = instance_id
         self.was_already_running = False
         """Whether somebody else's session had it up before this one asked."""
+        self.instances_held = 0
+        """How many non-deleted instances the account held when this one was chosen.
+
+        The service used to cap an account at one instance, so `acquire` picking a
+        workspace was never a choice and nothing needed to report it. The cap is no
+        longer 1, so it is: `acquire` collapses a whole account to a single id, and
+        the workspaces it did not pick have their own Volumes with their own files
+        on them. A caller that can say "there are five and I took this one" turns an
+        empty-looking workspace into a sentence the user can act on.
+
+        0 means nobody counted rather than "the account holds none": `acquire` given
+        an explicit instance id never lists, because there was no choice to make."""
 
     def shutdown(self) -> None:
         """Put the container down. The volume is untouched, so nothing is lost."""
@@ -1144,6 +1156,42 @@ def _extract_tar_gz(data: bytes, local_dir: Path) -> list[Path]:
     return written
 
 
+def _most_recently_active_first(row: dict[str, Any]) -> tuple[str, str, str]:
+    """Sort key for "the workspace this client is most likely still holding".
+
+    `coalesce(last_active_at, created_at) desc, created_at desc` is the ordering
+    `OpenFoam_Instance/sql/schema_f16.sql`'s repair step uses to decide which of an
+    account's live rows to keep, and the two have to agree. That migration keeps the
+    row a client is most likely still holding; this picks the row to re-attach to.
+    If they disagree, a resumed session lands on the workspace the repair marked
+    deleted -- the same study, on the other Volume, reading as empty.
+
+    The values are the service's ISO-8601 timestamps, compared as strings. That is
+    exact for same-offset ISO-8601, which is what the listing carries, and a trailing
+    `Z` is normalised to `+00:00` so a mixed representation cannot invert the order.
+    Where it is still inexact -- two rows written with different fractional-digit
+    counts -- the disagreement is sub-second and the later keys settle it.
+
+    `id` is the last key so the choice is deterministic even for two rows created in
+    the same microsecond. That is the whole point of this function: an unordered
+    `existing[0]` was not, and picked differently on two runs of the same resume.
+    """
+    created = _comparable_time(row.get("created_at"))
+    active = _comparable_time(row.get("last_active_at")) or created
+    return (active, created, str(row.get("id") or ""))
+
+
+def _comparable_time(value: Any) -> str:
+    """One timestamp as a string that sorts the way the instant does, or "" for none.
+
+    `""` sorts before every real timestamp, which is the right place for a row whose
+    time the service did not send: never the one preferred over a row that has one.
+    """
+    if not isinstance(value, str) or not value:
+        return ""
+    return value[:-1] + "+00:00" if value.endswith("Z") else value
+
+
 def acquire(
     base_url: str,
     api_key: str,
@@ -1151,26 +1199,47 @@ def acquire(
 ) -> tuple[HostedBackend, FoamdClient, str]:
     """Get a workspace: the named instance, else an existing one, else a new one.
 
-    The service caps concurrent instances (default 1) and deleting one destroys its
-    persistent volume, so reuse is the default and nothing here ever deletes.
+    Deleting an instance destroys its persistent volume, so reuse is the default and
+    nothing here ever deletes.
+
+    Which existing one is not arbitrary any more. The service caps concurrent
+    instances and that cap is no longer 1, so an account can hold several workspaces
+    at once, each with its own Volume and its own files. Taking `existing[0]` from an
+    unordered listing silently attached a resumed session to whichever row the
+    service happened to return first: the study's files are on a different Volume, so
+    the failure does not look like a wrong choice, it looks like an empty workspace --
+    the case directory gone, the mesh gone, nothing anywhere saying a different
+    workspace was joined. So the listing is ordered (`_most_recently_active_first`)
+    and the count is handed to the caller on `HostedBackend.instances_held`, because
+    collapsing five workspaces to one id is a thing the user has to be told.
     """
     client = FoamdClient(base_url, api_key)
     try:
         listed_as_running = False
+        held = 0
         if instance_id is None:
-            existing = [
-                inst for inst in client.list_instances() if inst.get("status") != "deleted"
-            ]
+            existing = sorted(
+                (
+                    inst
+                    for inst in client.list_instances()
+                    if inst.get("status") != "deleted"
+                ),
+                key=_most_recently_active_first,
+                reverse=True,
+            )
+            held = len(existing)
             if existing:
                 instance_id = existing[0]["id"]
                 listed_as_running = existing[0].get("status") == "running"
             else:
                 instance_id = client.create_instance()
+                held = 1
         reply = client.start_instance(instance_id)
     except BaseException:
         client.close()
         raise
     backend = HostedBackend(client, instance_id)
+    backend.instances_held = held
     # Whether it was already up decides whether whoever asked for it should put it
     # back down again. A command that borrows a container ought to leave the machine
     # as it found it; a session is what containers are for.
