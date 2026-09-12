@@ -344,7 +344,8 @@ class Loop:
         )
         try:
             with _holding(self.gate), _ticking(self.view, block.name):
-                content, is_error = dispatch(self.ctx, block.name, tool_input)
+                content, is_error = dispatch(
+                    self.ctx, block.name, tool_input, call_id=block.id)
         finally:
             self._unbusy()
         # A tool result can be content blocks rather than text -- an image, for one --

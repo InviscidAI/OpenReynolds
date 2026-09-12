@@ -13,6 +13,7 @@ import io
 import json
 import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -708,3 +709,48 @@ def test_the_study_id_in_the_first_event_is_the_directory_on_disk(tmp_path, monk
 
     study_id = read(sink)[0]["study_id"]
     assert Store(tmp_path / "studies", study_id).dir.is_dir()
+
+
+def test_a_trace_row_says_which_call_it_was_and_how_it_went(tmp_path, monkeypatch):
+    """A trace with timings and no identity could say a tool took nine seconds and
+    not which of the four calls in that turn it was, nor whether it worked. Both
+    facts exist at the call site and were simply never passed down."""
+    import json as _json
+
+    from openreynolds import tools as tools_mod
+
+    path = tmp_path / "trace.jsonl"
+    monkeypatch.setattr(trace, "_path", str(path))
+    monkeypatch.setattr(trace, "_sink", None)
+    monkeypatch.setattr(trace, "on", True)
+
+    ctx = SimpleNamespace(calls=0)
+    monkeypatch.setitem(tools_mod._HANDLERS, "bash", lambda c, a: "hello")
+    tools_mod.dispatch(ctx, "bash", {"cmd": "echo hello"}, call_id="toolu_abc")
+
+    row = _json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["kind"] == "tool"
+    assert row["tool_use_id"] == "toolu_abc"
+    assert row["result"] == {"ok": True, "bytes": len("hello")}
+
+
+def test_a_trace_row_for_a_tool_that_raised_says_it_did_not_work(tmp_path, monkeypatch):
+    """The failing calls are the ones somebody reads a trace to find."""
+    import json as _json
+
+    from openreynolds import tools as tools_mod
+
+    path = tmp_path / "trace.jsonl"
+    monkeypatch.setattr(trace, "_path", str(path))
+    monkeypatch.setattr(trace, "_sink", None)
+    monkeypatch.setattr(trace, "on", True)
+
+    def boom(c, a):
+        raise RuntimeError("no")
+
+    ctx = SimpleNamespace(calls=0)
+    monkeypatch.setitem(tools_mod._HANDLERS, "bash", boom)
+    tools_mod.dispatch(ctx, "bash", {"cmd": "x"}, call_id="toolu_z")
+
+    row = _json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["result"]["ok"] is False

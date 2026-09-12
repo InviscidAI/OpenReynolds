@@ -312,7 +312,7 @@ def test_a_tool_that_raises_still_leaves_the_bar_idle(ctx, store, view, monkeypa
     loop.progress = Bar()
     install(loop, [message([tool_block("bash", {"cmd": "x"})], stop_reason="tool_use")])
 
-    def explode(ctx, name, args):
+    def explode(ctx, name, args, call_id=None):
         raise RuntimeError("boom")
 
     monkeypatch.setattr("openreynolds.loop.dispatch", explode)

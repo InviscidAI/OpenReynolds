@@ -372,8 +372,32 @@ def _echo(ctx: ToolContext, body: str) -> str:
             f"in this conversation, so it is not repeated here]\n{head}")
 
 
-def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[ToolResult, bool]:
-    """Run one tool call. Returns (content, is_error)."""
+def _traced_size(result: ToolResult) -> int:
+    """Roughly how much this result costs the next request, for the trace row.
+
+    Cheap on purpose: it is read once per call and only when something is
+    listening. A picture is counted as its own bytes rather than rendered, because
+    `describe` base64s it and the number wanted here is what the transport carries.
+    """
+    if isinstance(result, str):
+        return len(result)
+    total = 0
+    for block in result or ():
+        if isinstance(block, dict):
+            source = block.get("source") or {}
+            total += len(block.get("text") or "") + len(source.get("data") or "")
+    return total
+
+
+def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any],
+             call_id: str | None = None) -> tuple[ToolResult, bool]:
+    """Run one tool call. Returns (content, is_error).
+
+    `call_id` is the model's own id for this call, passed through only so a trace
+    row can be joined to the turn that asked for it. It is optional because the
+    tool has no use for it: a trace with timings and no identity could say a tool
+    took nine seconds and not which of the four calls in that turn it was.
+    """
     ctx.calls += 1
     handler = _HANDLERS.get(name)
     if handler is None:
@@ -381,15 +405,20 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[T
     # Read the clock only when something is listening: the handlers below time
     # themselves off the same `time.monotonic`, and tests drive that with a fake.
     started = time.monotonic() if trace.on else 0.0
+    ok, size = True, 0
     try:
         result = handler(ctx, tool_input)
+        if trace.on:
+            size = _traced_size(result)
         # Only text is collapsed, and only when it repeats exactly. An image is already
         # handled by the eviction policy, and an error is never worth collapsing --
         # the same failure twice is a fact about the run, not a duplicate.
         return (_echo(ctx, result) if isinstance(result, str) else result), False
     except BackendError as exc:
+        ok = False
         return str(exc), True
     except Exception as exc:  # a harness bug is a fact the model should see
+        ok = False
         return f"{type(exc).__name__}: {exc}", True
     finally:
         if trace.on:
@@ -398,6 +427,8 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any]) -> tuple[T
                 tool=name,
                 seconds=round(time.monotonic() - started, 3),
                 cmd=str(tool_input.get("cmd") or tool_input.get("path") or "")[:200],
+                tool_use_id=call_id,
+                result={"ok": ok, "bytes": size},
             )
 
 
