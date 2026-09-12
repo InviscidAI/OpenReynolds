@@ -296,7 +296,12 @@ def table(name: str, against: str = "") -> int:
         print("|---|---|---|---|---|---|---|")
         for key, data in clean.items():
             read = data.get("probes", [])
-            got = [row["id"] for row in read if row.get("state") == "measured"]
+            # `pass` and `fired` are the old verdict states: both mean the probe got its
+            # numbers, so both count as a reading. A record written before the probes
+            # stopped judging is still a record, and a column that scored it 0/6 would
+            # misreport history to make the current vocabulary look tidy.
+            got = [row["id"] for row in read
+                   if row.get("state") in ("measured", "pass", "fired")]
             print(f"| {key} | {data.get('stopped', '?')} | {data.get('n_steps', 0)} | "
                   f"{data.get('first_mesh_step') or '-'} | "
                   f"{'ok' if data.get('checkmesh_ok') else 'no'} | "
