@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import re
 import struct
 import sys
 from pathlib import Path
@@ -383,6 +384,58 @@ def test_the_toolbox_index_names_every_script_in_it():
     index = (TOOLBOX / "README.md").read_text(encoding="utf-8")
     for script in sorted(TOOLBOX.glob("*.py")):
         assert script.name in index, f"{script.name} is in the toolbox and not in its index"
+
+
+def test_the_toolbox_index_names_nothing_that_is_not_there():
+    """The other direction, which nothing checked until 2026-09-12.
+
+    The index carried finished descriptions of `corpus.py` and `search.py` -- a
+    $FOAM_TUTORIALS index of 556 tutorials and a query tool for it, in detail, in the
+    present tense -- and neither file existed anywhere in the workspace. The existing
+    guard only walks the directory and looks in the index, so an index running ahead of
+    the code failed nothing, and a session reading it was promised an instrument it
+    could not run. Scoped to the table rows on purpose: the prose beside them names a
+    case's own `build.py` and the templates by their bare filenames, which are not
+    claims about this directory.
+    """
+    index = (TOOLBOX / "README.md").read_text(encoding="utf-8")
+    named = re.findall(r"^\|\s*`([^`]+\.py)`\s*\|", index, re.M)
+    assert named, "the index has no table rows, so it is no longer an index"
+    for name in named:
+        assert (TOOLBOX / name).is_file(), (
+            f"the index describes {name} and there is no such script in the toolbox"
+        )
+
+
+def test_the_field_notes_carry_what_the_moving_mesh_cost_to_learn():
+    """The Wigley hull's four rounds lived only in `qa-runs/comp/wigley/REPORT.md`, and
+    the agent never reads that. Each of these is a fact that run paid for: the release
+    is a restart because sixDoFRigidBodyMotion reads its constraints once at start-up,
+    the wall condition and pointDisplacement flip with the mesh type, the state file is
+    absolute and in radians, morphing turns concave cells negative, and what ended the
+    divergence was taking the DTCHullMoving tutorial wholesale."""
+    notes = (TOOLBOX / "notes" / "openfoam-field-notes.md").read_text(encoding="utf-8")
+    assert "## When the mesh moves" in notes
+    section = notes.split("## When the mesh moves", 1)[1].split("\n## ", 1)[0]
+    for fact in ("staticFvMesh", "dynamicMotionSolverFvMesh", "sixDoFRigidBodyMotion",
+                 "movingWallVelocity", "pointDisplacement", "sixDoFRigidBodyState",
+                 "radians", "negative-volume", "DTCHullMoving", "floatingObject"):
+        assert fact in section, f"the moving-mesh note does not mention {fact}"
+    assert "$FOAM_TUTORIALS/multiphase/interFoam/RAS/DTCHullMoving" in section, (
+        "a template is worth naming by the path it is actually at"
+    )
+
+
+def test_the_moving_mesh_note_states_facts_rather_than_a_procedure():
+    """The notes are offered like everything else in here. A section that told a session
+    the order to do things in would be the workflow injection the design exists to
+    avoid, and motion is exactly where that temptation is strongest."""
+    section = (TOOLBOX / "notes" / "openfoam-field-notes.md").read_text(encoding="utf-8")
+    section = " ".join(section.split("## When the mesh moves", 1)[1]
+                       .split("\n## ", 1)[0].lower().split())
+    for imperative in ("you must", "always run", "before you", "step 1", "first,",
+                       "you should", "make sure"):
+        assert imperative not in section
 
 
 def test_the_environment_manifest_states_the_facts_the_corpus_kept_missing():

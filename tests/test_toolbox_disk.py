@@ -201,3 +201,42 @@ def test_a_directory_that_is_not_a_case_is_reported_but_offers_nothing(tmp_path)
     (work / "uploads" / "hull.stl").write_text("s" * 2000)
     usages = disk.scan(work)
     assert usages[0].bytes > 0 and usages[0].candidates == []
+
+
+# -- the mesh that moves -------------------------------------------------------
+
+
+def test_a_time_directory_that_carries_its_own_mesh_is_kept_whole(work):
+    """On a moving mesh `<time>/polyMesh/points` IS the mesh at that instant.
+
+    Nothing regenerates it short of re-running the solve, so a prune that takes the
+    time directory destroys the only record the run keeps of its own motion -- and
+    pruning is routine here, because /work is one shared 20 GB quota. The reason line on
+    the times that do go names the test they passed.
+    """
+    case = work / "study-a" / "cyl"
+    (case / "0.5" / "polyMesh").mkdir(parents=True)
+    (case / "0.5" / "polyMesh" / "points").write_text("p" * 400)
+
+    usages = disk.scan(work, study="study-a")
+    offered = {c.path.name for c in usages[0].candidates}
+    assert "0.5" not in offered, "the deformed mesh at t = 0.5 has nothing to rebuild it"
+    assert not any("polyMesh" in str(c.path) for c in usages[0].candidates)
+
+
+def test_an_ordinary_time_directory_still_goes_and_says_why(work):
+    usages = disk.scan(work, study="study-a")
+    dropped = [c for c in usages[0].candidates if c.path.name == "0.5"]
+    assert dropped, "a plain intermediate time is still regenerable"
+    assert "carries no mesh of its own" in dropped[0].why
+
+
+def test_drop_latest_does_not_reach_a_moving_meshs_last_mesh_either(work):
+    """`--keep-latest False` is for a case whose numbers are already out; it is not
+    consent to delete a mesh that only exists inside a time directory."""
+    case = work / "study-b" / "duct"
+    (case / "2" / "polyMesh").mkdir(parents=True)
+    (case / "2" / "polyMesh" / "points").write_text("p" * 400)
+
+    usages = disk.scan(work, study="study-b", keep_latest=False)
+    assert not any(c.path.name == "2" for c in usages[0].candidates)

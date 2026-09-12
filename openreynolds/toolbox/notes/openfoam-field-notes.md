@@ -441,6 +441,7 @@ Solver names are ESI. These are places to start, not defaults to defend.
 | external aero, steady | `simpleFoam` | `kOmegaSST` | ~10D upstream, 20D downstream, 12D sides (an aerofoil wants 50-100c) | vary the schemes; bluff or post-stall bodies are shedding candidates |
 | indoor / buoyant | `buoyantSimpleFoam` | `kEpsilon` | room plus plenum | |
 | transient shedding | `pimpleFoam` | `kOmegaSST` | per class | a short-window check before the long run pays for itself |
+| free surface, moving body | `interFoam` | `kOmegaSST` | tank at model scale, the still-water plane on a cell face | two runs: held, then released. `case_gen.py` writes no `dynamicMeshDict` -- see "When the mesh moves" |
 
 ## When a steady solve will not converge
 
@@ -770,6 +771,93 @@ from the regime before solving, and saying which was chosen and why, saves the r
 otherwise arrives when someone looks at the result and asks for "the transient one." A
 transient run (pimpleFoam) costs more but is the honest instrument for a shedding flow;
 a steady run is right for an attached, genuinely steady one.
+
+## When the mesh moves
+
+A moving mesh is a second solver underneath the flow solver, with its own dictionary and
+its own failure modes, and it is coupled tightly enough that the wall conditions, the
+fields and the function objects all have to agree with the mesh type before anything
+runs. What follows is one case class -- a mesh that morphs, with no topology change --
+and it is written down because it cost four rounds of divergence to get once: a 3 m
+Wigley hull towed at Fr 0.316 and then released in heave and pitch, `interFoam` with
+`dynamicMotionSolverFvMesh` and `sixDoFRigidBodyMotion`, 8 s of physical time in two
+phases, one attempt each and no restarts, settling at 6.19 +/- 0.35 mm of sinkage
+against the towing tank's 7.50 mm.
+
+**Settling and then releasing is two runs, not a switch.** `sixDoFRigidBodyMotion` reads
+its constraints once at start-up and has no time-varying form of them, so a body that is
+held for the start-up transient and freed afterwards is two cases: phase one with
+`dynamicFvMesh staticFvMesh` and the body fixed, run until the flow field is developed,
+then a restart from `latestTime` with `dynamicMeshDict` switched to
+`dynamicMotionSolverFvMesh`. Nothing moved during phase one, so the mesh the second phase
+inherits is the mesh it was built with.
+
+**The mesh type decides three other files with it.** Under `staticFvMesh` the body wall is
+`noSlip` and `0/pointDisplacement` is never read. With the motion solver active the wall
+is `movingWallVelocity` and `pointDisplacement` has to be there. Function objects go the
+same way: `sixDoFRigidBodyState` wants a live motion solver and is an error under
+`staticFvMesh`, so one `controlDict` cannot serve both phases. On the hull above, the
+wall condition on binary restart fields was switched with `changeDictionary` rather than
+by rewriting them.
+
+**`sixDoFRigidBodyState.dat` reports absolute positions, and angles in radians** unless
+`angleFormat` is set to degrees. Heave is that column minus the centre of rotation's
+starting z, which is a subtraction that is easy to skip and impossible to see afterwards
+in a plot that looks plausible with or without it.
+
+**The datum is a measurement.** `setFields`' `boxToCell` fills every cell whose centre is
+below the plane, and on a graded tank mesh that over-fills the domain and leaves the
+ambient free surface sitting above it -- about 24 mm above z = 0 on one 304k-cell case,
+agreed to a millimetre by an `alpha = 0.5` isosurface, the far-field bottom `p_rgh`, and
+the volume bookkeeping. Sinkage quoted against the design draught instead of against that
+measured rest float came out as the hull *rising* 18.2 mm, and two rounds went into the
+mesh before anyone measured where the water actually was.
+
+**Morphing amplifies what the mesh already had.** A motion solver that morphs the whole
+domain around a body turns cells that were merely concave into negative-volume cells once
+the amplitude grows, so a run that started clean fails some seconds in. The cheap half of
+that is `checkMesh` on the mesh as meshed, before any body is released; the other half is
+that a displacement growing steadily with no bound is more often a force imbalance than a
+mesh defect, and the two read alike in the log. `ladder.py` puts the cheap half first on
+the rotating-machinery ladder: move the points through a full cycle with no flow solved
+at all and count the volumes, which is the one moving-mesh check whose answer is known
+before it runs.
+
+**Where the templates are.** Three `constant/dynamicMeshDict` files are attested on this
+image by path: `$FOAM_TUTORIALS/multiphase/interFoam/RAS/DTCHullMoving`,
+`$FOAM_TUTORIALS/multiphase/interFoam/RAS/floatingObject`, and
+`$FOAM_TUTORIALS/incompressible/pimpleFoam/RAS/propeller`. Taking DTCHullMoving's
+structure *wholesale* is what ended the divergence on the hull above, on the first
+attempt: internal field at tow speed from t = 0 with no inlet ramp, an outlet of
+`outletPhaseMeanVelocity` plus `variableHeightFlowRate` on the phase fraction,
+`pressureInletOutletVelocity`/`totalPressure` on the atmosphere, `fixedFluxPressure` on
+the hull, the tutorial's own alpha solver block, `setFields` with both `boxToCell` and
+`boxToFace`, and `renumberMesh -overwrite` ahead of the solver. Four earlier rounds had
+adopted parts of it and died at the same t ~ 0.106 s each time.
+
+`case_gen.py` dresses a mesh that exists and writes no `constant/dynamicMeshDict`, no
+`0/pointDisplacement` and no `constant/MRFProperties`; its `--study` values are mesh,
+steady and transient. So a moving-mesh case here is a tutorial copied and edited, which
+is also the conclusion the hull session reached on its own before it went to
+DTCHullMoving.
+
+**Zones are what AMI, MRF and overset are named against.** A sliding interface, a frozen
+rotor and an overset region all point at a `cellZone` or a `faceZone` by name, and a
+dictionary that names a zone the mesh does not have fails at the first solver step.
+`mesh_look.py` reports the zones it finds in `constant/polyMesh/{cellZones,faceZones}`
+next to the patch table -- names and counts either format, and a cell zone's bounding box
+and centroid where the file is ascii -- so a zone can be checked for before a dictionary
+is written against it. A mesh with no zone files reports none, which is the state of most
+meshes here.
+
+**What is on PATH is a question rather than a fact.** `interFoam` running a
+`dynamicMotionSolverFvMesh` case is attested on this image. The tutorial trees for
+`moveDynamicMesh`, the `over*DyMFoam` overset family, and `topoSet`/`setsToZones` are
+here too, which is strong evidence and not the same thing as the executable being on
+PATH. One `which` settles it in a second, and it is worth the second: on this image
+`which MRFSimpleFoam simpleFoam` came back with only `simpleFoam`, because MRF in v2512
+is an `MRFProperties`/`fvOptions` feature of the ordinary solvers and not a binary of its
+own.
 
 ## Choosing a solver class from the deliverable
 

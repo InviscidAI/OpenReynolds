@@ -123,7 +123,7 @@ class Intent(NamedTuple):
 
     `resolve` is different in kind from the other three. They describe the flow; it
     describes the *answer* -- the feature the run has to show for the run to have been
-    worth doing. "shock", "interface", "wake". It is the one piece of information that
+    worth doing. "shock", "interface", "motion". It is the one piece of information that
     lets a check ask whether the discretisation can produce the deliverable, rather
     than only whether the case will run.
     """
@@ -1680,6 +1680,37 @@ probe rewrites, and rewriting a link would rewrite the real controlDict."""
 PROBE_TIMEOUT = 300
 
 SOLVER_HINTS: tuple[tuple[str, str], ...] = (
+    # The motion shapes come first because they are the specific case of the generic
+    # ones below: a missing `pointDisplacement` is a "cannot find file", an unknown
+    # motion solver is an unknown type, and both were being handed back as raw FOAM
+    # text. The probe already provokes every one of these -- a dynamicFvMesh is
+    # constructed during the one step it takes -- so what was missing was the reading
+    # and not the detection. Added 2026-09-12, from the Wigley hull's four rounds:
+    # every entry here names a failure that run met and diagnosed by hand.
+    (r"Unknown dynamicFvMesh type (\S+)",
+     "constant/dynamicMeshDict names a mesh type this build does not have; the error "
+     "lists the ones it does. staticFvMesh is the no-motion one, and switching to it "
+     "is also how a case is run with its body held"),
+    (r"Unknown (?:motionSolver|solidBodyMotionFunction|displacementMotionSolver) type (\S+)",
+     "the motion solver named in constant/dynamicMeshDict is not in this build -- the "
+     "error lists what is, and the tutorial the dictionary came from may be a different "
+     "OpenFOAM lineage (.org names differ from ESI's)"),
+    (r"cannot find file \"?[^\"\s]*pointDisplacement",
+     "a moving mesh reads 0/pointDisplacement and this case has none. It flips with the "
+     "mesh type together with the wall condition: staticFvMesh wants noSlip and no "
+     "pointDisplacement, a motion solver wants movingWallVelocity and one"),
+    (r"(?:[Ii]llegal neighbourPatch name|neighbourPatch \S+ (?:not|cannot)|"
+     r"[Cc]annot find (?:the )?(?:neighbour|coupled) patch|"
+     r"(?:cyclic|cyclicAMI|cyclicACMI)[^\n]*(?:not (?:found|matched)|do(?:es)? not (?:match|couple)))",
+     "a cyclic or cyclicAMI patch names a neighbour patch that is not in this mesh or "
+     "does not pair with it; both halves have to exist and name each other, and an AMI "
+     "pair also needs its face zones"),
+    (r"(?:cell|face)[Zz]one[^\n]*not (?:found|exist)|"
+     r"[Cc]annot find (?:cell|face)[Zz]one|[Zz]one (?:named )?\S+ not found",
+     "a dictionary names a mesh zone that is not in constant/polyMesh. `mesh_look.py` "
+     "lists the zones the mesh actually has; neither the mesh desk nor case_gen.py "
+     "writes one, and the zone on the published propeller study was cut with a topoSet "
+     "cylinderToCell followed by a setToCellZone action in the same dictionary"),
     (r"Cannot find patchField entry for (\S+)",
      "the field named in the error has no boundaryField entry for that patch -- add one"),
     (r"incompatible|inconsistent.*patch.*patchField",
@@ -2645,7 +2676,7 @@ def check_method(case: Case, intent: Intent) -> list[Finding]:
             "no feature named",
             "nothing said what this run has to show, so there is nothing to check the "
             "discretisation against",
-            "pass --resolve shock|interface|wake to have this checked",
+            "pass --resolve shock|interface|motion to have this checked",
         )]
 
     application = (case.application or "").strip()
@@ -2664,6 +2695,8 @@ def check_method(case: Case, intent: Intent) -> list[Finding]:
         findings.extend(_shock_findings(case, application, solver))
     elif want in ("interface", "free-surface", "freesurface", "wave", "kelvin"):
         findings.extend(_interface_findings(case, application, solver))
+    elif want in ("motion", "moving-mesh", "movingmesh", "sinkage", "trim", "rotation"):
+        findings.extend(_motion_findings(case, application, solver))
     else:
         findings.append(Finding(
             "method", "skipped",
@@ -2769,6 +2802,154 @@ def _shock_findings(case: Case, application: str, solver: str) -> list[Finding]:
             "place the answer lives",
             "relax toward 'cellLimited Gauss linear 0.33' once the run is past its "
             "start-up transient, or accept it and do not report a shock position",
+        ))
+    return out
+
+
+MESH_TYPES_ATTESTED: dict[str, str] = {
+    "staticfvmesh": "the mesh is held; nothing moves",
+    "dynamicmotionsolverfvmesh": "a motion solver moves the points every step",
+    "dynamicrefinefvmesh": "cells are split and merged in place",
+}
+"""`dynamicFvMesh` types this workspace has evidence for, and what each one does.
+
+Evidence, not a build manifest. `staticFvMesh` and `dynamicMotionSolverFvMesh` both ran
+on this image on the Wigley hull of 2026-08-31, the two phases of one settle-then-release
+pair; `dynamicRefineFvMesh` and its `hexRef8` engine were read out of `src/dynamicFvMesh/`
+at the v2512 tag and are the only refining mesh there. Every other name -- the overset
+family included -- is left unrecognised on purpose: the tutorial directories for them
+exist on this image, which is not the same fact as the type being registered in the
+build, and the one-step `probe` check asks the build itself in a few seconds. Naming a
+type here that nobody has run would be the "briefs carry measurements, not constants"
+failure written into a checker.
+"""
+
+MOTION_SOLVERS_ATTESTED: dict[str, str] = {
+    "sixdofrigidbodymotion": "a rigid body integrated against the flow forces",
+}
+"""`motionSolver` names this workspace has evidence for. Same rule as above:
+`sixDoFRigidBodyMotion` carried the Wigley hull through 4.5 s of free heave and pitch."""
+
+
+def _motion_findings(case: Case, application: str, solver: str) -> list[Finding]:
+    """Can this case move its mesh at all, before anyone waits to find out that it cannot.
+
+    Deliberately narrow -- three questions, each answerable from two dictionaries:
+    is there a `dynamicMeshDict`, can the solver named in `controlDict` step a mesh
+    through time, and is the mesh or motion type one anything here has actually seen
+    run. It is not a motion-setup review: constraints, restraints, dampers, mesh
+    diffusivity and zone geometry are all outside it, and the honest instrument for
+    those is the `probe` check, which constructs the real dynamicFvMesh.
+
+    It exists because the Wigley hull of 2026-08-31 spent four rounds on a case that
+    could not have produced sinkage as written, and because `staticFvMesh` in phase one
+    of a settle-then-release pair is correct and in phase two is the whole deliverable
+    silently switched off -- the mesh type is the single line that decides which run
+    this is, and nothing read it.
+    """
+    out: list[Finding] = []
+
+    motion_text = case.read("constant/dynamicMeshDict") or case.read("system/dynamicMeshDict")
+    if not motion_text.strip():
+        out.append(Finding(
+            "method", "fail",
+            "no constant/dynamicMeshDict",
+            "the mesh cannot move without one, so a run asked for motion would produce a "
+            "held body and no sinkage, trim or rotation at all. Nothing in this toolbox "
+            "writes the dictionary: case_gen.py dresses a mesh and stops there",
+            "copy a dynamicMeshDict from a tutorial of the same family and edit it -- "
+            "$FOAM_TUTORIALS/multiphase/interFoam/RAS/DTCHullMoving and .../floatingObject "
+            "for a floating body, $FOAM_TUTORIALS/incompressible/pimpleFoam/RAS/propeller "
+            "for a rotating one",
+        ))
+        return out
+
+    values = entry_values(motion_text)
+    mesh_type = (values.get("dynamicFvMesh") or "").strip()
+    motion_solver = (values.get("motionSolver") or values.get("solver") or "").strip()
+    overset = "overset" in mesh_type.lower()
+    # STEADY_APPLICATIONS is spelled the way OpenFOAM spells the binaries and `solver`
+    # arrives here lowercased, so the membership test is folded rather than direct --
+    # compared as written it silently answered "no" for every steady solver there is.
+    steady = solver in {name.lower() for name in STEADY_APPLICATIONS}
+
+    if steady and not overset:
+        out.append(Finding(
+            "method", "fail",
+            f"solver {application} is steady and the mesh type is {mesh_type or 'unnamed'}",
+            "a steady solver iterates towards a time-independent state; there are no time "
+            "steps for the points to move through, so a motion solver attached to one has "
+            "nothing to integrate",
+            "use a transient solver of the same physics -- pimpleFoam for simpleFoam, "
+            "interFoam is already transient -- and set the run in seconds rather than "
+            "iterations",
+        ))
+    elif steady:
+        out.append(Finding(
+            "method", "ok",
+            f"solver {application} is steady and the mesh type names overset",
+            "an overset dictionary on a steady solver is hole-cutting between overlapping "
+            "meshes rather than motion, which is a legitimate pairing",
+        ))
+    else:
+        out.append(Finding(
+            "method", "ok",
+            f"solver {application} steps in time",
+            "a mesh that moves needs a solver that advances in seconds, and this one does",
+        ))
+
+    if mesh_type.lower() == "staticfvmesh":
+        out.append(Finding(
+            "method", "fail",
+            "dynamicFvMesh is staticFvMesh",
+            "the dictionary is present and switched off, which is exactly phase one of a "
+            "settle-then-release pair. sixDoFRigidBodyMotion reads its constraints once at "
+            "start-up, so releasing a body is a restart with this line changed and not a "
+            "runtime switch -- and phase one left in place answers the question with the "
+            "body held",
+            "set dynamicFvMesh to the moving type for the released phase, and flip the wall "
+            "condition (noSlip -> movingWallVelocity), 0/pointDisplacement and any "
+            "sixDoFRigidBodyState function object with it",
+        ))
+    elif mesh_type.lower() in MESH_TYPES_ATTESTED:
+        out.append(Finding(
+            "method", "ok",
+            f"dynamicFvMesh {mesh_type}",
+            MESH_TYPES_ATTESTED[mesh_type.lower()] + ", and it has run on this image",
+        ))
+    elif mesh_type:
+        out.append(Finding(
+            "method", "warn",
+            f"dynamicFvMesh {mesh_type}",
+            "no run recorded here has used that mesh type, so this check has no opinion on "
+            "whether it is registered in this build -- the tutorial directories for the "
+            "overset and solid-body families exist on the image, which is not the same fact",
+            "the `probe` check constructs the real dynamicFvMesh in one step and is the "
+            "authority on whether the type exists; `--only probe` asks it in seconds",
+        ))
+    else:
+        out.append(Finding(
+            "method", "warn",
+            "the dictionary names no dynamicFvMesh",
+            "the mesh type is the entry that decides whether anything moves, and it is the "
+            "one a dictionary copied from a tutorial most often loses in the edit",
+            "add 'dynamicFvMesh <type>;' at the top level of constant/dynamicMeshDict",
+        ))
+
+    if motion_solver and motion_solver.lower() not in MOTION_SOLVERS_ATTESTED:
+        out.append(Finding(
+            "method", "warn",
+            f"motionSolver {motion_solver}",
+            "no run recorded here has used that motion solver; a dictionary lifted from the "
+            "other OpenFOAM lineage is the common way to arrive at a name this build does "
+            "not register, because the two name their solvers differently",
+            "the `probe` check constructs it and says whether it exists",
+        ))
+    elif motion_solver:
+        out.append(Finding(
+            "method", "ok",
+            f"motionSolver {motion_solver}",
+            MOTION_SOLVERS_ATTESTED[motion_solver.lower()] + ", and it has run on this image",
         ))
     return out
 
@@ -2921,8 +3102,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--l", type=float, default=None, help="characteristic length, m")
     parser.add_argument(
         "--resolve", default="",
-        help="the feature the run has to show (shock, interface); checked against the "
-             "solver and schemes before anything is meshed",
+        help="the feature the run has to show (shock, interface, motion); checked against "
+             "the solver, the schemes and the mesh type before anything is meshed",
     )
     parser.add_argument("--log", default=None, help="the solver log to read residuals from")
     parser.add_argument("--no-probe", action="store_true", help="skip the one-step solver probe")

@@ -17,6 +17,10 @@ What it reports:
 * cells, faces, points, the bounding box, and whether the mesh is one cell thick (a
   plane case) or a volume;
 * every patch: type, face count, area, centre, mean unit normal;
+* every cell zone and face zone in `constant/polyMesh`, with its count -- and for a cell
+  zone its bounding box and centroid where the mesh is ascii. A sliding interface, a
+  frozen rotor and an overset region are all named against a zone, and a dictionary that
+  names a zone the mesh does not have fails at the first solver step;
 * `checkMesh`'s own verdict and the three metrics a solver actually minds -- maximum
   non-orthogonality, maximum skewness, maximum aspect ratio;
 * which files in the case would rebuild it.
@@ -72,6 +76,159 @@ def boundary_entries(case: Path) -> list[dict]:
 def _key(block: str, key: str) -> str:
     match = re.search(rf"\b{key}\s+([^;]+);", block)
     return match.group(1).strip() if match else ""
+
+
+# -- the zones ----------------------------------------------------------------
+#
+# Zones were invisible here until 2026-09-12. Everything that moves a mesh or freezes a
+# rotor names one -- `cyclicAMI` couples a pair of face zones, `MRFProperties` names a
+# cell zone, an overset region is a cell zone -- and a dictionary naming a zone the mesh
+# does not have fails at the first solver step with an error about a name nobody typed
+# twice. The mesh was already being walked; this is the read that makes the zone
+# checkable before the dictionary is written against it.
+
+ZONE_FILES = (("cellZones", "cell"), ("faceZones", "face"))
+
+_ZONE_ENTRY = re.compile(
+    # name { ... cellLabels List<label> N ( ... )
+    # `[^}]` keeps the span inside one block, so the `FoamFile { ... }` header cannot
+    # reach forward into the first zone's label list and be reported as a zone.
+    r"([A-Za-z_][\w.\-]*)\s*\{([^}]{0,400}?)\b(cellLabels|faceLabels)\s*"
+    r"(?:List<label>\s*)?(\d+)",
+    re.S,
+)
+
+
+def zone_entries(case: Path) -> list[dict]:
+    """Every cell zone and face zone: name, kind and count.
+
+    Read as text like `boundary` is, and for the same reason -- no OpenFOAM environment,
+    no reader. It works on a binary polyMesh too, because the label count is written in
+    plain text immediately before the binary block: only the labels themselves are
+    unreadable that way, and those are needed for the extents rather than for the name.
+    """
+    out: list[dict] = []
+    poly = case / "constant" / "polyMesh"
+    for filename, kind in ZONE_FILES:
+        path = poly / filename
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_bytes().decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        wanted = "cellLabels" if kind == "cell" else "faceLabels"
+        for match in _ZONE_ENTRY.finditer(text):
+            name, _between, keyword, count = match.groups()
+            if keyword != wanted:
+                continue
+            out.append({"name": name, "kind": kind, "count": int(count),
+                        "file": f"constant/polyMesh/{filename}"})
+    return out
+
+
+def _zone_labels(case: Path, kind: str) -> dict[str, list[int]]:
+    """`{zone name: cell or face labels}` for one zone file, ascii only.
+
+    A binary zone file returns nothing rather than a guess: the count is still reported
+    from `zone_entries`, and a zone whose extents could not be measured says so.
+    """
+    filename = "cellZones" if kind == "cell" else "faceZones"
+    path = case / "constant" / "polyMesh" / filename
+    if not path.is_file():
+        return {}
+    try:
+        text = path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return {}
+    if not re.search(r"\bformat\s+ascii\s*;", text[:2000]):
+        return {}
+    wanted = "cellLabels" if kind == "cell" else "faceLabels"
+    found: dict[str, list[int]] = {}
+    for match in _ZONE_ENTRY.finditer(text):
+        name, _between, keyword, count = match.groups()
+        if keyword != wanted:
+            continue
+        open_at = text.find("(", match.end())
+        if open_at < 0:
+            continue
+        depth, close_at = 0, -1
+        for index in range(open_at, len(text)):
+            if text[index] == "(":
+                depth += 1
+            elif text[index] == ")":
+                depth -= 1
+                if depth == 0:
+                    close_at = index
+                    break
+        if close_at < 0:
+            continue
+        labels = [int(token) for token in text[open_at + 1:close_at].split()]
+        if len(labels) == int(count):
+            found[name] = labels
+    return found
+
+
+def measure_cell_zones(case: Path, zones: list[dict]) -> None:
+    """Bounding box and centroid onto each cell zone entry, in place.
+
+    A zone's extent is what says whether the rotating region actually surrounds the
+    blade, and it is the one fact about a zone that a name and a count cannot carry.
+
+    The box is the box containing the zone's cell *centres*, not its outer vertices, so
+    it is short of the true extent by about half a cell on each face. That is stated
+    here and in the report rather than corrected, because the correction would need a
+    per-cell vertex walk and the half-cell is far below the question the number is asked
+    for -- whether the zone is where it was meant to be.
+    The arithmetic is `layer_report.py`'s -- it already reads `points`, `faces` and
+    `owner` and builds cell centres by OpenFOAM's own pyramid decomposition, and having
+    two polyMesh readers in this toolbox that disagree would be worse than having one
+    that refuses a binary mesh out loud.
+    """
+    cells = [zone for zone in zones if zone.get("kind") == "cell" and zone.get("count")]
+    if not cells:
+        return
+
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:  # the sibling import works when run from anywhere
+        sys.path.insert(0, here)
+    try:
+        import numpy as np
+
+        import layer_report
+    except Exception as exc:  # noqa: BLE001 - a mesh with no extents is still a mesh
+        for zone in cells:
+            zone["unmeasured"] = f"the zone extents need numpy ({type(exc).__name__}: {exc})"
+        return
+
+    labels = _zone_labels(case, "cell")
+    try:
+        mesh = layer_report.load(case)
+    except Exception as exc:  # noqa: BLE001 - MeshError on a binary or partial polyMesh
+        for zone in cells:
+            zone["unmeasured"] = str(exc)
+        return
+
+    for zone in cells:
+        wanted = labels.get(zone["name"])
+        if wanted is None:
+            zone["unmeasured"] = (
+                f"{zone['file']} is not ascii, so the labels could not be read -- "
+                "`foamFormatConvert` on a copy puts the extents within reach"
+            )
+            continue
+        index = np.asarray(wanted, dtype=np.int64)
+        if index.size == 0 or int(index.max()) >= int(mesh["n_cells"]):
+            zone["unmeasured"] = "the zone names cells this polyMesh does not have"
+            continue
+        try:
+            centres = layer_report.cell_centres(mesh, index)
+        except Exception as exc:  # noqa: BLE001
+            zone["unmeasured"] = f"{type(exc).__name__}: {exc}"
+            continue
+        low, high = centres.min(axis=0), centres.max(axis=0)
+        zone["bounds"] = [float(v) for v in (*low, *high)]
+        zone["centre"] = [float(v) for v in centres.mean(axis=0)]
 
 
 def build_files(case: Path) -> list[str]:
@@ -556,6 +713,29 @@ def report(payload: dict) -> str:
                 if not patch.get("flat", False):
                     row += " (curved)"
             lines.append(row)
+    zones = payload.get("zones")
+    if zones:
+        lines.append("  zones:")
+        width = max(len(z["name"]) for z in zones)
+        for zone in zones:
+            row = (f"    {zone['name']:<{width}}  {zone.get('kind', ''):<5} zone"
+                   f"{zone.get('count', 0):>9,} {'cells' if zone.get('kind') == 'cell' else 'faces'}")
+            if zone.get("centre"):
+                c = zone["centre"]
+                row += f"  centroid ({c[0]:.4g}, {c[1]:.4g}, {c[2]:.4g})"
+            bounds = zone.get("bounds") or []
+            if len(bounds) == 6:
+                row += (f"  cell centres span x {bounds[0]:.4g}..{bounds[3]:.4g}"
+                        f"  y {bounds[1]:.4g}..{bounds[4]:.4g}"
+                        f"  z {bounds[2]:.4g}..{bounds[5]:.4g}")
+            if zone.get("unmeasured"):
+                row += f"  (extents not measured: {zone['unmeasured']})"
+            lines.append(row)
+    elif payload.get("polymesh"):
+        # Said out loud, because "no zones" and "zones were not looked for" are
+        # different facts and only the first one means an AMI or MRF dictionary has
+        # nothing to name yet.
+        lines.append("  zones: none -- constant/polyMesh has no cellZones or faceZones")
     if payload.get("build"):
         lines.append("  rebuilds with: " + ", ".join(payload["build"]))
     else:
@@ -575,12 +755,19 @@ def look(case: Path, out_png: Path | None, check: bool = True) -> dict:
         "case": str(case),
         "polymesh": (case / "constant" / "polyMesh" / "points").exists(),
         "patches": entries,
+        # Additive: `mesher/check.py` and `case_gen.py` read this payload by key and
+        # ignore what they do not know, so an older reader of a newer mesh_look keeps
+        # working and inherits the zone facts the day it asks for them.
+        "zones": [],
         "build": build_files(case),
         "cells": 0, "faces": 0, "points": 0, "bounds": [], "two_d": False,
         "checkmesh": "", "checkmesh_ok": False, "metrics": {}, "render": "",
     }
     if not payload["polymesh"]:
         return payload
+
+    payload["zones"] = zone_entries(case)
+    measure_cell_zones(case, payload["zones"])
 
     if check:
         verdict = run_check(case)

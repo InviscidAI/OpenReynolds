@@ -216,3 +216,161 @@ def test_a_patchs_normal_is_reported_out_of_the_fluid(tmp_path):
     for patch in payload["patches"]:
         if patch.get("inward"):
             assert patch["inward"] == -1, "a measured normal must point out of the fluid"
+
+
+# -- the zones -----------------------------------------------------------------
+#
+# Nothing here reported a cellZone or a faceZone until 2026-09-12, and everything that
+# moves a mesh or freezes a rotor is named against one: `cyclicAMI` couples a pair of
+# face zones, `MRFProperties` names a cell zone, an overset region is a cell zone. A
+# dictionary that named a zone the mesh did not have failed at the first solver step and
+# there was nothing in the toolbox that could have said so beforehand.
+
+CELL_ZONES = """\
+FoamFile { version 2.0; format ascii; class regIOobject; object cellZones; }
+
+2
+(
+rotor
+{
+    type            cellZone;
+    cellLabels      List<label>
+2
+(
+0
+1
+)
+;
+}
+empty_zone
+{
+    type            cellZone;
+    cellLabels      List<label> 0();
+}
+)
+"""
+
+FACE_ZONES = """\
+FoamFile { version 2.0; format ascii; class regIOobject; object faceZones; }
+
+1
+(
+ami1
+{
+    type            faceZone;
+    faceLabels      List<label> 3(4 5 6);
+    flipMap         List<bool> 3(0 0 0);
+}
+)
+"""
+
+
+def test_a_mesh_with_no_zone_files_reports_none_rather_than_saying_nothing(tmp_path):
+    """"No zones" and "zones were not looked for" are different facts, and only the
+    first one means an AMI or MRF dictionary has nothing yet to name."""
+    payload = mesh_look.look(case_with(tmp_path), None, check=False)
+    assert payload["zones"] == []
+    assert "zones: none" in mesh_look.report(payload)
+
+
+def test_the_zones_are_read_with_no_openfoam_environment(tmp_path):
+    case = case_with(tmp_path)
+    poly = case / "constant" / "polyMesh"
+    (poly / "cellZones").write_text(CELL_ZONES)
+    (poly / "faceZones").write_text(FACE_ZONES)
+
+    zones = mesh_look.zone_entries(case)
+    assert [(z["name"], z["kind"], z["count"]) for z in zones] == [
+        ("rotor", "cell", 2), ("empty_zone", "cell", 0), ("ami1", "face", 3),
+    ]
+    assert zones[0]["file"] == "constant/polyMesh/cellZones"
+
+
+def test_the_foamfile_header_is_not_reported_as_a_zone(tmp_path):
+    """The header is a named block immediately before the first zone's label list, so a
+    span that is allowed to run past a closing brace reads `FoamFile` as a cell zone."""
+    case = case_with(tmp_path)
+    (case / "constant" / "polyMesh" / "cellZones").write_text(CELL_ZONES)
+    assert "FoamFile" not in {z["name"] for z in mesh_look.zone_entries(case)}
+
+
+def test_a_binary_zone_file_still_gives_its_names_and_counts(tmp_path):
+    """The label count is written in plain text immediately before the binary block, so
+    the name and the size survive a format this cannot read the labels out of -- and the
+    extents say they were not measured rather than coming back as zero."""
+    from test_toolbox_layer_report import write_box
+
+    case = tmp_path / "box"
+    write_box(case, [0, 1, 2, 3], [0, 1], [0, 1])
+    binary = (CELL_ZONES.replace("format ascii;", "format binary;")
+              .replace("2\n(\n0\n1\n)\n;", "2(\x00\x01\x02\x03)\n;"))
+    (case / "constant" / "polyMesh" / "cellZones").write_text(binary)
+
+    zones = mesh_look.zone_entries(case)
+    assert [(z["name"], z["count"]) for z in zones] == [("rotor", 2), ("empty_zone", 0)]
+    assert mesh_look._zone_labels(case, "cell") == {}
+
+    # The rest of this polyMesh is ascii and readable, so the only thing between the
+    # zone and its extents is the zone file's own format, and the message says that
+    # rather than handing back a box of zeros.
+    mesh_look.measure_cell_zones(case, zones)
+    assert "bounds" not in zones[0]
+    assert "not ascii" in zones[0]["unmeasured"]
+
+
+def test_a_cell_zones_extent_comes_from_the_cells_it_names(tmp_path):
+    """The number that says whether the rotating region actually surrounds the blade.
+    Measured on a three-cell box whose cell centres are known by hand: naming cells 0
+    and 1 of a 3 x 1 x 1 box of unit cells puts the centroid at x = 1."""
+    from test_toolbox_layer_report import write_box
+
+    case = tmp_path / "box"
+    write_box(case, [0, 1, 2, 3], [0, 1], [0, 1])
+    (case / "constant" / "polyMesh" / "cellZones").write_text(
+        "FoamFile { version 2.0; format ascii; class regIOobject; object cellZones; }\n"
+        "1\n(\nrotor\n{\n    type cellZone;\n    cellLabels List<label> 2(0 1);\n}\n)\n"
+    )
+    zones = mesh_look.zone_entries(case)
+    mesh_look.measure_cell_zones(case, zones)
+
+    rotor = zones[0]
+    assert rotor["centre"] == pytest.approx([1.0, 0.5, 0.5])
+    # The box spans the cell CENTRES, not the outer vertices: cells 0 and 1 are centred
+    # at x = 0.5 and x = 1.5, and the report says which of the two it is showing.
+    assert rotor["bounds"] == pytest.approx([0.5, 0.5, 0.5, 1.5, 0.5, 0.5])
+    assert "cell centres span" in mesh_look.report(
+        {"polymesh": True, "zones": zones, "case": str(case)})
+
+
+def test_a_zone_naming_cells_the_mesh_does_not_have_is_said_rather_than_drawn(tmp_path):
+    from test_toolbox_layer_report import write_box
+
+    case = tmp_path / "box"
+    write_box(case, [0, 1, 2], [0, 1], [0, 1])
+    (case / "constant" / "polyMesh" / "cellZones").write_text(
+        "FoamFile { version 2.0; format ascii; class regIOobject; object cellZones; }\n"
+        "1\n(\nrotor\n{\n    type cellZone;\n    cellLabels List<label> 1(99);\n}\n)\n"
+    )
+    zones = mesh_look.zone_entries(case)
+    mesh_look.measure_cell_zones(case, zones)
+    assert "does not have" in zones[0]["unmeasured"]
+    assert "bounds" not in zones[0]
+
+
+def test_the_json_shape_grew_and_did_not_change(tmp_path):
+    """`mesher/check.py` and `case_gen.py` both read this payload; zones were added
+    beside the patch table rather than into it, so a reader that has never heard of a
+    zone keeps working and inherits the facts the day it asks for them."""
+    from openreynolds.mesher.check import read
+
+    case = case_with(tmp_path, files=("Allmesh",))
+    (case / "constant" / "polyMesh" / "cellZones").write_text(CELL_ZONES)
+    payload = mesh_look.look(case, None, check=False)
+    payload.pop("error", None)
+    payload.update({"cells": 3750, "checkmesh_ok": True, "checkmesh": "Mesh OK.",
+                    "render": "look.png"})
+    assert payload["zones"], "the zones are in the payload"
+
+    check = read(payload, "mesh", "/work/s/mesh")
+    assert check.ok, check.missing
+    assert [p["name"] for p in check.patches] == ["inlet", "outlet", "walls", "frontAndBack"]

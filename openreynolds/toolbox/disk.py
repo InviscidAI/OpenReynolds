@@ -32,7 +32,8 @@ The distinction this script is built around is **regenerable** against
 Regenerable -- it can be produced again by re-running, from inputs that survive:
 
     processor*/          decomposed copies of the same fields
-    <time>/              solution time directories, except the latest
+    <time>/              solution time directories, except the latest and except
+                         any that carries a <time>/polyMesh of its own
     VTK/, *.vtk, *.vtu   post-processing dumps
     frames/, *.ppm       animation frames (the encoded video is not touched)
     .foam scratch        `.foamd/`, `.reynolds/tmp/`
@@ -41,6 +42,8 @@ Irreplaceable -- never touched, whatever flag you pass:
 
     0/, 0.orig/          the initial and boundary conditions
     constant/, system/   the case definition, including polyMesh
+    <time>/polyMesh/     a moving mesh's deformed mesh at that instant: the only
+                         record the run keeps of its own motion
     log.*                the record of what happened; often the only evidence left
     postProcessing/      measured results, usually kilobytes
     *.png *.gif *.mp4    figures and finished animations
@@ -75,7 +78,13 @@ from pathlib import Path
 WORK = os.environ.get("OPENREYNOLDS_WORK", "/work")
 
 # Directory names that are never regenerable, checked as whole path components.
-KEEP_DIRS = {"0", "0.orig", "constant", "system", "postProcessing", "notes", "references"}
+# `polyMesh` is in here for the moving-mesh case: on a case whose mesh deforms, the
+# deformed mesh is written to `<time>/polyMesh/points`, and that is the only record the
+# run keeps of its own motion -- there is nothing to regenerate it from short of
+# re-running the solve. `constant/polyMesh` was already covered by `constant`; this
+# covers the time-directory copies as well.
+KEEP_DIRS = {"0", "0.orig", "constant", "system", "postProcessing", "notes", "references",
+             "polyMesh"}
 # Suffixes that are always kept, whatever directory they are in.
 KEEP_SUFFIXES = {".png", ".gif", ".mp4", ".webm", ".md", ".py", ".sh", ".stl", ".obj",
                  ".step", ".stp", ".csv", ".json", ".pdf", ".svg"}
@@ -160,6 +169,10 @@ def candidates_in(case: Path, keep_latest: bool = True) -> list[Candidate]:
     is for a case whose results are already extracted and whose fields nobody will
     look at again; it is not the default because "I already have the numbers" is a
     belief, and a time directory is the only thing that can prove it wrong.
+
+    A time directory that holds a `polyMesh` of its own is kept whatever `keep_latest`
+    says, because on a moving mesh that subtree is the mesh at that instant and there is
+    nothing left to regenerate it from.
     """
     out: list[Candidate] = []
     if not case.is_dir():
@@ -189,8 +202,18 @@ def candidates_in(case: Path, keep_latest: bool = True) -> list[Candidate]:
     times.sort()
     droppable = times[:-1] if (keep_latest and times) else times
     for value, path in droppable:
+        # A time directory that carries its own polyMesh is kept whole. On a moving
+        # mesh -- a hull released in heave and pitch, a rotor on a sliding interface --
+        # `<time>/polyMesh/points` IS the mesh at that instant, and nothing regenerates
+        # it. Dropping the directory silently destroys the only record the run has of
+        # its own motion, and pruning is routine here because /work is one shared 20 GB
+        # quota. The reason line on the times that do go names the test they passed, so
+        # a prune that frees less than expected says why without anyone reading this.
+        if (path / "polyMesh").is_dir():
+            continue
         out.append(Candidate(path, _tree_bytes(path),
-                             f"solution time {value:g}, not the latest"))
+                             f"solution time {value:g}, not the latest, and carries no "
+                             "mesh of its own"))
 
     # Anything already covered by a directory above must not be listed again. Two
     # candidates for the same bytes double-counts what a prune would free, and the

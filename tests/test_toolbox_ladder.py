@@ -74,6 +74,49 @@ def marine_case(root: Path) -> Path:
     return case
 
 
+ROTOR_BOUNDARY = """\
+FoamFile { version 2.0; class polyBoundaryMesh; object boundary; }
+4
+(
+    inlet     { type patch;     nFaces 200;  startFace 0; }
+    outlet    { type patch;     nFaces 200;  startFace 200; }
+    blade     { type wall;      nFaces 3000; startFace 400; }
+    AMI1      { type cyclicAMI; nFaces 800;  startFace 3400; }
+)
+"""
+
+
+def rotating_case(root: Path) -> Path:
+    """A mixer on a sliding mesh: a dynamicMeshDict, no alpha field, no gravity.
+
+    Before 2026-09-12 this landed in external aerodynamics -- no phase fraction, a wall
+    immersed in the domain -- and was offered rungs about empty tunnels and symmetric
+    sections.
+    """
+    case = skeleton(root / "mixer")
+    (case / "system" / "controlDict").write_text(
+        "application     pimpleFoam;\nendTime         2;\n"
+    )
+    (case / "constant" / "polyMesh" / "boundary").write_text(ROTOR_BOUNDARY)
+    (case / "constant" / "dynamicMeshDict").write_text(
+        "dynamicFvMesh   solidBodyMotionFvMesh;\nsolver          rotatingMotion;\n"
+    )
+    (case / "0" / "U").write_text("internalField uniform (0 0 0);\n")
+    return case
+
+
+def frozen_rotor_case(root: Path) -> Path:
+    """A propeller with an MRF zone and no mesh motion at all: the other half of the
+    family, read off `constant/MRFProperties` rather than off a dynamicMeshDict."""
+    case = skeleton(root / "prop")
+    (case / "system" / "controlDict").write_text("application     simpleFoam;\n")
+    (case / "constant" / "polyMesh" / "boundary").write_text(ROTOR_BOUNDARY)
+    (case / "constant" / "MRFProperties").write_text(
+        "rotor\n{\n    cellZone        rotor;\n    rpm             4014;\n}\n"
+    )
+    return case
+
+
 AERO_BOUNDARY = """\
 FoamFile { version 2.0; class polyBoundaryMesh; object boundary; }
 4
@@ -139,6 +182,74 @@ def test_a_vof_case_with_six_dof_motion_is_the_marine_ladder(ladder, tmp_path):
     assert rungs[0].name == "still tank", (
         "rung 1 is the two-minute run that would have caught the failure this exists for"
     )
+
+
+def test_a_rotating_zone_with_no_free_surface_is_the_rotating_ladder(ladder, tmp_path):
+    """A mixer has no alpha field and a wall immersed in the domain, so the patch
+    evidence read it as external aerodynamics and offered it an empty tunnel. The motion
+    signal had been computed all along and used only to decorate the marine reason."""
+    detection, rungs = ladder.inspect(rotating_case(tmp_path))
+    assert detection.key == "rotating-machinery"
+    assert not detection.generic
+    assert len(rungs) == 5
+    assert "a mesh that moves" in detection.reason
+    assert rungs[0].name == "the motion alone, with nothing solved", (
+        "the cheapest rung here solves nothing at all, and it is the one with no "
+        "analogue on any other ladder in this file"
+    )
+
+
+def test_an_mrf_zone_alone_is_enough_to_read_it_as_rotating(ladder, tmp_path):
+    """A frozen rotor never moves a point, so there is no dynamicMeshDict to find. The
+    published propeller study is exactly this case."""
+    detection, rungs = ladder.inspect(frozen_rotor_case(tmp_path))
+    assert detection.key == "rotating-machinery"
+    assert "rotating frame" in detection.reason
+    assert len(rungs) == 5
+
+
+def test_a_moving_hull_with_a_free_surface_stays_on_the_marine_ladder(ladder, tmp_path):
+    """The marine rungs are the tuned ladder for a body in water and the rotating ones
+    are not, so the free-surface reading has to win over the motion reading."""
+    detection, _rungs = ladder.inspect(marine_case(tmp_path))
+    assert detection.key == "free-surface-marine"
+
+
+def test_an_overset_case_is_told_what_these_rungs_do_not_measure(ladder, tmp_path):
+    """Overset fails on donor and acceptor coverage and on the interpolation between
+    overlapping meshes. Nothing in this repository reads either and no run here has
+    exercised one, so the reading says which half of the problem it covers."""
+    case = skeleton(tmp_path / "over")
+    (case / "system" / "controlDict").write_text("application overPimpleDyMFoam;\n")
+    (case / "constant" / "dynamicMeshDict").write_text(
+        "dynamicFvMesh   dynamicOversetFvMesh;\n"
+    )
+    detection, _rungs = ladder.inspect(case)
+    assert detection.key == "rotating-machinery"
+    assert "donor and acceptor coverage is not measured here" in detection.reason
+
+
+def test_the_mesh_integrity_rung_is_a_mesh_fact_and_not_a_solver_one(ladder):
+    """The load-bearing rung of the rotating family and the reason it may sit on a
+    ladder at all: a negative cell volume is a signed integral over the cell's own
+    surface going the wrong way, which is arithmetic on the points and needs no solve."""
+    first = ladder.CATALOGUE["rotating-machinery"][0]
+    assert "no flow solved" in first.adds
+    assert "checkMesh" in first.check
+    assert ladder.known_is_independent(first)
+    assert "negative" in first.known.lower()
+
+
+def test_the_rotating_rungs_do_not_assert_a_binary_is_on_path(ladder):
+    """`moveDynamicMesh` has a tutorial family on this image and no attested binary.
+    Asserting one from a directory listing is the failure the workspace already has a
+    post-mortem for, so the rung names the check rather than the answer."""
+    text = " ".join(
+        rung.cost + " " + str(rung.overrides)
+        for rung in ladder.CATALOGUE["rotating-machinery"]
+    )
+    assert "moveDynamicMesh" in text
+    assert "which" in text, "the rung says how to settle it rather than settling it here"
 
 
 def test_a_compressible_external_case_is_the_aero_ladder(ladder, tmp_path):
