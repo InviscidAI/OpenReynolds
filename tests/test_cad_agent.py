@@ -1098,6 +1098,32 @@ def test_every_turn_is_reported_to_whatever_is_watching_from_outside(
     assert seen[0]["text_chars"] == 0
 
 
+def test_each_beat_carries_the_running_token_total(backend, store, monkeypatch):
+    """The accounting is handed out per turn, not kept until the run returns.
+
+    A killed run never returns its `CadResult`, so a total that exists only there is a
+    total nobody can read: the watcher signals the process group, SIGTERM terminates
+    without unwinding, and the record keeps its defaults. That is how T5 of the first
+    baseline sweep recorded $0.00 against a run `watch.json` clocked at 535 s.
+    `replies.jsonl` cannot stand in -- it carries this turn's `output` and never the
+    input or cache counts the price needs."""
+    checking(monkeypatch, PASSES)
+    kernelled(backend)
+    seen: list[dict] = []
+    made = desk(backend, store, [block("x = 1"), DONE])
+    made.on_turn = lambda **fields: seen.append(fields)
+    result = made.run("a duct")
+    assert result.ok
+
+    totals = [row.get("tokens") for row in seen]
+    assert all(isinstance(row, dict) and row for row in totals), totals
+    # Cumulative, so no key ever decreases and the last beat agrees with the result.
+    for key in result.tokens:
+        series = [row.get(key, 0) for row in totals]
+        assert series == sorted(series), (key, series)
+    assert totals[-1] == result.tokens
+
+
 def test_a_watcher_that_raises_does_not_end_the_run(backend, store, monkeypatch):
     """The observer reports and is never consulted. A run that could be ended by the
     thing measuring it is a measurement of the measurement."""

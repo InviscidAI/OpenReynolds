@@ -182,6 +182,7 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
         started_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
     record.save(run_dir, entry)
 
+    started = time.time()
     pulse = heartbeat.Heartbeat(run_dir)
     pulse.start()
     if group:
@@ -191,6 +192,27 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     def on_turn(**fields: Any) -> None:
         pulse.beat(**{name: value for name, value in fields.items()
                       if name in heartbeat.Beat.__annotations__})
+        # The accounting, brought up to this turn before anything can kill the run.
+        #
+        # It used to be written once, from `result`, after `desk.run` returned -- which a
+        # killed run never does. The watcher signals the process group, the default
+        # SIGTERM disposition terminates without unwinding, so neither the `except` nor
+        # the `finally` below runs and the record keeps its defaults. That is how T5 of
+        # the first baseline came to sit in the table at $0.00 and 0.0 s while
+        # `watch.json` independently clocked it at 535 s: not a free run, an unrecorded
+        # one, sorting last in a report that ranks failures by cost. The ending was
+        # recorded and the price of reaching it was not.
+        #
+        # Per turn rather than per cell because tokens are spent by the turn, including
+        # by the turns that run no cell at all -- which are exactly the turns a
+        # `no-progress` kill is made of.
+        totals = fields.pop("tokens", None)
+        if totals:
+            entry.tokens = dict(totals)
+            entry.usd = round(spend(entry.tokens), 4)
+        entry.n_turns = int(fields.get("turn") or entry.n_turns)
+        entry.seconds = round(time.time() - started, 1)
+        record.save(run_dir, entry)
         # Every raw reply, as it arrives. Written per turn rather than at the end because
         # the runs that most need explaining are the ones that get killed -- and without
         # the full text, the thinking length and the block types, the `starved` failure
@@ -209,7 +231,6 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     desk.on_turn = on_turn
     desk.on_step = on_step
 
-    started = time.time()
     try:
         result = desk.run(prompt["request"], case=case.lower(), geometry=geometry)
     except BaseException as exc:  # noqa: BLE001 - a crash is a result too
