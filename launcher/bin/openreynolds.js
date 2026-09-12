@@ -28,7 +28,7 @@ const path = require("node:path");
 // launcher deliberately pins a range rather than an exact version so `openreynolds
 // upgrade` can pick up patch releases without an npm update.
 const PYTHON_PACKAGE = "openreynolds";
-const PYTHON_PACKAGE_SPEC = "openreynolds>=0.1,<0.2";
+const PYTHON_PACKAGE_SPEC = "openreynolds>=0.2,<0.3";
 const UV_DOCS = "https://docs.astral.sh/uv/";
 const REPO = "https://github.com/InviscidAI/OpenReynolds";
 

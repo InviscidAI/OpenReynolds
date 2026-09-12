@@ -1,6 +1,6 @@
 {
   "name": "openreynolds",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Agentic OpenFOAM CFD: describe a flow problem, get an evidence-backed answer. Launcher for the openreynolds Python package.",
   "license": "MIT",
   "author": "InviscidAI <kabir@inviscidai.com>",
