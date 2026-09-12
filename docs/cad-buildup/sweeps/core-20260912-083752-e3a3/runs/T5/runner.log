@@ -1,0 +1,4 @@
+T5: run 20260912-084816-a47a
+  workspace /home/qiuzi/.openreynolds-buildup/work/T5-T5 clean (0 entries, 39 house names, no toolbox)
+  fixture assembly.step -> /home/qiuzi/.openreynolds-buildup/work/T5-T5/geometry/assembly.step
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-20260912-083752-e3a3/runs/T5

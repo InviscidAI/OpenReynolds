@@ -1,0 +1,11 @@
+{"turn": 1, "steps": 0, "stop_reason": "end_turn", "output_tokens": 1440, "fenced": true, "text_chars": 1398, "thinking_chars": 1002, "phase": "turn", "expect_s": 0.0, "at": 1789203464.4238045}
+{"turn": 2, "steps": 1, "stop_reason": "end_turn", "output_tokens": 501, "fenced": true, "text_chars": 785, "thinking_chars": 168, "phase": "turn", "expect_s": 0.0, "at": 1789203473.11195}
+{"turn": 3, "steps": 2, "stop_reason": "end_turn", "output_tokens": 178, "fenced": true, "text_chars": 346, "thinking_chars": 176, "phase": "turn", "expect_s": 0.0, "at": 1789203476.5255919}
+{"turn": 4, "steps": 3, "stop_reason": "end_turn", "output_tokens": 875, "fenced": true, "text_chars": 1682, "thinking_chars": 155, "phase": "turn", "expect_s": 0.0, "at": 1789203486.7306473}
+{"turn": 5, "steps": 4, "stop_reason": "end_turn", "output_tokens": 620, "fenced": true, "text_chars": 916, "thinking_chars": 159, "phase": "turn", "expect_s": 0.0, "at": 1789203495.1827233}
+{"turn": 6, "steps": 5, "stop_reason": "end_turn", "output_tokens": 604, "fenced": true, "text_chars": 650, "thinking_chars": 476, "phase": "turn", "expect_s": 0.0, "at": 1789203503.2987638}
+{"turn": 7, "steps": 6, "stop_reason": "end_turn", "output_tokens": 495, "fenced": true, "text_chars": 435, "thinking_chars": 544, "phase": "turn", "expect_s": 0.0, "at": 1789203511.366348}
+{"turn": 8, "steps": 7, "stop_reason": "end_turn", "output_tokens": 300, "fenced": true, "text_chars": 409, "thinking_chars": 241, "phase": "turn", "expect_s": 0.0, "at": 1789203516.1201396}
+{"turn": 9, "steps": 8, "stop_reason": "end_turn", "output_tokens": 495, "fenced": true, "text_chars": 855, "thinking_chars": 290, "phase": "turn", "expect_s": 0.0, "at": 1789203522.4683962}
+{"turn": 10, "steps": 9, "stop_reason": "end_turn", "output_tokens": 605, "fenced": true, "text_chars": 997, "thinking_chars": 224, "phase": "turn", "expect_s": 0.0, "at": 1789203529.4465075}
+{"turn": 11, "steps": 10, "stop_reason": "end_turn", "output_tokens": 1000, "fenced": true, "text_chars": 2228, "thinking_chars": 189, "phase": "turn", "expect_s": 0.0, "at": 1789203544.1911857}

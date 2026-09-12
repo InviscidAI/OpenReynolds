@@ -1,0 +1,668 @@
+{
+  "run_id": "20260912-084400-e1a2",
+  "case": "T3",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T3-T3",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T3-T3/t3",
+  "started_at": "2026-09-12T08:44:01",
+  "ended_at": "2026-09-12T08:56:42",
+  "seconds": 759.7,
+  "n_turns": 30,
+  "n_steps": 28,
+  "first_mesh_step": 19,
+  "mesh_exists": true,
+  "checkmesh_ok": false,
+  "usd": 1.2152,
+  "tokens": {
+    "input": 60,
+    "cache_read": 1109570,
+    "cache_write": 186764,
+    "output": 52625
+  },
+  "stopped": "steps",
+  "why": "checkMesh wrote no verdict this run could read",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import numpy as np, matplotlib.pyplot as plt\nfrom build123d import *\n\nW = 6.0        # channel width mm\nL = 120.0      # overall length mm\nALPHA = 20.0   # branch take-off angle, deg\nL1 = 22.9      # straight forward leg length\nR1 = 8.0       # radius of first turn (up to vertical)\nR2 = 5.0       # radius of the over-the-top return turn\nPITCH = 27.0\nX0 = 6.0\nNLOOP = 4\n\ndef loop_path(xa):\n    A = Vector(xa, 0, 0)\n    d0 = Vector(np.cos(np.radians(ALPHA)), np.sin(np.radians(ALPHA)), 0)\n    P1 = A + d0 * L1\n    l1 = Line(A, P1)\n    a1 = JernArc(start=P1, tangent=d0, radius=R1, arc_size=90 - ALPHA)\n    a2 = JernArc(start=a1 @ 1, tangent=a1 % 1, radius=R2, arc_size=170)\n    p2, t2 = a2 @ 1, a2 % 1\n    l2len = -p2.Y / t2.Y\n    B = p2 + t2 * l2len\n    return (l1 + a1 + a2 + Line(p2, B)), A, B, t2\n\npath, A, B, t2 = loop_path(X0)\npts = np.array([(path @ (i / 300)).to_tuple()[:2] for i in range(301)])\nprint(\"span A->B  =\", round(B.X - A.X, 3), \"mm   B =\", (round(B.X,3), round(B.Y,4)))\nprint(\"x-extent   =\", round(pts[:,0].max() - A.X, 3), \"mm  (+3 for wall)\")\nprint(\"max height =\", round(pts[:,1].max(), 3), \"mm\")\nprint(\"re-entry dir angle =\", round(np.degrees(np.arctan2(t2.Y, t2.X)), 2), \"deg (180=straight upstream)\")\nfig, ax = plt.subplots(figsize=(10,3))\nax.plot(pts[:,0], pts[:,1]); ax.plot([0,L],[0,0],'k--',lw=0.5); ax.set_aspect('equal'); plt.show()",
+      "exit_code": 0,
+      "seconds": 2.258554865606129,
+      "output": "span A->B  = 13.999 mm   B = (19.999, 0.0)\nx-extent   = 26.783 mm  (+3 for wall)\nmax height = 20.35 mm\nre-entry dir angle = -100.0 deg (180=straight upstream)\n\n/tmp/ipykernel_202569/2032941270.py:27: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.\n  pts = np.array([(path @ (i / 300)).to_tuple()[:2] for i in range(301)])",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "GAP = 27.0     # loop pitch\nXS = [3.0, 30.0, 57.0, 84.0]   # left-most x of each loop cell\n\ndef loop_mirrored(xs):\n    \"\"\"loop built at origin, mirrored in x, then shifted so its left-most centreline x = xs\"\"\"\n    p, A, B, t2 = loop_path(0.0)\n    pm = mirror(p, Plane.YZ)\n    xmin = min((pm @ (i/400)).X for i in range(401))\n    sh = xs - xmin\n    return pm.moved(Location((sh, 0, 0))), Vector(A.X*-1+sh, 0, 0), Vector(B.X*-1+sh, 0, 0)\n\nloops = [loop_mirrored(x) for x in XS]\nfig, ax = plt.subplots(figsize=(12, 3))\nfor pm, Aj, Bj in loops:\n    q = np.array([tuple(pm @ (i/400))[:2] for i in range(401)])\n    ax.plot(q[:,0], q[:,1], lw=1)\n    ax.plot([Aj.X, Bj.X], [0, 0], 'r.')\nprint(\"junctions  take-off A (shallow, faces -x):\", [round(l[1].X,2) for l in loops])\nprint(\"           re-entry B (steep, fires +x)  :\", [round(l[2].X,2) for l in loops])\nprint(\"loop span  :\", round(loops[0][1].X - loops[0][2].X, 2), \"mm ; pitch\", GAP, \"; last loop ends\", round(loops[-1][1].X+3,2))\nax.plot([0, L], [3, 3], 'k--', lw=0.5); ax.plot([0, L], [-3, -3], 'k--', lw=0.5)\nax.set_aspect('equal'); plt.show()",
+      "exit_code": 0,
+      "seconds": 0.7530965087935328,
+      "output": "junctions  take-off A (shallow, faces -x): [29.78, 56.78, 83.78, 110.78]\n           re-entry B (steep, fires +x)  : [15.78, 42.78, 69.78, 96.78]\nloop span  : 14.0 mm ; pitch 27.0 ; last loop ends 113.78",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "main = Rectangle(L, W).moved(Location((L/2, 0, 0)))\nfluid2d = main\nfor pm, Aj, Bj in loops:\n    fluid2d = fluid2d + trace(pm, line_width=W)\nfluid2d = fluid2d.clean()\n\nf = fluid2d.faces()[0] if len(fluid2d.faces()) == 1 else None\nprint(\"faces:\", len(fluid2d.faces()), \" area =\", round(fluid2d.area, 1), \"mm^2\")\nprint(\"wires (1 outer + islands):\", len(f.wires()) if f else \"n/a\")\nfig, ax = plt.subplots(figsize=(12, 3.2))\nfor w in f.wires():\n    q = np.array([tuple(w @ (i/1500))[:2] for i in range(1501)])\n    ax.plot(q[:,0], q[:,1], lw=0.8)\nax.set_aspect('equal'); plt.show()",
+      "exit_code": 1,
+      "seconds": 0.30139380134642124,
+      "output": "faces: 25  area = 2006.2 mm^2\nwires (1 outer + islands): n/a\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 11\u001b[39m\n\u001b[32m      7\u001b[39m f = fluid2d.faces()[\u001b[32m0\u001b[39m] \u001b[38;5;28;01mif\u001b[39;00m len(fluid2d.faces()) == \u001b[32m1\u001b[39m \u001b[38;5;28;01melse\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m\n\u001b[32m      8\u001b[39m print(\u001b[33m\"faces:\"\u001b[39m, len(fluid2d.faces()), \u001b[33m\" area =\"\u001b[39m, round(fluid2d.area, \u001b[32m1\u001b[39m), \u001b[33m\"mm^2\"\u001b[39m)\n\u001b[32m      9\u001b[39m print(\u001b[33m\"wires (1 outer + islands):\"\u001b[39m, len(f.wires()) \u001b[38;5;28;01mif\u001b[39;00m f \u001b[38;5;28;01melse\u001b[39;00m \u001b[33m\"n/a\"\u001b[39m)\n\u001b[32m     10\u001b[39m fig, ax = plt.subplots(figsize=(\u001b[32m12\u001b[39m, \u001b[32m3.2\u001b[39m))\n\u001b[32m---> \u001b[39m\u001b[32m11\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m w \u001b[38;5;28;01min\u001b[39;00m f.wires():\n\u001b[32m     12\u001b[39m     q = np.array([tuple(w @ (i/\u001b[32m1500\u001b[39m))[:\u001b[32m2\u001b[39m] \u001b[38;5;28;01mfor\u001b[39;00m i \u001b[38;5;28;01min\u001b[39;00m range(\u001b[32m1501\u001b[39m)])\n\u001b[32m     13\u001b[39m     ax.plot(q[:,\u001b[32m0\u001b[39m], q[:,\u001b[32m1\u001b[39m], lw=\u001b[32m0.8\u001b[39m)\n\u001b[32m     14\u001b[39m ax.set_aspect(\u001b[33m'equal'\u001b[39m); plt.show()\n\n\u001b[31mAttributeError\u001b[39m: 'NoneType' object has no attribute 'wires'",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "t1 = trace(loops[0][0], line_width=W)\nprint(\"trace faces:\", len(t1.faces()), \" area:\", round(t1.area,2))\nprint(\"main faces:\", len(main.faces()))\nu = main + t1\nprint(\"union faces:\", len(u.faces()), \" area:\", round(u.area,2), \" type:\", type(u))\nuc = u.clean()\nprint(\"cleaned faces:\", len(uc.faces()), \" area:\", round(uc.area,2))",
+      "exit_code": 0,
+      "seconds": 0.050605231896042824,
+      "output": "trace faces: 1  area: 383.86\nmain faces: 1\nunion faces: 4  area: 1103.86  type: <class 'build123d.topology.composite.Compound'>\ncleaned faces: 4  area: 1103.86",
+      "image": ""
+    },
+    {
+      "cmd": "from functools import reduce\nmain = Rectangle(L, W).moved(Location((L/2, 0, 0)))\nbands = [trace(pm, line_width=W).faces()[0] for pm, _, _ in loops]\nfused = reduce(lambda a, b: a.fuse(b), [main.faces()[0]] + bands).clean()\nfl = fused.faces()\nprint(\"faces after fuse:\", len(fl), \" area:\", round(sum(f.area for f in fl), 1),\n      \"mm^2  (sum of parts was\", round(main.area + sum(b.area for b in bands), 1), \")\")\nface2d = fl[0]\nprint(\"wires on face:\", len(face2d.wires()), \"(1 outer + 4 islands expected)\")\nbb = face2d.bounding_box()\nprint(\"bbox mm: x\", round(bb.min.X,2), round(bb.max.X,2), \" y\", round(bb.min.Y,2), round(bb.max.Y,2))",
+      "exit_code": 0,
+      "seconds": 0.05063269194215536,
+      "output": "faces after fuse: 13  area: 2255.5 mm^2  (sum of parts was 2255.5 )\nwires on face: 1 (1 outer + 4 islands expected)\nbbox mm: x 12.21 18.74  y -0.52 3.0",
+      "image": ""
+    },
+    {
+      "cmd": "TH = 1.0   # mm, single-cell thickness in z\nmain3 = extrude(main, amount=TH)\nband3 = [extrude(Sketch() + b, amount=TH) for b in bands]\nsolid = reduce(lambda a, b: a + b, [main3] + band3).clean()\nprint(\"solids:\", len(solid.solids()), \" volume:\", round(solid.volume, 1),\n      \"mm^3  (sum of parts:\", round(main3.volume + sum(b.volume for b in band3), 1), \")\")\ns = solid.solids()[0]\nbot = [f for f in s.faces() if abs(f.center().Z) < 1e-6 and abs(f.normal_at(f.center()).Z) > 0.99]\nprint(\"bottom faces:\", len(bot), \" area:\", round(bot[0].area, 1), \" wires:\", len(bot[0].wires()))",
+      "exit_code": 0,
+      "seconds": 0.25218192022293806,
+      "output": "solids: 1  volume: 1364.3 mm^3  (sum of parts: 2255.5 )\nbottom faces: 6  area: 646.9  wires: 5",
+      "image": ""
+    },
+    {
+      "cmd": "import os, subprocess, gmsh\nfaces_mm = Compound(children=[main.faces()[0]] + bands)\nexport_step(faces_mm, \"faces_mm.step\")\nprint(\"wrote\", os.path.getsize(\"faces_mm.step\"), \"bytes\")\n\ngmsh.initialize()\ngmsh.option.setNumber(\"General.Terminal\", 0)\ngmsh.model.add(\"tesla\")\ngmsh.model.occ.importShapes(\"faces_mm.step\")\nents = gmsh.model.occ.getEntities(2)\nprint(\"imported surfaces:\", len(ents))\nout, _ = gmsh.model.occ.fuse([ents[0]], ents[1:])\ngmsh.model.occ.synchronize()\nprint(\"after fuse:\", out)\nfor d, t in out:\n    print(\"  surf\", t, \"area mm^2 =\", round(gmsh.model.occ.getMass(d, t), 1),\n          \"curves:\", len(gmsh.model.getBoundary([(d, t)], oriented=False)))",
+      "exit_code": 0,
+      "seconds": 0.10082392394542694,
+      "output": "wrote 54716 bytes\nimported surfaces: 13\nafter fuse: [(2, 1), (2, 2), (2, 5), (2, 8), (2, 11)]\n  surf 1 area mm^2 = 832.5 curves: 28\n  surf 2 area mm^2 = 213.6 curves: 10\n  surf 5 area mm^2 = 213.6 curves: 10\n  surf 8 area mm^2 = 213.6 curves: 10\n  surf 11 area mm^2 = 213.6 curves: 10",
+      "image": ""
+    },
+    {
+      "cmd": "bot_all = [f for f in s.faces() if abs(f.center().Z) < 1e-6 and abs(f.normal_at(f.center()).Z) > 0.99]\nprint(\"bottom pieces:\", len(bot_all), \"areas:\", [round(f.area,1) for f in bot_all], \"sum:\", round(sum(f.area for f in bot_all),1))\nmerged = reduce(lambda a, b: a.fuse(b), bot_all).clean()\nmf = merged.faces()\nprint(\"after fuse:\", len(mf), \"faces, area\", round(sum(f.area for f in mf),1))\nfor f in mf:\n    print(\"   area\", round(f.area,1), \" wires\", len(f.wires()))",
+      "exit_code": 0,
+      "seconds": 0.10076563339680433,
+      "output": "bottom pieces: 6 areas: [646.9, 345.8, 92.9, 92.9, 92.9, 92.9] sum: 1364.3\nafter fuse: 1 faces, area 1141.6\n   area 1141.6  wires 1",
+      "image": ""
+    },
+    {
+      "cmd": "solid_m = s.scale(0.001)\nexport_step(solid_m, \"tesla_m.step\")\nbbm = solid_m.bounding_box()\nprint(\"EXPORTED IN METRES  bbox x: %.4f .. %.4f   y: %.4f .. %.4f   z: %.4f .. %.4f\"\n      % (bbm.min.X, bbm.max.X, bbm.min.Y, bbm.max.Y, bbm.min.Z, bbm.max.Z))\nprint(\"requested: length 0.120 m, channel width 0.006 m, thickness %.3f m\" % (TH/1000))\nprint(\"measured  : length %.4f m, loop stack height %.4f m\" % (bbm.max.X-bbm.min.X, bbm.max.Y-bbm.min.Y))\nprint(\"main-channel walls at y = %.4f / %.4f -> width %.4f m\" % (bbm.min.Y, 0.003, 0.006))\nprint(\"fluid area = %.2f mm^2, volume = %.3e m^3\" % (s.volume/TH, solid_m.volume))",
+      "exit_code": 0,
+      "seconds": 0.05076436139643192,
+      "output": "EXPORTED IN METRES  bbox x: -0.0000 .. 0.1200   y: -0.0030 .. 0.0233   z: 0.0000 .. 0.0010\nrequested: length 0.120 m, channel width 0.006 m, thickness 0.001 m\nmeasured  : length 0.1200 m, loop stack height 0.0263 m\nmain-channel walls at y = -0.0030 / 0.0030 -> width 0.0060 m\nfluid area = 1364.33 mm^2, volume = 1.364e-06 m^3",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.clear()\ngmsh.model.add(\"tesla2d\")\ngmsh.model.occ.importShapes(\"tesla_m.step\")\ngmsh.model.occ.synchronize()\nbottoms = []\nfor d, t in gmsh.model.getEntities(2):\n    com = gmsh.model.occ.getCenterOfMass(d, t)\n    if abs(com[2]) < 1e-9:\n        bottoms.append(t)\nprint(\"bottom faces:\", bottoms, \"total area m^2 =\",\n      round(sum(gmsh.model.occ.getMass(2, t) for t in bottoms), 8))\ngmsh.model.occ.remove(gmsh.model.getEntities(3))\ngmsh.model.occ.remove([(2, t) for d, t in gmsh.model.getEntities(2) if t not in bottoms])\ngmsh.model.occ.synchronize()\nkeep1 = {abs(c) for d, t in gmsh.model.getEntities(2)\n         for c in gmsh.model.getBoundary([(2, t)], oriented=False, combined=False)[0:0]}\nkept_curves = {abs(t) for st in bottoms for (d, t) in gmsh.model.getBoundary([(2, st)], oriented=False)}\ngmsh.model.occ.remove([(1, t) for d, t in gmsh.model.getEntities(1) if t not in kept_curves])\ngmsh.model.occ.synchronize()\nprint(\"remaining: surfaces\", len(gmsh.model.getEntities(2)), \" curves\", len(gmsh.model.getEntities(1)),\n      \" volumes\", len(gmsh.model.getEntities(3)))",
+      "exit_code": 0,
+      "seconds": 0.10073184408247471,
+      "output": "bottom faces: [4, 8, 9, 10, 11, 20, 21, 30, 32, 34, 36, 39, 40] total area m^2 = 0.00155191\nremaining: surfaces 13  curves 71  volumes 0",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.clear()\ngmsh.model.add(\"chk\")\ngmsh.model.occ.importShapes(\"tesla_m.step\")\ngmsh.model.occ.synchronize()\nfor d, t in gmsh.model.getEntities(2):\n    com = gmsh.model.occ.getCenterOfMass(d, t)\n    if abs(com[2]) < 1e-9:\n        print(\"surf %3d area_mm2 %8.2f  com=(%.4f, %.4f, %.4f)\" %\n              (t, gmsh.model.occ.getMass(d, t) * 1e6, *com))\nprint(\"volumes:\", gmsh.model.getEntities(3), \"total vol m^3\",\n      sum(gmsh.model.occ.getMass(3, t) for d, t in gmsh.model.getEntities(3)))",
+      "exit_code": 0,
+      "seconds": 0.1007689144462347,
+      "output": "surf   4 area_mm2   646.89  com=(0.0605, -0.0002, 0.0000)\nsurf   8 area_mm2   290.95  com=(0.0095, 0.0124, 0.0000)\nsurf   9 area_mm2    18.28  com=(0.0693, 0.0015, 0.0000)\nsurf  10 area_mm2    18.28  com=(0.0423, 0.0015, 0.0000)\nsurf  11 area_mm2    18.28  com=(0.0963, 0.0015, 0.0000)\nsurf  20 area_mm2   116.36  com=(0.0207, 0.0034, 0.0000)\nsurf  21 area_mm2    23.45  com=(0.0085, 0.0140, 0.0000)\nsurf  30 area_mm2   116.36  com=(0.0477, 0.0034, 0.0000)\nsurf  32 area_mm2   116.36  com=(0.0747, 0.0034, 0.0000)\nsurf  34 area_mm2    23.45  com=(0.0355, 0.0140, 0.0000)\nsurf  36 area_mm2    23.45  com=(0.0625, 0.0140, 0.0000)\nsurf  39 area_mm2   116.36  com=(0.1017, 0.0034, 0.0000)\nsurf  40 area_mm2    23.45  com=(0.0895, 0.0140, 0.0000)\nvolumes: [(3, 1)] total vol m^3 1.3643260210724542e-06",
+      "image": ""
+    },
+    {
+      "cmd": "cut = Rectangle(400, 400).moved(Location((0, 0, TH/2))).faces()[0]\nsec = s.intersect(cut)\nsfs = sec.faces()\nprint(\"section faces:\", len(sfs), \" area:\", round(sum(f.area for f in sfs), 2),\n      \"mm^2  (expected\", round(s.volume/TH, 2), \")\")\nfor f in sfs:\n    print(\"   area %.2f  wires %d\" % (f.area, len(f.wires())))",
+      "exit_code": 0,
+      "seconds": 0.10072538442909718,
+      "output": "section faces: 1  area: 1188.54 mm^2  (expected 1364.33 )\n   area 1188.54  wires 2",
+      "image": ""
+    },
+    {
+      "cmd": "pieces = [main3]\nfor pm, _, _ in loops:\n    for e in pm.edges():\n        pieces.append(extrude(trace(Curve() + e, line_width=W).faces()[0], amount=TH))\nprint(\"pieces:\", len(pieces))\nblob = reduce(lambda a, b: a + b, pieces).clean()\nprint(\"solids:\", len(blob.solids()), \" volume mm^3:\", round(blob.volume, 2))\nsol = blob.solids()[0]\nsec2 = sol.intersect(Rectangle(400, 400).moved(Location((0, 0, TH/2))).faces()[0])\nprint(\"section faces:\", len(sec2.faces()), \" area:\", round(sec2.area, 2),\n      \" wires:\", [len(f.wires()) for f in sec2.faces()])",
+      "exit_code": 1,
+      "seconds": 0.4015491548925638,
+      "output": "pieces: 17\nsolids: 1  volume mm^3: 1829.36\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[13]\u001b[39m\u001b[32m, line 10\u001b[39m\n\u001b[32m      6\u001b[39m blob = reduce(\u001b[38;5;28;01mlambda\u001b[39;00m a, b: a + b, pieces).clean()\n\u001b[32m      7\u001b[39m print(\u001b[33m\"solids:\"\u001b[39m, len(blob.solids()), \u001b[33m\" volume mm^3:\"\u001b[39m, round(blob.volume, \u001b[32m2\u001b[39m))\n\u001b[32m      8\u001b[39m sol = blob.solids()[\u001b[32m0\u001b[39m]\n\u001b[32m      9\u001b[39m sec2 = sol.intersect(Rectangle(\u001b[32m400\u001b[39m, \u001b[32m400\u001b[39m).moved(Location((\u001b[32m0\u001b[39m, \u001b[32m0\u001b[39m, TH/\u001b[32m2\u001b[39m))).faces()[\u001b[32m0\u001b[39m])\n\u001b[32m---> \u001b[39m\u001b[32m10\u001b[39m print(\"section faces:\", len(sec2.faces()), \" area:\", round(sec2.area, 2),\n\u001b[32m     11\u001b[39m       \u001b[33m\" wires:\"\u001b[39m, [len(f.wires()) \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m sec2.faces()])\n\n\u001b[31mAttributeError\u001b[39m: 'ShapeList' object has no attribute 'area'",
+      "image": ""
+    },
+    {
+      "cmd": "sfl = sec2.faces() if hasattr(sec2, \"faces\") else ShapeList(sec2)\nsfl = [x for x in (sec2 if isinstance(sec2, list) else [sec2])]\nsfl = [f for x in sfl for f in x.faces()]\nprint(\"section faces:\", len(sfl), \" area:\", round(sum(f.area for f in sfl), 2),\n      \" wires:\", [len(f.wires()) for f in sfl])\nprint(\"volume/thickness =\", round(sol.volume / TH, 2), \"mm^2\")",
+      "exit_code": 0,
+      "seconds": 0.05060929153114557,
+      "output": "section faces: 1  area: 1829.36  wires: [5]\nvolume/thickness = 1829.36 mm^2",
+      "image": ""
+    },
+    {
+      "cmd": "pieces = [main3]\nfor pm, _, _ in loops:\n    for e in pm.edges():\n        pieces.append(extrude(trace(Curve() + e, line_width=W).faces()[0], amount=TH))\nblob = reduce(lambda a, b: a + b, pieces).clean()\nsol = blob.solids()[0]\nsecl = sol.intersect(Rectangle(400, 400).moved(Location((0, 0, TH/2))).faces()[0])\nface_mm = [f for x in (secl if isinstance(secl, list) else [secl]) for f in x.faces()][0]\nprint(\"solids:\", len(blob.solids()), \" fluid area mm^2:\", round(face_mm.area, 2),\n      \" wires:\", len(face_mm.wires()), \"(outer + 4 islands)\")\nface_m = face_mm.moved(Location((0, 0, -TH/2))).scale(0.001)   # to z=0 plane, mm -> m\nexport_step(face_m, \"fluid_face_m.step\")\nfig, ax = plt.subplots(figsize=(13, 3.4))\nfor w in face_mm.wires():\n    q = np.array([tuple(w @ (i/2000))[:2] for i in range(2001)])\n    ax.plot(q[:, 0], q[:, 1], lw=0.9)\nax.set_aspect('equal'); ax.set_title(\"Tesla valve fluid region (mm)\"); plt.show()",
+      "exit_code": 0,
+      "seconds": 1.644608423113823,
+      "output": "solids: 1  fluid area mm^2: 1829.36  wires: 5 (outer + 4 islands)",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "gmsh.clear()\ngmsh.model.add(\"tv\")\ngmsh.model.occ.importShapes(\"fluid_face_m.step\")\ngmsh.model.occ.synchronize()\nsurf = gmsh.model.getEntities(2)\nprint(\"surfaces:\", surf, \"area m^2\", gmsh.model.occ.getMass(2, surf[0][1]))\nbnd = gmsh.model.getBoundary(surf, oriented=False)\nprint(\"boundary curves:\", len(bnd))\nfor d, t in bnd:\n    com = gmsh.model.occ.getCenterOfMass(d, t)\n    if com[0] < 1e-6 or com[0] > 0.1199:\n        print(\"  end curve\", t, \"com\", [round(c, 5) for c in com],\n              \"len\", round(gmsh.model.occ.getMass(d, t), 5))",
+      "exit_code": 0,
+      "seconds": 0.05079048220068216,
+      "output": "surfaces: [(2, 1)] area m^2 0.0018293609496265073\nboundary curves: 48\n  end curve 1 com [0.0, 0.0, -0.4995] len 0.006\n  end curve 3 com [0.12, 0.0, -0.4995] len 0.006",
+      "image": ""
+    },
+    {
+      "cmd": "LC = 1.5e-3\ngmsh.model.occ.translate(surf, 0, 0, -gmsh.model.occ.getCenterOfMass(2, surf[0][1])[2])\ngmsh.model.occ.synchronize()\nprint(\"z after translate:\", gmsh.model.occ.getCenterOfMass(2, 1)[2])\ngmsh.option.setNumber(\"Mesh.MeshSizeMin\", LC)\ngmsh.option.setNumber(\"Mesh.MeshSizeMax\", LC)\ngmsh.option.setNumber(\"Mesh.Algorithm\", 8)          # frontal-delaunay for quads\ngmsh.option.setNumber(\"Mesh.RecombineAll\", 1)\ngmsh.option.setNumber(\"Mesh.RecombinationAlgorithm\", 2)\next = gmsh.model.occ.extrude([(2, 1)], 0, 0, 0.001, numElements=[1], recombine=True)\ngmsh.model.occ.synchronize()\nprint(\"extrude result:\", ext[:3], \"... total\", len(ext))\nprint(\"volumes:\", gmsh.model.getEntities(3), \" surfaces:\", len(gmsh.model.getEntities(2)))",
+      "exit_code": 0,
+      "seconds": 0.05060039181262255,
+      "output": "z after translate: 0.0\nextrude result: [(2, 50), (3, 1), (2, 2)] ... total 50\nvolumes: [(3, 1)]  surfaces: 50",
+      "image": ""
+    },
+    {
+      "cmd": "back, front, inlet, outlet, wall = [], [], [], [], []\nfor d, t in gmsh.model.getEntities(2):\n    cx, cy, cz = gmsh.model.occ.getCenterOfMass(d, t)\n    if abs(cz) < 1e-9: back.append(t)\n    elif abs(cz - 0.001) < 1e-9: front.append(t)\n    elif cx < 1e-6: inlet.append(t)\n    elif cx > 0.11999: outlet.append(t)\n    else: wall.append(t)\nprint(\"back\", back, \"front\", front, \"inlet\", inlet, \"outlet\", outlet, \"nwall\", len(wall))\nfor nm, tags in [(\"inlet\", inlet), (\"outlet\", outlet)]:\n    print(nm, \"area m^2 =\", sum(gmsh.model.occ.getMass(2, t) for t in tags), \" expect 6e-06\")\ngmsh.model.addPhysicalGroup(3, [1], name=\"fluid\")\ngmsh.model.addPhysicalGroup(2, inlet, name=\"inlet\")\ngmsh.model.addPhysicalGroup(2, outlet, name=\"outlet\")\ngmsh.model.addPhysicalGroup(2, wall, name=\"walls\")\ngmsh.model.addPhysicalGroup(2, back + front, name=\"frontAndBack\")\ngmsh.model.mesh.generate(3)\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\ngmsh.write(\"tesla.msh\")\net, en = gmsh.model.mesh.getElementsByType(5)[0], None\nprint(\"hex cells:\", len(gmsh.model.mesh.getElementsByType(5)[0]),\n      \" prisms:\", len(gmsh.model.mesh.getElementsByType(6)[0]))",
+      "exit_code": 1,
+      "seconds": 0.05060214176774025,
+      "output": "back [1] front [50] inlet [2] outlet [4] nwall 46\ninlet area m^2 = 6e-06  expect 6e-06\noutlet area m^2 = 6e-06  expect 6e-06\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mException\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[18]\u001b[39m\u001b[32m, line 17\u001b[39m\n\u001b[32m     13\u001b[39m gmsh.model.addPhysicalGroup(\u001b[32m2\u001b[39m, inlet, name=\u001b[33m\"inlet\"\u001b[39m)\n\u001b[32m     14\u001b[39m gmsh.model.addPhysicalGroup(\u001b[32m2\u001b[39m, outlet, name=\u001b[33m\"outlet\"\u001b[39m)\n\u001b[32m     15\u001b[39m gmsh.model.addPhysicalGroup(\u001b[32m2\u001b[39m, wall, name=\u001b[33m\"walls\"\u001b[39m)\n\u001b[32m     16\u001b[39m gmsh.model.addPhysicalGroup(\u001b[32m2\u001b[39m, back + front, name=\u001b[33m\"frontAndBack\"\u001b[39m)\n\u001b[32m---> \u001b[39m\u001b[32m17\u001b[39m gmsh.model.mesh.generate(\u001b[32m3\u001b[39m)\n\u001b[32m     18\u001b[39m gmsh.option.setNumber(\u001b[33m\"Mesh.MshFileVersion\"\u001b[39m, \u001b[32m2.2\u001b[39m)\n\u001b[32m     19\u001b[39m gmsh.write(\u001b[33m\"tesla.msh\"\u001b[39m)\n\u001b[32m     20\u001b[39m et, en = gmsh.model.mesh.getElementsByType(\u001b[32m5\u001b[39m)[\u001b[32m0\u001b[39m], \u001b[38;5;28;01mNone\u001b[39;00m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/gmsh.py:2189\u001b[39m, in \u001b[36mmodel.mesh.generate\u001b[39m\u001b[34m(dim)\u001b[39m\n\u001b[32m   2185\u001b[39m             lib.gmshModelMeshGenerate(\n\u001b[32m   2186\u001b[39m                 c_int(dim),\n\u001b[32m   2187\u001b[39m                 byref(ierr))\n\u001b[32m   2188\u001b[39m             \u001b[38;5;28;01mif\u001b[39;00m ierr.value != \u001b[32m0\u001b[39m:\n\u001b[32m-> \u001b[39m\u001b[32m2189\u001b[39m                 \u001b[38;5;28;01mraise\u001b[39;00m Exception(logger.getLastError())\n\n\u001b[31mException\u001b[39m: 1D mesh cannot be divided by 2",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.model.removePhysicalGroups()\ngmsh.option.setNumber(\"Mesh.RecombinationAlgorithm\", 1)\nback, front, inlet, outlet, wall = [], [], [], [], []\nfor d, t in gmsh.model.getEntities(2):\n    cx, cy, cz = gmsh.model.occ.getCenterOfMass(d, t)\n    if abs(cz) < 1e-9: back.append(t)\n    elif abs(cz - 0.001) < 1e-9: front.append(t)\n    elif cx < 1e-6: inlet.append(t)\n    elif cx > 0.11999: outlet.append(t)\n    else: wall.append(t)\nprint(\"inlet area m^2 =\", sum(gmsh.model.occ.getMass(2, t) for t in inlet),\n      \" outlet area m^2 =\", sum(gmsh.model.occ.getMass(2, t) for t in outlet), \" expect 6e-06 each\")\ngmsh.model.addPhysicalGroup(3, [1], name=\"fluid\")\ngmsh.model.addPhysicalGroup(2, inlet, name=\"inlet\")\ngmsh.model.addPhysicalGroup(2, outlet, name=\"outlet\")\ngmsh.model.addPhysicalGroup(2, wall, name=\"walls\")\ngmsh.model.addPhysicalGroup(2, back + front, name=\"frontAndBack\")\ngmsh.model.mesh.generate(3)\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\ngmsh.write(\"tesla.msh\")\nprint(\"hexes:\", len(gmsh.model.mesh.getElementsByType(5)[0]),\n      \" prisms:\", len(gmsh.model.mesh.getElementsByType(6)[0]))",
+      "exit_code": 0,
+      "seconds": 0.10076988395303488,
+      "output": "inlet area m^2 = 6e-06  outlet area m^2 = 6e-06  expect 6e-06 each\nhexes: 882  prisms: 177",
+      "image": ""
+    },
+    {
+      "cmd": "import textwrap, pathlib\nfor d in [\"system\", \"constant\", \"0\"]:\n    pathlib.Path(d).mkdir(exist_ok=True)\nhead = \"FoamFile\\n{\\n    version 2.0;\\n    format ascii;\\n    class dictionary;\\n    object %s;\\n}\\n\"\npathlib.Path(\"system/controlDict\").write_text(\n    head % \"controlDict\" + textwrap.dedent(\"\"\"\n    application     simpleFoam;\n    startFrom       startTime;\n    startTime       0;\n    stopAt          endTime;\n    endTime         1;\n    deltaT          1;\n    writeControl    timeStep;\n    writeInterval   100;\n    \"\"\"))\nr = subprocess.run([\"gmshToFoam\", \"tesla.msh\"], capture_output=True, text=True)\nprint(r.returncode)\nprint(r.stdout[-1500:])\nprint(r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.25112607050687075,
+      "output": "0\nstemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nStarting to read mesh format at line 2\nRead format version 2.2  ascii 0\n\nStarting to read physical names at line 5\nPhysical names:5\n    Surface 2\tinlet\n    Surface 3\toutlet\n    Surface 4\twalls\n    Surface 5\tfrontAndBack\n    Volume 1\tfluid\n\nStarting to read points at line 13\nVertices to be read: 2246\nVertices read:2246\n\nStarting to read cells at line 2262\nCells to be read: 3488\n\nMapping region 10 to Foam patch 0\nMapping region 7 to Foam patch 1\nMapping region 9 to Foam patch 2\nMapping region 8 to Foam patch 3\nMapping region 6 to Foam cellZone 0\nCells:\n    total:1059\n    hex  :882\n    prism:177\n    pyr  :0\n    tet  :0\n\nCellZones:\nZone\tSize\n    0\t1059\n\nPatch 0 gets name patch0\nPatch 1 gets name patch1\nPatch 2 gets name patch2\nPatch 3 gets name patch3\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 2429 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone cellZone_0 and cellSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "txt = open(\"tesla.msh\").read()\ni = txt.index(\"$PhysicalNames\"); j = txt.index(\"$EndPhysicalNames\")\nprint(txt[i:j+20])\nimport re\nprint(open(\"constant/polyMesh/boundary\").read()[-1200:])",
+      "exit_code": 0,
+      "seconds": 0.050636752508580685,
+      "output": "$PhysicalNames\n5\n2 2 \"inlet\"\n2 3 \"outlet\"\n2 4 \"walls\"\n2 5 \"frontAndBack\"\n3 1 \"fluid\"\n$EndPhysicalNames\n$N\n                     |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n4\n(\n    patch0\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          2118;\n        startFace       1874;\n    }\n    patch1\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          2;\n        startFace       3992;\n    }\n    patch2\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          307;\n        startFace       3994;\n    }\n    patch3\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          2;\n        startFace       4301;\n    }\n)\n\n// ************************************************************************* //",
+      "image": ""
+    },
+    {
+      "cmd": "def build_mesh(lc, fname=\"tesla.msh\"):\n    gmsh.clear(); gmsh.model.add(\"tv\")\n    gmsh.model.occ.importShapes(\"fluid_face_m.step\")\n    gmsh.model.occ.synchronize()\n    s0 = gmsh.model.getEntities(2)[0][1]\n    gmsh.model.occ.translate([(2, s0)], 0, 0, -gmsh.model.occ.getCenterOfMass(2, s0)[2])\n    gmsh.model.occ.synchronize()\n    gmsh.option.setNumber(\"Mesh.MeshSizeMin\", lc); gmsh.option.setNumber(\"Mesh.MeshSizeMax\", lc)\n    gmsh.option.setNumber(\"Mesh.Algorithm\", 8)\n    gmsh.option.setNumber(\"Mesh.RecombineAll\", 1)\n    gmsh.option.setNumber(\"Mesh.RecombinationAlgorithm\", 1)\n    gmsh.model.occ.extrude([(2, s0)], 0, 0, 0.001, numElements=[1], recombine=True)\n    gmsh.model.occ.synchronize()\n    bk, fr, inl, outl, wl = [], [], [], [], []\n    for d, t in gmsh.model.getEntities(2):\n        cx, cy, cz = gmsh.model.occ.getCenterOfMass(d, t)\n        if abs(cz) < 1e-9: bk.append(t)\n        elif abs(cz - 0.001) < 1e-9: fr.append(t)\n        elif cx < 1e-6: inl.append(t)\n        elif cx > 0.11999: outl.append(t)\n        else: wl.append(t)\n    assert abs(sum(gmsh.model.occ.getMass(2, t) for t in inl) - 6e-6) < 1e-12\n    assert abs(sum(gmsh.model.occ.getMass(2, t) for t in outl) - 6e-6) < 1e-12\n    gmsh.model.addPhysicalGroup(2, inl, tag=1, name=\"inlet\")\n    gmsh.model.addPhysicalGroup(2, outl, tag=2, name=\"outlet\")\n    gmsh.model.addPhysicalGroup(2, wl, tag=3, name=\"walls\")\n    gmsh.model.addPhysicalGroup(2, bk + fr, tag=4, name=\"frontAndBack\")\n    gmsh.model.addPhysicalGroup(3, [1], tag=5, name=\"fluid\")\n    gmsh.model.mesh.generate(3)\n    gmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\n    gmsh.write(fname)\n    return len(gmsh.model.mesh.getElementsByType(5)[0]), len(gmsh.model.mesh.getElementsByType(6)[0])\n\nprint(\"hex, prism =\", build_mesh(1.5e-3))\nr = subprocess.run([\"gmshToFoam\", \"tesla.msh\"], capture_output=True, text=True)\nprint([l for l in r.stdout.splitlines() if \"name\" in l or \"Mapping\" in l or \"undefined\" in l])",
+      "exit_code": 0,
+      "seconds": 0.3512847628444433,
+      "output": "hex, prism = (1141, 0)\n['Starting to read physical names at line 5', 'Physical names:5', 'Mapping region 4 to Foam patch 0', 'Mapping region 1 to Foam patch 1', 'Mapping region 3 to Foam patch 2', 'Mapping region 2 to Foam patch 3', 'Mapping region 5 to Foam cellZone 0', 'Patch 0 gets name frontAndBack', 'Patch 1 gets name inlet', 'Patch 2 gets name walls', 'Patch 3 gets name outlet', '    Found 2664 undefined faces in mesh; adding to default patch defaultFaces']",
+      "image": ""
+    },
+    {
+      "cmd": "bf = \"constant/polyMesh/boundary\"\nt = open(bf).read()\ndef settype(txt, name, ftype):\n    k = txt.index(name + \"\\n\")\n    seg = txt[k:k + 400]\n    return txt[:k] + seg.replace(\"type            patch;\", \"type            %s;\" % ftype, 1) + txt[k + 400:]\nt = settype(t, \"frontAndBack\", \"empty\")\nt = settype(t, \"walls\", \"wall\")\nopen(bf, \"w\").write(t)\nprint(open(bf).read()[t.index(\"4\\n(\"):][:900])\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(r.stdout[-2200:])",
+      "exit_code": 0,
+      "seconds": 0.20095798838883638,
+      "output": "4\n(\n    frontAndBack\n    {\n        type            empty;\n        physicalType    patch;\n        nFaces          2282;\n        startFace       2091;\n    }\n    inlet\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          4;\n        startFace       4373;\n    }\n    walls\n    {\n        type            wall;\n        physicalType    patch;\n        nFaces          374;\n        startFace       4377;\n    }\n    outlet\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          4;\n        startFace       4751;\n    }\n)\n\n// ************************************************************************* //\n\n/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh\nDate   : Sep 12 2026\nTime   : 08:55:29\nHost   : yc-demo\nPID    : 209333\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T3-T3/t3\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(\"\\n\".join(r.stdout.splitlines()[-45:]))",
+      "exit_code": 0,
+      "seconds": 0.2012497279793024,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh\nDate   : Sep 12 2026\nTime   : 08:55:33\nHost   : yc-demo\nPID    : 209336\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T3-T3/t3\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0",
+      "image": ""
+    },
+    {
+      "cmd": "print(\"rc =\", r.returncode)\nprint(\"STDERR:\", r.stderr[-2000:])",
+      "exit_code": 0,
+      "seconds": 0.050617911852896214,
+      "output": "rc = 1\nSTDERR: \n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T3-T3/t3/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\nr = subprocess.run([\"foamToVTK\", \"-ascii\", \"-latestTime\"], capture_output=True, text=True)\nprint(\"rc\", r.returncode, r.stdout[-300:])\nprint(sorted(os.listdir(\"VTK\")) if os.path.isdir(\"VTK\") else sorted(os.listdir(\".\")))",
+      "exit_code": 0,
+      "seconds": 0.4015203155577183,
+      "output": "rc 1 ied files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nInitial memory 217536 kB\nCreate mesh for time = 0\n\n[]\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm",
+      "image": ""
+    },
+    {
+      "cmd": "def foam_list(path):\n    raw = open(path).read()\n    body = raw[raw.index(\"// * * *\"):]\n    k = body.index(\"\\n(\")\n    n = int(body[:k].strip().split(\"\\n\")[-1])\n    return body[k+2: body.rindex(\")\")], n\n\npts_txt, npts = foam_list(\"constant/polyMesh/points\")\npts = np.array([[float(v) for v in l.strip(\"() \\n\").split()]\n                for l in pts_txt.strip().splitlines() if l.strip()])\nfc_txt, nfc = foam_list(\"constant/polyMesh/faces\")\nfaces = [[int(v) for v in l[l.index(\"(\")+1:l.index(\")\")].split()]\n         for l in fc_txt.strip().splitlines() if \"(\" in l]\nprint(\"points\", pts.shape, \"faces\", len(faces), nfc)\nbnd = open(\"constant/polyMesh/boundary\").read()\npat = dict(re.findall(r\"(\\w+)\\s*\\{[^}]*?nFaces\\s+(\\d+);\\s*startFace\\s+(\\d+);\", bnd, re.S))\npat = {k: (int(v[0]), int(v[1])) for k, v in\n       {m[0]: (m[1], m[2]) for m in re.findall(r\"(\\w+)\\s*\\n\\s*\\{[^}]*?nFaces\\s+(\\d+);\\s*startFace\\s+(\\d+);\", bnd, re.S)}.items()}\nprint(pat)\nfig, ax = plt.subplots(figsize=(13, 3.4))\nfor nm, (nf, sf) in pat.items():\n    if nm == \"frontAndBack\": continue\n    c = np.array([pts[faces[i]].mean(axis=0) for i in range(sf, sf+nf)])\n    ax.plot(c[:, 0], c[:, 1], '.', ms=3, label=\"%s (%d)\" % (nm, nf))\nax.legend(loc=\"upper right\"); ax.set_aspect(\"equal\"); plt.show()",
+      "exit_code": 1,
+      "seconds": 0.050622512586414814,
+      "output": "points (2658, 3) faces 4755 4755\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[27]\u001b[39m\u001b[32m, line 16\u001b[39m\n\u001b[32m     12\u001b[39m faces = [[int(v) for v in l[l.index(\"(\")+1:l.index(\")\")].split()]\n\u001b[32m     13\u001b[39m          \u001b[38;5;28;01mfor\u001b[39;00m l \u001b[38;5;28;01min\u001b[39;00m fc_txt.strip().splitlines() \u001b[38;5;28;01mif\u001b[39;00m \u001b[33m\"(\"\u001b[39m \u001b[38;5;28;01min\u001b[39;00m l]\n\u001b[32m     14\u001b[39m print(\u001b[33m\"points\"\u001b[39m, pts.shape, \u001b[33m\"faces\"\u001b[39m, len(faces), nfc)\n\u001b[32m     15\u001b[39m bnd = open(\u001b[33m\"constant/polyMesh/boundary\"\u001b[39m).read()\n\u001b[32m---> \u001b[39m\u001b[32m16\u001b[39m pat = dict(re.findall(\u001b[33mr\"(\\w+)\\s*\\{[^}]*?nFaces\\s+(\\d+);\\s*startFace\\s+(\\d+);\"\u001b[39m, bnd, re.S))\n\u001b[32m     17\u001b[39m pat = {k: (int(v[0]), int(v[1])) for k, v in\n\u001b[32m     18\u001b[39m        {m[\u001b[32m0\u001b[39m]: (m[\u001b[32m1\u001b[39m], m[\u001b[32m2\u001b[39m]) \u001b[38;5;28;01mfor\u001b[39;00m m \u001b[38;5;28;01min\u001b[39;00m re.findall(\u001b[33mr\"(\\w+)\\s*\\n\\s*\\{[^}]*?nFaces\\s+(\\d+);\\s*startFace\\s+(\\d+);\"\u001b[39m, bnd, re.S)}.items()}\n\u001b[32m     19\u001b[39m print(pat)\n\n\u001b[31mValueError\u001b[39m: dictionary update sequence element #0 has length 3; 2 is required",
+      "image": ""
+    },
+    {
+      "cmd": "praw = open(\"constant/polyMesh/points\").read()\npts = np.array(re.findall(r\"\\(([-\\d.eE+ ]+)\\)\", praw.split(\"// * * *\")[-1]))\npts = np.array([[float(v) for v in s.split()] for s in pts])\nfraw = open(\"constant/polyMesh/faces\").read().split(\"// * * *\")[-1]\nfaces = [[int(v) for v in s.split()] for s in re.findall(r\"\\(([\\d ]+)\\)\", fraw)]\nbnd = open(\"constant/polyMesh/boundary\").read()\npat = {m[0]: (int(m[1]), int(m[2])) for m in\n       re.findall(r\"(\\w+)\\s*\\n\\s*\\{.*?nFaces\\s+(\\d+);\\s*startFace\\s+(\\d+);\", bnd, re.S)}\nprint(\"points\", pts.shape, \"faces\", len(faces), \"patches\", pat)\nfig, ax = plt.subplots(figsize=(13, 3.4))\nfor nm, (nf, sf) in pat.items():\n    if nm == \"frontAndBack\": continue\n    c = np.array([pts[faces[i]].mean(axis=0) for i in range(sf, sf+nf)])\n    ax.plot(c[:, 0]*1e3, c[:, 1]*1e3, '.', ms=3, label=\"%s (%d)\" % (nm, nf))\n    print(nm, \"x range mm: %.2f .. %.2f\" % (c[:,0].min()*1e3, c[:,0].max()*1e3))\nax.legend(loc=\"upper right\"); ax.set_aspect(\"equal\"); plt.show()",
+      "exit_code": 0,
+      "seconds": 0.18148637656122446,
+      "output": "points (2658, 3) faces 4755 patches {'FoamFile': (2282, 2091), 'inlet': (4, 4373), 'walls': (374, 4377), 'outlet': (4, 4751)}\nFoamFile x range mm: 0.63 .. 119.27\ninlet x range mm: 0.00 .. 0.00\nwalls x range mm: 0.04 .. 119.28\noutlet x range mm: 120.00 .. 120.00",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "print(\"hex, prism =\", build_mesh(0.5e-3))\nr = subprocess.run([\"gmshToFoam\", \"tesla.msh\"], capture_output=True, text=True)\nprint([l for l in r.stdout.splitlines() if \"gets name\" in l])\nt = open(bf).read()\nt = settype(t, \"frontAndBack\", \"empty\")\nt = settype(t, \"walls\", \"wall\")\nopen(bf, \"w\").write(t)\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(\"rc\", r.returncode)\nprint(\"\\n\".join(r.stdout.splitlines()[-32:]))",
+      "exit_code": 0,
+      "seconds": 1.904952198266983,
+      "output": "hex, prism = (8539, 0)\n['Patch 0 gets name frontAndBack', 'Patch 1 gets name inlet', 'Patch 2 gets name walls', 'Patch 3 gets name outlet']\nrc 1\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh\nDate   : Sep 12 2026\nTime   : 08:56:40\nHost   : yc-demo\nPID    : 209377\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T3-T3/t3\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 16543,
+      "fenced": true,
+      "text_chars": 1803,
+      "thinking_chars": 14621,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789202872.366774
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "end_turn",
+      "output_tokens": 6360,
+      "fenced": true,
+      "text_chars": 1529,
+      "thinking_chars": 4813,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789202969.3959117
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "end_turn",
+      "output_tokens": 787,
+      "fenced": true,
+      "text_chars": 764,
+      "thinking_chars": 448,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789202982.1432598
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "end_turn",
+      "output_tokens": 664,
+      "fenced": true,
+      "text_chars": 664,
+      "thinking_chars": 360,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789202992.966223
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "end_turn",
+      "output_tokens": 925,
+      "fenced": true,
+      "text_chars": 832,
+      "thinking_chars": 868,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203006.8130028
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "end_turn",
+      "output_tokens": 827,
+      "fenced": true,
+      "text_chars": 759,
+      "thinking_chars": 640,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203019.1545324
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "end_turn",
+      "output_tokens": 2003,
+      "fenced": true,
+      "text_chars": 896,
+      "thinking_chars": 1408,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203047.512352
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "end_turn",
+      "output_tokens": 1402,
+      "fenced": true,
+      "text_chars": 711,
+      "thinking_chars": 1228,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203068.0446854
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "end_turn",
+      "output_tokens": 2041,
+      "fenced": true,
+      "text_chars": 939,
+      "thinking_chars": 1641,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203099.5275555
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "end_turn",
+      "output_tokens": 1743,
+      "fenced": true,
+      "text_chars": 1286,
+      "thinking_chars": 1106,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203123.6474214
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "end_turn",
+      "output_tokens": 749,
+      "fenced": true,
+      "text_chars": 681,
+      "thinking_chars": 661,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203134.485423
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "end_turn",
+      "output_tokens": 1530,
+      "fenced": true,
+      "text_chars": 522,
+      "thinking_chars": 1234,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203156.546907
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "end_turn",
+      "output_tokens": 1381,
+      "fenced": true,
+      "text_chars": 808,
+      "thinking_chars": 1411,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203178.1556675
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "end_turn",
+      "output_tokens": 434,
+      "fenced": true,
+      "text_chars": 472,
+      "thinking_chars": 524,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203184.7314277
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "end_turn",
+      "output_tokens": 710,
+      "fenced": true,
+      "text_chars": 1120,
+      "thinking_chars": 349,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203194.49097
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "end_turn",
+      "output_tokens": 1185,
+      "fenced": true,
+      "text_chars": 739,
+      "thinking_chars": 855,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203214.3981879
+    },
+    {
+      "turn": 17,
+      "steps": 16,
+      "stop_reason": "end_turn",
+      "output_tokens": 1543,
+      "fenced": true,
+      "text_chars": 908,
+      "thinking_chars": 1226,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203236.4374979
+    },
+    {
+      "turn": 18,
+      "steps": 17,
+      "stop_reason": "end_turn",
+      "output_tokens": 824,
+      "fenced": true,
+      "text_chars": 1261,
+      "thinking_chars": 292,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203246.3785594
+    },
+    {
+      "turn": 19,
+      "steps": 18,
+      "stop_reason": "end_turn",
+      "output_tokens": 1163,
+      "fenced": true,
+      "text_chars": 1276,
+      "thinking_chars": 580,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203260.8583846
+    },
+    {
+      "turn": 20,
+      "steps": 19,
+      "stop_reason": "end_turn",
+      "output_tokens": 510,
+      "fenced": true,
+      "text_chars": 759,
+      "thinking_chars": 359,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203268.3245676
+    },
+    {
+      "turn": 21,
+      "steps": 20,
+      "stop_reason": "end_turn",
+      "output_tokens": 1455,
+      "fenced": true,
+      "text_chars": 327,
+      "thinking_chars": 1683,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203288.879385
+    },
+    {
+      "turn": 22,
+      "steps": 21,
+      "stop_reason": "end_turn",
+      "output_tokens": 2570,
+      "fenced": true,
+      "text_chars": 2207,
+      "thinking_chars": 1561,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203319.0327015
+    },
+    {
+      "turn": 23,
+      "steps": 22,
+      "stop_reason": "end_turn",
+      "output_tokens": 591,
+      "fenced": true,
+      "text_chars": 1125,
+      "thinking_chars": 199,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203329.2444544
+    },
+    {
+      "turn": 24,
+      "steps": 23,
+      "stop_reason": "end_turn",
+      "output_tokens": 189,
+      "fenced": true,
+      "text_chars": 187,
+      "thinking_chars": 152,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203333.4792192
+    },
+    {
+      "turn": 25,
+      "steps": 24,
+      "stop_reason": "end_turn",
+      "output_tokens": 81,
+      "fenced": true,
+      "text_chars": 76,
+      "thinking_chars": 175,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203336.9011047
+    },
+    {
+      "turn": 26,
+      "steps": 25,
+      "stop_reason": "end_turn",
+      "output_tokens": 926,
+      "fenced": false,
+      "text_chars": 1979,
+      "thinking_chars": 77,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203349.773944
+    },
+    {
+      "turn": 27,
+      "steps": 25,
+      "stop_reason": "end_turn",
+      "output_tokens": 234,
+      "fenced": true,
+      "text_chars": 442,
+      "thinking_chars": 76,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203354.1268091
+    },
+    {
+      "turn": 28,
+      "steps": 26,
+      "stop_reason": "end_turn",
+      "output_tokens": 1138,
+      "fenced": true,
+      "text_chars": 1456,
+      "thinking_chars": 414,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203369.996921
+    },
+    {
+      "turn": 29,
+      "steps": 27,
+      "stop_reason": "end_turn",
+      "output_tokens": 732,
+      "fenced": true,
+      "text_chars": 1102,
+      "thinking_chars": 301,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203379.1396708
+    },
+    {
+      "turn": 30,
+      "steps": 28,
+      "stop_reason": "end_turn",
+      "output_tokens": 1385,
+      "fenced": true,
+      "text_chars": 1780,
+      "thinking_chars": 646,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203398.6575553
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "skipped",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "skipped",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T3-T3/t3/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T3-T3/t3/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "skipped",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T3-T3/t3/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T3-T3/t3/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "skipped",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "skipped",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "skipped",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T3-T3/t3/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T3-T3/t3/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "number of bypass loops, 4",
+      "measured": null
+    },
+    {
+      "property": "channel width, 6 mm, in the main channel and in a loop",
+      "measured": null
+    },
+    {
+      "property": "overall length, ~120 mm",
+      "measured": null
+    },
+    {
+      "property": "**every loop both branches from and rejoins the main channel** \u2014 the fluid domain is one connected region with no isolated pocket and no loop that dead-ends",
+      "measured": null
+    },
+    {
+      "property": "the mesh is one cell thick with both side patches `empty`",
+      "measured": null
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 30,
+    "steps": 28,
+    "seconds": 760.1,
+    "killed": false,
+    "first_mesh_step": 19,
+    "first_mesh_turn": 20
+  }
+}

@@ -1,0 +1,522 @@
+# -- cell 1 (168.8s, exit 0)
+import os, subprocess
+from build123d import *
+
+D = 0.040          # sphere diameter [m]
+R = D / 2.0
+
+sphere = Sphere(radius=R)
+
+print("volume  :", sphere.volume, " expected", 4/3*3.141592653589793*R**3)
+print("area    :", sphere.area,   " expected", 4*3.141592653589793*R**2)
+print("bbox    :", sphere.bounding_box())
+os.makedirs("constant/triSurface", exist_ok=True)
+export_stl(sphere, "constant/triSurface/sphere.stl", tolerance=1e-5, angular_tolerance=0.1)
+print(os.path.getsize("constant/triSurface/sphere.stl"), "bytes")
+# -- output
+volume  : 3.351032163829113e-05  expected 3.351032163829113e-05
+area    : 0.005026548245743669  expected 0.005026548245743669
+bbox    : bbox: -0.02 <= x <= 0.02, -0.02 <= y <= 0.02, -0.02 <= z <= 0.02
+50305384 bytes
+
+# -- cell 2 (7.8s, exit 0)
+import struct
+export_stl(sphere, "constant/triSurface/sphere.stl", tolerance=1e-4, angular_tolerance=0.3)
+sz = os.path.getsize("constant/triSurface/sphere.stl")
+with open("constant/triSurface/sphere.stl","rb") as f:
+    head = f.read(84)
+ntri = struct.unpack("<I", head[80:84])[0]
+print(sz, "bytes,", ntri, "triangles, header:", head[:40])
+# -- output
+5066284 bytes, 101324 triangles, header: b'STL Exported by Open CASCADE Technology '
+
+# -- cell 3 (2.3s, exit 0)
+for tol, ang in [(5e-4,0.5),(2e-3,0.5),(1e-2,1.0)]:
+    export_stl(sphere, "/tmp/s.stl", tolerance=tol, angular_tolerance=ang)
+    with open("/tmp/s.stl","rb") as f: h=f.read(84)
+    print(tol, ang, struct.unpack("<I", h[80:84])[0])
+# -- output
+0.0005 0.5 20804
+0.002 0.5 5930
+0.01 1.0 1940
+
+# -- cell 4 (1.5s, exit 0)
+import numpy as np
+export_stl(sphere, "constant/triSurface/sphere.stl", tolerance=5e-4, angular_tolerance=0.5)
+raw = open("constant/triSurface/sphere.stl","rb").read()
+n = struct.unpack("<I", raw[80:84])[0]
+arr = np.frombuffer(raw[84:84+n*50].reshape if False else raw[84:84+n*50], dtype=np.uint8).reshape(n,50)
+verts = np.frombuffer(arr[:,12:48].tobytes(), dtype="<f4").reshape(-1,3).astype(float)
+r = np.linalg.norm(verts, axis=1)
+print("tris", n, "vertex radius min/max:", r.min(), r.max(), "target", R)
+# facet centroid radius -> sag
+c = verts.reshape(n,3,3).mean(axis=1)
+print("max sag:", R - np.linalg.norm(c,axis=1).min())
+# -- output
+tris 20804 vertex radius min/max: 0.01999999901960995 0.020000000943475964 target 0.02
+max sag: 1.742134752998406e-05
+
+# -- cell 5 (0.3s, exit 0)
+XMIN, XMAX = -5*D, 15*D
+YMIN, YMAX = -5*D, 5*D
+ZMIN, ZMAX = -5*D, 5*D
+CELL = 0.02
+NX = int(round((XMAX-XMIN)/CELL)); NY = int(round((YMAX-YMIN)/CELL)); NZ = int(round((ZMAX-ZMIN)/CELL))
+print("domain", XMIN, XMAX, YMIN, YMAX, ZMIN, ZMAX, "cells", NX, NY, NZ, NX*NY*NZ)
+
+os.makedirs("system", exist_ok=True)
+HEAD = """FoamFile{{ version 2.0; format ascii; class {cls}; object {obj}; }}\n"""
+
+blockMeshDict = f"""/*--------------------------------*- C++ -*----------------------------------*/
+FoamFile{{ version 2.0; format ascii; class dictionary; object blockMeshDict; }}
+
+scale 1;
+
+vertices
+(
+    ({XMIN} {YMIN} {ZMIN}) ({XMAX} {YMIN} {ZMIN}) ({XMAX} {YMAX} {ZMIN}) ({XMIN} {YMAX} {ZMIN})
+    ({XMIN} {YMIN} {ZMAX}) ({XMAX} {YMIN} {ZMAX}) ({XMAX} {YMAX} {ZMAX}) ({XMIN} {YMAX} {ZMAX})
+);
+
+blocks ( hex (0 1 2 3 4 5 6 7) ({NX} {NY} {NZ}) simpleGrading (1 1 1) );
+
+edges ();
+
+boundary
+(
+    inlet    {{ type patch; faces ( (0 4 7 3) ); }}
+    outlet   {{ type patch; faces ( (1 2 6 5) ); }}
+    farfield {{ type patch; faces ( (0 1 5 4) (3 7 6 2) (0 3 2 1) (4 5 6 7) ); }}
+);
+
+mergePatchPairs ();
+"""
+open("system/blockMeshDict","w").write(blockMeshDict)
+
+controlDict = """FoamFile{ version 2.0; format ascii; class dictionary; object controlDict; }
+application simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;
+writePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;
+"""
+open("system/controlDict","w").write(controlDict)
+open("system/fvSchemes","w").write("""FoamFile{ version 2.0; format ascii; class dictionary; object fvSchemes; }
+ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;}
+laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;}
+snGradSchemes{default corrected;}
+""")
+open("system/fvSolution","w").write("""FoamFile{ version 2.0; format ascii; class dictionary; object fvSolution; }
+solvers{} SIMPLE{nNonOrthogonalCorrectors 0;}
+""")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-800:], r.stderr[-500:])
+# -- output
+domain -0.2 0.6 -0.2 0.2 -0.2 0.2 cells 40 20 20 16000
+0 of defined boundary faces : 6
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.02 .. 0.02
+        j : 0.02 .. 0.02
+        k : 0.02 .. 0.02
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.2 -0.2 -0.2) (0.6 0.2 0.2)
+  nPoints: 18081
+  nCells: 16000
+  nFaces: 50000
+  nInternalFaces: 46000
+----------------
+Patches
+----------------
+  patch 0 (start: 46000 size: 400) name: inlet
+  patch 1 (start: 46400 size: 400) name: outlet
+  patch 2 (start: 46800 size: 3200) name: farfield
+
+End
+
+# -- cell 6 (6.5s, exit 0)
+snappy = """FoamFile{ version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }
+
+castellatedMesh true;
+snap            true;
+addLayers       false;
+
+geometry
+{
+    sphere.stl { type triSurfaceMesh; name sphere; }
+    wakeBox { type searchableBox; min (-0.06 -0.06 -0.06); max (0.30 0.06 0.06); }
+}
+
+castellatedMeshControls
+{
+    maxLocalCells 2000000;
+    maxGlobalCells 5000000;
+    minRefinementCells 10;
+    nCellsBetweenLevels 3;
+    maxLoadUnbalance 0.1;
+    resolveFeatureAngle 30;
+    allowFreeStandingZoneFaces true;
+    features ();
+    refinementSurfaces
+    {
+        sphere { level (3 3); patchInfo { type wall; } }
+    }
+    refinementRegions
+    {
+        wakeBox { mode inside; levels ((1e15 2)); }
+    }
+    locationInMesh (0.3 0.1 0.1);
+}
+
+snapControls
+{
+    nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+    nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true;
+    multiRegionFeatureSnap false;
+}
+
+addLayersControls
+{
+    relativeSizes true;
+    layers { sphere { nSurfaceLayers 5; } }
+    expansionRatio 1.2;
+    finalLayerThickness 0.5;
+    minThickness 0.1;
+    nGrow 0;
+    featureAngle 120;
+    nRelaxIter 5;
+    nSmoothSurfaceNormals 1;
+    nSmoothNormals 3;
+    nSmoothThickness 10;
+    maxFaceThicknessRatio 0.5;
+    maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle 90;
+    nBufferCellsNoExtrude 0;
+    nLayerIter 50;
+    nRelaxedIter 20;
+}
+
+meshQualityControls
+{
+    maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4;
+    maxConcave 80; minVol 1e-13; minTetQuality 1e-15; minArea -1;
+    minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02; minVolRatio 0.01;
+    minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75;
+}
+
+writeFlags ( );
+mergeTolerance 1e-6;
+"""
+open("system/snappyHexMeshDict","w").write(snappy)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode); print(r.stdout[-1500:]); print(r.stderr[-500:])
+# -- output
+0
+---------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:64819  faces:201743  points:72487
+Cells per refinement level:
+    0	14724
+    1	5024
+    2	40647
+    3	4424
+Writing mesh to time constant
+Wrote mesh in = 0.14 s.
+Mesh snapped in = 4.42 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 6.24 s.
+End
+
+# -- cell 7 (0.3s, exit 1)
+import pyvista as pv
+pv.start_xvfb() if False else None
+open("case.foam","w").write("")
+rd = pv.OpenFOAMReader("case.foam"); rd.set_constant_data(True)
+mesh = rd.read()
+internal = mesh["internalMesh"]
+bnd = mesh["boundary"]
+print(internal.n_cells, list(bnd.keys()))
+sl = internal.slice(normal="z", origin=(0,0,0))
+p = pv.Plotter(off_screen=True, window_size=(1400,700))
+p.add_mesh(sl, show_edges=True, color="lightgray", line_width=0.5)
+p.add_mesh(bnd["sphere"], color="red")
+p.view_xy(); p.camera.zoom(1.4)
+p.screenshot("look_slice.png")
+print("ok")
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[7][39m[32m, line 4[39m
+[32m      1[39m [38;5;28;01mimport[39;00m pyvista [38;5;28;01mas[39;00m pv
+[32m      2[39m pv.start_xvfb() [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m      3[39m open([33m"case.foam"[39m,[33m"w"[39m).write([33m""[39m)
+[32m----> [39m[32m4[39m rd = pv.OpenFOAMReader([33m"case.foam"[39m); rd.set_constant_data([38;5;28;01mTrue[39;00m)
+[32m      5[39m mesh = rd.read()
+[32m      6[39m internal = mesh[[33m"internalMesh"[39m]
+[32m      7[39m bnd = mesh[[33m"boundary"[39m]
+
+[31mAttributeError[39m: 'OpenFOAMReader' object has no attribute 'set_constant_data'
+
+# -- cell 8 (0.4s, exit 0)
+rd = pv.OpenFOAMReader("case.foam")
+rd.enable_all_patch_arrays()
+mesh = rd.read()
+print(mesh.keys())
+internal = mesh["internalMesh"]
+bnd = mesh["boundary"]
+print(internal.n_cells, list(bnd.keys()))
+sl = internal.slice(normal="z", origin=(0,0,0))
+p = pv.Plotter(off_screen=True, window_size=(1400,700))
+p.add_mesh(sl, show_edges=True, color="lightgray", line_width=0.5)
+p.add_mesh(bnd["sphere"], color="red")
+p.view_xy(); p.camera.zoom(1.4)
+p.screenshot("look_slice.png")
+print("ok")
+# -- output
+['internalMesh', 'boundary']
+64819 ['inlet', 'outlet', 'farfield', 'sphere']
+ok
+
+[0m[33m2026-09-12 08:42:14.131 (   3.458s) [    76D71910D780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 08:42:14.131 (   3.459s) [    76D71910D780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 08:42:14.144 (   3.471s) [    76D71910D780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 9 (0.3s, exit 0)
+import pyvista as pv
+from IPython.display import Image, display
+rd = pv.OpenFOAMReader("case.foam")
+rd.enable_all_patch_arrays()
+mesh = rd.read()
+internal, bnd = mesh["internalMesh"], mesh["boundary"]
+print(internal.n_cells, list(bnd.keys()))
+sl = internal.slice(normal="z", origin=(0,0,0))
+p = pv.Plotter(off_screen=True, window_size=(1400,700))
+p.add_mesh(sl, show_edges=True, color="lightgray", line_width=0.5)
+p.add_mesh(bnd["sphere"], color="red")
+p.view_xy(); p.camera.zoom(1.4)
+p.screenshot("look_slice.png")
+display(Image("look_slice.png"))
+# -- output
+64819 ['inlet', 'outlet', 'farfield', 'sphere']
+
+[0m[33m2026-09-12 08:42:18.977 (   8.305s) [    76D71910D780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 08:42:18.978 (   8.305s) [    76D71910D780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 10 (0.2s, exit 1)
+import numpy as np
+sph = bnd["sphere"]
+ar = sph.compute_cell_sizes(length=False, volume=False)["Area"].sum()
+b = sph.bounds
+print("sphere patch area %.6e  exact %.6e  (%.2f%%)" % (ar, 4*np.pi*R**2, 100*(ar/(4*np.pi*R**2)-1)))
+print("sphere bbox dx,dy,dz:", b[1]-b[0], b[3]-b[2], b[5]-b[4], " target D =", D)
+print("sphere centre:", [(b[1]+b[0])/2, (b[3]+b[2])/2, (b[5]+b[4])/2])
+db = internal.bounds
+print("upstream/D %.2f downstream/D %.2f y/D %.2f %.2f z/D %.2f %.2f"
+      % (-db[0]/D, db[1]/D, -db[2]/D, db[3]/D, -db[4]/D, db[5]/D))
+for k in bnd: print(k, bnd[k].n_cells)
+# -- output
+sphere patch area 5.004867e-03  exact 5.026548e-03  (-0.43%)
+sphere bbox dx,dy,dz: 0.03999260067939758 0.039985399693250656 0.03999999910593033  target D = 0.04
+sphere centre: [3.60049307346344e-06, 0.0, 0.0]
+upstream/D 5.00 downstream/D 15.00 y/D 5.00 5.00 z/D 5.00 5.00
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[10][39m[32m, line 11[39m
+[32m      7[39m print([33m"sphere centre:"[39m, [(b[[32m1[39m]+b[[32m0[39m])/[32m2[39m, (b[[32m3[39m]+b[[32m2[39m])/[32m2[39m, (b[[32m5[39m]+b[[32m4[39m])/[32m2[39m])
+[32m      8[39m db = internal.bounds
+[32m      9[39m print("upstream/D %.2f downstream/D %.2f y/D %.2f %.2f z/D %.2f %.2f"
+[32m     10[39m       % (-db[[32m0[39m]/D, db[[32m1[39m]/D, -db[[32m2[39m]/D, db[[32m3[39m]/D, -db[[32m4[39m]/D, db[[32m5[39m]/D))
+[32m---> [39m[32m11[39m [38;5;28;01mfor[39;00m k [38;5;28;01min[39;00m bnd: print(k, bnd[k].n_cells)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/composite.py:1540[39m, in [36mMultiBlock.__getitem__[39m[34m(self, index)[39m
+[32m   1538[39m     index = [38;5;28mself[39m.get_index_by_name(index)
+[32m   1539[39m [38;5;66;03m############################[39;00m
+[32m-> [39m[32m1540[39m [38;5;28;01mif[39;00m [30;43mindex[39;49m[30;43m [39;49m[30;43m<[39;49m[30;43m [39;49m[30;43m-[39;49m[30;43mself[39;49m[30;43m.[39;49m[30;43mn_blocks[39;49m [38;5;129;01mor[39;00m index >= [38;5;28mself[39m.n_blocks:
+[32m   1541[39m     msg = [33mf[39m[33m'[39m[33mindex ([39m[38;5;132;01m{[39;00mindex[38;5;132;01m}[39;00m[33m) out of range for this dataset.[39m[33m'[39m
+[32m   1542[39m     [38;5;28;01mraise[39;00m [38;5;167;01mIndexError[39;00m(msg)
+
+[31mTypeError[39m: '<' not supported between instances of 'PolyData' and 'int'
+
+# -- cell 11 (7.1s, exit 0)
+snappy_l = snappy.replace("addLayers       false;", "addLayers       true;")
+open("system/snappyHexMeshDict","w").write(snappy_l)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode)
+import re
+out = r.stdout
+i = out.find("Layer mesh :")
+print(out[out.find("Extruding")-200 if out.find("Extruding")>0 else 0:][:0])
+print("\n".join([l for l in out.splitlines() if "overall" in l or "Layer mesh" in l or "thickness" in l.lower()][-15:]))
+print(out[-700:])
+# -- output
+0
+
+- final layer thickness ('finalLayerThickness')
+patch  faces    layers avg thickness[m]
+                       near-wall overall
+displacementMedialAxis : Reducing layer thickness at 0 nodes where thickness to medial axis distance is large 
+patch  faces        layers        overall thickness
+Layer mesh : cells:68567  faces:214067  points:77325
+n = 0.94 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 6.75 s.
+End
+
+# -- cell 12 (0.1s, exit 0)
+lines = r.stdout.splitlines()
+k = [i for i,l in enumerate(lines) if "overall thickness" in l]
+for i in k:
+    print("\n".join(lines[i-2:i+6]))
+    print("---")
+# -- output
+Mesh with layers : cells:68567  faces:214067  points:77325
+
+patch  faces        layers        overall thickness
+                target   mesh     [m]       [%]
+-----  -----    -----    ----     ---       ---
+sphere 744      5        5        0.00449   100     
+
+Layer mesh : cells:68567  faces:214067  points:77325
+---
+
+# -- cell 13 (10.3s, exit 0)
+snappy_fine = (snappy
+    .replace("addLayers       false;", "addLayers       true;")
+    .replace("sphere { level (3 3); patchInfo { type wall; } }",
+             "sphere { level (4 4); patchInfo { type wall; } }")
+    .replace("nSurfaceLayers 5;", "nSurfaceLayers 6;")
+    .replace("finalLayerThickness 0.5;", "finalLayerThickness 0.4;"))
+open("system/snappyHexMeshDict","w").write(snappy_fine)
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+rf = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(rf.returncode)
+L = rf.stdout.splitlines()
+for i,l in enumerate(L):
+    if "overall thickness" in l: print("\n".join(L[i-2:i+6]))
+print(rf.stdout[-400:])
+# -- output
+0
+Mesh with layers : cells:95219  faces:300301  points:110769
+
+patch  faces        layers        overall thickness
+                target   mesh     [m]       [%]
+-----  -----    -----    ----     ---       ---
+sphere 2792     6        6        0.002     100     
+
+Layer mesh : cells:95219  faces:300301  points:110769
+          : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 9.79 s.
+End
+
+# -- cell 14 (0.7s, exit 0)
+cm = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True)
+tail = cm.stdout
+print("\n".join([l for l in tail.splitlines() if any(s in l for s in
+      ["Mesh OK","***","Max ","cells:","non-orthogonality","skewness","aspect ratio","faces","points:"])][-25:]))
+# -- output
+points:           110769
+    faces:            300301
+    internal faces:   293509
+    cells:            95219
+    faces per cell:   6.23626
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+Checking patch topology for multiply connected surfaces...
+Checking faceZone topology for multiply connected surfaces...
+    Max cell openness = 2.86531e-16 OK.
+    Max aspect ratio = 5.3965 OK.
+    Min volume = 1.9115e-10. Max volume = 8.13737e-06.  Total volume = 0.127967.  Cell volumes OK.
+    Mesh non-orthogonality Max: 38.911 average: 7.73125
+    Max skewness = 0.502481 OK.
+Mesh OK.
+
+# -- cell 15 (0.4s, exit 0)
+import pyvista as pv
+from IPython.display import Image, display
+rd2 = pv.OpenFOAMReader("case.foam"); rd2.enable_all_patch_arrays()
+m2 = rd2.read(); im, bd = m2["internalMesh"], m2["boundary"]
+sl2 = im.slice(normal="z", origin=(0,0,0)).clip_box([-0.05,0.09,-0.05,0.05,-1,1], invert=False)
+p = pv.Plotter(off_screen=True, window_size=(1200,900))
+p.add_mesh(sl2, show_edges=True, color="white", line_width=0.8)
+p.view_xy(); p.camera.zoom(1.3)
+p.screenshot("look_layers.png")
+display(Image("look_layers.png"))
+# -- output
+[0m[33m2026-09-12 08:43:30.645 (  79.972s) [    76D71910D780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 08:43:30.646 (  79.973s) [    76D71910D780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 16 (1.1s, exit 0)
+import numpy as np
+sphp = bd["sphere"]
+areas = sphp.compute_cell_sizes(length=False, volume=False)["Area"]
+cent = sphp.cell_centers().points
+# find owner cell of each wall face by nearest cell centre
+cc = im.cell_centers().points
+vol = im.compute_cell_sizes(length=False, area=False)["Volume"]
+tree = None
+from scipy.spatial import cKDTree
+tree = cKDTree(cc)
+d, idx = tree.query(cent)
+t = vol[idx] / areas
+print("first layer thickness: mean %.4e  min %.4e  max %.4e m" % (t.mean(), t.min(), t.max()))
+print("expected 0.4*1.25mm/1.2^5 = %.4e" % (0.4*0.00125/1.2**5))
+print("total layer thickness 0.002 m = %.1f%% of D" % (100*0.002/D))
+print("sphere wall faces:", sphp.n_cells, " total cells:", im.n_cells)
+# -- output
+first layer thickness: mean 2.0280e-04  min 2.0250e-04  max 2.0435e-04 m
+expected 0.4*1.25mm/1.2^5 = 2.0094e-04
+total layer thickness 0.002 m = 5.0% of D
+sphere wall faces: 2792  total cells: 95219
+

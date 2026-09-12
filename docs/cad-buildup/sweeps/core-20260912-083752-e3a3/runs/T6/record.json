@@ -1,0 +1,457 @@
+{
+  "run_id": "20260912-085642-747a",
+  "case": "T6",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T6-T6",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T6-T6/t6",
+  "started_at": "2026-09-12T08:56:43",
+  "ended_at": "2026-09-12T09:01:13",
+  "seconds": 268.9,
+  "n_turns": 20,
+  "n_steps": 19,
+  "first_mesh_step": 11,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.3075,
+  "tokens": {
+    "input": 40,
+    "cache_read": 268751,
+    "cache_write": 26431,
+    "output": 18761
+  },
+  "stopped": "done",
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import subprocess, os\np = \"/home/qiuzi/.openreynolds-buildup/work/T6-T6/geometry/customer_part.step\"\nprint(os.getcwd())\nprint(os.path.getsize(p), \"bytes\")\nwith open(p) as f:\n    head = [next(f) for _ in range(40)]\nprint(\"\".join(head))",
+      "exit_code": 0,
+      "seconds": 0.050640348345041275,
+      "output": "/home/qiuzi/.openreynolds-buildup/work/T6-T6/t6\n19387 bytes\nISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('Open CASCADE Model'),'2;1');\nFILE_NAME('Open CASCADE Shape Model','2026-09-11T03:37:11',('Author'),(\n    'Open CASCADE'),'Open CASCADE STEP processor 7.9','Open CASCADE 7.9'\n  ,'Unknown');\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\nENDSEC;\nDATA;\n#1 = APPLICATION_PROTOCOL_DEFINITION('international standard',\n  'automotive_design',2000,#2);\n#2 = APPLICATION_CONTEXT(\n  'core data for automotive mechanical design processes');\n#3 = SHAPE_DEFINITION_REPRESENTATION(#4,#10);\n#4 = PRODUCT_DEFINITION_SHAPE('','',#5);\n#5 = PRODUCT_DEFINITION('design','',#6,#9);\n#6 = PRODUCT_DEFINITION_FORMATION('','',#7);\n#7 = PRODUCT('Open CASCADE STEP translator 7.9 1',\n  'Open CASCADE STEP translator 7.9 1','',(#8));\n#8 = PRODUCT_CONTEXT('',#2,'mechanical');\n#9 = PRODUCT_DEFINITION_CONTEXT('part definition',#2,'design');\n#10 = ADVANCED_BREP_SHAPE_REPRESENTATION('',(#11,#15),#425);\n#11 = AXIS2_PLACEMENT_3D('',#12,#13,#14);\n#12 = CARTESIAN_POINT('',(0.,0.,0.));\n#13 = DIRECTION('',(0.,0.,1.));\n#14 = DIRECTION('',(1.,0.,-0.));\n#15 = MANIFOLD_SOLID_BREP('',#16);\n#16 = CLOSED_SHELL('',(#17,#167,#243,#292,#341,#368,#415));\n#17 = ADVANCED_FACE('',(#18,#137),#32,.F.);\n#18 = FACE_BOUND('',#19,.F.);\n#19 = EDGE_LOOP('',(#20,#55,#83,#111));\n#20 = ORIENTED_EDGE('',*,*,#21,.F.);\n#21 = EDGE_CURVE('',#22,#24,#26,.T.);\n#22 = VERTEX_POINT('',#23);\n#23 = CARTESIAN_POINT('',(0.,0.,0.));\n#24 = VERTEX_POINT('',#25);\n#25 = CARTESIAN_POINT('',(0.,0.,100.));\n#26 = SURFACE_CURVE('',#27,(#31,#43),.PCURVE_S1.);\n#27 = LINE('',#28,#29);\n#28 = CARTESIAN_POINT('',(0.,0.,0.));",
+      "image": ""
+    },
+    {
+      "cmd": "txt = open(p).read()\nimport re\nfor kw in [\"UNIT\",\"CONVERSION\"]:\n    for line in txt.splitlines():\n        if kw in line:\n            print(line)\n    print(\"---\")",
+      "exit_code": 0,
+      "seconds": 0.050617280416190624,
+      "output": "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#429)) GLOBAL_UNIT_ASSIGNED_CONTEXT\n  '3D Context with UNIT and UNCERTAINTY') );\n#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );\n#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );\n#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );\n#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,\n---\n---",
+      "image": ""
+    },
+    {
+      "cmd": "from build123d import *\nshp = import_step(p)\nprint(type(shp))\nsolids = shp.solids()\nprint(\"solids:\", len(solids), \"faces:\", len(shp.faces()), \"edges:\", len(shp.edges()))\nprint(\"bbox:\", shp.bounding_box())\nfor i,s in enumerate(solids):\n    print(i, \"vol\", s.volume, \"area\", s.area, \"valid\", s.is_valid())",
+      "exit_code": 1,
+      "seconds": 2.256644694134593,
+      "output": "<class 'build123d.topology.three_d.Solid'>\nsolids: 1 faces: 7 edges: 15\nbbox: bbox: 0.0 <= x <= 200.0, 0.0 <= y <= 100.0, 0.0 <= z <= 100.0\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 8\u001b[39m\n\u001b[32m      4\u001b[39m solids = shp.solids()\n\u001b[32m      5\u001b[39m print(\u001b[33m\"solids:\"\u001b[39m, len(solids), \u001b[33m\"faces:\"\u001b[39m, len(shp.faces()), \u001b[33m\"edges:\"\u001b[39m, len(shp.edges()))\n\u001b[32m      6\u001b[39m print(\u001b[33m\"bbox:\"\u001b[39m, shp.bounding_box())\n\u001b[32m      7\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m i,s \u001b[38;5;28;01min\u001b[39;00m enumerate(solids):\n\u001b[32m----> \u001b[39m\u001b[32m8\u001b[39m     print(i, \u001b[33m\"vol\"\u001b[39m, s.volume, \u001b[33m\"area\"\u001b[39m, s.area, \u001b[33m\"valid\"\u001b[39m, s.is_valid())\n\n\u001b[31mTypeError\u001b[39m: 'bool' object is not callable",
+      "image": ""
+    },
+    {
+      "cmd": "s = shp.solids()[0]\nprint(\"vol\", s.volume, \"area\", s.area, \"valid\", s.is_valid)\nfor i,f in enumerate(s.faces()):\n    print(i, f.geom_type, \"area=%.1f\"%f.area, \"center=\", tuple(round(v,2) for v in f.center()), \"normal=\", tuple(round(v,3) for v in f.normal_at(f.center())))",
+      "exit_code": 0,
+      "seconds": 0.05062414892017841,
+      "output": "vol 1748672.5877128076 area 122619.46710584816 valid True\n0 GeomType.PLANE area=8743.4 center= (0.0, 50.0, 50.0) normal= (-1.0, -0.0, 0.0)\n1 GeomType.PLANE area=20000.0 center= (100.0, 0.0, 50.0) normal= (0.0, -1.0, -0.0)\n2 GeomType.PLANE area=20000.0 center= (100.0, 50.0, 100.0) normal= (0.0, 0.0, 1.0)\n3 GeomType.PLANE area=20000.0 center= (100.0, 50.0, 0.0) normal= (-0.0, -0.0, -1.0)\n4 GeomType.PLANE area=20000.0 center= (100.0, 100.0, 50.0) normal= (-0.0, 1.0, 0.0)\n5 GeomType.CYLINDER area=25132.7 center= (100.0, 50.0, 30.0) normal= (-0.0, -0.0, 1.0)\n6 GeomType.PLANE area=8743.4 center= (200.0, 50.0, 50.0) normal= (1.0, 0.0, -0.0)",
+      "image": ""
+    },
+    {
+      "cmd": "from build123d import *\nimport numpy as np\n\nSTEP_PATH = \"/home/qiuzi/.openreynolds-buildup/work/T6-T6/geometry/customer_part.step\"\nshp = import_step(STEP_PATH)\nsolid = shp.solids()[0]\nprint(\"solids:\", len(shp.solids()), \"faces:\", len(solid.faces()), \"valid:\", solid.is_valid)\nprint(\"bbox:\", solid.bounding_box())\nprint(\"volume:\", solid.volume)\n\ncyl = [f for f in solid.faces() if f.geom_type == GeomType.CYLINDER][0]\nfrom OCP.BRepAdaptor import BRepAdaptor_Surface\nad = BRepAdaptor_Surface(cyl.wrapped)\nc = ad.Cylinder()\nax = c.Axis()\nprint(\"bore radius:\", c.Radius())\nprint(\"bore axis loc:\", ax.Location().X(), ax.Location().Y(), ax.Location().Z())\nprint(\"bore axis dir:\", ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z())\nprint(\"cyl face area:\", cyl.area, \" -> implied length:\", cyl.area/(2*np.pi*c.Radius()))",
+      "exit_code": 0,
+      "seconds": 0.050636968575417995,
+      "output": "solids: 1 faces: 7 valid: True\nbbox: bbox: 0.0 <= x <= 200.0, 0.0 <= y <= 100.0, 0.0 <= z <= 100.0\nvolume: 1748672.5877128076\nbore radius: 20.0\nbore axis loc: 0.0 50.0 50.0\nbore axis dir: 1.0 0.0 0.0\ncyl face area: 25132.741228720002  -> implied length: 200.0000000000132",
+      "image": ""
+    },
+    {
+      "cmd": "BB_L, BB_W, BB_H = 200.0, 100.0, 100.0   # mm, from the measured bounding box\nMM_TO_M = 0.001                           # STEP declares a bare LENGTH_UNIT; extents imply mm\n\nblock = Pos(BB_L/2, BB_W/2, BB_H/2) * Box(BB_L, BB_W, BB_H)\nfluid_mm = block - solid\nprint(\"fluid solids:\", len(fluid_mm.solids()), \"valid:\", fluid_mm.solids()[0].is_valid)\nprint(\"fluid bbox:\", fluid_mm.bounding_box())\nimport numpy as np\nprint(\"fluid volume  : %.3f mm^3\" % fluid_mm.volume)\nprint(\"pi*r^2*L      : %.3f mm^3\" % (np.pi*20.0**2*200.0))\nfor f in fluid_mm.faces():\n    print(\"  \", f.geom_type, \"area=%.2f\" % f.area, \"center=\", tuple(round(v,2) for v in f.center()))",
+      "exit_code": 0,
+      "seconds": 0.050609868951141834,
+      "output": "fluid solids: 1 valid: True\nfluid bbox: bbox: 0.0 <= x <= 200.0, 30.0 <= y <= 70.0, 30.0 <= z <= 70.0\nfluid volume  : 251327.412 mm^3\npi*r^2*L      : 251327.412 mm^3\n   GeomType.PLANE area=1256.64 center= (0.0, 50.0, 50.0)\n   GeomType.CYLINDER area=25132.74 center= (100.0, 50.0, 30.0)\n   GeomType.PLANE area=1256.64 center= (200.0, 50.0, 50.0)",
+      "image": ""
+    },
+    {
+      "cmd": "fluid = scale(fluid_mm, MM_TO_M)\nprint(\"fluid bbox (m):\", fluid.bounding_box())\nprint(\"fluid volume: %.6e m^3   expected %.6e\" % (fluid.volume, np.pi*0.02**2*0.2))\nbb = fluid.bounding_box()\nprint(\"length x = %.4f m, bore diameter = %.4f m\" % (bb.size.X, bb.size.Y))\nexport_step(fluid, \"fluid.step\")\nimport os; print(\"wrote fluid.step\", os.path.getsize(\"fluid.step\"), \"bytes\")",
+      "exit_code": 0,
+      "seconds": 0.05062718037515879,
+      "output": "fluid bbox (m): bbox: 0.0 <= x <= 0.2, 0.030000000000000002 <= y <= 0.07, 0.030000000000000002 <= z <= 0.07\nfluid volume: 2.513274e-04 m^3   expected 2.513274e-04\nlength x = 0.2000 m, bore diameter = 0.0400 m\nwrote fluid.step 5967 bytes",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.start_xvfb() if False else None\nverts, tris = fluid.tessellate(0.0005)\npts = np.array([(v.X, v.Y, v.Z) for v in verts])\nfaces = np.hstack([np.hstack(([3], t)) for t in tris]).astype(np.int64)\nmesh = pv.PolyData(pts, faces)\npl = pv.Plotter(off_screen=True, window_size=(900, 500))\npl.add_mesh(mesh, color=\"lightblue\", show_edges=True, edge_color=\"gray\")\npl.add_axes(); pl.camera_position = \"iso\"\npl.screenshot(\"fluid_shape.png\")\nprint(\"tessellated tris:\", len(tris))",
+      "exit_code": 0,
+      "seconds": 0.5018399134278297,
+      "output": "tessellated tris: 500\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-12 08:57:56.806 (   0.273s) [    74D0C455B780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-12 08:57:56.807 (   0.274s) [    74D0C455B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-12 08:57:56.820 (   0.286s) [    74D0C455B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": ""
+    },
+    {
+      "cmd": "import os\nfrom IPython.display import Image, display\nprint(os.path.exists(\"fluid_shape.png\"), os.path.getsize(\"fluid_shape.png\") if os.path.exists(\"fluid_shape.png\") else None)\nif os.path.exists(\"fluid_shape.png\"):\n    display(Image(\"fluid_shape.png\"))",
+      "exit_code": 0,
+      "seconds": 0.05075113009661436,
+      "output": "True 87118",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import os, textwrap, numpy as np\nfrom math import sqrt\n\nR  = 0.02    # measured bore radius, m\nL  = 0.2     # measured bore length, m\nCY, CZ = 0.05, 0.05   # measured bore axis location, m\n\nfor d in (\"system\", \"constant/polyMesh\", \"constant/triSurface\"):\n    os.makedirs(d, exist_ok=True)\n\nHEAD = \"\"\"FoamFile\n{{\n    version     2.0;\n    format      ascii;\n    class       {cls};\n    object      {obj};\n}}\n\"\"\"\n\nopen(\"system/controlDict\",\"w\").write(HEAD.format(cls=\"dictionary\",obj=\"controlDict\") + textwrap.dedent(\"\"\"\napplication     none;\nstartFrom       startTime;\nstartTime       0;\nstopAt          endTime;\nendTime         1;\ndeltaT          1;\nwriteControl    timeStep;\nwriteInterval   1;\n\"\"\"))\n\n# O-grid cross-section points (y,z), angles 45,135,225,315\nP = 0.40*R                # inner square half-width\nQ = R/sqrt(2.0)           # outer diagonal points on the circle\nang = [45,135,225,315]\ninner = [(CY+P*np.sign(np.cos(np.radians(a))), CZ+P*np.sign(np.sin(np.radians(a)))) for a in ang]\nouter = [(CY+R*np.cos(np.radians(a)), CZ+R*np.sin(np.radians(a))) for a in ang]\nprint(\"inner corners:\", [tuple(round(v,5) for v in c) for c in inner])\nprint(\"outer corners:\", [tuple(round(v,5) for v in c) for c in outer], \" |r-R| =\",\n      max(abs(np.hypot(y-CY,z-CZ)-R) for y,z in outer))\nprint(\"Q check:\", round(Q,6))",
+      "exit_code": 0,
+      "seconds": 0.05060900002717972,
+      "output": "inner corners: [(np.float64(0.058), np.float64(0.058)), (np.float64(0.042), np.float64(0.058)), (np.float64(0.042), np.float64(0.042)), (np.float64(0.058), np.float64(0.042))]\nouter corners: [(np.float64(0.06414), np.float64(0.06414)), (np.float64(0.03586), np.float64(0.06414)), (np.float64(0.03586), np.float64(0.03586)), (np.float64(0.06414), np.float64(0.03586))]  |r-R| = 3.469446951953614e-18\nQ check: 0.014142",
+      "image": ""
+    },
+    {
+      "cmd": "NC, NR, NX = 6, 4, 20   # coarse first: core, radial, axial\n\nverts = [(0.0, y, z) for (y,z) in inner] + [(0.0, y, z) for (y,z) in outer] + \\\n        [(L,   y, z) for (y,z) in inner] + [(L,   y, z) for (y,z) in outer]\n\ncore  = [0,1,2,3, 8,9,10,11]\n# segment k spans inner/outer corner k (angle A) to k+1 (angle A+90): [in(B),in(A),out(A),out(B)]\nsides = []\nfor k in range(4):\n    a, b = k, (k+1) % 4\n    sides.append([b, a, 4+a, 4+b, 8+b, 8+a, 12+a, 12+b])\n\ndef vs(v): return \"    (%.8f %.8f %.8f)\" % v\nblocks  = [\"    hex (%s) (%d %d %d) simpleGrading (1 1 1)\" % (\" \".join(map(str,core)), NC, NC, NX)]\nblocks += [\"    hex (%s) (%d %d %d) simpleGrading (1 1 1)\" % (\" \".join(map(str,s)), NC, NR, NX) for s in sides]\n\n# arc midpoints at 90,180,270,0 deg on the measured circle\narcmid = [(CY+R*np.cos(np.radians(a)), CZ+R*np.sin(np.radians(a))) for a in (90,180,270,0)]\nedges = []\nfor k in range(4):\n    a, b = 4+k, 4+((k+1) % 4)\n    my, mz = arcmid[k]\n    edges.append(\"    arc %d %d (%.8f %.8f %.8f)\" % (a, b, 0.0, my, mz))\n    edges.append(\"    arc %d %d (%.8f %.8f %.8f)\" % (a+8, b+8, L, my, mz))\n\ninlet_f  = [\"        (3 2 1 0)\"] + [\"        (%d %d %d %d)\" % (s[3], s[2], s[1], s[0]) for s in sides]\noutlet_f = [\"        (8 9 10 11)\"] + [\"        (%d %d %d %d)\" % (s[4], s[5], s[6], s[7]) for s in sides]\nwall_f   = [\"        (%d %d %d %d)\" % (s[2], s[3], s[7], s[6]) for s in sides]\n\ndict_txt = HEAD.format(cls=\"dictionary\", obj=\"blockMeshDict\") + \"\\nscale 1;\\n\\nvertices\\n(\\n\" + \\\n    \"\\n\".join(vs(v) for v in verts) + \"\\n);\\n\\nblocks\\n(\\n\" + \"\\n\".join(blocks) + \\\n    \"\\n);\\n\\nedges\\n(\\n\" + \"\\n\".join(edges) + \"\\n);\\n\\nboundary\\n(\\n\" + \\\n    \"    inlet\\n    {\\n        type patch;\\n        faces\\n        (\\n\" + \"\\n\".join(inlet_f) + \"\\n        );\\n    }\\n\" + \\\n    \"    outlet\\n    {\\n        type patch;\\n        faces\\n        (\\n\" + \"\\n\".join(outlet_f) + \"\\n        );\\n    }\\n\" + \\\n    \"    walls\\n    {\\n        type wall;\\n        faces\\n        (\\n\" + \"\\n\".join(wall_f) + \"\\n        );\\n    }\\n\" + \\\n    \");\\n\\nmergePatchPairs\\n(\\n);\\n\"\nopen(\"system/blockMeshDict\",\"w\").write(dict_txt)\nprint(dict_txt[:700])\nprint(\"... blocks:\", len(blocks), \"edges:\", len(edges))",
+      "exit_code": 0,
+      "seconds": 0.05064574908465147,
+      "output": "FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      blockMeshDict;\n}\n\nscale 1;\n\nvertices\n(\n    (0.00000000 0.05800000 0.05800000)\n    (0.00000000 0.04200000 0.05800000)\n    (0.00000000 0.04200000 0.04200000)\n    (0.00000000 0.05800000 0.04200000)\n    (0.00000000 0.06414214 0.06414214)\n    (0.00000000 0.03585786 0.06414214)\n    (0.00000000 0.03585786 0.03585786)\n    (0.00000000 0.06414214 0.03585786)\n    (0.20000000 0.05800000 0.05800000)\n    (0.20000000 0.04200000 0.05800000)\n    (0.20000000 0.04200000 0.04200000)\n    (0.20000000 0.05800000 0.04200000)\n    (0.20000000 0.06414214 0.06414214)\n    (0.20000000 0.03585786 0.06414214)\n    (0.20000000 \n... blocks: 5 edges: 8",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.returncode)\nprint(r.stdout[-2500:])\nprint(\"STDERR\", r.stderr[-1500:])",
+      "exit_code": 0,
+      "seconds": 0.20097360853105783,
+      "output": "0\n8:59:33\nHost   : yc-demo\nPID    : 213044\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T6-T6/t6\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreating block mesh from \"system/blockMeshDict\"\nCreating block edges\nNo non-planar block faces defined\nCreating topology blocks\n\nCreating topology patches - from boundary section\n\nCreating block mesh topology\n\nCheck topology\n\n\tBasic statistics\n\t\tNumber of internal faces : 8\n\t\tNumber of boundary faces : 14\n\t\tNumber of defined boundary faces : 14\n\t\tNumber of undefined boundary faces : 0\n\tChecking patch -> block consistency\n\nCreating block offsets\nCreating merge list (topological search)...\nDeleting polyMesh directory \"constant/polyMesh\"\n\nCreating polyMesh from blockMesh\nCreating patches\nCreating cells\nCreating points with scale (1 1 1)\n    Block 0 cell size :\n        i : 0.00266667 .. 0.00266667\n        j : 0.00266667 .. 0.00266667\n        k : 0.01 .. 0.01\n\n    Block 1 cell size :\n        i : 0.00266667 .. 0.00266667\n        j : 0.00217157 .. 0.00217157\n        k : 0.01 .. 0.01\n\n    Block 2 cell size :\n        i : 0.00266667 .. 0.00266667\n        j : 0.00217157 .. 0.00217157\n        k : 0.01 .. 0.01\n\n    Block 3 cell size :\n        i : 0.00266667 .. 0.00266667\n        j : 0.00217157 .. 0.00217157\n        k : 0.01 .. 0.01\n\n    Block 4 cell size :\n        i : 0.00266667 .. 0.00266667\n        j : 0.00217157 .. 0.00217157\n        k : 0.01 .. 0.01\n\nNo patch pairs to merge\n\nWriting polyMesh with 0 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (0 0.03 0.03) (0.2 0.07 0.07)\n  nPoints: 3045\n  nCells: 2640\n  nFaces: 8292\n  nInternalFaces: 7548\n----------------\nPatches\n----------------\n  patch 0 (start: 7548 size: 132) name: inlet\n  patch 1 (start: 7680 size: 132) name: outlet\n  patch 2 (start: 7812 size: 480) name: walls\n\nEnd\n\n\nSTDERR",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nout = r.stdout\ni = out.find(\"Checking geometry\")\nprint(out[i:i+3000])",
+      "exit_code": 0,
+      "seconds": 0.20102651789784431,
+      "output": "",
+      "image": ""
+    },
+    {
+      "cmd": "NC, NR, NX = 12, 8, 60          # refined\nWALL_GRADING = 0.5              # last/first cell size ratio, inner -> wall\n\nblocks  = [\"    hex (%s) (%d %d %d) simpleGrading (1 1 1)\" % (\" \".join(map(str,core)), NC, NC, NX)]\nblocks += [\"    hex (%s) (%d %d %d) simpleGrading (1 %g 1)\" % (\" \".join(map(str,s)), NC, NR, NX, WALL_GRADING)\n           for s in sides]\n\ndict_txt = HEAD.format(cls=\"dictionary\", obj=\"blockMeshDict\") + \"\\nscale 1;\\n\\nvertices\\n(\\n\" + \\\n    \"\\n\".join(vs(v) for v in verts) + \"\\n);\\n\\nblocks\\n(\\n\" + \"\\n\".join(blocks) + \\\n    \"\\n);\\n\\nedges\\n(\\n\" + \"\\n\".join(edges) + \"\\n);\\n\\nboundary\\n(\\n\" + \\\n    \"    inlet\\n    {\\n        type patch;\\n        faces\\n        (\\n\" + \"\\n\".join(inlet_f) + \"\\n        );\\n    }\\n\" + \\\n    \"    outlet\\n    {\\n        type patch;\\n        faces\\n        (\\n\" + \"\\n\".join(outlet_f) + \"\\n        );\\n    }\\n\" + \\\n    \"    walls\\n    {\\n        type wall;\\n        faces\\n        (\\n\" + \"\\n\".join(wall_f) + \"\\n        );\\n    }\\n\" + \\\n    \");\\n\\nmergePatchPairs\\n(\\n);\\n\"\nopen(\"system/blockMeshDict\",\"w\").write(dict_txt)\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[r.stdout.find(\"Mesh Information\"):][:600])",
+      "exit_code": 0,
+      "seconds": 0.3513106666505337,
+      "output": "0 Mesh Information\n----------------\n  boundingBox: (0 0.03 0.03) (0.2 0.07 0.07)\n  nPoints: 33733\n  nCells: 31680\n  nFaces: 97008\n  nInternalFaces: 93072\n----------------\nPatches\n----------------\n  patch 0 (start: 93072 size: 528) name: inlet\n  patch 1 (start: 93600 size: 528) name: outlet\n  patch 2 (start: 94128 size: 2880) name: walls\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nout = r.stdout\nprint(out[out.find(\"Checking geometry\"):][:1400])\n\nopen(\"case.foam\",\"w\").write(\"\")\nrd = pv.OpenFOAMReader(\"case.foam\")\nrd.enable_all_patch_arrays()\nblk = rd.read()\nbnd = blk[\"boundary\"]\nfor name in bnd.keys():\n    a = bnd[name].compute_cell_sizes(length=False, area=True, volume=False)[\"Area\"].sum()\n    print(\"%-8s area = %.6e m^2\" % (name, a))\nprint(\"pi*r^2   = %.6e\" % (np.pi*R**2))\nprint(\"2*pi*r*L = %.6e\" % (2*np.pi*R*L))",
+      "exit_code": 0,
+      "seconds": 0.35133799631148577,
+      "output": "inlet    area = 1.253052e-03 m^2\noutlet   area = 1.253052e-03 m^2\nwalls    area = 2.511480e-02 m^2\npi*r^2   = 1.256637e-03\n2*pi*r*L = 2.513274e-02",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\ntxt = r.stdout\ni = txt.find(\"Checking geometry\")\nprint(\"found at\", i)\nprint(txt[i:])",
+      "exit_code": 0,
+      "seconds": 0.3012551460415125,
+      "output": "found at -1",
+      "image": ""
+    },
+    {
+      "cmd": "print(\"rc\", r.returncode, \"len\", len(r.stdout))\nprint(r.stdout[-2000:])\nprint(\"ERR:\", r.stderr[-1000:])",
+      "exit_code": 0,
+      "seconds": 0.050603268668055534,
+      "output": "rc 1 len 1779\n/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh\nDate   : Sep 12 2026\nTime   : 09:00:18\nHost   : yc-demo\nPID    : 213625\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T6-T6/t6\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nERR: \n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T6-T6/t6/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "open(\"system/fvSchemes\",\"w\").write(HEAD.format(cls=\"dictionary\",obj=\"fvSchemes\") + \"\"\"\nddtSchemes { default steadyState; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\n\"\"\")\nopen(\"system/fvSolution\",\"w\").write(HEAD.format(cls=\"dictionary\",obj=\"fvSolution\") + \"\"\"\nsolvers {}\n\"\"\")\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nt = r.stdout\nprint(\"rc\", r.returncode)\nprint(t[t.find(\"Checking geometry\"):])",
+      "exit_code": 0,
+      "seconds": 0.35137595515698195,
+      "output": "rc 0\nChecking geometry...\n    Overall domain bounding box (0 0.03 0.03) (0.2 0.07 0.07)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (2.64191e-17 7.97326e-17 -7.31393e-17) OK.\n    Max cell openness = 1.9816e-16 OK.\n    Max aspect ratio = 4.36999 OK.\n    Minimum face area = 1.77778e-06. Maximum face area = 8.72042e-06.  Face area magnitudes OK.\n    Min volume = 5.92593e-09. Max volume = 1.03666e-08.  Total volume = 0.00025061.  Cell volumes OK.\n    Mesh non-orthogonality Max: 29.4084 average: 5.94998\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.565655 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "rd = pv.OpenFOAMReader(\"case.foam\"); rd.enable_all_patch_arrays()\nblk = rd.read()\ninternal = blk[\"internalMesh\"]\npl = pv.Plotter(off_screen=True, window_size=(1100, 450), shape=(1,2))\npl.subplot(0,0)\npl.add_mesh(internal.extract_surface(), color=\"lightsteelblue\", show_edges=True, line_width=0.4)\npl.add_axes(); pl.camera_position = \"iso\"\npl.subplot(0,1)\nsl = internal.slice(normal=(1,0,0), origin=(0.1,0.05,0.05))\npl.add_mesh(sl, color=\"white\", show_edges=True, line_width=0.8)\npl.view_yz(); pl.add_text(\"x=0.1 m section\", font_size=8)\npl.screenshot(\"mesh.png\")\nfrom IPython.display import Image, display\ndisplay(Image(\"mesh.png\"))\nprint(\"cells:\", internal.n_cells)",
+      "exit_code": 0,
+      "seconds": 0.2648710757493973,
+      "output": "cells: 31680\n\n\u001b[0m\u001b[33m2026-09-12 09:00:52.997 ( 176.463s) [    74D0C455B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_210581/3096227918.py:6: PyVistaFutureWarning: The default value of `algorithm` for the filter\n`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to\n`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to\nsilence this warning.\n  pl.add_mesh(internal.extract_surface(), color=\"lightsteelblue\", show_edges=True, line_width=0.4)\n\u001b[0m\u001b[33m2026-09-12 09:00:52.998 ( 176.464s) [    74D0C455B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 179,
+      "fenced": true,
+      "text_chars": 375,
+      "thinking_chars": 66,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203407.6391277
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "end_turn",
+      "output_tokens": 125,
+      "fenced": true,
+      "text_chars": 259,
+      "thinking_chars": 67,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203410.4658604
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "end_turn",
+      "output_tokens": 316,
+      "fenced": true,
+      "text_chars": 443,
+      "thinking_chars": 231,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203415.5909941
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "end_turn",
+      "output_tokens": 206,
+      "fenced": true,
+      "text_chars": 357,
+      "thinking_chars": 123,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203421.3533585
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "end_turn",
+      "output_tokens": 1358,
+      "fenced": true,
+      "text_chars": 1014,
+      "thinking_chars": 1325,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203439.7424133
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "end_turn",
+      "output_tokens": 1894,
+      "fenced": true,
+      "text_chars": 945,
+      "thinking_chars": 1725,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203466.4438264
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "end_turn",
+      "output_tokens": 283,
+      "fenced": true,
+      "text_chars": 489,
+      "thinking_chars": 111,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203471.0237865
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "end_turn",
+      "output_tokens": 366,
+      "fenced": true,
+      "text_chars": 554,
+      "thinking_chars": 231,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203476.501688
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "end_turn",
+      "output_tokens": 214,
+      "fenced": true,
+      "text_chars": 367,
+      "thinking_chars": 246,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203480.7986665
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "end_turn",
+      "output_tokens": 5492,
+      "fenced": true,
+      "text_chars": 1650,
+      "thinking_chars": 4773,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203552.668828
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "end_turn",
+      "output_tokens": 1614,
+      "fenced": true,
+      "text_chars": 2977,
+      "thinking_chars": 73,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203569.8773575
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "end_turn",
+      "output_tokens": 156,
+      "fenced": true,
+      "text_chars": 258,
+      "thinking_chars": 172,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203572.9881642
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "end_turn",
+      "output_tokens": 806,
+      "fenced": true,
+      "text_chars": 1509,
+      "thinking_chars": 157,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203585.7491868
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "end_turn",
+      "output_tokens": 1251,
+      "fenced": true,
+      "text_chars": 1390,
+      "thinking_chars": 662,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203601.8067932
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "end_turn",
+      "output_tokens": 682,
+      "fenced": true,
+      "text_chars": 631,
+      "thinking_chars": 206,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203612.4322174
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "end_turn",
+      "output_tokens": 327,
+      "fenced": true,
+      "text_chars": 306,
+      "thinking_chars": 228,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203617.859853
+    },
+    {
+      "turn": 17,
+      "steps": 16,
+      "stop_reason": "end_turn",
+      "output_tokens": 86,
+      "fenced": true,
+      "text_chars": 117,
+      "thinking_chars": 120,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203620.6539013
+    },
+    {
+      "turn": 18,
+      "steps": 17,
+      "stop_reason": "end_turn",
+      "output_tokens": 498,
+      "fenced": true,
+      "text_chars": 727,
+      "thinking_chars": 322,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203627.4870002
+    },
+    {
+      "turn": 19,
+      "steps": 18,
+      "stop_reason": "end_turn",
+      "output_tokens": 1812,
+      "fenced": true,
+      "text_chars": 830,
+      "thinking_chars": 1503,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203652.937895
+    },
+    {
+      "turn": 20,
+      "steps": 19,
+      "stop_reason": "end_turn",
+      "output_tokens": 1096,
+      "fenced": true,
+      "text_chars": 2506,
+      "thinking_chars": 49,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789203671.1373708
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "skipped",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "skipped",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T6-T6/t6/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T6-T6/t6/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "skipped",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T6-T6/t6/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T6-T6/t6/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "skipped",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "skipped",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "skipped",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T6-T6/t6/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T6-T6/t6/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    }
+  ],
+  "properties": [],
+  "watch": {
+    "alarm": null,
+    "turns": 20,
+    "steps": 19,
+    "seconds": 270.0,
+    "killed": false,
+    "first_mesh_step": 11,
+    "first_mesh_turn": 12
+  }
+}
