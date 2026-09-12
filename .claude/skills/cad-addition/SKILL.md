@@ -74,15 +74,19 @@ The table gives per-case cells before and after, a delta marked `fewer`, `more` 
 and a sign test over the cases that moved.
 
 - **The verdict is the sign test, never a row.** With one run per case a single flip is
-  sampling. Measured on T1 with Opus at medium, the same prompt lands within three to eight
-  cells of itself, which is where the noise band comes from; it is one number from one case
-  and it is worth re-measuring when the model or the brief changes.
+  sampling. The noise band is **30% of the case's own cells before**, because run-to-run
+  spread on the same prompt is roughly proportional — a case that ran 10 cells has to move
+  by 3, one that ran 28 by 9, and both mean the same thing. It was a flat eight cells once,
+  measured on T1 and applied to everything, which against a corpus running 10 to 28 cells
+  meant the smallest case could not register a change at all. Still a chosen number: re-measure
+  with `--repeat` when the model or the brief changes.
 - **Check the cases the addition was not aimed at.** If a tool for STEP unit traps moves
   the 2D authoring cases, that is a regression, and with one run across many cases it shows
   as a pattern even though no single case proves it. This check is free here and is most of
   what the breadth is for.
-- **`checkMesh` outcomes are the other axis.** Fewer cells and fewer meshes is not an
-  improvement.
+- **`passed` is the other axis.** Fewer cells and fewer passes is not an improvement. Read
+  `passed` rather than `checkMesh`: they agree on every case except one whose pass is the
+  desk refusing, where they are opposites.
 
 ## Reporting
 
