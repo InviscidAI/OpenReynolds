@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -74,19 +75,25 @@ def one(results, probe_id):
 # -- the surface itself ----------------------------------------------------------
 
 
-def test_a_closed_cube_fires_nothing(tmp_path):
+def test_a_closed_cube_reads_as_closed_wound_and_clear(tmp_path):
+    """The numbers a clean surface produces. Not "passes": these are instruments, and a
+    reading of zero free edges is a reading, not a verdict."""
     found = probes.run_all(case(tmp_path, point=(0.5, 0.5, 0.5)), {"extent_m": 1.0})
     assert probes.fired(found) == []
     assert {one(found, name).state for name in
             ("union_closure", "normals", "self_intersection", "location_in_mesh",
-             "scale")} == {probes.PASS}
+             "scale")} == {probes.MEASURED}
+    assert one(found, "union_closure").measured["open_edges"] == 0
+    assert one(found, "normals").measured["flipped_edges"] == 0
+    assert one(found, "self_intersection").measured["pairs"] == 0
+    assert one(found, "location_in_mesh").measured["classification"] == "inside"
 
 
 def test_a_face_missing_from_the_export_fires_union_closure(tmp_path):
     """The leak that gives the wrong fluid volume and still checks clean."""
     leaky = [tri for tri in CUBE if tri not in ((4, 5, 6), (4, 6, 7))]
     result = one(probes.run_all(case(tmp_path, leaky), {}), "union_closure")
-    assert result.state == probes.FIRED
+    assert result.state == probes.MEASURED
     assert result.measured["open_edges"] == 4
 
 
@@ -98,14 +105,14 @@ def test_the_closure_check_is_on_the_union_and_not_per_file(tmp_path):
     (root / "constant" / "triSurface" / "lid.stl").write_text(stl(CUBE[6:]),
                                                               encoding="utf-8")
     result = one(probes.run_all(root, {}), "union_closure")
-    assert result.state == probes.PASS and len(result.measured["files"]) == 2
+    assert result.measured["open_edges"] == 0 and len(result.measured["files"]) == 2
 
 
 def test_one_triangle_wound_backwards_fires_normals(tmp_path):
     """What snappy reads as a hole, and why it meshes the outside of the object."""
     flipped = [(0, 1, 2) if tri == (0, 2, 1) else tri for tri in CUBE]
     result = one(probes.run_all(case(tmp_path, flipped), {}), "normals")
-    assert result.state == probes.FIRED and result.measured["flipped_edges"] > 0
+    assert result.state == probes.MEASURED and result.measured["flipped_edges"] > 0
 
 
 def test_a_surface_that_crosses_itself_fires_self_intersection(tmp_path):
@@ -119,7 +126,7 @@ def test_a_surface_that_crosses_itself_fires_self_intersection(tmp_path):
                 " endloop\nendfacet\nendsolid x\n")
     (root / "constant" / "triSurface" / "fin.stl").write_text(crossing, encoding="utf-8")
     result = one(probes.run_all(root, {}), "self_intersection")
-    assert result.state == probes.FIRED and result.measured["pairs"] >= 1
+    assert result.state == probes.MEASURED and result.measured["pairs"] >= 1
 
 
 # -- the point, the scale, the manifest -------------------------------------------
@@ -129,9 +136,12 @@ def test_a_meshing_point_outside_the_part_fires(tmp_path):
     """`checkMesh` passes a perfectly valid mesh of the volume around the part, and
     nothing inside the run can see it."""
     result = one(probes.run_all(case(tmp_path, point=(5, 5, 5)), {}), "location_in_mesh")
-    assert result.state == probes.FIRED
+    assert result.state == probes.MEASURED
     assert result.measured["classification"] == "outside"
     assert result.measured["source"] == "system/snappyHexMeshDict"
+    # And `outside` is reported, never judged: T2 of the first baseline was a correct
+    # external-flow case whose seed point is outside the part by definition.
+    assert "outside" in result.why and "wrong" not in result.why
 
 
 def test_the_point_is_read_off_the_case_and_not_off_the_conversation(tmp_path):
@@ -141,29 +151,36 @@ def test_the_point_is_read_off_the_case_and_not_off_the_conversation(tmp_path):
                 manifest={"location_in_mesh": [9, 9, 9], "patches": []})
     result = one(probes.run_all(root, {}), "location_in_mesh")
     assert result.measured["point"] == [0.5, 0.5, 0.5]
-    assert result.state == probes.PASS
+    assert result.measured["classification"] == "inside"
 
 
-def test_a_case_with_no_meshing_point_is_skipped_and_not_passed(tmp_path):
-    """`skipped` is the probe saying it could not measure, which is not a clean bill."""
+def test_a_case_with_no_meshing_point_is_not_applicable_rather_than_clean(tmp_path):
+    """The instrument had nothing to read. Named `n/a` rather than `skipped` because a
+    column of `skipped` reads as a check that ran -- which is how the first baseline came
+    to report 79% of its probe verdicts as screening when nothing had been screened."""
     result = one(probes.run_all(case(tmp_path), {}), "location_in_mesh")
-    assert result.state == probes.SKIPPED
+    assert result.state == probes.NOT_APPLICABLE
 
 
-def test_millimetres_read_as_metres_fires_scale(tmp_path):
+def test_millimetres_read_as_metres_show_up_as_a_ratio_of_a_thousand(tmp_path):
     result = one(probes.run_all(case(tmp_path, scale=1000.0), {"extent_m": 1.0}), "scale")
-    assert result.state == probes.FIRED and round(result.measured["ratio"]) == 1000
+    assert result.state == probes.MEASURED and round(result.measured["ratio"]) == 1000
 
 
-def test_scale_is_measured_against_the_request_so_a_silent_request_leaves_it_skipped(tmp_path):
+def test_scale_needs_a_stated_dimension_and_the_case_that_matters_has_none(tmp_path):
+    """The probe written for the factor of a thousand cannot read the factor-of-a-thousand
+    case. T6 of the first baseline is a STEP that declares no unit, the desk guessed
+    millimetres and shipped a mesh checkMesh passed -- and this probe measures against
+    "the extent the case states", which T6 by construction does not."""
     result = one(probes.run_all(case(tmp_path, scale=1000.0), {}), "scale")
-    assert result.state == probes.SKIPPED and "state" in result.why
+    assert result.state == probes.NOT_APPLICABLE and "state" in result.why
 
 
 def test_coverage_without_a_manifest_is_skipped_rather_than_guessed(tmp_path):
     """Nothing declares which face was meant to be whose, so double-assignment is
     unmeasurable -- and saying so beats reporting a pass nobody earned."""
-    assert one(probes.run_all(case(tmp_path), {}), "coverage").state == probes.SKIPPED
+    assert one(probes.run_all(case(tmp_path), {}),
+               "coverage").state == probes.NOT_APPLICABLE
 
 
 def test_a_probe_that_throws_is_a_probe_result_and_not_a_dead_supervisor(tmp_path, monkeypatch):
@@ -176,9 +193,19 @@ def test_a_probe_that_throws_is_a_probe_result_and_not_a_dead_supervisor(tmp_pat
 # -- the registry ----------------------------------------------------------------
 
 
-def test_every_probe_starts_dormant_because_none_has_fired_yet():
-    """A check reaches the agent on the day its probe first fires, and not before."""
+def test_no_probe_carries_a_verdict_any_more():
+    """The registry measures; the supervisor judges.
+
+    Three probes fired across the first baseline and the supervisor overturned all three,
+    while the two runs that were really wrong produced no probe signal at all. Every
+    measurement was right and every verdict was wrong, so the verdicts are gone: nothing
+    in the registry returns `fired` or `pass`, and no exit code turns on one."""
     assert {probe.state for probe in probes.REGISTRY} == {probes.DORMANT}
+    root = case(Path(tempfile.mkdtemp()), point=(5, 5, 5))
+    found = probes.run_all(root, {"extent_m": 1.0})
+    assert probes.fired(found) == []
+    assert {r.state for r in found} <= {probes.MEASURED, probes.NOT_APPLICABLE,
+                                        probes.ERROR}
 
 
 def test_the_registry_document_and_the_code_hold_the_same_probes():

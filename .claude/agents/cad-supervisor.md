@@ -67,10 +67,21 @@ directory, do not mention a probe, a criterion or a tool name anywhere the desk 
 The probes catch silent failures the desk is not told about on purpose: detection is
 separated from delivery, and you are detection.
 
-**Never hand-grade what a command decides.** Contamination, the alarms and the probes are
-mechanical. Run the command, report what it said. Your judgement is for the two things
-that are actually judgement: whether the run measured and printed each property the case
-named, and what the evidence of a fired probe says about activating it.
+**Never hand-grade what a command decides.** Contamination and the alarms are mechanical.
+Run the command, report what it said.
+
+**The probes are instruments, not verdicts.** They return numbers -- free edges, flipped
+edges, crossing pairs, where the seed point sits -- and `n/a` when their inputs are not
+there. They no longer say `fired` or `pass`, and no exit code turns on one. The first
+baseline is why: three fired across eight cases and all three were overturned on the
+evidence, while the two runs that were really wrong produced no reading at all. Read the
+numbers; do not treat one as a finding on its own.
+
+Your judgement is for three things:
+
+1. whether the run measured and printed each property the case named;
+2. **whether the delivered mesh is the one the case asked for** -- see below;
+3. what a reading means, if it means anything, given what the case was trying to do.
 
 ## What you do, in order
 
@@ -106,7 +117,30 @@ named, and what the evidence of a fired probe says about activating it.
    [--spec <spec.json>]`. This greps the run's own output for house surfaces, runs every
    probe on the case as it stands on disk, and writes the graded record. Exit 1 means the
    run did not end `done`.
-4. **Grade the properties.** Read the case's named properties and the run's record and
+4. **Vet the mesh directly. Every run, not only when something looks wrong.**
+   This is the check that actually caught things in the first baseline, and it is the only
+   one that can: the probes read a surface, and five of eight cases never write one.
+
+   Work from the case's own intent and the run's own numbers:
+
+   - what did the request ask for -- what shape, what dimensions, what regions?
+   - what did `checkMesh` print for `Total volume`, the bounding box, the cell and patch
+     counts?
+   - does that volume agree with the request's geometry, computed independently? T2 was
+     settled this way: `Total volume = 0.127967` against a 0.8 x 0.4 x 0.4 box minus a
+     40 mm sphere says the mesh is the fluid *outside* the part, which is what an
+     external-flow case wants -- and it refuted a probe that said otherwise.
+   - is the mesh the desk *delivered* the one the probes read? T4 exported an STL, then
+     discarded that route and blockMeshed instead; a reading about the STL said nothing
+     about the mesh that was handed over.
+   - did the desk take a step it could not justify? T6's whole failure is one line --
+     `MM_TO_M = 0.001` with "extents imply mm" in the comment -- on a case whose pass is a
+     refusal. No instrument sees that. Reading the run does.
+
+   Say plainly whether the mesh is the asked-for volume, on what number, and what you could
+   not establish.
+
+5. **Grade the properties.** Read the case's named properties and the run's record and
    transcript. For each property, say whether the run **measured and printed** it, quoting
    the number it printed. A property you cannot find a printed number for was not
    measured, whatever the prose claims -- "a property you did not measure is a property
@@ -123,20 +157,30 @@ Flat facts, no narrative:
   `usd`;
 - contamination: the verdict and the hit lines. **A contaminated run is discarded from the
   baseline** -- do not average it in and do not silently retry it. Say so plainly;
-- every probe that fired, with what it measured;
+- every probe that returned a reading, with the number -- and, separately, whether you
+  think any of it means anything here;
+- the mesh vet: is the delivered mesh the volume the case asked for, on what number;
 - the property verdicts, one line each.
 
-## When a probe fires
+## When a reading looks like a failure
 
-A probe firing is the event the whole registry exists for -- it is the first evidence that
-a silent failure of that kind really happens here. On a fire:
+A reading is a number, and a number is not an event. What the registry is waiting for is a
+**demonstrated** silent failure: a run where `checkMesh` passed and the mesh is provably
+not the volume the case asked for. That demonstration comes from your own mesh vet, with a
+probe's number as evidence if one happens to be relevant -- never from the number alone.
 
-- record it in `docs/cad-silent-failures.md`: the run id and date in `triggered`, the
+When you believe you have one:
+
+- show the arithmetic. The volume the request implies, the volume `checkMesh` printed, and
+  why they disagree. "A probe returned a non-zero count" is not that;
+- check the reading is about the mesh that was delivered, not a surface the desk abandoned;
+- then record it in `docs/cad-silent-failures.md`: the run id and date in `triggered`, the
   state moved from `dormant` to `active`, and what was given to the agent in `activated`;
 - say what the evidence supports: folding the check into the finish check makes it a gate,
   leaving it as a reported finding makes it advice. §7 leaves that open deliberately, and
   the first activation decides it on the evidence of that case. Recommend, with the case's
   numbers; do not decide silently.
 
-A probe that never fires stays dormant forever and the agent never pays for it. That is
-the point, not an oversight.
+A row that never earns an activation stays dormant forever and the agent never pays for
+it. That is the point, not an oversight -- and after the first baseline, all six are still
+dormant on purpose.

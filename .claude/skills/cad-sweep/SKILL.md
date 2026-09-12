@@ -63,8 +63,11 @@ working, and do not call a probe yourself.
 
 ## Classifying what failed
 
-For every run that did not end `done` with `checkmesh_ok`, and every run where a probe
-fired, get one structured finding. Use the `cad-supervisor` subagent, one run at a time,
+For every run that did not end `done` with `checkmesh_ok`, get one structured finding —
+and get a mesh vet for **every** run, including the ones that ended green, because a run
+that finishes clean is exactly where a silent failure hides. A probe reading is an input to
+that vet, never a trigger for it: the probes returned three readings that looked like
+failures and were not, and stayed silent on the two runs that were. Use the `cad-supervisor` subagent, one run at a time,
 so each classification reads one record rather than the whole sweep:
 
 ```json
@@ -98,13 +101,20 @@ Write them to `<sweep-dir>/findings.jsonl`, one per line.
 3. **Failures, ranked by cost** — cases hit × cells burned × spend. Each one: the id, the
    statement, which cases, the evidence lines, and whether a probe fired alongside it. Cost
    is the ranking because cost is what an addition buys back.
-4. **Probes**: which fired, which passed, which were `skipped`. `skipped` is not a pass —
-   a sweep that keeps returning it is a corpus that is not exercising Layer B, and that is
-   worth saying out loud.
-5. **Properties**: per case, whether each named property was measured **and printed**,
+4. **Probes**: what each one *measured*, and on how many cases it could read anything at
+   all. They return numbers and `n/a` now, never `fired` or `pass` — so this section
+   reports readings, and a reading is not a finding. A probe that returns `n/a` across the
+   corpus is not screening anything, and a corpus where most do is one that is not
+   exercising Layer B; say that out loud rather than letting a column of ids read as
+   coverage.
+5. **The mesh vet**, per case: is the delivered mesh the volume the case asked for, on
+   which number, and what could not be established. This is the section that catches
+   silent failures — the probes did not, in the sweep that established this corpus, and
+   two of the eight runs were wrong in ways no instrument could see.
+6. **Properties**: per case, whether each named property was measured **and printed**,
    quoting the number. A property you cannot find a printed number for was not measured,
    whatever the closing prose claims.
-6. **Candidate corpus cases**: failures the corpus does not currently cover. A failure
+7. **Candidate corpus cases**: failures the corpus does not currently cover. A failure
    without a case is a case, not a tool.
 
 Then hand the person the ranked list and stop. The next step is theirs.

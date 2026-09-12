@@ -57,20 +57,29 @@ def test_a_dirty_environment_is_refused_with_what_resolved(tmp_path):
     assert code == 1 and not answer["clean"] and ".toolbox" in answer["why"]
 
 
-def test_a_run_that_finished_with_a_silent_failure_does_not_exit_clean(tmp_path):
-    """`done` and a fired probe at once is the pairing the probes exist for: the run
-    finished, `checkMesh` passed, and the mesh is of the volume around the part."""
+def test_the_exit_code_says_how_the_run_ended_and_nothing_about_the_probes(tmp_path):
+    """It used to also say "a probe fired", on the argument that `done` plus a firing is
+    the pairing the probes exist for -- run finishes, checkMesh passes, mesh is of the
+    volume around the part.
+
+    The first baseline tested that pairing three times and the supervisor overturned all
+    three; the seed point 0.312 m outside T2's sphere was a correct external-flow case.
+    A measurement that is right and an implication that is wrong must not become an exit
+    code, because an exit code is read by things that cannot weigh it."""
     run, case = staged(tmp_path)
     code, answer = supervise("observe", str(run), "--case", str(case))
-    assert code == 1
-    assert answer["stopped"] == "done" and answer["fired"] == ["location_in_mesh"]
+    assert code == 0
+    assert answer["stopped"] == "done"
+    assert "location_in_mesh" in answer["measured"]
     assert answer["n_turns"] == 3 and not answer["contaminated"]
 
 
-def test_the_same_run_with_the_point_inside_exits_clean(tmp_path):
+def test_a_point_inside_and_a_point_outside_exit_the_same_way(tmp_path):
+    """Both are readings. Which one is correct depends on whether the case is internal or
+    external flow, which the surface cannot say and the supervisor can."""
     run, case = staged(tmp_path, point=(0.5, 0.5, 0.5))
     code, answer = supervise("observe", str(run), "--case", str(case))
-    assert code == 0 and answer["fired"] == []
+    assert code == 0 and "location_in_mesh" in answer["measured"]
 
 
 def test_the_graded_record_keeps_the_probe_evidence_and_the_workspace_is_untouched(tmp_path):
@@ -78,8 +87,11 @@ def test_the_graded_record_keeps_the_probe_evidence_and_the_workspace_is_untouch
     before = sorted(str(p.relative_to(case)) for p in case.rglob("*"))
     supervise("observe", str(run), "--case", str(case))
     graded = record.load(run)
-    fired = [row for row in graded["probes"] if row["state"] == "fired"]
-    assert fired[0]["measured"]["classification"] == "outside"
+    read = [row for row in graded["probes"] if row["state"] == "measured"]
+    point = next(row for row in read if row["id"] == "location_in_mesh")
+    assert point["measured"]["classification"] == "outside"
+    # The number is kept; no verdict is attached to it.
+    assert not any(row["state"] in ("fired", "pass") for row in graded["probes"])
     assert sorted(str(p.relative_to(case)) for p in case.rglob("*")) == before
 
 
