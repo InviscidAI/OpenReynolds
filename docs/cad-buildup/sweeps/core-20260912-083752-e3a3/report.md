@@ -12,18 +12,31 @@
 | ended `done` | 6/8 (T3 `steps`, T5 `no-progress`) |
 | passed `checkMesh` | 6/8 as recorded — **5/8 honestly**, see T6 below |
 | cells | 138 |
-| spend | **$3.00 recorded, and that is an undercount** — see §1.1 |
+| spend | **$7.49**, and still an undercount — see §1.1 |
 
 | case | ended | cells | first mesh | checkMesh | $ | probes fired |
 |---|---|---|---|---|---|---|
-| T1 | done | 13 | 3 | ok | 0.66 | – |
-| T2 | done | 16 | 4 | ok | 0.20 | `location_in_mesh`, `normals` |
-| T3 | steps | 28 | 19 | no | 1.22 | – |
-| T4 | done | 16 | 8 | ok | 0.26 | `normals` |
+| T1 | done | 13 | 3 | ok | 1.66 | – |
+| T2 | done | 16 | 4 | ok | 0.49 | `location_in_mesh`, `normals` |
+| T3 | steps | 28 | 19 | no | 3.04 | – |
+| T4 | done | 16 | 8 | ok | 0.66 | `normals` |
 | T5 | no-progress | 22 | – | no | 0.00 | `normals`, `self_intersection` |
-| T6 | done | 19 | 11 | ok | 0.31 | – |
-| T7 | done | 10 | 3 | ok | 0.12 | – |
-| T8 | done | 14 | 4 | ok | 0.23 | – |
+| T6 | done | 19 | 11 | ok | 0.77 | – |
+| T7 | done | 10 | 3 | ok | 0.30 | – |
+| T8 | done | 14 | 4 | ok | 0.58 | – |
+
+### 1.0 The dollars in the first version of this report were 2.5x under
+
+Corrected in place. `scripts/cad_accept.py` held one untagged price table at Sonnet 5's
+rates -- Sonnet 5 being what the default preset runs -- while the sweep sets
+`mesher_model` to Opus 5 at $5/$25 per Mtok. Nothing reconciled the two, so every figure
+here was multiplied by 0.4: the corpus was reported at **$3.00** and cost **$7.49**.
+
+The *ranking* in §3 is untouched: one sweep runs one model, so the error is a uniform
+scalar and a uniform scalar cannot reorder anything. Every absolute number was wrong, and
+so would be any comparison against a sweep whose model differed -- which is what the
+baseline chain exists to make. Pricing now lives in `openreynolds/llm/presets.py` keyed by
+model, and `cad_buildup.py` refuses a model it has no rates for.
 
 ### 1.1 Two numbers in this table are wrong, and both flatter the desk
 
@@ -32,7 +45,7 @@ and `tokens {}` while `watch.json` independently logged `seconds 535.0` and the 
 spans 25 turns and 17,049 output tokens. Every other run — *including T3, which also ended
 abnormally, at `steps`* — is fully accounted. So the correlation is not "did not finish
 normally"; it is specifically **the alarm-kill path returning before the accounting runs**.
-At the corpus median of $0.0165/cell, T5's 22 cells are about **$0.36**, and by wall clock
+At the corpus median of $0.0412/cell, T5's 22 cells are about **$0.91**, and by wall clock
 its 535 s is the second-longest run in the sweep. Ranking failures by the recorded number
 puts T5 last when it belongs near the top. *This is a harness defect, not a result.*
 
@@ -55,20 +68,21 @@ void sweep was discarded rather than regraded.
 ## 3. Failures, ranked by cost
 
 Cost is `cases hit × cells burned × spend`. Attributed spend uses each case's own per-cell
-rate; T5 uses the corpus median, because T5's spend was never recorded (§1.1).
+rate; T5 uses the corpus median, because T5's spend was never recorded (§1.1). All
+figures are at Opus 5 rates after the correction in §1.0.
 
 | # | failure_id | cases | cells | $ | probe |
 |---|---|---|---|---|---|
-| 1 | `fabricated_cell_output_after_fence` | **T3, T5** | 4 direct | 0.17 | – |
-| 2 | `exported_surface_winding_inconsistent` | **T2, T5** | 1 | 0.02 | `normals` |
-| 3 | `undeclared_step_unit_guessed_instead_of_refused` | T6 | 19 | 0.31 | – |
-| 4 | `boolean_union_of_swept_bands_loses_material` | T3 | 13 | 0.56 | – |
-| 5 | `checkmesh_fatal_on_missing_case_dicts` | T3 | 3 | 0.13 | – |
-| 6 | `gmshtofoam_drops_physical_patch_names` | T3 | 3 | 0.13 | – |
-| 7 | `gmsh_recombination_fails_on_odd_boundary_division` | T3 | 2 | 0.09 | – |
-| 8 | `polymesh_boundary_parsed_by_hand_rolled_regex` | T3 | 2 | 0.09 | – |
-| 9 | `defeature_call_cut_without_printing_anything` | T5 | 2 | 0.03 | – |
-| 10 | `exported_surface_self_intersecting` | T5 | 1 | 0.02 | `self_intersection` |
+| 1 | `fabricated_cell_output_after_fence` | **T3, T5** | 4 direct | 0.43 | – |
+| 2 | `exported_surface_winding_inconsistent` | **T2, T5** | 1 | 0.05 | `normals` |
+| 3 | `undeclared_step_unit_guessed_instead_of_refused` | T6 | 19 | 0.77 | – |
+| 4 | `boolean_union_of_swept_bands_loses_material` | T3 | 13 | 1.41 | – |
+| 5 | `checkmesh_fatal_on_missing_case_dicts` | T3 | 3 | 0.33 | – |
+| 6 | `gmshtofoam_drops_physical_patch_names` | T3 | 3 | 0.33 | – |
+| 7 | `gmsh_recombination_fails_on_odd_boundary_division` | T3 | 2 | 0.22 | – |
+| 8 | `polymesh_boundary_parsed_by_hand_rolled_regex` | T3 | 2 | 0.22 | – |
+| 9 | `defeature_call_cut_without_printing_anything` | T5 | 2 | 0.08 | – |
+| 10 | `exported_surface_self_intersecting` | T5 | 1 | 0.04 | `self_intersection` |
 | 11 | `meshing_point_outside_exported_surface` | T2 | 0 | 0.00 | `location_in_mesh` |
 | 12 | `exported_surface_duplicated_in_trisurface` | T4 | 0 | 0.00 | `normals` |
 

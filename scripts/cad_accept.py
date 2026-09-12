@@ -80,15 +80,13 @@ WHEELS_LOCAL = Path(
 Not committed: fifteen megabytes of binary wheels in a source tree is the wrong fix
 for a missing image dependency, and the right one is the image."""
 
-PRICE_PER_MTOK = {
-    # claude-sonnet-5, first-party API rates. Cache reads are 0.1x input and cache
-    # writes 1.25x at the five-minute TTL, which is the one the harness uses.
-    "input": 2.00,
-    "output": 10.00,
-    "cache_read": 0.20,
-    "cache_write": 2.50,
-}
-"""Stated rather than looked up, so a number in the report can be re-derived from it."""
+from openreynolds.llm.presets import PRICE_PER_MTOK, prices  # noqa: E402
+from openreynolds.llm.presets import spend as presets_spend  # noqa: E402
+"""Priced by model, from the package where the model ids already live.
+
+This was a single untagged table here, holding Sonnet 5's rates because Sonnet 5 is the
+default preset -- while the build-up sweep runs Opus 5. Every dollar the first baseline
+reported was 2.5x under."""
 
 
 # -- the prompts ---------------------------------------------------------------
@@ -199,8 +197,13 @@ def save_record(arm: str, name: str, record: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def spend(tokens: dict[str, int]) -> float:
-    return sum(PRICE_PER_MTOK.get(k, 0.0) * int(v or 0) / 1e6 for k, v in (tokens or {}).items())
+def spend(tokens: dict[str, int], model: str = "") -> float:
+    """What these tokens cost at `model`'s rates.
+
+    `model` is defaulted rather than required only so an old call site is a wrong number
+    instead of a crash while it is being updated -- and an empty model prices at zero,
+    which is loud. Every call site in the tree passes one."""
+    return presets_spend(tokens, model)
 
 
 # -- the workspace -------------------------------------------------------------
@@ -531,7 +534,7 @@ def run_desk(cfg, backend, store, prompt: dict[str, Any], out: Path) -> dict[str
         "desk_seconds": round(result.seconds, 1),
         "steps": len(result.steps),
         "tokens": dict(result.tokens),
-        "usd": round(spend(result.tokens), 4),
+        "usd": round(spend(result.tokens, cfg.mesher_model or cfg.model), 4),
         "script_lines": len((result.script or "").splitlines()),
         "check": _check_digest(result.check),
         "artifacts": sorted(files) + sorted(extra),
@@ -597,7 +600,7 @@ def run_old(cfg, backend, store, prompt: dict[str, Any], out: Path) -> dict[str,
         "ok": bool(result.ok), "stopped": result.stopped, "error": result.error,
         "summary": result.summary, "case_dir": result.case_dir,
         "seconds": round(wall, 1), "steps": len(result.steps),
-        "tokens": dict(result.tokens), "usd": round(spend(result.tokens), 4),
+        "tokens": dict(result.tokens), "usd": round(spend(result.tokens, cfg.mesher_model or cfg.model), 4),
         "missing": list(result.check.missing) if result.check else [],
         "artifacts": sorted(files) + sorted(extra),
     }

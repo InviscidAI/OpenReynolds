@@ -133,9 +133,9 @@ def test_the_record_carries_the_accounting_before_the_run_returns(tmp_path, monk
     run_dir_holder: list[Path] = []
     real_prepare = module.prepare
 
-    def prepare(case, parent, run_dir):
+    def prepare(case, parent, run_dir, identifier=""):
         run_dir_holder.append(Path(run_dir))
-        return real_prepare(case, parent, run_dir)
+        return real_prepare(case, parent, run_dir, identifier)
 
     from openreynolds.buildup import record
 
@@ -157,3 +157,52 @@ def test_the_record_carries_the_accounting_before_the_run_returns(tmp_path, monk
     assert seen[1]["tokens"] == {"input": 10, "output": 3000}
     assert seen[1]["usd"] > seen[0]["usd"]
     assert seen[1]["n_turns"] == 2
+
+
+def test_two_sweeps_do_not_ask_for_the_same_workspace(tmp_path, monkeypatch):
+    """A sweep names its run directories after the case -- `runs/T3` -- so a workspace
+    named from the directory is `T3-T3` for every sweep that ever runs.
+
+    `fresh_workspace` refuses a root that is not empty, correctly, so the second sweep on
+    a machine aborted on its own leftovers and exited 3 -- which the driver reports as
+    "this sweep is void", the same words it uses for a house surface. The standalone path
+    hid it: there the run directory is already `T1-<id>`, so the workspace was unique by
+    accident rather than by construction.
+    """
+    module = load_runner()
+    parent = tmp_path / "work"
+    sweep_run_dir = tmp_path / "sweeps" / "core-1" / "runs" / "T1"
+
+    first = module.prepare("T1", parent, sweep_run_dir, "20260912-090000-aaaa")[0]
+    second = module.prepare("T1", parent, sweep_run_dir, "20260912-100000-bbbb")[0]
+
+    assert first != second, "two runs of one case shared a workspace"
+    assert first.name == "T1-20260912-090000-aaaa"
+    assert second.name == "T1-20260912-100000-bbbb"
+
+
+def test_a_model_with_no_price_on_record_refuses_before_it_spends(tmp_path, monkeypatch):
+    """The runner writes the records a sweep ranks by cost, so an unpriced model does not
+    make a run cheaper -- it makes its cost meaningless. Beside the key check, and for the
+    same reason: a meaningless number that looks like a real one is how the first baseline
+    reported $3.00 for a corpus that cost $7.49."""
+    from openreynolds.llm import presets
+
+    assert presets.prices("claude-opus-5") is not None
+    assert presets.prices("a-model-nobody-priced") is None
+    # Priced at zero rather than crashing, so the guard is what refuses, not the sum.
+    assert presets.spend({"output": 1_000_000}, "a-model-nobody-priced") == 0.0
+    assert presets.spend({"output": 1_000_000}, "claude-opus-5") == 25.0
+
+
+def test_opus_and_sonnet_do_not_price_the_same_run_the_same(tmp_path):
+    """The bug itself: one untagged table held Sonnet 5's rates because Sonnet 5 is the
+    default preset, while the build-up sweep sets `mesher_model` to Opus 5."""
+    from openreynolds.llm import presets
+
+    tokens = {"input": 30, "cache_read": 251_953, "cache_write": 89_915, "output": 38_936}
+    opus = presets.spend(tokens, "claude-opus-5")
+    sonnet = presets.spend(tokens, "claude-sonnet-5")
+    assert round(sonnet, 4) == 0.6646
+    assert round(opus, 4) == 1.6615
+    assert round(opus / sonnet, 2) == 2.50

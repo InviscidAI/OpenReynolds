@@ -46,6 +46,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from cad_accept import LOCAL_FIXTURES, load_prompts, spend  # noqa: E402
+from openreynolds.llm.presets import prices  # noqa: E402
 from openreynolds.buildup import core, heartbeat, isolation, record  # noqa: E402
 
 WORK = Path(os.environ.get("OPENREYNOLDS_BUILDUP_WORK")
@@ -90,7 +91,8 @@ def cases() -> dict[str, dict[str, Any]]:
     return load_prompts()
 
 
-def prepare(case: str, parent: Path, run_dir: Path) -> tuple[Path, str, dict[str, Any]]:
+def prepare(case: str, parent: Path, run_dir: Path,
+            identifier: str = "") -> tuple[Path, str, dict[str, Any]]:
     """A fresh workspace, asserted clean, with this case's fixture in it -- or an abort.
 
     The order matters: the assertion runs on an empty directory, and the fixture is copied
@@ -100,7 +102,15 @@ def prepare(case: str, parent: Path, run_dir: Path) -> tuple[Path, str, dict[str
     if case not in prompts:
         raise SystemExit(f"no case {case}; there are {', '.join(sorted(prompts))}")
     prompt = prompts[case]
-    workspace = isolation.fresh_workspace(_outside_the_repo(parent), case, run_dir.name)
+    # The run's own id, never the directory's name. A sweep names its run directories
+    # after the case -- `runs/T3` -- so `run_dir.name` is `"T3"` and every sweep ever run
+    # asked for the same workspace, `T3-T3`. `fresh_workspace` refuses a root that is not
+    # empty, correctly, so the *second* sweep on a machine aborted on its own leftovers
+    # and exited 3, which the driver reports as "this sweep is void" -- the same words it
+    # uses for a house surface. The standalone path never showed it: there the directory
+    # is already `T1-<id>`, so the workspace was unique by accident.
+    workspace = isolation.fresh_workspace(_outside_the_repo(parent), case,
+                                          identifier or run_dir.name)
     report = isolation.preflight(workspace)
     print(f"  workspace {workspace} clean ({report['entries']} entries, "
           f"{report['house_names']} house names, no toolbox)")
@@ -156,7 +166,7 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
 
     # The workspace is asserted clean *before* the run directory exists, so an aborted
     # attempt leaves no empty record behind to be counted as a run that happened.
-    workspace, geometry, prompt = prepare(case, parent, run_dir)
+    workspace, geometry, prompt = prepare(case, parent, run_dir, identifier)
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"  record {run_dir}")
 
@@ -164,6 +174,15 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     missing = cfg.model_key_missing()
     if missing:
         raise SystemExit(f"missing configuration: {missing}")
+    model = cfg.mesher_model or cfg.model
+    if prices(model) is None:
+        # Beside the key check, and for the same reason: this is the thing that writes
+        # the records a sweep ranks by cost. An unpriced model does not make the run
+        # cheaper, it makes the number meaningless -- and a meaningless number that
+        # looks like a real one is how the first baseline reported $3.00 for $7.49.
+        raise SystemExit(
+            f"no price on record for {model!r}, so this run could not report what it "
+            "cost. Add its rates to openreynolds/llm/presets.PRICE_PER_MTOK.")
     bashrc = find_bashrc()
     if not bashrc:
         raise SystemExit("no OpenFOAM installation found; set OPENREYNOLDS_FOAM_BASHRC")
@@ -209,7 +228,7 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
         totals = fields.pop("tokens", None)
         if totals:
             entry.tokens = dict(totals)
-            entry.usd = round(spend(entry.tokens), 4)
+            entry.usd = round(spend(entry.tokens, entry.model), 4)
         entry.n_turns = int(fields.get("turn") or entry.n_turns)
         entry.seconds = round(time.time() - started, 1)
         record.save(run_dir, entry)
@@ -248,7 +267,7 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     entry.case_dir = result.case_dir
     entry.n_steps = len(result.steps)
     entry.tokens = dict(result.tokens)
-    entry.usd = round(spend(result.tokens), 4)
+    entry.usd = round(spend(result.tokens, entry.model), 4)
     entry.stopped = result.stopped or "done"
     entry.mesh_exists = bool(result.check and result.check.regions)
     entry.checkmesh_ok = bool(result.check and result.check.ok)
