@@ -176,7 +176,8 @@ class CadDesk:
 
     def __init__(self, cfg: Any, backend: Any, store: Any, home: str,
                  on_step: Callable[[Step], None] | None = None,
-                 interject: Callable[[], str | None] | None = None):
+                 interject: Callable[[], str | None] | None = None,
+                 on_turn: Callable[..., None] | None = None):
         self.cfg = cfg
         self.backend = backend
         self.store = store
@@ -192,6 +193,15 @@ class CadDesk:
         answered by the desk going looking, which costs steps out of the budget the run
         is judged on."""
         self.on_step = on_step
+        self.on_turn = on_turn
+        """Told about **every** model turn, whether or not a cell ran.
+
+        The heartbeat the observer outside the run reads (`buildup/heartbeat.py`), and
+        the reason it is per turn rather than per step: the failure that went unnoticed
+        for three consecutive runs last round was a desk producing replies and executing
+        zero cells, and a step-based heartbeat cannot see it because there are no steps.
+
+        It reports; it is never consulted. A raising hook does not end a run."""
         self.interject = interject
         """Drains anything the person has typed since the last call, or None.
 
@@ -231,7 +241,7 @@ class CadDesk:
             result.seconds = time.monotonic() - started
             return result
 
-        system = system_prompt(STEP_TIMEOUT_S, toolbox=self.toolbox)
+        system = self._system()
         messages: list[dict[str, Any]] = [
             {"role": "user",
              "content": [{"type": "text",
@@ -275,6 +285,7 @@ class CadDesk:
                 # from scratch, three of them opening "I should first explore the
                 # environment". The count is what the dropped turn cannot carry.
                 empty_turns += 1
+                self._beat(turns, result, turn, fenced=False)
                 _observe(messages, _ran_out_of_room(empty_turns))
                 continue
             empty_turns = 0
@@ -284,6 +295,7 @@ class CadDesk:
             remark = self._remark(messages, result)
 
             source, complaint = parse_action(turn.text)
+            self._beat(turns, result, turn, fenced=bool(source))
             if complaint:
                 _observe(messages, complaint)
                 continue
@@ -296,8 +308,7 @@ class CadDesk:
 
             if _is_finish(source):
                 result.summary = _summary(turn.text)
-                check = verify(self.backend, case_dir, case_rel, request,
-                               script=self.log.script())
+                check = self._verify(case_rel, request, self.log.script())
                 result.check = check
                 if check.ok:
                     result.ok = True
@@ -308,7 +319,7 @@ class CadDesk:
             step = self._cell(source, _summary(turn.text), messages)
             result.steps.append(step)
             if len(result.steps) == NUDGE_AT_STEP and not self._has_mesh():
-                _observe(messages, NUDGE.format(toolbox=self.toolbox))
+                _observe(messages, self._nudge())
             if self.on_step:
                 try:
                     self.on_step(step)
@@ -325,13 +336,66 @@ class CadDesk:
             # mesh nobody looked at is exactly the failure this desk exists to end.
             # Measured, not assumed: a T10 run built 91,000 cells, hit a 400 on its
             # next model call, and was reported as "nothing was meshed".
-            result.check = verify(self.backend, case_dir, case_rel, request,
-                                  script=result.script)
+            result.check = self._verify(case_rel, request, result.script)
             result.ok = result.check.ok
         if not result.summary:
             result.summary = _summary(last_text)
         result.png = self._render_bytes(result)
         return result
+
+    # -- the three seams a differently-briefed desk replaces ---------------------
+    #
+    # The build-up phase of `docs/cad-build-up-handoff.md` runs this same loop with a
+    # smaller brief, no toolbox and `checkMesh` as the whole of the finish check
+    # (`buildup/core.py`). What differs between that desk and this one is only what it is
+    # told, what it is nudged with, and what judges it -- so those three are methods, and
+    # the loop below does not branch on which desk it is driving.
+
+    def _system(self) -> str:
+        return system_prompt(STEP_TIMEOUT_S, toolbox=self.toolbox)
+
+    def _nudge(self) -> str:
+        return NUDGE.format(toolbox=self.toolbox)
+
+    def _verify(self, case_rel: str, request: str, script: str) -> Check:
+        return verify(self.backend, self.case_dir, case_rel, request, script=script)
+
+    def _mark(self, phase: str, expect_s: float, steps: int = -1) -> None:
+        """Tell the watcher that a long, turn-free stretch is starting, and how long.
+
+        The finish check runs `checkMesh` per region and the recovery replay re-runs the
+        whole accepted log; neither is a model turn, and both can outlast a beat-age
+        threshold that knows only about turns. So the loop declares its own silence rather
+        than the supervisor guessing at a constant it cannot see. The turn index does not
+        advance -- this is liveness, not progress."""
+        if not self.on_turn:
+            return
+        try:
+            self.on_turn(turn=getattr(self, "_turns", 0),
+                         steps=steps if steps >= 0 else getattr(self, "_steps", 0),
+                         phase=phase, expect_s=float(expect_s))
+        except Exception:  # noqa: BLE001 - the watcher is not allowed to end the run
+            pass
+
+    def _beat(self, turns: int, result: CadResult, turn: Any, *, fenced: bool) -> None:
+        """Report this turn to whatever is watching from outside, and carry on.
+
+        Two call sites, which between them are every path a turn can take: the reply that
+        was all reasoning and no words, and everything else. A turn that reported nothing
+        would look to the observer exactly like a process that had stopped."""
+        if not self.on_turn:
+            return
+        try:
+            self._turns = turns
+            self._steps = len(result.steps)
+            self.on_turn(turn=turns, steps=len(result.steps),
+                         stop_reason=getattr(turn, "stop_reason", ""),
+                         output_tokens=int((getattr(turn, "tokens", None) or {}).get("output", 0)),
+                         fenced=fenced, text_chars=len(turn.text or ""),
+                         thinking_chars=_thinking_chars(turn),
+                         text=turn.text or "", block_types=_block_types(turn))
+        except Exception:  # noqa: BLE001 - the watcher is not allowed to end the run
+            pass
 
     def _settle(self) -> None:
         """Stop a cell that is still going, before anything is measured or reported.
@@ -442,6 +506,7 @@ class CadDesk:
                 return False
         script = self.log.script()
         if script:
+            self._mark("recover", RECOVERY_TIMEOUT_S)
             try:
                 replay = self.backend.kernel_run(script, timeout_s=RECOVERY_TIMEOUT_S)
             except Exception:  # noqa: BLE001
@@ -585,6 +650,28 @@ def parse_action(text: str) -> tuple[str, str]:
 
 
 _FINISH = re.compile(rf"^print\(\s*[\"']{CAD_DONE}[\"']\s*\)$")
+
+
+def _block_types(turn: Any) -> list[str]:
+    """What the reply was made of. `['thinking']` with no text is the starved failure."""
+    return [str(getattr(block, "type", "") or (block.get("type", "")
+            if isinstance(block, dict) else ""))
+            for block in (getattr(turn, "content", None) or [])]
+
+
+def _thinking_chars(turn: Any) -> int:
+    """How much of the reply went to reasoning -- the other half of the budget.
+
+    `starved` is the pair of this and an empty text block: thinking and words are spent
+    from one allowance, so a hard prompt can reason past the ceiling and never open the
+    sentence that carries the work."""
+    total = 0
+    for block in getattr(turn, "content", None) or []:
+        text = getattr(block, "thinking", None)
+        if text is None and isinstance(block, dict):
+            text = block.get("thinking")
+        total += len(text or "")
+    return total
 
 
 def _is_finish(source: str) -> bool:

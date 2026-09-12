@@ -1,0 +1,1486 @@
+# -- cell 1 (2.3s, exit 0)
+import numpy as np
+from build123d import *
+
+# Parameters (metres) -- passage width, leg length, centerline bend radius
+W = 0.010      # passage width
+L = 0.120      # leg length (horizontal)
+R = 0.015      # bend centerline radius
+r_in = R - W/2 # inner wall radius of bend
+r_out = R + W/2 # outer wall radius of bend
+
+# Bend center: lower leg centerline at y=0, upper leg centerline at y=2R
+C = (L, R)
+
+# Boundary points (counterclockwise loop)
+P1 = (0.0,  -W/2)      # inlet outer corner
+P2 = (L,    -W/2)      # outer wall, end of lower leg
+P3 = (L,    2*R + W/2) # outer wall, start of upper leg
+P4 = (0.0,  2*R + W/2) # outlet outer corner
+P5 = (0.0,  2*R - W/2) # outlet inner corner
+P6 = (L,    2*R - W/2) # inner wall, start of upper leg (from bend)
+P7 = (L,    W/2)       # inner wall, end of bend (start of lower leg inner)
+P8 = (0.0,  W/2)       # inlet inner corner
+
+E1 = Line(P1, P2)                                   # wall_outer: lower leg
+E2 = RadiusArc(P2, P3, r_out)                        # wall_outer: bend (outer)
+E3 = Line(P3, P4)                                   # wall_outer: upper leg
+E4 = Line(P4, P5)                                   # outlet
+E5 = Line(P5, P6)                                   # wall_inner: upper leg
+E6 = RadiusArc(P6, P7, -r_in)                        # wall_inner: bend (inner)
+E7 = Line(P7, P8)                                   # wall_inner: lower leg
+E8 = Line(P8, P1)                                   # inlet
+
+wire = Wire([E1, E2, E3, E4, E5, E6, E7, E8])
+face = make_face(wire)
+
+print("Face area (m^2):", face.area)
+print("Perimeter check (m):", wire.length)
+
+show_object = None
+try:
+    from ocp_vscode import show
+except Exception:
+    pass
+
+face
+# -- output
+Face area (m^2): 0.001928761118092512
+Perimeter check (m): 0.5942477788011448
+Sketch at 0x7e42f7bcd7f0, label(), #children(0)
+
+# -- cell 2 (0.1s, exit 0)
+bbox = face.bounding_box()
+print("bounding box min:", bbox.min)
+print("bounding box max:", bbox.max)
+# expected max.X should be ~ L + r_out = 0.120+0.020 = 0.140 if bend bulges outward (+x)
+# -- output
+bounding box min: Vector: (X=0, Y=-0.005, Z=0)
+bounding box max: Vector: (X=0.12, Y=0.035, Z=0)
+
+# -- cell 3 (0.1s, exit 0)
+import numpy as np
+from build123d import *
+
+# Parameters (metres)
+W = 0.010
+L = 0.120
+R = 0.015
+r_in = R - W/2
+r_out = R + W/2
+C = (L, R)
+
+P1 = (0.0,  -W/2)
+P2 = (L,    -W/2)
+P3 = (L,    2*R + W/2)
+P4 = (0.0,  2*R + W/2)
+P5 = (0.0,  2*R - W/2)
+P6 = (L,    2*R - W/2)
+P7 = (L,    W/2)
+P8 = (0.0,  W/2)
+
+E1 = Line(P1, P2)
+E2 = CenterArc(C, r_out, -90, 180)   # outer arc, CCW from -90 to +90 through 0 (bulge +x)
+E3 = Line(P3, P4)
+E4 = Line(P4, P5)
+E5 = Line(P5, P6)
+E6 = CenterArc(C, r_in, 90, -180)    # inner arc, CW from 90 to -90 through 0 (bulge +x)
+E7 = Line(P7, P8)
+E8 = Line(P8, P1)
+
+print("E2 endpoints:", E2 @ 0, E2 @ 1)
+print("E6 endpoints:", E6 @ 0, E6 @ 1)
+
+wire = Wire([E1, E2, E3, E4, E5, E6, E7, E8])
+face = make_face(wire)
+bbox = face.bounding_box()
+print("area:", face.area, "expected:", W*(2*L + np.pi*R))
+print("bbox min:", bbox.min, "max:", bbox.max)
+# -- output
+E2 endpoints: Vector: (X=0.12, Y=-0.005, Z=0) Vector: (X=0.12, Y=0.035, Z=0)
+E6 endpoints: Vector: (X=0.12, Y=0.025, Z=0) Vector: (X=0.12, Y=0.005, Z=0)
+area: 0.002871238898038463 expected: 0.002871238898038469
+bbox min: Vector: (X=0, Y=-0.005, Z=0) max: Vector: (X=0.14, Y=0.035, Z=0)
+
+# -- cell 4 (0.2s, exit 0)
+import matplotlib.pyplot as plt
+from build123d import Vector
+
+# sample the wire boundary as points for plotting
+def sample_edge(e, n=40):
+    return [e.position_at(t/n) for t in range(n+1)]
+
+pts = []
+for e in wire.edges():
+    pts.extend(sample_edge(e))
+
+xs = [p.X for p in pts]
+ys = [p.Y for p in pts]
+
+fig, ax = plt.subplots(figsize=(7,5))
+ax.plot(xs, ys, '-')
+ax.set_aspect('equal')
+ax.set_title('U-bend duct centerline-offset boundary (m)')
+ax.set_xlabel('x (m)')
+ax.set_ylabel('y (m)')
+fig.savefig('shape_check.png', dpi=120)
+print("saved shape_check.png")
+# -- output
+saved shape_check.png
+
+# -- cell 5 (0.1s, exit 0)
+import numpy as np
+
+# Width: perpendicular distance between lower-leg outer edge (E1) and inner edge (E7)
+p_on_E1 = np.array([E1 @ 0.5])[0]
+p_on_E7 = np.array([E7 @ 0.5])[0]
+width_measured = abs(p_on_E1.Y - p_on_E7.Y)  # both edges horizontal, so Y difference = width
+
+# Leg lengths
+leg1_len = E1.length
+leg2_len = E5.length  # upper leg inner edge, should also be 120mm
+
+# Bend arc radii (measured from geometry, via radius property of the arc edges)
+r_out_meas = E2.radius
+r_in_meas = E6.radius
+centerline_radius_meas = (r_out_meas + r_in_meas) / 2
+bend_width_meas = r_out_meas - r_in_meas
+
+# Bend angle: total turning angle from arc parametrization
+ang0 = E2.param_at_point(E2 @ 0) if hasattr(E2, "param_at_point") else None
+# simpler: use tangent directions at start/end of outer arc
+t_start = E2.tangent_at(0)
+t_end = E2.tangent_at(1)
+cosang = t_start.dot(t_end)
+bend_angle_deg = np.degrees(np.arccos(np.clip(cosang, -1, 1)))
+# tangent-to-tangent angle for a 180 deg turn where tangents are reversed -> arccos(-1)=180, but if collinear same dir could be 0; check via cross too
+
+print(f"width measured = {width_measured*1000:.3f} mm  (requested 10 mm)")
+print(f"leg1 length = {leg1_len*1000:.3f} mm (requested 120 mm)")
+print(f"leg2 length = {leg2_len*1000:.3f} mm (requested 120 mm)")
+print(f"outer wall radius = {r_out_meas*1000:.3f} mm (expected 20 mm)")
+print(f"inner wall radius = {r_in_meas*1000:.3f} mm (expected 10 mm)")
+print(f"centerline radius measured = {centerline_radius_meas*1000:.3f} mm (requested 15 mm)")
+print(f"bend passage width from radii = {bend_width_meas*1000:.3f} mm (requested 10 mm)")
+print(f"bend turning angle (tangent method) = {bend_angle_deg:.2f} deg (requested 180 deg)")
+# -- output
+width measured = 10.000 mm  (requested 10 mm)
+leg1 length = 120.000 mm (requested 120 mm)
+leg2 length = 120.000 mm (requested 120 mm)
+outer wall radius = 20.000 mm (expected 20 mm)
+inner wall radius = 10.000 mm (expected 10 mm)
+centerline radius measured = 15.000 mm (requested 15 mm)
+bend passage width from radii = 10.000 mm (requested 10 mm)
+bend turning angle (tangent method) = 180.00 deg (requested 180 deg)
+
+# -- cell 6 (0.1s, exit 0)
+import gmsh
+import numpy as np
+
+W = 0.010
+L = 0.120
+R = 0.015
+r_in = R - W/2
+r_out = R + W/2
+
+gmsh.initialize()
+gmsh.model.add("ubend")
+
+occ = gmsh.model.occ
+
+# points
+p1 = occ.addPoint(0.0,  -W/2, 0)
+p2 = occ.addPoint(L,    -W/2, 0)
+p3 = occ.addPoint(L,    2*R+W/2, 0)
+p4 = occ.addPoint(0.0,  2*R+W/2, 0)
+p5 = occ.addPoint(0.0,  2*R-W/2, 0)
+p6 = occ.addPoint(L,    2*R-W/2, 0)
+p7 = occ.addPoint(L,    W/2, 0)
+p8 = occ.addPoint(0.0,  W/2, 0)
+pc = occ.addPoint(L, R, 0)  # bend center
+
+# curves
+E1 = occ.addLine(p1, p2)                     # wall_outer, lower leg
+E2 = occ.addCircleArc(p2, pc, p3)            # wall_outer, bend (outer)
+E3 = occ.addLine(p3, p4)                     # wall_outer, upper leg
+E4 = occ.addLine(p4, p5)                     # outlet
+E5 = occ.addLine(p5, p6)                     # wall_inner, upper leg
+E6 = occ.addCircleArc(p6, pc, p7)            # wall_inner, bend (inner)
+E7 = occ.addLine(p7, p8)                     # wall_inner, lower leg
+E8 = occ.addLine(p8, p1)                     # inlet
+
+Lstart = occ.addLine(p2, p7)  # internal separator: leg/bend boundary near inlet side
+Lend   = occ.addLine(p3, p6)  # internal separator: leg/bend boundary near outlet side
+
+occ.synchronize()
+
+loop1 = occ.addCurveLoop([E1, Lstart, E7, E8])          # lower leg block (need correct signs)
+loop2 = occ.addCurveLoop([E2, Lend, -E6, -Lstart])      # bend block
+loop3 = occ.addCurveLoop([E3, E4, E5, -Lend])           # upper leg block
+
+occ.synchronize()
+
+s1 = occ.addPlaneSurface([loop1])
+s2 = occ.addPlaneSurface([loop2])
+s3 = occ.addPlaneSurface([loop3])
+
+occ.synchronize()
+
+area_total = 0.0
+for s in (s1, s2, s3):
+    m = gmsh.model.occ.getMass(2, s)
+    print("surface", s, "area", m)
+    area_total += m
+
+print("total area:", area_total, "expected:", W*(2*L+np.pi*R))
+# -- output
+surface 1 area 0.0012
+surface 2 area 0.0007853981633974477
+surface 3 area 0.0011999999999999997
+total area: 0.0031853981633974474 expected: 0.002871238898038469
+
+# -- cell 7 (0.1s, exit 0)
+import gmsh
+import numpy as np
+
+gmsh.finalize()
+gmsh.initialize()
+gmsh.model.add("ubend")
+
+W = 0.010
+L = 0.120
+R = 0.015
+r_in = R - W/2
+r_out = R + W/2
+
+occ = gmsh.model.occ
+
+p1 = occ.addPoint(0.0,  -W/2, 0)
+p2 = occ.addPoint(L,    -W/2, 0)
+p3 = occ.addPoint(L,    2*R+W/2, 0)
+p4 = occ.addPoint(0.0,  2*R+W/2, 0)
+p5 = occ.addPoint(0.0,  2*R-W/2, 0)
+p6 = occ.addPoint(L,    2*R-W/2, 0)
+p7 = occ.addPoint(L,    W/2, 0)
+p8 = occ.addPoint(0.0,  W/2, 0)
+pc = occ.addPoint(L, R, 0)
+
+E1 = occ.addLine(p1, p2)
+E2 = occ.addCircleArc(p2, pc, p3)
+E3 = occ.addLine(p3, p4)
+E4 = occ.addLine(p4, p5)
+E5 = occ.addLine(p5, p6)
+E6 = occ.addCircleArc(p6, pc, p7)
+E7 = occ.addLine(p7, p8)
+E8 = occ.addLine(p8, p1)
+
+Lstart = occ.addLine(p2, p7)
+Lend   = occ.addLine(p3, p6)
+
+occ.synchronize()
+
+loop1 = occ.addCurveLoop([E1, Lstart, E7, E8])
+loop2 = occ.addCurveLoop([E2, Lend, E6, -Lstart])
+loop3 = occ.addCurveLoop([E3, E4, E5, -Lend])
+
+occ.synchronize()
+
+s1 = occ.addPlaneSurface([loop1])
+s2 = occ.addPlaneSurface([loop2])
+s3 = occ.addPlaneSurface([loop3])
+
+occ.synchronize()
+
+area_total = 0.0
+for s in (s1, s2, s3):
+    m = gmsh.model.occ.getMass(2, s)
+    print("surface", s, "area", m)
+    area_total += m
+
+expected_bend = 0.5*np.pi*(r_out**2 - r_in**2)
+print("bend area expected:", expected_bend)
+print("total area:", area_total, "expected:", W*(2*L+np.pi*R))
+# -- output
+surface 1 area 0.0012
+surface 2 area 0.0007853981633974477
+surface 3 area 0.0011999999999999997
+bend area expected: 0.000471238898038469
+total area: 0.0031853981633974474 expected: 0.002871238898038469
+
+# -- cell 8 (0.1s, exit 0)
+import gmsh
+import numpy as np
+
+gmsh.finalize()
+gmsh.initialize()
+gmsh.model.add("ubend")
+
+W = 0.010
+L = 0.120
+R = 0.015
+r_in = R - W/2
+r_out = R + W/2
+
+occ = gmsh.model.occ
+
+p1 = occ.addPoint(0.0,  -W/2, 0)
+p2 = occ.addPoint(L,    -W/2, 0)
+p3 = occ.addPoint(L,    2*R+W/2, 0)
+p4 = occ.addPoint(0.0,  2*R+W/2, 0)
+p5 = occ.addPoint(0.0,  2*R-W/2, 0)
+p6 = occ.addPoint(L,    2*R-W/2, 0)
+p7 = occ.addPoint(L,    W/2, 0)
+p8 = occ.addPoint(0.0,  W/2, 0)
+pc = occ.addPoint(L, R, 0)
+
+E1 = occ.addLine(p1, p2)
+E2 = occ.addCircleArc(p2, pc, p3)   # CCW -90 -> +90 through 0 (bulge +x): OK
+E3 = occ.addLine(p3, p4)
+E4 = occ.addLine(p4, p5)
+E5 = occ.addLine(p5, p6)
+E6 = occ.addCircleArc(p7, pc, p6)   # define p7->p6 so CCW -90->+90 through 0 (bulge +x)
+E7 = occ.addLine(p7, p8)
+E8 = occ.addLine(p8, p1)
+
+Lstart = occ.addLine(p2, p7)
+Lend   = occ.addLine(p3, p6)
+
+occ.synchronize()
+
+loop1 = occ.addCurveLoop([E1, Lstart, E7, E8])
+loop2 = occ.addCurveLoop([E2, Lend, -E6, -Lstart])   # p6->p7 needs reverse of E6(p7->p6)
+loop3 = occ.addCurveLoop([E3, E4, E5, -Lend])
+
+occ.synchronize()
+
+s1 = occ.addPlaneSurface([loop1])
+s2 = occ.addPlaneSurface([loop2])
+s3 = occ.addPlaneSurface([loop3])
+
+occ.synchronize()
+
+area_total = 0.0
+for s in (s1, s2, s3):
+    m = gmsh.model.occ.getMass(2, s)
+    print("surface", s, "area", m)
+    area_total += m
+
+expected_bend = 0.5*np.pi*(r_out**2 - r_in**2)
+print("bend area expected:", expected_bend)
+print("total area:", area_total, "expected:", W*(2*L+np.pi*R))
+# -- output
+surface 1 area 0.0012
+surface 2 area 0.00047123889803846815
+surface 3 area 0.0011999999999999997
+bend area expected: 0.000471238898038469
+total area: 0.0028712388980384677 expected: 0.002871238898038469
+
+# -- cell 9 (0.1s, exit 0)
+import gmsh
+
+# coarse structured mesh: cells across width, and along legs/bend
+n_w = 4          # cells across width (10mm) -> 2.5mm cells
+n_leg = 48       # cells along each 120mm leg -> 2.5mm cells
+n_bend = 19      # cells along bend arc (180deg, R=15mm, arc len ~47.1mm) -> ~2.5mm cells
+
+# width-direction curves (need n_w+1 points), consistent across blocks
+for c in (Lstart, Lend, E8, E4):
+    gmsh.model.mesh.setTransfiniteCurve(c, n_w+1)
+
+# length-direction curves for legs (need n_leg+1 points)
+for c in (E1, E7, E3, E5):
+    gmsh.model.mesh.setTransfiniteCurve(c, n_leg+1)
+
+# length-direction curves for bend arcs (need n_bend+1 points)
+for c in (E2, E6):
+    gmsh.model.mesh.setTransfiniteCurve(c, n_bend+1)
+
+# transfinite + recombine each surface for structured quads
+for s in (s1, s2, s3):
+    gmsh.model.mesh.setTransfiniteSurface(s)
+    gmsh.model.mesh.setRecombine(2, s)
+
+gmsh.model.mesh.generate(2)
+
+# report
+nnodes = gmsh.model.mesh.getNodes()[0].size
+print("2D mesh nodes:", nnodes)
+elem_types, elem_tags, _ = gmsh.model.mesh.getElements(2)
+for t, tags in zip(elem_types, elem_tags):
+    print("elem type", t, "count", len(tags))
+
+gmsh.write("ubend_2d_check.msh")
+print("wrote ubend_2d_check.msh")
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 20%] Meshing curve 2 (Circle)
+Info    : [ 30%] Meshing curve 3 (Line)
+Info    : [ 40%] Meshing curve 4 (Line)
+Info    : [ 50%] Meshing curve 5 (Line)
+Info    : [ 60%] Meshing curve 6 (Circle)
+Info    : [ 70%] Meshing curve 7 (Line)
+Info    : [ 80%] Meshing curve 8 (Line)
+Info    : [ 90%] Meshing curve 9 (Line)
+Info    : [100%] Meshing curve 10 (Line)
+Info    : Done meshing 1D (Wall 0.00036834s, CPU 0.000857s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Transfinite)
+Info    : [ 40%] Meshing surface 2 (Transfinite)
+Info    : [ 70%] Meshing surface 3 (Transfinite)
+Info    : Done meshing 2D (Wall 0.000531412s, CPU 0.000714s)
+2D mesh nodes: 581
+elem type 3 count 460
+Info    : 581 nodes 715 elements
+Info    : Writing 'ubend_2d_check.msh'...
+wrote ubend_2d_check.msh
+Info    : Done writing 'ubend_2d_check.msh'
+
+# -- cell 10 (0.3s, exit 1)
+import pyvista as pv
+import meshio
+
+m = meshio.read("ubend_2d_check.msh")
+pts = m.points
+cells = None
+for cb in m.cells:
+    if cb.type == "quad":
+        cells = cb.data
+        break
+
+import numpy as np
+n = cells.shape[0]
+faces = np.hstack([np.full((n,1),4), cells]).astype(np.int64).flatten()
+grid = pv.PolyData(pts, faces)
+
+pl = pv.Plotter(off_screen=True)
+pl.add_mesh(grid, show_edges=True, color="lightblue")
+pl.view_xy()
+pl.camera.parallel_projection = True
+pl.screenshot("ubend_2d_mesh.png", window_size=(900,500))
+print("saved ubend_2d_mesh.png")
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mModuleNotFoundError[39m                       Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[10][39m[32m, line 2[39m
+[32m      1[39m [38;5;28;01mimport[39;00m pyvista [38;5;28;01mas[39;00m pv
+[32m----> [39m[32m2[39m [38;5;28;01mimport[39;00m meshio
+[32m      3[39m 
+[32m      4[39m m = meshio.read([33m"ubend_2d_check.msh"[39m)
+[32m      5[39m pts = m.points
+
+[31mModuleNotFoundError[39m: No module named 'meshio'
+
+# -- cell 11 (0.3s, exit 0)
+import numpy as np
+import pyvista as pv
+
+node_tags, node_coords, _ = gmsh.model.mesh.getNodes()
+node_coords = node_coords.reshape(-1, 3)
+tag_to_idx = {t: i for i, t in enumerate(node_tags)}
+
+elem_types, elem_tags, elem_node_tags = gmsh.model.mesh.getElements(2)
+quads = None
+for t, tags, nodes in zip(elem_types, elem_tags, elem_node_tags):
+    if t == 3:  # quad
+        quads = nodes.reshape(-1, 4)
+
+quad_idx = np.vectorize(tag_to_idx.get)(quads)
+
+n = quad_idx.shape[0]
+faces = np.hstack([np.full((n,1), 4), quad_idx]).astype(np.int64).flatten()
+grid = pv.PolyData(node_coords, faces)
+
+pl = pv.Plotter(off_screen=True)
+pl.add_mesh(grid, show_edges=True, color="lightblue")
+pl.view_xy()
+pl.camera.parallel_projection = True
+pl.screenshot("ubend_2d_mesh.png", window_size=(900,500))
+print("saved ubend_2d_mesh.png")
+# -- output
+saved ubend_2d_mesh.png
+
+[0m[33m2026-09-12 03:36:35.568 ( 162.459s) [    7E43E7FA2780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 03:36:35.568 ( 162.459s) [    7E43E7FA2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 03:36:35.581 ( 162.472s) [    7E43E7FA2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 12 (0.1s, exit 0)
+import os
+print(os.path.exists("ubend_2d_mesh.png"), os.path.getsize("ubend_2d_mesh.png"))
+# -- output
+True 24292
+
+# -- cell 13 (0.1s, exit 0)
+import gmsh
+import numpy as np
+
+dz = 0.0025  # thickness = one in-plane cell size (10mm/4), single layer
+
+# capture ordered boundary curves for each surface BEFORE extrude (for correspondence)
+b1 = gmsh.model.getBoundary([(2, s1)], oriented=True)
+b2 = gmsh.model.getBoundary([(2, s2)], oriented=True)
+b3 = gmsh.model.getBoundary([(2, s3)], oriented=True)
+print("s1 boundary:", b1)
+print("s2 boundary:", b2)
+print("s3 boundary:", b3)
+
+# extrude each surface individually, 1 layer, recombine -> hex cells
+ext1 = gmsh.model.occ.extrude([(2, s1)], 0, 0, dz, numElements=[1], recombine=True)
+ext2 = gmsh.model.occ.extrude([(2, s2)], 0, 0, dz, numElements=[1], recombine=True)
+ext3 = gmsh.model.occ.extrude([(2, s3)], 0, 0, dz, numElements=[1], recombine=True)
+
+gmsh.model.occ.synchronize()
+print("ext1:", ext1)
+print("ext2:", ext2)
+print("ext3:", ext3)
+# -- output
+s1 boundary: [(1, 1), (1, 7), (1, 8), (1, 9)]
+s2 boundary: [(1, 2), (1, -6), (1, -9), (1, 10)]
+s3 boundary: [(1, 3), (1, 4), (1, 5), (1, -10)]
+ext1: [(2, 8), (3, 1), (2, 4), (2, 5), (2, 6), (2, 7)]
+ext2: [(2, 13), (3, 2), (2, 9), (2, 10), (2, 11), (2, 12)]
+ext3: [(2, 18), (3, 3), (2, 14), (2, 15), (2, 16), (2, 17)]
+
+# -- cell 14 (0.1s, exit 0)
+import gmsh
+
+# lateral surface tag -> originating curve tag, from the printed correspondence
+lateral_map = {
+    4: 1,   # E1 (wall_outer, lower leg)
+    5: 7,   # E7 (wall_inner, lower leg)
+    6: 8,   # E8 (inlet)
+    7: 9,   # Lstart (internal, shared s1/s2)
+    9: 2,   # E2 (wall_outer, bend)
+    10: 6,  # E6 (wall_inner, bend)
+    11: 9,  # Lstart (internal, dup)
+    12: 10, # Lend (internal, shared s2/s3)
+    14: 3,  # E3 (wall_outer, upper leg)
+    15: 4,  # E4 (outlet)
+    16: 5,  # E5 (wall_inner, upper leg)
+    17: 10, # Lend (internal, dup)
+}
+
+curve_names = {1:"wall_outer",7:"wall_inner",8:"inlet",2:"wall_outer",6:"wall_inner",
+               10:None,9:None,3:"wall_outer",4:"outlet",5:"wall_inner"}
+
+n_before = len(gmsh.model.occ.getEntities(2))
+print("surfaces before dedup:", n_before)
+
+gmsh.model.occ.removeAllDuplicates()
+gmsh.model.occ.synchronize()
+
+n_after = len(gmsh.model.occ.getEntities(2))
+print("surfaces after dedup:", n_after)
+print("volumes:", gmsh.model.occ.getEntities(3))
+print("all surfaces:", gmsh.model.occ.getEntities(2))
+# -- output
+surfaces before dedup: 18
+Info    : [  0%] Fragments                                                                                  Info    : [ 10%] Fragments                                                                                  Info    : [ 20%] Fragments                                                                                  Info    : [ 30%] Fragments                                                                                  Info    : [ 40%] Fragments                                                                                  Info    : [ 50%] Fragments                                                                                  Info    : [ 60%] Fragments                                                                                  Info    : [ 70%] Fragments                                                                                  Info    : [ 80%] Fragments                                                                                  Info    : [ 90%] Fragments                                                                                                                                                                  surfaces after dedup: 24
+volumes: [(3, 1), (3, 2), (3, 3), (3, 4), (3, 5)]
+all surfaces: [(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (2, 15), (2, 16), (2, 17), (2, 18), (2, 19), (2, 20), (2, 21), (2, 22), (2, 23), (2, 24)]
+
+# -- cell 15 (0.1s, exit 0)
+import gmsh
+import numpy as np
+
+gmsh.finalize()
+gmsh.initialize()
+gmsh.model.add("ubend")
+
+W = 0.010
+L = 0.120
+R = 0.015
+r_in = R - W/2
+r_out = R + W/2
+dz = 0.0025
+
+occ = gmsh.model.occ
+
+p1 = occ.addPoint(0.0,  -W/2, 0)
+p2 = occ.addPoint(L,    -W/2, 0)
+p3 = occ.addPoint(L,    2*R+W/2, 0)
+p4 = occ.addPoint(0.0,  2*R+W/2, 0)
+p5 = occ.addPoint(0.0,  2*R-W/2, 0)
+p6 = occ.addPoint(L,    2*R-W/2, 0)
+p7 = occ.addPoint(L,    W/2, 0)
+p8 = occ.addPoint(0.0,  W/2, 0)
+pc = occ.addPoint(L, R, 0)
+
+E1 = occ.addLine(p1, p2)
+E2 = occ.addCircleArc(p2, pc, p3)
+E3 = occ.addLine(p3, p4)
+E4 = occ.addLine(p4, p5)
+E5 = occ.addLine(p5, p6)
+E6 = occ.addCircleArc(p7, pc, p6)
+E7 = occ.addLine(p7, p8)
+E8 = occ.addLine(p8, p1)
+
+Lstart = occ.addLine(p2, p7)
+Lend   = occ.addLine(p3, p6)
+
+occ.synchronize()
+
+loop1 = occ.addCurveLoop([E1, Lstart, E7, E8])
+loop2 = occ.addCurveLoop([E2, Lend, -E6, -Lstart])
+loop3 = occ.addCurveLoop([E3, E4, E5, -Lend])
+
+occ.synchronize()
+
+s1 = occ.addPlaneSurface([loop1])
+s2 = occ.addPlaneSurface([loop2])
+s3 = occ.addPlaneSurface([loop3])
+
+occ.synchronize()
+
+n_w = 4
+n_leg = 48
+n_bend = 19
+
+for c in (Lstart, Lend, E8, E4):
+    gmsh.model.mesh.setTransfiniteCurve(c, n_w+1)
+for c in (E1, E7, E3, E5):
+    gmsh.model.mesh.setTransfiniteCurve(c, n_leg+1)
+for c in (E2, E6):
+    gmsh.model.mesh.setTransfiniteCurve(c, n_bend+1)
+
+for s in (s1, s2, s3):
+    gmsh.model.mesh.setTransfiniteSurface(s)
+    gmsh.model.mesh.setRecombine(2, s)
+
+ext1 = occ.extrude([(2, s1)], 0, 0, dz, numElements=[1], recombine=True)
+ext2 = occ.extrude([(2, s2)], 0, 0, dz, numElements=[1], recombine=True)
+ext3 = occ.extrude([(2, s3)], 0, 0, dz, numElements=[1], recombine=True)
+occ.synchronize()
+
+vol1 = [t for d,t in ext1 if d==3][0]
+vol2 = [t for d,t in ext2 if d==3][0]
+vol3 = [t for d,t in ext3 if d==3][0]
+print("volumes to fuse:", vol1, vol2, vol3)
+
+fused, fuse_map = occ.fuse([(3, vol1)], [(3, vol2), (3, vol3)])
+occ.synchronize()
+print("fused result:", fused)
+print("volumes now:", gmsh.model.occ.getEntities(3))
+print("surfaces now:", gmsh.model.occ.getEntities(2))
+# -- output
+volumes to fuse: 1 2 3
+Info    : [  0%] Union                                                                                  Info    : [ 10%] Union                                                                                  Info    : [ 20%] Union                                                                                  Info    : [ 30%] Union                                                                                  Info    : [ 40%] Union                                                                                  Info    : [ 50%] Union                                                                                  Info    : [ 60%] Union                                                                                  Info    : [ 70%] Union                                                                                  Info    : [ 80%] Union                                                                                  Info    : [ 90%] Union                                                                                  fused result: [(3, 1)]
+volumes now: [(3, 1)]
+surfaces now: [(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (2, 12)]
+
+# -- cell 16 (0.1s, exit 0)
+import numpy as np
+
+surfs = gmsh.model.occ.getEntities(2)
+info = []
+for d, t in surfs:
+    com = gmsh.model.occ.getCenterOfMass(d, t)
+    mass = gmsh.model.occ.getMass(d, t)
+    bbox = gmsh.model.getBoundingBox(d, t)
+    info.append((t, com, mass, bbox))
+    print(f"surf {t}: COM={tuple(round(c,5) for c in com)}, area={mass:.6f}, bbox={tuple(round(b,5) for b in bbox)}")
+# -- output
+surf 1: COM=(0.06, -0.005, 0.00125), area=0.000300, bbox=(-0.0, -0.005, -0.0, 0.12, -0.005, 0.0025)
+surf 2: COM=(0.0, -0.0, 0.00125), area=0.000025, bbox=(-0.0, -0.005, -0.0, 0.0, 0.005, 0.0025)
+surf 3: COM=(0.12, 0.0, 0.00125), area=0.000025, bbox=(0.12, -0.005, -0.0, 0.12, 0.005, 0.0025)
+surf 4: COM=(0.06401, 0.015, 0.0), area=0.002626, bbox=(-0.0, -0.005, -0.0, 0.12, 0.035, 0.0)
+surf 5: COM=(0.06401, 0.015, 0.0025), area=0.002626, bbox=(-0.0, -0.005, 0.0025, 0.12, 0.035, 0.0025)
+surf 6: COM=(0.05134, 0.005, 0.00125), area=0.000257, bbox=(-0.0, 0.005, -0.0, 0.10268, 0.005, 0.0025)
+surf 7: COM=(0.11363, 0.015, 0.00125), area=0.000079, bbox=(0.11, 0.005, -0.0, 0.12, 0.025, 0.0025)
+surf 8: COM=(0.1009, 0.015, 0.00125), area=0.000052, bbox=(0.1, 0.005, -0.0, 0.10268, 0.025, 0.0025)
+surf 9: COM=(0.12, 0.03, 0.00125), area=0.000025, bbox=(0.12, 0.025, -0.0, 0.12, 0.035, 0.0025)
+surf 10: COM=(0.05134, 0.025, 0.00125), area=0.000257, bbox=(-0.0, 0.025, -0.0, 0.10268, 0.025, 0.0025)
+surf 11: COM=(0.06, 0.035, 0.00125), area=0.000300, bbox=(-0.0, 0.035, -0.0, 0.12, 0.035, 0.0025)
+surf 12: COM=(0.0, 0.03, 0.00125), area=0.000025, bbox=(-0.0, 0.025, -0.0, 0.0, 0.035, 0.0025)
+
+# -- cell 17 (0.1s, exit 0)
+import gmsh
+import numpy as np
+
+gmsh.finalize()
+gmsh.initialize()
+gmsh.model.add("ubend")
+
+W = 0.010
+L = 0.120
+R = 0.015
+r_in = R - W/2
+r_out = R + W/2
+dz = 0.0025
+
+occ = gmsh.model.occ
+
+p1 = occ.addPoint(0.0,  -W/2, 0)
+p2 = occ.addPoint(L,    -W/2, 0)
+p3 = occ.addPoint(L,    2*R+W/2, 0)
+p4 = occ.addPoint(0.0,  2*R+W/2, 0)
+p5 = occ.addPoint(0.0,  2*R-W/2, 0)
+p6 = occ.addPoint(L,    2*R-W/2, 0)
+p7 = occ.addPoint(L,    W/2, 0)
+p8 = occ.addPoint(0.0,  W/2, 0)
+pc = occ.addPoint(L, R, 0)
+
+E1 = occ.addLine(p1, p2)
+E2 = occ.addCircleArc(p2, pc, p3)
+E3 = occ.addLine(p3, p4)
+E4 = occ.addLine(p4, p5)
+E5 = occ.addLine(p5, p6)
+E6 = occ.addCircleArc(p7, pc, p6)
+E7 = occ.addLine(p7, p8)
+E8 = occ.addLine(p8, p1)
+
+Lstart = occ.addLine(p2, p7)
+Lend   = occ.addLine(p3, p6)
+
+occ.synchronize()
+
+loop1 = occ.addCurveLoop([E1, Lstart, E7, E8])
+loop2 = occ.addCurveLoop([E2, Lend, -E6, -Lstart])
+loop3 = occ.addCurveLoop([E3, E4, E5, -Lend])
+
+occ.synchronize()
+
+s1 = occ.addPlaneSurface([loop1])
+s2 = occ.addPlaneSurface([loop2])
+s3 = occ.addPlaneSurface([loop3])
+
+occ.synchronize()
+
+n_w = 4
+n_leg = 48
+n_bend = 19
+
+for c in (Lstart, Lend, E8, E4):
+    gmsh.model.mesh.setTransfiniteCurve(c, n_w+1)
+for c in (E1, E7, E3, E5):
+    gmsh.model.mesh.setTransfiniteCurve(c, n_leg+1)
+for c in (E2, E6):
+    gmsh.model.mesh.setTransfiniteCurve(c, n_bend+1)
+
+for s in (s1, s2, s3):
+    gmsh.model.mesh.setTransfiniteSurface(s)
+    gmsh.model.mesh.setRecombine(2, s)
+
+# extrude all three surfaces TOGETHER in one call
+ext = occ.extrude([(2, s1), (2, s2), (2, s3)], 0, 0, dz, numElements=[1], recombine=True)
+occ.synchronize()
+
+print("extrude result:", ext)
+print("volumes:", gmsh.model.occ.getEntities(3))
+print("surfaces:", gmsh.model.occ.getEntities(2))
+# -- output
+extrude result: [(2, 8), (3, 1), (2, 4), (2, 5), (2, 6), (2, 7), (2, 12), (3, 2), (2, 9), (2, 10), (2, 11), (2, 5), (2, 16), (3, 3), (2, 13), (2, 14), (2, 15), (2, 10)]
+volumes: [(3, 1), (3, 2), (3, 3)]
+surfaces: [(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (2, 15), (2, 16)]
+
+# -- cell 18 (0.1s, exit 0)
+import numpy as np
+
+all_surfs = gmsh.model.occ.getEntities(2)
+for d, t in all_surfs:
+    com = gmsh.model.occ.getCenterOfMass(d, t)
+    mass = gmsh.model.occ.getMass(d, t)
+    bbox = gmsh.model.getBoundingBox(d, t)
+    # which volumes is this surface adjacent to?
+    ups, downs = gmsh.model.getAdjacencies(d, t)
+    print(f"surf {t}: COM=({com[0]:.5f},{com[1]:.5f},{com[2]:.5f}) area={mass:.6f} "
+          f"bbox_x=({bbox[0]:.4f},{bbox[3]:.4f}) bbox_y=({bbox[1]:.4f},{bbox[4]:.4f}) "
+          f"bbox_z=({bbox[2]:.4f},{bbox[5]:.4f})")
+# -- output
+surf 1: COM=(0.06000,0.00000,0.00000) area=0.001200 bbox_x=(-0.0000,0.1200) bbox_y=(-0.0050,0.0050) bbox_z=(-0.0000,0.0000)
+surf 2: COM=(0.11010,0.01500,0.00000) area=0.000471 bbox_x=(0.1000,0.1200) bbox_y=(-0.0050,0.0350) bbox_z=(-0.0000,0.0000)
+surf 3: COM=(0.06000,0.03000,0.00000) area=0.001200 bbox_x=(-0.0000,0.1200) bbox_y=(0.0250,0.0350) bbox_z=(-0.0000,0.0000)
+surf 4: COM=(0.06000,-0.00500,0.00125) area=0.000300 bbox_x=(-0.0000,0.1200) bbox_y=(-0.0050,-0.0050) bbox_z=(-0.0000,0.0025)
+surf 5: COM=(0.12000,0.00000,0.00125) area=0.000025 bbox_x=(0.1200,0.1200) bbox_y=(-0.0050,0.0050) bbox_z=(-0.0000,0.0025)
+surf 6: COM=(0.06000,0.00500,0.00125) area=0.000300 bbox_x=(-0.0000,0.1200) bbox_y=(0.0050,0.0050) bbox_z=(-0.0000,0.0025)
+surf 7: COM=(0.00000,-0.00000,0.00125) area=0.000025 bbox_x=(-0.0000,0.0000) bbox_y=(-0.0050,0.0050) bbox_z=(-0.0000,0.0025)
+surf 8: COM=(0.06000,0.00000,0.00250) area=0.001200 bbox_x=(-0.0000,0.1200) bbox_y=(-0.0050,0.0050) bbox_z=(0.0025,0.0025)
+surf 9: COM=(0.10727,0.01500,0.00125) area=0.000157 bbox_x=(0.1000,0.1200) bbox_y=(-0.0050,0.0350) bbox_z=(-0.0000,0.0025)
+surf 10: COM=(0.12000,0.03000,0.00125) area=0.000025 bbox_x=(0.1200,0.1200) bbox_y=(0.0250,0.0350) bbox_z=(-0.0000,0.0025)
+surf 11: COM=(0.11363,0.01500,0.00125) area=0.000079 bbox_x=(0.1100,0.1200) bbox_y=(0.0050,0.0250) bbox_z=(-0.0000,0.0025)
+surf 12: COM=(0.11010,0.01500,0.00250) area=0.000471 bbox_x=(0.1000,0.1200) bbox_y=(-0.0050,0.0350) bbox_z=(0.0025,0.0025)
+surf 13: COM=(0.06000,0.03500,0.00125) area=0.000300 bbox_x=(-0.0000,0.1200) bbox_y=(0.0350,0.0350) bbox_z=(-0.0000,0.0025)
+surf 14: COM=(0.00000,0.03000,0.00125) area=0.000025 bbox_x=(-0.0000,0.0000) bbox_y=(0.0250,0.0350) bbox_z=(-0.0000,0.0025)
+surf 15: COM=(0.06000,0.02500,0.00125) area=0.000300 bbox_x=(-0.0000,0.1200) bbox_y=(0.0250,0.0250) bbox_z=(-0.0000,0.0025)
+surf 16: COM=(0.06000,0.03000,0.00250) area=0.001200 bbox_x=(-0.0000,0.1200) bbox_y=(0.0250,0.0350) bbox_z=(0.0025,0.0025)
+
+# -- cell 19 (0.1s, exit 0)
+for t in (5, 10):
+    ups, downs = gmsh.model.getAdjacencies(2, t)
+    print(f"surf {t} adjacent volumes:", ups)
+
+wall_outer = [4, 9, 13]
+wall_inner = [6, 11, 15]
+inlet = [7]
+outlet = [14]
+front = [1, 2, 3]
+back = [8, 12, 16]
+
+pg_wall_outer = gmsh.model.addPhysicalGroup(2, wall_outer)
+gmsh.model.setPhysicalName(2, pg_wall_outer, "wall_outer")
+pg_wall_inner = gmsh.model.addPhysicalGroup(2, wall_inner)
+gmsh.model.setPhysicalName(2, pg_wall_inner, "wall_inner")
+pg_inlet = gmsh.model.addPhysicalGroup(2, inlet)
+gmsh.model.setPhysicalName(2, pg_inlet, "inlet")
+pg_outlet = gmsh.model.addPhysicalGroup(2, outlet)
+gmsh.model.setPhysicalName(2, pg_outlet, "outlet")
+pg_front = gmsh.model.addPhysicalGroup(2, front)
+gmsh.model.setPhysicalName(2, pg_front, "front")
+pg_back = gmsh.model.addPhysicalGroup(2, back)
+gmsh.model.setPhysicalName(2, pg_back, "back")
+
+pg_vol = gmsh.model.addPhysicalGroup(3, [1, 2, 3])
+gmsh.model.setPhysicalName(3, pg_vol, "fluid")
+
+print("physical groups:", gmsh.model.getPhysicalGroups())
+# -- output
+surf 5 adjacent volumes: [1 2]
+surf 10 adjacent volumes: [2 3]
+physical groups: [(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (3, 7)]
+
+# -- cell 20 (0.1s, exit 0)
+import subprocess
+
+gmsh.model.mesh.generate(3)
+
+node_tags = gmsh.model.mesh.getNodes()[0]
+elem_types, elem_tags, _ = gmsh.model.mesh.getElements(3)
+print("3D mesh nodes:", len(node_tags))
+for t, tags in zip(elem_types, elem_tags):
+    print("volume elem type", t, "count", len(tags))
+
+gmsh.write("ubend.msh")
+print("wrote ubend.msh")
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Circle)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 20%] Meshing curve 4 (Line)
+Info    : [ 20%] Meshing curve 5 (Line)
+Info    : [ 20%] Meshing curve 6 (Circle)
+Info    : [ 30%] Meshing curve 7 (Line)
+Info    : [ 30%] Meshing curve 8 (Line)
+Info    : [ 30%] Meshing curve 9 (Line)
+Info    : [ 40%] Meshing curve 10 (Line)
+Info    : [ 40%] Meshing curve 11 (Extruded)
+Info    : [ 40%] Meshing curve 12 (Extruded)
+Info    : [ 50%] Meshing curve 13 (Extruded)
+Info    : [ 50%] Meshing curve 14 (Extruded)
+Info    : [ 60%] Meshing curve 15 (Extruded)
+Info    : [ 60%] Meshing curve 16 (Extruded)
+Info    : [ 60%] Meshing curve 17 (Extruded)
+Info    : [ 70%] Meshing curve 18 (Extruded)
+Info    : [ 70%] Meshing curve 19 (Extruded)
+Info    : [ 70%] Meshing curve 20 (Extruded)
+Info    : [ 80%] Meshing curve 21 (Extruded)
+Info    : [ 80%] Meshing curve 22 (Extruded)
+Info    : [ 80%] Meshing curve 23 (Extruded)
+Info    : [ 90%] Meshing curve 24 (Extruded)
+Info    : [ 90%] Meshing curve 25 (Extruded)
+Info    : [ 90%] Meshing curve 26 (Extruded)
+Info    : [100%] Meshing curve 27 (Extruded)
+Info    : [100%] Meshing curve 28 (Extruded)
+Info    : Done meshing 1D (Wall 0.00044215s, CPU 0.00107s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Transfinite)
+Info    : [ 10%] Meshing surface 2 (Transfinite)
+Info    : [ 20%] Meshing surface 3 (Transfinite)
+Info    : [ 20%] Meshing surface 4 (Extruded)
+Info    : [ 30%] Meshing surface 5 (Extruded)
+Info    : [ 40%] Meshing surface 6 (Extruded)
+Info    : [ 40%] Meshing surface 7 (Extruded)
+Info    : [ 50%] Meshing surface 8 (Extruded)
+Info    : [ 60%] Meshing surface 9 (Extruded)
+Info    : [ 60%] Meshing surface 10 (Extruded)
+Info    : [ 70%] Meshing surface 11 (Extruded)
+Info    : [ 70%] Meshing surface 12 (Extruded)
+Info    : [ 80%] Meshing surface 13 (Extruded)
+Info    : [ 90%] Meshing surface 14 (Extruded)
+Info    : [ 90%] Meshing surface 15 (Extruded)
+Info    : [100%] Meshing surface 16 (Extruded)
+Info    : Done meshing 2D (Wall 0.001426s, CPU 0.001719s)
+Info    : Meshing 3D...
+Info    : Meshing volume 1 (Extruded)
+Info    : Meshing volume 2 (Extruded)
+Info    : Meshing volume 3 (Extruded)
+Info    : Done meshing 3D (Wall 0.00117993s, CPU 0.001256s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 1.23205e-05s, CPU 1e-05s)
+Info    : 1161 nodes 2143 elements
+3D mesh nodes: 1161
+volume elem type 5 count 460
+Info    : Writing 'ubend.msh'...
+wrote ubend.msh
+Info    : Done writing 'ubend.msh'
+
+# -- cell 21 (0.2s, exit 0)
+import subprocess, os
+
+os.makedirs("constant", exist_ok=True)
+result = subprocess.run(["gmshToFoam", "ubend.msh"], capture_output=True, text=True)
+print(result.stdout[-3000:])
+print("STDERR:", result.stderr[-2000:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : gmshToFoam ubend.msh
+Date   : Sep 12 2026
+Time   : 03:40:36
+Host   : yc-demo
+PID    : 43355
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-T1-20260912-033156-e7e5/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+STDERR: 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T1-T1-20260912-033156-e7e5/t1/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 22 (0.1s, exit 0)
+import os
+
+os.makedirs("system", exist_ok=True)
+os.makedirs("constant", exist_ok=True)
+
+controlDict = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      controlDict;
+}
+application     simpleFoam;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         1;
+deltaT          1;
+writeControl    timeStep;
+writeInterval   1;
+purgeWrite      0;
+writeFormat     ascii;
+writePrecision  6;
+writeCompression off;
+timeFormat      general;
+timePrecision   6;
+runTimeModifiable true;
+"""
+with open("system/controlDict", "w") as f:
+    f.write(controlDict)
+
+fvSchemes = """FoamFile
+{
+    version 2.0;
+    format  ascii;
+    class   dictionary;
+    object  fvSchemes;
+}
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+"""
+with open("system/fvSchemes", "w") as f:
+    f.write(fvSchemes)
+
+fvSolution = """FoamFile
+{
+    version 2.0;
+    format  ascii;
+    class   dictionary;
+    object  fvSolution;
+}
+solvers {}
+"""
+with open("system/fvSolution", "w") as f:
+    f.write(fvSolution)
+
+print("minimal case files written")
+print(os.listdir("system"))
+# -- output
+minimal case files written
+['controlDict', 'fvSolution', 'fvSchemes']
+
+# -- cell 23 (0.2s, exit 0)
+import subprocess
+
+result = subprocess.run(["gmshToFoam", "ubend.msh"], capture_output=True, text=True)
+print(result.stdout[-3000:])
+print("STDERR:", result.stderr[-2000:])
+# -- output
+|                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : gmshToFoam ubend.msh
+Date   : Sep 12 2026
+Time   : 03:40:44
+Host   : yc-demo
+PID    : 43364
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-T1-20260912-033156-e7e5/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 4.1  ascii 0
+
+Starting to read physical names at line 5
+Physical names:7
+    Surface 1	wall_outer
+    Surface 2	wall_inner
+    Surface 3	inlet
+    Surface 4	outlet
+    Surface 5	front
+    Surface 6	back
+    Volume 7	fluid
+
+Starting to read points at line 82
+Vertices to be read: 1160
+Vertices read: 1160
+
+Starting to read cells at line 2458
+Cells to be read:1618
+
+Mapping region 5 to Foam patch 0
+Mapping region 1 to Foam patch 1
+Mapping region 2 to Foam patch 2
+Mapping region 3 to Foam patch 3
+Mapping region 6 to Foam patch 4
+Mapping region 4 to Foam patch 5
+Mapping region 7 to Foam cellZone 0
+Cells:
+    total: 460
+    hex  : 460
+    prism: 0
+    pyr  : 0
+    tet  : 0
+
+CellZones:
+Zone	Size
+    0	460
+
+Patch 0 gets name front
+Patch 1 gets name wall_outer
+Patch 2 gets name wall_inner
+Patch 3 gets name inlet
+Patch 4 gets name back
+Patch 5 gets name outlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 1158 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+Finding faces of patch 5
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone fluid and cellSet
+End
+
+
+STDERR:
+
+# -- cell 24 (0.1s, exit 0)
+with open("constant/polyMesh/boundary") as f:
+    print(f.read())
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+6
+(
+    front
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          460;
+        startFace       801;
+    }
+    wall_outer
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          115;
+        startFace       1261;
+    }
+    wall_inner
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          115;
+        startFace       1376;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4;
+        startFace       1491;
+    }
+    back
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          460;
+        startFace       1495;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4;
+        startFace       1955;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 25 (0.1s, exit 0)
+import re
+
+with open("constant/polyMesh/boundary") as f:
+    content = f.read()
+
+def set_type(content, patch_name, new_type):
+    pattern = re.compile(
+        r"(" + re.escape(patch_name) + r"\s*\{[^}]*?type\s+)(\w+)(;)"
+    )
+    return pattern.sub(lambda m: m.group(1) + new_type + m.group(3), content)
+
+for p in ("front", "back"):
+    content = set_type(content, p, "empty")
+for p in ("wall_outer", "wall_inner"):
+    content = set_type(content, p, "wall")
+# inlet/outlet remain 'patch'
+
+with open("constant/polyMesh/boundary", "w") as f:
+    f.write(content)
+
+print(content)
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+6
+(
+    front
+    {
+        type            empty;
+        physicalType    patch;
+        nFaces          460;
+        startFace       801;
+    }
+    wall_outer
+    {
+        type            wall;
+        physicalType    patch;
+        nFaces          115;
+        startFace       1261;
+    }
+    wall_inner
+    {
+        type            wall;
+        physicalType    patch;
+        nFaces          115;
+        startFace       1376;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4;
+        startFace       1491;
+    }
+    back
+    {
+        type            empty;
+        physicalType    patch;
+        nFaces          460;
+        startFace       1495;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4;
+        startFace       1955;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 26 (0.2s, exit 0)
+import subprocess
+
+result = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(result.stdout[-5000:])
+print("STDERR:", result.stderr[-2000:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 12 2026
+Time   : 03:41:28
+Host   : yc-demo
+PID    : 43386
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-T1-20260912-033156-e7e5/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           1160
+    internal points:  0
+    faces:            1959
+    internal faces:   801
+    cells:            460
+    faces per cell:   6
+    boundary patches: 6
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     460
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    front               460      580      ok (non-closed singly connected)  
+    wall_outer          115      232      ok (non-closed singly connected)  
+    wall_inner          115      232      ok (non-closed singly connected)  
+    inlet               4        10       ok (non-closed singly connected)  
+    back                460      580      ok (non-closed singly connected)  
+    outlet              4        10       ok (non-closed singly connected)  
+    ".*"                1158     1160     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               460          1160         7.13131e-06  (0 -0.005 0) (0.12 0.035 0.0025)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.005 0) (0.12 0.035 0.0025)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+ ***Boundary openness (-0.0138436 2.3452e-19 4.0572e-17) possible hole in boundary description.
+ ***Open cells found, max cell openness: 1, number of open cells 8
+  <<Writing 8 non closed cells to set nonClosedCells
+    Minimum face area = 4.12897e-06. Maximum face area = 8.25793e-06.  Face area magnitudes OK.
+    Min volume = 7.71008e-09. Max volume = 1.92884e-08.  Total volume = 7.13131e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 177.769 average: 11.2511
+ ***Number of non-orthogonality errors: 8.
+  <<Writing 8 non-orthogonal faces to set nonOrthoFaces
+ ***Error in face pyramids: 8 faces are incorrectly oriented.
+  <<Writing 8 faces with incorrect orientation to set wrongOrientedFaces
+    Max skewness = 1.31171 OK.
+    Coupled point location match (average 0) OK.
+
+Failed 4 mesh checks.
+
+End
+
+
+STDERR:
+
+# -- cell 27 (0.1s, exit 0)
+import gmsh
+import numpy as np
+
+gmsh.finalize()
+gmsh.initialize()
+gmsh.model.add("ubend_single")
+
+W = 0.010
+L = 0.120
+R = 0.015
+r_in = R - W/2
+r_out = R + W/2
+dz = 0.0025
+
+occ = gmsh.model.occ
+
+p1 = occ.addPoint(0.0,  -W/2, 0)
+p2 = occ.addPoint(L,    -W/2, 0)
+p3 = occ.addPoint(L,    2*R+W/2, 0)
+p4 = occ.addPoint(0.0,  2*R+W/2, 0)
+p5 = occ.addPoint(0.0,  2*R-W/2, 0)
+p6 = occ.addPoint(L,    2*R-W/2, 0)
+p7 = occ.addPoint(L,    W/2, 0)
+p8 = occ.addPoint(0.0,  W/2, 0)
+pc = occ.addPoint(L, R, 0)
+
+E1 = occ.addLine(p1, p2)          # wall_outer, lower leg
+E2 = occ.addCircleArc(p2, pc, p3) # wall_outer, bend (bulges +x, verified earlier)
+E3 = occ.addLine(p3, p4)          # wall_outer, upper leg
+E4 = occ.addLine(p4, p5)          # outlet
+E5 = occ.addLine(p5, p6)          # wall_inner, upper leg
+E6 = occ.addCircleArc(p7, pc, p6) # wall_inner, bend
+E7 = occ.addLine(p7, p8)          # wall_inner, lower leg
+E8 = occ.addLine(p8, p1)          # inlet
+
+loop = occ.addCurveLoop([E1, E2, E3, E4, E5, E6, E7, E8])
+occ.synchronize()
+s = occ.addPlaneSurface([loop])
+occ.synchronize()
+
+area = gmsh.model.occ.getMass(2, s)
+print("single face area:", area, "expected:", W*(2*L+np.pi*R))
+# -- output
+single face area: 0.0019287611019615262 expected: 0.002871238898038469
+
+# -- cell 28 (0.1s, exit 0)
+gmsh.model.occ.remove([(2, s)], recursive=False)
+loop = gmsh.model.occ.addCurveLoop([E1, E2, E3, E4, E5, -E6, E7, E8])
+gmsh.model.occ.synchronize()
+s = gmsh.model.occ.addPlaneSurface([loop])
+gmsh.model.occ.synchronize()
+
+area = gmsh.model.occ.getMass(2, s)
+print("single face area:", area, "expected:", W*(2*L + np.pi*R))
+bbox = gmsh.model.getBoundingBox(2, s)
+print("bbox:", bbox)
+# -- output
+single face area: 0.0019287611019615262 expected: 0.002871238898038469
+bbox: (-1e-07, -0.005000100000000001, -1e-07, 0.1200001, 0.035000100000000006, 1e-07)
+

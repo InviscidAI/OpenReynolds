@@ -33,8 +33,12 @@ VERIFIED*.md
 qa-runs/
 reynolds-verification/
 
-# editor/agent scratch
-.claude/
+# editor/agent scratch, except the agents and skills defined for this project: the CAD
+# supervisor and the two sweep workflows are infrastructure the next round needs, not
+# somebody's local setup.
+.claude/*
+!.claude/agents/
+!.claude/skills/
 
 # the acceptance harness's local workspace (scripts/cad_accept.py --local)
 .accept-work/

@@ -1072,3 +1072,41 @@ def test_the_loop_reads_a_python_fence_and_nothing_else():
     source, complaint = parse_action("```bash\nblockMesh\n```")
     assert source == "" and "no python block" in complaint
     assert not re.search(r"bash", parse_action("no block")[1])
+
+
+def test_every_turn_is_reported_to_whatever_is_watching_from_outside(
+    backend, store, monkeypatch
+):
+    """The heartbeat is per turn, not per step, and this is why.
+
+    The pathology that went unnoticed for three consecutive runs was a desk producing
+    replies and executing zero cells; each burned its full clock and was reported as an
+    ordinary budget exhaustion. A step-based heartbeat cannot see it, because there are
+    no steps. So a turn that ran nothing -- an all-reasoning reply, a message with no
+    fenced block -- still beats, carrying the step count that is not moving.
+    """
+    checking(monkeypatch, PASSES)
+    kernelled(backend)
+    seen: list[dict] = []
+    made = desk(backend, store, ["", "no block here", block("x = 1"), DONE])
+    made.on_turn = lambda **fields: seen.append(fields)
+    result = made.run("a duct")
+    assert result.ok
+    assert [row["turn"] for row in seen] == [1, 2, 3, 4]
+    assert [row["fenced"] for row in seen] == [False, False, True, True]
+    assert [row["steps"] for row in seen] == [0, 0, 0, 1]
+    assert seen[0]["text_chars"] == 0
+
+
+def test_a_watcher_that_raises_does_not_end_the_run(backend, store, monkeypatch):
+    """The observer reports and is never consulted. A run that could be ended by the
+    thing measuring it is a measurement of the measurement."""
+    checking(monkeypatch, PASSES)
+    kernelled(backend)
+    made = desk(backend, store, [block("x = 1"), DONE])
+
+    def explode(**fields):
+        raise RuntimeError("the watcher fell over")
+
+    made.on_turn = explode
+    assert made.run("a duct").ok

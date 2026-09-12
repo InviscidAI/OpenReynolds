@@ -1,0 +1,677 @@
+"""Built by the CAD desk, one accepted cell at a time.
+
+This file is not a record written beside the work; it is the work. Every cell below ran
+in the desk's kernel, in this order, and was accepted only after the names it uses were
+shown to be bound by a cell above it. It is run from empty at the finish, and what it
+makes there is compared against what is in the case directory.
+
+The prose above each cell is the desk's own reasoning for it, carried with the action
+rather than thrown away -- it is the only record of why this shape is this shape.
+"""
+
+# -- cell 1 -------------------------------------------------------------------------
+import numpy as np, os
+
+# ---- Parameters (metres) ----
+W      = 0.010   # passage width
+Rc     = 0.015   # centreline bend radius
+R_in   = Rc - W/2   # 0.010
+R_out  = Rc + W/2   # 0.020
+L      = 0.120   # leg length
+t      = 0.001   # slab thickness for 2D (pseudo-2D, 1 cell in z)
+
+print("R_in =", R_in, "R_out =", R_out, "width check:", R_out-R_in)
+
+# Key (x,y) points at z=0 plane (bend centre at origin, legs extend to -x)
+A = (0.0, -R_out)   # bend/leg1 outer corner
+B = (0.0, -R_in)    # bend/leg1 inner corner
+C = (0.0,  R_in)    # bend/leg2 inner corner
+D = (0.0,  R_out)   # bend/leg2 outer corner
+
+P1 = (-L, -R_out)   # inlet outer
+P2 = (-L, -R_in)    # inlet inner
+P7 = (-L,  R_out)   # outlet outer
+P8 = (-L,  R_in)    # outlet inner
+
+pts = dict(A=A,B=B,C=C,D=D,P1=P1,P2=P2,P7=P7,P8=P8)
+for k,v in pts.items():
+    print(k, v)
+
+os.makedirs("system", exist_ok=True)
+os.makedirs("constant", exist_ok=True)
+print("dirs ready")
+
+# -- cell 2 -------------------------------------------------------------------------
+# Now I'll build the blockMeshDict programmatically: 3 hex blocks (leg1 straight, bend curved via arc 
+import numpy as np
+
+# vertices (x,y) at z=0, index 0..7
+V2 = [
+    (-L, -R_out),  # 0 P1
+    (-L, -R_in ),  # 1 P2
+    (0.0,-R_in ),  # 2 B
+    (0.0,-R_out),  # 3 A
+    (0.0, R_in ),  # 4 C
+    (0.0, R_out),  # 5 D
+    (-L,  R_out),  # 6 P7
+    (-L,  R_in ),  # 7 P8
+]
+verts = []
+for (x,y) in V2:
+    verts.append((x,y,0.0))
+for (x,y) in V2:
+    verts.append((x,y,t))
+verts = np.array(verts)
+print(verts.shape)
+
+# candidate blocks using bottom-face index quadruple (z=0 indices), each will pair with +8 for top
+blocks = {
+    "leg1": [0,1,2,3],   # P1,P2,B,A
+    "bend": [3,2,4,5],   # A,B,C,D
+    "leg2": [5,4,7,6],   # D,C,P8,P7
+}
+
+def signed_area(idx):
+    pts = verts[idx][:, :2]
+    x = pts[:,0]; y = pts[:,1]
+    return 0.5*np.sum(x*np.roll(y,-1) - np.roll(x,-1)*y)
+
+for name, idx in blocks.items():
+    print(name, idx, "area=", signed_area(idx))
+
+# -- cell 3 -------------------------------------------------------------------------
+import numpy as np
+
+# Numerically determine CCW-vs-CW orientation for each block's bottom face,
+# including the bend block whose 4 corners are collinear (shoelace on corners
+# alone is degenerate) by sampling the true curved (polar) surface it spans.
+
+def area_of_ordered_loop(xy):
+    x = xy[:,0]; y = xy[:,1]
+    return 0.5*np.sum(x*np.roll(y,-1) - np.roll(x,-1)*y)
+
+# --- leg1 candidate order: P1,P2,B,A (indices 0,1,2,3) ---
+leg1_xy = verts[[0,1,2,3]][:, :2]
+print("leg1 area (0,1,2,3):", area_of_ordered_loop(leg1_xy))
+
+# --- leg2 candidate order: D,C,P8,P7 (indices 5,4,7,6) ---
+leg2_xy = verts[[5,4,7,6]][:, :2]
+print("leg2 area (5,4,7,6):", area_of_ordered_loop(leg2_xy))
+
+# --- bend block: sample the true polar-mapped quad boundary for order A,B,C,D ---
+def polar_pt(r, phi_deg):
+    phi = np.radians(phi_deg)
+    return np.array([r*np.sin(phi), -r*np.cos(phi)])
+
+# order A(u=0,v=1) -> B(u=0,v=0) -> C(u=1,v=0) -> D(u=1,v=1), sample edges densely
+N = 50
+loop = []
+# A->B : u=0, v:1->0  => phi=0, r: R_out->R_in
+for v in np.linspace(1,0,N,endpoint=False): loop.append(polar_pt(R_in+v*(R_out-R_in), 0))
+# B->C : v=0, u:0->1  => r=R_in, phi:0->180
+for u in np.linspace(0,1,N,endpoint=False): loop.append(polar_pt(R_in, 180*u))
+# C->D : u=1, v:0->1 => phi=180, r:R_in->R_out
+for v in np.linspace(0,1,N,endpoint=False): loop.append(polar_pt(R_in+v*(R_out-R_in), 180))
+# D->A : v=1, u:1->0 => r=R_out, phi:180->0
+for u in np.linspace(1,0,N,endpoint=False): loop.append(polar_pt(R_out, 180*u))
+loop = np.array(loop)
+print("bend area (A,B,C,D order):", area_of_ordered_loop(loop))
+
+# -- cell 4 -------------------------------------------------------------------------
+import numpy as np
+
+def area_of_ordered_loop(xy):
+    x = xy[:,0]; y = xy[:,1]
+    return 0.5*np.sum(x*np.roll(y,-1) - np.roll(x,-1)*y)
+
+# Reversed orders (should now be CCW / positive area) -> use these for blockMeshDict
+leg1_order = [3,2,1,0]   # A,B,P2,P1
+leg2_order = [6,7,4,5]   # P7,P8,C,D
+bend_order = [5,4,2,3]   # D,C,B,A
+
+print("leg1 area:", area_of_ordered_loop(verts[leg1_order][:, :2]))
+print("leg2 area:", area_of_ordered_loop(verts[leg2_order][:, :2]))
+
+def polar_pt(r, phi_deg):
+    phi = np.radians(phi_deg)
+    return np.array([r*np.sin(phi), -r*np.cos(phi)])
+
+N = 50
+loop = []
+# order D(u=1,v=1) -> C(u=1,v=0) -> B(u=0,v=0) -> A(u=0,v=1)
+for u in np.linspace(1,0,N,endpoint=False): loop.append(polar_pt(R_out, 180*u))   # D->? actually D->C is v:1->0 at u=1
+loop = []
+for v in np.linspace(1,0,N,endpoint=False): loop.append(polar_pt(R_out+ (v-1)*0,0))  # placeholder, redo properly below
+
+# -- cell 5 -------------------------------------------------------------------------
+import numpy as np
+
+def area_of_ordered_loop(xy):
+    x = xy[:,0]; y = xy[:,1]
+    return 0.5*np.sum(x*np.roll(y,-1) - np.roll(x,-1)*y)
+
+def polar_pt(r, phi_deg):
+    phi = np.radians(phi_deg)
+    return np.array([r*np.sin(phi), -r*np.cos(phi)])
+
+N = 50
+loop = []
+# D->C : u=1, v:1->0 , phi=180, r:R_out->R_in
+for v in np.linspace(1,0,N,endpoint=False): loop.append(polar_pt(R_in+v*(R_out-R_in), 180))
+# C->B : v=0, u:1->0 , r=R_in, phi:180->0
+for u in np.linspace(1,0,N,endpoint=False): loop.append(polar_pt(R_in, 180*u))
+# B->A : u=0, v:0->1 , phi=0, r:R_in->R_out
+for v in np.linspace(0,1,N,endpoint=False): loop.append(polar_pt(R_in+v*(R_out-R_in), 0))
+# A->D : v=1, u:0->1 , r=R_out, phi:0->180
+for u in np.linspace(0,1,N,endpoint=False): loop.append(polar_pt(R_out, 180*u))
+loop = np.array(loop)
+print("bend area (D,C,B,A order):", area_of_ordered_loop(loop))
+
+bend_order = [5,4,2,3]  # D,C,B,A  -> confirmed CCW, use this for blockMeshDict
+leg1_order = [3,2,1,0]  # A,B,P2,P1
+leg2_order = [6,7,4,5]  # P7,P8,C,D
+print("orders finalized:", leg1_order, bend_order, leg2_order)
+
+# -- cell 6 -------------------------------------------------------------------------
+# Now writing the actual `blockMeshDict` with these validated orderings, arc edges for the bend's inne
+import os
+
+nz = 1
+ny = 8      # cells across the 10 mm width
+nx_leg = 48 # cells along each 120 mm leg
+n_theta = 24 # cells around the 180 deg bend
+
+def v3(i, top=False):
+    return i+8 if top else i
+
+def blk(order, n1, n2, name):
+    b = order + [x+8 for x in order]
+    return f"    hex ({b[0]} {b[1]} {b[2]} {b[3]} {b[4]} {b[5]} {b[6]} {b[7]}) ({n1} {n2} {nz}) simpleGrading (1 1 1) // {name}"
+
+leg1_order = [3,2,1,0]
+bend_order = [5,4,2,3]
+leg2_order = [6,7,4,5]
+
+blocks_txt = "\n".join([
+    blk(leg1_order, nx_leg, ny, "leg1"),
+    blk(bend_order, n_theta, ny, "bend"),
+    blk(leg2_order, nx_leg, ny, "leg2"),
+])
+
+# arc edges: inner wall B->C (idx 2->4), outer wall A->D (idx 3->5), at z=0 and z=t(+8)
+def arc_mid(r):
+    return (r, 0.0)
+
+def arcline(i0, i1, r):
+    mx, my = arc_mid(r)
+    return f"    arc {i0} {i1} ({mx:.6f} {my:.6f} {verts[i0][2]:.6f})"
+
+edges_txt = "\n".join([
+    arcline(2, 4, R_in),
+    arcline(3, 5, R_out),
+    arcline(10, 12, R_in),
+    arcline(11, 13, R_out),
+])
+
+verts_txt = "\n".join(f"    ({x:.6f} {y:.6f} {z:.6f})" for x,y,z in verts)
+
+blockMeshDict = f"""
+FoamFile
+{{
+    version 2.0;
+    format ascii;
+    class dictionary;
+    object blockMeshDict;
+}}
+
+scale 1;
+
+vertices
+(
+{verts_txt}
+);
+
+edges
+(
+{edges_txt}
+);
+
+blocks
+(
+{blocks_txt}
+);
+
+boundary
+(
+    inlet
+    {{
+        type patch;
+        faces ((0 8 9 1));
+    }}
+    outlet
+    {{
+        type patch;
+        faces ((6 7 15 14));
+    }}
+    walls
+    {{
+        type wall;
+        faces (
+            (0 3 11 8)     // leg1 outer
+            (1 9 10 2)     // leg1 inner
+            (3 5 13 11)    // bend outer arc
+            (2 10 12 4)    // bend inner arc
+            (5 6 14 13)    // leg2 outer
+            (4 12 15 7)    // leg2 inner
+        );
+    }}
+    frontAndBack
+    {{
+        type empty;
+        faces (
+            (0 1 2 3)
+            (2 4 5 3)
+            (4 7 6 5)
+            (8 11 10 9)
+            (10 11 13 12)
+            (12 13 14 15)
+        );
+    }}
+);
+
+mergePatchPairs
+(
+);
+"""
+
+with open("system/blockMeshDict", "w") as f:
+    f.write(blockMeshDict)
+
+print(blockMeshDict[:2000])
+
+# -- cell 7 -------------------------------------------------------------------------
+# File written. Now let's run `blockMesh` and see what happens.
+import subprocess
+
+# minimal controlDict / fvSchemes / fvSolution are not needed for blockMesh itself,
+# but OpenFOAM utilities need a valid case structure with at least system/controlDict.
+controlDict = """
+FoamFile
+{
+    version 2.0;
+    format ascii;
+    class dictionary;
+    object controlDict;
+}
+application     simpleFoam;
+startFrom        startTime;
+startTime        0;
+stopAt           endTime;
+endTime          1;
+deltaT           1;
+writeControl     timeStep;
+writeInterval    1;
+purgeWrite       0;
+writeFormat      ascii;
+writePrecision   6;
+writeCompression off;
+timeFormat       general;
+timePrecision    6;
+runTimeModifiable true;
+"""
+with open("system/controlDict", "w") as f:
+    f.write(controlDict)
+
+result = subprocess.run(["blockMesh"], cwd=".", capture_output=True, text=True)
+print(result.stdout[-3000:])
+print("STDERR:", result.stderr[-2000:])
+
+# -- cell 8 -------------------------------------------------------------------------
+import subprocess
+
+# leg1 passed the orientation check; bend flagged as inward-pointing with D,C,B,A.
+# Try the opposite winding for the bend block only (A,B,C,D = indices 3,2,4,5).
+bend_order = [3,2,4,5]
+leg1_order = [3,2,1,0]
+leg2_order = [6,7,4,5]
+
+def blk(order, n1, n2, name):
+    b = order + [x+8 for x in order]
+    return f"    hex ({b[0]} {b[1]} {b[2]} {b[3]} {b[4]} {b[5]} {b[6]} {b[7]}) ({n1} {n2} {nz}) simpleGrading (1 1 1) // {name}"
+
+blocks_txt = "\n".join([
+    blk(leg1_order, nx_leg, ny, "leg1"),
+    blk(bend_order, n_theta, ny, "bend"),
+    blk(leg2_order, nx_leg, ny, "leg2"),
+])
+
+with open("system/blockMeshDict") as f:
+    content = f.read()
+
+import re
+new_content = re.sub(r"blocks\n\(\n.*?\n\);", "blocks\n(\n" + blocks_txt + "\n);", content, flags=re.S)
+with open("system/blockMeshDict", "w") as f:
+    f.write(new_content)
+
+result = subprocess.run(["blockMesh"], cwd=".", capture_output=True, text=True)
+print(result.stdout[-3000:])
+print("STDERR:", result.stderr[-2000:])
+
+# -- cell 9 -------------------------------------------------------------------------
+import numpy as np
+
+# The 180-deg bend as ONE block has 4 collinear corners; blockMesh's block
+# validity check operates on the straight-corner geometry and always flags it
+# as inverted regardless of winding. Fix: split the bend into two 90-deg
+# blocks with an extra vertex pair at angle=0 (pointing +x), so each block's
+# 4 corners are non-degenerate.
+
+W      = 0.010
+Rc     = 0.015
+R_in   = Rc - W/2
+R_out  = Rc + W/2
+L      = 0.120
+t      = 0.001
+
+V2 = [
+    (-L, -R_out),   # 0 P1
+    (-L, -R_in ),   # 1 P2
+    (0.0,-R_in ),   # 2 B
+    (0.0,-R_out),   # 3 A
+    (R_in, 0.0 ),   # 4 E (inner, angle 90)
+    (R_out,0.0 ),   # 5 F (outer, angle 90)
+    (0.0, R_in ),   # 6 C
+    (0.0, R_out),   # 7 D
+    (-L,  R_out),   # 8 P7
+    (-L,  R_in ),   # 9 P8
+]
+verts = []
+for (x,y) in V2: verts.append((x,y,0.0))
+for (x,y) in V2: verts.append((x,y,t))
+verts = np.array(verts)
+print(verts.shape)
+
+def area(idx):
+    pts = verts[idx][:, :2]
+    x=pts[:,0]; y=pts[:,1]
+    return 0.5*np.sum(x*np.roll(y,-1) - np.roll(x,-1)*y)
+
+candidates = {
+    "leg1":  [0,1,2,3],
+    "bend1": [3,2,4,5],
+    "bend2": [5,4,6,7],
+    "leg2":  [7,6,9,8],
+}
+for name, idx in candidates.items():
+    print(name, idx, "area=", area(idx))
+
+# -- cell 10 ------------------------------------------------------------------------
+import numpy as np
+
+def area(idx):
+    pts = verts[idx][:, :2]
+    x=pts[:,0]; y=pts[:,1]
+    return 0.5*np.sum(x*np.roll(y,-1) - np.roll(x,-1)*y)
+
+leg1_order  = [3,2,1,0]
+bend1_order = [5,4,2,3]
+bend2_order = [7,6,4,5]
+leg2_order  = [8,9,6,7]
+
+for name, idx in [("leg1",leg1_order),("bend1",bend1_order),("bend2",bend2_order),("leg2",leg2_order)]:
+    print(name, idx, "area=", area(idx))
+
+# -- cell 11 ------------------------------------------------------------------------
+# All positive now. Let's write the full blockMeshDict with this 4-block topology (leg1, bend1, bend2,
+import os
+
+nz = 1
+ny = 8
+nx_leg = 48
+n_theta = 12   # per 90-deg block (24 total across the bend, matching before)
+
+def blk(order, n1, n2, name):
+    b = order + [x+10 for x in order]
+    return f"    hex ({b[0]} {b[1]} {b[2]} {b[3]} {b[4]} {b[5]} {b[6]} {b[7]}) ({n1} {n2} {nz}) simpleGrading (1 1 1) // {name}"
+
+blocks_txt = "\n".join([
+    blk(leg1_order,  nx_leg,  ny, "leg1"),
+    blk(bend1_order, n_theta, ny, "bend1"),
+    blk(bend2_order, n_theta, ny, "bend2"),
+    blk(leg2_order,  nx_leg,  ny, "leg2"),
+])
+
+# quarter-arc edges, midpoint at 45 deg from each arc's start
+def polar(r, phi_deg):
+    phi = np.radians(phi_deg)
+    return (r*np.sin(phi), -r*np.cos(phi))
+
+def arcline(i0, i1, r, phi_mid):
+    mx, my = polar(r, phi_mid)
+    z = verts[i0][2]
+    return f"    arc {i0} {i1} ({mx:.6f} {my:.6f} {z:.6f})"
+
+# B(2)->E(4): inner, phi 0->90, mid 45
+# E(4)->C(6): inner, phi 90->180, mid135
+# A(3)->F(5): outer, phi 0->90, mid45
+# F(5)->D(7): outer, phi 90->180, mid135
+edges_txt = "\n".join([
+    arcline(2,4, R_in, 45),
+    arcline(4,6, R_in, 135),
+    arcline(3,5, R_out, 45),
+    arcline(5,7, R_out, 135),
+    arcline(12,14, R_in, 45),
+    arcline(14,16, R_in, 135),
+    arcline(13,15, R_out, 45),
+    arcline(15,17, R_out, 135),
+])
+
+verts_txt = "\n".join(f"    ({x:.6f} {y:.6f} {z:.6f})" for x,y,z in verts)
+
+blockMeshDict = f"""
+FoamFile
+{{
+    version 2.0;
+    format ascii;
+    class dictionary;
+    object blockMeshDict;
+}}
+
+scale 1;
+
+vertices
+(
+{verts_txt}
+);
+
+edges
+(
+{edges_txt}
+);
+
+blocks
+(
+{blocks_txt}
+);
+
+boundary
+(
+    inlet
+    {{
+        type patch;
+        faces ((0 10 11 1));
+    }}
+    outlet
+    {{
+        type patch;
+        faces ((8 9 19 18));
+    }}
+    walls
+    {{
+        type wall;
+        faces (
+            (0 3 13 10)     // leg1 outer
+            (1 11 12 2)     // leg1 inner
+            (3 5 15 13)     // bend1 outer arc
+            (2 12 14 4)     // bend1 inner arc
+            (5 7 17 15)     // bend2 outer arc
+            (4 14 16 6)     // bend2 inner arc
+            (7 8 18 17)     // leg2 outer
+            (6 16 19 9)     // leg2 inner
+        );
+    }}
+    frontAndBack
+    {{
+        type empty;
+        faces (
+            (0 1 2 3)
+            (3 2 4 5)
+            (5 4 6 7)
+            (7 6 9 8)
+            (10 13 12 11)
+            (13 15 14 12)
+            (15 17 16 14)
+            (17 18 19 16)
+        );
+    }}
+);
+
+mergePatchPairs
+(
+);
+"""
+
+with open("system/blockMeshDict", "w") as f:
+    f.write(blockMeshDict)
+
+print("written, len=", len(blockMeshDict))
+
+# -- cell 12 ------------------------------------------------------------------------
+import subprocess
+result = subprocess.run(["blockMesh"], cwd=".", capture_output=True, text=True)
+print(result.stdout[-3000:])
+print("STDERR:", result.stderr[-2000:])
+
+# -- cell 13 ------------------------------------------------------------------------
+# The interface subdivision mismatch is because I swapped the two in-plane cell counts: for each block
+import numpy as np, subprocess
+
+def blk(order, n_width, n_along, name):
+    b = order + [x+10 for x in order]
+    return f"    hex ({b[0]} {b[1]} {b[2]} {b[3]} {b[4]} {b[5]} {b[6]} {b[7]}) ({n_width} {n_along} {nz}) simpleGrading (1 1 1) // {name}"
+
+blocks_txt = "\n".join([
+    blk(leg1_order,  ny, nx_leg,  "leg1"),
+    blk(bend1_order, ny, n_theta, "bend1"),
+    blk(bend2_order, ny, n_theta, "bend2"),
+    blk(leg2_order,  ny, nx_leg,  "leg2"),
+])
+
+with open("system/blockMeshDict") as f:
+    content = f.read()
+import re
+new_content = re.sub(r"blocks\n\(\n.*?\n\);", "blocks\n(\n" + blocks_txt + "\n);", content, flags=re.S)
+with open("system/blockMeshDict", "w") as f:
+    f.write(new_content)
+
+result = subprocess.run(["blockMesh"], cwd=".", capture_output=True, text=True)
+print(result.stdout[-3000:])
+print("STDERR:", result.stderr[-2000:])
+
+# -- cell 14 ------------------------------------------------------------------------
+# Mesh generated successfully: 960 cells, correct bounding box (x: -0.12 to 0.02, y: -0.02 to 0.02). L
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv, "start_xvfb") else None
+
+reader = pv.OpenFOAMReader("foam.foam") if False else None
+# create a minimal .foam file for reader
+open("case.foam","w").close()
+reader = pv.POpenFOAMReader("case.foam") if hasattr(pv,"POpenFOAMReader") else pv.OpenFOAMReader("case.foam")
+reader.set_active_time_value(0.0)
+mesh = reader.read()
+block0 = mesh[0]
+print(mesh)
+
+p = pv.Plotter(off_screen=True)
+p.add_mesh(block0, show_edges=True, color="lightblue")
+p.camera_position = "xy"
+p.screenshot("mesh_check.png")
+print("saved")
+
+# -- cell 15 ------------------------------------------------------------------------
+# ## AI(0)
+from PIL import Image
+im = Image.open("mesh_check.png")
+print(im.size)
+im
+
+# -- cell 16 ------------------------------------------------------------------------
+# Shape matches the request visually (U-bend, both legs horizontal, constant width, 180° turn). Let's 
+import numpy as np
+
+# Measured directly from the parameters used to build the mesh (verts array is analytic, exact)
+width_measured = R_out - R_in
+leg_length_measured = L
+bend_centerline_radius = (R_in + R_out) / 2
+
+print(f"passage width:      requested 0.010 m -> built {width_measured:.6f} m")
+print(f"leg length:         requested 0.120 m -> built {leg_length_measured:.6f} m")
+print(f"bend centerline R:  requested 0.015 m -> built {bend_centerline_radius:.6f} m")
+print(f"bend sweep angle:   requested 180 deg -> built {180} deg (two 90 deg blocks, phi 0->90->180)")
+
+# cross-check against actual mesh point cloud bounds
+import pyvista as pv
+reader = pv.POpenFOAMReader("case.foam")
+reader.set_active_time_value(0.0)
+mesh = reader.read()[0]
+b = mesh.bounds
+print("mesh bounding box x:", b[0], b[1], " -> length span:", b[1]-b[0], "(should be L + R_out =", L+R_out, ")")
+print("mesh bounding box y:", b[2], b[3], " -> width span:", b[3]-b[2], "(should be 2*R_out =", 2*R_out, ")")
+print("mesh bounding box z:", b[4], b[5], " (slab thickness, should be", t, ")")
+
+# -- cell 17 ------------------------------------------------------------------------
+# All geometric measurements match the request. Now let's set up the remaining case files needed for a
+import subprocess
+result = subprocess.run(["checkMesh"], cwd=".", capture_output=True, text=True)
+print(result.stdout[-4000:])
+print("STDERR:", result.stderr[-2000:])
+
+# -- cell 18 ------------------------------------------------------------------------
+# Need minimal `fvSchemes` and `fvSolution` for `checkMesh` to run (it reads the full case setup even 
+fvSchemes = """
+FoamFile
+{
+    version 2.0;
+    format ascii;
+    class dictionary;
+    object fvSchemes;
+}
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+"""
+with open("system/fvSchemes","w") as f:
+    f.write(fvSchemes)
+
+fvSolution = """
+FoamFile
+{
+    version 2.0;
+    format ascii;
+    class dictionary;
+    object fvSolution;
+}
+solvers
+{
+}
+"""
+with open("system/fvSolution","w") as f:
+    f.write(fvSolution)
+
+import subprocess
+result = subprocess.run(["checkMesh"], cwd=".", capture_output=True, text=True)
+print(result.stdout[-4000:])
+print("STDERR:", result.stderr[-2000:])

@@ -317,3 +317,25 @@ That is the design working rather than failing. The capability — being able to
 you drew — gets used every session. The pre-built script does not, because the agent
 would rather write the render its own case needs. It also says which half was worth
 building: the image plumbing is load-bearing, the script is a convenience.
+
+## The workspace the next round was going to run in was already dirty
+
+The first thing `scripts/cad_supervise.py preflight` was ever pointed at said no, and it
+was right. On the development machine `/work/.toolbox` holds a full copy of the toolbox
+left by the last round's runs, `/work/.accept` still holds its two STEP fixtures, and
+twenty-odd case directories from previous arms sit beside them. A bare arm started there
+has our source, our templates and another arm's geometry one `ls` away — which is exactly
+how the last round's bare arm found `cad_convert.py` and read a function signature out of
+it with `sed`.
+
+The point is not that the directory needs cleaning. It is that **nothing was checking**,
+and the arm that found the toolbox was recorded as an arm that had none. Absence is a
+claim about the environment, and a claim nobody tests is a claim that is true until the
+first time it matters.
+
+**Fix:** a fresh workspace root per case per run, a pre-run assertion that no house path
+resolves and nothing of ours is reachable beneath the root, and a post-run grep of the
+cell log and every captured output for house filenames, the toolbox directory name and
+the repo path. A run that touched one is contaminated and is discarded from the baseline
+rather than averaged in, and the contamination rate is reported: if it is not zero, the
+numbers are not measuring what they claim.
