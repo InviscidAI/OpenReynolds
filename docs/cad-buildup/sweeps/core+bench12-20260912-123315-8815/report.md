@@ -1,5 +1,46 @@
 # Sweep `core+bench12-20260912-123315-8815` — twelve cases, four of them somebody else's geometry
 
+## 0. Amendment, 2026-09-12 — which of these findings are n=1
+
+Added after the fact, because the first version of §3 and of
+`docs/cad-benchmark-survey.md` drew a behavioural conclusion from single runs. `/cad-sweep`'s
+own rule is *"do not read a single case's result as a result; with one run per case, a flip is
+sampling, the corpus is the unit"*, and the conclusion broke it.
+
+**Not sampling — these stand on a mechanism, not a count:**
+
+- `checkmesh_ok_ignores_starred_region_count`. This is `cad_buildup.py:274` reading
+  `result.check.ok`, and OpenFOAM's own behaviour of starring a multi-region mesh while
+  printing `Mesh OK.`. Verifiable by reading the source; no number of runs changes it.
+- `self_intersection_probe_returns_measured_on_zero_triangles`. Two cases, and a mechanism:
+  `union_closure` read 51,282 and 44 triangles from the same directory in the same run.
+- `scale_probe_skips_cases_that_state_dimensions`. Seven cases across two sweeps.
+- `case_brief_asserts_topology_the_geometry_cannot_have`. An analytic fact about T9's brief.
+
+**Sampling, at one run each — stated too strongly first time:**
+
+- `named_requirement_dropped_without_mention` (T12's fillets) and
+  `printed_number_is_a_literal_not_a_measurement`. **One run.** The literals are certainly in
+  that run's source; whether the desk *systematically* drops a named requirement or fabricates
+  a provenance label is not established by one sample.
+- `step_budget_exhausted_before_first_mesh` and
+  `patch_mapping_collides_on_nearest_centroid_heuristic` (T10). One run.
+- `defeature_produces_invalid_shape_and_run_continues` and
+  `mesher_backgrounded_past_the_step_budget` (T5). One run each, and the baseline's T5 finding
+  did *not* recur, which is itself evidence that this case varies between runs.
+- §5's "areas and volumes measured well, a length at a station never" — four cases, one run
+  apiece. The most suggestive pattern here and still not a measured one.
+
+**And the comparison in the survey was one sample against one sample.** MAC published a single
+pass per prompt at `qwen3.7-max`; T12 is one run at `claude-opus-5`. Two anecdotes on different
+models is not an outcomes comparison, whatever direction it points.
+
+**What is being done about it:** the corpus was grown from 12 cases to 26 rather than repeating
+three cases five times — fifteen further distinct geometries at one run each, which tests the
+behavioural claims above across independent cases instead of tightening an estimate on one.
+T20 was written as a control, and T12, T20 and T26 are the three points with an external
+number beside them. The next sweep is where these claims are either supported or dropped.
+
 ## 1. The sweep
 
 | | |
