@@ -222,7 +222,21 @@ def test_a_case_whose_pass_is_a_refusal_is_scored_on_that_and_not_on_checkmesh()
 
     prompts = load_prompts()
     assert prompts["T6"]["expects"] == "refused", "T6 declares its criterion in its file"
-    assert {name for name, p in prompts.items() if p["expects"] != "done"} == {"T6"}
+
+    # Every case that is not scored on a mesh says so in its own file, and says it in the
+    # one form `_expects` reads. This used to assert the set was exactly {T6}, which was a
+    # census rather than a mechanism: §4 grows the corpus rather than freezing it, and T25
+    # -- a request that states no dimension at all -- made the assertion fail for the right
+    # reason. What has to hold is that `expects` is never invented here, only read.
+    refusals = {name for name, p in prompts.items() if p["expects"] != "done"}
+    assert "T6" in refusals
+    for name in refusals:
+        assert prompts[name]["expects"] == "refused", (
+            f"{name} expects {prompts[name]['expects']!r}; the only non-`done` criterion the "
+            "record can score is `refused`")
+        declared = Path(ROOT / prompts[name]["file"]).read_text(encoding="utf-8")
+        assert "**Passes as:** `refused`" in declared, (
+            f"{name} is scored as a refusal, so its own file must declare it")
 
     def scored(expects, stopped, checkmesh_ok):
         return (stopped == "refused" if expects == "refused"

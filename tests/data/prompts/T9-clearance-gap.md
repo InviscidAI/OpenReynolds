@@ -7,19 +7,21 @@
 
 > Model a flooded gyroscope bearing and mesh the oil inside it. An outer ring, 30 mm
 > outer radius and 23 mm inner radius, 10 mm tall, centred on the XY plane. Inside it an
-> inner spinner, 22 mm outer radius and 15 mm inner radius, the same 10 mm tall, so a
-> 1.0 mm radial clearance separates the two. The bore through the spinner, the annular
-> clearance and the volume outside the spinner but inside the ring are all filled with
-> oil and all connect through the clearance. Mesh that oil as one continuous fluid
-> region. Name the outer ring's wetted face, the spinner's wetted face, and the two
-> annular end faces at the top and bottom separately.
+> inner spinner, 22 mm outer radius and 15 mm inner radius, **8 mm tall and centred on the
+> same plane**, so a 1.0 mm radial clearance separates it from the ring and a 1.0 mm axial
+> gap separates each of its ends from the ring's. The bore through the spinner, the
+> annular clearance and the two end gaps are all filled with oil and connect through those
+> gaps, so the oil is one continuous region. Mesh it. Name the outer ring's wetted face,
+> the spinner's wetted face, and the ring's two annular end faces separately, and
+> **export one STL per patch to `constant/triSurface` before meshing.**
 
 ## Properties the desk must measure and print
 
 - the radial clearance, measured between the two meshed wall patches, not restated from the input
+- the axial end gap, measured the same way, at both ends
 - the number of connected mesh regions `checkMesh` reports, and the number expected
-- the cell size across the clearance, and how many cells span it
-- the oil volume, against the ring's swept volume minus the spinner's
+- the cell size across the clearance, and how many cells span it, counted on the mesh
+- the oil volume, against the ring's bore swept volume minus the spinner's
 - every exported patch, exhaustive and disjoint over the domain's faces
 
 ## What this catches
@@ -47,6 +49,20 @@ having never resolved the clearance at all. One region is the expected answer, s
 number agrees with the request while the geometry does not. The cells-across-the-clearance
 count is what tells the two apart, and it is the property most likely to be replaced by
 arithmetic on the requested cell size rather than measured on the mesh.
+
+## Corrected on 2026-09-12, after the first sweep
+
+**The first version of this brief could not be passed.** It gave the spinner the same 10 mm
+height as the ring, flush, and then asserted that the bore and the annular clearance "all
+connect through the clearance". With both parts flush there is no axial path between them:
+two regions is the geometrically correct answer, and sweep
+`core+bench12-20260912-123315-8815` recorded the desk building exactly what was described
+and `checkMesh` reporting `*Number of regions: 2` — correctly, against a brief that expected
+one. The 8 mm spinner height above is the fix, and it makes the one-region expectation true.
+
+The original also named patches without requiring them exported, so no probe could read the
+surface. Four cases made that mistake and all four returned `n/a` on every probe. The export
+is now required in the request.
 
 ## Provenance
 

@@ -18,12 +18,23 @@ follows judges the authoring layer on what it produces.
 **Both repos were read, neither was run.** Their numbers are theirs, quoted from their
 reports with the conditions attached. This desk's numbers are from the sweep above.
 
-## The answer
+## The answer, and the size of the claim
 
-**Continue building — and lift one thing, which is a discipline rather than a component:
-every geometric operation carries a post-condition, and a failed post-condition emits a
-named diagnostic rather than nothing.** MAC has this and this desk does not, and the sweep
-that ran alongside this survey is the evidence.
+**Continue building.** That part is not close: nothing in either repo touches what happens
+downstream of the STEP file, and their own outputs are a printable solid in OpenSCAD polyhedra
+and in build123d STEP respectively.
+
+**On the authoring half, the candidate to lift is a discipline rather than a component: every
+geometric operation carries a post-condition, and a failed post-condition emits a named
+diagnostic rather than nothing.** MAC's generated code has this and this desk's does not —
+that much is code reading on both sides, and it is not a sampling claim.
+
+**What is *not* yet established is that it matters as much as the first version of this
+document said.** That version compared T12 at n=1 against MAC's P8 at n=1, on different
+models, and concluded their behaviour on their geometry was better than ours. Two anecdotes.
+The corpus has since been grown to 26 cases — fifteen further distinct geometries rather than
+five repeats of three — and the claim stands or falls on the next sweep. §"What the outcomes
+say" below is written as of one run per case and should be read that way.
 
 ## What the outcomes say
 
@@ -49,10 +60,14 @@ nothing said so. Three of the run's closing numbers are typed constants inside s
 labelled as measurements, including `print("hub radius from mesh : 0.01200 m (asked
 0.012)")`, which contains no computation. The record scores it a pass.
 
-**The scores are not comparable and the behaviour is.** Their 15 features are presence checks
-on a printable solid; this case demands a clean `checkMesh` plus six measured properties. But
-"did the pipeline attempt the operation its brief required, and did it say what happened" is
-the same question either side, and on their geometry **their answer is better than ours.**
+**The scores are not comparable, the behaviour is, and both columns are a single run.** Their
+15 features are presence checks on a printable solid; this case demands a clean `checkMesh`
+plus six measured properties. "Did the pipeline attempt the operation its brief required, and
+did it say what happened" *is* the same question either side — but MAC published one pass per
+prompt and T12 ran once, so the honest statement is that **on one run each, on their geometry,
+their answer was better than ours**, and whether that survives repetition is unmeasured. Their
+side stays n=1 unless their pipeline is run here, which is possible — it takes any
+OpenAI-compatible endpoint — and is a separate piece of work.
 
 ### Why, and it is not the model
 
@@ -94,8 +109,11 @@ measured well; a length at a station is not measured at all.**
   `measured clearance = 1.000 mm` as `(R_RING_I-R_SPIN_O)*1000`.
 - T12 measured its outlet radius over 5,260 real face centres, and typed its hub radius in.
 
-Four for four. The desk substitutes arithmetic on its own parameters for a width, a thickness
-or a gap, and labels the result as measured. A post-condition on the operation would not
+Four for four, **at one run each**, which makes it the most suggestive pattern in the corpus
+and not yet a measured one. On that evidence the desk substitutes arithmetic on its own
+parameters for a width, a thickness or a gap, and labels the result as measured. Nine of the
+fifteen new cases ask for a length at a station for exactly this reason, including T20, which
+is a 42 mm cylinder and therefore has no difficulty to blame. A post-condition on the operation would not
 catch every instance of that, but the class it does catch — an operation that was required,
 ran, and did nothing — is ranks 1, 2 and 6 of this sweep.
 
