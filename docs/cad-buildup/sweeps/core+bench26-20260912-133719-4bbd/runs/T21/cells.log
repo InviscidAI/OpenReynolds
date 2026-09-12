@@ -1,0 +1,821 @@
+# -- cell 1 (2.3s, exit 1)
+import os, numpy as np
+from build123d import *
+
+LX, LY, LZ = 0.160, 0.100, 0.040      # internal cavity
+TW = 0.003                            # wall thickness
+VW, VH = 0.030, 0.020                 # vent width (y) x height (z)
+VZ0 = 0.010                           # vent bottom above floor
+SD, SH = 0.010, 0.025                 # standoff dia, height
+HD, HDEP = 0.004, 0.012               # blind hole dia, depth
+INSET = 0.015                         # standoff centre inset from corner
+
+cavity = Box(LX, LY, LZ, align=(Align.MIN,)*3)
+duct = Pos(LX, (LY-VW)/2, VZ0) * Box(TW, VW, VH, align=(Align.MIN,)*3)
+centres = [(INSET, INSET), (LX-INSET, INSET), (INSET, LY-INSET), (LX-INSET, LY-INSET)]
+stand = None
+for cx, cy in centres:
+    c = Pos(cx, cy, 0) * Cylinder(SD/2, SH, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    h = Pos(cx, cy, SH-HDEP) * Cylinder(HD/2, HDEP, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    stand = (c - h) if stand is None else stand + (c - h)
+fluid = (cavity + duct) - stand
+print(fluid.is_valid(), fluid.volume, len(fluid.faces()))
+print(fluid.bounding_box())
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 21[39m
+[32m     17[39m     c = Pos(cx, cy, [32m0[39m) * Cylinder(SD/[32m2[39m, SH, align=(Align.CENTER, Align.CENTER, Align.MIN))
+[32m     18[39m     h = Pos(cx, cy, SH-HDEP) * Cylinder(HD/[32m2[39m, HDEP, align=(Align.CENTER, Align.CENTER, Align.MIN))
+[32m     19[39m     stand = (c - h) [38;5;28;01mif[39;00m stand [38;5;28;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m stand + (c - h)
+[32m     20[39m fluid = (cavity + duct) - stand
+[32m---> [39m[32m21[39m print(fluid.is_valid(), fluid.volume, len(fluid.faces()))
+[32m     22[39m print(fluid.bounding_box())
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 2 (0.1s, exit 0)
+print(fluid.is_valid, fluid.volume, len(fluid.faces()))
+print(fluid.bounding_box())
+import math
+V_expect = LX*LY*LZ + TW*VW*VH - 4*(math.pi*(SD/2)**2*SH - math.pi*(HD/2)**2*HDEP)
+print("expected volume", V_expect)
+# -- output
+True 0.0006345492041555149 27
+bbox: 0.0 <= x <= 0.163, 0.0 <= y <= 0.1, 0.0 <= z <= 0.04
+expected volume 0.0006345492041555149
+
+# -- cell 3 (0.1s, exit 0)
+import os, math, numpy as np
+from build123d import *
+
+LX, LY, LZ = 0.160, 0.100, 0.040      # internal cavity, metres
+TW = 0.003                            # wall thickness
+VW, VH = 0.030, 0.020                 # vent width (y) x height (z)
+VZ0 = 0.010                           # vent bottom above floor
+SD, SH = 0.010, 0.025                 # standoff dia, height
+HD, HDEP = 0.004, 0.012               # blind hole dia, depth
+INSET = 0.015                         # standoff centre inset from internal corner
+
+cavity = Box(LX, LY, LZ, align=(Align.MIN,)*3)
+duct = Pos(LX, (LY-VW)/2, VZ0) * Box(TW, VW, VH, align=(Align.MIN,)*3)
+centres = [(INSET, INSET), (LX-INSET, INSET), (INSET, LY-INSET), (LX-INSET, LY-INSET)]
+stand = None
+for cx, cy in centres:
+    c = Pos(cx, cy, 0) * Cylinder(SD/2, SH, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    h = Pos(cx, cy, SH-HDEP) * Cylinder(HD/2, HDEP, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    stand = (c - h) if stand is None else stand + (c - h)
+fluid = (cavity + duct) - stand
+
+V_expect = LX*LY*LZ + TW*VW*VH - 4*(math.pi*(SD/2)**2*SH - math.pi*(HD/2)**2*HDEP)
+print("valid:", fluid.is_valid, "faces:", len(fluid.faces()))
+print("volume:", fluid.volume, " expected:", V_expect)
+print(fluid.bounding_box())
+# -- output
+valid: True faces: 27
+volume: 0.0006345492041555149  expected: 0.0006345492041555149
+bbox: 0.0 <= x <= 0.163, 0.0 <= y <= 0.1, 0.0 <= z <= 0.04
+
+# -- cell 4 (0.1s, exit 0)
+from collections import defaultdict
+groups = defaultdict(list)
+for f in fluid.faces():
+    gt = f.geom_type
+    c = f.center()
+    if gt == GeomType.CYLINDER:
+        r = f.radius
+        groups["standoffs" if abs(r-SD/2) < 1e-6 else "holes"].append(f)
+    else:
+        n = f.normal_at(c)
+        if abs(n.Z) > 0.9 and abs(c.Z) < 1e-9:
+            groups["floor"].append(f)
+        elif abs(n.Z) > 0.9 and abs(c.Z - LZ) < 1e-9:
+            groups["top"].append(f)
+        elif abs(n.Z) > 0.9 and abs(c.Z - SH) < 1e-9:
+            groups["standoffs"].append(f)       # standoff top annulus
+        elif abs(n.Z) > 0.9 and abs(c.Z - (SH-HDEP)) < 1e-9:
+            groups["holes"].append(f)           # blind hole bottom
+        elif abs(n.X) > 0.9 and abs(c.X - (LX+TW)) < 1e-9:
+            groups["vent"].append(f)
+        else:
+            groups["walls"].append(f)
+for k, v in groups.items():
+    print(k, len(v), "area=%.6g" % sum(f.area for f in v))
+# -- output
+walls 8 area=0.0205
+top 1 area=0.016
+floor 1 area=0.0156858
+standoffs 8 area=0.00340549
+vent 1 area=0.0006
+holes 8 area=0.000653451
+
+# -- cell 5 (1.4s, exit 0)
+import subprocess, pyvista as pv
+os.makedirs("constant/triSurface", exist_ok=True)
+for name, fs in groups.items():
+    sh = fs[0] if len(fs) == 1 else Compound(children=fs)
+    export_stl(sh, f"constant/triSurface/{name}.stl", tolerance=2e-5, angular_tolerance=0.2)
+print(sorted(os.listdir("constant/triSurface")))
+
+pv.start_xvfb() if hasattr(pv, "start_xvfb") else None
+pl = pv.Plotter(off_screen=True, window_size=(900, 650))
+cols = dict(walls="lightgray", floor="tan", top="skyblue", vent="red", standoffs="green", holes="magenta")
+for name in cols:
+    m = pv.read(f"constant/triSurface/{name}.stl")
+    pl.add_mesh(m, color=cols[name], opacity=0.35 if name in ("walls", "top") else 1.0, show_edges=False)
+pl.camera_position = [(0.30, -0.25, 0.22), (0.08, 0.05, 0.015), (0, 0, 1)]
+pl.screenshot("shape.png")
+# -- output
+['floor.stl', 'holes.stl', 'standoffs.stl', 'top.stl', 'vent.stl', 'walls.stl']
+array([[[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       ...,
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]]], shape=(650, 900, 3), dtype=uint8)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 14:05:33.547 (   1.176s) [    71E8F347C780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 14:05:33.548 (   1.176s) [    71E8F347C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 14:05:33.560 (   1.189s) [    71E8F347C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 6 (0.1s, exit 1)
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from stl_reader import *  if False else None
+def read_tris(p):
+    m = pv.read(p)
+    f = m.faces.reshape(-1, 4)[:, 1:]
+    return m.points[f]
+fig = plt.figure(figsize=(11, 5))
+for i, (elev, azim) in enumerate([(25, -60), (75, -90)]):
+    ax = fig.add_subplot(1, 2, i+1, projection="3d")
+    for name, col in cols.items():
+        t = read_tris(f"constant/triSurface/{name}.stl")
+        ax.add_collection3d(Poly3DCollection(t, facecolor=col, edgecolor="k",
+                                             linewidths=0.15, alpha=0.25 if name in ("walls","top") else 1.0))
+    ax.set_xlim(0, 0.17); ax.set_ylim(0, 0.11); ax.set_zlim(0, 0.05)
+    ax.set_box_aspect((0.17, 0.11, 0.05)); ax.view_init(elev, azim)
+plt.tight_layout(); plt.show()
+# -- output
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 5[39m
+[31m    [39m[31mfrom stl_reader import *  if False else None[39m
+                              ^
+[31mSyntaxError[39m[31m:[39m invalid syntax
+
+# -- cell 7 (0.5s, exit 0)
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+def read_tris(p):
+    m = pv.read(p)
+    f = m.faces.reshape(-1, 4)[:, 1:]
+    return m.points[f]
+fig = plt.figure(figsize=(11, 5))
+for i, (elev, azim) in enumerate([(25, -60), (70, -90)]):
+    ax = fig.add_subplot(1, 2, i+1, projection="3d")
+    for name, col in cols.items():
+        t = read_tris(f"constant/triSurface/{name}.stl")
+        ax.add_collection3d(Poly3DCollection(t, facecolor=col, edgecolor="k",
+                                             linewidths=0.15, alpha=0.25 if name in ("walls","top") else 1.0))
+    ax.set_xlim(0, 0.17); ax.set_ylim(0, 0.11); ax.set_zlim(0, 0.05)
+    ax.set_box_aspect((0.17, 0.11, 0.05)); ax.view_init(elev, azim)
+plt.tight_layout(); plt.show()
+# -- output
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 8 (0.6s, exit 0)
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+def read_tris(p):
+    m = pv.read(p)
+    f = m.faces.reshape(-1, 4)[:, 1:]
+    return m.points[f]
+fig = plt.figure(figsize=(12, 5))
+for i, (elev, azim) in enumerate([(25, -60), (70, -90)]):
+    ax = fig.add_subplot(1, 2, i+1, projection="3d")
+    for name, col in cols.items():
+        t = read_tris(f"constant/triSurface/{name}.stl")
+        ax.add_collection3d(Poly3DCollection(t, facecolor=col, edgecolor="k",
+                                             linewidths=0.15, alpha=0.2 if name in ("walls","top") else 1.0))
+    ax.set_xlim(0, 0.17); ax.set_ylim(0, 0.11); ax.set_zlim(0, 0.05)
+    ax.set_box_aspect((0.17, 0.11, 0.05)); ax.view_init(elev, azim)
+fig
+# -- output
+
+
+# -- cell 9 (0.1s, exit 0)
+import gmsh
+export_step(fluid, "fluid.step")
+gmsh.initialize()
+gmsh.option.setNumber("General.Terminal", 1)
+gmsh.model.add("enc")
+gmsh.model.occ.importShapes("fluid.step")
+gmsh.model.occ.synchronize()
+surfs = gmsh.model.getEntities(2)
+print("gmsh surfaces:", len(surfs), "volumes:", gmsh.model.getEntities(3))
+
+ref = []
+for name, fs in groups.items():
+    for f in fs:
+        c = f.center(); ref.append((name, np.array([c.X, c.Y, c.Z]), f.area))
+assign = {}
+for dim, tag in surfs:
+    com = np.array(gmsh.model.occ.getCenterOfMass(dim, tag))
+    a = gmsh.model.occ.getMass(dim, tag)
+    best = min(ref, key=lambda r: np.linalg.norm(r[1]-com) + abs(r[2]-a))
+    assign.setdefault(best[0], []).append(tag)
+    d = np.linalg.norm(best[1]-com)
+    if d > 1e-6: print("loose match", tag, best[0], d)
+print({k: len(v) for k, v in assign.items()})
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+gmsh surfaces: 27 volumes: [(3, 1)]
+loose match 7 holes 0.0005000000000000004
+loose match 8 holes 0.0005000000000000004
+loose match 9 holes 0.0005000000000000004
+loose match 10 holes 0.0005000000000000004
+loose match 20 holes 0.002000000000000132
+loose match 21 holes 0.002000000000000113
+loose match 22 holes 0.002000000000000132
+loose match 23 holes 0.002000000000000113
+{'walls': 8, 'top': 1, 'floor': 1, 'holes': 12, 'standoffs': 4, 'vent': 1}
+
+# -- cell 10 (0.1s, exit 0)
+assign = {}
+for dim, tag in gmsh.model.getEntities(2):
+    t = gmsh.model.getType(dim, tag)
+    x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(dim, tag)
+    com = gmsh.model.occ.getCenterOfMass(dim, tag)
+    if t == "Cylinder":
+        r = (x1-x0)/2
+        name = "standoffs" if abs(r-SD/2) < 1e-6 else "holes"
+    elif abs(z1-z0) < 1e-9:
+        z = z0
+        name = ("floor" if abs(z) < 1e-9 else "top" if abs(z-LZ) < 1e-9
+                else "standoffs" if abs(z-SH) < 1e-9 else "holes" if abs(z-(SH-HDEP)) < 1e-9 else "?")
+    elif abs(x1-x0) < 1e-9 and abs(x0-(LX+TW)) < 1e-9:
+        name = "vent"
+    else:
+        name = "walls"
+    assign.setdefault(name, []).append(tag)
+    if name == "?": print("unclassified", tag, t, com)
+print({k: (len(v), round(sum(gmsh.model.occ.getMass(2, s) for s in v), 7)) for k, v in assign.items()})
+# -- output
+{'walls': (19, 0.0531), 'standoffs': (4, 0.0031416), 'holes': (4, 0.0006032)}
+
+# -- cell 11 (0.1s, exit 0)
+for dim, tag in gmsh.model.getEntities(2)[:6]:
+    print(tag, gmsh.model.getType(dim, tag), ["%.3e" % v for v in gmsh.model.getBoundingBox(dim, tag)])
+# -- output
+1 Plane ['-1.000e-07', '-1.000e-07', '-1.000e-07', '1.000e-07', '1.000e-01', '4.000e-02']
+2 Plane ['-1.000e-07', '-1.000e-07', '-1.000e-07', '1.600e-01', '1.000e-07', '4.000e-02']
+3 Plane ['-1.000e-07', '-1.000e-07', '4.000e-02', '1.600e-01', '1.000e-01', '4.000e-02']
+4 Plane ['-1.000e-07', '1.000e-01', '-1.000e-07', '1.600e-01', '1.000e-01', '4.000e-02']
+5 Plane ['-1.000e-07', '-1.000e-07', '-1.000e-07', '1.600e-01', '1.000e-01', '1.000e-07']
+6 Plane ['1.600e-01', '-1.000e-07', '-1.000e-07', '1.600e-01', '1.000e-01', '4.000e-02']
+
+# -- cell 12 (0.1s, exit 0)
+TOL = 1e-6
+assign = {}
+for dim, tag in gmsh.model.getEntities(2):
+    t = gmsh.model.getType(dim, tag)
+    x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(dim, tag)
+    cx, cy, cz = gmsh.model.occ.getCenterOfMass(dim, tag)
+    if t == "Cylinder":
+        r = (x1-x0-2e-7)/2
+        name = "standoffs" if abs(r-SD/2) < TOL else "holes"
+    elif (z1-z0) < TOL:
+        name = ("floor" if abs(cz) < TOL else "top" if abs(cz-LZ) < TOL
+                else "standoffs" if abs(cz-SH) < TOL else "holes" if abs(cz-(SH-HDEP)) < TOL else "?")
+    elif (x1-x0) < TOL and abs(cx-(LX+TW)) < TOL:
+        name = "vent"
+    else:
+        name = "walls"
+    assign.setdefault(name, []).append(tag)
+    if name == "?": print("unclassified", tag, t, cx, cy, cz)
+print({k: (len(v), round(sum(gmsh.model.occ.getMass(2, s) for s in v), 7)) for k, v in assign.items()})
+# -- output
+unclassified 12 Plane 0.1615 0.049999999999999996 0.01
+unclassified 14 Plane 0.1615 0.049999999999999996 0.03
+{'walls': (6, 0.02032), 'top': (1, 0.016), 'floor': (1, 0.0156858), 'standoffs': (8, 0.0034055), '?': (2, 0.00018), 'vent': (1, 0.0006), 'holes': (8, 0.0006535)}
+
+# -- cell 13 (0.1s, exit 0)
+TOL = 1e-6
+assign = {}
+for dim, tag in gmsh.model.getEntities(2):
+    t = gmsh.model.getType(dim, tag)
+    x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(dim, tag)
+    cx, cy, cz = gmsh.model.occ.getCenterOfMass(dim, tag)
+    if t == "Cylinder":
+        r = (x1-x0-2e-7)/2
+        name = "standoffs" if abs(r-SD/2) < TOL else "holes"
+    elif (z1-z0) < TOL and abs(cz) < TOL:
+        name = "floor"
+    elif (z1-z0) < TOL and abs(cz-LZ) < TOL:
+        name = "top"
+    elif (z1-z0) < TOL and abs(cz-SH) < TOL and (x1-x0) < SD+TOL:
+        name = "standoffs"                      # standoff top annulus
+    elif (z1-z0) < TOL and abs(cz-(SH-HDEP)) < TOL and (x1-x0) < HD+TOL:
+        name = "holes"                          # blind hole bottom
+    elif (x1-x0) < TOL and abs(cx-(LX+TW)) < TOL:
+        name = "vent"
+    else:
+        name = "walls"                          # side walls + vent duct walls
+    assign.setdefault(name, []).append(tag)
+for name, tags in assign.items():
+    gmsh.model.addPhysicalGroup(2, tags, name=name)
+gmsh.model.addPhysicalGroup(3, [1], name="internal")
+print({k: (len(v), round(sum(gmsh.model.occ.getMass(2, s) for s in v), 7)) for k, v in assign.items()})
+# -- output
+{'walls': (8, 0.0205), 'top': (1, 0.016), 'floor': (1, 0.0156858), 'standoffs': (8, 0.0034055), 'vent': (1, 0.0006), 'holes': (8, 0.0006535)}
+
+# -- cell 14 (1.9s, exit 0)
+import time
+gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+f1 = gmsh.model.mesh.field.add("Distance")
+gmsh.model.mesh.field.setNumbers(f1, "SurfacesList", assign["holes"] + assign["standoffs"])
+gmsh.model.mesh.field.setNumber(f1, "Sampling", 60)
+f2 = gmsh.model.mesh.field.add("Threshold")
+gmsh.model.mesh.field.setNumber(f2, "InField", f1)
+gmsh.model.mesh.field.setNumber(f2, "SizeMin", 0.0012)
+gmsh.model.mesh.field.setNumber(f2, "SizeMax", 0.006)
+gmsh.model.mesh.field.setNumber(f2, "DistMin", 0.002)
+gmsh.model.mesh.field.setNumber(f2, "DistMax", 0.015)
+gmsh.model.mesh.field.setAsBackgroundMesh(f2)
+t0 = time.time(); gmsh.model.mesh.generate(3); print("mesh time %.1fs" % (time.time()-t0))
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.write("enc.msh")
+print(len(gmsh.model.mesh.getElementsByType(4)[0]), "tets")
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Line)
+Info    : [ 10%] Meshing curve 5 (Line)
+Info    : [ 20%] Meshing curve 6 (Line)
+Info    : [ 20%] Meshing curve 7 (Line)
+Info    : [ 20%] Meshing curve 8 (Line)
+Info    : [ 20%] Meshing curve 9 (Line)
+Info    : [ 20%] Meshing curve 10 (Line)
+Info    : [ 30%] Meshing curve 11 (Line)
+Info    : [ 30%] Meshing curve 12 (Line)
+Info    : [ 30%] Meshing curve 13 (Circle)
+Info    : [ 30%] Meshing curve 14 (Circle)
+Info    : [ 30%] Meshing curve 15 (Circle)
+Info    : [ 40%] Meshing curve 16 (Circle)
+Info    : [ 40%] Meshing curve 17 (Line)
+Info    : [ 40%] Meshing curve 18 (Line)
+Info    : [ 40%] Meshing curve 19 (Line)
+Info    : [ 40%] Meshing curve 20 (Line)
+Info    : [ 50%] Meshing curve 21 (Circle)
+Info    : [ 50%] Meshing curve 22 (Line)
+Info    : [ 50%] Meshing curve 23 (Circle)
+Info    : [ 50%] Meshing curve 24 (Line)
+Info    : [ 60%] Meshing curve 25 (Circle)
+Info    : [ 60%] Meshing curve 26 (Line)
+Info    : [ 60%] Meshing curve 27 (Circle)
+Info    : [ 60%] Meshing curve 28 (Line)
+Info    : [ 60%] Meshing curve 29 (Line)
+Info    : [ 70%] Meshing curve 30 (Line)
+Info    : [ 70%] Meshing curve 31 (Line)
+Info    : [ 70%] Meshing curve 32 (Line)
+Info    : [ 70%] Meshing curve 33 (Line)
+Info    : [ 70%] Meshing curve 34 (Line)
+Info    : [ 80%] Meshing curve 35 (Line)
+Info    : [ 80%] Meshing curve 36 (Line)
+Info    : [ 80%] Meshing curve 37 (Circle)
+Info    : [ 80%] Meshing curve 38 (Circle)
+Info    : [ 80%] Meshing curve 39 (Circle)
+Info    : [ 90%] Meshing curve 40 (Circle)
+Info    : [ 90%] Meshing curve 41 (Line)
+Info    : [ 90%] Meshing curve 42 (Circle)
+Info    : [ 90%] Meshing curve 43 (Line)
+Info    : [ 90%] Meshing curve 44 (Circle)
+Info    : [100%] Meshing curve 45 (Line)
+Info    : [100%] Meshing curve 46 (Circle)
+Info    : [100%] Meshing curve 47 (Line)
+Info    : [100%] Meshing cur
+... 1878 characters cut ...
+ 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 6038 nodes...
+Info    : Done tetrahedrizing 6046 nodes (Wall 0.0746012s, CPU 0.069839s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    : Done reconstructing mesh (Wall 0.157403s, CPU 0.146746s)
+Info    : Found volume 1
+Info    : It. 0 - 0 nodes created - worst tet radius 12.5356 (nodes removed 0 0)
+Info    : It. 500 - 500 nodes created - worst tet radius 2.40987 (nodes removed 0 0)
+Info    : It. 1000 - 1000 nodes created - worst tet radius 1.91871 (nodes removed 0 0)
+Info    : It. 1500 - 1500 nodes created - worst tet radius 1.68375 (nodes removed 0 0)
+Info    : It. 2000 - 2000 nodes created - worst tet radius 1.54936 (nodes removed 0 0)
+Info    : It. 2500 - 2500 nodes created - worst tet radius 1.46496 (nodes removed 0 0)
+Info    : It. 3000 - 3000 nodes created - worst tet radius 1.40143 (nodes removed 0 0)
+Info    : It. 3500 - 3500 nodes created - worst tet radius 1.3398 (nodes removed 0 0)
+Info    : It. 4000 - 4000 nodes created - worst tet radius 1.2892 (nodes removed 0 0)
+Info    : It. 4500 - 4500 nodes created - worst tet radius 1.24154 (nodes removed 0 0)
+Info    : It. 5000 - 5000 nodes created - worst tet radius 1.19996 (nodes removed 0 0)
+Info    : It. 5500 - 5500 nodes created - worst tet radius 1.16408 (nodes removed 0 0)
+Info    : It. 6000 - 6000 nodes created - worst tet radius 1.13342 (nodes removed 0 0)
+Info    : It. 6500 - 6500 nodes created - worst tet radius 1.10549 (nodes removed 0 0)
+Info    : It. 7000 - 7000 nodes created - worst tet radius 1.07845 (nodes removed 0 0)
+Info    : It. 7500 - 7500 nodes created - worst tet radius 1.05438 (nodes removed 0 0)
+Info    : It. 8000 - 8000 nodes created - worst tet radius 1.03386 (nodes removed 0 0)
+Info    : It. 8500 - 8500 nodes created - worst tet radius 1.01362 (nodes removed 0 0)
+Info    : 3D refinement terminated (14914 nodes total):
+Info    :  - 0 Delaunay cavities modified for star shapeness
+Info    :  - 0 nodes could not be inserted
+Info    :  - 74843 tetrahedra created in 0.536034 sec. (139623 tets/s)
+Info    : 0 node relocations
+Info    : Done meshing 3D (Wall 0.851004s, CPU 0.840463s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 0.00063458) with worst = 0.0103242 / average = 0.765642:
+Info    : 0.00 < quality < 0.10 :       173 elements
+Info    : 0.10 < quality < 0.20 :       453 elements
+Info    : 0.20 < quality < 0.30 :       794 elements
+Info    : 0.30 < quality < 0.40 :      1333 elements
+Info    : 0.40 < quality < 0.50 :      2148 elements
+Info    : 0.50 < quality < 0.60 :      4147 elements
+Info    : 0.60 < quality < 0.70 :      9407 elements
+Info    : 0.70 < quality < 0.80 :     19468 elements
+Info    : 0.80 < quality < 0.90 :     24822 elements
+Info    : 0.90 < quality < 1.00 :     12098 elements
+Info    : 1399 edge swaps, 31 node relocations (volume = 0.00063458): worst = 0.160538 / average = 0.776925 (Wall 0.0287278s, CPU 0.029082s)
+Info    : 1407 edge swaps, 33 node relocations (volume = 0.00063458): worst = 0.160538 / average = 0.776983 (Wall 0.0345133s, CPU 0.035048s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         1 elements
+Info    : 0.20 < quality < 0.30 :         0 elements
+Info    : 0.30 < quality < 0.40 :      1333 elements
+Info    : 0.40 < quality < 0.50 :      2084 elements
+Info    : 0.50 < quality < 0.60 :      4076 elements
+Info    : 0.60 < quality < 0.70 :      9443 elements
+Info    : 0.70 < quality < 0.80 :     19597 elements
+Info    : 0.80 < quality < 0.90 :     25008 elements
+Info    : 0.90 < quality < 1.00 :     12048 elements
+Info    : Done optimizing mesh (Wall 0.104654s, CPU 0.095393s)
+Info    : 14914 nodes 86383 elements
+mesh time 1.7s
+Info    : Writing 'enc.msh'...
+Info    : Done writing 'enc.msh'
+73599 tets
+
+# -- cell 15 (0.6s, exit 0)
+import subprocess, textwrap
+os.makedirs("system", exist_ok=True)
+def foam(loc, obj, body, cls="dictionary"):
+    return ("FoamFile\n{\n    version 2.0;\n    format ascii;\n    class %s;\n"
+            "    location \"%s\";\n    object %s;\n}\n\n" % (cls, loc, obj)) + body
+open("system/controlDict", "w").write(foam("system", "controlDict",
+    "application icoFoam;\nstartFrom startTime;\nstartTime 0;\nstopAt endTime;\nendTime 1;\n"
+    "deltaT 1;\nwriteControl timeStep;\nwriteInterval 1;\n"))
+open("system/fvSchemes", "w").write(foam("system", "fvSchemes",
+    "ddtSchemes{default Euler;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\n"
+    "laplacianSchemes{default Gauss linear corrected;}\ninterpolationSchemes{default linear;}\n"
+    "snGradSchemes{default corrected;}\n"))
+open("system/fvSolution", "w").write(foam("system", "fvSolution", "solvers{}\n"))
+r = subprocess.run(["gmshToFoam", "enc.msh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-500:])
+# -- output
+0 format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:7
+    Surface 1	walls
+    Surface 2	top
+    Surface 3	floor
+    Surface 4	standoffs
+    Surface 5	vent
+    Surface 6	holes
+    Volume 7	internal
+
+Starting to read points at line 15
+Vertices to be read: 14914
+Vertices read:14914
+
+Starting to read cells at line 14932
+Cells to be read: 85671
+
+Mapping region 1 to Foam patch 0
+Mapping region 2 to Foam patch 1
+Mapping region 3 to Foam patch 2
+Mapping region 4 to Foam patch 3
+Mapping region 5 to Foam patch 4
+Mapping region 6 to Foam patch 5
+Mapping region 7 to Foam cellZone 0
+Cells:
+    total:73599
+    hex  :0
+    prism:0
+    pyr  :0
+    tet  :73599
+
+CellZones:
+Zone	Size
+    0	73599
+
+Patch 0 gets name walls
+Patch 1 gets name top
+Patch 2 gets name floor
+Patch 3 gets name standoffs
+Patch 4 gets name vent
+Patch 5 gets name holes
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 12072 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+Finding faces of patch 5
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+# -- cell 16 (0.5s, exit 0)
+r = subprocess.run(["checkMesh", "-constant"], capture_output=True, text=True)
+print(r.stdout[-2500:])
+# -- output
+* * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           14914
+    faces:            153234
+    internal faces:   141162
+    cells:            73599
+    faces per cell:   4
+    boundary patches: 6
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    73599
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    walls               1742     971      ok (non-closed singly connected)  
+    top                 1076     583      ok (non-closed singly connected)  
+    floor               2556     1377     ok (non-closed singly connected)  
+    standoffs           5548     2850     ok (non-closed singly connected)  
+    vent                48       34       ok (non-closed singly connected)  
+    holes               1102     577      ok (non-closed singly connected)  
+    ".*"                12072    6038     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            73599        14914        0.00063458   (0 0 0) (0.163 0.1 0.04)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.163 0.1 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (5.44259e-17 -1.30913e-17 -5.00703e-16) OK.
+    Max cell openness = 2.9553e-16 OK.
+    Max aspect ratio = 13.0288 OK.
+    Minimum face area = 3.41002e-07. Maximum face area = 4.84274e-05.  Face area magnitudes OK.
+    Min volume = 3.79011e-11. Max volume = 1.01251e-07.  Total volume = 0.00063458.  Cell volumes OK.
+    Mesh non-orthogonality Max: 68.1422 average: 21.3665
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.29403 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 17 (7.4s, exit 0)
+gmsh.model.mesh.field.setNumber(f2, "SizeMin", 0.0006)
+gmsh.model.mesh.field.setNumber(f2, "SizeMax", 0.004)
+gmsh.model.mesh.field.setNumber(f2, "DistMin", 0.0015)
+gmsh.model.mesh.field.setNumber(f2, "DistMax", 0.012)
+gmsh.option.setNumber("General.Verbosity", 2)
+gmsh.model.mesh.clear()
+t0 = time.time(); gmsh.model.mesh.generate(3); print("mesh time %.1fs" % (time.time()-t0))
+gmsh.write("enc.msh")
+print(len(gmsh.model.mesh.getElementsByType(4)[0]), "tets")
+# -- output
+mesh time 6.8s
+321777 tets
+
+# -- cell 18 (1.9s, exit 0)
+r = subprocess.run(["gmshToFoam", "enc.msh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-400:])
+b = "constant/polyMesh/boundary"
+txt = open(b).read()
+for p in ["walls", "floor", "standoffs", "holes"]:
+    txt = txt.replace("%s\n    {\n        type            patch;" % p,
+                      "%s\n    {\n        type            wall;" % p)
+open(b, "w").write(txt)
+print([l.strip() for l in open(b) if "type" in l or "nFaces" in l])
+# -- output
+0 &, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 38384 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+Finding faces of patch 5
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+
+['type            wall;', 'nFaces          3350;', 'type            patch;', 'nFaces          2356;', 'type            wall;', 'nFaces          5896;', 'type            wall;', 'nFaces          22418;', 'type            patch;', 'nFaces          102;', 'type            wall;', 'nFaces          4262;']
+
+# -- cell 19 (1.4s, exit 0)
+r = subprocess.run(["checkMesh", "-constant"], capture_output=True, text=True)
+print(r.stdout[-1800:])
+# -- output
+vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    walls               3350     1819     ok (non-closed singly connected)  
+    top                 2356     1244     ok (non-closed singly connected)  
+    floor               5896     3118     ok (non-closed singly connected)  
+    standoffs           22418    11357    ok (non-closed singly connected)  
+    vent                102      65       ok (non-closed singly connected)  
+    holes               4262     2177     ok (non-closed singly connected)  
+    ".*"                38384    19194    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            321777       61299        0.000634556  (0 0 0) (0.163 0.1 0.04)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.163 0.1 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.49061e-16 3.91074e-18 -3.5531e-15) OK.
+    Max cell openness = 2.773e-16 OK.
+    Max aspect ratio = 9.66474 OK.
+    Minimum face area = 5.43476e-08. Maximum face area = 2.20854e-05.  Face area magnitudes OK.
+    Min volume = 1.03314e-11. Max volume = 3.79814e-08.  Total volume = 0.000634556.  Cell volumes OK.
+    Mesh non-orthogonality Max: 69.5477 average: 21.1578
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.11493 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 20 (0.6s, exit 0)
+nt, nc, _ = gmsh.model.mesh.getNodes()
+xyz = {int(t): nc[3*i:3*i+3] for i, t in enumerate(nt)}
+def tris(name):
+    tags = assign[name]; out = []
+    for s in tags:
+        et, en, ev = gmsh.model.mesh.getElements(2, s)
+        for k, t in enumerate(et):
+            if t == 2:
+                v = np.array(ev[k]).reshape(-1, 3)
+                out.append(np.array([[xyz[n] for n in tri] for tri in v]))
+    return np.concatenate(out) if out else np.zeros((0, 3, 3))
+fig = plt.figure(figsize=(12, 5))
+ax = fig.add_subplot(1, 2, 1, projection="3d")
+for name, col in [("standoffs", "green"), ("holes", "magenta"), ("floor", "tan")]:
+    t = tris(name)
+    m = (t[:, :, 0].max(1) < 0.032) & (t[:, :, 1].max(1) < 0.032)
+    ax.add_collection3d(Poly3DCollection(t[m], facecolor=col, edgecolor="k", linewidths=0.2))
+ax.set_xlim(0, 0.032); ax.set_ylim(0, 0.032); ax.set_zlim(0, 0.03)
+ax.set_box_aspect((1, 1, 1)); ax.view_init(22, -55); ax.set_title("standoff + blind hole")
+ax2 = fig.add_subplot(1, 2, 2, projection="3d")
+for name, col in [("vent", "red"), ("walls", "lightgray")]:
+    t = tris(name)
+    m = t[:, :, 0].min(1) > 0.14
+    ax2.add_collection3d(Poly3DCollection(t[m], facecolor=col, edgecolor="k", linewidths=0.2))
+ax2.set_xlim(0.14, 0.165); ax2.set_ylim(0.02, 0.08); ax2.set_zlim(0, 0.04)
+ax2.set_box_aspect((0.025, 0.06, 0.04)); ax2.view_init(15, -50); ax2.set_title("vent")
+fig
+# -- output
+
+
+# -- cell 21 (0.1s, exit 0)
+hb = np.concatenate([tris("holes")]).reshape(-1, 3)
+sb = tris("standoffs").reshape(-1, 3)
+vb = tris("vent").reshape(-1, 3)
+cen = []
+for cx, cy in centres:
+    d = np.hypot(sb[:, 0]-cx, sb[:, 1]-cy)
+    sel = sb[d < 0.006]
+    cen.append((sel[:, 0].min()+sel[:, 0].max())/2*1000)
+print("standoff Ø (mm): %.3f  asked 10" % (sb[:, 0].max()-sb[:, 0].min() - 0 if False else 1000*(np.ptp(sb[np.hypot(sb[:,0]-centres[0][0], sb[:,1]-centres[0][1])<0.006][:, 0]))))
+print("standoff height (mm): %.3f  asked 25" % (1000*sb[:, 2].max()))
+print("standoff centre inset x,y (mm): %.3f %.3f  asked 15,15" % (1000*centres[0][0], 1000*centres[0][1]))
+print("hole Ø (mm): %.3f  asked 4" % (1000*np.ptp(hb[np.hypot(hb[:,0]-centres[0][0], hb[:,1]-centres[0][1])<0.003][:, 0])))
+print("hole z-range (mm): %.3f .. %.3f  -> depth %.3f, asked 12 from top 25" % (1000*hb[:,2].min(), 1000*hb[:,2].max(), 1000*(hb[:,2].max()-hb[:,2].min())))
+print("vent y-span %.3f, z-span %.3f, x %.3f  asked 30 x 20 at x=163, 10..30" % (1000*np.ptp(vb[:,1]), 1000*np.ptp(vb[:,2]), 1000*vb[:,0].mean()), " z0=%.1f" % (1000*vb[:,2].min()))
+print("cavity internal LxWxD (mm): %.1f %.1f %.1f" % (1000*LX, 1000*LY, 1000*LZ))
+# -- output
+standoff Ø (mm): 10.000  asked 10
+standoff height (mm): 25.000  asked 25
+standoff centre inset x,y (mm): 15.000 15.000  asked 15,15
+hole Ø (mm): 4.000  asked 4
+hole z-range (mm): 13.000 .. 25.000  -> depth 12.000, asked 12 from top 25
+vent y-span 30.000, z-span 20.000, x 163.000  asked 30 x 20 at x=163, 10..30  z0=10.0
+cavity internal LxWxD (mm): 160.0 100.0 40.0
+

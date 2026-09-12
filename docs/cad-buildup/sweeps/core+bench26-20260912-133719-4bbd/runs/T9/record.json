@@ -1,0 +1,505 @@
+{
+  "run_id": "20260912-133720-908b",
+  "case": "T9",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T9-20260912-133720-908b",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T9-20260912-133720-908b/t9",
+  "started_at": "2026-09-12T13:37:20",
+  "ended_at": "2026-09-12T13:42:40",
+  "seconds": 311.6,
+  "n_turns": 21,
+  "n_steps": 18,
+  "first_mesh_step": 6,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.8353,
+  "tokens": {
+    "input": 42,
+    "cache_read": 400840,
+    "cache_write": 37297,
+    "output": 16063
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import os, subprocess, math\nfrom build123d import *\n\n# --- all dimensions in METRES (OpenFOAM reads metres) ---\nR_RING_O, R_RING_I, H_RING = 0.030, 0.023, 0.010   # outer ring\nR_SP_O,   R_SP_I,  H_SP    = 0.022, 0.015, 0.008   # inner spinner\n\nring    = Cylinder(R_RING_O, H_RING) - Cylinder(R_RING_I, H_RING)\nspinner = Cylinder(R_SP_O,  H_SP)   - Cylinder(R_SP_I,  H_SP)\noil     = Cylinder(R_RING_I, H_RING) - spinner     # fluid = ring bore minus spinner\n\nprint(\"radial clearance (mm):\", 1000*(R_RING_I - R_SP_O))\nprint(\"axial gap each end (mm):\", 1000*(H_RING - H_SP)/2)\nprint(\"oil volume (mm^3):\", oil.volume*1e9, \" solids:\", len(oil.solids()))\nprint(\"analytic  (mm^3):\", 1e9*(math.pi*R_RING_I**2*H_RING - math.pi*(R_SP_O**2-R_SP_I**2)*H_SP))\nprint(\"oil bbox (mm):\", [round(1000*v,3) for v in oil.bounding_box().min], [round(1000*v,3) for v in oil.bounding_box().max])\nprint(\"n faces:\", len(oil.faces()))",
+      "exit_code": 0,
+      "seconds": 2.2060109972953796,
+      "output": "radial clearance (mm): 1.0000000000000009\naxial gap each end (mm): 1.0\noil volume (mm^3): 10109.645159251955  solids: 1\nanalytic  (mm^3): 10109.645159251953\noil bbox (mm): [-23.0, -23.0, -5.0] [23.0, 23.0, 5.0]\nn faces: 7",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\ndef classify(f):\n    g = f.geom_type\n    c = f.center()\n    if str(g).upper().endswith(\"CYLINDER\") or \"CYLIN\" in str(g).upper():\n        # radius from a sampled vertex\n        r = max(math.hypot(v.X, v.Y) for v in f.vertices())\n        return (\"cyl\", round(r,6))\n    else:\n        return (\"plane\", round(c.Z,6))\n\nfor i,f in enumerate(oil.faces()):\n    print(i, f.geom_type, classify(f), \"area_mm2=%.2f\"%(f.area*1e6))",
+      "exit_code": 0,
+      "seconds": 0.050638528540730476,
+      "output": "0 GeomType.CYLINDER ('cyl', 0.023) area_mm2=1445.13\n1 GeomType.PLANE ('plane', 0.005) area_mm2=1661.90\n2 GeomType.PLANE ('plane', -0.005) area_mm2=1661.90\n3 GeomType.CYLINDER ('cyl', 0.022) area_mm2=1105.84\n4 GeomType.PLANE ('plane', 0.004) area_mm2=813.67\n5 GeomType.PLANE ('plane', -0.004) area_mm2=813.67\n6 GeomType.CYLINDER ('cyl', 0.015) area_mm2=753.98",
+      "image": ""
+    },
+    {
+      "cmd": "os.makedirs(\"constant/triSurface\", exist_ok=True)\nF = oil.faces()\npatches = {\n    \"ringWall\":      [F[0]],              # cylinder r=23 mm, ring bore\n    \"spinnerWall\":   [F[3], F[4], F[5], F[6]],  # r=22, z=+-4 annuli, r=15 bore\n    \"ringEndTop\":    [F[1]],              # plane z=+5 mm\n    \"ringEndBottom\": [F[2]],              # plane z=-5 mm\n}\nfor name, faces in patches.items():\n    shp = faces[0] if len(faces)==1 else Compound(children=[f for f in faces])\n    export_stl(shp, f\"constant/triSurface/{name}.stl\", tolerance=2e-6, angular_tolerance=0.05)\n    print(name, \"area_mm2=%.2f\"%(sum(f.area for f in faces)*1e6), os.path.getsize(f\"constant/triSurface/{name}.stl\"))\nprint(sorted(os.listdir(\"constant/triSurface\")))",
+      "exit_code": 0,
+      "seconds": 9.924680488184094,
+      "output": "ringWall area_mm2=1445.13 106684\nspinnerWall area_mm2=3487.17 380684\nringEndTop area_mm2=1661.90 53284\nringEndBottom area_mm2=1661.90 53284\n['ringEndBottom.stl', 'ringEndTop.stl', 'ringWall.stl', 'spinnerWall.stl']",
+      "image": ""
+    },
+    {
+      "cmd": "export_step(oil, \"oil.step\")\nimport gmsh\ngmsh.initialize()\ngmsh.option.setNumber(\"General.Terminal\", 1)\ngmsh.model.add(\"oil\")\ngmsh.model.occ.importShapes(\"oil.step\")\ngmsh.model.occ.synchronize()\nsurfs = gmsh.model.getEntities(2)\ninfo = []\nfor d,t in surfs:\n    a = gmsh.model.occ.getMass(d,t); com = gmsh.model.occ.getCenterOfMass(d,t)\n    info.append((t, a*1e6, [round(c*1000,3) for c in com]))\n    print(t, \"area_mm2=%.2f\"%(a*1e6), info[-1][2])\nprint(\"volume mm^3\", gmsh.model.occ.getMass(3,1)*1e9)",
+      "exit_code": 0,
+      "seconds": 0.050760519690811634,
+      "output": "Info    :  - Label 'Shapes/COMPOUND' (3D)\n1 area_mm2=1445.13 [0.0, 0.0, -0.0]\n2 area_mm2=1661.90 [0.0, -0.0, 5.0]\n3 area_mm2=1661.90 [0.0, -0.0, -5.0]\n4 area_mm2=1105.84 [0.0, 0.0, 0.0]\n5 area_mm2=813.67 [0.0, -0.0, 4.0]\n6 area_mm2=813.67 [0.0, -0.0, -4.0]\n7 area_mm2=753.98 [0.0, 0.0, -0.0]\nvolume mm^3 10109.645159251919",
+      "image": ""
+    },
+    {
+      "cmd": "def tag_groups():\n    want = {1:\"ringWall\", 2:\"ringEndTop\", 3:\"ringEndBottom\"}\n    groups = {\"ringWall\":[], \"ringEndTop\":[], \"ringEndBottom\":[], \"spinnerWall\":[]}\n    for d,t in gmsh.model.getEntities(2):\n        a = gmsh.model.occ.getMass(d,t)*1e6; z = gmsh.model.occ.getCenterOfMass(d,t)[2]*1000\n        if abs(a-1445.13) < 1: groups[\"ringWall\"].append(t)\n        elif abs(a-1661.90) < 1: groups[\"ringEndTop\" if z>0 else \"ringEndBottom\"].append(t)\n        else: groups[\"spinnerWall\"].append(t)\n    for n,(k,v) in enumerate(groups.items(), start=1):\n        gmsh.model.addPhysicalGroup(2, v, n); gmsh.model.setPhysicalName(2, n, k)\n    gmsh.model.addPhysicalGroup(3, [1], 100); gmsh.model.setPhysicalName(3, 100, \"oil\")\n    print({k:v for k,v in groups.items()})\n\ndef mesh(h_bore, h_gap, fname):\n    gmsh.model.mesh.clear()\n    f = gmsh.model.mesh.field.add(\"Cylinder\")\n    gmsh.model.mesh.field.setNumber(f,\"Radius\",0.0155)\n    gmsh.model.mesh.field.setNumber(f,\"ZAxis\",0.007)\n    gmsh.model.mesh.field.setNumber(f,\"XAxis\",0.0); gmsh.model.mesh.field.setNumber(f,\"YAxis\",0.0)\n    gmsh.model.mesh.field.setNumber(f,\"VIn\",h_bore); gmsh.model.mesh.field.setNumber(f,\"VOut\",h_gap)\n    gmsh.model.mesh.field.setAsBackgroundMesh(f)\n    gmsh.option.setNumber(\"Mesh.MeshSizeExtendFromBoundary\",0)\n    gmsh.option.setNumber(\"Mesh.MeshSizeFromPoints\",0); gmsh.option.setNumber(\"Mesh.MeshSizeFromCurvature\",0)\n    gmsh.model.mesh.generate(3)\n    gmsh.write(fname)\n    ts = gmsh.model.mesh.getElementsByType(4)[0]\n    print(fname, \"tets:\", len(ts))\n\ntag_groups()\nmesh(0.002, 0.0008, \"oil_coarse.msh\")",
+      "exit_code": 0,
+      "seconds": 1.2036170978099108,
+      "output": "{'ringWall': [1], 'ringEndTop': [2], 'ringEndBottom': [3], 'spinnerWall': [4, 5, 6, 7]}\nInfo    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Circle)\nInfo    : [ 20%] Meshing curve 2 (Line)\nInfo    : [ 30%] Meshing curve 3 (Circle)\nInfo    : [ 40%] Meshing curve 4 (Circle)\nInfo    : [ 50%] Meshing curve 5 (Line)\nInfo    : [ 60%] Meshing curve 6 (Circle)\nInfo    : [ 70%] Meshing curve 7 (Circle)\nInfo    : [ 80%] Meshing curve 8 (Circle)\nInfo    : [ 90%] Meshing curve 9 (Line)\nInfo    : Done meshing 1D (Wall 0.00080786s, CPU 0.000128s)\nInfo    : Meshing 2D...\nInfo    : [  0%] Meshing surface 1 (Cylinder, Frontal-Delaunay)\nInfo    : [ 20%] Meshing surface 2 (Plane, Frontal-Delaunay)\nInfo    : [ 30%] Meshing surface 3 (Plane, Frontal-Delaunay)\nInfo    : [ 50%] Meshing surface 4 (Cylinder, Frontal-Delaunay)\nInfo    : [ 60%] Meshing surface 5 (Plane, Frontal-Delaunay)\nInfo    : [ 80%] Meshing surface 6 (Plane, Frontal-Delaunay)\nInfo    : [ 90%] Meshing surface 7 (Cylinder, Frontal-Delaunay)\nInfo    : Done meshing 2D (Wall 0.436205s, CPU 0.434512s)\nInfo    : Meshing 3D...\nInfo    : 3D Meshing 1 volume with 1 connected component\nInfo    : Tetrahedrizing 11744 nodes...\nInfo    : Done tetrahedrizing 11752 nodes (Wall 0.147133s, CPU 0.138161s)\nInfo    : Reconstructing mesh...\nInfo    :  - Creating surface mesh\nInfo    :  - Identifying boundary edges\nInfo    :  - Recovering boundary\nInfo    : Done reconstructing mesh (Wall 0.319938s, CPU 0.297086s)\nInfo    : Found void region\nInfo    : Found volume 1\nInfo    : It. 0 - 0 nodes created - worst tet radius 2.69259 (nodes removed 0 0)\nInfo    : 3D refinement terminated (12127 nodes total):\nInfo    :  - 0 Delaunay cavities modified for star shapeness\nInfo    :  - 0 nodes could not be inserted\nInfo    :  - 39216 tetrahedra created in 0.0245962 sec. (1594392 tets/s)\nInfo    : 0 node relocations\nInfo    : Done meshing 3D (Wall 0.606969s, CPU 0.583879s)\nInfo    : Optimizing mesh...\nInfo    : Optimizing volume 1\nInfo    : Optimization starts (volume = 1.0097e-05) with worst = 0.0131945 / average = 0.769968:\nInfo    : 0.00 < quality < 0.10 :        65 elements\nInfo    : 0.10 < quality < 0.20 :       409 elements\nInfo    : 0.20 < quality < 0.30 :       365 elements\nInfo    : 0.30 < quality < 0.40 :       486 elements\nInfo    : 0.40 < quality < 0.50 :      1848 elements\nInfo    : 0.50 < quality < 0.60 :      1145 elements\nInfo    : 0.60 < quality < 0.70 :      3583 elements\nInfo    : 0.70 < quality < 0.80 :      7823 elements\nInfo    : 0.80 < quality < 0.90 :     21038 elements\nInfo    : 0.90 < quality < 1.00 :      2454 elements\nInfo    : 815 edge swaps, 1 node relocations (volume = 1.0097e-05): worst = 0.0629241 / average = 0.783364 (Wall 0.0111304s, CPU 0.011179s)\nInfo    : 841 edge swaps, 1 node relocations (volume = 1.0097e-05): worst = 0.147256 / average = 0.783513 (Wall 0.0144627s, CPU 0.014544s)\nInfo    : 848 edge swaps, 1 node relocations (volume = 1.0097e-05): worst = 0.147256 / average = 0.783464 (Wall 0.0174599s, CPU 0.01756s)\nInfo    : No ill-shaped tets in the mesh :-)\nInfo    : 0.00 < quality < 0.10 :         0 elements\nInfo    : 0.10 < quality < 0.20 :        26 elements\nInfo    : 0.20 < quality < 0.30 :        15 elements\nInfo    : 0.30 < quality < 0.40 :       491 elements\nInfo    : 0.40 < quality < 0.50 :      1808 elements\nInfo    : 0.50 < quality < 0.60 :      1008 elements\nInfo    : 0.60 < quality < 0.70 :      3308 elements\nInfo    : 0.70 < quality < 0.80 :      8467 elements\nInfo    : 0.80 < quality < 0.90 :     20882 elements\nInfo    : 0.90 < quality < 1.00 :      2455 elements\nInfo    : Done optimizing mesh (Wall 0.0454686s, CPU 0.045622s)\nInfo    : 12127 nodes 62788 elements\nInfo    : Writing 'oil_coarse.msh'...\nInfo    : Done writing 'oil_coarse.msh'\noil_coarse.msh tets: 38467",
+      "image": ""
+    },
+    {
+      "cmd": "for d in [\"system\",\"constant\"]: os.makedirs(d, exist_ok=True)\nhdr = lambda cls,obj: f\"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\\n\"\nopen(\"system/controlDict\",\"w\").write(hdr(\"dictionary\",\"controlDict\")+\n  \"application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\\n\"\n  \"deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; timeFormat general; runTimeModifiable true;\\n\")\nopen(\"system/fvSchemes\",\"w\").write(hdr(\"dictionary\",\"fvSchemes\")+\"ddtSchemes{default Euler;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\\n\")\nopen(\"system/fvSolution\",\"w\").write(hdr(\"dictionary\",\"fvSolution\")+\"solvers{} \\n\")\n\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\ngmsh.write(\"oil.msh\")\np = subprocess.run([\"gmshToFoam\",\"oil.msh\"], capture_output=True, text=True)\nprint(p.returncode, p.stdout[-1500:], p.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.502023815177381,
+      "output": "Info    : Writing 'oil.msh'...\nInfo    : Done writing 'oil.msh'\n0 pplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nStarting to read mesh format at line 2\nRead format version 2.2  ascii 0\n\nStarting to read physical names at line 5\nPhysical names:5\n    Surface 1\tringWall\n    Surface 2\tringEndTop\n    Surface 3\tringEndBottom\n    Surface 4\tspinnerWall\n    Volume 100\toil\n\nStarting to read points at line 13\nVertices to be read: 12127\nVertices read:12127\n\nStarting to read cells at line 12143\nCells to be read: 61951\n\nMapping region 1 to Foam patch 0\nMapping region 2 to Foam patch 1\nMapping region 3 to Foam patch 2\nMapping region 4 to Foam patch 3\nMapping region 100 to Foam cellZone 0\nCells:\n    total:38467\n    hex  :0\n    prism:0\n    pyr  :0\n    tet  :38467\n\nCellZones:\nZone\tSize\n    0\t38467\n\nPatch 0 gets name ringWall\nPatch 1 gets name ringEndTop\nPatch 2 gets name ringEndBottom\nPatch 3 gets name spinnerWall\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 23484 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone oil and cellSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "p = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(p.stdout[p.stdout.find(\"Mesh stats\"):][:3000])",
+      "exit_code": 0,
+      "seconds": 0.40169069543480873,
+      "output": "Mesh stats \n    points:           12127\n    faces:            88676\n    internal faces:   65192\n    cells:            38467\n    faces per cell:   4\n    boundary patches: 4\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     0\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    38467\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    ringWall            5388     2875     ok (non-closed singly connected)  \n    ringEndTop          3857     2020     ok (non-closed singly connected)  \n    ringEndBottom       3857     2020     ok (non-closed singly connected)  \n    spinnerWall         10382    5191     ok (closed singly connected)      \n    \".*\"                23484    11744    ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    oil                 38467        12127        1.0097e-05   (-0.023 -0.0229994 -0.005) (0.023 0.0229999 0.005)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.023 -0.0229994 -0.005) (0.023 0.0229999 0.005)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (8.43295e-18 1.83595e-17 -5.87855e-16) OK.\n    Max cell openness = 2.94563e-16 OK.\n    Max aspect ratio = 15.8618 OK.\n    Minimum face area = 1.10042e-07. Maximum face area = 5.32476e-06.  Face area magnitudes OK.\n    Min volume = 1.64721e-11. Max volume = 3.73109e-09.  Total volume = 1.0097e-05.  Cell volumes OK.\n    Mesh non-orthogonality Max: 64.0256 average: 25.0607\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.794121 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.start_xvfb() if False else None\npv.OFF_SCREEN = True\nimport numpy as np\nmesh_pv = pv.read(\"oil.msh\")\n# boundary triangles by physical group\npl = pv.Plotter(shape=(1,2), window_size=(1400,650), off_screen=True)\ncols = {\"ringWall\":\"red\",\"ringEndTop\":\"green\",\"ringEndBottom\":\"blue\",\"spinnerWall\":\"orange\"}\nblocks = mesh_pv if isinstance(mesh_pv, pv.MultiBlock) else pv.MultiBlock([mesh_pv])\nprint(type(mesh_pv), blocks.keys() if hasattr(blocks,'keys') else None)",
+      "exit_code": 1,
+      "seconds": 0.5519322641193867,
+      "output": "/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mKeyError\u001b[39m                                  Traceback (most recent call last)\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/reader.py:129\u001b[39m, in \u001b[36mget_reader\u001b[39m\u001b[34m(filename, force_ext)\u001b[39m\n\u001b[32m    128\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m--> \u001b[39m\u001b[32m129\u001b[39m     Reader = \u001b[30;43mCLASS_READERS\u001b[39;49m\u001b[30;43m[\u001b[39;49m\u001b[30;43mext\u001b[39;49m\u001b[30;43m]\u001b[39;49m\n\u001b[32m    130\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mKeyError\u001b[39;00m:\n\n\u001b[31mKeyError\u001b[39m: '.msh'\n\nDuring handling of the above exception, another exception occurred:\n\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:451\u001b[39m, in \u001b[36m_read_dispatch\u001b[39m\u001b[34m(filename, force_ext, file_format, progress_bar, validate)\u001b[39m\n\u001b[32m    450\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m--> \u001b[39m\u001b[32m451\u001b[39m     reader = \u001b[30;43mpv\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mget_reader\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mfilename\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mforce_ext\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m    452\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m:\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/reader.py:143\u001b[39m, in \u001b[36mget_reader\u001b[39m\u001b[34m(filename, force_ext)\u001b[39m\n\u001b[32m    142\u001b[39m         msg = \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33m`pyvista.get_reader` does not support a file with the \u001b[39m\u001b[38;5;132;01m{\u001b[39;00mext\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m extension\u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m--> \u001b[39m\u001b[32m143\u001b[39m         \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01\n... 1937 characters cut ...\nttom\"\u001b[39m:\u001b[33m\"blue\"\u001b[39m,\u001b[33m\"spinnerWall\"\u001b[39m:\u001b[33m\"orange\"\u001b[39m}\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243\u001b[39m, in \u001b[36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f\u001b[39m\u001b[34m(*args, **kwargs)\u001b[39m\n\u001b[32m    239\u001b[39m             warn_external(msg, PyVistaDeprecationWarning)\n\u001b[32m    241\u001b[39m         warn_positional_args()\n\u001b[32m--> \u001b[39m\u001b[32m243\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mf\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43margs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43mkwargs\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:347\u001b[39m, in \u001b[36mread\u001b[39m\u001b[34m(filename, force_ext, file_format, progress_bar, cls, validate)\u001b[39m\n\u001b[32m    230\u001b[39m \u001b[38;5;129m@_deprecate_positional_args\u001b[39m(allowed=[\u001b[33m'\u001b[39m\u001b[33mfilename\u001b[39m\u001b[33m'\u001b[39m])\n\u001b[32m    231\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mread\u001b[39m(  \u001b[38;5;66;03m# noqa: PLR0917\u001b[39;00m\n\u001b[32m    232\u001b[39m     filename: PathStrSeq,\n\u001b[32m   (...)\u001b[39m\u001b[32m    238\u001b[39m     validate: \u001b[38;5;28mbool\u001b[39m | \u001b[38;5;28;01mNone\u001b[39;00m = \u001b[38;5;28;01mNone\u001b[39;00m,\n\u001b[32m    239\u001b[39m ) -> DataObject:\n\u001b[32m    240\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"Read any file type supported by ``vtk`` or ``meshio``.\u001b[39;00m\n\u001b[32m    241\u001b[39m \n\u001b[32m    242\u001b[39m \u001b[33;03m    Automatically determines the correct reader to use then wraps the\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m    345\u001b[39m \n\u001b[32m    346\u001b[39m \u001b[33;03m    \"\"\"\u001b[39;00m\n\u001b[32m--> \u001b[39m\u001b[32m347\u001b[39m     result = \u001b[30;43m_read_dispatch\u001b[39;49m\u001b[30;43m(\u001b[39;49m\n\u001b[32m    348\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mfilename\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    349\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mforce_ext\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mforce_ext\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    350\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mfile_format\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mfile_format\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    351\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mprogress_bar\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mprogress_bar\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    352\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mvalidate\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mvalidate\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    353\u001b[39m \u001b[30;43m    \u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m    354\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28mcls\u001b[39m \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m \u001b[38;5;129;01mand\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(result, \u001b[38;5;28mcls\u001b[39m):\n\u001b[32m    355\u001b[39m         msg = (\n\u001b[32m    356\u001b[39m             \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33mExpected an instance of \u001b[39m\u001b[38;5;132;01m{\u001b[39;00m\u001b[38;5;28mcls\u001b[39m.\u001b[34m__name__\u001b[39m\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m when reading \u001b[39m\u001b[38;5;132;01m{\u001b[39;00mfilename\u001b[38;5;132;01m!r}\u001b[39;00m\u001b[33m, \u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m    357\u001b[39m             \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33mbut got \u001b[39m\u001b[38;5;132;01m{\u001b[39;00m\u001b[38;5;28mtype\u001b[39m(result).\u001b[34m__name__\u001b[39m\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m.\u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m    358\u001b[39m         )\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:460\u001b[39m, in \u001b[36m_read_dispatch\u001b[39m\u001b[34m(filename, force_ext, file_format, progress_bar, validate)\u001b[39m\n\u001b[32m    458\u001b[39m     \u001b[38;5;28;01mfrom\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34;01mmeshio\u001b[39;00m\u001b[34;01m.\u001b[39;00m\u001b[34;01m_exceptions\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[38;5;28;01mimport\u001b[39;00m ReadError  \u001b[38;5;66;03m# noqa: PLC0415\u001b[39;00m\n\u001b[32m    459\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mImportError\u001b[39;00m:\n\u001b[32m--> \u001b[39m\u001b[32m460\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mOSError\u001b[39;00m(msg)\n\u001b[32m    461\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m    462\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m read_meshio(filename)\n\n\u001b[31mOSError\u001b[39m: This file was not able to be automatically read by pyvista.\n  '/home/qiuzi/.openreynolds-buildup/work/T9-20260912-133720-908b/t9/oil.msh'",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.OFF_SCREEN = True\nopen(\"case.foam\",\"w\").close()\nr = pv.OpenFOAMReader(\"case.foam\"); r.enable_all_patch_arrays()\nblocks = r.read()\nnames = list(blocks[\"boundary\"].keys()) if \"boundary\" in blocks.keys() else blocks.keys()\nprint(blocks.keys(), names)",
+      "exit_code": 0,
+      "seconds": 0.1007396187633276,
+      "output": "['internalMesh', 'boundary'] ['ringWall', 'ringEndTop', 'ringEndBottom', 'spinnerWall']",
+      "image": ""
+    },
+    {
+      "cmd": "bnd = blocks[\"boundary\"]\npl = pv.Plotter(shape=(1,2), window_size=(1500,700), off_screen=True)\ncols = {\"ringWall\":\"red\",\"ringEndTop\":\"green\",\"ringEndBottom\":\"blue\",\"spinnerWall\":\"orange\"}\npl.subplot(0,0)\nfor n,c in cols.items(): pl.add_mesh(bnd[n].extract_surface().clip(\"y\"), color=c, show_edges=True, line_width=0.3, label=n)\npl.add_legend(); pl.camera_position=\"iso\"\npl.subplot(0,1)\nvol = blocks[\"internalMesh\"].clip(\"y\")\npl.add_mesh(vol, color=\"lightsteelblue\", show_edges=True, line_width=0.3)\npl.camera_position = [(0.0,-0.09,0.03),(0,0,0),(0,0,1)]\npl.screenshot(\"look_coarse.png\")\nprint(\"ok\")",
+      "exit_code": 0,
+      "seconds": 0.6021523429080844,
+      "output": "ok\n\n\u001b[0m\u001b[33m2026-09-12 13:40:09.189 (   9.544s) [    703CFF7B8780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-12 13:40:09.189 (   9.545s) [    703CFF7B8780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-12 13:40:09.202 (   9.557s) [    703CFF7B8780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_575723/2607321261.py:5: PyVistaFutureWarning: The default value of `algorithm` for the filter\n`PolyData.extract_surface` will change in the future. It currently defaults to\n`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to\nsilence this warning.\n  for n,c in cols.items(): pl.add_mesh(bnd[n].extract_surface().clip(\"y\"), color=c, show_edges=True, line_width=0.3, label=n)",
+      "image": ""
+    },
+    {
+      "cmd": "from IPython.display import Image, display\ndisplay(Image(\"look_coarse.png\"))",
+      "exit_code": 0,
+      "seconds": 0.13647852931171656,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import time\nt0=time.time()\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\nmesh(0.0012, 0.00035, \"oil.msh\")\nprint(\"wall time\", time.time()-t0)",
+      "exit_code": 0,
+      "seconds": 11.379236694425344,
+      "output": "Info    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Circle)\nInfo    : [ 20%] Meshing curve 2 (Line)\nInfo    : [ 30%] Meshing curve 3 (Circle)\nInfo    : [ 40%] Meshing curve 4 (Circle)\nInfo    : [ 50%] Meshing curve 5 (Line)\nInfo    : [ 60%] Meshing curve 6 (Circle)\nInfo    : [ 70%] Meshing curve 7 (Circle)\nInfo    : [ 80%] Meshing curve 8 (Circle)\nInfo    : [ 90%] Meshing curve 9 (Line)\nInfo    : Done meshing 1D (Wall 0.00369303s, CPU 0.004114s)\nInfo    : Meshing 2D...\nInfo    : [  0%] Meshing surface 1 (Cylinder, Frontal-Delaunay)\nInfo    : [ 20%] Meshing surface 2 (Plane, Frontal-Delaunay)\nInfo    : [ 30%] Meshing surface 3 (Plane, Frontal-Delaunay)\nInfo    : [ 50%] Meshing surface 4 (Cylinder, Frontal-Delaunay)\nInfo    : [ 60%] Meshing surface 5 (Plane, Frontal-Delaunay)\nInfo    : [ 80%] Meshing surface 6 (Plane, Frontal-Delaunay)\nInfo    : [ 90%] Meshing surface 7 (Cylinder, Frontal-Delaunay)\nInfo    : Done meshing 2D (Wall 2.05715s, CPU 2.05936s)\nInfo    : Meshing 3D...\nInfo    : 3D Meshing 1 volume with 1 connected component\nInfo    : Tetrahedrizing 58048 nodes...\nInfo    : Done tetrahedrizing 58056 nodes (Wall 0.89787s, CPU 0.855288s)\nInfo    : Reconstructing mesh...\nInfo    :  - Creating surface mesh\nInfo    :  - Identifying boundary edges\nInfo    :  - Recovering boundary\nInfo    : Done reconstructing mesh (Wall 2.55687s, CPU 2.44305s)\nInfo    : Found void region\nInfo    : Found volume 1\nInfo    : It. 0 - 0 nodes created - worst tet radius 4.22379 (nodes removed 0 0)\nInfo    : It. 500 - 500 nodes created - worst tet radius 1.68641 (nodes removed 0 0)\nInfo    : It. 1000 - 1000 nodes created - worst tet radius 1.54252 (nodes removed 0 0)\nInfo    : It. 1500 - 1500 nodes created - worst tet radius 1.53541 (nodes removed 0 0)\nInfo    : It. 2000 - 2000 nodes created - worst tet radius 1.53325 (nodes removed 0 0)\nInfo    : It. 2500 - 2500 nodes created - worst tet radius 1.53164 (nodes removed 0 0)\nInfo    : It. 3000 - 3000 nodes created - worst tet radius 1.\n... 3458 characters cut ...\ned 0 0)\nInfo    : It. 23000 - 23000 nodes created - worst tet radius 1.05972 (nodes removed 0 0)\nInfo    : It. 23500 - 23500 nodes created - worst tet radius 1.05195 (nodes removed 0 0)\nInfo    : It. 24000 - 24000 nodes created - worst tet radius 1.04565 (nodes removed 0 0)\nInfo    : It. 24500 - 24500 nodes created - worst tet radius 1.0408 (nodes removed 0 0)\nInfo    : It. 25000 - 25000 nodes created - worst tet radius 1.03653 (nodes removed 0 0)\nInfo    : It. 25500 - 25500 nodes created - worst tet radius 1.03301 (nodes removed 0 0)\nInfo    : It. 26000 - 26000 nodes created - worst tet radius 1.03028 (nodes removed 0 0)\nInfo    : It. 26500 - 26500 nodes created - worst tet radius 1.02623 (nodes removed 0 0)\nInfo    : It. 27000 - 27000 nodes created - worst tet radius 1.02303 (nodes removed 0 0)\nInfo    : It. 27500 - 27500 nodes created - worst tet radius 1.02005 (nodes removed 0 0)\nInfo    : It. 28000 - 28000 nodes created - worst tet radius 1.01649 (nodes removed 0 0)\nInfo    : It. 28500 - 28500 nodes created - worst tet radius 1.01481 (nodes removed 0 0)\nInfo    : It. 29000 - 29000 nodes created - worst tet radius 1.01342 (nodes removed 0 0)\nInfo    : It. 29500 - 29500 nodes created - worst tet radius 1.01229 (nodes removed 0 0)\nInfo    : It. 30000 - 30000 nodes created - worst tet radius 1.01088 (nodes removed 0 0)\nInfo    : It. 30500 - 30500 nodes created - worst tet radius 1.00928 (nodes removed 0 0)\nInfo    : It. 31000 - 31000 nodes created - worst tet radius 1.00807 (nodes removed 0 0)\nInfo    : It. 31500 - 31500 nodes created - worst tet radius 1.00632 (nodes removed 0 0)\nInfo    : It. 32000 - 32000 nodes created - worst tet radius 1.00357 (nodes removed 0 0)\nInfo    : It. 32500 - 32500 nodes created - worst tet radius 1.0011 (nodes removed 0 0)\nInfo    : 3D refinement terminated (90748 nodes total):\nInfo    :  - 0 Delaunay cavities modified for star shapeness\nInfo    :  - 0 nodes could not be inserted\nInfo    :  - 388099 tetrahedra created in 2.34993 sec. (165153 tets/s)\nInfo    : 8 node relocations\nInfo    : Done meshing 3D (Wall 7.40429s, CPU 7.296s)\nInfo    : Optimizing mesh...\nInfo    : Optimizing volume 1\nInfo    : Optimization starts (volume = 1.0105e-05) with worst = 0.000628324 / average = 0.770584:\nInfo    : 0.00 < quality < 0.10 :      1098 elements\nInfo    : 0.10 < quality < 0.20 :      2245 elements\nInfo    : 0.20 < quality < 0.30 :      2828 elements\nInfo    : 0.30 < quality < 0.40 :      5022 elements\nInfo    : 0.40 < quality < 0.50 :     10529 elements\nInfo    : 0.50 < quality < 0.60 :     17028 elements\nInfo    : 0.60 < quality < 0.70 :     43272 elements\nInfo    : 0.70 < quality < 0.80 :    118057 elements\nInfo    : 0.80 < quality < 0.90 :    134338 elements\nInfo    : 0.90 < quality < 1.00 :     53682 elements\nInfo    : 6068 edge swaps, 250 node relocations (volume = 1.0105e-05): worst = 0.100022 / average = 0.780423 (Wall 0.225906s, CPU 0.226269s)\nInfo    : 6141 edge swaps, 256 node relocations (volume = 1.0105e-05): worst = 0.186595 / average = 0.780542 (Wall 0.297392s, CPU 0.298193s)\nInfo    : 6145 edge swaps, 257 node relocations (volume = 1.0105e-05): worst = 0.221186 / average = 0.780548 (Wall 0.365497s, CPU 0.366499s)\nInfo    : No ill-shaped tets in the mesh :-)\nInfo    : 0.00 < quality < 0.10 :         0 elements\nInfo    : 0.10 < quality < 0.20 :         0 elements\nInfo    : 0.20 < quality < 0.30 :         6 elements\nInfo    : 0.30 < quality < 0.40 :      4945 elements\nInfo    : 0.40 < quality < 0.50 :     10148 elements\nInfo    : 0.50 < quality < 0.60 :     17140 elements\nInfo    : 0.60 < quality < 0.70 :     44034 elements\nInfo    : 0.70 < quality < 0.80 :    116930 elements\nInfo    : 0.80 < quality < 0.90 :    135604 elements\nInfo    : 0.90 < quality < 1.00 :     53828 elements\nInfo    : Done optimizing mesh (Wall 0.923347s, CPU 0.924787s)\nInfo    : 90748 nodes 500566 elements\nInfo    : Writing 'oil.msh'...\nInfo    : Done writing 'oil.msh'\noil.msh tets: 382635\nwall time 11.354832649230957",
+      "image": ""
+    },
+    {
+      "cmd": "import shutil\nshutil.rmtree(\"constant/polyMesh\", ignore_errors=True)\np = subprocess.run([\"gmshToFoam\",\"oil.msh\"], capture_output=True, text=True)\nprint(\"gmshToFoam rc\", p.returncode, p.stdout[p.stdout.find(\"Patch 0\"):][:300])\nc = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(c.stdout[c.stdout.find(\"Checking patch topology\"):][:2600])",
+      "exit_code": 0,
+      "seconds": 4.21099014673382,
+      "output": "gmshToFoam rc 0 Patch 0 gets name ringWall\nPatch 1 gets name ringEndTop\nPatch 2 gets name ringEndBottom\nPatch 3 gets name spinnerWall\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const \nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    ringWall            27276    14051    ok (non-closed singly connected)  \n    ringEndTop          18581    9498     ok (non-closed singly connected)  \n    ringEndBottom       18581    9498     ok (non-closed singly connected)  \n    spinnerWall         51654    25827    ok (closed singly connected)      \n    \".*\"                116092   58048    ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    oil                 382635       90748        1.0105e-05   (-0.023 -0.0229999 -0.005) (0.023 0.0229999 0.005)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.023 -0.0229999 -0.005) (0.023 0.0229999 0.005)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (-9.75165e-18 2.0348e-18 -2.75955e-16) OK.\n    Max cell openness = 3.36439e-16 OK.\n    Max aspect ratio = 8.77515 OK.\n    Minimum face area = 2.02001e-08. Maximum face area = 1.93362e-06.  Face area magnitudes OK.\n    Min volume = 1.88731e-12. Max volume = 9.29892e-10.  Total volume = 1.0105e-05.  Cell volumes OK.\n    Mesh non-orthogonality Max: 67.868 average: 22.9984\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.843498 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "r2 = pv.OpenFOAMReader(\"case.foam\"); r2.enable_all_patch_arrays()\nb2 = r2.read(); im = b2[\"internalMesh\"]\ncc = im.cell_centers().points; vol = im.compute_cell_sizes(volume=True)[\"Volume\"]\nrr = np.hypot(cc[:,0],cc[:,1]); zz = cc[:,2]\nsel_rad = (rr>0.022)&(rr<0.023)&(abs(zz)<0.004)\nsel_ax  = (rr<0.022)&(abs(zz)>0.004)\nfor name, sel, gap in [(\"radial clearance\",sel_rad,0.001),(\"end gaps\",sel_ax,0.001)]:\n    N=sel.sum(); V=vol[sel].sum()\n    h=(8.5*V/N)**(1/3)\n    print(f\"{name}: cells={N}, V={V*1e9:.0f} mm^3, mean tet edge={h*1000:.3f} mm -> ~{gap/h:.1f} cells across the 1.0 mm gap\")\nprint(\"total mesh volume mm^3 %.2f vs exact %.2f\"%(vol.sum()*1e9, oil.volume*1e9))",
+      "exit_code": 0,
+      "seconds": 0.40145303681492805,
+      "output": "radial clearance: cells=149655, V=1131 mm^3, mean tet edge=0.401 mm -> ~2.5 cells across the 1.0 mm gap\nend gaps: cells=184176, V=3102 mm^3, mean tet edge=0.523 mm -> ~1.9 cells across the 1.0 mm gap\ntotal mesh volume mm^3 10104.99 vs exact 10109.65",
+      "image": ""
+    },
+    {
+      "cmd": "t0=time.time()\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\nmesh(0.0010, 0.00025, \"oil.msh\")\nprint(\"wall time\", time.time()-t0)",
+      "exit_code": 0,
+      "seconds": 30.679639625363052,
+      "output": "Info    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Circle)\nInfo    : [ 20%] Meshing curve 2 (Line)\nInfo    : [ 30%] Meshing curve 3 (Circle)\nInfo    : [ 40%] Meshing curve 4 (Circle)\nInfo    : [ 50%] Meshing curve 5 (Line)\nInfo    : [ 60%] Meshing curve 6 (Circle)\nInfo    : [ 70%] Meshing curve 7 (Circle)\nInfo    : [ 80%] Meshing curve 8 (Circle)\nInfo    : [ 90%] Meshing curve 9 (Line)\nInfo    : Done meshing 1D (Wall 0.0855481s, CPU 0.085993s)\nInfo    : Meshing 2D...\nInfo    : [  0%] Meshing surface 1 (Cylinder, Frontal-Delaunay)\nInfo    : [ 20%] Meshing surface 2 (Plane, Frontal-Delaunay)\nInfo    : [ 30%] Meshing surface 3 (Plane, Frontal-Delaunay)\nInfo    : [ 50%] Meshing surface 4 (Cylinder, Frontal-Delaunay)\nInfo    : [ 60%] Meshing surface 5 (Plane, Frontal-Delaunay)\nInfo    : [ 80%] Meshing surface 6 (Plane, Frontal-Delaunay)\nInfo    : [ 90%] Meshing surface 7 (Cylinder, Frontal-Delaunay)\nInfo    : Done meshing 2D (Wall 4.46768s, CPU 4.47105s)\nInfo    : Meshing 3D...\nInfo    : 3D Meshing 1 volume with 1 connected component\nInfo    : Tetrahedrizing 112621 nodes...\nInfo    : Done tetrahedrizing 112629 nodes (Wall 1.89955s, CPU 1.80743s)\nInfo    : Reconstructing mesh...\nInfo    :  - Creating surface mesh\nInfo    :  - Identifying boundary edges\nInfo    :  - Recovering boundary\nInfo    : Done reconstructing mesh (Wall 6.62992s, CPU 6.41252s)\nInfo    : Found void region\nInfo    : Found volume 1\nInfo    : It. 0 - 0 nodes created - worst tet radius 5.03324 (nodes removed 0 0)\nInfo    : It. 500 - 500 nodes created - worst tet radius 2.26194 (nodes removed 0 0)\nInfo    : It. 1000 - 1000 nodes created - worst tet radius 2.08289 (nodes removed 0 0)\nInfo    : It. 1500 - 1500 nodes created - worst tet radius 2.08024 (nodes removed 0 0)\nInfo    : It. 2000 - 2000 nodes created - worst tet radius 2.07813 (nodes removed 0 0)\nInfo    : It. 2500 - 2500 nodes created - worst tet radius 2.07697 (nodes removed 0 0)\nInfo    : It. 3000 - 3000 nodes created - worst tet radius 2.\n... 13540 characters cut ...\nated - worst tet radius 1.04429 (nodes removed 0 0)\nInfo    : It. 80000 - 80000 nodes created - worst tet radius 1.04165 (nodes removed 0 0)\nInfo    : It. 80500 - 80500 nodes created - worst tet radius 1.03945 (nodes removed 0 0)\nInfo    : It. 81000 - 81000 nodes created - worst tet radius 1.03732 (nodes removed 0 0)\nInfo    : It. 81500 - 81500 nodes created - worst tet radius 1.03477 (nodes removed 0 0)\nInfo    : It. 82000 - 82000 nodes created - worst tet radius 1.03251 (nodes removed 0 0)\nInfo    : It. 82500 - 82500 nodes created - worst tet radius 1.02999 (nodes removed 0 0)\nInfo    : It. 83000 - 83000 nodes created - worst tet radius 1.02757 (nodes removed 0 0)\nInfo    : It. 83500 - 83500 nodes created - worst tet radius 1.02523 (nodes removed 0 0)\nInfo    : It. 84000 - 84000 nodes created - worst tet radius 1.02294 (nodes removed 0 0)\nInfo    : It. 84500 - 84500 nodes created - worst tet radius 1.02084 (nodes removed 0 0)\nInfo    : It. 85000 - 85000 nodes created - worst tet radius 1.01876 (nodes removed 0 0)\nInfo    : It. 85500 - 85500 nodes created - worst tet radius 1.0169 (nodes removed 0 0)\nInfo    : It. 86000 - 86000 nodes created - worst tet radius 1.01479 (nodes removed 0 0)\nInfo    : It. 86500 - 86500 nodes created - worst tet radius 1.01285 (nodes removed 0 0)\nInfo    : It. 87000 - 87000 nodes created - worst tet radius 1.011 (nodes removed 0 0)\nInfo    : It. 87500 - 87500 nodes created - worst tet radius 1.00936 (nodes removed 0 0)\nInfo    : It. 88000 - 88000 nodes created - worst tet radius 1.00753 (nodes removed 0 0)\nInfo    : It. 88500 - 88500 nodes created - worst tet radius 1.00571 (nodes removed 0 0)\nInfo    : It. 89000 - 89000 nodes created - worst tet radius 1.00397 (nodes removed 0 0)\nInfo    : It. 89500 - 89500 nodes created - worst tet radius 1.00241 (nodes removed 0 0)\nInfo    : It. 90000 - 90000 nodes created - worst tet radius 1.00107 (nodes removed 0 0)\nInfo    : 3D refinement terminated (203019 nodes total):\nInfo    :  - 8 Delaunay cavities modified for star shapeness\nInfo    :  - 0 nodes could not be inserted\nInfo    :  - 922955 tetrahedra created in 7.95869 sec. (115968 tets/s)\nInfo    : 95 node relocations\nInfo    : Done meshing 3D (Wall 20.8604s, CPU 20.6633s)\nInfo    : Optimizing mesh...\nInfo    : Optimizing volume 1\nInfo    : Optimization starts (volume = 1.01064e-05) with worst = 2.31198e-05 / average = 0.780873:\nInfo    : 0.00 < quality < 0.10 :      1822 elements\nInfo    : 0.10 < quality < 0.20 :      4896 elements\nInfo    : 0.20 < quality < 0.30 :      9037 elements\nInfo    : 0.30 < quality < 0.40 :     16473 elements\nInfo    : 0.40 < quality < 0.50 :     23474 elements\nInfo    : 0.50 < quality < 0.60 :     42554 elements\nInfo    : 0.60 < quality < 0.70 :     85096 elements\nInfo    : 0.70 < quality < 0.80 :    222637 elements\nInfo    : 0.80 < quality < 0.90 :    353377 elements\nInfo    : 0.90 < quality < 1.00 :    163589 elements\nInfo    : 15622 edge swaps, 328 node relocations (volume = 1.01064e-05): worst = 0.101359 / average = 0.791827 (Wall 0.638357s, CPU 0.639082s)\nInfo    : 15740 edge swaps, 332 node relocations (volume = 1.01064e-05): worst = 0.247141 / average = 0.791885 (Wall 0.847915s, CPU 0.849227s)\nInfo    : No ill-shaped tets in the mesh :-)\nInfo    : 0.00 < quality < 0.10 :         0 elements\nInfo    : 0.10 < quality < 0.20 :         0 elements\nInfo    : 0.20 < quality < 0.30 :        14 elements\nInfo    : 0.30 < quality < 0.40 :     16513 elements\nInfo    : 0.40 < quality < 0.50 :     22393 elements\nInfo    : 0.50 < quality < 0.60 :     40754 elements\nInfo    : 0.60 < quality < 0.70 :     85405 elements\nInfo    : 0.70 < quality < 0.80 :    223276 elements\nInfo    : 0.80 < quality < 0.90 :    357004 elements\nInfo    : 0.90 < quality < 1.00 :    163231 elements\nInfo    : Done optimizing mesh (Wall 2.42885s, CPU 2.43026s)\nInfo    : 203019 nodes 1136368 elements\nInfo    : Writing 'oil.msh'...\nInfo    : Done writing 'oil.msh'\noil.msh tets: 908590\nwall time 30.651039123535156",
+      "image": ""
+    },
+    {
+      "cmd": "shutil.rmtree(\"constant/polyMesh\", ignore_errors=True)\np = subprocess.run([\"gmshToFoam\",\"oil.msh\"], capture_output=True, text=True); print(\"rc\",p.returncode)\nc = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(c.stdout[c.stdout.find(\"Checking patch topology\"):][:2500])",
+      "exit_code": 0,
+      "seconds": 10.329995122738183,
+      "output": "rc 0\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    ringWall            53730    27444    ok (non-closed singly connected)  \n    ringEndTop          35683    18132    ok (non-closed singly connected)  \n    ringEndBottom       35683    18132    ok (non-closed singly connected)  \n    spinnerWall         100142   50071    ok (closed singly connected)      \n    \".*\"                225238   112621   ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    oil                 908590       203019       1.01064e-05  (-0.023 -0.023 -0.005) (0.023 0.0229999 0.005)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.023 -0.023 -0.005) (0.023 0.0229999 0.005)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (2.86557e-18 -4.45002e-18 1.03886e-14) OK.\n    Max cell openness = 3.22781e-16 OK.\n    Max aspect ratio = 8.8352 OK.\n    Minimum face area = 1.17403e-08. Maximum face area = 1.37234e-06.  Face area magnitudes OK.\n    Min volume = 7.32849e-13. Max volume = 5.53132e-10.  Total volume = 1.01064e-05.  Cell volumes OK.\n    Mesh non-orthogonality Max: 68.9278 average: 21.1594\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 1.04298 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "r3 = pv.OpenFOAMReader(\"case.foam\"); r3.enable_all_patch_arrays(); b3 = r3.read()\nim3 = b3[\"internalMesh\"]; cc = im3.cell_centers().points\nvol3 = im3.compute_cell_sizes(volume=True)[\"Volume\"]\nrr = np.hypot(cc[:,0],cc[:,1]); zz = cc[:,2]\nfor name, sel in [(\"radial clearance\",(rr>0.022)&(rr<0.023)&(abs(zz)<0.004)),\n                  (\"end gaps\",(rr<0.022)&(abs(zz)>0.004)),\n                  (\"bore\",(rr<0.015)&(abs(zz)<0.004))]:\n    N=sel.sum(); V=vol3[sel].sum(); h=(8.5*V/N)**(1/3)\n    print(f\"{name}: cells={N:7d} V={V*1e9:8.1f} mm^3  h={h*1000:.3f} mm  ({0.001/h:.1f} across 1 mm)\")\nsl = im3.slice(normal=\"y\")\npl = pv.Plotter(window_size=(1400,700), off_screen=True)\npl.add_mesh(sl, color=\"lightsteelblue\", show_edges=True, line_width=0.4)\npl.camera_position=[(0,-0.05,0),(0.0195,0,0.0),(0,0,1)]; pl.camera.parallel_projection=True; pl.camera.parallel_scale=0.006\npl.screenshot(\"gap_zoom.png\"); display(Image(\"gap_zoom.png\"))",
+      "exit_code": 0,
+      "seconds": 1.113836687989533,
+      "output": "radial clearance: cells= 337339 V=  1130.5 mm^3  h=0.305 mm  (3.3 across 1 mm)\nend gaps: cells= 460174 V=  3226.1 mm^3  h=0.391 mm  (2.6 across 1 mm)\nbore: cells=  24642 V=  5466.2 mm^3  h=1.235 mm  (0.8 across 1 mm)\n\n\u001b[0m\u001b[33m2026-09-12 13:41:55.379 ( 115.734s) [    703CFF7B8780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-12 13:41:55.379 ( 115.734s) [    703CFF7B8780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "bnd3 = b3[\"boundary\"]\nexact = {\"ringWall\":2*math.pi*0.023*0.010, \"ringEndTop\":math.pi*0.023**2, \"ringEndBottom\":math.pi*0.023**2,\n         \"spinnerWall\":2*math.pi*0.022*0.008+2*math.pi*(0.022**2-0.015**2)+2*math.pi*0.015*0.008}\nfor n,e in exact.items():\n    a = bnd3[n].compute_cell_sizes(area=True)[\"Area\"].sum()\n    s = pv.read(f\"constant/triSurface/{n}.stl\")\n    print(f\"{n:14s} mesh {a*1e6:8.2f} mm^2  exact {e*1e6:8.2f}  STL {s.area*1e6:8.2f} mm^2  STL bbox(m) \"\n          f\"{[round(v,4) for v in s.bounds]}\")",
+      "exit_code": 0,
+      "seconds": 0.05062498897314072,
+      "output": "ringWall       mesh  1445.13 mm^2  exact  1445.13  STL  1445.13 mm^2  STL bbox(m) [-0.023, 0.023, -0.023, 0.023, -0.005, 0.005]\nringEndTop     mesh  1661.87 mm^2  exact  1661.90  STL  1661.89 mm^2  STL bbox(m) [-0.023, 0.023, -0.023, 0.023, 0.005, 0.005]\nringEndBottom  mesh  1661.87 mm^2  exact  1661.90  STL  1661.89 mm^2  STL bbox(m) [-0.023, 0.023, -0.023, 0.023, -0.005, -0.005]\nspinnerWall    mesh  3488.02 mm^2  exact  3487.17  STL  3487.16 mm^2  STL bbox(m) [-0.022, 0.022, -0.022, 0.022, -0.004, 0.004]",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 3793,
+      "fenced": false,
+      "text_chars": 1180,
+      "thinking_chars": 3899,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220295.8258939
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 568,
+      "fenced": true,
+      "text_chars": 42,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220301.4376414
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 426,
+      "fenced": true,
+      "text_chars": 166,
+      "thinking_chars": 224,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220310.3889935
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 964,
+      "fenced": true,
+      "text_chars": 234,
+      "thinking_chars": 647,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220322.527583
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 739,
+      "fenced": true,
+      "text_chars": 189,
+      "thinking_chars": 624,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220342.9803326
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 2275,
+      "fenced": true,
+      "text_chars": 122,
+      "thinking_chars": 1495,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220374.386836
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 801,
+      "fenced": true,
+      "text_chars": 97,
+      "thinking_chars": 566,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220386.3071818
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 191,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 172,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220390.368809
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 612,
+      "fenced": true,
+      "text_chars": 157,
+      "thinking_chars": 670,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220399.6114368
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 249,
+      "fenced": true,
+      "text_chars": 62,
+      "thinking_chars": 119,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220403.887806
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 373,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220409.042832
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 120,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 132,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220412.7998724
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 469,
+      "fenced": true,
+      "text_chars": 104,
+      "thinking_chars": 571,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220420.4001083
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 298,
+      "fenced": true,
+      "text_chars": 30,
+      "thinking_chars": 188,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220436.3482208
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 895,
+      "fenced": true,
+      "text_chars": 134,
+      "thinking_chars": 630,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220453.1444411
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 438,
+      "fenced": true,
+      "text_chars": 105,
+      "thinking_chars": 389,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220461.4902818
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 183,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220495.426478
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 680,
+      "fenced": true,
+      "text_chars": 103,
+      "thinking_chars": 106,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220514.4571948
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 655,
+      "fenced": true,
+      "text_chars": 98,
+      "thinking_chars": 423,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220526.5262165
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "end_turn",
+      "output_tokens": 1277,
+      "fenced": false,
+      "text_chars": 2270,
+      "thinking_chars": 561,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220544.625603
+    },
+    {
+      "turn": 21,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 57,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789220547.5009692
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 11,872 triangles across 4 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "ringEndBottom.stl",
+          "ringEndTop.stl",
+          "ringWall.stl",
+          "spinnerWall.stl"
+        ],
+        "triangles": 11872
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the triSurface directory",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 11872
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 2,276 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 2276
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the radial clearance, measured between the two meshed wall patches, not restated from the input",
+      "measured": null
+    },
+    {
+      "property": "the axial end gap, measured the same way, at both ends",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "the cell size across the clearance, and how many cells span it, counted on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the oil volume, against the ring's bore swept volume minus the spinner's",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 21,
+    "steps": 18,
+    "seconds": 315.0,
+    "killed": false,
+    "first_mesh_step": 6,
+    "first_mesh_turn": 8
+  }
+}

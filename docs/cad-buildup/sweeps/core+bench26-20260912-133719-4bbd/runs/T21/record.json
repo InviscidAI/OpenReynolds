@@ -1,0 +1,564 @@
+{
+  "run_id": "20260912-140422-2ffe",
+  "case": "T21",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T21-20260912-140422-2ffe",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T21-20260912-140422-2ffe/t21",
+  "started_at": "2026-09-12T14:04:22",
+  "ended_at": "2026-09-12T14:08:11",
+  "seconds": 225.3,
+  "n_turns": 24,
+  "n_steps": 21,
+  "first_mesh_step": 15,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.7681,
+  "tokens": {
+    "input": 48,
+    "cache_read": 367908,
+    "cache_write": 27609,
+    "output": 16454
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import os, numpy as np\nfrom build123d import *\n\nLX, LY, LZ = 0.160, 0.100, 0.040      # internal cavity\nTW = 0.003                            # wall thickness\nVW, VH = 0.030, 0.020                 # vent width (y) x height (z)\nVZ0 = 0.010                           # vent bottom above floor\nSD, SH = 0.010, 0.025                 # standoff dia, height\nHD, HDEP = 0.004, 0.012               # blind hole dia, depth\nINSET = 0.015                         # standoff centre inset from corner\n\ncavity = Box(LX, LY, LZ, align=(Align.MIN,)*3)\nduct = Pos(LX, (LY-VW)/2, VZ0) * Box(TW, VW, VH, align=(Align.MIN,)*3)\ncentres = [(INSET, INSET), (LX-INSET, INSET), (INSET, LY-INSET), (LX-INSET, LY-INSET)]\nstand = None\nfor cx, cy in centres:\n    c = Pos(cx, cy, 0) * Cylinder(SD/2, SH, align=(Align.CENTER, Align.CENTER, Align.MIN))\n    h = Pos(cx, cy, SH-HDEP) * Cylinder(HD/2, HDEP, align=(Align.CENTER, Align.CENTER, Align.MIN))\n    stand = (c - h) if stand is None else stand + (c - h)\nfluid = (cavity + duct) - stand\nprint(fluid.is_valid(), fluid.volume, len(fluid.faces()))\nprint(fluid.bounding_box())",
+      "exit_code": 1,
+      "seconds": 2.3069876860827208,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[1]\u001b[39m\u001b[32m, line 21\u001b[39m\n\u001b[32m     17\u001b[39m     c = Pos(cx, cy, \u001b[32m0\u001b[39m) * Cylinder(SD/\u001b[32m2\u001b[39m, SH, align=(Align.CENTER, Align.CENTER, Align.MIN))\n\u001b[32m     18\u001b[39m     h = Pos(cx, cy, SH-HDEP) * Cylinder(HD/\u001b[32m2\u001b[39m, HDEP, align=(Align.CENTER, Align.CENTER, Align.MIN))\n\u001b[32m     19\u001b[39m     stand = (c - h) \u001b[38;5;28;01mif\u001b[39;00m stand \u001b[38;5;28;01mis\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m \u001b[38;5;28;01melse\u001b[39;00m stand + (c - h)\n\u001b[32m     20\u001b[39m fluid = (cavity + duct) - stand\n\u001b[32m---> \u001b[39m\u001b[32m21\u001b[39m print(fluid.is_valid(), fluid.volume, len(fluid.faces()))\n\u001b[32m     22\u001b[39m print(fluid.bounding_box())\n\n\u001b[31mTypeError\u001b[39m: 'bool' object is not callable",
+      "image": ""
+    },
+    {
+      "cmd": "print(fluid.is_valid, fluid.volume, len(fluid.faces()))\nprint(fluid.bounding_box())\nimport math\nV_expect = LX*LY*LZ + TW*VW*VH - 4*(math.pi*(SD/2)**2*SH - math.pi*(HD/2)**2*HDEP)\nprint(\"expected volume\", V_expect)",
+      "exit_code": 0,
+      "seconds": 0.05063027981668711,
+      "output": "True 0.0006345492041555149 27\nbbox: 0.0 <= x <= 0.163, 0.0 <= y <= 0.1, 0.0 <= z <= 0.04\nexpected volume 0.0006345492041555149",
+      "image": ""
+    },
+    {
+      "cmd": "import os, math, numpy as np\nfrom build123d import *\n\nLX, LY, LZ = 0.160, 0.100, 0.040      # internal cavity, metres\nTW = 0.003                            # wall thickness\nVW, VH = 0.030, 0.020                 # vent width (y) x height (z)\nVZ0 = 0.010                           # vent bottom above floor\nSD, SH = 0.010, 0.025                 # standoff dia, height\nHD, HDEP = 0.004, 0.012               # blind hole dia, depth\nINSET = 0.015                         # standoff centre inset from internal corner\n\ncavity = Box(LX, LY, LZ, align=(Align.MIN,)*3)\nduct = Pos(LX, (LY-VW)/2, VZ0) * Box(TW, VW, VH, align=(Align.MIN,)*3)\ncentres = [(INSET, INSET), (LX-INSET, INSET), (INSET, LY-INSET), (LX-INSET, LY-INSET)]\nstand = None\nfor cx, cy in centres:\n    c = Pos(cx, cy, 0) * Cylinder(SD/2, SH, align=(Align.CENTER, Align.CENTER, Align.MIN))\n    h = Pos(cx, cy, SH-HDEP) * Cylinder(HD/2, HDEP, align=(Align.CENTER, Align.CENTER, Align.MIN))\n    stand = (c - h) if stand is None else stand + (c - h)\nfluid = (cavity + duct) - stand\n\nV_expect = LX*LY*LZ + TW*VW*VH - 4*(math.pi*(SD/2)**2*SH - math.pi*(HD/2)**2*HDEP)\nprint(\"valid:\", fluid.is_valid, \"faces:\", len(fluid.faces()))\nprint(\"volume:\", fluid.volume, \" expected:\", V_expect)\nprint(fluid.bounding_box())",
+      "exit_code": 0,
+      "seconds": 0.10074008908122778,
+      "output": "valid: True faces: 27\nvolume: 0.0006345492041555149  expected: 0.0006345492041555149\nbbox: 0.0 <= x <= 0.163, 0.0 <= y <= 0.1, 0.0 <= z <= 0.04",
+      "image": ""
+    },
+    {
+      "cmd": "from collections import defaultdict\ngroups = defaultdict(list)\nfor f in fluid.faces():\n    gt = f.geom_type\n    c = f.center()\n    if gt == GeomType.CYLINDER:\n        r = f.radius\n        groups[\"standoffs\" if abs(r-SD/2) < 1e-6 else \"holes\"].append(f)\n    else:\n        n = f.normal_at(c)\n        if abs(n.Z) > 0.9 and abs(c.Z) < 1e-9:\n            groups[\"floor\"].append(f)\n        elif abs(n.Z) > 0.9 and abs(c.Z - LZ) < 1e-9:\n            groups[\"top\"].append(f)\n        elif abs(n.Z) > 0.9 and abs(c.Z - SH) < 1e-9:\n            groups[\"standoffs\"].append(f)       # standoff top annulus\n        elif abs(n.Z) > 0.9 and abs(c.Z - (SH-HDEP)) < 1e-9:\n            groups[\"holes\"].append(f)           # blind hole bottom\n        elif abs(n.X) > 0.9 and abs(c.X - (LX+TW)) < 1e-9:\n            groups[\"vent\"].append(f)\n        else:\n            groups[\"walls\"].append(f)\nfor k, v in groups.items():\n    print(k, len(v), \"area=%.6g\" % sum(f.area for f in v))",
+      "exit_code": 0,
+      "seconds": 0.05061393976211548,
+      "output": "walls 8 area=0.0205\ntop 1 area=0.016\nfloor 1 area=0.0156858\nstandoffs 8 area=0.00340549\nvent 1 area=0.0006\nholes 8 area=0.000653451",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, pyvista as pv\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nfor name, fs in groups.items():\n    sh = fs[0] if len(fs) == 1 else Compound(children=fs)\n    export_stl(sh, f\"constant/triSurface/{name}.stl\", tolerance=2e-5, angular_tolerance=0.2)\nprint(sorted(os.listdir(\"constant/triSurface\")))\n\npv.start_xvfb() if hasattr(pv, \"start_xvfb\") else None\npl = pv.Plotter(off_screen=True, window_size=(900, 650))\ncols = dict(walls=\"lightgray\", floor=\"tan\", top=\"skyblue\", vent=\"red\", standoffs=\"green\", holes=\"magenta\")\nfor name in cols:\n    m = pv.read(f\"constant/triSurface/{name}.stl\")\n    pl.add_mesh(m, color=cols[name], opacity=0.35 if name in (\"walls\", \"top\") else 1.0, show_edges=False)\npl.camera_position = [(0.30, -0.25, 0.22), (0.08, 0.05, 0.015), (0, 0, 1)]\npl.screenshot(\"shape.png\")",
+      "exit_code": 0,
+      "seconds": 1.404815174639225,
+      "output": "['floor.stl', 'holes.stl', 'standoffs.stl', 'top.stl', 'vent.stl', 'walls.stl']\narray([[[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]],\n\n       [[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]],\n\n       [[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]],\n\n       ...,\n\n       [[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]],\n\n       [[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]],\n\n       [[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]]], shape=(650, 900, 3), dtype=uint8)\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-12 14:05:33.547 (   1.176s) [    71E8F347C780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-12 14:05:33.548 (   1.176s) [    71E8F347C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-12 14:05:33.560 (   1.189s) [    71E8F347C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": ""
+    },
+    {
+      "cmd": "import matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\nfrom mpl_toolkits.mplot3d.art3d import Poly3DCollection\nfrom stl_reader import *  if False else None\ndef read_tris(p):\n    m = pv.read(p)\n    f = m.faces.reshape(-1, 4)[:, 1:]\n    return m.points[f]\nfig = plt.figure(figsize=(11, 5))\nfor i, (elev, azim) in enumerate([(25, -60), (75, -90)]):\n    ax = fig.add_subplot(1, 2, i+1, projection=\"3d\")\n    for name, col in cols.items():\n        t = read_tris(f\"constant/triSurface/{name}.stl\")\n        ax.add_collection3d(Poly3DCollection(t, facecolor=col, edgecolor=\"k\",\n                                             linewidths=0.15, alpha=0.25 if name in (\"walls\",\"top\") else 1.0))\n    ax.set_xlim(0, 0.17); ax.set_ylim(0, 0.11); ax.set_zlim(0, 0.05)\n    ax.set_box_aspect((0.17, 0.11, 0.05)); ax.view_init(elev, azim)\nplt.tight_layout(); plt.show()",
+      "exit_code": 1,
+      "seconds": 0.050565170124173164,
+      "output": "\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[6]\u001b[39m\u001b[32m, line 5\u001b[39m\n\u001b[31m    \u001b[39m\u001b[31mfrom stl_reader import *  if False else None\u001b[39m\n                              ^\n\u001b[31mSyntaxError\u001b[39m\u001b[31m:\u001b[39m invalid syntax",
+      "image": ""
+    },
+    {
+      "cmd": "import matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\nfrom mpl_toolkits.mplot3d.art3d import Poly3DCollection\ndef read_tris(p):\n    m = pv.read(p)\n    f = m.faces.reshape(-1, 4)[:, 1:]\n    return m.points[f]\nfig = plt.figure(figsize=(11, 5))\nfor i, (elev, azim) in enumerate([(25, -60), (70, -90)]):\n    ax = fig.add_subplot(1, 2, i+1, projection=\"3d\")\n    for name, col in cols.items():\n        t = read_tris(f\"constant/triSurface/{name}.stl\")\n        ax.add_collection3d(Poly3DCollection(t, facecolor=col, edgecolor=\"k\",\n                                             linewidths=0.15, alpha=0.25 if name in (\"walls\",\"top\") else 1.0))\n    ax.set_xlim(0, 0.17); ax.set_ylim(0, 0.11); ax.set_zlim(0, 0.05)\n    ax.set_box_aspect((0.17, 0.11, 0.05)); ax.view_init(elev, azim)\nplt.tight_layout(); plt.show()",
+      "exit_code": 0,
+      "seconds": 0.5016663447022438,
+      "output": "[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use(\"Agg\")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]",
+      "image": ""
+    },
+    {
+      "cmd": "import matplotlib.pyplot as plt\nfrom mpl_toolkits.mplot3d.art3d import Poly3DCollection\ndef read_tris(p):\n    m = pv.read(p)\n    f = m.faces.reshape(-1, 4)[:, 1:]\n    return m.points[f]\nfig = plt.figure(figsize=(12, 5))\nfor i, (elev, azim) in enumerate([(25, -60), (70, -90)]):\n    ax = fig.add_subplot(1, 2, i+1, projection=\"3d\")\n    for name, col in cols.items():\n        t = read_tris(f\"constant/triSurface/{name}.stl\")\n        ax.add_collection3d(Poly3DCollection(t, facecolor=col, edgecolor=\"k\",\n                                             linewidths=0.15, alpha=0.2 if name in (\"walls\",\"top\") else 1.0))\n    ax.set_xlim(0, 0.17); ax.set_ylim(0, 0.11); ax.set_zlim(0, 0.05)\n    ax.set_box_aspect((0.17, 0.11, 0.05)); ax.view_init(elev, azim)\nfig",
+      "exit_code": 0,
+      "seconds": 0.6021289033815265,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import gmsh\nexport_step(fluid, \"fluid.step\")\ngmsh.initialize()\ngmsh.option.setNumber(\"General.Terminal\", 1)\ngmsh.model.add(\"enc\")\ngmsh.model.occ.importShapes(\"fluid.step\")\ngmsh.model.occ.synchronize()\nsurfs = gmsh.model.getEntities(2)\nprint(\"gmsh surfaces:\", len(surfs), \"volumes:\", gmsh.model.getEntities(3))\n\nref = []\nfor name, fs in groups.items():\n    for f in fs:\n        c = f.center(); ref.append((name, np.array([c.X, c.Y, c.Z]), f.area))\nassign = {}\nfor dim, tag in surfs:\n    com = np.array(gmsh.model.occ.getCenterOfMass(dim, tag))\n    a = gmsh.model.occ.getMass(dim, tag)\n    best = min(ref, key=lambda r: np.linalg.norm(r[1]-com) + abs(r[2]-a))\n    assign.setdefault(best[0], []).append(tag)\n    d = np.linalg.norm(best[1]-com)\n    if d > 1e-6: print(\"loose match\", tag, best[0], d)\nprint({k: len(v) for k, v in assign.items()})",
+      "exit_code": 0,
+      "seconds": 0.10087565891444683,
+      "output": "Info    :  - Label 'Shapes/COMPOUND' (3D)\ngmsh surfaces: 27 volumes: [(3, 1)]\nloose match 7 holes 0.0005000000000000004\nloose match 8 holes 0.0005000000000000004\nloose match 9 holes 0.0005000000000000004\nloose match 10 holes 0.0005000000000000004\nloose match 20 holes 0.002000000000000132\nloose match 21 holes 0.002000000000000113\nloose match 22 holes 0.002000000000000132\nloose match 23 holes 0.002000000000000113\n{'walls': 8, 'top': 1, 'floor': 1, 'holes': 12, 'standoffs': 4, 'vent': 1}",
+      "image": ""
+    },
+    {
+      "cmd": "assign = {}\nfor dim, tag in gmsh.model.getEntities(2):\n    t = gmsh.model.getType(dim, tag)\n    x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(dim, tag)\n    com = gmsh.model.occ.getCenterOfMass(dim, tag)\n    if t == \"Cylinder\":\n        r = (x1-x0)/2\n        name = \"standoffs\" if abs(r-SD/2) < 1e-6 else \"holes\"\n    elif abs(z1-z0) < 1e-9:\n        z = z0\n        name = (\"floor\" if abs(z) < 1e-9 else \"top\" if abs(z-LZ) < 1e-9\n                else \"standoffs\" if abs(z-SH) < 1e-9 else \"holes\" if abs(z-(SH-HDEP)) < 1e-9 else \"?\")\n    elif abs(x1-x0) < 1e-9 and abs(x0-(LX+TW)) < 1e-9:\n        name = \"vent\"\n    else:\n        name = \"walls\"\n    assign.setdefault(name, []).append(tag)\n    if name == \"?\": print(\"unclassified\", tag, t, com)\nprint({k: (len(v), round(sum(gmsh.model.occ.getMass(2, s) for s in v), 7)) for k, v in assign.items()})",
+      "exit_code": 0,
+      "seconds": 0.050650049932301044,
+      "output": "{'walls': (19, 0.0531), 'standoffs': (4, 0.0031416), 'holes': (4, 0.0006032)}",
+      "image": ""
+    },
+    {
+      "cmd": "for dim, tag in gmsh.model.getEntities(2)[:6]:\n    print(tag, gmsh.model.getType(dim, tag), [\"%.3e\" % v for v in gmsh.model.getBoundingBox(dim, tag)])",
+      "exit_code": 0,
+      "seconds": 0.050616358406841755,
+      "output": "1 Plane ['-1.000e-07', '-1.000e-07', '-1.000e-07', '1.000e-07', '1.000e-01', '4.000e-02']\n2 Plane ['-1.000e-07', '-1.000e-07', '-1.000e-07', '1.600e-01', '1.000e-07', '4.000e-02']\n3 Plane ['-1.000e-07', '-1.000e-07', '4.000e-02', '1.600e-01', '1.000e-01', '4.000e-02']\n4 Plane ['-1.000e-07', '1.000e-01', '-1.000e-07', '1.600e-01', '1.000e-01', '4.000e-02']\n5 Plane ['-1.000e-07', '-1.000e-07', '-1.000e-07', '1.600e-01', '1.000e-01', '1.000e-07']\n6 Plane ['1.600e-01', '-1.000e-07', '-1.000e-07', '1.600e-01', '1.000e-01', '4.000e-02']",
+      "image": ""
+    },
+    {
+      "cmd": "TOL = 1e-6\nassign = {}\nfor dim, tag in gmsh.model.getEntities(2):\n    t = gmsh.model.getType(dim, tag)\n    x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(dim, tag)\n    cx, cy, cz = gmsh.model.occ.getCenterOfMass(dim, tag)\n    if t == \"Cylinder\":\n        r = (x1-x0-2e-7)/2\n        name = \"standoffs\" if abs(r-SD/2) < TOL else \"holes\"\n    elif (z1-z0) < TOL:\n        name = (\"floor\" if abs(cz) < TOL else \"top\" if abs(cz-LZ) < TOL\n                else \"standoffs\" if abs(cz-SH) < TOL else \"holes\" if abs(cz-(SH-HDEP)) < TOL else \"?\")\n    elif (x1-x0) < TOL and abs(cx-(LX+TW)) < TOL:\n        name = \"vent\"\n    else:\n        name = \"walls\"\n    assign.setdefault(name, []).append(tag)\n    if name == \"?\": print(\"unclassified\", tag, t, cx, cy, cz)\nprint({k: (len(v), round(sum(gmsh.model.occ.getMass(2, s) for s in v), 7)) for k, v in assign.items()})",
+      "exit_code": 0,
+      "seconds": 0.05061209015548229,
+      "output": "unclassified 12 Plane 0.1615 0.049999999999999996 0.01\nunclassified 14 Plane 0.1615 0.049999999999999996 0.03\n{'walls': (6, 0.02032), 'top': (1, 0.016), 'floor': (1, 0.0156858), 'standoffs': (8, 0.0034055), '?': (2, 0.00018), 'vent': (1, 0.0006), 'holes': (8, 0.0006535)}",
+      "image": ""
+    },
+    {
+      "cmd": "TOL = 1e-6\nassign = {}\nfor dim, tag in gmsh.model.getEntities(2):\n    t = gmsh.model.getType(dim, tag)\n    x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(dim, tag)\n    cx, cy, cz = gmsh.model.occ.getCenterOfMass(dim, tag)\n    if t == \"Cylinder\":\n        r = (x1-x0-2e-7)/2\n        name = \"standoffs\" if abs(r-SD/2) < TOL else \"holes\"\n    elif (z1-z0) < TOL and abs(cz) < TOL:\n        name = \"floor\"\n    elif (z1-z0) < TOL and abs(cz-LZ) < TOL:\n        name = \"top\"\n    elif (z1-z0) < TOL and abs(cz-SH) < TOL and (x1-x0) < SD+TOL:\n        name = \"standoffs\"                      # standoff top annulus\n    elif (z1-z0) < TOL and abs(cz-(SH-HDEP)) < TOL and (x1-x0) < HD+TOL:\n        name = \"holes\"                          # blind hole bottom\n    elif (x1-x0) < TOL and abs(cx-(LX+TW)) < TOL:\n        name = \"vent\"\n    else:\n        name = \"walls\"                          # side walls + vent duct walls\n    assign.setdefault(name, []).append(tag)\nfor name, tags in assign.items():\n    gmsh.model.addPhysicalGroup(2, tags, name=name)\ngmsh.model.addPhysicalGroup(3, [1], name=\"internal\")\nprint({k: (len(v), round(sum(gmsh.model.occ.getMass(2, s) for s in v), 7)) for k, v in assign.items()})",
+      "exit_code": 0,
+      "seconds": 0.050638359040021896,
+      "output": "{'walls': (8, 0.0205), 'top': (1, 0.016), 'floor': (1, 0.0156858), 'standoffs': (8, 0.0034055), 'vent': (1, 0.0006), 'holes': (8, 0.0006535)}",
+      "image": ""
+    },
+    {
+      "cmd": "import time\ngmsh.option.setNumber(\"Mesh.MeshSizeFromCurvature\", 0)\ngmsh.option.setNumber(\"Mesh.MeshSizeExtendFromBoundary\", 0)\ngmsh.option.setNumber(\"Mesh.MeshSizeFromPoints\", 0)\nf1 = gmsh.model.mesh.field.add(\"Distance\")\ngmsh.model.mesh.field.setNumbers(f1, \"SurfacesList\", assign[\"holes\"] + assign[\"standoffs\"])\ngmsh.model.mesh.field.setNumber(f1, \"Sampling\", 60)\nf2 = gmsh.model.mesh.field.add(\"Threshold\")\ngmsh.model.mesh.field.setNumber(f2, \"InField\", f1)\ngmsh.model.mesh.field.setNumber(f2, \"SizeMin\", 0.0012)\ngmsh.model.mesh.field.setNumber(f2, \"SizeMax\", 0.006)\ngmsh.model.mesh.field.setNumber(f2, \"DistMin\", 0.002)\ngmsh.model.mesh.field.setNumber(f2, \"DistMax\", 0.015)\ngmsh.model.mesh.field.setAsBackgroundMesh(f2)\nt0 = time.time(); gmsh.model.mesh.generate(3); print(\"mesh time %.1fs\" % (time.time()-t0))\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\ngmsh.write(\"enc.msh\")\nprint(len(gmsh.model.mesh.getElementsByType(4)[0]), \"tets\")",
+      "exit_code": 0,
+      "seconds": 1.855518450960517,
+      "output": "Info    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Line)\nInfo    : [ 10%] Meshing curve 2 (Line)\nInfo    : [ 10%] Meshing curve 3 (Line)\nInfo    : [ 10%] Meshing curve 4 (Line)\nInfo    : [ 10%] Meshing curve 5 (Line)\nInfo    : [ 20%] Meshing curve 6 (Line)\nInfo    : [ 20%] Meshing curve 7 (Line)\nInfo    : [ 20%] Meshing curve 8 (Line)\nInfo    : [ 20%] Meshing curve 9 (Line)\nInfo    : [ 20%] Meshing curve 10 (Line)\nInfo    : [ 30%] Meshing curve 11 (Line)\nInfo    : [ 30%] Meshing curve 12 (Line)\nInfo    : [ 30%] Meshing curve 13 (Circle)\nInfo    : [ 30%] Meshing curve 14 (Circle)\nInfo    : [ 30%] Meshing curve 15 (Circle)\nInfo    : [ 40%] Meshing curve 16 (Circle)\nInfo    : [ 40%] Meshing curve 17 (Line)\nInfo    : [ 40%] Meshing curve 18 (Line)\nInfo    : [ 40%] Meshing curve 19 (Line)\nInfo    : [ 40%] Meshing curve 20 (Line)\nInfo    : [ 50%] Meshing curve 21 (Circle)\nInfo    : [ 50%] Meshing curve 22 (Line)\nInfo    : [ 50%] Meshing curve 23 (Circle)\nInfo    : [ 50%] Meshing curve 24 (Line)\nInfo    : [ 60%] Meshing curve 25 (Circle)\nInfo    : [ 60%] Meshing curve 26 (Line)\nInfo    : [ 60%] Meshing curve 27 (Circle)\nInfo    : [ 60%] Meshing curve 28 (Line)\nInfo    : [ 60%] Meshing curve 29 (Line)\nInfo    : [ 70%] Meshing curve 30 (Line)\nInfo    : [ 70%] Meshing curve 31 (Line)\nInfo    : [ 70%] Meshing curve 32 (Line)\nInfo    : [ 70%] Meshing curve 33 (Line)\nInfo    : [ 70%] Meshing curve 34 (Line)\nInfo    : [ 80%] Meshing curve 35 (Line)\nInfo    : [ 80%] Meshing curve 36 (Line)\nInfo    : [ 80%] Meshing curve 37 (Circle)\nInfo    : [ 80%] Meshing curve 38 (Circle)\nInfo    : [ 80%] Meshing curve 39 (Circle)\nInfo    : [ 90%] Meshing curve 40 (Circle)\nInfo    : [ 90%] Meshing curve 41 (Line)\nInfo    : [ 90%] Meshing curve 42 (Circle)\nInfo    : [ 90%] Meshing curve 43 (Line)\nInfo    : [ 90%] Meshing curve 44 (Circle)\nInfo    : [100%] Meshing curve 45 (Line)\nInfo    : [100%] Meshing curve 46 (Circle)\nInfo    : [100%] Meshing curve 47 (Line)\nInfo    : [100%] Meshing cur\n... 1878 characters cut ...\n 3D Meshing 1 volume with 1 connected component\nInfo    : Tetrahedrizing 6038 nodes...\nInfo    : Done tetrahedrizing 6046 nodes (Wall 0.0746012s, CPU 0.069839s)\nInfo    : Reconstructing mesh...\nInfo    :  - Creating surface mesh\nInfo    :  - Identifying boundary edges\nInfo    :  - Recovering boundary\nInfo    : Done reconstructing mesh (Wall 0.157403s, CPU 0.146746s)\nInfo    : Found volume 1\nInfo    : It. 0 - 0 nodes created - worst tet radius 12.5356 (nodes removed 0 0)\nInfo    : It. 500 - 500 nodes created - worst tet radius 2.40987 (nodes removed 0 0)\nInfo    : It. 1000 - 1000 nodes created - worst tet radius 1.91871 (nodes removed 0 0)\nInfo    : It. 1500 - 1500 nodes created - worst tet radius 1.68375 (nodes removed 0 0)\nInfo    : It. 2000 - 2000 nodes created - worst tet radius 1.54936 (nodes removed 0 0)\nInfo    : It. 2500 - 2500 nodes created - worst tet radius 1.46496 (nodes removed 0 0)\nInfo    : It. 3000 - 3000 nodes created - worst tet radius 1.40143 (nodes removed 0 0)\nInfo    : It. 3500 - 3500 nodes created - worst tet radius 1.3398 (nodes removed 0 0)\nInfo    : It. 4000 - 4000 nodes created - worst tet radius 1.2892 (nodes removed 0 0)\nInfo    : It. 4500 - 4500 nodes created - worst tet radius 1.24154 (nodes removed 0 0)\nInfo    : It. 5000 - 5000 nodes created - worst tet radius 1.19996 (nodes removed 0 0)\nInfo    : It. 5500 - 5500 nodes created - worst tet radius 1.16408 (nodes removed 0 0)\nInfo    : It. 6000 - 6000 nodes created - worst tet radius 1.13342 (nodes removed 0 0)\nInfo    : It. 6500 - 6500 nodes created - worst tet radius 1.10549 (nodes removed 0 0)\nInfo    : It. 7000 - 7000 nodes created - worst tet radius 1.07845 (nodes removed 0 0)\nInfo    : It. 7500 - 7500 nodes created - worst tet radius 1.05438 (nodes removed 0 0)\nInfo    : It. 8000 - 8000 nodes created - worst tet radius 1.03386 (nodes removed 0 0)\nInfo    : It. 8500 - 8500 nodes created - worst tet radius 1.01362 (nodes removed 0 0)\nInfo    : 3D refinement terminated (14914 nodes total):\nInfo    :  - 0 Delaunay cavities modified for star shapeness\nInfo    :  - 0 nodes could not be inserted\nInfo    :  - 74843 tetrahedra created in 0.536034 sec. (139623 tets/s)\nInfo    : 0 node relocations\nInfo    : Done meshing 3D (Wall 0.851004s, CPU 0.840463s)\nInfo    : Optimizing mesh...\nInfo    : Optimizing volume 1\nInfo    : Optimization starts (volume = 0.00063458) with worst = 0.0103242 / average = 0.765642:\nInfo    : 0.00 < quality < 0.10 :       173 elements\nInfo    : 0.10 < quality < 0.20 :       453 elements\nInfo    : 0.20 < quality < 0.30 :       794 elements\nInfo    : 0.30 < quality < 0.40 :      1333 elements\nInfo    : 0.40 < quality < 0.50 :      2148 elements\nInfo    : 0.50 < quality < 0.60 :      4147 elements\nInfo    : 0.60 < quality < 0.70 :      9407 elements\nInfo    : 0.70 < quality < 0.80 :     19468 elements\nInfo    : 0.80 < quality < 0.90 :     24822 elements\nInfo    : 0.90 < quality < 1.00 :     12098 elements\nInfo    : 1399 edge swaps, 31 node relocations (volume = 0.00063458): worst = 0.160538 / average = 0.776925 (Wall 0.0287278s, CPU 0.029082s)\nInfo    : 1407 edge swaps, 33 node relocations (volume = 0.00063458): worst = 0.160538 / average = 0.776983 (Wall 0.0345133s, CPU 0.035048s)\nInfo    : No ill-shaped tets in the mesh :-)\nInfo    : 0.00 < quality < 0.10 :         0 elements\nInfo    : 0.10 < quality < 0.20 :         1 elements\nInfo    : 0.20 < quality < 0.30 :         0 elements\nInfo    : 0.30 < quality < 0.40 :      1333 elements\nInfo    : 0.40 < quality < 0.50 :      2084 elements\nInfo    : 0.50 < quality < 0.60 :      4076 elements\nInfo    : 0.60 < quality < 0.70 :      9443 elements\nInfo    : 0.70 < quality < 0.80 :     19597 elements\nInfo    : 0.80 < quality < 0.90 :     25008 elements\nInfo    : 0.90 < quality < 1.00 :     12048 elements\nInfo    : Done optimizing mesh (Wall 0.104654s, CPU 0.095393s)\nInfo    : 14914 nodes 86383 elements\nmesh time 1.7s\nInfo    : Writing 'enc.msh'...\nInfo    : Done writing 'enc.msh'\n73599 tets",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, textwrap\nos.makedirs(\"system\", exist_ok=True)\ndef foam(loc, obj, body, cls=\"dictionary\"):\n    return (\"FoamFile\\n{\\n    version 2.0;\\n    format ascii;\\n    class %s;\\n\"\n            \"    location \\\"%s\\\";\\n    object %s;\\n}\\n\\n\" % (cls, loc, obj)) + body\nopen(\"system/controlDict\", \"w\").write(foam(\"system\", \"controlDict\",\n    \"application icoFoam;\\nstartFrom startTime;\\nstartTime 0;\\nstopAt endTime;\\nendTime 1;\\n\"\n    \"deltaT 1;\\nwriteControl timeStep;\\nwriteInterval 1;\\n\"))\nopen(\"system/fvSchemes\", \"w\").write(foam(\"system\", \"fvSchemes\",\n    \"ddtSchemes{default Euler;}\\ngradSchemes{default Gauss linear;}\\ndivSchemes{default none;}\\n\"\n    \"laplacianSchemes{default Gauss linear corrected;}\\ninterpolationSchemes{default linear;}\\n\"\n    \"snGradSchemes{default corrected;}\\n\"))\nopen(\"system/fvSolution\", \"w\").write(foam(\"system\", \"fvSolution\", \"solvers{}\\n\"))\nr = subprocess.run([\"gmshToFoam\", \"enc.msh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[-1500:], r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.5518524143844843,
+      "output": "0 format version 2.2  ascii 0\n\nStarting to read physical names at line 5\nPhysical names:7\n    Surface 1\twalls\n    Surface 2\ttop\n    Surface 3\tfloor\n    Surface 4\tstandoffs\n    Surface 5\tvent\n    Surface 6\tholes\n    Volume 7\tinternal\n\nStarting to read points at line 15\nVertices to be read: 14914\nVertices read:14914\n\nStarting to read cells at line 14932\nCells to be read: 85671\n\nMapping region 1 to Foam patch 0\nMapping region 2 to Foam patch 1\nMapping region 3 to Foam patch 2\nMapping region 4 to Foam patch 3\nMapping region 5 to Foam patch 4\nMapping region 6 to Foam patch 5\nMapping region 7 to Foam cellZone 0\nCells:\n    total:73599\n    hex  :0\n    prism:0\n    pyr  :0\n    tet  :73599\n\nCellZones:\nZone\tSize\n    0\t73599\n\nPatch 0 gets name walls\nPatch 1 gets name top\nPatch 2 gets name floor\nPatch 3 gets name standoffs\nPatch 4 gets name vent\nPatch 5 gets name holes\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 12072 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\nFinding faces of patch 4\nFinding faces of patch 5\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone internal and cellSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"checkMesh\", \"-constant\"], capture_output=True, text=True)\nprint(r.stdout[-2500:])",
+      "exit_code": 0,
+      "seconds": 0.45170721504837275,
+      "output": "* * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           14914\n    faces:            153234\n    internal faces:   141162\n    cells:            73599\n    faces per cell:   4\n    boundary patches: 6\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     0\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    73599\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    walls               1742     971      ok (non-closed singly connected)  \n    top                 1076     583      ok (non-closed singly connected)  \n    floor               2556     1377     ok (non-closed singly connected)  \n    standoffs           5548     2850     ok (non-closed singly connected)  \n    vent                48       34       ok (non-closed singly connected)  \n    holes               1102     577      ok (non-closed singly connected)  \n    \".*\"                12072    6038     ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    internal            73599        14914        0.00063458   (0 0 0) (0.163 0.1 0.04)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (0 0 0) (0.163 0.1 0.04)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (5.44259e-17 -1.30913e-17 -5.00703e-16) OK.\n    Max cell openness = 2.9553e-16 OK.\n    Max aspect ratio = 13.0288 OK.\n    Minimum face area = 3.41002e-07. Maximum face area = 4.84274e-05.  Face area magnitudes OK.\n    Min volume = 3.79011e-11. Max volume = 1.01251e-07.  Total volume = 0.00063458.  Cell volumes OK.\n    Mesh non-orthogonality Max: 68.1422 average: 21.3665\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 1.29403 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.model.mesh.field.setNumber(f2, \"SizeMin\", 0.0006)\ngmsh.model.mesh.field.setNumber(f2, \"SizeMax\", 0.004)\ngmsh.model.mesh.field.setNumber(f2, \"DistMin\", 0.0015)\ngmsh.model.mesh.field.setNumber(f2, \"DistMax\", 0.012)\ngmsh.option.setNumber(\"General.Verbosity\", 2)\ngmsh.model.mesh.clear()\nt0 = time.time(); gmsh.model.mesh.generate(3); print(\"mesh time %.1fs\" % (time.time()-t0))\ngmsh.write(\"enc.msh\")\nprint(len(gmsh.model.mesh.getElementsByType(4)[0]), \"tets\")",
+      "exit_code": 0,
+      "seconds": 7.420646091923118,
+      "output": "mesh time 6.8s\n321777 tets",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"gmshToFoam\", \"enc.msh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[-400:])\nb = \"constant/polyMesh/boundary\"\ntxt = open(b).read()\nfor p in [\"walls\", \"floor\", \"standoffs\", \"holes\"]:\n    txt = txt.replace(\"%s\\n    {\\n        type            patch;\" % p,\n                      \"%s\\n    {\\n        type            wall;\" % p)\nopen(b, \"w\").write(txt)\nprint([l.strip() for l in open(b) if \"type\" in l or \"nFaces\" in l])",
+      "exit_code": 0,
+      "seconds": 1.8551365109160542,
+      "output": "0 &, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 38384 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\nFinding faces of patch 4\nFinding faces of patch 5\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone internal and cellSet\nEnd\n\n\n['type            wall;', 'nFaces          3350;', 'type            patch;', 'nFaces          2356;', 'type            wall;', 'nFaces          5896;', 'type            wall;', 'nFaces          22418;', 'type            patch;', 'nFaces          102;', 'type            wall;', 'nFaces          4262;']",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"checkMesh\", \"-constant\"], capture_output=True, text=True)\nprint(r.stdout[-1800:])",
+      "exit_code": 0,
+      "seconds": 1.3543478064239025,
+      "output": "vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    walls               3350     1819     ok (non-closed singly connected)  \n    top                 2356     1244     ok (non-closed singly connected)  \n    floor               5896     3118     ok (non-closed singly connected)  \n    standoffs           22418    11357    ok (non-closed singly connected)  \n    vent                102      65       ok (non-closed singly connected)  \n    holes               4262     2177     ok (non-closed singly connected)  \n    \".*\"                38384    19194    ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    internal            321777       61299        0.000634556  (0 0 0) (0.163 0.1 0.04)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (0 0 0) (0.163 0.1 0.04)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (-1.49061e-16 3.91074e-18 -3.5531e-15) OK.\n    Max cell openness = 2.773e-16 OK.\n    Max aspect ratio = 9.66474 OK.\n    Minimum face area = 5.43476e-08. Maximum face area = 2.20854e-05.  Face area magnitudes OK.\n    Min volume = 1.03314e-11. Max volume = 3.79814e-08.  Total volume = 0.000634556.  Cell volumes OK.\n    Mesh non-orthogonality Max: 69.5477 average: 21.1578\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 1.11493 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "nt, nc, _ = gmsh.model.mesh.getNodes()\nxyz = {int(t): nc[3*i:3*i+3] for i, t in enumerate(nt)}\ndef tris(name):\n    tags = assign[name]; out = []\n    for s in tags:\n        et, en, ev = gmsh.model.mesh.getElements(2, s)\n        for k, t in enumerate(et):\n            if t == 2:\n                v = np.array(ev[k]).reshape(-1, 3)\n                out.append(np.array([[xyz[n] for n in tri] for tri in v]))\n    return np.concatenate(out) if out else np.zeros((0, 3, 3))\nfig = plt.figure(figsize=(12, 5))\nax = fig.add_subplot(1, 2, 1, projection=\"3d\")\nfor name, col in [(\"standoffs\", \"green\"), (\"holes\", \"magenta\"), (\"floor\", \"tan\")]:\n    t = tris(name)\n    m = (t[:, :, 0].max(1) < 0.032) & (t[:, :, 1].max(1) < 0.032)\n    ax.add_collection3d(Poly3DCollection(t[m], facecolor=col, edgecolor=\"k\", linewidths=0.2))\nax.set_xlim(0, 0.032); ax.set_ylim(0, 0.032); ax.set_zlim(0, 0.03)\nax.set_box_aspect((1, 1, 1)); ax.view_init(22, -55); ax.set_title(\"standoff + blind hole\")\nax2 = fig.add_subplot(1, 2, 2, projection=\"3d\")\nfor name, col in [(\"vent\", \"red\"), (\"walls\", \"lightgray\")]:\n    t = tris(name)\n    m = t[:, :, 0].min(1) > 0.14\n    ax2.add_collection3d(Poly3DCollection(t[m], facecolor=col, edgecolor=\"k\", linewidths=0.2))\nax2.set_xlim(0.14, 0.165); ax2.set_ylim(0.02, 0.08); ax2.set_zlim(0, 0.04)\nax2.set_box_aspect((0.025, 0.06, 0.04)); ax2.view_init(15, -50); ax2.set_title(\"vent\")\nfig",
+      "exit_code": 0,
+      "seconds": 0.5519604440778494,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "hb = np.concatenate([tris(\"holes\")]).reshape(-1, 3)\nsb = tris(\"standoffs\").reshape(-1, 3)\nvb = tris(\"vent\").reshape(-1, 3)\ncen = []\nfor cx, cy in centres:\n    d = np.hypot(sb[:, 0]-cx, sb[:, 1]-cy)\n    sel = sb[d < 0.006]\n    cen.append((sel[:, 0].min()+sel[:, 0].max())/2*1000)\nprint(\"standoff \u00d8 (mm): %.3f  asked 10\" % (sb[:, 0].max()-sb[:, 0].min() - 0 if False else 1000*(np.ptp(sb[np.hypot(sb[:,0]-centres[0][0], sb[:,1]-centres[0][1])<0.006][:, 0]))))\nprint(\"standoff height (mm): %.3f  asked 25\" % (1000*sb[:, 2].max()))\nprint(\"standoff centre inset x,y (mm): %.3f %.3f  asked 15,15\" % (1000*centres[0][0], 1000*centres[0][1]))\nprint(\"hole \u00d8 (mm): %.3f  asked 4\" % (1000*np.ptp(hb[np.hypot(hb[:,0]-centres[0][0], hb[:,1]-centres[0][1])<0.003][:, 0])))\nprint(\"hole z-range (mm): %.3f .. %.3f  -> depth %.3f, asked 12 from top 25\" % (1000*hb[:,2].min(), 1000*hb[:,2].max(), 1000*(hb[:,2].max()-hb[:,2].min())))\nprint(\"vent y-span %.3f, z-span %.3f, x %.3f  asked 30 x 20 at x=163, 10..30\" % (1000*np.ptp(vb[:,1]), 1000*np.ptp(vb[:,2]), 1000*vb[:,0].mean()), \" z0=%.1f\" % (1000*vb[:,2].min()))\nprint(\"cavity internal LxWxD (mm): %.1f %.1f %.1f\" % (1000*LX, 1000*LY, 1000*LZ))",
+      "exit_code": 0,
+      "seconds": 0.10072508919984102,
+      "output": "standoff \u00d8 (mm): 10.000  asked 10\nstandoff height (mm): 25.000  asked 25\nstandoff centre inset x,y (mm): 15.000 15.000  asked 15,15\nhole \u00d8 (mm): 4.000  asked 4\nhole z-range (mm): 13.000 .. 25.000  -> depth 12.000, asked 12 from top 25\nvent y-span 30.000, z-span 20.000, x 163.000  asked 30 x 20 at x=163, 10..30  z0=10.0\ncavity internal LxWxD (mm): 160.0 100.0 40.0",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 2341,
+      "fenced": false,
+      "text_chars": 1519,
+      "thinking_chars": 2016,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221896.169392
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 611,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 44,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221901.5693705
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 189,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 89,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221906.323182
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 791,
+      "fenced": true,
+      "text_chars": 155,
+      "thinking_chars": 109,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221914.7141206
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 716,
+      "fenced": true,
+      "text_chars": 131,
+      "thinking_chars": 191,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221922.5975573
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 882,
+      "fenced": true,
+      "text_chars": 146,
+      "thinking_chars": 397,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221932.3494112
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 681,
+      "fenced": true,
+      "text_chars": 86,
+      "thinking_chars": 253,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221942.3675992
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 465,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221946.535925
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 432,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221951.019357
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 712,
+      "fenced": true,
+      "text_chars": 159,
+      "thinking_chars": 385,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221961.2225842
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 763,
+      "fenced": true,
+      "text_chars": 146,
+      "thinking_chars": 363,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221970.0421126
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 493,
+      "fenced": true,
+      "text_chars": 99,
+      "thinking_chars": 686,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221977.5554996
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 701,
+      "fenced": true,
+      "text_chars": 108,
+      "thinking_chars": 248,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221985.8311734
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 776,
+      "fenced": true,
+      "text_chars": 114,
+      "thinking_chars": 225,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789221994.1683357
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 764,
+      "fenced": true,
+      "text_chars": 123,
+      "thinking_chars": 231,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789222003.3292
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 679,
+      "fenced": true,
+      "text_chars": 120,
+      "thinking_chars": 206,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789222013.2880225
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 94,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789222015.5237944
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 830,
+      "fenced": true,
+      "text_chars": 148,
+      "thinking_chars": 598,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789222027.3503397
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 250,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789222038.0826275
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 275,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 325,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789222045.3264391
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 1003,
+      "fenced": true,
+      "text_chars": 119,
+      "thinking_chars": 314,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789222057.0828638
+    },
+    {
+      "turn": 22,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 933,
+      "fenced": true,
+      "text_chars": 127,
+      "thinking_chars": 275,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789222069.1279747
+    },
+    {
+      "turn": 23,
+      "steps": 21,
+      "stop_reason": "end_turn",
+      "output_tokens": 1016,
+      "fenced": false,
+      "text_chars": 2279,
+      "thinking_chars": 141,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789222084.5879412
+    },
+    {
+      "turn": 24,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 57,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789222086.1908913
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 10,700 triangles across 6 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "floor.stl",
+          "holes.stl",
+          "standoffs.stl",
+          "top.stl",
+          "vent.stl",
+          "walls.stl"
+        ],
+        "triangles": 10700
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the triSurface directory",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 10700
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 2,660 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 2660
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "each blind hole's depth, measured on the mesh, and the 13 mm of standoff remaining below it",
+      "measured": null
+    },
+    {
+      "property": "the blind hole diameters, measured on the meshed hole patches",
+      "measured": null
+    },
+    {
+      "property": "the four standoffs' heights and centre positions, measured on the mesh, against 15 mm in from each corner",
+      "measured": null
+    },
+    {
+      "property": "the vent's area and its height above the floor, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the air volume, against the internal box volume minus four standoffs plus four blind holes",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 24,
+    "steps": 21,
+    "seconds": 225.0,
+    "killed": false,
+    "first_mesh_step": 15,
+    "first_mesh_turn": 17
+  }
+}

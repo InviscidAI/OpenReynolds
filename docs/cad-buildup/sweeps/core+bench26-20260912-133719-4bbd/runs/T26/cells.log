@@ -1,0 +1,701 @@
+# -- cell 1 (25.5s, exit 0)
+import os, numpy as np
+from build123d import *
+
+R_SHAFT, H, R_COL = 1.2, 3.0, 0.1
+N_TREAD, TREAD_DEPTH, TREAD_THK, RISE, TURN = 20, 0.25, 0.04, 0.15, 18.0
+TREAD_RADIAL = R_SHAFT - R_COL   # 1.1 m exposed
+
+shaft  = Pos(0, 0, H/2) * Cylinder(R_SHAFT, H)
+column = Pos(0, 0, H/2) * Cylinder(R_COL, H)
+
+treads = []
+for i in range(N_TREAD):
+    ztop = RISE * (i + 1)
+    plank = Pos(R_SHAFT/2, 0, ztop - TREAD_THK/2) * Box(R_SHAFT, TREAD_DEPTH, TREAD_THK)
+    treads.append(Rot(0, 0, TURN * i) * plank)
+
+tread_solid = treads[0]
+for t in treads[1:]:
+    tread_solid = tread_solid + t
+
+fluid = shaft - column - tread_solid
+print("fluid volume m^3:", round(fluid.volume, 5))
+print("bbox:", fluid.bounding_box())
+print("n faces:", len(fluid.faces()), "n solids:", len(fluid.solids()))
+# -- output
+fluid volume m^3: 13.25043
+bbox: bbox: -1.2 <= x <= 1.2, -1.2000000000000002 <= y <= 1.2000000000000002, 0.0 <= z <= 3.0
+n faces: 123 n solids: 1
+
+# -- cell 2 (0.1s, exit 0)
+from collections import Counter
+rows=[]
+for f in fluid.faces():
+    c=f.center(); n=f.normal_at(c)
+    rows.append((f.geom_type, round(f.area,4), round((c.X**2+c.Y**2)**0.5,4), round(c.Z,4)))
+print(Counter(r[0] for r in rows))
+for r in sorted(rows, key=lambda r:(str(r[0]), -r[1]))[:12]: print(r)
+print("total area", round(sum(r[1] for r in rows),4))
+# -- output
+Counter({<GeomType.PLANE>: 121, <GeomType.CYLINDER>: 2})
+(<GeomType.CYLINDER>, 22.4191, 1.2, 1.5)
+(<GeomType.CYLINDER>, 1.6336, 0.1, 1.5)
+(<GeomType.PLANE>, 4.4925, 0.0, 0.0)
+(<GeomType.PLANE>, 4.2087, 0.0425, 3.0)
+(<GeomType.PLANE>, 0.2837, 0.6297, 2.85)
+(<GeomType.PLANE>, 0.2837, 0.6297, 2.81)
+(<GeomType.PLANE>, 0.2837, 0.6297, 2.7)
+(<GeomType.PLANE>, 0.2837, 0.6297, 2.66)
+(<GeomType.PLANE>, 0.2837, 0.6297, 2.55)
+(<GeomType.PLANE>, 0.2837, 0.6297, 2.51)
+(<GeomType.PLANE>, 0.2837, 0.6297, 2.4)
+(<GeomType.PLANE>, 0.2837, 0.6297, 2.36)
+total area 45.7662
+
+# -- cell 3 (0.1s, exit 0)
+groups={"shaft":[], "column":[], "floor":[], "top":[], "treads":[]}
+for f in fluid.faces():
+    c=f.center(); r=(c.X**2+c.Y**2)**0.5
+    if f.geom_type==GeomType.CYLINDER:
+        groups["shaft" if r>0.5 else "column"].append(f)
+    elif abs(c.Z)<1e-9 and f.area>1.0:
+        groups["floor"].append(f)
+    elif abs(c.Z-3.0)<1e-9 and f.area>1.0:
+        groups["top"].append(f)
+    else:
+        groups["treads"].append(f)
+for k,v in groups.items(): print(k, len(v), round(sum(f.area for f in v),4))
+areas=sorted(f.area for f in groups["treads"])
+print("smallest tread-group faces:", [round(a,6) for a in areas[:8]])
+# -- output
+shaft 1 22.4191
+column 1 1.6336
+floor 1 4.4925
+top 1 4.2087
+treads 119 13.0158
+smallest tread-group faces: [0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001]
+
+# -- cell 4 (0.1s, exit 0)
+from collections import Counter
+print(Counter(round(f.area,5) for f in groups["treads"]))
+sm=[f for f in groups["treads"] if f.area<0.002][:3]
+for f in sm:
+    c=f.center(); print("center",[round(v,4) for v in (c.X,c.Y,c.Z)],"normal",[round(v,3) for v in f.normal_at(c)],"bbox",f.bounding_box())
+# -- output
+Counter({0.04774: 40, 0.001: 40, 0.28375: 39})
+center [0.0661, 0.091, 2.83] normal [0.809, -0.588, 0.0] bbox bbox: 0.05877852522924734 <= x <= 0.0734731565365592, 0.0809016994374947 <= y <= 0.1011271242968684, 2.81 <= z <= 2.85
+center [-0.107, 0.0348, 2.23] normal [-0.309, -0.951, 0.0] bbox bbox: -0.11888206453689422 <= x <= -0.09510565162951534, 0.03090169943749483 <= y <= 0.03862712429686854, 2.21 <= z <= 2.25
+center [0.107, -0.0348, 2.23] normal [-0.309, -0.951, 0.0] bbox bbox: 0.09510565162951537 <= x <= 0.11888206453689422, -0.03862712429686843 <= y <= -0.03090169943749474, 2.21 <= z <= 2.25
+
+# -- cell 5 (0.1s, exit 0)
+import math
+# measure a representative tread (i=5) from the built solid
+tf=[f for f in groups["treads"] if abs(f.area-0.28375)<1e-4 and 0.85<f.center().Z<0.95]
+bb=[f.bounding_box() for f in tf]
+f0=tf[0]; c=f0.center()
+rmax=max(math.hypot(v.X,v.Y) for v in f0.vertices()); rmin=min(math.hypot(v.X,v.Y) for v in f0.vertices())
+print("tread face z:",[round(f.center().Z,3) for f in tf])
+print("radial extent of tread underside: rmin %.4f rmax %.4f -> exposed length %.4f (asked 1.100)"%(rmin,rmax,rmax-R_COL))
+# depth = width across
+ang=[math.degrees(math.atan2(v.Y,v.X)) for v in f0.vertices()]
+print("tread centre-line angle %.2f deg (tread index %d -> %.1f)"%(math.degrees(math.atan2(c.Y,c.X)), 5, 5*TURN))
+zs=sorted(set(round(f.center().Z,4) for f in groups["treads"] if abs(f.area-0.28375)<1e-4))
+print("consecutive rise:", round(zs[1]-zs[0],4), "thickness:", round(TREAD_THK,3))
+print("shaft ID %.3f (asked 2.400), column D %.3f (asked 0.200), height %.3f"%(2*R_SHAFT,2*R_COL,H))
+# -- output
+tread face z: [0.9, 0.86]
+radial extent of tread underside: rmin 0.1000 rmax 1.2000 -> exposed length 1.1000 (asked 1.100)
+tread centre-line angle 90.00 deg (tread index 5 -> 90.0)
+consecutive rise: 0.04 thickness: 0.04
+shaft ID 2.400 (asked 2.400), column D 0.200 (asked 0.200), height 3.000
+
+# -- cell 6 (0.1s, exit 0)
+import math, numpy as np
+tops=sorted(set(round(f.center().Z,4) for f in groups["treads"] if abs(f.area-0.28375)<1e-4))
+tops=np.array(tops); tops_only=tops[1::2] if tops[0]<tops[1] else tops
+print("all tread plate z:", tops)
+print("rise between successive treads:", round(tops[2]-tops[0],4), "(asked 0.150)")
+# depth: width of a side-to-side across a tread underside, and turn between tread centre angles
+angs=[]
+for f in groups["treads"]:
+    if abs(f.area-0.28375)<1e-4 and abs(f.normal_at(f.center()).Z)>0.9:
+        c=f.center(); angs.append((round(c.Z,3), round(math.degrees(math.atan2(c.Y,c.X))%360,2)))
+angs.sort()
+print("first 6 (z, centre angle):", angs[:6])
+f0=[f for f in groups["treads"] if abs(f.area-0.28375)<1e-4 and abs(f.center().Z-0.86)<1e-3][0]
+vs=np.array([[v.X,v.Y] for v in f0.vertices()])
+d=max(np.hypot(*(vs[i]-vs[j])) for i in range(len(vs)) for j in range(len(vs)))
+# depth = distance between the two parallel side planes
+n=np.array([-math.sin(math.radians(90)), math.cos(math.radians(90))])
+print("tread depth (spread along its own y):", round(vs@n).max()-round(vs@n).min() if False else round(float((vs@n).max()-(vs@n).min()),4), "(asked 0.250)")
+# -- output
+all tread plate z: [0.11 0.15 0.26 0.3  0.41 0.45 0.56 0.6  0.71 0.75 0.86 0.9  1.01 1.05
+ 1.16 1.2  1.31 1.35 1.46 1.5  1.61 1.65 1.76 1.8  1.91 1.95 2.06 2.1
+ 2.21 2.25 2.36 2.4  2.51 2.55 2.66 2.7  2.81 2.85 2.96]
+rise between successive treads: 0.15 (asked 0.150)
+first 6 (z, centre angle): [(0.11, 360.0), (0.15, 360.0), (0.26, 18.0), (0.3, 18.0), (0.41, 36.0), (0.45, 36.0)]
+tread depth (spread along its own y): 0.25 (asked 0.250)
+
+# -- cell 7 (0.2s, exit 0)
+import os
+from build123d import Compound, export_stl
+os.makedirs("constant/triSurface", exist_ok=True)
+stl_paths={}
+for name, fs in groups.items():
+    comp = Compound(children=fs) if len(fs)>1 else fs[0]
+    p = f"constant/triSurface/{name}.stl"
+    export_stl(comp, p, tolerance=0.002, angular_tolerance=0.2)
+    stl_paths[name]=p
+    print(name, len(fs), "faces ->", p, os.path.getsize(p), "bytes")
+# -- output
+shaft 1 faces -> constant/triSurface/shaft.stl 19084 bytes
+column 1 faces -> constant/triSurface/column.stl 71734 bytes
+floor 1 faces -> constant/triSurface/floor.stl 6784 bytes
+top 1 faces -> constant/triSurface/top.stl 5284 bytes
+treads 119 faces -> constant/triSurface/treads.stl 83784 bytes
+
+# -- cell 8 (7.8s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pl = pv.Plotter(off_screen=True, window_size=(900,800))
+cols={"shaft":"lightsteelblue","column":"firebrick","floor":"tan","top":"palegreen","treads":"goldenrod"}
+for n,p in stl_paths.items():
+    m=pv.read(p)
+    pl.add_mesh(m, color=cols[n], opacity=0.35 if n=="shaft" else 1.0, show_edges=(n=="treads"), line_width=0.3)
+    print(n, m.n_cells, "tris, bounds", [round(b,3) for b in m.bounds])
+pl.camera_position=[(4.5,-4.5,4.0),(0,0,1.5),(0,0,1)]
+pl.show_axes(); pl.screenshot("surfaces.png")
+# -- output
+shaft 380 tris, bounds [-1.2, 1.2, -1.2, 1.2, 0.0, 3.0]
+column 1433 tris, bounds [-0.1, 0.1, -0.1, 0.1, 0.0, 3.0]
+floor 134 tris, bounds [-1.199, 1.2, -1.2, 1.2, 0.0, 0.0]
+top 104 tris, bounds [-1.199, 1.2, -1.2, 1.2, 3.0, 3.0]
+treads 1674 tris, bounds [-1.2, 1.2, -1.2, 1.2, 0.11, 3.0]
+array([[[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       ...,
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]]], shape=(800, 900, 3), dtype=uint8)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 14:28:25.656 (   4.760s) [    7EAA6B126780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 14:28:25.691 (   4.794s) [    7EAA6B126780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 14:28:26.419 (   5.522s) [    7EAA6B126780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 9 (0.2s, exit 1)
+import numpy as np, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from stl import mesh as _m if False else None
+def read_stl_tris(path):
+    import struct
+    with open(path,'rb') as fh:
+        head=fh.read(84); n=struct.unpack('<I', head[80:84])[0]
+        data=np.frombuffer(fh.read(n*50), dtype=np.uint8).reshape(n,50)
+        v=data[:,12:48].copy().view('<f4').reshape(n,3,3)
+    return v
+fig=plt.figure(figsize=(9,9)); ax=fig.add_subplot(111, projection='3d')
+for n,p in stl_paths.items():
+    if n=="shaft": continue
+    t=read_stl_tris(p)
+    ax.add_collection3d(Poly3DCollection(t, facecolor=cols[n], edgecolor='k', linewidths=0.15, alpha=1.0))
+ax.set_xlim(-1.3,1.3); ax.set_ylim(-1.3,1.3); ax.set_zlim(0,3.0)
+ax.set_box_aspect((2.6,2.6,3.0)); ax.view_init(elev=22, azim=35)
+plt.tight_layout(); plt.savefig("surfaces.png", dpi=110); print("ok")
+# -- output
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 5[39m
+[31m    [39m[31mfrom stl import mesh as _m if False else None[39m
+                               ^
+[31mSyntaxError[39m[31m:[39m invalid syntax
+
+# -- cell 10 (0.4s, exit 0)
+import numpy as np, struct, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+cols={"shaft":"lightsteelblue","column":"firebrick","floor":"tan","top":"palegreen","treads":"goldenrod"}
+def read_stl_tris(path):
+    with open(path,'rb') as fh:
+        head=fh.read(84); n=struct.unpack('<I', head[80:84])[0]
+        data=np.frombuffer(fh.read(n*50), dtype=np.uint8).reshape(n,50)
+        return data[:,12:48].copy().view('<f4').reshape(n,3,3).astype(float)
+fig=plt.figure(figsize=(9,9)); ax=fig.add_subplot(111, projection='3d')
+for n,p in stl_paths.items():
+    if n=="shaft": continue
+    ax.add_collection3d(Poly3DCollection(read_stl_tris(p), facecolor=cols[n], edgecolor='k', linewidths=0.15))
+ax.set_xlim(-1.3,1.3); ax.set_ylim(-1.3,1.3); ax.set_zlim(0,3.0)
+ax.set_box_aspect((2.6,2.6,3.0)); ax.view_init(elev=22, azim=35)
+plt.tight_layout(); plt.savefig("surfaces.png", dpi=110); plt.show()
+# -- output
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 11 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("surfaces.png"))
+# -- output
+
+
+# -- cell 12 (0.4s, exit 0)
+import os, textwrap
+for d in ("system","constant"): os.makedirs(d, exist_ok=True)
+def w(p,s): open(p,"w").write(s.lstrip()+"\n")
+HEAD='FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n'
+w("system/controlDict", HEAD%"controlDict"+"""
+application snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; writePrecision 6;
+runTimeModifiable true;""")
+w("system/fvSchemes", HEAD%"fvSchemes"+"""
+ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;}
+laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;}
+snGradSchemes{default corrected;}""")
+w("system/fvSolution", HEAD%"fvSolution"+"""
+solvers{} relaxationFactors{}""")
+BASE=0.1
+nx=int(round(2.6/BASE)); nz=int(round(3.2/BASE))
+w("system/blockMeshDict", HEAD%"blockMeshDict"+f"""
+scale 1;
+vertices
+(
+ (-1.3 -1.3 -0.1) (1.3 -1.3 -0.1) (1.3 1.3 -0.1) (-1.3 1.3 -0.1)
+ (-1.3 -1.3 3.1) (1.3 -1.3 3.1) (1.3 1.3 3.1) (-1.3 1.3 3.1)
+);
+blocks ( hex (0 1 2 3 4 5 6 7) ({nx} {nx} {nz}) simpleGrading (1 1 1) );
+edges ();
+boundary ( background {{ type patch; faces ((0 3 2 1) (4 5 6 7) (0 1 5 4) (2 3 7 6) (1 2 6 5) (0 4 7 3)); }} );
+mergePatchPairs ();""")
+import subprocess
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-500:], r.stderr[-800:])
+# -- output
+0 lockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.1 .. 0.1
+        j : 0.1 .. 0.1
+        k : 0.1 .. 0.1
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-1.3 -1.3 -0.1) (1.3 1.3 3.1)
+  nPoints: 24057
+  nCells: 21632
+  nFaces: 67236
+  nInternalFaces: 62556
+----------------
+Patches
+----------------
+  patch 0 (start: 62556 size: 4680) name: background
+
+End
+
+# -- cell 13 (0.3s, exit 0)
+import subprocess
+names=["shaft","column","floor","top","treads"]
+sfe=HEAD%"surfaceFeatureExtractDict"+"\n".join(
+ f'{n}.stl {{ extractionMethod extractFromSurface; includedAngle 150; writeObj no; }}' for n in names)
+w("system/surfaceFeatureExtractDict", sfe)
+r=subprocess.run(["surfaceFeatureExtract"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-1200:], r.stderr[-500:])
+# -- output
+0 
+Surfaces     : treads.stl
+Output       : treads
+Load options : offset
+Write options: writeObj=no writeVTK=off
+
+Statistics:
+Triangles    : 1674 in 1 region(s)
+Vertices     : 1598
+Bounding Box : (-1.2 -1.2 0.11) (1.2 1.2 3)
+
+Constructing feature set from included angle 150
+Selecting edges based purely on geometric tests: no
+
+Initial Feature set:
+    points : 240
+    edges  : 1716
+    of which
+        region edges   : 1520
+        external edges : 0
+        internal edges : 196
+
+Final Feature set:
+    points : 1598
+    of which
+        convex             : 0
+        concave            : 78
+        mixed              : 162
+        non-feature        : 1358
+    edges  : 1716
+    of which
+        external edges     : 0
+        internal edges     : 196
+        flat edges         : 0
+        open edges         : 1520
+        multiply connected : 0
+
+Writing extendedFeatureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T26-20260912-142443-d0a7/t26/constant/extendedFeatureEdgeMesh/treads.extendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T26-20260912-142443-d0a7/t26/constant/triSurface/treads.eMesh"
+ExecutionTime = 0.02 s  ClockTime = 0 s
+
+End
+
+# -- cell 14 (0.1s, exit 0)
+LEV={"shaft":(1,1),"column":(2,2),"floor":(1,1),"top":(0,0),"treads":(3,3)}
+geo="\n".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in names)
+refs="\n".join(f'      {n} {{ level ({LEV[n][0]} {LEV[n][1]}); patchInfo {{ type wall; }} }}' for n in names)
+feats="\n".join(f'      {{ file "{n}.eMesh"; level {max(LEV[n])}; }}' for n in names)
+snap=HEAD%"snappyHexMeshDict"+f"""
+castellatedMesh true; snap true; addLayers false;
+geometry
+{{
+{geo}
+}}
+castellatedMeshControls
+{{
+  maxLocalCells 4000000; maxGlobalCells 8000000; minRefinementCells 10; nCellsBetweenLevels 2;
+  maxLoadUnbalance 0.1; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+  features
+  (
+{feats}
+  );
+  refinementSurfaces
+  {{
+{refs}
+  }}
+  refinementRegions {{}}
+  locationInMesh (0.9877 0.1564 1.5);
+}}
+snapControls
+{{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+  nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}
+addLayersControls
+{{ relativeSizes true; layers {{}} expansionRatio 1.2; finalLayerThickness 0.5; minThickness 0.1;
+  nGrow 0; featureAngle 130; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;
+  maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0;
+  nLayerIter 50; }}
+meshQualityControls
+{{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80; minVol 1e-13;
+  minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;
+  minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+writeFlags (); mergeTolerance 1e-6;"""
+w("system/snappyHexMeshDict", snap)
+print(open("system/snappyHexMeshDict").read()[:900])
+# -- output
+FoamFile{version 2.0; format ascii; class dictionary; object snappyHexMeshDict;}
+
+castellatedMesh true; snap true; addLayers false;
+geometry
+{
+  shaft.stl { type triSurfaceMesh; name shaft; }
+  column.stl { type triSurfaceMesh; name column; }
+  floor.stl { type triSurfaceMesh; name floor; }
+  top.stl { type triSurfaceMesh; name top; }
+  treads.stl { type triSurfaceMesh; name treads; }
+}
+castellatedMeshControls
+{
+  maxLocalCells 4000000; maxGlobalCells 8000000; minRefinementCells 10; nCellsBetweenLevels 2;
+  maxLoadUnbalance 0.1; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+  features
+  (
+      { file "shaft.eMesh"; level 1; }
+      { file "column.eMesh"; level 2; }
+      { file "floor.eMesh"; level 1; }
+      { file "top.eMesh"; level 0; }
+      { file "treads.eMesh"; level 3; }
+  );
+  refinementSurfaces
+  {
+      shaft { level (1 1); patchInfo { type wall; } }
+      column {
+
+# -- cell 15 (120.1s, exit 0)
+import re, subprocess, time
+s=open("system/snappyHexMeshDict").read().replace(
+  "top { level (0 0); patchInfo { type wall; } }", "top { level (0 0); patchInfo { type patch; } }")
+open("system/snappyHexMeshDict","w").write(s)
+print([l for l in s.splitlines() if l.strip().startswith("top")])
+log=open("log.snappy","w"); proc=subprocess.Popen(["snappyHexMesh","-overwrite"],stdout=log,stderr=subprocess.STDOUT)
+time.sleep(120); print("running" if proc.poll() is None else proc.poll())
+print(subprocess.run(["tail","-25","log.snappy"],capture_output=True,text=True).stdout)
+# -- output
+['  top.stl { type triSurfaceMesh; name top; }', '      top { level (0 0); patchInfo { type patch; } }']
+0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:353930  faces:1176613  points:470109
+Cells per refinement level:
+    0	7558
+    1	32236
+    2	74513
+    3	239623
+Writing mesh to time constant
+Wrote mesh in = 0.85 s.
+Mesh snapped in = 63.8 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 109.96 s.
+End
+
+# -- cell 16 (2.7s, exit 0)
+import subprocess
+r=subprocess.run(["checkMesh","-constant"],capture_output=True,text=True)
+print(r.stdout[-2600:])
+# -- output
+3
+    internal faces:   1071930
+    cells:            353930
+    faces per cell:   6.35307
+    boundary patches: 5
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     296830
+    prisms:        7942
+    wedges:        0
+    pyramids:      0
+    tet wedges:    77
+    tetrahedra:    0
+    polyhedra:     49081
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   241
+            5   3290
+            6   11254
+            7   178
+            8   89
+            9   25543
+           10   62
+           11   49
+           12   5530
+           13   4
+           14   24
+           15   2610
+           17   33
+           18   168
+           20   6
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   shaft    12998    14695  ok (non-closed singly connected)
+                  column     6248     7118  ok (non-closed singly connected)
+                   floor     2254     2334  ok (non-closed singly connected)
+                     top     1869     2132  ok (non-closed singly connected)
+                  treads    81314    83433  ok (non-closed singly connected)
+                    ".*"   104683   107244      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-1.2 -1.2 -5.6506e-07) (1.2 1.2 3.00001)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (3.24653e-16 3.34681e-16 -3.45569e-16) OK.
+    Max cell openness = 3.44703e-16 OK.
+    Max aspect ratio = 4.08631 OK.
+    Minimum face area = 2.1417e-05. Maximum face area = 0.010995.  Face area magnitudes OK.
+    Min volume = 4.10928e-07. Max volume = 0.00116331.  Total volume = 13.232.  Cell volumes OK.
+    Mesh non-orthogonality Max: 48.9514 average: 11.1603
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.90987 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 17 (0.6s, exit 1)
+import numpy as np, re
+def read_list(path):
+    txt=open(path).read()
+    body=txt[txt.index("FoamFile"):]
+    return body
+pts_txt=read_list("constant/polyMesh/points")
+nums=re.search(r"\n(\d+)\s*\(", pts_txt)
+start=nums.end()-1
+arr=np.fromstring(pts_txt[start:].replace("(", " ").replace(")", " ").split(";")[0], sep=" ")
+P=arr[:int(nums.group(1))*3].reshape(-1,3)
+print("points", P.shape)
+fa=open("constant/polyMesh/faces").read()
+print(fa[fa.index("FoamFile"):][:400].replace("\n"," ")[:400])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[17][39m[32m, line 9[39m
+[32m      5[39m     [38;5;28;01mreturn[39;00m body
+[32m      6[39m pts_txt=read_list([33m"constant/polyMesh/points"[39m)
+[32m      7[39m nums=re.search([33mr"\n(\d+)\s*\("[39m, pts_txt)
+[32m      8[39m start=nums.end()-[32m1[39m
+[32m----> [39m[32m9[39m arr=np.fromstring(pts_txt[start:].replace([33m"("[39m, [33m" "[39m).replace([33m")"[39m, [33m" "[39m).split([33m";"[39m)[[32m0[39m], sep=[33m" "[39m)
+[32m     10[39m P=arr[:int(nums.group([32m1[39m))*[32m3[39m].reshape(-[32m1[39m,[32m3[39m)
+[32m     11[39m print([33m"points"[39m, P.shape)
+[32m     12[39m fa=open([33m"constant/polyMesh/faces"[39m).read()
+
+[31mValueError[39m: string or file could not be read to its end due to unmatched data
+
+# -- cell 18 (2.5s, exit 0)
+import subprocess, glob
+r=subprocess.run(["foamToVTK","-constant","-no-internal"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-400:], r.stderr[-300:])
+print(sorted(glob.glob("VTK/**/*.vt*", recursive=True))[:20])
+# -- output
+0 tial memory 223680 kB
+Create mesh for time = constant
+
+VTK mesh topology: 1.2 s, 298700 kB
+Time: constant
+    Boundary  : "VTK/t26_0/boundary/shaft.vtp"
+    Boundary  : "VTK/t26_0/boundary/column.vtp"
+    Boundary  : "VTK/t26_0/boundary/floor.vtp"
+    Boundary  : "VTK/t26_0/boundary/top.vtp"
+    Boundary  : "VTK/t26_0/boundary/treads.vtp"
+Wrote in 0.05 s, 308996 kB
+
+End: 1.25 s, 311784 kB (peak)
+
+ 
+['VTK/t26.vtm.series', 'VTK/t26_0.vtm', 'VTK/t26_0/boundary.vtm', 'VTK/t26_0/boundary/column.vtp', 'VTK/t26_0/boundary/floor.vtp', 'VTK/t26_0/boundary/shaft.vtp', 'VTK/t26_0/boundary/top.vtp', 'VTK/t26_0/boundary/treads.vtp']
+
+# -- cell 19 (0.5s, exit 0)
+import pyvista as pv, numpy as np
+cad_area={k: sum(f.area for f in v) for k,v in groups.items()}
+patch={}
+for n in names:
+    m=pv.read(f"VTK/t26_0/boundary/{n}.vtp"); patch[n]=m
+    a=m.compute_cell_sizes(length=False, volume=False)["Area"].sum()
+    c=m.cell_centers().points; r=np.hypot(c[:,0],c[:,1])
+    print(f"{n:7s} mesh area {a:8.4f}  CAD area {cad_area[n]:8.4f}   r range {r.min():.3f}-{r.max():.3f}  z {c[:,2].min():.3f}-{c[:,2].max():.3f}")
+# -- output
+shaft   mesh area  22.4089  CAD area  22.4191   r range 1.197-1.203  z 0.011-2.994
+column  mesh area   1.6298  CAD area   1.6336   r range 0.098-0.103  z 0.012-2.994
+floor   mesh area   4.4835  CAD area   4.4925   r range 0.106-1.194  z -0.000-0.000
+top     mesh area   4.2000  CAD area   4.2087   r range 0.103-1.195  z 3.000-3.000
+treads  mesh area  13.0130  CAD area  13.0158   r range 0.102-1.198  z 0.110-2.994
+
+# -- cell 20 (4.7s, exit 0)
+import subprocess, pyvista as pv, numpy as np
+subprocess.run(["foamToVTK","-constant"],capture_output=True,text=True)
+vol=pv.read("VTK/t26_0/internal.vtu")
+sl=vol.slice(normal=(0,1,0), origin=(0,0,1.5))
+print(vol.n_cells, sl.n_cells)
+tri=sl.extract_surface().triangulate()
+import matplotlib.pyplot as plt
+from matplotlib.collections import PolyCollection
+pts=tri.points; faces=tri.faces.reshape(-1,4)[:,1:]
+polys=[pts[f][:,[0,2]] for f in faces]
+fig,ax=plt.subplots(figsize=(9,11))
+ax.add_collection(PolyCollection(polys, facecolor="#cfe2f3", edgecolor="k", linewidths=0.15))
+ax.set_xlim(-1.3,1.3); ax.set_ylim(-0.1,3.1); ax.set_aspect("equal"); ax.set_title("mesh slice y=0")
+fig
+# -- output
+353930 5559
+
+/tmp/ipykernel_599562/1069818496.py:6: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  tri=sl.extract_surface().triangulate()
+
+# -- cell 21 (0.1s, exit 0)
+import shutil, subprocess
+shutil.rmtree("VTK", ignore_errors=True)
+print(subprocess.run(["du","-sh","."],capture_output=True,text=True).stdout)
+print(subprocess.run(["ls","constant/triSurface"],capture_output=True,text=True).stdout)
+# -- output
+68M	.
+
+column.eMesh
+column.stl
+floor.eMesh
+floor.stl
+shaft.eMesh
+shaft.stl
+top.eMesh
+top.stl
+treads.eMesh
+treads.stl
+

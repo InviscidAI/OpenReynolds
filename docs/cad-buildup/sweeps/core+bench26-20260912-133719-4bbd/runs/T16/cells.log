@@ -1,0 +1,750 @@
+# -- cell 1 (0.1s, exit 0)
+import numpy as np, os, subprocess
+os.makedirs("constant/triSurface", exist_ok=True)
+
+L = 0.900                      # duct length, m
+Z = np.array([0.0, L/2, L])
+R_OUT = np.array([0.450, 0.430, 0.410])   # outer cowl inner surface
+R_IN  = np.array([0.280, 0.310, 0.250])   # core cowl outer surface
+
+c_out = np.polyfit(Z, R_OUT, 2)   # quadratic through the 3 radii
+c_in  = np.polyfit(Z, R_IN , 2)
+r_out = lambda z: np.polyval(c_out, z)
+r_in  = lambda z: np.polyval(c_in , z)
+
+print("outer coeffs", np.round(c_out,6), "->", np.round(r_out(Z),6), "target", R_OUT)
+print("inner coeffs", np.round(c_in ,6), "->", np.round(r_in (Z),6), "target", R_IN)
+zz = np.linspace(0,L,901)
+print("gap at z=0,0.45,0.9:", np.round(r_out(Z)-r_in(Z),4), "min gap:", (r_out(zz)-r_in(zz)).min())
+# -- output
+outer coeffs [ 0.       -0.044444  0.45    ] -> [0.45 0.43 0.41] target [0.45 0.43 0.41]
+inner coeffs [-0.222222  0.166667  0.28    ] -> [0.28 0.31 0.25] target [0.28 0.31 0.25]
+gap at z=0,0.45,0.9: [0.17 0.12 0.16] min gap: 0.11986111111111097
+
+# -- cell 2 (2.4s, exit 1)
+from build123d import *
+NS = 41
+zs = np.linspace(0, L, NS)
+pts_out = [(float(r_out(z)), 0.0, float(z)) for z in zs]
+pts_in  = [(float(r_in(z)),  0.0, float(z)) for z in zs]
+
+e_out = Spline(*pts_out)                      # outer cowl generatrix
+e_in  = Spline(*pts_in)                       # core cowl generatrix
+e_in_cap  = Line(pts_in[0],  pts_out[0])      # fan-exit inlet generatrix
+e_out_cap = Line(pts_in[-1], pts_out[-1])     # nozzle outlet generatrix
+prof = Face(Wire([e_in_cap, e_out, e_out_cap, e_in]))
+duct = revolve(prof, Axis.Z, 360)
+print(type(duct), "volume", duct.volume)
+V_analytic = np.pi*np.trapz(r_out(zz)**2 - r_in(zz)**2, zz)
+print("analytic annulus volume", V_analytic, "faces:", len(duct.faces()))
+# -- output
+<class 'build123d.topology.composite.Part'> volume 0.27639103841353807
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 14[39m
+[32m     10[39m e_out_cap = Line(pts_in[-[32m1[39m], pts_out[-[32m1[39m])     [38;5;66;03m# nozzle outlet generatrix[39;00m
+[32m     11[39m prof = Face(Wire([e_in_cap, e_out, e_out_cap, e_in]))
+[32m     12[39m duct = revolve(prof, Axis.Z, [32m360[39m)
+[32m     13[39m print(type(duct), [33m"volume"[39m, duct.volume)
+[32m---> [39m[32m14[39m V_analytic = np.pi*np.trapz(r_out(zz)**[32m2[39m - r_in(zz)**[32m2[39m, zz)
+[32m     15[39m print([33m"analytic annulus volume"[39m, V_analytic, [33m"faces:"[39m, len(duct.faces()))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/numpy/__init__.py:769[39m, in [36m__getattr__[39m[34m(attr)[39m
+[32m    762[39m [38;5;28;01mif[39;00m attr [38;5;129;01min[39;00m __expired_attributes__:
+[32m    763[39m     [38;5;28;01mraise[39;00m [38;5;167;01mAttributeError[39;00m(
+[32m    764[39m         [33mf[39m[33m"[39m[33m`np.[39m[38;5;132;01m{[39;00mattr[38;5;132;01m}[39;00m[33m` was removed in the NumPy 2.0 release. [39m[33m"[39m
+[32m    765[39m         [33mf[39m[33m"[39m[38;5;132;01m{[39;00m__expired_attributes__[attr][38;5;132;01m}[39;00m[33m"[39m,
+[32m    766[39m         name=[38;5;28;01mNone[39;00m
+[32m    767[39m     )
+[32m--> [39m[32m769[39m [38;5;28;01mraise[39;00m [38;5;167;01mAttributeError[39;00m([33mf[39m[33m"[39m[33mmodule [39m[38;5;132;01m{[39;00m[34m__name__[39m[38;5;132;01m!r}[39;00m[33m has no attribute [39m[38;5;132;01m{[39;00mattr[38;5;132;01m!r}[39;00m[33m"[39m)
+
+[31mAttributeError[39m: module 'numpy' has no attribute 'trapz'
+
+# -- cell 3 (0.1s, exit 0)
+from build123d import *
+NS = 41
+zs = np.linspace(0, L, NS)
+pts_out = [(float(r_out(z)), 0.0, float(z)) for z in zs]
+pts_in  = [(float(r_in(z)),  0.0, float(z)) for z in zs]
+
+e_out = Spline(*pts_out)                      # outer cowl generatrix
+e_in  = Spline(*pts_in)                       # core cowl generatrix
+e_in_cap  = Line(pts_in[0],  pts_out[0])      # fan-exit inlet generatrix
+e_out_cap = Line(pts_in[-1], pts_out[-1])     # nozzle outlet generatrix
+prof = Face(Wire([e_in_cap, e_out, e_out_cap, e_in]))
+duct = revolve(prof, Axis.Z, 360)
+V_analytic = np.pi*np.trapezoid(r_out(zz)**2 - r_in(zz)**2, zz)
+print("solid volume", duct.volume, " analytic", V_analytic, " rel err", abs(duct.volume-V_analytic)/V_analytic)
+print("faces:", len(duct.faces()), "bbox", duct.bounding_box())
+# -- output
+solid volume 0.27639103841353807  analytic 0.27639109438624093  rel err 2.0251268582224207e-07
+faces: 4 bbox bbox: -0.45000009999999985 <= x <= 0.45000009999999985, -0.45000009999999985 <= y <= 0.45000009999999985, -1e-07 <= z <= 0.9000001
+
+# -- cell 4 (0.1s, exit 1)
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeRevol
+def rev(edge):
+    return Shape.cast(BRepPrimAPI_MakeRevol(edge.wrapped, Axis.Z.wrapped).Shape())
+
+patches = {"outerCowl": rev(e_out), "coreCowl": rev(e_in),
+           "inlet": rev(e_in_cap), "outlet": rev(e_out_cap)}
+def lateral(f, c):
+    dr = np.polyval(np.polyder(c), zz)
+    return float(np.trapezoid(2*np.pi*np.polyval(c, zz)*np.sqrt(1+dr**2), zz))
+ref = {"outerCowl": lateral(None, c_out), "coreCowl": lateral(None, c_in),
+       "inlet": np.pi*(R_OUT[0]**2-R_IN[0]**2), "outlet": np.pi*(R_OUT[2]**2-R_IN[2]**2)}
+for k, s in patches.items():
+    print(f"{k:10s} type={type(s).__name__} area={s.area:.6f} analytic={ref[k]:.6f}")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mNameError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 5[39m
+[32m      1[39m [38;5;28;01mfrom[39;00m OCP.BRepPrimAPI [38;5;28;01mimport[39;00m BRepPrimAPI_MakeRevol
+[32m      2[39m [38;5;28;01mdef[39;00m rev(edge):
+[32m      3[39m     [38;5;28;01mreturn[39;00m Shape.cast(BRepPrimAPI_MakeRevol(edge.wrapped, Axis.Z.wrapped).Shape())
+[32m      4[39m 
+[32m----> [39m[32m5[39m patches = {"outerCowl": rev(e_out), "coreCowl": rev(e_in),
+[32m      6[39m            [33m"inlet"[39m: rev(e_in_cap), [33m"outlet"[39m: rev(e_out_cap)}
+[32m      7[39m [38;5;28;01mdef[39;00m lateral(f, c):
+[32m      8[39m     dr = np.polyval(np.polyder(c), zz)
+
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 3[39m, in [36mrev[39m[34m(edge)[39m
+[32m      2[39m [38;5;28;01mdef[39;00m rev(edge):
+[32m----> [39m[32m3[39m     [38;5;28;01mreturn[39;00m Shape.cast(BRepPrimAPI_MakeRevol(edge.wrapped, Axis.Z.wrapped).Shape())
+
+[31mNameError[39m: name 'Shape' is not defined
+
+# -- cell 5 (0.1s, exit 1)
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeRevol
+from build123d.topology import Shape as BDShape
+def rev(edge):
+    return BDShape.cast(BRepPrimAPI_MakeRevol(edge.wrapped, Axis.Z.wrapped).Shape())
+
+patches = {"outerCowl": rev(e_out), "coreCowl": rev(e_in),
+           "inlet": rev(e_in_cap), "outlet": rev(e_out_cap)}
+def lateral(c):
+    dr = np.polyval(np.polyder(c), zz)
+    return float(np.trapezoid(2*np.pi*np.polyval(c, zz)*np.sqrt(1+dr**2), zz))
+ref = {"outerCowl": lateral(c_out), "coreCowl": lateral(c_in),
+       "inlet": np.pi*(R_OUT[0]**2-R_IN[0]**2), "outlet": np.pi*(R_OUT[2]**2-R_IN[2]**2)}
+for k, s in patches.items():
+    print(f"{k:10s} type={type(s).__name__} area={s.area:.6f} analytic={ref[k]:.6f}")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 14[39m
+[32m     10[39m     [38;5;28;01mreturn[39;00m float(np.trapezoid([32m2[39m*np.pi*np.polyval(c, zz)*np.sqrt([32m1[39m+dr**[32m2[39m), zz))
+[32m     11[39m ref = {"outerCowl": lateral(c_out), "coreCowl": lateral(c_in),
+[32m     12[39m        [33m"inlet"[39m: np.pi*(R_OUT[[32m0[39m]**[32m2[39m-R_IN[[32m0[39m]**[32m2[39m), [33m"outlet"[39m: np.pi*(R_OUT[[32m2[39m]**[32m2[39m-R_IN[[32m2[39m]**[32m2[39m)}
+[32m     13[39m [38;5;28;01mfor[39;00m k, s [38;5;28;01min[39;00m patches.items():
+[32m---> [39m[32m14[39m     print(f"{k:10s} type={type(s).__name__} area={s.area:.6f} analytic={ref[k]:.6f}")
+
+[31mAttributeError[39m: 'NoneType' object has no attribute 'area'
+
+# -- cell 6 (0.1s, exit 0)
+s = BRepPrimAPI_MakeRevol(e_out.wrapped, Axis.Z.wrapped).Shape()
+print(s.ShapeType(), s.IsNull())
+from build123d.topology import Face as BDFace, Shell as BDShell
+print(BDShape.cast(s))
+# -- output
+TopAbs_ShapeEnum.TopAbs_FACE False
+None
+
+# -- cell 7 (0.1s, exit 0)
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeRevol
+
+def rev_face(edge):                       # surface of revolution from one generatrix
+    return Face(BRepPrimAPI_MakeRevol(edge.wrapped, Axis.Z.wrapped).Shape())
+
+patches = {"outerCowl": rev_face(e_out), "coreCowl": rev_face(e_in),
+           "inlet": rev_face(e_in_cap), "outlet": rev_face(e_out_cap)}
+
+def lateral(c):
+    dr = np.polyval(np.polyder(c), zz)
+    return float(np.trapezoid(2*np.pi*np.polyval(c, zz)*np.sqrt(1+dr**2), zz))
+ref = {"outerCowl": lateral(c_out), "coreCowl": lateral(c_in),
+       "inlet": np.pi*(R_OUT[0]**2-R_IN[0]**2), "outlet": np.pi*(R_OUT[2]**2-R_IN[2]**2)}
+for k, s in patches.items():
+    print(f"{k:10s} area={s.area:.6f}  analytic={ref[k]:.6f}")
+# -- output
+outerCowl  area=2.433993  analytic=2.433993
+coreCowl   area=1.679516  analytic=1.679515
+inlet      area=0.389872  analytic=0.389872
+outlet     area=0.331752  analytic=0.331752
+
+# -- cell 8 (4.0s, exit 0)
+for k, s in patches.items():
+    export_stl(s, f"constant/triSurface/{k}.stl", tolerance=2e-4, angular_tolerance=0.1)
+print(subprocess.run(["ls","-l","constant/triSurface"],capture_output=True,text=True).stdout)
+for k in patches:
+    print(subprocess.run(["surfaceCheck",f"constant/triSurface/{k}.stl"],capture_output=True,text=True).stdout.splitlines()[-6:])
+# -- output
+total 3624
+-rw-rw-r-- 1 qiuzi qiuzi 1328184 Sep 12 13:48 coreCowl.stl
+-rw-rw-r-- 1 qiuzi qiuzi   20034 Sep 12 13:48 inlet.stl
+-rw-rw-r-- 1 qiuzi qiuzi 2335584 Sep 12 13:48 outerCowl.stl
+-rw-rw-r-- 1 qiuzi qiuzi   19934 Sep 12 13:48 outlet.stl
+
+['', 'Number of zones (connected area with consistent normal) : 1', '', '', 'End', '']
+['', 'Number of zones (connected area with consistent normal) : 1', '', '', 'End', '']
+['', 'Number of zones (connected area with consistent normal) : 1', '', '', 'End', '']
+['', 'Number of zones (connected area with consistent normal) : 1', '', '', 'End', '']
+
+# -- cell 9 (0.2s, exit 0)
+import textwrap
+os.makedirs("system", exist_ok=True)
+open("system/controlDict","w").write(textwrap.dedent("""\
+    FoamFile{version 2.0;format ascii;class dictionary;object controlDict;}
+    application blockMesh; startFrom startTime; startTime 0; stopAt endTime;
+    endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;
+    """))
+
+NR, NT, NZ = 4, 8, 12            # per-sector cell counts (coarse pass)
+NPOLY = 21                       # points defining each axial polyLine
+ang = np.array([0.0, 90.0, 180.0, 270.0])
+
+def P(a_deg, r, z): return (r*np.cos(np.radians(a_deg)), r*np.sin(np.radians(a_deg)), z)
+verts, vid = [], {}
+for i, a in enumerate(ang):
+    for ring, rf in ((0, r_in), (1, r_out)):
+        for k, z in ((0, 0.0), (1, L)):
+            vid[(i, ring, k)] = len(verts); verts.append(P(a, float(rf(z)), z))
+
+blocks, edges, fo, fc, fi, fu = [], [], [], [], [], []
+for i in range(4):
+    j = (i+1) % 4
+    am = 0.5*(ang[i] + ang[i]+90.0)
+    v = lambda ii, ring, k: vid[(ii, ring, k)]
+    blocks.append(f"hex ({v(i,0,0)} {v(i,1,0)} {v(j,1,0)} {v(j,0,0)} "
+                  f"{v(i,0,1)} {v(i,1,1)} {v(j,1,1)} {v(j,0,1)}) ({NR} {NT} {NZ}) simpleGrading (1 1 1)")
+    for ring, rf in ((0, r_in), (1, r_out)):
+        for k, z in ((0, 0.0), (1, L)):
+            p = P(am, float(rf(z)), z)
+            edges.append(f"arc {v(i,ring,k)} {v(j,ring,k)} ({p[0]:.9g} {p[1]:.9g} {p[2]:.9g})")
+        pl = " ".join("(%.9g %.9g %.9g)" % P(ang[i], float(rf(z)), z) for z in np.linspace(0, L, NPOLY)[1:-1])
+        edges.append(f"polyLine {v(i,ring,0)} {v(i,ring,1)} ({pl})")
+    fo.append(f"({v(i,1,0)} {v(j,1,0)} {v(j,1,1)} {v(i,1,1)})")
+    fc.append(f"({v(i,0,0)} {v(i,0,1)} {v(j,0,1)} {v(j,0,0)})")
+    fi.append(f"({v(i,0,0)} {v(j,0,0)} {v(j,1,0)} {v(i,1,0)})")
+    fu.append(f"({v(i,0,1)} {v(i,1,1)} {v(j,1,1)} {v(j,0,1)})")
+
+def blk(name, typ, faces): return f"{name} {{ type {typ}; faces ( {' '.join(faces)} ); }}"
+dct = ("FoamFile{version 2.0;format ascii;class dictionary;object blockMeshDict;}\n"
+       "scale 1;\nvertices (\n" + "\n".join("(%.9g %.9g %.9g)" % p for p in verts) + "\n);\n"
+       "blocks (\n" + "\n".join(blocks) + "\n);\nedges (\n" + "\n".join(edges) + "\n);\n"
+       "boundary (\n" + "\n".join([blk("outerCowl","wall",fo), blk("coreCowl","wall",fc),
+                                   blk("inlet","patch",fi), blk("outlet","patch",fu)]) + "\n);\n")
+open("system/blockMeshDict","w").write(dct)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode); print(r.stdout[-1500:]); print(r.stderr[-800:])
+# -- output
+0
+ block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 4
+		Number of boundary faces : 16
+		Number of defined boundary faces : 16
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.0425 .. 0.0425
+        j : 0.0548896 .. 0.0548896
+        k : 0.0755332 .. 0.0755334
+
+    Block 1 cell size :
+        i : 0.0425 .. 0.0425
+        j : 0.0548896 .. 0.0548896
+        k : 0.0755332 .. 0.0755334
+
+    Block 2 cell size :
+        i : 0.0425 .. 0.0425
+        j : 0.0548896 .. 0.0548896
+        k : 0.0755332 .. 0.0755334
+
+    Block 3 cell size :
+        i : 0.0425 .. 0.0425
+        j : 0.0548896 .. 0.0548896
+        k : 0.0755332 .. 0.0755334
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.45 -0.45 0) (0.45 0.45 0.9)
+  nPoints: 2080
+  nCells: 1536
+  nFaces: 5120
+  nInternalFaces: 4096
+----------------
+Patches
+----------------
+  patch 0 (start: 4096 size: 384) name: outerCowl
+  patch 1 (start: 4480 size: 384) name: coreCowl
+  patch 2 (start: 4864 size: 128) name: inlet
+  patch 3 (start: 4992 size: 128) name: outlet
+
+End
+
+# -- cell 10 (0.2s, exit 0)
+r = subprocess.run(["checkMesh","-allTopology"], capture_output=True, text=True)
+print(r.stdout[-2200:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allTopology
+Date   : Sep 12 2026
+Time   : 13:49:28
+Host   : yc-demo
+PID    : 581546
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T16-20260912-134709-4d6e/t16
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+# -- cell 11 (0.1s, exit 0)
+print(r.stdout[r.stdout.find("Mesh stats"):][:3000])
+# -- output
+
+
+# -- cell 12 (0.2s, exit 0)
+r2 = subprocess.run(["checkMesh"], capture_output=True, text=True)
+i = r2.stdout.find("Mesh stats")
+print(r2.stdout[i:] if i>0 else r2.stdout[-2500:]); print("STDERR", r2.stderr[-500:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 12 2026
+Time   : 13:49:33
+Host   : yc-demo
+PID    : 581548
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T16-20260912-134709-4d6e/t16
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+STDERR 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T16-20260912-134709-4d6e/t16/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 13 (0.2s, exit 0)
+open("system/fvSchemes","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSchemes;}\n"
+    "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;}\n"
+    "laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;}\n"
+    "snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSolution;}\nsolvers{}\n")
+r2 = subprocess.run(["checkMesh"], capture_output=True, text=True)
+i = r2.stdout.find("Mesh stats"); print(r2.stdout[i:])
+# -- output
+Mesh stats 
+    points:           2080
+    faces:            5120
+    internal faces:   4096
+    cells:            1536
+    faces per cell:   6
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     1536
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    outerCowl           384      416      ok (non-closed singly connected)  
+    coreCowl            384      416      ok (non-closed singly connected)  
+    inlet               128      160      ok (non-closed singly connected)  
+    outlet              128      160      ok (non-closed singly connected)  
+    ".*"                1024     1024     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.45 -0.45 0) (0.45 0.45 0.9)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-8.69401e-18 -3.72439e-17 -9.43662e-17) OK.
+    Max cell openness = 2.20109e-16 OK.
+    Max aspect ratio = 2.5076 OK.
+    Minimum face area = 0.0018601. Maximum face area = 0.0065981.  Face area magnitudes OK.
+    Min volume = 0.000140188. Max volume = 0.000257702.  Total volume = 0.28441.  Cell volumes OK.
+    Mesh non-orthogonality Max: 10.1135 average: 3.26687
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.322247 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 14 (0.3s, exit 0)
+def write_bmd(nsec=8, nax=6, nr=4, nt=6, nz=3, npoly=9):
+    A = np.arange(nsec)*360.0/nsec
+    ZL = np.linspace(0, L, nax+1)
+    def P(a, r, z): return (r*np.cos(np.radians(a)), r*np.sin(np.radians(a)), z)
+    verts, vid = [], {}
+    for i, a in enumerate(A):
+        for ring, rf in ((0, r_in), (1, r_out)):
+            for k, z in enumerate(ZL):
+                vid[(i, ring, k)] = len(verts); verts.append(P(a, float(rf(z)), z))
+    blocks, edges, fo, fc, fi, fu = [], [], [], [], [], []
+    v = lambda ii, ring, k: vid[(ii, ring, k)]
+    for i in range(nsec):
+        j = (i+1) % nsec
+        am = A[i] + 180.0/nsec
+        for k in range(nax):
+            blocks.append(f"hex ({v(i,0,k)} {v(i,1,k)} {v(j,1,k)} {v(j,0,k)} "
+                          f"{v(i,0,k+1)} {v(i,1,k+1)} {v(j,1,k+1)} {v(j,0,k+1)}) "
+                          f"({nr} {nt} {nz}) simpleGrading (1 1 1)")
+            for ring, rf in ((0, r_in), (1, r_out)):
+                zs_ = np.linspace(ZL[k], ZL[k+1], npoly)
+                pl = " ".join("(%.9g %.9g %.9g)" % P(A[i], float(rf(z)), z) for z in zs_[1:-1])
+                edges.append(f"polyLine {v(i,ring,k)} {v(i,ring,k+1)} ({pl})")
+            fo.append(f"({v(i,1,k)} {v(j,1,k)} {v(j,1,k+1)} {v(i,1,k+1)})")
+            fc.append(f"({v(i,0,k)} {v(i,0,k+1)} {v(j,0,k+1)} {v(j,0,k)})")
+        for k, z in enumerate(ZL):
+            for ring, rf in ((0, r_in), (1, r_out)):
+                p = P(am, float(rf(z)), z)
+                edges.append(f"arc {v(i,ring,k)} {v(j,ring,k)} ({p[0]:.9g} {p[1]:.9g} {p[2]:.9g})")
+        fi.append(f"({v(i,0,0)} {v(j,0,0)} {v(j,1,0)} {v(i,1,0)})")
+        fu.append(f"({v(i,0,nax)} {v(i,1,nax)} {v(j,1,nax)} {v(j,0,nax)})")
+    blk = lambda n,t,f: f"{n} {{ type {t}; faces ( {' '.join(f)} ); }}"
+    open("system/blockMeshDict","w").write(
+        "FoamFile{version 2.0;format ascii;class dictionary;object blockMeshDict;}\nscale 1;\n"
+        "vertices (\n" + "\n".join("(%.9g %.9g %.9g)" % p for p in verts) + "\n);\n"
+        "blocks (\n" + "\n".join(blocks) + "\n);\nedges (\n" + "\n".join(edges) + "\n);\n"
+        "boundary (\n" + "\n".join([blk("outerCowl","wall",fo), blk("coreCowl","wall",fc),
+                                    blk("inlet","patch",fi), blk("outlet","patch",fu)]) + "\n);\n")
+
+write_bmd()
+print(subprocess.run(["blockMesh"], capture_output=True, text=True).stdout[-400:])
+# -- output
+-----
+Mesh Information
+----------------
+  boundingBox: (-0.45 -0.45 0) (0.45 0.45 0.9)
+  nPoints: 4560
+  nCells: 3456
+  nFaces: 11424
+  nInternalFaces: 9312
+----------------
+Patches
+----------------
+  patch 0 (start: 9312 size: 864) name: outerCowl
+  patch 1 (start: 10176 size: 864) name: coreCowl
+  patch 2 (start: 11040 size: 192) name: inlet
+  patch 3 (start: 11232 size: 192) name: outlet
+
+End
+
+# -- cell 15 (0.3s, exit 0)
+out = subprocess.run(["checkMesh"], capture_output=True, text=True).stdout
+print(out[out.find("Checking geometry"):])
+print("analytic volume", V_analytic)
+# -- output
+Checking geometry...
+    Overall domain bounding box (-0.45 -0.45 0) (0.45 0.45 0.9)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (2.739e-17 2.49232e-17 2.73002e-17) OK.
+    Max cell openness = 2.14631e-16 OK.
+    Max aspect ratio = 1.99517 OK.
+    Minimum face area = 0.00126312. Maximum face area = 0.00293876.  Face area magnitudes OK.
+    Min volume = 6.31855e-05. Max volume = 0.000115293.  Total volume = 0.275834.  Cell volumes OK.
+    Mesh non-orthogonality Max: 10.7433 average: 3.31878
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.239746 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+
+analytic volume 0.27639109438624093
+
+# -- cell 16 (0.5s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pv.global_theme.background = "white"
+mesh = pv.OpenFOAMReader("case.foam") if os.path.exists("case.foam") else None
+open("case.foam","w").close()
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0) if rd.number_time_points else None
+grid = rd.read()
+internal = grid["internalMesh"]
+bnd = grid["boundary"]
+print(internal.n_cells, list(bnd.keys()))
+p = pv.Plotter(off_screen=True, window_size=(1000,450), shape=(1,2))
+p.subplot(0,0)
+cols = {"outerCowl":"steelblue","coreCowl":"indianred","inlet":"green","outlet":"orange"}
+for k,c in cols.items(): p.add_mesh(bnd[k], color=c, show_edges=True, line_width=0.5)
+p.camera_position = "iso"
+p.subplot(0,1)
+p.add_mesh(internal.clip(normal="y", origin=(0,0,0)), show_edges=True, color="lightgray")
+p.camera_position = "xz"
+p.screenshot("view0.png")
+# -- output
+3456 ['outerCowl', 'coreCowl', 'inlet', 'outlet']
+array([[[  0,   0,   0],
+        [  0,   0,   0],
+        [  0,   0,   0],
+        ...,
+        [  0,   0,   0],
+        [  0,   0,   0],
+        [  0,   0,   0]],
+
+       [[  0,   0,   0],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [  0,   0,   0]],
+
+       [[  0,   0,   0],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [  0,   0,   0]],
+
+       ...,
+
+       [[  0,   0,   0],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [  0,   0,   0]],
+
+       [[  0,   0,   0],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [  0,   0,   0]],
+
+       [[  0,   0,   0],
+        [  0,   0,   0],
+        [  0,   0,   0],
+        ...,
+        [  0,   0,   0],
+        [  0,   0,   0],
+        [  0,   0,   0]]], shape=(450, 1000, 3), dtype=uint8)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 13:50:40.470 (   0.280s) [    732A384FB780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 13:50:40.470 (   0.280s) [    732A384FB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 13:50:40.484 (   0.294s) [    732A384FB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 17 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("view0.png"))
+# -- output
+
+
+# -- cell 18 (0.2s, exit 0)
+import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+sl = internal.slice(normal="y", origin=(0,0,0))
+pts = sl.points; keep = pts[:,0] > 0
+fig, ax = plt.subplots(figsize=(9,3.2))
+ax.plot(pts[keep,2], pts[keep,0], '.', ms=2, color='0.6', label='mesh slice y=0')
+ax.plot(zz, r_out(zz), 'b-', lw=1.5, label='outer law')
+ax.plot(zz, r_in(zz),  'r-', lw=1.5, label='inner law')
+ax.plot(Z, R_OUT, 'bo'); ax.plot(Z, R_IN, 'ro')
+ax.set_xlabel("z [m]"); ax.set_ylabel("r [m]"); ax.legend(); ax.grid(alpha=.3)
+# measure from patch points at the four rays nearest the meridian
+for name, law in (("outerCowl", r_out), ("coreCowl", r_in)):
+    P_ = bnd[name].points; r_ = np.hypot(P_[:,0], P_[:,1])
+    err = r_ - law(P_[:,2])
+    print(f"{name}: max |r_mesh - r_law| over patch nodes = {np.abs(err).max():.2e} m")
+for name, zq, tgt in (("outerCowl",Z,R_OUT), ("coreCowl",Z,R_IN)):
+    P_ = bnd[name].points; r_ = np.hypot(P_[:,0], P_[:,1])
+    got = [r_[np.abs(P_[:,2]-z)<1e-6].mean() for z in zq]
+    print(f"{name} mesh radii at z=0,0.45,0.9: {np.round(got,5)} vs requested {tgt}")
+plt.tight_layout(); plt.savefig("meridian.png", dpi=110); plt.close()
+display(Image("meridian.png"))
+# -- output
+outerCowl: max |r_mesh - r_law| over patch nodes = 2.78e-08 m
+coreCowl: max |r_mesh - r_law| over patch nodes = 1.01e-04 m
+outerCowl mesh radii at z=0,0.45,0.9: [0.45 0.43 0.41] vs requested [0.45 0.43 0.41]
+coreCowl mesh radii at z=0,0.45,0.9: [0.28 0.31 0.25] vs requested [0.28 0.31 0.25]
+
+# -- cell 19 (0.7s, exit 0)
+write_bmd(nsec=16, nax=6, nr=16, nt=8, nz=8, npoly=13)   # 128 circumferential, 48 axial, 16 radial
+print(subprocess.run(["blockMesh"], capture_output=True, text=True).stdout[-350:])
+# -- output
+45 0) (0.45 0.45 0.9)
+  nPoints: 106624
+  nCells: 98304
+  nFaces: 303104
+  nInternalFaces: 286720
+----------------
+Patches
+----------------
+  patch 0 (start: 286720 size: 6144) name: outerCowl
+  patch 1 (start: 292864 size: 6144) name: coreCowl
+  patch 2 (start: 299008 size: 2048) name: inlet
+  patch 3 (start: 301056 size: 2048) name: outlet
+
+End
+
+# -- cell 20 (0.8s, exit 0)
+out = subprocess.run(["checkMesh"], capture_output=True, text=True).stdout
+print(out[out.find("Checking geometry"):])
+print("analytic volume", V_analytic, " rel err", )
+# -- output
+Checking geometry...
+    Overall domain bounding box (-0.45 -0.45 0) (0.45 0.45 0.9)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (1.18978e-17 -9.39189e-17 -1.32687e-16) OK.
+    Max cell openness = 3.10574e-16 OK.
+    Max aspect ratio = 2.71221 OK.
+    Minimum face area = 0.000114471. Maximum face area = 0.000414158.  Face area magnitudes OK.
+    Min volume = 2.14542e-06. Max volume = 4.29376e-06.  Total volume = 0.276326.  Cell volumes OK.
+    Mesh non-orthogonality Max: 12.3972 average: 3.54043
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.412238 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+
+analytic volume 0.27639109438624093  rel err
+
+# -- cell 21 (0.3s, exit 0)
+rd2 = pv.OpenFOAMReader("case.foam"); g2 = rd2.read(); b2 = g2["boundary"]; im = g2["internalMesh"]
+for k in ["outerCowl","coreCowl","inlet","outlet"]:
+    print(f"{k:10s} mesh area={b2[k].area:.6f}  CAD/analytic={ref[k]:.6f}")
+for name, law, tgt in (("outerCowl", r_out, R_OUT), ("coreCowl", r_in, R_IN)):
+    P_ = b2[name].points; r_ = np.hypot(P_[:,0], P_[:,1])
+    print(name, "max node dev from law %.2e m" % np.abs(r_-law(P_[:,2])).max(),
+          "radii@z=0,.45,.9", np.round([r_[np.abs(P_[:,2]-z)<1e-6].mean() for z in Z],5), "req", tgt)
+p = pv.Plotter(off_screen=True, window_size=(1000,460))
+p.add_mesh(im.clip(normal="y", origin=(0,0,0)).clip(normal="x", origin=(0,0,0)), show_edges=True, color="lightgray", line_width=0.3)
+for k,c in (("outerCowl","steelblue"),("coreCowl","indianred"),("inlet","green"),("outlet","orange")):
+    p.add_mesh(b2[k].clip(normal="y", origin=(0,0,0)), color=c, opacity=0.55)
+p.camera_position = [(2.0,-2.2,2.0),(0,0,0.45),(0,0,1)]
+p.screenshot("final.png"); display(Image("final.png"))
+# -- output
+outerCowl  mesh area=2.433747  CAD/analytic=2.433993
+coreCowl   mesh area=1.679170  CAD/analytic=1.679515
+inlet      mesh area=0.389715  CAD/analytic=0.389872
+outlet     mesh area=0.331619  CAD/analytic=0.331752
+outerCowl max node dev from law 3.38e-08 m radii@z=0,.45,.9 [0.45 0.43 0.41] req [0.45 0.43 0.41]
+coreCowl max node dev from law 3.10e-05 m radii@z=0,.45,.9 [0.28 0.31 0.25] req [0.28 0.31 0.25]
+
+[0m[33m2026-09-12 13:51:20.577 (  40.387s) [    732A384FB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 13:51:20.578 (  40.388s) [    732A384FB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

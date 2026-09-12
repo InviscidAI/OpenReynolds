@@ -58,10 +58,17 @@ one.
 
 ## Provenance
 
-The geometry is the centrifugal impeller common to the CADAM benchmarks (08,
-"7 swept backward-curved blades") and the MAC benchmark set (P8, "centrifugal impeller +
-12 backward-curved blades + root fillets", 15 features), the latter sharing its prompt
-with [earthtojake/text-to-cad](https://github.com/earthtojake/text-to-cad). Blade count
-and radii are set here to CADAM's 7 rather than MAC's 12 so the passages stay wide enough
-that the *fillet* is the marginal feature and not the passage. Fluid domain, patches and
-properties are authored for this corpus.
+The geometry is the centrifugal impeller common to benchmark 08 in
+[Adam-CAD/CADAM](https://github.com/Adam-CAD/CADAM) ("7 swept backward-curved blades", 10
+dims · 1 colour) and P8 in
+[Pan-Chera/Multi-Agent-CAD](https://github.com/Pan-Chera/Multi-Agent-CAD) ("centrifugal
+impeller + 12 backward-curved blades + root fillets", 15 features), the latter sharing its
+prompt with [earthtojake/text-to-cad](https://github.com/earthtojake/text-to-cad). Blade
+count and radii are set here to CADAM's 7 rather than MAC's 12 so the passages stay wide
+enough that the *fillet* is the marginal feature and not the passage. Fluid domain, patches
+and properties are authored for this corpus.
+
+**The two external results on this geometry disagree**, which is worth stating beside the
+claim above: MAC failed item 13 and the `cad` skill scored P8 15/15 at ¥32.75 — 27× MAC's
+cost. So the fillet is not simply beyond a pipeline of this kind; it is what MAC's cheaper
+architecture gave up to get there. `docs/cad-benchmark-provenance.md` has the full map.

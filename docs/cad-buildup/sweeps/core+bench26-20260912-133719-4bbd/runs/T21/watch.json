@@ -1,0 +1,9 @@
+{
+  "alarm": null,
+  "turns": 24,
+  "steps": 21,
+  "seconds": 225.0,
+  "killed": false,
+  "first_mesh_step": 15,
+  "first_mesh_turn": 17
+}

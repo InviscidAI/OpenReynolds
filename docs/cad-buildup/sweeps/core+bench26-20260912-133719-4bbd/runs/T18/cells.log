@@ -1,0 +1,581 @@
+# -- cell 1 (2.3s, exit 0)
+import os, subprocess
+from build123d import *
+
+R_B, H_B = 0.045, 0.120          # barrel radius, height
+R_F, T_F, GAP, N_F = 0.070, 0.003, 0.006, 12   # fin radius, thickness, gap, count
+PITCH = T_F + GAP
+STACK = N_F*T_F + (N_F-1)*GAP
+Z0 = (H_B - STACK)/2             # first fin bottom
+
+barrel = Cylinder(R_B, H_B, align=(Align.CENTER, Align.CENTER, Align.MIN))
+fins = [Pos(0,0,Z0+i*PITCH) * Cylinder(R_F, T_F, align=(Align.CENTER,Align.CENTER,Align.MIN)) for i in range(N_F)]
+dome = Sphere(R_B) & Box(3*R_B, 3*R_B, R_B, align=(Align.CENTER,Align.CENTER,Align.MIN))
+head = Pos(0,0,H_B) * dome
+
+solid = barrel
+for f in fins: solid = solid + f
+solid = solid + head
+
+bb = solid.bounding_box()
+print("stack height", STACK, "first fin z", Z0, "last fin top", Z0+(N_F-1)*PITCH+T_F)
+print("bbox", bb.min, bb.max, "vol", solid.volume)
+print("n faces", len(solid.faces()))
+# -- output
+stack height 0.10200000000000001 first fin z 0.008999999999999994 last fin top 0.111
+bbox Vector: (X=-0.07, Y=-0.07, Z=0) Vector: (X=0.07, Y=0.07, Z=0.165) vol 0.0012794136081744432
+n faces 51
+
+# -- cell 2 (0.1s, exit 0)
+from collections import defaultdict
+import numpy as np
+groups = defaultdict(list)
+for f in solid.faces():
+    gt = f.geom_type
+    c = f.center()
+    if gt == GeomType.SPHERE:
+        groups["head"].append(f)
+    elif gt == GeomType.CYLINDER:
+        r = f.radius
+        groups["barrel" if abs(r-R_B) < 1e-6 else "fins"].append(f)
+    elif gt == GeomType.PLANE:
+        if abs(c.Z) < 1e-9:
+            groups["barrel"].append(f)   # closed bottom of barrel
+        else:
+            groups["fins"].append(f)
+    else:
+        groups["?"+str(gt)].append(f)
+for k,v in groups.items():
+    print(k, len(v), "area", round(sum(f.area for f in v),6))
+# -- output
+barrel 14 area 0.030112
+fins 36 area 0.232604
+head 1 area 0.012723
+
+# -- cell 3 (2.7s, exit 0)
+D, ZMIN, ZMAX = 0.300, -0.150, 0.465     # duct side, 150 below cylinder base, 300 above head top
+os.makedirs("constant/triSurface", exist_ok=True)
+h = D/2
+inlet  = Pos(0,0,ZMIN) * Rectangle(D, D)
+outlet = Pos(0,0,ZMAX) * Rectangle(D, D)
+side   = Rectangle(D, ZMAX-ZMIN)
+walls  = [Pos(0,-h,(ZMIN+ZMAX)/2)*Rot(90,0,0)*side, Pos(0,h,(ZMIN+ZMAX)/2)*Rot(90,0,0)*side,
+          Pos(-h,0,(ZMIN+ZMAX)/2)*Rot(90,0,90)*side, Pos(h,0,(ZMIN+ZMAX)/2)*Rot(90,0,90)*side]
+patches = dict(groups); patches["inlet"]=[inlet.faces()[0]]; patches["outlet"]=[outlet.faces()[0]]
+patches["ductWalls"]=[w.faces()[0] for w in walls]
+for name, fl in patches.items():
+    export_stl(Compound(children=[Solid(f.wrapped) if False else f for f in fl]), f"constant/triSurface/{name}.stl",
+               tolerance=1e-4, angular_tolerance=0.2)
+    print(name, len(fl), os.path.getsize(f"constant/triSurface/{name}.stl"))
+print([f.center() for f in patches["ductWalls"]], [f.area for f in patches["ductWalls"]])
+# -- output
+barrel 14 368534
+fins 36 1058484
+head 1 2531984
+inlet 1 184
+outlet 1 184
+ductWalls 4 484
+[Vector(0, -0.15, 0.1575), Vector(0, 0.15, 0.1575), Vector(-0.15, 0, 0.1575), Vector(0.15, 0, 0.1575)] [0.18449999999999997, 0.18449999999999997, 0.18449999999999997, 0.18449999999999997]
+
+# -- cell 4 (0.3s, exit 0)
+os.makedirs("system", exist_ok=True)
+hdr = lambda cls,obj: f"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"
+open("system/controlDict","w").write(hdr("dictionary","controlDict")+
+ "application simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\n"
+ "deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; writePrecision 6;\n"
+ "runTimeModifiable true;\n")
+nx=ny=20; nz=41
+open("system/blockMeshDict","w").write(hdr("dictionary","blockMeshDict")+f"""
+scale 1;
+vertices ( (-{h} -{h} {ZMIN}) ({h} -{h} {ZMIN}) ({h} {h} {ZMIN}) (-{h} {h} {ZMIN})
+           (-{h} -{h} {ZMAX}) ({h} -{h} {ZMAX}) ({h} {h} {ZMAX}) (-{h} {h} {ZMAX}) );
+blocks ( hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1) );
+edges ();
+boundary (
+  inlet {{ type patch; faces ((0 3 2 1)); }}
+  outlet {{ type patch; faces ((4 5 6 7)); }}
+  ductWalls {{ type wall; faces ((0 1 5 4) (2 3 7 6) (1 2 6 5) (3 0 4 7)); }}
+);
+mergePatchPairs ();
+""")
+print(subprocess.run(["blockMesh"],capture_output=True,text=True).stdout[-600:])
+# -- output
+ting patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.015 .. 0.015
+        j : 0.015 .. 0.015
+        k : 0.015 .. 0.015
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.15 -0.15 -0.15) (0.15 0.15 0.465)
+  nPoints: 18522
+  nCells: 16400
+  nFaces: 51240
+  nInternalFaces: 47160
+----------------
+Patches
+----------------
+  patch 0 (start: 47160 size: 400) name: inlet
+  patch 1 (start: 47560 size: 400) name: outlet
+  patch 2 (start: 47960 size: 3280) name: ductWalls
+
+End
+
+# -- cell 5 (0.3s, exit 0)
+def snappy_dict(lvl, gapLvl, layers=0):
+    geo = "\n".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in ["barrel","fins","head"])
+    ref = "\n".join(f'    {n} {{ level ({lvl} {lvl}); patchInfo {{ type wall; }} }}' for n in ["barrel","fins","head"])
+    return hdr("dictionary","snappyHexMeshDict")+f"""
+castellatedMesh true; snap true; addLayers {"true" if layers else "false"};
+geometry {{
+{geo}
+}};
+castellatedMeshControls {{
+  maxLocalCells 4000000; maxGlobalCells 8000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+  features ();
+  refinementSurfaces {{
+{ref}
+  }}
+  refinementRegions {{
+    fins {{ mode distance; levels ((0.010 {gapLvl})); }}
+  }}
+  locationInMesh (0.14 0.14 0.40);
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+  nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}}; expansionRatio 1.2; finalLayerThickness 0.5;
+  minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 5; nSmoothSurfaceNormals 1;
+  nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3;
+  minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ #include "meshQualityDict" }}
+writeFlags (scalarLevels layerSets layerFields); mergeTolerance 1e-6;
+"""
+open("system/meshQualityDict","w").write(hdr("dictionary","meshQualityDict")+
+  '#includeEtc "caseDicts/meshQualityDict"\n')
+open("system/snappyHexMeshDict","w").write(snappy_dict(2,2))
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.stdout[-1500:])
+# -- output
+=====                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 12 2026
+Time   : 13:57:53
+Host   : yc-demo
+PID    : 585530
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T18-20260912-135608-1d74/t18
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+# -- cell 6 (0.1s, exit 0)
+print(r.returncode); print(r.stderr[-2000:])
+# -- output
+1
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T18-20260912-135608-1d74/t18/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 7 (3.8s, exit 0)
+open("system/fvSchemes","w").write(hdr("dictionary","fvSchemes")+
+ "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;}\n"
+ "laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;}\n"
+ "snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(hdr("dictionary","fvSolution")+"solvers{} relaxationFactors{}\n")
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-1200:], r.stderr[-800:])
+# -- output
+1 Using mesh parameters 
+{
+    maxNonOrtho     65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave      80;
+    minVol          1e-13;
+    minTetQuality   1e-15;
+    minArea         -1;
+    minTwist        0.02;
+    minDeterminant  0.001;
+    minFaceWeight   0.05;
+    minVolRatio     0.01;
+    minTriangleTwist -1;
+    minEdgeLength   -1;
+}
+
+
+Checking initial mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Detected 0 illegal faces (concave, zero area or negative cell pyramid volume)
+Checked initial mesh in = 0.41 s
+
+
+Smoothing patch points ...
+Smoothing iteration 0
+Found 2464 non-manifold point(s).
+
+Scaling iteration 0
+ 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'errorReduction' not found in dictionary "/home/qiuzi/.openreynolds-buildup/work/T18-20260912-135608-1d74/t18/system/snappyHexMeshDict/meshQualityControls"
+
+
+file: system/snappyHexMeshDict/meshQualityControls at line 18 to 77.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 8 (9.6s, exit 0)
+def write_snappy(lvl, gapLvl):
+    s = snappy_dict(lvl, gapLvl).replace('#include "meshQualityDict"',
+        '#include "meshQualityDict" nSmoothScale 4; errorReduction 0.75;')
+    open("system/snappyHexMeshDict","w").write(s)
+write_snappy(2,2)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-500:])
+# -- output
+0 on 0
+----------------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:46144  faces:151970  points:60045
+Cells per refinement level:
+    0	14912
+    1	5292
+    2	25940
+Writing mesh to time constant
+Wrote mesh in = 0.13 s.
+Mesh snapped in = 7.1 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 9.25 s.
+End
+
+# -- cell 9 (0.7s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pv.global_theme.window_size=[1200,700]
+open("case.foam","w").write("")
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0)
+m = rd.read()
+internal = m["internalMesh"]
+bnd = m["boundary"]
+print(list(bnd.keys()))
+p = pv.Plotter(off_screen=True, shape=(1,2))
+p.subplot(0,0)
+p.add_mesh(internal.slice(normal='y'), show_edges=True, color='lightblue')
+p.camera_position='xz'
+p.subplot(0,1)
+cols=dict(barrel='red',fins='orange',head='green',ductWalls='grey',inlet='blue',outlet='purple')
+for k in bnd.keys():
+    p.add_mesh(bnd[k], color=cols.get(k,'w'), opacity=0.35 if k in('ductWalls','inlet','outlet') else 1.0)
+p.camera_position='xz'
+p.screenshot("look1.png")
+# -- output
+['inlet', 'outlet', 'ductWalls', 'barrel', 'fins', 'head']
+array([[[  0,   0,   0],
+        [  0,   0,   0],
+        [  0,   0,   0],
+        ...,
+        [  0,   0,   0],
+        [  0,   0,   0],
+        [  0,   0,   0]],
+
+       [[  0,   0,   0],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [  0,   0,   0]],
+
+       [[  0,   0,   0],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [  0,   0,   0]],
+
+       ...,
+
+       [[  0,   0,   0],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [  0,   0,   0]],
+
+       [[  0,   0,   0],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [  0,   0,   0]],
+
+       [[  0,   0,   0],
+        [  0,   0,   0],
+        [  0,   0,   0],
+        ...,
+        [  0,   0,   0],
+        [  0,   0,   0],
+        [  0,   0,   0]]], shape=(700, 1200, 3), dtype=uint8)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 13:58:27.942 (   0.337s) [    7D86460B2780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 13:58:27.943 (   0.337s) [    7D86460B2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 13:58:27.956 (   0.350s) [    7D86460B2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 10 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("look1.png"))
+# -- output
+
+
+# -- cell 11 (1.5s, exit 0)
+import time
+write_snappy(3,3)
+t=time.time(); r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode, round(time.time()-t,1)); print(r.stdout[-900:]); print(r.stderr[-400:])
+# -- output
+-6 1.4
+AM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+
+dictionary const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#8  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+#9  ? in /lib/x86_64-linux-gnu/libc.so.6
+#10  __libc_start_main in /lib/x86_64-linux-gnu/libc.so.6
+#11  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+=============
+
+# -- cell 12 (49.6s, exit 0)
+subprocess.run(["blockMesh"],capture_output=True,text=True)
+t=time.time(); r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode, round(time.time()-t,1)); print(r.stdout[-1000:]); print(r.stderr[-300:])
+# -- output
+0 49.3
+0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:256476  faces:826472  points:314798
+Cells per refinement level:
+    0	14532
+    1	6076
+    2	20164
+    3	215704
+Writing mesh to time constant
+Wrote mesh in = 0.7 s.
+Mesh snapped in = 32.76 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 48.85 s.
+End
+
+# -- cell 13 (1.9s, exit 0)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True)
+print(r.stdout[-2500:])
+# -- output
+46560
+    cells:            256476
+    faces per cell:   6.13325
+    boundary patches: 6
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     237012
+    prisms:        2520
+    wedges:        0
+    pyramids:      0
+    tet wedges:    64
+    tetrahedra:    0
+    polyhedra:     16880
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   1100
+            5   2232
+            6   3912
+            9   6432
+           12   2420
+           15   656
+           18   128
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      400      441  ok (non-closed singly connected)
+                  outlet      400      441  ok (non-closed singly connected)
+               ductWalls     3280     3360  ok (non-closed singly connected)
+                  barrel     7868    10173  ok (non-closed singly connected)
+                    fins    64880    67568  ok (non-closed singly connected)
+                    head     3084     3921  ok (non-closed singly connected)
+                    ".*"    79912    81672      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.15 -0.15 -0.15) (0.15 0.15 0.465)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (4.78859e-17 1.85572e-16 1.38655e-16) OK.
+    Max cell openness = 3.24842e-16 OK.
+    Max aspect ratio = 5.25218 OK.
+    Minimum face area = 1.24876e-07. Maximum face area = 0.000226652.  Face area magnitudes OK.
+    Min volume = 8.88071e-10. Max volume = 3.40784e-06.  Total volume = 0.054071.  Cell volumes OK.
+    Mesh non-orthogonality Max: 48.1872 average: 8.22939
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.82247 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 14 (0.9s, exit 0)
+import numpy as np
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0); m=rd.read()
+bnd=m["boundary"]; internal=m["internalMesh"]
+exact=dict(barrel=0.030112, fins=0.232604, head=0.012723, inlet=0.09, outlet=0.09, ductWalls=4*0.1845)
+for k in bnd.keys():
+    a=bnd[k].compute_cell_sizes(length=False,volume=False)["Area"].sum()
+    print(f"{k:10s} area {a:.6f}  target {exact[k]:.6f}")
+# radial extents of fins / barrel patches
+for k in ["fins","barrel","head"]:
+    pts=bnd[k].points; rr=np.hypot(pts[:,0],pts[:,1])
+    print(k,"r range",rr.min().round(5),rr.max().round(5),"z range",pts[:,2].min().round(4),pts[:,2].max().round(4))
+# cells across a gap: sample cell centres in a vertical line at r=0.058, x axis
+cc=internal.cell_centers().points
+sel=(np.abs(cc[:,1])<0.002)&(cc[:,0]>0.050)&(cc[:,0]<0.065)&(cc[:,2]>0.0)&(cc[:,2]<0.120)
+z=np.sort(cc[sel,2]); print("z of cells in fin region (r~0.058):", np.unique(z.round(4))[:24])
+# -- output
+inlet      area 0.090000  target 0.090000
+outlet     area 0.090000  target 0.090000
+ductWalls  area 0.738000  target 0.738000
+barrel     area 0.030101  target 0.030112
+fins       area 0.232577  target 0.232604
+head       area 0.012720  target 0.012723
+fins r range 0.045 0.07003 z range 0.009 0.111
+barrel r range 0.0 0.04507 z range -0.0 0.12
+head r range 0.0 0.045 z range 0.12 0.165
+z of cells in fin region (r~0.058): [0.0007 0.0008 0.0026 0.0027 0.0045 0.0064 0.0082 0.0127 0.0128 0.0142
+ 0.0143 0.0157 0.0158 0.0172 0.0173 0.0219 0.024  0.0261 0.0309 0.033
+ 0.0351 0.0399 0.042  0.0441]
+

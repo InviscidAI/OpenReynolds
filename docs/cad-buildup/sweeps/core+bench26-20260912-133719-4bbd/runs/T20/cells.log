@@ -1,0 +1,468 @@
+# -- cell 1 (2.2s, exit 0)
+import os, subprocess
+from build123d import *
+
+R      = 0.030   # bore radius, m (60 mm dia)
+T_FL   = 0.020   # flange thickness
+T_GK   = 0.002   # gasket thickness
+L      = 2*T_FL + T_GK
+
+seg1 = Pos(0, 0, T_FL/2)              * Cylinder(R, T_FL)
+seg2 = Pos(0, 0, T_FL + T_GK/2)       * Cylinder(R, T_GK)
+seg3 = Pos(0, 0, T_FL + T_GK + T_FL/2)* Cylinder(R, T_FL)
+fluid = seg1 + seg2 + seg3
+
+bb = fluid.bounding_box()
+print("bbox", bb.min, bb.max)
+print("length z =", bb.max.Z - bb.min.Z, "want", L)
+print("diameter =", bb.max.X - bb.min.X, "want", 2*R)
+print("volume   =", fluid.volume, "want", 3.141592653589793*R*R*L)
+os.makedirs("constant/triSurface", exist_ok=True)
+# -- output
+bbox Vector: (X=-0.03, Y=-0.03, Z=0) Vector: (X=0.03, Y=0.03, Z=0.042)
+length z = 0.041999999999999996 want 0.042
+diameter = 0.06 want 0.06
+volume   = 0.00011875220230569416 want 0.00011875220230569419
+
+# -- cell 2 (0.1s, exit 0)
+def lateral(seg):
+    return [f for f in seg.faces() if f.geom_type == GeomType.CYLINDER]
+def planar_at(seg, z):
+    return [f for f in seg.faces() if f.geom_type == GeomType.PLANE and abs(f.center().Z - z) < 1e-9]
+
+patches = {
+    "inlet":       planar_at(seg1, 0.0),
+    "outlet":      planar_at(seg3, L),
+    "flangeBore1": lateral(seg1),
+    "gasketInner": lateral(seg2),
+    "flangeBore2": lateral(seg3),
+}
+for k, v in patches.items():
+    print(k, len(v), [round(f.area, 8) for f in v], "zc", [round(f.center().Z, 4) for f in v])
+# -- output
+inlet 1 [0.00282743] zc [0.0]
+outlet 1 [0.00282743] zc [0.042]
+flangeBore1 1 [0.00376991] zc [0.01]
+gasketInner 1 [0.00037699] zc [0.021]
+flangeBore2 1 [0.00376991] zc [0.032]
+
+# -- cell 3 (0.4s, exit 0)
+for name, fs in patches.items():
+    shp = fs[0] if len(fs) == 1 else Compound(children=fs)
+    ok = export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=1e-4, angular_tolerance=0.1)
+    print(name, ok, os.path.getsize(f"constant/triSurface/{name}.stl"))
+print(subprocess.run(["ls","constant/triSurface"],capture_output=True,text=True).stdout)
+# -- output
+inlet True 15734
+outlet True 15734
+flangeBore1 True 31584
+gasketInner True 31584
+flangeBore2 True 31584
+flangeBore1.stl
+flangeBore2.stl
+gasketInner.stl
+inlet.stl
+outlet.stl
+
+# -- cell 4 (0.3s, exit 0)
+import textwrap, os
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+head = """FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"""
+
+open("system/controlDict","w").write(head%"controlDict" + textwrap.dedent("""
+application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;
+writePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;
+"""))
+open("system/fvSchemes","w").write(head%"fvSchemes" + "\nddtSchemes{default steadyState;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\ninterpolationSchemes{default linear;}\nsnGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(head%"fvSolution" + "\nsolvers{}\n")
+
+# background box: snug around the bore, 3 mm cells
+bm = head%"blockMeshDict" + textwrap.dedent("""
+scale 1;
+vertices ((-0.0345 -0.0345 -0.006)(0.0345 -0.0345 -0.006)(0.0345 0.0345 -0.006)(-0.0345 0.0345 -0.006)
+          (-0.0345 -0.0345 0.048)(0.0345 -0.0345 0.048)(0.0345 0.0345 0.048)(-0.0345 0.0345 0.048));
+blocks (hex (0 1 2 3 4 5 6 7) (23 23 18) simpleGrading (1 1 1));
+edges ();
+boundary ( background { type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); } );
+""")
+open("system/blockMeshDict","w").write(bm)
+print(subprocess.run(["blockMesh"],capture_output=True,text=True).stdout[-500:])
+# -- output
+reating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.003 .. 0.003
+        j : 0.003 .. 0.003
+        k : 0.003 .. 0.003
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.0345 -0.0345 -0.006) (0.0345 0.0345 0.048)
+  nPoints: 10944
+  nCells: 9522
+  nFaces: 29923
+  nInternalFaces: 27209
+----------------
+Patches
+----------------
+  patch 0 (start: 27209 size: 2714) name: background
+
+End
+
+# -- cell 5 (0.2s, exit 0)
+names = ["inlet","outlet","flangeBore1","gasketInner","flangeBore2"]
+sfe = head%"surfaceFeatureExtractDict" + "\n" + "\n".join(
+  f'{n}.stl {{ extractionMethod extractFromSurface; extractFromSurfaceCoeffs {{ includedAngle 150; }} writeObj no; }}' for n in names)
+open("system/surfaceFeatureExtractDict","w").write(sfe)
+r=subprocess.run(["surfaceFeatureExtract"],capture_output=True,text=True)
+print(r.stdout[-1500:], r.stderr[-500:])
+# -- output
+/home/qiuzi/.openreynolds-buildup/work/T20-20260912-140159-f9e2/t20/constant/extendedFeatureEdgeMesh/gasketInner.extendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T20-20260912-140159-f9e2/t20/constant/triSurface/gasketInner.eMesh"
+Surfaces     : flangeBore2.stl
+Output       : flangeBore2
+Load options : offset
+Write options: writeObj=no writeVTK=off
+
+Statistics:
+Triangles    : 630 in 1 region(s)
+Vertices     : 630
+Bounding Box : (-0.0299985 -0.0299996 0.022) (0.03 0.0299996 0.042)
+
+Constructing feature set from included angle 150
+Selecting edges based purely on geometric tests: no
+
+Initial Feature set:
+    points : 0
+    edges  : 630
+    of which
+        region edges   : 630
+        external edges : 0
+        internal edges : 0
+
+Final Feature set:
+    points : 630
+    of which
+        convex             : 0
+        concave            : 0
+        mixed              : 0
+        non-feature        : 630
+    edges  : 630
+    of which
+        external edges     : 0
+        internal edges     : 0
+        flat edges         : 0
+        open edges         : 630
+        multiply connected : 0
+
+Writing extendedFeatureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T20-20260912-140159-f9e2/t20/constant/extendedFeatureEdgeMesh/flangeBore2.extendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T20-20260912-140159-f9e2/t20/constant/triSurface/flangeBore2.eMesh"
+ExecutionTime = 0.01 s  ClockTime = 0 s
+
+End
+
+# -- cell 6 (2.4s, exit 0)
+geo = "\n".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in names)
+refs = "\n".join(f'    {n} {{ level (0 0); patchInfo {{ type {"patch" if n in ("inlet","outlet") else "wall"}; }} }}' for n in names)
+feats = "\n".join(f'      {{ file "{n}.eMesh"; level 1; }}' for n in names)
+snap = head%"snappyHexMeshDict" + textwrap.dedent(f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geo}
+}};
+castellatedMeshControls {{
+  maxLocalCells 1000000; maxGlobalCells 5000000; minRefinementCells 0; nCellsBetweenLevels 2;
+  maxLoadUnbalance 0.1; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+  features (
+{feats}
+  );
+  refinementSurfaces {{
+{refs}
+  }}
+  refinementRegions {{}}
+  locationInMesh (0.001 0.002 0.021);
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+  nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.2; finalLayerThickness 0.5;
+  minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3;
+  nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;
+  minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6; debug 0;
+""")
+open("system/snappyHexMeshDict","w").write(snap)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.stdout[-2000:], r.stderr[-800:])
+# -- output
+faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+
+Merging all points on surface that
+- are used by only two boundary faces and
+- make an angle with a cosine of more than 0.866025.
+
+Removing 976 straight edge points ...
+
+Edge intersection testing:
+    Number of edges             : 30571
+    Number of edges to retest   : 4056
+    Number of intersected edges : 3338
+
+Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:9230  faces:30571  points:12432
+Cells per refinement level:
+    0	3662
+    1	5568
+Writing mesh to time constant
+Wrote mesh in = 0.02 s.
+Mesh snapped in = 1.15 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 2.18 s.
+End
+
+# -- cell 7 (0.3s, exit 0)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True); print(r.stdout[-2500:])
+# -- output
+s:            30571
+    internal faces:   27233
+    cells:            9230
+    faces per cell:   6.26262
+    boundary patches: 5
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     7190
+    prisms:        744
+    wedges:        0
+    pyramids:      0
+    tet wedges:    64
+    tetrahedra:    0
+    polyhedra:     1232
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   32
+            5   96
+            6   336
+            7   16
+            9   448
+           10   32
+           12   192
+           15   48
+           18   32
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      589      656  ok (non-closed singly connected)
+                  outlet      589      656  ok (non-closed singly connected)
+             flangeBore1      968     1216  ok (non-closed singly connected)
+             gasketInner      224      336  ok (non-closed singly connected)
+             flangeBore2      968     1216  ok (non-closed singly connected)
+                    ".*"     3338     3632      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.0299985 -0.0299989 0) (0.03 0.0299989 0.042)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (3.40454e-17 3.5622e-17 -2.15223e-16) OK.
+    Max cell openness = 3.39608e-16 OK.
+    Max aspect ratio = 4.55409 OK.
+    Minimum face area = 7.91768e-07. Maximum face area = 1.41855e-05.  Face area magnitudes OK.
+    Min volume = 7.5444e-10. Max volume = 3.4768e-08.  Total volume = 0.000118618.  Cell volumes OK.
+    Mesh non-orthogonality Max: 46.7131 average: 11.6457
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.05041 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 8 (0.6s, exit 0)
+import pyvista as pv, numpy as np
+open("case.foam","w").write("")
+pv.global_theme.window_size=[900,700]
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0)
+m = rd.read()
+bnd = m["boundary"]
+p = pv.Plotter(off_screen=True)
+cols = {"inlet":"blue","outlet":"red","flangeBore1":"lightgray","gasketInner":"green","flangeBore2":"tan"}
+for k in bnd.keys():
+    b = bnd[k]
+    z = b.points[:,2]
+    print(f"{k:12s} faces={b.n_cells:4d} z=[{z.min():.4f},{z.max():.4f}] rmax={np.hypot(b.points[:,0],b.points[:,1]).max():.5f}")
+    p.add_mesh(b, color=cols[k], show_edges=True, line_width=1)
+p.camera_position=[(0.12,-0.13,0.10),(0,0,0.021),(0,0,1)]
+p.screenshot("view.png")
+# -- output
+inlet        faces= 589 z=[0.0000,0.0000] rmax=0.03000
+outlet       faces= 589 z=[0.0420,0.0420] rmax=0.03000
+flangeBore1  faces= 968 z=[0.0000,0.0195] rmax=0.03000
+gasketInner  faces= 224 z=[0.0195,0.0225] rmax=0.03000
+flangeBore2  faces= 968 z=[0.0225,0.0420] rmax=0.03000
+array([[[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       ...,
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]]], shape=(700, 900, 3), dtype=uint8)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 14:03:35.650 (   0.283s) [    7E502224B780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 14:03:35.651 (   0.283s) [    7E502224B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 14:03:35.664 (   0.296s) [    7E502224B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 9 (0.2s, exit 0)
+p = pv.Plotter(off_screen=True)
+for k in bnd.keys():
+    p.add_mesh(bnd[k], color=cols[k], show_edges=True, line_width=1)
+p.view_isometric(); p.camera.zoom(1.2)
+img = p.screenshot("view.png", return_img=True)
+print(img.shape, img.min(), img.max())
+from IPython.display import Image, display
+display(Image("view.png"))
+# -- output
+(700, 900, 3) 0 255
+
+[0m[33m2026-09-12 14:03:41.306 (   5.938s) [    7E502224B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 14:03:41.307 (   5.939s) [    7E502224B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 10 (6.1s, exit 0)
+PCD, D_BOLT = 0.140, 0.014
+print("bolt hole inner radius =", PCD/2 - D_BOLT/2, "> bore radius", R, "->", PCD/2-D_BOLT/2 > R)
+bm2 = bm.replace("(23 23 18)", "(35 35 27)")
+open("system/blockMeshDict","w").write(bm2)
+subprocess.run(["blockMesh"],capture_output=True,text=True)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.stdout[-300:])
+c=subprocess.run(["checkMesh"],capture_output=True,text=True).stdout
+print("\n".join(l for l in c.splitlines() if any(k in l for k in ["cells:","Total volume","non-orthogonality","skewness","Mesh OK","***","aspect"])))
+# -- output
+bolt hole inner radius = 0.063 > bore radius 0.03 -> True
+ation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 5.25 s.
+End
+
+
+    cells:            23245
+    Max aspect ratio = 4.31539 OK.
+    Min volume = 2.22153e-10. Max volume = 1.00696e-08.  Total volume = 0.000118668.  Cell volumes OK.
+    Mesh non-orthogonality Max: 47.1477 average: 10.0461
+    Max skewness = 1.20597 OK.
+Mesh OK.
+
+# -- cell 11 (0.1s, exit 0)
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0); bnd = rd.read()["boundary"]
+for k in bnd.keys():
+    b = bnd[k]; z=b.points[:,2]; rr=np.hypot(b.points[:,0],b.points[:,1])
+    print(f"{k:12s} faces={b.n_cells:5d} area={b.area:.6f} z=[{z.min():.4f},{z.max():.4f}] r=[{rr.min():.4f},{rr.max():.4f}]")
+print("exact areas: inlet/outlet", np.pi*R*R, " bore(20mm)", 2*np.pi*R*0.020, " gasket", 2*np.pi*R*0.002)
+# -- output
+inlet        faces= 1117 area=0.002827 z=[0.0000,0.0000] r=[0.0014,0.0300]
+outlet       faces= 1117 area=0.002827 z=[0.0420,0.0420] r=[0.0014,0.0300]
+flangeBore1  faces= 1912 area=0.003770 z=[0.0000,0.0200] r=[0.0300,0.0300]
+gasketInner  faces=  344 area=0.000377 z=[0.0200,0.0220] r=[0.0300,0.0300]
+flangeBore2  faces= 1912 area=0.003770 z=[0.0220,0.0420] r=[0.0300,0.0300]
+exact areas: inlet/outlet 0.0028274333882308137  bore(20mm) 0.0037699111843077517  gasket 0.00037699111843077514
+

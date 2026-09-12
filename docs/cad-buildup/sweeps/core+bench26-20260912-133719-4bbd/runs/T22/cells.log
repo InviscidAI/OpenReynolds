@@ -1,0 +1,469 @@
+# -- cell 1 (2.5s, exit 0)
+import os, numpy as np, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from build123d import *
+
+RO, RI, H, N, W = 0.160, 0.095, 0.012, 36, 0.008   # metres
+OVER = 0.004                                       # radial overshoot for clean cuts
+
+annulus = Circle(RO) - Circle(RI)
+vane_blank = Pos((RI + RO) / 2, 0) * Rectangle(RO - RI + 2 * OVER, W)
+vanes = [Rot(0, 0, k * 360.0 / N) * vane_blank for k in range(N)]
+section = annulus - vanes
+
+faces = section.faces()
+print("passages:", len(faces), " expected", N)
+print("area of one passage [mm^2]:", faces[0].area * 1e6)
+print("total fluid area [mm^2]  :", section.area * 1e6)
+
+fig, ax = plt.subplots(figsize=(6, 6))
+for e in section.edges():
+    p = np.array([tuple(e @ t) for t in np.linspace(0, 1, 40)])
+    ax.plot(p[:, 0] * 1e3, p[:, 1] * 1e3, "k-", lw=0.7)
+ax.set_aspect("equal"); ax.set_title("fluid cross-section [mm]")
+fig.savefig("section.png", dpi=90)
+print("bbox mm:", [round(v * 1e3, 2) for v in (section.bounding_box().min.X, section.bounding_box().max.X)])
+# -- output
+passages: 36  expected 36
+area of one passage [mm^2]: 926.3503422680482
+total fluid area [mm^2]  : 33348.61232164404
+bbox mm: [-159.95, 159.95]
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 2 (0.2s, exit 0)
+display(fig)
+# -- output
+
+
+# -- cell 3 (0.1s, exit 0)
+from collections import defaultdict
+solid = extrude(section, amount=H)
+print("solids:", len(solid.solids()), " volume [mm^3]:", solid.volume*1e9, " expected:", section.area*H*1e9)
+
+groups = defaultdict(list)
+for f in solid.faces():
+    c = f.center()
+    if f.geom_type == GeomType.PLANE:
+        n = f.normal_at(c)
+        if abs(n.Z) > 0.99:
+            groups["friction_bottom" if c.Z < H/2 else "friction_top"].append(f)
+        else:
+            groups["vanes"].append(f)
+    elif f.geom_type == GeomType.CYLINDER:
+        r = (c.X**2 + c.Y**2)**0.5
+        groups["inlet" if r < (RI+RO)/2 else "outlet"].append(f)
+    else:
+        groups["UNKNOWN"].append(f)
+for k, v in groups.items():
+    print(f"{k:16s} nfaces={len(v):4d}  area[mm^2]={sum(f.area for f in v)*1e6:10.1f}")
+# -- output
+solids: 36  volume [mm^3]: 400183.3478597284  expected: 400183.34785972844
+vanes            nfaces=  72  area[mm^2]=   56189.6
+inlet            nfaces=  36  area[mm^2]=    3705.8
+outlet           nfaces=  36  area[mm^2]=    8607.4
+friction_bottom  nfaces=  36  area[mm^2]=   33348.6
+friction_top     nfaces=  36  area[mm^2]=   33348.6
+
+# -- cell 4 (0.1s, exit 0)
+import os
+from build123d import Compound, export_stl
+os.makedirs("constant/triSurface", exist_ok=True)
+PATCHES = ["friction_top", "friction_bottom", "vanes", "inlet", "outlet"]
+for name in PATCHES:
+    shp = Compound(children=[f for f in groups[name]])
+    export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=2e-4, angular_tolerance=0.2)
+    print(name, os.path.getsize(f"constant/triSurface/{name}.stl"), "bytes")
+# -- output
+friction_top 32484 bytes
+friction_bottom 32484 bytes
+vanes 7284 bytes
+inlet 30084 bytes
+outlet 34884 bytes
+
+# -- cell 5 (0.2s, exit 0)
+import gmsh, numpy as np
+from build123d import export_step
+export_step(section, "section.step")
+
+NZ, LC = 3, 0.004
+gmsh.initialize(); gmsh.option.setNumber("General.Terminal", 0)
+gmsh.model.add("vented_disc")
+base = gmsh.model.occ.importShapes("section.step")
+base = [d for d in base if d[0] == 2]
+ext = gmsh.model.occ.extrude(base, 0, 0, H, numElements=[NZ], recombine=True)
+gmsh.model.occ.synchronize()
+vols = [d for d in ext if d[0] == 3]
+print("base faces:", len(base), " volumes:", len(vols), " total surfaces:", len(gmsh.model.getEntities(2)))
+# -- output
+base faces: 36  volumes: 36  total surfaces: 216
+
+# -- cell 6 (0.1s, exit 0)
+from collections import defaultdict as dd
+tags = dd(list)
+for dim, tag in gmsh.model.getEntities(2):
+    typ = gmsh.model.getType(2, tag)
+    x, y, z = gmsh.model.occ.getCenterOfMass(2, tag)
+    if typ == "Plane":
+        n = gmsh.model.getNormal(tag, [0.5, 0.5])
+        if abs(n[2]) > 0.99:
+            tags["friction_bottom" if z < H/2 else "friction_top"].append(tag)
+        else:
+            tags["vanes"].append(tag)
+    elif typ == "Cylinder":
+        tags["inlet" if (x*x + y*y)**0.5 < (RI+RO)/2 else "outlet"].append(tag)
+    else:
+        tags["UNKNOWN_" + typ].append(tag)
+for k, v in tags.items():
+    print(k, len(v))
+# -- output
+friction_bottom 36
+vanes 72
+outlet 36
+inlet 36
+friction_top 36
+
+# -- cell 7 (0.3s, exit 0)
+for name, tl in tags.items():
+    gmsh.model.addPhysicalGroup(2, tl, name=name)
+gmsh.model.addPhysicalGroup(3, [t for d, t in vols], name="fluid")
+
+for d, t in base:
+    gmsh.model.mesh.setRecombine(2, t)
+gmsh.option.setNumber("Mesh.Algorithm", 8)
+gmsh.option.setNumber("Mesh.MeshSizeMin", LC)
+gmsh.option.setNumber("Mesh.MeshSizeMax", LC)
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.model.mesh.generate(3)
+print("hexes:", len(gmsh.model.mesh.getElementsByType(5)[0]), "prisms:", len(gmsh.model.mesh.getElementsByType(6)[0]))
+gmsh.write("disc.msh")
+print("written")
+# -- output
+hexes: 8262 prisms: 270
+written
+
+# -- cell 8 (0.3s, exit 0)
+import subprocess, textwrap, os
+os.makedirs("system", exist_ok=True)
+head = lambda cls, obj: f"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"
+open("system/controlDict","w").write(head("dictionary","controlDict") + textwrap.dedent("""
+    application simpleFoam; startFrom startTime; startTime 0; stopAt endTime;
+    endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;
+    """))
+open("system/fvSchemes","w").write(head("dictionary","fvSchemes") + "gradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\nddtSchemes{default steadyState;}\n")
+open("system/fvSolution","w").write(head("dictionary","fvSolution") + "solvers{}\n")
+r = subprocess.run(["gmshToFoam","disc.msh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-800:])
+# -- output
+0  * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:6
+    Surface 1	friction_bottom
+    Surface 2	vanes
+    Surface 3	outlet
+    Surface 4	inlet
+    Surface 5	friction_top
+    Volume 6	fluid
+
+Starting to read points at line 14
+Vertices to be read: 14652
+Vertices read:14652
+
+Starting to read cells at line 14669
+Cells to be read: 19188
+
+Mapping region 1 to Foam patch 0
+Mapping region 5 to Foam patch 1
+Mapping region 2 to Foam patch 2
+Mapping region 3 to Foam patch 3
+Mapping region 4 to Foam patch 4
+Mapping region 6 to Foam cellZone 0
+Cells:
+    total:8532
+    hex  :8262
+    prism:270
+    pyr  :0
+    tet  :0
+
+CellZones:
+Zone	Size
+    0	8532
+
+Patch 0 gets name friction_bottom
+Patch 1 gets name friction_top
+Patch 2 gets name vanes
+Patch 3 gets name outlet
+Patch 4 gets name inlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 10656 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone fluid and cellSet
+End
+
+# -- cell 9 (0.1s, exit 0)
+print(open("constant/polyMesh/boundary").read()[-1600:])
+# -- output
+------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+5
+(
+    friction_bottom
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          2844;
+        startFace       20133;
+    }
+    friction_top
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          2844;
+        startFace       22977;
+    }
+    vanes
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          3888;
+        startFace       25821;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          648;
+        startFace       29709;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          432;
+        startFace       30357;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 10 (0.8s, exit 0)
+import subprocess
+for p in ["friction_bottom", "friction_top", "vanes"]:
+    subprocess.run(["foamDictionary", "constant/polyMesh/boundary",
+                    "-entry", f"entry0/{p}/type", "-set", "wall"], check=True, capture_output=True)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-2500:])
+# -- output
+22 with 234 cells to cellSet region22
+  <<Writing region 23 with 258 cells to cellSet region23
+  <<Writing region 24 with 225 cells to cellSet region24
+  <<Writing region 25 with 240 cells to cellSet region25
+  <<Writing region 26 with 234 cells to cellSet region26
+  <<Writing region 27 with 225 cells to cellSet region27
+  <<Writing region 28 with 222 cells to cellSet region28
+  <<Writing region 29 with 240 cells to cellSet region29
+  <<Writing region 30 with 234 cells to cellSet region30
+  <<Writing region 31 with 255 cells to cellSet region31
+  <<Writing region 32 with 234 cells to cellSet region32
+  <<Writing region 33 with 246 cells to cellSet region33
+  <<Writing region 34 with 231 cells to cellSet region34
+  <<Writing region 35 with 237 cells to cellSet region35
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    friction_bottom     2844     3663     ok (non-closed singly connected)  
+    friction_top        2844     3663     ok (non-closed singly connected)  
+    vanes               3888     5472     ok (non-closed singly connected)  
+    outlet              648      1008     ok (non-closed singly connected)  
+    inlet               432      720      ok (non-closed singly connected)  
+    ".*"                10656    10638    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               8532         14652        0.000400149  (-0.15995 -0.15995 0) (0.15995 0.15995 0.012)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.15995 -0.15995 0) (0.15995 0.15995 0.012)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (1.71419e-17 -6.8104e-18 -9.78962e-16) OK.
+    Max cell openness = 1.90394e-16 OK.
+    Max aspect ratio = 6.64032 OK.
+    Minimum face area = 2.16694e-06. Maximum face area = 2.61098e-05.  Face area magnitudes OK.
+    Min volume = 8.66777e-09. Max volume = 9.24896e-08.  Total volume = 0.000400149.  Cell volumes OK.
+    Mesh non-orthogonality Max: 44.1879 average: 9.5943
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.3322 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 11 (1.0s, exit 0)
+def build_gmsh_mesh(lc, nz, out="disc.msh"):
+    gmsh.clear(); gmsh.model.add("vented_disc_f")
+    b = [d for d in gmsh.model.occ.importShapes("section.step") if d[0] == 2]
+    e = gmsh.model.occ.extrude(b, 0, 0, H, numElements=[nz], recombine=True)
+    gmsh.model.occ.synchronize()
+    g = dd(list)
+    for dim, tag in gmsh.model.getEntities(2):
+        typ = gmsh.model.getType(2, tag)
+        x, y, z = gmsh.model.occ.getCenterOfMass(2, tag)
+        if typ == "Plane":
+            n = gmsh.model.getNormal(tag, [0.5, 0.5])
+            g["friction_bottom" if z < H/2 else "friction_top"].append(tag) if abs(n[2]) > 0.99 else g["vanes"].append(tag)
+        elif typ == "Cylinder":
+            g["inlet" if (x*x + y*y)**0.5 < (RI+RO)/2 else "outlet"].append(tag)
+        else:
+            raise RuntimeError("unexpected surface type " + typ)
+    for nm, tl in g.items():
+        gmsh.model.addPhysicalGroup(2, tl, name=nm)
+    gmsh.model.addPhysicalGroup(3, [t for d, t in e if d == 3], name="fluid")
+    for d, t in b:
+        gmsh.model.mesh.setRecombine(2, t)
+    gmsh.option.setNumber("Mesh.MeshSizeMin", lc); gmsh.option.setNumber("Mesh.MeshSizeMax", lc)
+    gmsh.model.mesh.generate(3)
+    gmsh.write(out)
+    return {k: len(v) for k, v in g.items()}, len(gmsh.model.mesh.getElementsByType(5)[0]), len(gmsh.model.mesh.getElementsByType(6)[0])
+
+print(build_gmsh_mesh(0.002, 6))
+# -- output
+({'friction_bottom': 36, 'vanes': 72, 'outlet': 36, 'inlet': 36, 'friction_top': 36}, 57318, 132)
+
+# -- cell 12 (1.9s, exit 0)
+import shutil
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+subprocess.run(["gmshToFoam", "disc.msh"], check=True, capture_output=True)
+for p in ["friction_bottom", "friction_top", "vanes"]:
+    subprocess.run(["foamDictionary", "constant/polyMesh/boundary",
+                    "-entry", f"entry0/{p}/type", "-set", "wall"], check=True, capture_output=True)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[r.stdout.find("Checking patch topology"):][:900])
+print(r.stdout[r.stdout.find("Checking geometry"):][:1600])
+# -- output
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    friction_bottom     9575     11112    ok (non-closed singly connected)  
+    friction_top        9575     11112    ok (non-closed singly connected)  
+    vanes               14688    17640    ok (non-closed singly connected)  
+    outlet              2160     2772     ok (non-closed singly connected)  
+    inlet               1296     1764     ok (non-closed singly connected)  
+    ".*"                37294    37344    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               57450        77784        0.000400172  (-0.15995 -0.15995 0) (0.15995 0.15995 0.012)
+
+Checki
+Checking geometry...
+    Overall domain bounding box (-0.15995 -0.15995 0) (0.15995 0.15995 0.012)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (2.02896e-16 1.88455e-17 -8.55513e-16) OK.
+    Max cell openness = 2.23611e-16 OK.
+    Max aspect ratio = 6.41188 OK.
+    Minimum face area = 8.44533e-07. Maximum face area = 6.37879e-06.  Face area magnitudes OK.
+    Min volume = 1.68907e-09. Max volume = 1.23799e-08.  Total volume = 0.000400172.  Cell volumes OK.
+    Mesh non-orthogonality Max: 41.1301 average: 8.16867
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.953062 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 13 (0.6s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv, "start_xvfb") else None
+pl = pv.Plotter(off_screen=True, window_size=(900, 800))
+cols = {"friction_bottom": "lightgray", "friction_top": "peachpuff", "vanes": "steelblue",
+        "inlet": "green", "outlet": "red"}
+for nm, c in cols.items():
+    m = pv.read(f"constant/triSurface/{nm}.stl")
+    if nm == "friction_top":
+        m = m.clip(normal="x", origin=(0, 0, 0))
+    pl.add_mesh(m, color=c, show_edges=False, label=nm)
+pl.add_legend()
+pl.camera_position = [(0.30, -0.30, 0.28), (0, 0, 0.006), (0, 0, 1)]
+img = pl.screenshot("patches.png")
+from IPython.display import Image
+Image("patches.png")
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 14:12:43.785 (   0.250s) [    762041D0D780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 14:12:43.785 (   0.251s) [    762041D0D780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 14:12:43.797 (   0.263s) [    762041D0D780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 14 (0.1s, exit 0)
+import numpy as np
+rad = lambda fs: sorted({round((f.center().X**2 + f.center().Y**2)**0.5, 6) for f in fs})
+ci = [f for f in groups["inlet"]]; co = [f for f in groups["outlet"]]
+print("inlet  cyl radius [mm]:", round(max(np.hypot(*np.array([v.to_tuple()[:2] for v in ci[0].vertices()]).T)) * 1e3, 3), "vs 95")
+print("outlet cyl radius [mm]:", round(max(np.hypot(*np.array([v.to_tuple()[:2] for v in co[0].vertices()]).T)) * 1e3, 3), "vs 160")
+bb = solid.bounding_box()
+print("gap height [mm]:", round((bb.max.Z - bb.min.Z) * 1e3, 3), "vs 12")
+f0 = [f for f in groups["vanes"] if abs(f.center().Y) < 0.01 and f.center().X > 0]
+print("flanks near +x axis:", len(f0), " y of centres [mm]:", sorted(round(f.center().Y * 1e3, 3) for f in f0))
+print("=> vane width [mm]:", round(abs(f0[0].center().Y - f0[1].center().Y) * 1e3, 3), "vs 8")
+print("passages:", len(solid.solids()), "vs 36   pitch [deg]:", 360 / 36)
+# -- output
+inlet  cyl radius [mm]: 95.0 vs 95
+outlet cyl radius [mm]: 160.0 vs 160
+gap height [mm]: 12.0 vs 12
+flanks near +x axis: 2  y of centres [mm]: [-4.0, 4.0]
+=> vane width [mm]: 8.0 vs 8
+passages: 36 vs 36   pitch [deg]: 10.0
+
+/tmp/ipykernel_592240/4252670208.py:4: DeprecationWarning: Use 'tuple(Vertex)' instead.
+  print("inlet  cyl radius [mm]:", round(max(np.hypot(*np.array([v.to_tuple()[:2] for v in ci[0].vertices()]).T)) * 1e3, 3), "vs 95")
+/tmp/ipykernel_592240/4252670208.py:5: DeprecationWarning: Use 'tuple(Vertex)' instead.
+  print("outlet cyl radius [mm]:", round(max(np.hypot(*np.array([v.to_tuple()[:2] for v in co[0].vertices()]).T)) * 1e3, 3), "vs 160")
+

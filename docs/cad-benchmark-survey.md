@@ -109,11 +109,19 @@ measured well; a length at a station is not measured at all.**
   `measured clearance = 1.000 mm` as `(R_RING_I-R_SPIN_O)*1000`.
 - T12 measured its outlet radius over 5,260 real face centres, and typed its hub radius in.
 
-Four for four, **at one run each**, which makes it the most suggestive pattern in the corpus
-and not yet a measured one. On that evidence the desk substitutes arithmetic on its own
-parameters for a width, a thickness or a gap, and labels the result as measured. Nine of the
-fifteen new cases ask for a length at a station for exactly this reason, including T20, which
-is a 42 mm cylinder and therefore has no difficulty to blame. A post-condition on the operation would not
+Four for four, **at one run each** — and the breadth sweep that followed withdrew it.
+`core+bench26-20260912-133719-4bbd` §4 records nine cases asking for a length at a station and
+the desk measuring them: T19's 0.05 mm clearance as the nearest approach between the bore and
+shaft point clouds, T13's helical flank gap as a min/max over a distance array (`0.2000 /
+0.2521 mm` — the spread is the proof), T21's blind-hole depth off the hole patch, T24's swirl
+angle by dot product *with its sense*. T20, the 42 mm cylinder with no difficulty to blame,
+measured properly too.
+
+So the four-case pattern described **the desk under difficulty**, not the desk. T12's typed
+literals and T9's restated clearance stand as what they were; they are no longer evidence of a
+habit. Two properties are still taken from the inputs — T16's annulus heights off its own
+radius functions and T22's passage count off the solid rather than the mesh — and that is the
+honest size of what remains. A post-condition on the operation would not
 catch every instance of that, but the class it does catch — an operation that was required,
 ran, and did nothing — is ranks 1, 2 and 6 of this sweep.
 

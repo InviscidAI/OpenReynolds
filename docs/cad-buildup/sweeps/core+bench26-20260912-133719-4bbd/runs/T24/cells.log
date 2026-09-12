@@ -1,0 +1,895 @@
+# -- cell 1 (3.0s, exit 1)
+import numpy as np, math
+from build123d import *
+
+R, H = 0.060, 0.200            # vessel inner radius, height
+R_OUT = 0.020                  # outlet radius (40 mm dia)
+PW, PH = 0.020, 0.030          # port width (tangential-ish), height (vertical)
+ZP = 0.040                     # port axis height above floor
+LD = 0.050                     # duct length along own axis
+ANG = math.radians(15.0)       # off local tangent
+
+vessel = Cylinder(radius=R, height=H, align=(Align.CENTER, Align.CENTER, Align.MIN))
+
+ducts, frames = [], []
+for i in range(4):
+    th = i * math.pi / 2
+    rhat = Vector(math.cos(th), math.sin(th), 0)
+    that = Vector(-math.sin(th), math.cos(th), 0)
+    din = (that * math.cos(ANG) - rhat * math.sin(ANG)).normalized()   # inflow dir
+    P0 = rhat * R + Vector(0, 0, ZP)                                   # axis crosses wall here
+    O = P0 - din * LD                                                  # outer (inlet) face centre
+    pl = Plane(origin=O, z_dir=din, x_dir=Vector(0, 0, 1))
+    tube = extrude(pl * Rectangle(PH, PW), amount=LD + 2 * R + 0.02)
+    pieces = (tube - vessel).solids()
+    keep = min(pieces, key=lambda s: (Vector(*s.center()) - O).length)
+    ducts.append(keep); frames.append((din, O, P0))
+
+fluid = vessel + ducts[0] + ducts[1] + ducts[2] + ducts[3]
+print(fluid.is_valid(), len(fluid.solids()), fluid.volume)
+print(fluid.bounding_box())
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 28[39m
+[32m     24[39m     keep = min(pieces, key=[38;5;28;01mlambda[39;00m s: (Vector(*s.center()) - O).length)
+[32m     25[39m     ducts.append(keep); frames.append((din, O, P0))
+[32m     26[39m 
+[32m     27[39m fluid = vessel + ducts[[32m0[39m] + ducts[[32m1[39m] + ducts[[32m2[39m] + ducts[[32m3[39m]
+[32m---> [39m[32m28[39m print(fluid.is_valid(), len(fluid.solids()), fluid.volume)
+[32m     29[39m print(fluid.bounding_box())
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 2 (0.2s, exit 0)
+import numpy as np, math
+from build123d import *
+
+R, H = 0.060, 0.200            # vessel inner radius, height
+R_OUT = 0.020                  # outlet radius (40 mm dia)
+PW, PH = 0.020, 0.030          # port width (tangential-ish), height (vertical)
+ZP = 0.040                     # port axis height above floor
+LD = 0.050                     # duct length along own axis
+ANG = math.radians(15.0)       # off local tangent
+
+vessel = Cylinder(radius=R, height=H, align=(Align.CENTER, Align.CENTER, Align.MIN))
+
+ducts, frames = [], []
+for i in range(4):
+    th = i * math.pi / 2
+    rhat = Vector(math.cos(th), math.sin(th), 0)
+    that = Vector(-math.sin(th), math.cos(th), 0)
+    din = (that * math.cos(ANG) - rhat * math.sin(ANG)).normalized()   # inflow dir
+    P0 = rhat * R + Vector(0, 0, ZP)                                   # axis crosses wall here
+    O = P0 - din * LD                                                  # outer (inlet) face centre
+    pl = Plane(origin=O, z_dir=din, x_dir=Vector(0, 0, 1))
+    tube = extrude(pl * Rectangle(PH, PW), amount=LD + 2 * R + 0.02)
+    pieces = (tube - vessel).solids()
+    keep = min(pieces, key=lambda s: (Vector(*s.center()) - O).length)
+    ducts.append(keep); frames.append((din, O, P0))
+
+fluid = vessel + ducts[0] + ducts[1] + ducts[2] + ducts[3]
+print(fluid.is_valid, len(fluid.solids()), fluid.volume)
+print(fluid.bounding_box())
+print("vessel vol", math.pi*R**2*H)
+# -- output
+True 1 0.0026047532405613933
+bbox: -0.1378178061314948 <= x <= 0.1378178061314948, -0.1378178061314948 <= y <= 0.1378178061314948, 0.0 <= z <= 0.2
+vessel vol 0.002261946710584651
+
+# -- cell 3 (0.1s, exit 0)
+import numpy as np, math
+from build123d import *
+
+R, H = 0.060, 0.200            # vessel inner radius, height
+R_OUT = 0.020                  # outlet radius (40 mm dia)
+PW, PH = 0.020, 0.030          # port width (horizontal), height (vertical)
+ZP = 0.040                     # port axis height above floor
+LD = 0.050                     # duct length along own axis
+ANG = math.radians(15.0)       # duct axis off local tangent
+
+vessel = Cylinder(radius=R, height=H, align=(Align.CENTER, Align.CENTER, Align.MIN))
+
+ducts, frames = [], []
+for i in range(4):
+    th = i * math.pi / 2
+    rhat = Vector(math.cos(th), math.sin(th), 0)
+    that = Vector(-math.sin(th), math.cos(th), 0)
+    din = (that * math.cos(ANG) - rhat * math.sin(ANG)).normalized()   # inflow direction
+    P0 = rhat * R + Vector(0, 0, ZP)                                   # axis meets wall here
+    O = P0 - din * LD                                                  # inlet face centre
+    pl = Plane(origin=O, z_dir=din, x_dir=Vector(0, 0, 1))
+    ducts.append(extrude(pl * Rectangle(PH, PW), amount=LD))
+    frames.append((din, O, P0))
+
+fluid = vessel + ducts[0] + ducts[1] + ducts[2] + ducts[3]
+print("valid", fluid.is_valid, "solids", len(fluid.solids()), "vol", fluid.volume)
+print("extra over bare vessel per duct:", (fluid.volume - math.pi*R**2*H)/4, "vs full tube", LD*PW*PH)
+print(fluid.bounding_box())
+print("faces", len(fluid.faces()))
+# -- output
+valid True solids 1 vol 0.002367621926339588
+extra over bare vessel per duct: 2.6418803938734218e-05 vs full tube 3e-05
+bbox: -0.08260021051801672 <= x <= 0.08260021051801672, -0.08260021051801672 <= y <= 0.08260021051801672, 0.0 <= z <= 0.2
+faces 27
+
+# -- cell 4 (0.1s, exit 1)
+for i, f in enumerate(fluid.faces()):
+    c = f.center(); n = f.normal_at(c)
+    print(f"{i:2d} {type(f.geometry_type()).__name__ if False else f.geometry_type():10s} area={f.area*1e6:8.1f}mm2 c=({c.X*1000:7.1f},{c.Y*1000:7.1f},{c.Z*1000:7.1f}) n=({n.X:5.2f},{n.Y:5.2f},{n.Z:5.2f})")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 3[39m
+[32m      1[39m [38;5;28;01mfor[39;00m i, f [38;5;28;01min[39;00m enumerate(fluid.faces()):
+[32m      2[39m     c = f.center(); n = f.normal_at(c)
+[32m----> [39m[32m3[39m     print(f"{i:2d} {type(f.geometry_type()).__name__ [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m f.geometry_type():10s} area={f.area*[32m1e6[39m:8.1f}mm2 c=({c.X*[32m1000[39m:7.1f},{c.Y*[32m1000[39m:7.1f},{c.Z*[32m1000[39m:7.1f}) n=({n.X:5.2f},{n.Y:5.2f},{n.Z:5.2f})")
+
+[31mAttributeError[39m: 'Face' object has no attribute 'geometry_type'
+
+# -- cell 5 (0.1s, exit 0)
+for i, f in enumerate(fluid.faces()):
+    c = f.center(); n = f.normal_at(c)
+    print(f"{i:2d} {str(f.geom_type):18s} area={f.area*1e6:8.1f}mm2 c=({c.X*1000:7.1f},{c.Y*1000:7.1f},{c.Z*1000:7.1f}) n=({n.X:5.2f},{n.Y:5.2f},{n.Z:5.2f})")
+# -- output
+0 GeomType.CYLINDER  area= 72641.1mm2 c=(  -60.0,    0.0,  100.0) n=(-1.00, 0.00, 0.00)
+ 1 GeomType.PLANE     area=   880.6mm2 c=(   67.9,  -26.2,   25.0) n=( 0.00, 0.00,-1.00)
+ 2 GeomType.PLANE     area= 11309.7mm2 c=(    0.0,   -0.0,    0.0) n=(-0.00,-0.00,-1.00)
+ 3 GeomType.PLANE     area=   300.0mm2 c=(   64.8,    1.3,   40.0) n=(-0.26, 0.97, 0.00)
+ 4 GeomType.PLANE     area= 11309.7mm2 c=(    0.0,   -0.0,  200.0) n=( 0.00, 0.00, 1.00)
+ 5 GeomType.PLANE     area=   880.6mm2 c=(   67.9,  -26.2,   55.0) n=(-0.00,-0.00, 1.00)
+ 6 GeomType.PLANE     area=   884.1mm2 c=(   59.5,  -36.7,   40.0) n=(-0.97,-0.26, 0.00)
+ 7 GeomType.PLANE     area=   880.6mm2 c=(   26.2,   67.9,   25.0) n=( 0.00, 0.00,-1.00)
+ 8 GeomType.PLANE     area=   884.1mm2 c=(   36.7,   59.5,   40.0) n=( 0.26,-0.97,-0.00)
+ 9 GeomType.PLANE     area=   300.0mm2 c=(   -1.3,   64.8,   40.0) n=(-0.97,-0.26, 0.00)
+10 GeomType.PLANE     area=   880.6mm2 c=(   26.2,   67.9,   55.0) n=(-0.00,-0.00, 1.00)
+11 GeomType.PLANE     area=   880.6mm2 c=(  -67.9,   26.2,   25.0) n=( 0.00,-0.00,-1.00)
+12 GeomType.PLANE     area=   884.1mm2 c=(  -59.5,   36.7,   40.0) n=( 0.97, 0.26,-0.00)
+13 GeomType.PLANE     area=   300.0mm2 c=(  -64.8,   -1.3,   40.0) n=( 0.26,-0.97, 0.00)
+14 GeomType.PLANE     area=   880.6mm2 c=(  -67.9,   26.2,   55.0) n=(-0.00, 0.00, 1.00)
+15 GeomType.PLANE     area=   880.6mm2 c=(  -26.2,  -67.9,   25.0) n=( 0.00, 0.00,-1.00)
+16 GeomType.PLANE     area=   300.0mm2 c=(    1.3,  -64.8,   40.0) n=( 0.97, 0.26, 0.00)
+17 GeomType.PLANE     area=   880.6mm2 c=(  -26.2,  -67.9,   55.0) n=(-0.00,-0.00, 1.00)
+18 GeomType.PLANE     area=   884.1mm2 c=(  -36.7,  -59.5,   40.0) n=(-0.26, 0.97, 0.00)
+19 GeomType.PLANE     area=   600.0mm2 c=(   72.9,  -48.3,   40.0) n=( 0.26,-0.97,-0.00)
+20 GeomType.PLANE     area=  1500.0mm2 c=(   76.1,  -21.6,   40.0) n=( 0.97, 0.26,-0.00)
+21 GeomType.PLANE     area=   600.0mm2 c=(   48.3,   72.9,   40.0) n=( 0.97, 0.26,-0.00)
+22 GeomType.PLANE     area=  1500.0mm2 c=(   21.6,   76.1,   40.0) n=(-0.26, 0.97, 0.00)
+23 GeomType.PLANE     area=   600.0mm2 c=(  -72.9,   48.3,   40.0) n=(-0.26, 0.97,-0.00)
+24 GeomType.PLANE     area=  1500.0mm2 c=(  -76.1,   21.6,   40.0) n=(-0.97,-0.26, 0.00)
+25 GeomType.PLANE     area=   600.0mm2 c=(  -48.3,  -72.9,   40.0) n=(-0.97,-0.26,-0.00)
+26 GeomType.PLANE     area=  1500.0mm2 c=(  -21.6,  -76.1,   40.0) n=( 0.26,-0.97,-0.00)
+
+# -- cell 6 (0.1s, exit 0)
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Splitter
+from OCP.TopTools import TopTools_ListOfShape
+
+tool = Cylinder(radius=R_OUT, height=0.02, align=(Align.CENTER, Align.CENTER, Align.CENTER)).moved(Location((0,0,H)))
+tool_face = [f for f in tool.faces() if f.geom_type == GeomType.CYLINDER][0]
+
+args, tools = TopTools_ListOfShape(), TopTools_ListOfShape()
+args.Append(fluid.wrapped); tools.Append(tool_face.wrapped)
+sp = BRepAlgoAPI_Splitter(); sp.SetArguments(args); sp.SetTools(tools); sp.Build()
+fluid_s = Solid(sp.Shape()) if sp.Shape().ShapeType() == 2 else Compound(sp.Shape()).solids()[0]
+print("valid", fluid_s.is_valid, "vol", fluid_s.volume, "faces", len(fluid_s.faces()))
+for f in fluid_s.faces():
+    c = f.center()
+    if abs(c.Z - H) < 1e-9 and f.geom_type == GeomType.PLANE:
+        print("top-plane face area mm2:", f.area*1e6)
+# -- output
+valid True vol 0.0023676219263395895 faces 29
+top-plane face area mm2: 10053.09649148734
+top-plane face area mm2: 1256.6370614359173
+
+# -- cell 7 (0.1s, exit 1)
+import os
+from OCP.BRep import BRep_Tool
+from OCP.TopLoc import TopLoc_Location
+from OCP.TopAbs import TopAbs_REVERSED
+
+def duct_local(c, i):
+    din, O, P0 = frames[i]
+    n = din.cross(Vector(0,0,1)).normalized()      # horizontal cross-axis
+    d = Vector(c.X, c.Y, c.Z) - O
+    return d.dot(din), d.dot(n), c.Z
+
+patch_of = {}
+for f in fluid_s.faces():
+    c = f.center(); nrm = f.normal_at(c); a = f.area
+    if f.geom_type == GeomType.CYLINDER and abs(math.hypot(c.X, c.Y) - R) < 1e-6:
+        p = "cylwall"
+    elif abs(c.Z) < 1e-9 and abs(nrm.Z) > 0.99:
+        p = "floor"
+    elif abs(c.Z - H) < 1e-9 and abs(nrm.Z) > 0.99:
+        p = "top" if a > 5e-3 else "outlet"
+    else:
+        cand = [(i, duct_local(c, i)) for i in range(4)]
+        i, (s, o, z) = min(cand, key=lambda t: abs(t[1][1]) + abs(t[1][0]-LD/2))
+        assert -1e-6 <= s <= LD+1e-6 and abs(o) <= PW/2+1e-6, (s, o)
+        p = f"inlet{i}" if (s < 1e-6 and nrm.dot(frames[i][0]) < -0.99) else f"ductwall{i}"
+    patch_of.setdefault(p, []).append(f)
+
+for p in sorted(patch_of):
+    print(f"{p:10s} nfaces={len(patch_of[p]):2d} area={sum(f.area for f in patch_of[p])*1e6:9.1f} mm2")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAssertionError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[7][39m[32m, line 24[39m
+[32m     20[39m         p = [33m"top"[39m [38;5;28;01mif[39;00m a > [32m5e-3[39m [38;5;28;01melse[39;00m [33m"outlet"[39m
+[32m     21[39m     [38;5;28;01melse[39;00m:
+[32m     22[39m         cand = [(i, duct_local(c, i)) [38;5;28;01mfor[39;00m i [38;5;28;01min[39;00m range([32m4[39m)]
+[32m     23[39m         i, (s, o, z) = min(cand, key=[38;5;28;01mlambda[39;00m t: abs(t[[32m1[39m][[32m1[39m]) + abs(t[[32m1[39m][[32m0[39m]-LD/[32m2[39m))
+[32m---> [39m[32m24[39m         [38;5;28;01massert[39;00m -[32m1e-6[39m <= s <= LD+[32m1e-6[39m [38;5;28;01mand[39;00m abs(o) <= PW/[32m2[39m+[32m1e-6[39m, (s, o)
+[32m     25[39m         p = f"inlet{i}" [38;5;28;01mif[39;00m (s < [32m1e-6[39m [38;5;28;01mand[39;00m nrm.dot(frames[i][[32m0[39m]) < -[32m0.99[39m) [38;5;28;01melse[39;00m f"ductwall{i}"
+[32m     26[39m     patch_of.setdefault(p, []).append(f)
+[32m     27[39m 
+
+[31mAssertionError[39m: (0.06035276180410084, -0.03863703305156273)
+
+# -- cell 8 (0.1s, exit 0)
+for f in fluid_s.faces():
+    c = f.center(); nrm = f.normal_at(c)
+    tag = ("CYL" if f.geom_type == GeomType.CYLINDER else "PLN")
+    loc = [tuple(round(v,4) for v in duct_local(c,i)) for i in range(4)]
+    print(f"{tag} a={f.area*1e6:8.1f} c=({c.X*1e3:7.1f},{c.Y*1e3:7.1f},{c.Z*1e3:7.1f}) n=({nrm.X:5.2f},{nrm.Y:5.2f},{nrm.Z:5.2f}) r={math.hypot(c.X,c.Y)*1e3:6.1f}")
+# -- output
+CYL a= 72641.1 c=(  -60.0,    0.0,  100.0) n=(-1.00, 0.00, 0.00) r=  60.0
+PLN a=   880.6 c=(   67.9,  -26.2,   25.0) n=( 0.00, 0.00,-1.00) r=  72.8
+PLN a= 11309.7 c=(    0.0,   -0.0,    0.0) n=(-0.00,-0.00,-1.00) r=   0.0
+PLN a=   300.0 c=(   64.8,    1.3,   40.0) n=(-0.26, 0.97, 0.00) r=  64.8
+PLN a= 10053.1 c=(    0.0,   -0.0,  200.0) n=( 0.00, 0.00, 1.00) r=   0.0
+PLN a=   880.6 c=(   67.9,  -26.2,   55.0) n=(-0.00,-0.00, 1.00) r=  72.8
+PLN a=   884.1 c=(   59.5,  -36.7,   40.0) n=(-0.97,-0.26, 0.00) r=  69.9
+PLN a=   880.6 c=(   26.2,   67.9,   25.0) n=( 0.00, 0.00,-1.00) r=  72.8
+PLN a=   884.1 c=(   36.7,   59.5,   40.0) n=( 0.26,-0.97,-0.00) r=  69.9
+PLN a=   300.0 c=(   -1.3,   64.8,   40.0) n=(-0.97,-0.26, 0.00) r=  64.8
+PLN a=   880.6 c=(   26.2,   67.9,   55.0) n=(-0.00,-0.00, 1.00) r=  72.8
+PLN a=   880.6 c=(  -67.9,   26.2,   25.0) n=( 0.00,-0.00,-1.00) r=  72.8
+PLN a=   884.1 c=(  -59.5,   36.7,   40.0) n=( 0.97, 0.26,-0.00) r=  69.9
+PLN a=   300.0 c=(  -64.8,   -1.3,   40.0) n=( 0.26,-0.97, 0.00) r=  64.8
+PLN a=   880.6 c=(  -67.9,   26.2,   55.0) n=(-0.00, 0.00, 1.00) r=  72.8
+PLN a=   880.6 c=(  -26.2,  -67.9,   25.0) n=( 0.00, 0.00,-1.00) r=  72.8
+PLN a=   300.0 c=(    1.3,  -64.8,   40.0) n=( 0.97, 0.26, 0.00) r=  64.8
+PLN a=   880.6 c=(  -26.2,  -67.9,   55.0) n=(-0.00,-0.00, 1.00) r=  72.8
+PLN a=   884.1 c=(  -36.7,  -59.5,   40.0) n=(-0.26, 0.97, 0.00) r=  69.9
+PLN a=   600.0 c=(   72.9,  -48.3,   40.0) n=( 0.26,-0.97,-0.00) r=  87.5
+PLN a=  1500.0 c=(   76.1,  -21.6,   40.0) n=( 0.97, 0.26,-0.00) r=  79.1
+PLN a=  1256.6 c=(   -0.0,   -0.0,  200.0) n=( 0.00, 0.00, 1.00) r=   0.0
+PLN a=   600.0 c=(   48.3,   72.9,   40.0) n=( 0.97, 0.26,-0.00) r=  87.5
+PLN a=  1500.0 c=(   21.6,   76.1,   40.0) n=(-0.26, 0.97, 0.00) r=  79.1
+PLN a=   600.0 c=(  -72.9,   48.3,   40.0) n=(-0.26, 0.97,-0.00) r=  87.5
+PLN a=  1500.0 c=(  -76.1,   21.6,   40.0) n=(-0.97,-0.26, 0.00) r=  79.1
+PLN a=   600.0 c=(  -48.3,  -72.9,   40.0) n=(-0.97,-0.26,-0.00) r=  87.5
+PLN a=  1500.0 c=(  -21.6,  -76.1,   40.0) n=( 0.26,-0.97,-0.00) r=  79.1
+CYL a=  1256.6 c=(  -20.0,    0.0,  195.0) n=(-1.00, 0.00, 0.00) r=  20.0
+
+# -- cell 9 (0.1s, exit 0)
+sh = sp.Shape()
+print("result type", sh.ShapeType(), "fluid_s type", type(fluid_s), fluid_s.wrapped.ShapeType())
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopAbs import TopAbs_SOLID, TopAbs_SHELL
+ex = TopExp_Explorer(sh, TopAbs_SOLID); n=0
+while ex.More(): n+=1; ex.Next()
+print("solids in result:", n, " shells in fluid_s:", len(fluid_s.shells()))
+for s in fluid_s.shells():
+    print("  shell faces", len(s.faces()), "closed", s.wrapped.Closed())
+# -- output
+result type TopAbs_ShapeEnum.TopAbs_COMPOUND fluid_s type <class 'build123d.topology.three_d.Solid'> TopAbs_ShapeEnum.TopAbs_SOLID
+solids in result: 1  shells in fluid_s: 2
+  shell faces 28 closed True
+  shell faces 1 closed False
+
+# -- cell 10 (0.1s, exit 0)
+import math
+from build123d import GeomType, Vector
+
+outer_shell = max(fluid_s.shells(), key=lambda s: len(s.faces()))
+print("outer shell faces", len(outer_shell.faces()), "closed", outer_shell.wrapped.Closed())
+
+def duct_local(c, i):
+    """(s along duct axis from inlet face, o across it, z) in duct i's own frame."""
+    din, O, P0 = frames[i]
+    n = din.cross(Vector(0, 0, 1)).normalized()
+    d = Vector(c.X, c.Y, c.Z) - O
+    return d.dot(din), d.dot(n), c.Z
+
+patch_of = {}
+for f in outer_shell.faces():
+    c = f.center(); nrm = f.normal_at(c); a = f.area
+    if f.geom_type == GeomType.CYLINDER and abs(math.hypot(c.X, c.Y) - R) < 1e-6:
+        p = "cylwall"
+    elif abs(c.Z) < 1e-9 and abs(nrm.Z) > 0.99:
+        p = "floor"
+    elif abs(c.Z - H) < 1e-9 and abs(nrm.Z) > 0.99:
+        p = "top" if a > 5e-3 else "outlet"
+    else:
+        i, (s, o, z) = min(((i, duct_local(c, i)) for i in range(4)),
+                           key=lambda t: abs(t[1][1]) + abs(t[1][0] - LD / 2))
+        assert -1e-6 <= s <= LD + 1e-6 and abs(o) <= PW / 2 + 1e-6, (s, o)
+        p = f"inlet{i}" if (s < 1e-6 and nrm.dot(frames[i][0]) < -0.99) else f"ductwall{i}"
+    patch_of.setdefault(p, []).append(f)
+
+for p in sorted(patch_of):
+    print(f"{p:10s} nf={len(patch_of[p]):2d} area={sum(f.area for f in patch_of[p])*1e6:9.1f} mm2")
+# -- output
+outer shell faces 28 closed True
+cylwall    nf= 1 area=  72641.1 mm2
+ductwall0  nf= 5 area=   4445.4 mm2
+ductwall1  nf= 5 area=   4445.4 mm2
+ductwall2  nf= 5 area=   4445.4 mm2
+ductwall3  nf= 5 area=   4445.4 mm2
+floor      nf= 1 area=  11309.7 mm2
+inlet0     nf= 1 area=    600.0 mm2
+inlet1     nf= 1 area=    600.0 mm2
+inlet2     nf= 1 area=    600.0 mm2
+inlet3     nf= 1 area=    600.0 mm2
+outlet     nf= 1 area=   1256.6 mm2
+top        nf= 1 area=  10053.1 mm2
+
+# -- cell 11 (0.1s, exit 0)
+print("vessel bore dia  :", 2*R*1000, "mm  (asked 120)")
+print("vessel height    :", (fluid_s.bounding_box().max.Z - fluid_s.bounding_box().min.Z)*1000, "mm (asked 200)")
+print("outlet dia       :", 2*math.sqrt(sum(f.area for f in patch_of['outlet'])/math.pi)*1000, "mm (asked 40)")
+for i in range(4):
+    din, O, P0 = frames[i]
+    rhat = Vector(P0.X, P0.Y, 0).normalized(); that = Vector(-rhat.Y, rhat.X, 0)
+    ang = math.degrees(math.acos(max(-1, min(1, din.dot(that)))))
+    inl = patch_of[f"inlet{i}"][0]
+    bb = inl.bounding_box()
+    L = (Vector(P0.X,P0.Y,P0.Z) - Vector(inl.center().X, inl.center().Y, inl.center().Z)).length
+    w = math.hypot(bb.max.X-bb.min.X, bb.max.Y-bb.min.Y)
+    print(f"duct{i}: axis-vs-tangent {ang:5.2f} deg (asked 15) | len along axis {L*1000:5.1f} mm (asked 50) | "
+          f"port {w*1000:4.1f} x {(bb.max.Z-bb.min.Z)*1000:4.1f} mm (asked 20x30) | port axis z {P0.Z*1000:4.1f} mm (asked 40) | "
+          f"wall crossing r {math.hypot(P0.X,P0.Y)*1000:5.1f} mm (asked 60)")
+print("swirl sense (din x rhat)_z, all same sign:", [round(frames[i][0].cross(Vector(math.cos(i*math.pi/2), math.sin(i*math.pi/2),0)).Z,3) for i in range(4)])
+# -- output
+vessel bore dia  : 120.0 mm  (asked 120)
+vessel height    : 200.0 mm (asked 200)
+outlet dia       : 40.0 mm (asked 40)
+duct0: axis-vs-tangent 15.00 deg (asked 15) | len along axis  50.0 mm (asked 50) | port 20.0 x 30.0 mm (asked 20x30) | port axis z 40.0 mm (asked 40) | wall crossing r  60.0 mm (asked 60)
+duct1: axis-vs-tangent 15.00 deg (asked 15) | len along axis  50.0 mm (asked 50) | port 20.0 x 30.0 mm (asked 20x30) | port axis z 40.0 mm (asked 40) | wall crossing r  60.0 mm (asked 60)
+duct2: axis-vs-tangent 15.00 deg (asked 15) | len along axis  50.0 mm (asked 50) | port 20.0 x 30.0 mm (asked 20x30) | port axis z 40.0 mm (asked 40) | wall crossing r  60.0 mm (asked 60)
+duct3: axis-vs-tangent 15.00 deg (asked 15) | len along axis  50.0 mm (asked 50) | port 20.0 x 30.0 mm (asked 20x30) | port axis z 40.0 mm (asked 40) | wall crossing r  60.0 mm (asked 60)
+swirl sense (din x rhat)_z, all same sign: [-0.966, -0.966, -0.966, -0.966]
+
+# -- cell 12 (0.1s, exit 0)
+import os, numpy as np
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.BRep import BRep_Tool
+from OCP.TopLoc import TopLoc_Location
+from OCP.TopAbs import TopAbs_REVERSED
+
+os.makedirs("constant/triSurface", exist_ok=True)
+BRepMesh_IncrementalMesh(fluid_s.wrapped, 0.0004, False, 0.3, True)
+
+def face_tris(f):
+    loc = TopLoc_Location()
+    tri = BRep_Tool.Triangulation_s(f.wrapped, loc)
+    trsf = loc.Transformation()
+    pts = []
+    for k in range(1, tri.NbNodes() + 1):
+        p = tri.Node(k).Transformed(trsf); pts.append((p.X(), p.Y(), p.Z()))
+    pts = np.array(pts)
+    rev = f.wrapped.Orientation() == TopAbs_REVERSED
+    tris = []
+    for k in range(1, tri.NbTriangles() + 1):
+        a, b, c = tri.Triangle(k).Get()
+        tris.append((a-1, c-1, b-1) if rev else (a-1, b-1, c-1))
+    return pts, np.array(tris)
+
+def write_stl(name, faces):
+    V, T = [], []
+    off = 0
+    for f in faces:
+        p, t = face_tris(f)
+        V.append(p); T.append(t + off); off += len(p)
+    V = np.vstack(V); T = np.vstack(T)
+    with open(f"constant/triSurface/{name}.stl", "w") as fh:
+        fh.write(f"solid {name}\n")
+        for a, b, c in T:
+            n = np.cross(V[b]-V[a], V[c]-V[a]); ln = np.linalg.norm(n)
+            n = n/ln if ln > 0 else np.array([0., 0., 1.])
+            fh.write(f" facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\n  outer loop\n")
+            for v in (a, b, c):
+                fh.write(f"   vertex {V[v][0]:.7e} {V[v][1]:.7e} {V[v][2]:.7e}\n")
+            fh.write("  endloop\n endfacet\n")
+        fh.write(f"endsolid {name}\n")
+    return len(T), V
+
+tot = 0
+for p in sorted(patch_of):
+    ntri, V = write_stl(p, patch_of[p]); tot += ntri
+    print(f"{p:10s} {ntri:5d} tris")
+print("total tris", tot)
+# -- output
+cylwall      124 tris
+ductwall0     16 tris
+ductwall1     16 tris
+ductwall2     16 tris
+ductwall3     16 tris
+floor         40 tris
+inlet0         2 tris
+inlet1         2 tris
+inlet2         2 tris
+inlet3         2 tris
+outlet        40 tris
+top           84 tris
+total tris 360
+
+# -- cell 13 (0.3s, exit 0)
+import os, textwrap, subprocess
+os.makedirs("system", exist_ok=True)
+PATCHES = sorted(patch_of)
+HDR = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+
+open("system/controlDict","w").write(HDR%"controlDict"+
+ "application simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\n"
+ "deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;\n"
+ "writePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;\n")
+open("system/fvSchemes","w").write(HDR%"fvSchemes"+
+ "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;}\n"
+ "laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;}\n"
+ "snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(HDR%"fvSolution"+"solvers{} relaxationFactors{}\n")
+
+XY, Z0, Z1, NB = 0.092, -0.006, 0.206, 0.008
+nx = int(round(2*XY/NB)); nz = int(round((Z1-Z0)/NB))
+open("system/blockMeshDict","w").write(HDR%"blockMeshDict"+f"""
+scale 1;
+vertices
+(
+ (-{XY} -{XY} {Z0}) ({XY} -{XY} {Z0}) ({XY} {XY} {Z0}) (-{XY} {XY} {Z0})
+ (-{XY} -{XY} {Z1}) ({XY} -{XY} {Z1}) ({XY} {XY} {Z1}) (-{XY} {XY} {Z1})
+);
+blocks (hex (0 1 2 3 4 5 6 7) ({nx} {nx} {nz}) simpleGrading (1 1 1));
+edges ();
+boundary ( bg {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(3 0 4 7)); }} );
+""")
+print(nx, nx, nz, nx*nx*nz)
+print(subprocess.run(["blockMesh"], capture_output=True, text=True).stdout[-400:])
+# -- output
+23 23 26 13754
+
+        j : 0.008 .. 0.008
+        k : 0.00815385 .. 0.00815385
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.092 -0.092 -0.006) (0.092 0.092 0.206)
+  nPoints: 15552
+  nCells: 13754
+  nFaces: 42987
+  nInternalFaces: 39537
+----------------
+Patches
+----------------
+  patch 0 (start: 39537 size: 3450) name: bg
+
+End
+
+# -- cell 14 (3.5s, exit 0)
+geom = "\n".join(f'  {p}.stl {{ type triSurfaceMesh; name {p}; }}' for p in PATCHES)
+refs = "\n".join(f'    {p} {{ level (1 1); patchInfo {{ type {"patch" if (p.startswith("inlet") or p=="outlet") else "wall"}; }} }}' for p in PATCHES)
+open("system/snappyHexMeshDict","w").write(HDR%"snappyHexMeshDict"+f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geom}
+}};
+castellatedMeshControls
+{{
+  maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; nCellsBetweenLevels 2;
+  maxLoadUnbalance 0.1; resolveFeatureAngle 40; allowFreeStandingZoneFaces true;
+  features ();
+  refinementSurfaces
+  {{
+{refs}
+  }}
+  refinementRegions {{}};
+  locationInMesh (0.003 0.002 0.120);
+}}
+snapControls
+{{
+  nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+  nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false;
+}}
+addLayersControls
+{{
+  relativeSizes true; layers {{}}; expansionRatio 1.2; finalLayerThickness 0.3; minThickness 0.1;
+  nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;
+  maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedianAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50;
+}}
+meshQualityControls
+{{
+  maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001;
+  minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75;
+}}
+mergeTolerance 1e-6; debug 0;
+""")
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode); print(r.stdout[-1500:])
+# -- output
+0
+ skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Detected 0 error faces on boundaries that have been merged. These will be restored to their original faces.
+
+Detected 8 error faces in mesh. Restoring neighbours of faces in error.
+
+Edge intersection testing:
+    Number of edges             : 59379
+    Number of edges to retest   : 248
+    Number of intersected edges : 6474
+Snapped mesh : cells:18338  faces:59379  points:22836
+Cells per refinement level:
+    0	2682
+    1	15656
+Writing mesh to time constant
+Wrote mesh in = 0.05 s.
+Mesh snapped in = 2.01 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 3.26 s.
+End
+
+# -- cell 15 (0.3s, exit 0)
+r = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True)
+print(r.stdout[r.stdout.find("Mesh stats"):r.stdout.find("End")][:3000])
+# -- output
+Mesh stats 
+    points:           22836
+    faces:            59379
+    internal faces:   52905
+    cells:            18338
+    faces per cell:   6.12302
+    boundary patches: 12
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     15162
+    prisms:        1832
+    wedges:        0
+    pyramids:      0
+    tet wedges:    22
+    tetrahedra:    0
+    polyhedra:     1322
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   10
+            5   102
+            6   328
+            9   410
+           12   416
+           15   48
+           18   8
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                 cylwall     4012     4188  ok (non-closed singly connected)
+               ductwall0      234      261  ok (non-closed singly connected)
+               ductwall1      231      257  ok (non-closed singly connected)
+               ductwall2      234      261  ok (non-closed singly connected)
+               ductwall3      231      257  ok (non-closed singly connected)
+                   floor      712      769  ok (non-closed singly connected)
+                  inlet0       27       40  ok (non-closed singly connected)
+                  inlet1       27       40  ok (non-closed singly connected)
+                  inlet2       27       40  ok (non-closed singly connected)
+                  inlet3       27       40  ok (non-closed singly connected)
+                  outlet       80      101  ok (non-closed singly connected)
+                     top      632      708  ok (non-closed singly connected)
+                    ".*"     6474     6506      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.0826002 -0.0826002 -6.92928e-05) (0.0826002 0.0826002 0.200069)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-4.02687e-18 -9.64564e-17 -8.10269e-17) OK.
+    Max cell openness = 3.29137e-16 OK.
+    Max aspect ratio = 8.78957 OK.
+    Minimum face area = 1.94395e-06. Maximum face area = 6.85949e-05.  Face area magnitudes OK.
+    Min volume = 7.17599e-09. Max volume = 5.61336e-07.  Total volume = 0.00235762.  Cell volumes OK.
+    Mesh non-orthogonality Max: 50.1163 average: 9.71308
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2
+
+# -- cell 16 (0.6s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+pv.OFF_SCREEN = True
+m = pv.OpenFOAMReader("case.foam") if os.path.exists("case.foam") else None
+open("case.foam","w").close()
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0) if rd.number_time_points else None
+mesh = rd.read()
+internal = mesh["internalMesh"]
+pl = pv.Plotter(off_screen=True, window_size=(900,700))
+bnd = mesh["boundary"]
+for nm in bnd.keys():
+    col = "red" if nm.startswith("inlet") else ("blue" if nm=="outlet" else ("green" if nm.startswith("ductwall") else "lightgrey"))
+    pl.add_mesh(bnd[nm], color=col, show_edges=True, opacity=1.0 if nm!="cylwall" else 0.35, line_width=0.5)
+pl.camera_position = [(0.35,-0.30,0.30),(0,0,0.09),(0,0,1)]
+pl.screenshot("view_iso.png")
+print("ok", list(bnd.keys()))
+# -- output
+ok ['cylwall', 'ductwall0', 'ductwall1', 'ductwall2', 'ductwall3', 'floor', 'inlet0', 'inlet1', 'inlet2', 'inlet3', 'outlet', 'top']
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 14:20:22.294 (   0.322s) [    7DFC01D0C780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 14:20:22.295 (   0.323s) [    7DFC01D0C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 14:20:22.308 (   0.336s) [    7DFC01D0C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 17 (0.1s, exit 0)
+from IPython.display import Image, display
+print(os.path.getsize("view_iso.png"))
+display(Image("view_iso.png"))
+# -- output
+317410
+
+# -- cell 18 (12.1s, exit 0)
+NB2 = 0.006
+nx2 = int(round(2*XY/NB2)); nz2 = int(round((Z1-Z0)/NB2))
+open("system/blockMeshDict","w").write(HDR%"blockMeshDict"+f"""
+scale 1;
+vertices
+(
+ (-{XY} -{XY} {Z0}) ({XY} -{XY} {Z0}) ({XY} {XY} {Z0}) (-{XY} {XY} {Z0})
+ (-{XY} -{XY} {Z1}) ({XY} -{XY} {Z1}) ({XY} {XY} {Z1}) (-{XY} {XY} {Z1})
+);
+blocks (hex (0 1 2 3 4 5 6 7) ({nx2} {nx2} {nz2}) simpleGrading (1 1 1));
+edges ();
+boundary ( bg {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(3 0 4 7)); }} );
+""")
+lev = lambda p: 2 if (p.startswith("duct") or p.startswith("inlet")) else 1
+refs2 = "\n".join(f'    {p} {{ level ({lev(p)} {lev(p)}); patchInfo {{ type {"patch" if (p.startswith("inlet") or p=="outlet") else "wall"}; }} }}' for p in PATCHES)
+d = open("system/snappyHexMeshDict").read()
+import re
+d = re.sub(r"refinementSurfaces\s*\{.*?\n  \}", "refinementSurfaces\n  {\n"+refs2+"\n  }", d, flags=re.S)
+open("system/snappyHexMeshDict","w").write(d)
+print(subprocess.run(["blockMesh"], capture_output=True, text=True).returncode, nx2, nz2, nx2*nx2*nz2)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-600:])
+# -- output
+0 31 35 33635
+0                     : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 11.52 s.
+End
+
+# -- cell 19 (0.6s, exit 0)
+r = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True)
+s = r.stdout
+print(s[s.find("Mesh stats"):s.find("Checking topology")])
+import re as _re
+print("\n".join(l for l in s.splitlines() if _re.search(r"(non-orthogonality|skewness|Total volume|Mesh OK|\*\*\*|inlet|outlet|cylwall|floor|top|ductwall)", l)))
+# -- output
+Mesh stats 
+    points:           70146
+    faces:            179262
+    internal faces:   159890
+    cells:            54739
+    faces per cell:   6.1958
+    boundary patches: 12
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     45045
+    prisms:        4564
+    wedges:        0
+    pyramids:      0
+    tet wedges:    24
+    tetrahedra:    4
+    polyhedra:     5102
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   84
+            5   232
+            6   1024
+            7   16
+            8   40
+            9   2446
+           12   1044
+           15   184
+           18   32
+
+
+Checking topology...
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                 cylwall     8204     8644  ok (non-closed singly connected)
+               ductwall0     1921     2011  ok (non-closed singly connected)
+               ductwall1     1921     2011  ok (non-closed singly connected)
+               ductwall2     1921     2011  ok (non-closed singly connected)
+               ductwall3     1921     2011  ok (non-closed singly connected)
+                   floor     1272     1313  ok (non-closed singly connected)
+                  inlet0      235      274  ok (non-closed singly connected)
+                  inlet1      235      274  ok (non-closed singly connected)
+                  inlet2      235      274  ok (non-closed singly connected)
+                  inlet3      235      274  ok (non-closed singly connected)
+                  outlet      148      177  ok (non-closed singly connected)
+                     top     1124     1192  ok (non-closed singly connected)
+Checking faceZone topology for multiply connected surfaces...
+    Min volume = 2.88203e-10. Max volume = 2.36307e-07.  Total volume = 0.00235865.  Cell volumes OK.
+    Mesh non-orthogonality Max: 47.6049 average: 10.0804
+ ***Max skewness = 4.05913, 36 highly skew faces detected which may impair the quality of the results
+
+# -- cell 20 (14.4s, exit 0)
+d = open("system/snappyHexMeshDict").read()
+d = d.replace("maxInternalSkewness 4;", "maxInternalSkewness 3.2;").replace("maxBoundarySkewness 20;", "maxBoundarySkewness 10;")
+d = d.replace("nSolveIter 50; nRelaxIter 5;", "nSolveIter 100; nRelaxIter 8;").replace("errorReduction 0.75;", "errorReduction 0.9;")
+open("system/snappyHexMeshDict","w").write(d)
+print(subprocess.run(["blockMesh"], capture_output=True, text=True).returncode)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True); print(r.returncode)
+c = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True).stdout
+print("\n".join(l for l in c.splitlines() if _re.search(r"(cells:|non-orthogonality|skewness|Total volume|Mesh OK|\*\*\*)", l)))
+# -- output
+0
+0
+    cells:            54739
+    Min volume = 2.877e-10. Max volume = 2.36311e-07.  Total volume = 0.00235865.  Cell volumes OK.
+    Mesh non-orthogonality Max: 47.6054 average: 10.0814
+ ***Max skewness = 4.05887, 38 highly skew faces detected which may impair the quality of the results
+
+# -- cell 21 (0.6s, exit 0)
+r = subprocess.run(["checkMesh","-constant","-writeSets","vtk"], capture_output=True, text=True)
+print([l for l in r.stdout.splitlines() if "skew" in l.lower()])
+import glob
+print(glob.glob("**/*skew*", recursive=True)[:10])
+# -- output
+['fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)', ' ***Max skewness = 4.05887, 38 highly skew faces detected which may impair the quality of the results', '  <<Writing 38 skew faces to set skewFaces']
+['constant/polyMesh/sets/skewFaces', 'postProcessing/constant/skewFaces', 'postProcessing/constant/skewFaces/skewFaces.vtp']
+
+# -- cell 22 (0.1s, exit 0)
+sk = pv.read("postProcessing/constant/skewFaces/skewFaces.vtp")
+c = sk.cell_centers().points
+import numpy as np
+print(sk.n_cells)
+for p in c:
+    s, o, z = duct_local(Vector(*p), min(range(4), key=lambda i: abs(duct_local(Vector(*p), i)[1])))
+    print(f"({p[0]*1e3:7.1f},{p[1]*1e3:7.1f},{p[2]*1e3:6.1f})  r={np.hypot(p[0],p[1])*1e3:6.1f}  s={s*1e3:6.1f} o={o*1e3:6.1f}")
+# -- output
+38
+(   55.7,  -22.7,  35.6)  r=  60.2  s=  29.2 o= -10.0
+(   55.7,  -22.7,  37.2)  r=  60.2  s=  29.2 o= -10.0
+(   55.7,  -22.7,  41.7)  r=  60.2  s=  29.2 o= -10.0
+(   55.7,  -22.7,  43.2)  r=  60.2  s=  29.2 o= -10.0
+(   55.7,  -22.7,  32.6)  r=  60.2  s=  29.2 o= -10.0
+(   55.7,  -22.7,  34.1)  r=  60.2  s=  29.2 o= -10.0
+(   55.7,  -22.7,  38.7)  r=  60.2  s=  29.2 o= -10.0
+(   55.7,  -22.7,  40.2)  r=  60.2  s=  29.2 o= -10.0
+(   55.7,  -22.7,  44.7)  r=  60.2  s=  29.2 o= -10.0
+(   55.7,  -22.7,  46.2)  r=  60.2  s=  29.2 o= -10.0
+(   22.7,   55.7,  35.6)  r=  60.2  s=  29.2 o= -10.0
+(   22.7,   55.7,  37.2)  r=  60.2  s=  29.2 o= -10.0
+(   22.7,   55.7,  41.7)  r=  60.2  s=  29.2 o= -10.0
+(   22.7,   55.7,  43.2)  r=  60.2  s=  29.2 o= -10.0
+(   22.7,   55.7,  34.1)  r=  60.2  s=  29.2 o= -10.0
+(   22.7,   55.7,  38.7)  r=  60.2  s=  29.2 o= -10.0
+(   22.7,   55.7,  40.2)  r=  60.2  s=  29.2 o= -10.0
+(   22.7,   55.7,  44.7)  r=  60.2  s=  29.2 o= -10.0
+(   22.7,   55.7,  46.2)  r=  60.2  s=  29.2 o= -10.0
+(  -55.7,   22.7,  37.2)  r=  60.2  s=  29.2 o= -10.0
+(  -55.7,   22.7,  43.2)  r=  60.2  s=  29.2 o= -10.0
+(  -55.7,   22.7,  35.6)  r=  60.2  s=  29.2 o= -10.0
+(  -55.7,   22.7,  41.7)  r=  60.2  s=  29.2 o= -10.0
+(  -55.7,   22.7,  32.6)  r=  60.2  s=  29.2 o= -10.0
+(  -55.7,   22.7,  38.7)  r=  60.2  s=  29.2 o= -10.0
+(  -55.7,   22.7,  44.7)  r=  60.2  s=  29.2 o= -10.0
+(  -55.7,   22.7,  34.1)  r=  60.2  s=  29.2 o= -10.0
+(  -55.7,   22.7,  40.2)  r=  60.2  s=  29.2 o= -10.0
+(  -55.7,   22.7,  46.2)  r=  60.2  s=  29.2 o= -10.0
+(  -22.7,  -55.7,  35.6)  r=  60.2  s=  29.2 o= -10.0
+(  -22.7,  -55.7,  37.2)  r=  60.2  s=  29.2 o= -10.0
+(  -22.7,  -55.7,  41.7)  r=  60.2  s=  29.2 o= -10.0
+(  -22.7,  -55.7,  43.2)  r=  60.2  s=  29.2 o= -10.0
+(  -22.7,  -55.7,  34.1)  r=  60.2  s=  29.2 o= -10.0
+(  -22.7,  -55.7,  38.7)  r=  60.2  s=  29.2 o= -10.0
+(  -22.7,  -55.7,  40.2)  r=  60.2  s=  29.2 o= -10.0
+(  -22.7,  -55.7,  44.7)  r=  60.2  s=  29.2 o= -10.0
+(  -22.7,  -55.7,  46.2)  r=  60.2  s=  29.2 o= -10.0
+
+# -- cell 23 (62.1s, exit 0)
+wedge_pts = []
+for i in range(4):
+    din, O, P0 = frames[i]
+    n = din.cross(Vector(0,0,1)).normalized()
+    wedge_pts.append(O + din*0.0292 - n*0.010)      # upstream edge of port opening
+HW = 0.012
+gb = "\n".join(f'  wedge{i} {{ type searchableBox; min ({p.X-HW} {p.Y-HW} 0.020); max ({p.X+HW} {p.Y+HW} 0.060); }}'
+               for i, p in enumerate(wedge_pts))
+rr = "\n".join(f'    wedge{i} {{ mode inside; levels ((1e15 3)); }}' for i in range(4))
+d = open("system/snappyHexMeshDict").read()
+d = d.replace("};\ncastellatedMeshControls", gb + "\n};\ncastellatedMeshControls")
+d = d.replace("refinementRegions {};", "refinementRegions\n  {\n" + rr + "\n  };")
+open("system/snappyHexMeshDict","w").write(d)
+print(subprocess.run(["blockMesh"], capture_output=True, text=True).returncode)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True); print(r.returncode)
+c = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True).stdout
+print("\n".join(l for l in c.splitlines() if _re.search(r"(cells:|non-orthogonality|skewness|Total volume|Mesh OK|\*\*\*)", l)))
+# -- output
+0
+0
+    cells:            259365
+    Min volume = 5.04814e-11. Max volume = 2.34268e-07.  Total volume = 0.00235873.  Cell volumes OK.
+    Mesh non-orthogonality Max: 48.1097 average: 6.98945
+    Max skewness = 2.70458 OK.
+Mesh OK.
+
+# -- cell 24 (0.6s, exit 0)
+rd2 = pv.OpenFOAMReader("case.foam"); msh = rd2.read(); bnd = msh["boundary"]
+print(f"{'patch':10s} {'mesh mm2':>10s} {'CAD mm2':>10s}")
+for nm in bnd.keys():
+    a_mesh = bnd[nm].compute_cell_sizes(length=False, volume=False)["Area"].sum()*1e6
+    a_cad = sum(f.area for f in patch_of[nm])*1e6
+    print(f"{nm:10s} {a_mesh:10.1f} {a_cad:10.1f}")
+cl = msh["internalMesh"].slice(normal="z", origin=(0,0,0.040))
+pl = pv.Plotter(off_screen=True, window_size=(800,760))
+pl.add_mesh(cl, color="lightsteelblue", show_edges=True, line_width=0.4)
+pl.view_xy(); pl.screenshot("slice_z40.png")
+display(Image("slice_z40.png"))
+# -- output
+patch        mesh mm2    CAD mm2
+cylwall       72522.8    72641.1
+ductwall0      4446.7     4445.4
+ductwall1      4446.7     4445.4
+ductwall2      4446.7     4445.4
+ductwall3      4446.7     4445.4
+floor         11260.4    11309.7
+inlet0          599.8      600.0
+inlet1          599.8      600.0
+inlet2          599.8      600.0
+inlet3          599.8      600.0
+outlet         1303.5     1256.6
+top            9956.7    10053.1
+
+[0m[33m2026-09-12 14:23:18.903 ( 176.931s) [    7DFC01D0C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 14:23:18.904 ( 176.932s) [    7DFC01D0C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

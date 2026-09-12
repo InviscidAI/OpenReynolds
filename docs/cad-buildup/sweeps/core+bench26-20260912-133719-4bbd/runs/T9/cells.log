@@ -1,0 +1,829 @@
+# -- cell 1 (2.2s, exit 0)
+import os, subprocess, math
+from build123d import *
+
+# --- all dimensions in METRES (OpenFOAM reads metres) ---
+R_RING_O, R_RING_I, H_RING = 0.030, 0.023, 0.010   # outer ring
+R_SP_O,   R_SP_I,  H_SP    = 0.022, 0.015, 0.008   # inner spinner
+
+ring    = Cylinder(R_RING_O, H_RING) - Cylinder(R_RING_I, H_RING)
+spinner = Cylinder(R_SP_O,  H_SP)   - Cylinder(R_SP_I,  H_SP)
+oil     = Cylinder(R_RING_I, H_RING) - spinner     # fluid = ring bore minus spinner
+
+print("radial clearance (mm):", 1000*(R_RING_I - R_SP_O))
+print("axial gap each end (mm):", 1000*(H_RING - H_SP)/2)
+print("oil volume (mm^3):", oil.volume*1e9, " solids:", len(oil.solids()))
+print("analytic  (mm^3):", 1e9*(math.pi*R_RING_I**2*H_RING - math.pi*(R_SP_O**2-R_SP_I**2)*H_SP))
+print("oil bbox (mm):", [round(1000*v,3) for v in oil.bounding_box().min], [round(1000*v,3) for v in oil.bounding_box().max])
+print("n faces:", len(oil.faces()))
+# -- output
+radial clearance (mm): 1.0000000000000009
+axial gap each end (mm): 1.0
+oil volume (mm^3): 10109.645159251955  solids: 1
+analytic  (mm^3): 10109.645159251953
+oil bbox (mm): [-23.0, -23.0, -5.0] [23.0, 23.0, 5.0]
+n faces: 7
+
+# -- cell 2 (0.1s, exit 0)
+import numpy as np
+def classify(f):
+    g = f.geom_type
+    c = f.center()
+    if str(g).upper().endswith("CYLINDER") or "CYLIN" in str(g).upper():
+        # radius from a sampled vertex
+        r = max(math.hypot(v.X, v.Y) for v in f.vertices())
+        return ("cyl", round(r,6))
+    else:
+        return ("plane", round(c.Z,6))
+
+for i,f in enumerate(oil.faces()):
+    print(i, f.geom_type, classify(f), "area_mm2=%.2f"%(f.area*1e6))
+# -- output
+0 GeomType.CYLINDER ('cyl', 0.023) area_mm2=1445.13
+1 GeomType.PLANE ('plane', 0.005) area_mm2=1661.90
+2 GeomType.PLANE ('plane', -0.005) area_mm2=1661.90
+3 GeomType.CYLINDER ('cyl', 0.022) area_mm2=1105.84
+4 GeomType.PLANE ('plane', 0.004) area_mm2=813.67
+5 GeomType.PLANE ('plane', -0.004) area_mm2=813.67
+6 GeomType.CYLINDER ('cyl', 0.015) area_mm2=753.98
+
+# -- cell 3 (9.9s, exit 0)
+os.makedirs("constant/triSurface", exist_ok=True)
+F = oil.faces()
+patches = {
+    "ringWall":      [F[0]],              # cylinder r=23 mm, ring bore
+    "spinnerWall":   [F[3], F[4], F[5], F[6]],  # r=22, z=+-4 annuli, r=15 bore
+    "ringEndTop":    [F[1]],              # plane z=+5 mm
+    "ringEndBottom": [F[2]],              # plane z=-5 mm
+}
+for name, faces in patches.items():
+    shp = faces[0] if len(faces)==1 else Compound(children=[f for f in faces])
+    export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=2e-6, angular_tolerance=0.05)
+    print(name, "area_mm2=%.2f"%(sum(f.area for f in faces)*1e6), os.path.getsize(f"constant/triSurface/{name}.stl"))
+print(sorted(os.listdir("constant/triSurface")))
+# -- output
+ringWall area_mm2=1445.13 106684
+spinnerWall area_mm2=3487.17 380684
+ringEndTop area_mm2=1661.90 53284
+ringEndBottom area_mm2=1661.90 53284
+['ringEndBottom.stl', 'ringEndTop.stl', 'ringWall.stl', 'spinnerWall.stl']
+
+# -- cell 4 (0.1s, exit 0)
+export_step(oil, "oil.step")
+import gmsh
+gmsh.initialize()
+gmsh.option.setNumber("General.Terminal", 1)
+gmsh.model.add("oil")
+gmsh.model.occ.importShapes("oil.step")
+gmsh.model.occ.synchronize()
+surfs = gmsh.model.getEntities(2)
+info = []
+for d,t in surfs:
+    a = gmsh.model.occ.getMass(d,t); com = gmsh.model.occ.getCenterOfMass(d,t)
+    info.append((t, a*1e6, [round(c*1000,3) for c in com]))
+    print(t, "area_mm2=%.2f"%(a*1e6), info[-1][2])
+print("volume mm^3", gmsh.model.occ.getMass(3,1)*1e9)
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+1 area_mm2=1445.13 [0.0, 0.0, -0.0]
+2 area_mm2=1661.90 [0.0, -0.0, 5.0]
+3 area_mm2=1661.90 [0.0, -0.0, -5.0]
+4 area_mm2=1105.84 [0.0, 0.0, 0.0]
+5 area_mm2=813.67 [0.0, -0.0, 4.0]
+6 area_mm2=813.67 [0.0, -0.0, -4.0]
+7 area_mm2=753.98 [0.0, 0.0, -0.0]
+volume mm^3 10109.645159251919
+
+# -- cell 5 (1.2s, exit 0)
+def tag_groups():
+    want = {1:"ringWall", 2:"ringEndTop", 3:"ringEndBottom"}
+    groups = {"ringWall":[], "ringEndTop":[], "ringEndBottom":[], "spinnerWall":[]}
+    for d,t in gmsh.model.getEntities(2):
+        a = gmsh.model.occ.getMass(d,t)*1e6; z = gmsh.model.occ.getCenterOfMass(d,t)[2]*1000
+        if abs(a-1445.13) < 1: groups["ringWall"].append(t)
+        elif abs(a-1661.90) < 1: groups["ringEndTop" if z>0 else "ringEndBottom"].append(t)
+        else: groups["spinnerWall"].append(t)
+    for n,(k,v) in enumerate(groups.items(), start=1):
+        gmsh.model.addPhysicalGroup(2, v, n); gmsh.model.setPhysicalName(2, n, k)
+    gmsh.model.addPhysicalGroup(3, [1], 100); gmsh.model.setPhysicalName(3, 100, "oil")
+    print({k:v for k,v in groups.items()})
+
+def mesh(h_bore, h_gap, fname):
+    gmsh.model.mesh.clear()
+    f = gmsh.model.mesh.field.add("Cylinder")
+    gmsh.model.mesh.field.setNumber(f,"Radius",0.0155)
+    gmsh.model.mesh.field.setNumber(f,"ZAxis",0.007)
+    gmsh.model.mesh.field.setNumber(f,"XAxis",0.0); gmsh.model.mesh.field.setNumber(f,"YAxis",0.0)
+    gmsh.model.mesh.field.setNumber(f,"VIn",h_bore); gmsh.model.mesh.field.setNumber(f,"VOut",h_gap)
+    gmsh.model.mesh.field.setAsBackgroundMesh(f)
+    gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary",0)
+    gmsh.option.setNumber("Mesh.MeshSizeFromPoints",0); gmsh.option.setNumber("Mesh.MeshSizeFromCurvature",0)
+    gmsh.model.mesh.generate(3)
+    gmsh.write(fname)
+    ts = gmsh.model.mesh.getElementsByType(4)[0]
+    print(fname, "tets:", len(ts))
+
+tag_groups()
+mesh(0.002, 0.0008, "oil_coarse.msh")
+# -- output
+{'ringWall': [1], 'ringEndTop': [2], 'ringEndBottom': [3], 'spinnerWall': [4, 5, 6, 7]}
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Circle)
+Info    : [ 20%] Meshing curve 2 (Line)
+Info    : [ 30%] Meshing curve 3 (Circle)
+Info    : [ 40%] Meshing curve 4 (Circle)
+Info    : [ 50%] Meshing curve 5 (Line)
+Info    : [ 60%] Meshing curve 6 (Circle)
+Info    : [ 70%] Meshing curve 7 (Circle)
+Info    : [ 80%] Meshing curve 8 (Circle)
+Info    : [ 90%] Meshing curve 9 (Line)
+Info    : Done meshing 1D (Wall 0.00080786s, CPU 0.000128s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Cylinder, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 2 (Plane, Frontal-Delaunay)
+Info    : [ 30%] Meshing surface 3 (Plane, Frontal-Delaunay)
+Info    : [ 50%] Meshing surface 4 (Cylinder, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 5 (Plane, Frontal-Delaunay)
+Info    : [ 80%] Meshing surface 6 (Plane, Frontal-Delaunay)
+Info    : [ 90%] Meshing surface 7 (Cylinder, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 0.436205s, CPU 0.434512s)
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 11744 nodes...
+Info    : Done tetrahedrizing 11752 nodes (Wall 0.147133s, CPU 0.138161s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    : Done reconstructing mesh (Wall 0.319938s, CPU 0.297086s)
+Info    : Found void region
+Info    : Found volume 1
+Info    : It. 0 - 0 nodes created - worst tet radius 2.69259 (nodes removed 0 0)
+Info    : 3D refinement terminated (12127 nodes total):
+Info    :  - 0 Delaunay cavities modified for star shapeness
+Info    :  - 0 nodes could not be inserted
+Info    :  - 39216 tetrahedra created in 0.0245962 sec. (1594392 tets/s)
+Info    : 0 node relocations
+Info    : Done meshing 3D (Wall 0.606969s, CPU 0.583879s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 1.0097e-05) with worst = 0.0131945 / average = 0.769968:
+Info    : 0.00 < quality < 0.10 :        65 elements
+Info    : 0.10 < quality < 0.20 :       409 elements
+Info    : 0.20 < quality < 0.30 :       365 elements
+Info    : 0.30 < quality < 0.40 :       486 elements
+Info    : 0.40 < quality < 0.50 :      1848 elements
+Info    : 0.50 < quality < 0.60 :      1145 elements
+Info    : 0.60 < quality < 0.70 :      3583 elements
+Info    : 0.70 < quality < 0.80 :      7823 elements
+Info    : 0.80 < quality < 0.90 :     21038 elements
+Info    : 0.90 < quality < 1.00 :      2454 elements
+Info    : 815 edge swaps, 1 node relocations (volume = 1.0097e-05): worst = 0.0629241 / average = 0.783364 (Wall 0.0111304s, CPU 0.011179s)
+Info    : 841 edge swaps, 1 node relocations (volume = 1.0097e-05): worst = 0.147256 / average = 0.783513 (Wall 0.0144627s, CPU 0.014544s)
+Info    : 848 edge swaps, 1 node relocations (volume = 1.0097e-05): worst = 0.147256 / average = 0.783464 (Wall 0.0174599s, CPU 0.01756s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :        26 elements
+Info    : 0.20 < quality < 0.30 :        15 elements
+Info    : 0.30 < quality < 0.40 :       491 elements
+Info    : 0.40 < quality < 0.50 :      1808 elements
+Info    : 0.50 < quality < 0.60 :      1008 elements
+Info    : 0.60 < quality < 0.70 :      3308 elements
+Info    : 0.70 < quality < 0.80 :      8467 elements
+Info    : 0.80 < quality < 0.90 :     20882 elements
+Info    : 0.90 < quality < 1.00 :      2455 elements
+Info    : Done optimizing mesh (Wall 0.0454686s, CPU 0.045622s)
+Info    : 12127 nodes 62788 elements
+Info    : Writing 'oil_coarse.msh'...
+Info    : Done writing 'oil_coarse.msh'
+oil_coarse.msh tets: 38467
+
+# -- cell 6 (0.5s, exit 0)
+for d in ["system","constant"]: os.makedirs(d, exist_ok=True)
+hdr = lambda cls,obj: f"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"
+open("system/controlDict","w").write(hdr("dictionary","controlDict")+
+  "application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\n"
+  "deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; timeFormat general; runTimeModifiable true;\n")
+open("system/fvSchemes","w").write(hdr("dictionary","fvSchemes")+"ddtSchemes{default Euler;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(hdr("dictionary","fvSolution")+"solvers{} \n")
+
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.write("oil.msh")
+p = subprocess.run(["gmshToFoam","oil.msh"], capture_output=True, text=True)
+print(p.returncode, p.stdout[-1500:], p.stderr[-500:])
+# -- output
+Info    : Writing 'oil.msh'...
+Info    : Done writing 'oil.msh'
+0 pplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:5
+    Surface 1	ringWall
+    Surface 2	ringEndTop
+    Surface 3	ringEndBottom
+    Surface 4	spinnerWall
+    Volume 100	oil
+
+Starting to read points at line 13
+Vertices to be read: 12127
+Vertices read:12127
+
+Starting to read cells at line 12143
+Cells to be read: 61951
+
+Mapping region 1 to Foam patch 0
+Mapping region 2 to Foam patch 1
+Mapping region 3 to Foam patch 2
+Mapping region 4 to Foam patch 3
+Mapping region 100 to Foam cellZone 0
+Cells:
+    total:38467
+    hex  :0
+    prism:0
+    pyr  :0
+    tet  :38467
+
+CellZones:
+Zone	Size
+    0	38467
+
+Patch 0 gets name ringWall
+Patch 1 gets name ringEndTop
+Patch 2 gets name ringEndBottom
+Patch 3 gets name spinnerWall
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 23484 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone oil and cellSet
+End
+
+# -- cell 7 (0.4s, exit 0)
+p = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(p.stdout[p.stdout.find("Mesh stats"):][:3000])
+# -- output
+Mesh stats 
+    points:           12127
+    faces:            88676
+    internal faces:   65192
+    cells:            38467
+    faces per cell:   4
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    38467
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    ringWall            5388     2875     ok (non-closed singly connected)  
+    ringEndTop          3857     2020     ok (non-closed singly connected)  
+    ringEndBottom       3857     2020     ok (non-closed singly connected)  
+    spinnerWall         10382    5191     ok (closed singly connected)      
+    ".*"                23484    11744    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    oil                 38467        12127        1.0097e-05   (-0.023 -0.0229994 -0.005) (0.023 0.0229999 0.005)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.023 -0.0229994 -0.005) (0.023 0.0229999 0.005)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (8.43295e-18 1.83595e-17 -5.87855e-16) OK.
+    Max cell openness = 2.94563e-16 OK.
+    Max aspect ratio = 15.8618 OK.
+    Minimum face area = 1.10042e-07. Maximum face area = 5.32476e-06.  Face area magnitudes OK.
+    Min volume = 1.64721e-11. Max volume = 3.73109e-09.  Total volume = 1.0097e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 64.0256 average: 25.0607
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.794121 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 8 (0.6s, exit 1)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pv.OFF_SCREEN = True
+import numpy as np
+mesh_pv = pv.read("oil.msh")
+# boundary triangles by physical group
+pl = pv.Plotter(shape=(1,2), window_size=(1400,650), off_screen=True)
+cols = {"ringWall":"red","ringEndTop":"green","ringEndBottom":"blue","spinnerWall":"orange"}
+blocks = mesh_pv if isinstance(mesh_pv, pv.MultiBlock) else pv.MultiBlock([mesh_pv])
+print(type(mesh_pv), blocks.keys() if hasattr(blocks,'keys') else None)
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mKeyError[39m                                  Traceback (most recent call last)
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/reader.py:129[39m, in [36mget_reader[39m[34m(filename, force_ext)[39m
+[32m    128[39m [38;5;28;01mtry[39;00m:
+[32m--> [39m[32m129[39m     Reader = [30;43mCLASS_READERS[39;49m[30;43m[[39;49m[30;43mext[39;49m[30;43m][39;49m
+[32m    130[39m [38;5;28;01mexcept[39;00m [38;5;167;01mKeyError[39;00m:
+
+[31mKeyError[39m: '.msh'
+
+During handling of the above exception, another exception occurred:
+
+[31mValueError[39m                                Traceback (most recent call last)
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:451[39m, in [36m_read_dispatch[39m[34m(filename, force_ext, file_format, progress_bar, validate)[39m
+[32m    450[39m [38;5;28;01mtry[39;00m:
+[32m--> [39m[32m451[39m     reader = [30;43mpv[39;49m[30;43m.[39;49m[30;43mget_reader[39;49m[30;43m([39;49m[30;43mfilename[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mforce_ext[39;49m[30;43m)[39;49m
+[32m    452[39m [38;5;28;01mexcept[39;00m [38;5;167;01mValueError[39;00m:
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/reader.py:143[39m, in [36mget_reader[39m[34m(filename, force_ext)[39m
+[32m    142[39m         msg = [33mf[39m[33m'[39m[33m`pyvista.get_reader` does not support a file with the [39m[38;5;132;01m{[39;00mext[38;5;132;01m}[39;00m[33m extension[39m[33m'[39m
+[32m--> [39m[32m143[39m         [38;5;28;01mraise[39;00m [38;5;167;01
+... 1937 characters cut ...
+ttom"[39m:[33m"blue"[39m,[33m"spinnerWall"[39m:[33m"orange"[39m}
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243[39m, in [36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f[39m[34m(*args, **kwargs)[39m
+[32m    239[39m             warn_external(msg, PyVistaDeprecationWarning)
+[32m    241[39m         warn_positional_args()
+[32m--> [39m[32m243[39m [38;5;28;01mreturn[39;00m [30;43mf[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43margs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:347[39m, in [36mread[39m[34m(filename, force_ext, file_format, progress_bar, cls, validate)[39m
+[32m    230[39m [38;5;129m@_deprecate_positional_args[39m(allowed=[[33m'[39m[33mfilename[39m[33m'[39m])
+[32m    231[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mread[39m(  [38;5;66;03m# noqa: PLR0917[39;00m
+[32m    232[39m     filename: PathStrSeq,
+[32m   (...)[39m[32m    238[39m     validate: [38;5;28mbool[39m | [38;5;28;01mNone[39;00m = [38;5;28;01mNone[39;00m,
+[32m    239[39m ) -> DataObject:
+[32m    240[39m [38;5;250m    [39m[33;03m"""Read any file type supported by ``vtk`` or ``meshio``.[39;00m
+[32m    241[39m 
+[32m    242[39m [33;03m    Automatically determines the correct reader to use then wraps the[39;00m
+[32m   (...)[39m[32m    345[39m 
+[32m    346[39m [33;03m    """[39;00m
+[32m--> [39m[32m347[39m     result = [30;43m_read_dispatch[39;49m[30;43m([39;49m
+[32m    348[39m [30;43m        [39;49m[30;43mfilename[39;49m[30;43m,[39;49m
+[32m    349[39m [30;43m        [39;49m[30;43mforce_ext[39;49m[30;43m=[39;49m[30;43mforce_ext[39;49m[30;43m,[39;49m
+[32m    350[39m [30;43m        [39;49m[30;43mfile_format[39;49m[30;43m=[39;49m[30;43mfile_format[39;49m[30;43m,[39;49m
+[32m    351[39m [30;43m        [39;49m[30;43mprogress_bar[39;49m[30;43m=[39;49m[30;43mprogress_bar[39;49m[30;43m,[39;49m
+[32m    352[39m [30;43m        [39;49m[30;43mvalidate[39;49m[30;43m=[39;49m[30;43mvalidate[39;49m[30;43m,[39;49m
+[32m    353[39m [30;43m    [39;49m[30;43m)[39;49m
+[32m    354[39m     [38;5;28;01mif[39;00m [38;5;28mcls[39m [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m [38;5;129;01mand[39;00m [38;5;129;01mnot[39;00m [38;5;28misinstance[39m(result, [38;5;28mcls[39m):
+[32m    355[39m         msg = (
+[32m    356[39m             [33mf[39m[33m'[39m[33mExpected an instance of [39m[38;5;132;01m{[39;00m[38;5;28mcls[39m.[34m__name__[39m[38;5;132;01m}[39;00m[33m when reading [39m[38;5;132;01m{[39;00mfilename[38;5;132;01m!r}[39;00m[33m, [39m[33m'[39m
+[32m    357[39m             [33mf[39m[33m'[39m[33mbut got [39m[38;5;132;01m{[39;00m[38;5;28mtype[39m(result).[34m__name__[39m[38;5;132;01m}[39;00m[33m.[39m[33m'[39m
+[32m    358[39m         )
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:460[39m, in [36m_read_dispatch[39m[34m(filename, force_ext, file_format, progress_bar, validate)[39m
+[32m    458[39m     [38;5;28;01mfrom[39;00m[38;5;250m [39m[34;01mmeshio[39;00m[34;01m.[39;00m[34;01m_exceptions[39;00m[38;5;250m [39m[38;5;28;01mimport[39;00m ReadError  [38;5;66;03m# noqa: PLC0415[39;00m
+[32m    459[39m [38;5;28;01mexcept[39;00m [38;5;167;01mImportError[39;00m:
+[32m--> [39m[32m460[39m     [38;5;28;01mraise[39;00m [38;5;167;01mOSError[39;00m(msg)
+[32m    461[39m [38;5;28;01mtry[39;00m:
+[32m    462[39m     [38;5;28;01mreturn[39;00m read_meshio(filename)
+
+[31mOSError[39m: This file was not able to be automatically read by pyvista.
+  '/home/qiuzi/.openreynolds-buildup/work/T9-20260912-133720-908b/t9/oil.msh'
+
+# -- cell 9 (0.1s, exit 0)
+import pyvista as pv
+pv.OFF_SCREEN = True
+open("case.foam","w").close()
+r = pv.OpenFOAMReader("case.foam"); r.enable_all_patch_arrays()
+blocks = r.read()
+names = list(blocks["boundary"].keys()) if "boundary" in blocks.keys() else blocks.keys()
+print(blocks.keys(), names)
+# -- output
+['internalMesh', 'boundary'] ['ringWall', 'ringEndTop', 'ringEndBottom', 'spinnerWall']
+
+# -- cell 10 (0.6s, exit 0)
+bnd = blocks["boundary"]
+pl = pv.Plotter(shape=(1,2), window_size=(1500,700), off_screen=True)
+cols = {"ringWall":"red","ringEndTop":"green","ringEndBottom":"blue","spinnerWall":"orange"}
+pl.subplot(0,0)
+for n,c in cols.items(): pl.add_mesh(bnd[n].extract_surface().clip("y"), color=c, show_edges=True, line_width=0.3, label=n)
+pl.add_legend(); pl.camera_position="iso"
+pl.subplot(0,1)
+vol = blocks["internalMesh"].clip("y")
+pl.add_mesh(vol, color="lightsteelblue", show_edges=True, line_width=0.3)
+pl.camera_position = [(0.0,-0.09,0.03),(0,0,0),(0,0,1)]
+pl.screenshot("look_coarse.png")
+print("ok")
+# -- output
+ok
+
+[0m[33m2026-09-12 13:40:09.189 (   9.544s) [    703CFF7B8780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 13:40:09.189 (   9.545s) [    703CFF7B8780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 13:40:09.202 (   9.557s) [    703CFF7B8780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_575723/2607321261.py:5: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  for n,c in cols.items(): pl.add_mesh(bnd[n].extract_surface().clip("y"), color=c, show_edges=True, line_width=0.3, label=n)
+
+# -- cell 11 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("look_coarse.png"))
+# -- output
+
+
+# -- cell 12 (11.4s, exit 0)
+import time
+t0=time.time()
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+mesh(0.0012, 0.00035, "oil.msh")
+print("wall time", time.time()-t0)
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Circle)
+Info    : [ 20%] Meshing curve 2 (Line)
+Info    : [ 30%] Meshing curve 3 (Circle)
+Info    : [ 40%] Meshing curve 4 (Circle)
+Info    : [ 50%] Meshing curve 5 (Line)
+Info    : [ 60%] Meshing curve 6 (Circle)
+Info    : [ 70%] Meshing curve 7 (Circle)
+Info    : [ 80%] Meshing curve 8 (Circle)
+Info    : [ 90%] Meshing curve 9 (Line)
+Info    : Done meshing 1D (Wall 0.00369303s, CPU 0.004114s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Cylinder, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 2 (Plane, Frontal-Delaunay)
+Info    : [ 30%] Meshing surface 3 (Plane, Frontal-Delaunay)
+Info    : [ 50%] Meshing surface 4 (Cylinder, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 5 (Plane, Frontal-Delaunay)
+Info    : [ 80%] Meshing surface 6 (Plane, Frontal-Delaunay)
+Info    : [ 90%] Meshing surface 7 (Cylinder, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 2.05715s, CPU 2.05936s)
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 58048 nodes...
+Info    : Done tetrahedrizing 58056 nodes (Wall 0.89787s, CPU 0.855288s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    : Done reconstructing mesh (Wall 2.55687s, CPU 2.44305s)
+Info    : Found void region
+Info    : Found volume 1
+Info    : It. 0 - 0 nodes created - worst tet radius 4.22379 (nodes removed 0 0)
+Info    : It. 500 - 500 nodes created - worst tet radius 1.68641 (nodes removed 0 0)
+Info    : It. 1000 - 1000 nodes created - worst tet radius 1.54252 (nodes removed 0 0)
+Info    : It. 1500 - 1500 nodes created - worst tet radius 1.53541 (nodes removed 0 0)
+Info    : It. 2000 - 2000 nodes created - worst tet radius 1.53325 (nodes removed 0 0)
+Info    : It. 2500 - 2500 nodes created - worst tet radius 1.53164 (nodes removed 0 0)
+Info    : It. 3000 - 3000 nodes created - worst tet radius 1.
+... 3458 characters cut ...
+ed 0 0)
+Info    : It. 23000 - 23000 nodes created - worst tet radius 1.05972 (nodes removed 0 0)
+Info    : It. 23500 - 23500 nodes created - worst tet radius 1.05195 (nodes removed 0 0)
+Info    : It. 24000 - 24000 nodes created - worst tet radius 1.04565 (nodes removed 0 0)
+Info    : It. 24500 - 24500 nodes created - worst tet radius 1.0408 (nodes removed 0 0)
+Info    : It. 25000 - 25000 nodes created - worst tet radius 1.03653 (nodes removed 0 0)
+Info    : It. 25500 - 25500 nodes created - worst tet radius 1.03301 (nodes removed 0 0)
+Info    : It. 26000 - 26000 nodes created - worst tet radius 1.03028 (nodes removed 0 0)
+Info    : It. 26500 - 26500 nodes created - worst tet radius 1.02623 (nodes removed 0 0)
+Info    : It. 27000 - 27000 nodes created - worst tet radius 1.02303 (nodes removed 0 0)
+Info    : It. 27500 - 27500 nodes created - worst tet radius 1.02005 (nodes removed 0 0)
+Info    : It. 28000 - 28000 nodes created - worst tet radius 1.01649 (nodes removed 0 0)
+Info    : It. 28500 - 28500 nodes created - worst tet radius 1.01481 (nodes removed 0 0)
+Info    : It. 29000 - 29000 nodes created - worst tet radius 1.01342 (nodes removed 0 0)
+Info    : It. 29500 - 29500 nodes created - worst tet radius 1.01229 (nodes removed 0 0)
+Info    : It. 30000 - 30000 nodes created - worst tet radius 1.01088 (nodes removed 0 0)
+Info    : It. 30500 - 30500 nodes created - worst tet radius 1.00928 (nodes removed 0 0)
+Info    : It. 31000 - 31000 nodes created - worst tet radius 1.00807 (nodes removed 0 0)
+Info    : It. 31500 - 31500 nodes created - worst tet radius 1.00632 (nodes removed 0 0)
+Info    : It. 32000 - 32000 nodes created - worst tet radius 1.00357 (nodes removed 0 0)
+Info    : It. 32500 - 32500 nodes created - worst tet radius 1.0011 (nodes removed 0 0)
+Info    : 3D refinement terminated (90748 nodes total):
+Info    :  - 0 Delaunay cavities modified for star shapeness
+Info    :  - 0 nodes could not be inserted
+Info    :  - 388099 tetrahedra created in 2.34993 sec. (165153 tets/s)
+Info    : 8 node relocations
+Info    : Done meshing 3D (Wall 7.40429s, CPU 7.296s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 1.0105e-05) with worst = 0.000628324 / average = 0.770584:
+Info    : 0.00 < quality < 0.10 :      1098 elements
+Info    : 0.10 < quality < 0.20 :      2245 elements
+Info    : 0.20 < quality < 0.30 :      2828 elements
+Info    : 0.30 < quality < 0.40 :      5022 elements
+Info    : 0.40 < quality < 0.50 :     10529 elements
+Info    : 0.50 < quality < 0.60 :     17028 elements
+Info    : 0.60 < quality < 0.70 :     43272 elements
+Info    : 0.70 < quality < 0.80 :    118057 elements
+Info    : 0.80 < quality < 0.90 :    134338 elements
+Info    : 0.90 < quality < 1.00 :     53682 elements
+Info    : 6068 edge swaps, 250 node relocations (volume = 1.0105e-05): worst = 0.100022 / average = 0.780423 (Wall 0.225906s, CPU 0.226269s)
+Info    : 6141 edge swaps, 256 node relocations (volume = 1.0105e-05): worst = 0.186595 / average = 0.780542 (Wall 0.297392s, CPU 0.298193s)
+Info    : 6145 edge swaps, 257 node relocations (volume = 1.0105e-05): worst = 0.221186 / average = 0.780548 (Wall 0.365497s, CPU 0.366499s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :         6 elements
+Info    : 0.30 < quality < 0.40 :      4945 elements
+Info    : 0.40 < quality < 0.50 :     10148 elements
+Info    : 0.50 < quality < 0.60 :     17140 elements
+Info    : 0.60 < quality < 0.70 :     44034 elements
+Info    : 0.70 < quality < 0.80 :    116930 elements
+Info    : 0.80 < quality < 0.90 :    135604 elements
+Info    : 0.90 < quality < 1.00 :     53828 elements
+Info    : Done optimizing mesh (Wall 0.923347s, CPU 0.924787s)
+Info    : 90748 nodes 500566 elements
+Info    : Writing 'oil.msh'...
+Info    : Done writing 'oil.msh'
+oil.msh tets: 382635
+wall time 11.354832649230957
+
+# -- cell 13 (4.2s, exit 0)
+import shutil
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+p = subprocess.run(["gmshToFoam","oil.msh"], capture_output=True, text=True)
+print("gmshToFoam rc", p.returncode, p.stdout[p.stdout.find("Patch 0"):][:300])
+c = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(c.stdout[c.stdout.find("Checking patch topology"):][:2600])
+# -- output
+gmshToFoam rc 0 Patch 0 gets name ringWall
+Patch 1 gets name ringEndTop
+Patch 2 gets name ringEndBottom
+Patch 3 gets name spinnerWall
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const 
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    ringWall            27276    14051    ok (non-closed singly connected)  
+    ringEndTop          18581    9498     ok (non-closed singly connected)  
+    ringEndBottom       18581    9498     ok (non-closed singly connected)  
+    spinnerWall         51654    25827    ok (closed singly connected)      
+    ".*"                116092   58048    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    oil                 382635       90748        1.0105e-05   (-0.023 -0.0229999 -0.005) (0.023 0.0229999 0.005)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.023 -0.0229999 -0.005) (0.023 0.0229999 0.005)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-9.75165e-18 2.0348e-18 -2.75955e-16) OK.
+    Max cell openness = 3.36439e-16 OK.
+    Max aspect ratio = 8.77515 OK.
+    Minimum face area = 2.02001e-08. Maximum face area = 1.93362e-06.  Face area magnitudes OK.
+    Min volume = 1.88731e-12. Max volume = 9.29892e-10.  Total volume = 1.0105e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 67.868 average: 22.9984
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.843498 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 14 (0.4s, exit 0)
+r2 = pv.OpenFOAMReader("case.foam"); r2.enable_all_patch_arrays()
+b2 = r2.read(); im = b2["internalMesh"]
+cc = im.cell_centers().points; vol = im.compute_cell_sizes(volume=True)["Volume"]
+rr = np.hypot(cc[:,0],cc[:,1]); zz = cc[:,2]
+sel_rad = (rr>0.022)&(rr<0.023)&(abs(zz)<0.004)
+sel_ax  = (rr<0.022)&(abs(zz)>0.004)
+for name, sel, gap in [("radial clearance",sel_rad,0.001),("end gaps",sel_ax,0.001)]:
+    N=sel.sum(); V=vol[sel].sum()
+    h=(8.5*V/N)**(1/3)
+    print(f"{name}: cells={N}, V={V*1e9:.0f} mm^3, mean tet edge={h*1000:.3f} mm -> ~{gap/h:.1f} cells across the 1.0 mm gap")
+print("total mesh volume mm^3 %.2f vs exact %.2f"%(vol.sum()*1e9, oil.volume*1e9))
+# -- output
+radial clearance: cells=149655, V=1131 mm^3, mean tet edge=0.401 mm -> ~2.5 cells across the 1.0 mm gap
+end gaps: cells=184176, V=3102 mm^3, mean tet edge=0.523 mm -> ~1.9 cells across the 1.0 mm gap
+total mesh volume mm^3 10104.99 vs exact 10109.65
+
+# -- cell 15 (30.7s, exit 0)
+t0=time.time()
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+mesh(0.0010, 0.00025, "oil.msh")
+print("wall time", time.time()-t0)
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Circle)
+Info    : [ 20%] Meshing curve 2 (Line)
+Info    : [ 30%] Meshing curve 3 (Circle)
+Info    : [ 40%] Meshing curve 4 (Circle)
+Info    : [ 50%] Meshing curve 5 (Line)
+Info    : [ 60%] Meshing curve 6 (Circle)
+Info    : [ 70%] Meshing curve 7 (Circle)
+Info    : [ 80%] Meshing curve 8 (Circle)
+Info    : [ 90%] Meshing curve 9 (Line)
+Info    : Done meshing 1D (Wall 0.0855481s, CPU 0.085993s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Cylinder, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 2 (Plane, Frontal-Delaunay)
+Info    : [ 30%] Meshing surface 3 (Plane, Frontal-Delaunay)
+Info    : [ 50%] Meshing surface 4 (Cylinder, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 5 (Plane, Frontal-Delaunay)
+Info    : [ 80%] Meshing surface 6 (Plane, Frontal-Delaunay)
+Info    : [ 90%] Meshing surface 7 (Cylinder, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 4.46768s, CPU 4.47105s)
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 112621 nodes...
+Info    : Done tetrahedrizing 112629 nodes (Wall 1.89955s, CPU 1.80743s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    : Done reconstructing mesh (Wall 6.62992s, CPU 6.41252s)
+Info    : Found void region
+Info    : Found volume 1
+Info    : It. 0 - 0 nodes created - worst tet radius 5.03324 (nodes removed 0 0)
+Info    : It. 500 - 500 nodes created - worst tet radius 2.26194 (nodes removed 0 0)
+Info    : It. 1000 - 1000 nodes created - worst tet radius 2.08289 (nodes removed 0 0)
+Info    : It. 1500 - 1500 nodes created - worst tet radius 2.08024 (nodes removed 0 0)
+Info    : It. 2000 - 2000 nodes created - worst tet radius 2.07813 (nodes removed 0 0)
+Info    : It. 2500 - 2500 nodes created - worst tet radius 2.07697 (nodes removed 0 0)
+Info    : It. 3000 - 3000 nodes created - worst tet radius 2.
+... 13540 characters cut ...
+ated - worst tet radius 1.04429 (nodes removed 0 0)
+Info    : It. 80000 - 80000 nodes created - worst tet radius 1.04165 (nodes removed 0 0)
+Info    : It. 80500 - 80500 nodes created - worst tet radius 1.03945 (nodes removed 0 0)
+Info    : It. 81000 - 81000 nodes created - worst tet radius 1.03732 (nodes removed 0 0)
+Info    : It. 81500 - 81500 nodes created - worst tet radius 1.03477 (nodes removed 0 0)
+Info    : It. 82000 - 82000 nodes created - worst tet radius 1.03251 (nodes removed 0 0)
+Info    : It. 82500 - 82500 nodes created - worst tet radius 1.02999 (nodes removed 0 0)
+Info    : It. 83000 - 83000 nodes created - worst tet radius 1.02757 (nodes removed 0 0)
+Info    : It. 83500 - 83500 nodes created - worst tet radius 1.02523 (nodes removed 0 0)
+Info    : It. 84000 - 84000 nodes created - worst tet radius 1.02294 (nodes removed 0 0)
+Info    : It. 84500 - 84500 nodes created - worst tet radius 1.02084 (nodes removed 0 0)
+Info    : It. 85000 - 85000 nodes created - worst tet radius 1.01876 (nodes removed 0 0)
+Info    : It. 85500 - 85500 nodes created - worst tet radius 1.0169 (nodes removed 0 0)
+Info    : It. 86000 - 86000 nodes created - worst tet radius 1.01479 (nodes removed 0 0)
+Info    : It. 86500 - 86500 nodes created - worst tet radius 1.01285 (nodes removed 0 0)
+Info    : It. 87000 - 87000 nodes created - worst tet radius 1.011 (nodes removed 0 0)
+Info    : It. 87500 - 87500 nodes created - worst tet radius 1.00936 (nodes removed 0 0)
+Info    : It. 88000 - 88000 nodes created - worst tet radius 1.00753 (nodes removed 0 0)
+Info    : It. 88500 - 88500 nodes created - worst tet radius 1.00571 (nodes removed 0 0)
+Info    : It. 89000 - 89000 nodes created - worst tet radius 1.00397 (nodes removed 0 0)
+Info    : It. 89500 - 89500 nodes created - worst tet radius 1.00241 (nodes removed 0 0)
+Info    : It. 90000 - 90000 nodes created - worst tet radius 1.00107 (nodes removed 0 0)
+Info    : 3D refinement terminated (203019 nodes total):
+Info    :  - 8 Delaunay cavities modified for star shapeness
+Info    :  - 0 nodes could not be inserted
+Info    :  - 922955 tetrahedra created in 7.95869 sec. (115968 tets/s)
+Info    : 95 node relocations
+Info    : Done meshing 3D (Wall 20.8604s, CPU 20.6633s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 1.01064e-05) with worst = 2.31198e-05 / average = 0.780873:
+Info    : 0.00 < quality < 0.10 :      1822 elements
+Info    : 0.10 < quality < 0.20 :      4896 elements
+Info    : 0.20 < quality < 0.30 :      9037 elements
+Info    : 0.30 < quality < 0.40 :     16473 elements
+Info    : 0.40 < quality < 0.50 :     23474 elements
+Info    : 0.50 < quality < 0.60 :     42554 elements
+Info    : 0.60 < quality < 0.70 :     85096 elements
+Info    : 0.70 < quality < 0.80 :    222637 elements
+Info    : 0.80 < quality < 0.90 :    353377 elements
+Info    : 0.90 < quality < 1.00 :    163589 elements
+Info    : 15622 edge swaps, 328 node relocations (volume = 1.01064e-05): worst = 0.101359 / average = 0.791827 (Wall 0.638357s, CPU 0.639082s)
+Info    : 15740 edge swaps, 332 node relocations (volume = 1.01064e-05): worst = 0.247141 / average = 0.791885 (Wall 0.847915s, CPU 0.849227s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :        14 elements
+Info    : 0.30 < quality < 0.40 :     16513 elements
+Info    : 0.40 < quality < 0.50 :     22393 elements
+Info    : 0.50 < quality < 0.60 :     40754 elements
+Info    : 0.60 < quality < 0.70 :     85405 elements
+Info    : 0.70 < quality < 0.80 :    223276 elements
+Info    : 0.80 < quality < 0.90 :    357004 elements
+Info    : 0.90 < quality < 1.00 :    163231 elements
+Info    : Done optimizing mesh (Wall 2.42885s, CPU 2.43026s)
+Info    : 203019 nodes 1136368 elements
+Info    : Writing 'oil.msh'...
+Info    : Done writing 'oil.msh'
+oil.msh tets: 908590
+wall time 30.651039123535156
+
+# -- cell 16 (10.3s, exit 0)
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+p = subprocess.run(["gmshToFoam","oil.msh"], capture_output=True, text=True); print("rc",p.returncode)
+c = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(c.stdout[c.stdout.find("Checking patch topology"):][:2500])
+# -- output
+rc 0
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    ringWall            53730    27444    ok (non-closed singly connected)  
+    ringEndTop          35683    18132    ok (non-closed singly connected)  
+    ringEndBottom       35683    18132    ok (non-closed singly connected)  
+    spinnerWall         100142   50071    ok (closed singly connected)      
+    ".*"                225238   112621   ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    oil                 908590       203019       1.01064e-05  (-0.023 -0.023 -0.005) (0.023 0.0229999 0.005)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.023 -0.023 -0.005) (0.023 0.0229999 0.005)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (2.86557e-18 -4.45002e-18 1.03886e-14) OK.
+    Max cell openness = 3.22781e-16 OK.
+    Max aspect ratio = 8.8352 OK.
+    Minimum face area = 1.17403e-08. Maximum face area = 1.37234e-06.  Face area magnitudes OK.
+    Min volume = 7.32849e-13. Max volume = 5.53132e-10.  Total volume = 1.01064e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 68.9278 average: 21.1594
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.04298 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 17 (1.1s, exit 0)
+r3 = pv.OpenFOAMReader("case.foam"); r3.enable_all_patch_arrays(); b3 = r3.read()
+im3 = b3["internalMesh"]; cc = im3.cell_centers().points
+vol3 = im3.compute_cell_sizes(volume=True)["Volume"]
+rr = np.hypot(cc[:,0],cc[:,1]); zz = cc[:,2]
+for name, sel in [("radial clearance",(rr>0.022)&(rr<0.023)&(abs(zz)<0.004)),
+                  ("end gaps",(rr<0.022)&(abs(zz)>0.004)),
+                  ("bore",(rr<0.015)&(abs(zz)<0.004))]:
+    N=sel.sum(); V=vol3[sel].sum(); h=(8.5*V/N)**(1/3)
+    print(f"{name}: cells={N:7d} V={V*1e9:8.1f} mm^3  h={h*1000:.3f} mm  ({0.001/h:.1f} across 1 mm)")
+sl = im3.slice(normal="y")
+pl = pv.Plotter(window_size=(1400,700), off_screen=True)
+pl.add_mesh(sl, color="lightsteelblue", show_edges=True, line_width=0.4)
+pl.camera_position=[(0,-0.05,0),(0.0195,0,0.0),(0,0,1)]; pl.camera.parallel_projection=True; pl.camera.parallel_scale=0.006
+pl.screenshot("gap_zoom.png"); display(Image("gap_zoom.png"))
+# -- output
+radial clearance: cells= 337339 V=  1130.5 mm^3  h=0.305 mm  (3.3 across 1 mm)
+end gaps: cells= 460174 V=  3226.1 mm^3  h=0.391 mm  (2.6 across 1 mm)
+bore: cells=  24642 V=  5466.2 mm^3  h=1.235 mm  (0.8 across 1 mm)
+
+[0m[33m2026-09-12 13:41:55.379 ( 115.734s) [    703CFF7B8780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 13:41:55.379 ( 115.734s) [    703CFF7B8780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 18 (0.1s, exit 0)
+bnd3 = b3["boundary"]
+exact = {"ringWall":2*math.pi*0.023*0.010, "ringEndTop":math.pi*0.023**2, "ringEndBottom":math.pi*0.023**2,
+         "spinnerWall":2*math.pi*0.022*0.008+2*math.pi*(0.022**2-0.015**2)+2*math.pi*0.015*0.008}
+for n,e in exact.items():
+    a = bnd3[n].compute_cell_sizes(area=True)["Area"].sum()
+    s = pv.read(f"constant/triSurface/{n}.stl")
+    print(f"{n:14s} mesh {a*1e6:8.2f} mm^2  exact {e*1e6:8.2f}  STL {s.area*1e6:8.2f} mm^2  STL bbox(m) "
+          f"{[round(v,4) for v in s.bounds]}")
+# -- output
+ringWall       mesh  1445.13 mm^2  exact  1445.13  STL  1445.13 mm^2  STL bbox(m) [-0.023, 0.023, -0.023, 0.023, -0.005, 0.005]
+ringEndTop     mesh  1661.87 mm^2  exact  1661.90  STL  1661.89 mm^2  STL bbox(m) [-0.023, 0.023, -0.023, 0.023, 0.005, 0.005]
+ringEndBottom  mesh  1661.87 mm^2  exact  1661.90  STL  1661.89 mm^2  STL bbox(m) [-0.023, 0.023, -0.023, 0.023, -0.005, -0.005]
+spinnerWall    mesh  3488.02 mm^2  exact  3487.17  STL  3487.16 mm^2  STL bbox(m) [-0.022, 0.022, -0.022, 0.022, -0.004, 0.004]
+

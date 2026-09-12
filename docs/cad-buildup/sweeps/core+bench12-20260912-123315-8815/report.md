@@ -7,6 +7,24 @@ Added after the fact, because the first version of §3 and of
 own rule is *"do not read a single case's result as a result; with one run per case, a flip is
 sampling, the corpus is the unit"*, and the conclusion broke it.
 
+**Second amendment, after `core+bench26-20260912-133719-4bbd`.** Two of the findings listed
+below as "not sampling" were wrong, and the successor sweep's §3 sets both out:
+
+- `self_intersection_probe_returns_measured_on_zero_triangles` is **withdrawn.** Its
+  `triangles` field counts triangles *involved in a crossing*, not the surface total; it was
+  compared against `union_closure`'s same-named field, which is the total. The probe is sound.
+- `scale_probe_skips_cases_that_state_dimensions` keeps its conclusion and loses its
+  mechanism. The probe is not misreading the brief — `cad_sweep.py:123` passes `--spec` only
+  if `spec.json` already exists, nothing ever writes it, so `spec` is `{}` and `extent_m` is
+  absent. Superseded by `scale_probe_never_receives_a_spec`.
+
+And §5's closing pattern — "areas and volumes measured well, a length at a station never" —
+**does not survive breadth.** Nine cases in the successor sweep ask for a length at a station
+and the desk measured them, including a 0.05 mm clearance taken as the nearest approach
+between two point clouds and a swirl angle taken by dot product with its sense. The pattern
+was four hard cases at one run each, and it generalised to the desk when it described the
+desk under difficulty.
+
 **Not sampling — these stand on a mechanism, not a count:**
 
 - `checkmesh_ok_ignores_starred_region_count`. This is `cad_buildup.py:274` reading
