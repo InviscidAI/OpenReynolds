@@ -182,7 +182,7 @@ def drive(label: str, names: list[str], repeat: int, parallel: int, work: str,
                   f"checkMesh {'ok' if outcome.get('checkmesh_ok') else 'not ok'}, "
                   f"${outcome.get('usd', 0):.2f}"
                   + (" CONTAMINATED" if outcome.get("contaminated") else "")
-                  + (f" fired={outcome['fired']}" if outcome.get("fired") else ""))
+                  + (f" measured={outcome['measured']}" if outcome.get("measured") else ""))
 
     manifest["ended_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     _save(directory, manifest)
@@ -288,15 +288,20 @@ def table(name: str, against: str = "") -> int:
     clean = {key: data for key, data in here.items() if not data.get("contaminated")}
 
     if not against:
-        print("\n| case | ended | cells | first mesh | checkMesh | $ | probes fired |")
+        # The last column counts instruments that returned a number, not findings. A
+        # probe measuring something is not the probe saying anything is wrong -- and a
+        # column of ids reads as a column of problems, which is how 79% `skipped` came
+        # to look like coverage in the first baseline.
+        print("\n| case | ended | cells | first mesh | checkMesh | $ | probes read |")
         print("|---|---|---|---|---|---|---|")
         for key, data in clean.items():
-            fired = [row["id"] for row in data.get("probes", [])
-                     if row.get("state") == "fired"]
+            read = data.get("probes", [])
+            got = [row["id"] for row in read if row.get("state") == "measured"]
             print(f"| {key} | {data.get('stopped', '?')} | {data.get('n_steps', 0)} | "
                   f"{data.get('first_mesh_step') or '-'} | "
                   f"{'ok' if data.get('checkmesh_ok') else 'no'} | "
-                  f"{data.get('usd', 0):.2f} | {', '.join(fired) or '-'} |")
+                  f"{data.get('usd', 0):.2f} | "
+                  f"{len(got)}/{len(read) or len(probe_ids())} |")
         _totals(clean)
         return 0
 
@@ -352,6 +357,11 @@ def _totals(now: dict[str, dict[str, Any]], before: dict[str, dict[str, Any]] | 
     print(f"\ntotal: {summarise(now)}")
     if before:
         print(f"before: {summarise(before)}")
+
+
+def probe_ids() -> list[str]:
+    from openreynolds.buildup import probes
+    return [p.id for p in probes.REGISTRY]
 
 
 def listing() -> int:

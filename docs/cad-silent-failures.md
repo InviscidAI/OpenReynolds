@@ -5,19 +5,57 @@ passes a perfectly valid mesh of the wrong volume. A leak in the exported surfac
 the wrong fluid volume and still checks clean. Neither can be found by waiting for a
 failure, so neither can wait for the build-up loop to surface it.
 
-So detection is separated from delivery. **The supervisor probes for every row below**,
-out of band, on the case as it stands on disk, and grades the result into the run record.
+So detection is separated from delivery. **The supervisor reads every instrument below**,
+out of band, on the case as it stands on disk, and records what each measured. It then
+vets the mesh itself, which is the part that carries the judgement.
 The agent is not told, the checks are not in its brief, and nothing is mounted in its
 workspace -- the contamination grep of §3 is what proves the last part. The
 implementations are `openreynolds/buildup/probes.py`, which imports `cad_audit.py`,
 `domain_probe.py` and `surfaces.py` **in the supervisor's process**; the workspace does
 not contain them.
 
-**A check is activated for the agent only once its probe has actually fired** -- once some
-run has produced a silently-wrong result of that kind. On that trigger and not before, the
-criterion joins the finish check and the measuring script becomes reachable. A probe that
-never fires across the whole corpus stays dormant forever, and that is the point: the
-agent pays for a check only after the failure it catches has been observed to happen.
+**A check is activated for the agent only once a real instance of its failure has been
+seen** -- once some run has produced a silently-wrong result of that kind, and the
+supervisor has said so with the case in front of it. On that trigger and not before, the
+criterion joins the finish check and the measuring script becomes reachable. A row that
+never earns an activation stays dormant forever, and that is the point: the agent pays
+for a check only after the failure it catches has been observed to happen.
+
+## The probes measure; they do not judge
+
+They used to return `fired` / `pass` / `skipped`, and a firing was a failed exit even on a
+run that ended `done`. The first baseline sweep (`core-20260912-083752-e3a3`) is why that
+is gone.
+
+Three probes fired across eight cases and the supervisor overturned all three. T2's seed
+point sits 0.312 m outside the sphere because it is an external-flow case, and the desk's
+own `Total volume = 0.127967` against a 0.8 x 0.4 x 0.4 box minus the sphere confirms the
+mesh was right. T4's 132 flipped edges on 88 triangles are one surface present twice in
+`constant/triSurface` while `meshDict` named a single file that `surfaceCheck` certified
+as `Number of zones (connected area with consistent normal) : 1` -- and the delivered mesh
+came from blockMesh and never touched the STL.
+
+Meanwhile the two runs that really were wrong produced no probe signal at all. T6 guessed
+a length unit and shipped a mesh `checkMesh` passed; T3 burned 28 cells to a mesh that
+never got a verdict. Both had every probe return no reading, because five of the eight
+cases never write a `triSurface` for a probe to read -- they are blockMesh, gmsh, or an
+analytic O-grid.
+
+**Every measurement was correct and every verdict was wrong.** A probe can count free
+edges, flipped edges, crossing pairs and the clearance of a point. It cannot know whether
+the surface it counted is the one that was meshed, or whether `outside` is where the seed
+point belonged, because that is the case's intent -- and the supervisor is the thing that
+reads the case. So the probes report numbers and `n/a`, the supervisor vets the mesh
+directly on **every** run rather than only when something fires, and no exit code turns on
+a reading.
+
+The sharpest evidence that a fixed check cannot carry intent is `scale`. It is written for
+"millimetres read as metres" and measures the surface against *the extent the case states*.
+T6 is a STEP that declares no unit -- the factor-of-a-thousand case -- so it states no
+extent, and the probe written for that failure is structurally unable to fire on it.
+
+Nothing here says the numbers are worthless: the supervisor used all of them while
+reasoning about T2 and T4. It says the conclusion was never the instrument's to draw.
 
 Written by hand, from the supervisor's own output. `python3 scripts/cad_supervise.py
 registry` prints the states as the code holds them, and

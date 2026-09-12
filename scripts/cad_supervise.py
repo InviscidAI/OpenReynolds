@@ -61,11 +61,15 @@ def cmd_watch(args) -> int:
 
 
 def cmd_probe(args) -> int:
+    """The instruments, read off one case. Exit 0 either way.
+
+    A non-zero exit would be a verdict, and these do not carry one: the numbers go to the
+    supervisor, which has the case in front of it and can tell an external-flow seed point
+    from an inverted mesh. See `probes.FIRED` for what the first baseline showed."""
     results = probes.run_all(Path(args.case), _spec(args.spec))
-    went_off = probes.fired(results)
-    return emit({"case": str(args.case), "fired": went_off,
-                 "probes": [result.as_dict() for result in results]},
-                1 if went_off else 0)
+    return emit({"case": str(args.case),
+                 "measured": probes.measured(results),
+                 "probes": [result.as_dict() for result in results]}, 0)
 
 
 def cmd_contamination(args) -> int:
@@ -80,13 +84,16 @@ def cmd_observe(args) -> int:
                            spec=_spec(args.spec), expected=args.expected or [])
     flat = {key: value for key, value in data.items()
             if not isinstance(value, (list, dict))}
-    went_off = [row["id"] for row in data.get("probes", [])
-                if row.get("state") == probes.FIRED]
-    # A fired probe is a failed exit even when the run ended `done`, because that pairing
-    # is the whole reason the probes exist: the silent failures are the ones where the
-    # run finishes, `checkMesh` passes, and the answer is of the wrong volume.
-    return emit({**flat, "fired": went_off},
-                0 if data.get("stopped") == "done" and not went_off else 1)
+    # The exit code answers "did this run end well", and nothing else. It used to also
+    # answer "did a probe fire", on the argument that the pairing -- run finishes,
+    # checkMesh passes, answer is the wrong volume -- is what the probes exist for. The
+    # first baseline tested that pairing three times and the supervisor overturned all
+    # three, while the two runs that were really wrong produced no probe signal at all.
+    # A number that is right and an implication that is wrong should not become an exit
+    # code; it should become something a reader looks at.
+    return emit({**flat, "measured": [row["id"] for row in data.get("probes", [])
+                                      if row.get("state") == probes.MEASURED]},
+                0 if data.get("stopped") == "done" else 1)
 
 
 def cmd_registry(args) -> int:
