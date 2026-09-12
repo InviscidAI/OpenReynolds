@@ -18,7 +18,7 @@ it on every call (`tools.py`, `llm/anthropic_api.py`, `mirror.py`) and the whole
 of the check is that it costs nothing when nothing is being recorded.
 
 Every event carries `v` (schema), `kind`, `type`, `at` (monotonic seconds since this
-module loaded), `ts` (wall clock) and `study`. `kind` and the fields each kind already
+module loaded, or since the origin `to()` was given), `ts` (wall clock) and `study`. `kind` and the fields each kind already
 carried are unchanged: `turn`, `tool` and `mirror` rows written by an older build and a
 newer one are the same rows with more identity on them. The identity is the point --
 a trace file from a machine running three studies could not say which study a turn
@@ -42,7 +42,10 @@ SCHEMA = 1
 """Bumped when a field is renamed or removed. Adding one is not that."""
 
 _lock = threading.Lock()
-_t0 = time.monotonic()
+_IMPORT_T0 = time.monotonic()
+"""When this module loaded. The origin `at` is measured from when nobody else's
+clock has been offered."""
+_t0 = _IMPORT_T0
 _path = os.environ.get("OPENREYNOLDS_TRACE") or ""
 _sink: Any = None
 _study = ""
@@ -61,15 +64,26 @@ def begin(study_id: str) -> None:
     _study = str(study_id or "")
 
 
-def to(sink: Any) -> None:
+def to(sink: Any, origin: float | None = None) -> None:
     """Send events to a writable object from here on, and turn recording on.
 
     `sink` needs `write` and may have `flush`. A flush happens after every event: a
     consumer reading the same stream live is the reason this exists, and a trace that
     appears when the operating system feels like it is a trace of nothing.
+
+    `origin` is the monotonic reading that `at` is measured from, and giving it is
+    what keeps one stream on one clock. `JsonView` starts counting when it is built --
+    after the config load and after the workspace acquire, which against the real
+    service is a container cold start -- while this module started counting at import.
+    Both write a field called `at`, and a captured run showed the result: a `cost` row
+    at 4.125 sitting between two view rows at 2.938. An agent sorting the stream by
+    `at` reordered it, and one differencing a `cost` row against its neighbours got a
+    tool duration inflated by the whole startup.
     """
-    global _sink, on
+    global _sink, on, _t0
     _sink = sink
+    if origin is not None:
+        _t0 = float(origin)
     on = True
 
 
@@ -87,8 +101,12 @@ def off() -> None:
     trace file the person set `OPENREYNOLDS_TRACE` for, and a test that forgot this
     would leave the next test writing into a closed stream.
     """
-    global _sink, on
+    global _sink, on, _t0
     _sink = None
+    _t0 = _IMPORT_T0
+    """The borrowed clock goes back with the sink it came with: a file trace the
+    environment asked for is a trace of the process, and the next session in this
+    process is not the one whose view lent its origin."""
     on = bool(_path)
 
 

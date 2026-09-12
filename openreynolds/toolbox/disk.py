@@ -32,8 +32,9 @@ The distinction this script is built around is **regenerable** against
 Regenerable -- it can be produced again by re-running, from inputs that survive:
 
     processor*/          decomposed copies of the same fields
-    <time>/              solution time directories, except the latest and except
-                         any that carries a <time>/polyMesh of its own
+    <time>/              solution time directories, except the latest; on one that
+                         carries a <time>/polyMesh of its own the fields go one by
+                         one and the mesh subtree beside them stays
     VTK/, *.vtk, *.vtu   post-processing dumps
     frames/, *.ppm       animation frames (the encoded video is not touched)
     .foam scratch        `.foamd/`, `.reynolds/tmp/`
@@ -170,9 +171,15 @@ def candidates_in(case: Path, keep_latest: bool = True) -> list[Candidate]:
     look at again; it is not the default because "I already have the numbers" is a
     belief, and a time directory is the only thing that can prove it wrong.
 
-    A time directory that holds a `polyMesh` of its own is kept whatever `keep_latest`
-    says, because on a moving mesh that subtree is the mesh at that instant and there is
-    nothing left to regenerate it from.
+    A time directory that holds a `polyMesh` of its own keeps that *subtree* whatever
+    `keep_latest` says, because on a moving mesh it is the mesh at that instant and there
+    is nothing left to regenerate it from. The fields beside it are offered one by one
+    instead. Skipping the whole directory was the first shape of this rule, and the
+    review of 2026-09-12 measured what it costs: OpenFOAM writes `<time>/polyMesh/points`
+    at every write of a morphing-mesh run, so every written time qualified and a case
+    shaped like the Wigley free phase reported 2.7 GB used and 0 B regenerable, in both
+    modes -- "nothing regenerable found" to the one situation (F-56, /work at 31.5 GB
+    against a 20 GB quota) this module exists to answer.
     """
     out: list[Candidate] = []
     if not case.is_dir():
@@ -202,14 +209,27 @@ def candidates_in(case: Path, keep_latest: bool = True) -> list[Candidate]:
     times.sort()
     droppable = times[:-1] if (keep_latest and times) else times
     for value, path in droppable:
-        # A time directory that carries its own polyMesh is kept whole. On a moving
-        # mesh -- a hull released in heave and pitch, a rotor on a sliding interface --
-        # `<time>/polyMesh/points` IS the mesh at that instant, and nothing regenerates
-        # it. Dropping the directory silently destroys the only record the run has of
-        # its own motion, and pruning is routine here because /work is one shared 20 GB
-        # quota. The reason line on the times that do go names the test they passed, so
-        # a prune that frees less than expected says why without anyone reading this.
+        # A time directory that carries its own polyMesh keeps that subtree and gives up
+        # everything else. On a moving mesh -- a hull released in heave and pitch, a
+        # rotor on a sliding interface -- `<time>/polyMesh/points` IS the mesh at that
+        # instant and nothing regenerates it; the fields written beside it (U, p_rgh,
+        # alpha.water, k, omega, nut, phi) are the ordinary regenerable output this
+        # module was written to reclaim, and on such a run they are the bulk of the
+        # volume. Keeping the whole directory instead, as this did until 2026-09-12,
+        # freed nothing at all on the case that most needs it. The reason line names the
+        # test each time passed, so a prune that frees less than expected says why
+        # without anyone reading this.
         if (path / "polyMesh").is_dir():
+            for child in sorted(path.iterdir()):
+                if child.is_symlink() or _keep((child.name,), child.name):
+                    continue  # `polyMesh` is in KEEP_DIRS, so this is where it survives
+                try:
+                    size = _tree_bytes(child) if child.is_dir() else child.stat().st_size
+                except OSError:
+                    continue  # vanished under us; not worth failing a prune over
+                out.append(Candidate(child, size,
+                                     f"solution time {value:g}, not the latest; the "
+                                     "deformed mesh beside it is kept"))
             continue
         out.append(Candidate(path, _tree_bytes(path),
                              f"solution time {value:g}, not the latest, and carries no "

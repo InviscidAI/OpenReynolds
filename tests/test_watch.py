@@ -156,6 +156,36 @@ def test_a_finished_job_wakes_with_its_outcome(backend, store, view):
     assert store.session.jobs[job_id].status == "exited"
 
 
+def test_a_job_that_finishes_while_the_harness_watches_is_announced_as_job_state(
+    backend, store, view
+):
+    """`view.jobs` was called from exactly one place -- `tools._announce_jobs`, i.e.
+    only when the MODEL asked about a job -- so a job that ended during the harness's
+    own watch loop produced `info("job solve -> exited")` and nothing else. A
+    stream-json run of a 40 s job with `--max-wait 3` carried one `jobs` object, at
+    t=2.9 s and `running`; at t=45.5 s the job ended and the stream said only
+    `{"type":"info","message":"job solve -> exited"}`. The exit code and the end
+    reason never reached it in structured form at all, so an agent that correctly
+    treats `info` as free-form prose never learns that its four-hour solve finished,
+    or whether it worked. The README promises "every job and its state, whenever any
+    of it changes"."""
+    job_id = start_job(backend, store)
+    backend.logs[job_id] = b"End\n"
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, name="solve", status="exited", exit_code=1,
+        end_reason="completed", log_size=4,
+    )
+
+    _collect_finished(backend, store, view)
+
+    assert view.job_reports, "the one state change an agent is waiting for"
+    announced = [record for batch in view.job_reports for record in batch]
+    ended = [r for r in announced if r.job_id == job_id]
+    assert ended and ended[-1].status == "exited"
+    assert ended[-1].exit_code == 1, "and with the exit code, which prose never carried"
+    assert ended[-1].end_reason == "completed"
+
+
 def test_an_unreadable_job_is_reported_rather_than_polled_forever(backend, store, view):
     job_id = start_job(backend, store)
 

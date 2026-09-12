@@ -38,6 +38,41 @@ def protocol(env: dict[str, str] | None = None) -> str | None:
     return None
 
 
+_suppressed = False
+"""Whether this process has given up drawing entirely, whatever the terminal says.
+
+`--output-format stream-json` sets it. `isatty()` was the only guard and it is not
+enough: an agent harness normally runs a child CLI on a pseudo-terminal, so a run
+started from kitty/WezTerm/iTerm2 with `TERM=xterm-kitty` answered True to `isatty()`
+and a `fetch` of a .png injected a graphics payload into the middle of the NDJSON
+stream -- and a strict reader resynchronises inside a base64 blob and never recovers.
+The mode knows something the file descriptor does not, so the mode says so.
+"""
+
+
+def suppress() -> None:
+    """Draw nothing anywhere for the rest of this process.
+
+    Not "prefer not to": `show(stream=...)` with an explicit stream is honoured
+    everywhere else, and it must not be here -- `ConsoleView.delivered` and
+    `show_renders` both hand over a stream, and in stream-json mode the bytes would
+    still land on the one stdout the reader is parsing.
+    """
+    global _suppressed
+    _suppressed = True
+
+
+def allow_drawing() -> None:
+    """Undo `suppress()`. Only a test process needs this.
+
+    A real process runs in one output mode for its whole life; a test process runs
+    many sessions in one interpreter, and a leaked suppression would quietly turn
+    every later drawing test into a test of nothing.
+    """
+    global _suppressed
+    _suppressed = False
+
+
 def drawable(stream) -> bool:
     """Whether drawing on this stream could reach an eye.
 
@@ -48,6 +83,8 @@ def drawable(stream) -> bool:
     escape payload -- unreadable, and enough of it to push the actual answer out of
     view. A pipe is not a terminal, so nothing is drawn on one.
     """
+    if _suppressed:
+        return False
     try:
         return bool(stream.isatty())
     except (AttributeError, ValueError, OSError):
@@ -59,8 +96,11 @@ def show(path: Path, stream=None) -> bool:
 
     A `stream` given explicitly is a caller who already knows where the bytes go and
     is not second-guessed; the default is stdout, and stdout is drawn on only when it
-    is a terminal.
+    is a terminal. `suppress()` overrules both: a session speaking NDJSON on stdout
+    has no stream anywhere that an escape payload may be written to.
     """
+    if _suppressed:
+        return False
     if stream is None:
         if not drawable(sys.stdout):
             return False

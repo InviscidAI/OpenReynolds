@@ -129,6 +129,16 @@ class JsonView(View):
         """A stream for `trace` to write its cost events to, sharing this lock."""
         return _Locked(self)
 
+    @property
+    def origin(self) -> float:
+        """The monotonic reading every `at` on this stream is measured from.
+
+        Handed to `trace.to()` so the cost events share it. Two clocks writing one
+        field name on one stream is not a schema a reader can be expected to notice:
+        it just makes the stream non-monotonic in `at`.
+        """
+        return self._t0
+
     # -- session boundaries ----------------------------------------------------
 
     def header(self, study_id: str, instance_id: str, model: str, mirror: Path) -> None:

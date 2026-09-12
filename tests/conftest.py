@@ -8,6 +8,7 @@ import anthropic
 import pytest
 from rich.console import Console
 
+from openreynolds import images
 from openreynolds.backend.base import (
     WORKSPACE_ROOT,
     Backend,
@@ -124,6 +125,22 @@ class FakeBackend(Backend):
 
     def close(self):
         pass
+
+
+@pytest.fixture(autouse=True)
+def drawing_starts_allowed():
+    """`--output-format stream-json` gives up drawing inline images for the life of
+    the process, because a pseudo-terminal answers `isatty()` the same way a person's
+    terminal does and the escape payload would land in the middle of the NDJSON.
+
+    A process runs in one output mode for its whole life; a test process runs many
+    sessions in one interpreter, so the flag is reset around each one. Without this
+    the first test to ask for stream-json would quietly turn every later drawing test
+    into a test of nothing.
+    """
+    images.allow_drawing()
+    yield
+    images.allow_drawing()
 
 
 @pytest.fixture

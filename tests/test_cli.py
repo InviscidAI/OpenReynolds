@@ -8,6 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from conftest import FakeBackend, ScriptedReader, install_model, message, text_block, tool_block
+from shellprobe import Machine, Process
 from openreynolds import cli
 from openreynolds.backend.base import WORKSPACE_ROOT, BackendError, ExecResult, JobStatus
 from openreynolds.browse import Browser
@@ -264,6 +265,53 @@ def test_studies_can_answer_a_script_instead_of_a_person(tmp_path, monkeypatch):
     assert payload["studies"][0]["title"] == "elbow"
     assert payload["studies"][0]["instance_id"] == "iid-1"
     assert payload["studies"][0]["running_jobs"] == 1
+
+
+def test_the_group_output_flag_is_the_same_request_as_studies_own_json(
+    tmp_path, monkeypatch
+):
+    """`--output-format` is a GROUP option, so putting it in front of everything is
+    the obvious thing for an agent to do -- and `main()` returned before the mode was
+    applied whenever a subcommand was invoked. The flag was accepted, parsed and
+    discarded, and `openreynolds --output-format stream-json studies` exited 0 having
+    printed `20260912-162705-92f8  (untitled)  instance=local` and three more lines of
+    prose at a reader that cannot read prose."""
+    root = tmp_path / "studies"
+    Store(root, "20260823-120000-abcd").save()
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: Config(studies_dir=root)))
+
+    result = CliRunner().invoke(cli.main, ["--output-format", "stream-json", "studies"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["studies"][0]["study_id"] == "20260823-120000-abcd"
+
+
+def test_the_group_output_flag_is_the_same_request_as_doctors_own_json(monkeypatch):
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: Config()))
+    monkeypatch.setattr(cli, "run_checks", lambda cfg: [("config file", True, "")])
+
+    result = CliRunner().invoke(cli.main, ["--output-format", "stream-json", "doctor"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["ok"] is True
+
+
+def test_a_subcommand_with_no_json_answer_says_so_rather_than_printing_prose(
+    tmp_path, monkeypatch
+):
+    """The other half of not ignoring it. `renders` has no structured answer, and an
+    agent that got four lines of rich markup on stdout with exit 0 had no hint that
+    the flag did nothing."""
+    monkeypatch.setattr(
+        Config, "load", classmethod(lambda cls: Config(studies_dir=tmp_path / "s"))
+    )
+
+    result = CliRunner().invoke(cli.main, ["--output-format", "stream-json", "renders"])
+
+    assert result.exit_code == 2, result.output
+    assert "--output-format" in result.output
+    assert "studies" in result.output and "doctor" in result.output
 
 
 def test_studies_json_with_none_is_still_an_object(tmp_path, monkeypatch):
@@ -1099,23 +1147,89 @@ def test_a_study_with_no_directory_of_its_own_does_not_guess(store, quiet_consol
     assert backend.stopped == 1
 
 
-def test_a_probe_that_cannot_be_run_does_not_keep_the_workspace_up(store, monkeypatch):
-    """The same asymmetry the job listing already takes: a workspace left up on an
-    unanswerable question bills until a reaper notices."""
+class Refusing(Neighboured):
+    """A workspace whose exec route refuses. `fails` is how many attempts refuse
+    before the rest are answered."""
+
+    def __init__(self, exc, fails=99, **kw):
+        super().__init__(**kw)
+        self.exc, self.fails = exc, fails
+
+    def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
+        if "/proc/" in cmd and "continue ;;" in cmd:
+            self.probes += 1
+            if self.probes <= self.fails:
+                raise self.exc
+            return ExecResult(0, "".join(f"{p}\n" for p in self.processes), False, None)
+        return Busy.exec(self, cmd, cwd=cwd, timeout_s=timeout_s, background=background)
+
+
+@pytest.fixture
+def no_probe_pause(monkeypatch):
+    monkeypatch.setattr(cli, "PROBE_RETRY_PAUSE_S", 0.0)
+
+
+def test_a_probe_that_cannot_be_run_leaves_the_workspace_up(
+    store, monkeypatch, no_probe_pause
+):
+    """A question that could not be put is not the answer "nobody is here", and this
+    read it as one: every BackendError became [], and [] means terminate.
+
+    The states that make the probe fail are exactly the states where a neighbour is
+    most likely. `quota.ensure_room` now runs on the exec route, so once /work is at
+    its quota every synchronous exec -- this probe included -- is refused with 507
+    BEFORE it runs; 507 is not retried by the client, so it arrives as a BackendError
+    on the first answer. A session ending at that moment terminated the container its
+    neighbour was meshing in. The costs are asymmetric the wrong way round for a
+    guess: leaving the workspace up costs at most the reaper's idle window, and
+    terminating it under a neighbour destroys an in-flight mesh or solve."""
     out = _said(monkeypatch)
-
-    class Mute(Neighboured):
-        def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
-            if "/proc/" in cmd and "continue ;;" in cmd:
-                raise BackendError("gateway down", code="unavailable", status=503)
-            return Busy.exec(self, cmd, cwd=cwd, timeout_s=timeout_s, background=background)
-
-    backend = Mute(rows=[])
+    backend = Refusing(BackendError("volume full", code="volume_full", status=507), rows=[])
 
     cli._close_down(backend, _with_a_home(store))
 
+    assert backend.stopped == 0, "the question could not be put, so nothing was assumed"
+    assert backend.probes == 2, "and it was asked twice before being given up on"
+    said = out.getvalue()
+    assert "could not check" in said
+    assert "left up" in said, "and the person is told the workspace is still there"
+    assert "openreynolds stop" in said, "and how to put it down themselves"
+
+
+def test_a_probe_that_fails_once_is_asked_again_rather_than_given_up_on(
+    store, monkeypatch, no_probe_pause
+):
+    """A 503 from a control plane mid-deploy is usually gone two seconds later, and
+    the answer it then gives is a real one -- better than the refusal above, which
+    leaves a container up that nobody may be using."""
+    out = _said(monkeypatch)
+    backend = Refusing(
+        BackendError("gateway down", code="unavailable", status=503),
+        fails=1,
+        rows=[],
+        processes=["4021 snappyHexMesh"],
+    )
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.probes == 2
+    assert backend.stopped == 0
+    assert "snappyHexMesh" in out.getvalue()
+
+
+def test_a_probe_that_answers_on_the_retry_can_still_put_an_idle_workspace_down(
+    store, quiet_console, no_probe_pause
+):
+    """The retry is not a licence to leave every workspace up: an answer is an
+    answer, and an empty one still means nobody is here."""
+    backend = Refusing(
+        BackendError("gateway down", code="unavailable", status=503), fails=1, rows=[]
+    )
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.probes == 2
     assert backend.stopped == 1
-    assert "could not check" in out.getvalue()
 
 
 def test_a_workspace_someone_else_is_working_on_is_shared_whoever_started_it(
@@ -1144,6 +1258,108 @@ def test_a_listing_that_fails_does_not_keep_the_workspace_up(store, monkeypatch)
 
     assert backend.stopped == 1
     assert "could not check" in out.getvalue()
+
+
+# -- the probe against a container shaped the way a real one is ----------------
+#
+# Everything above answers the probe with canned rows, which is why a probe that
+# matched nothing in production for its whole life passed every test it had. The
+# fakes below RUN the script (tests/shellprobe.py), against a container where `/work`
+# is a symlink to the Volume -- which is what a Modal Sandbox is.
+
+VOLUME = "/__modal/volumes/vo-QLeP1IjwPg9DkyX8ENl2HW"
+"""The physical path behind `/work`, from the production transcript that prints the
+same case both ways: `Case : /__modal/volumes/vo-QLeP1IjwPg9DkyX8ENl2HW/onera_hisa`
+from getcwd and `Case : /work/onera_hisa` from `$PWD`."""
+
+
+class Sandboxed(Busy):
+    """A workspace that evaluates the probe instead of answering it from a script.
+
+    `/work` is not a directory inside a Modal Sandbox: it is a symlink to
+    `/__modal/volumes/vo-<id>`, and `/proc/<pid>/cwd` is a kernel magic link that
+    answers with the physical path however the process got there.
+    """
+
+    def __init__(self, *processes, **kw):
+        super().__init__(**kw)
+        self.machine = Machine(
+            links={WORKSPACE_ROOT: VOLUME},
+            processes=[Process(pid, comm, cwd) for pid, comm, cwd in processes],
+            cwd=WORKSPACE_ROOT,
+        )
+        self.probes = 0
+
+    def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
+        if "/proc/" in cmd:
+            self.probes += 1
+            return ExecResult(0, self.machine.run(cmd), False, None)
+        return super().exec(cmd, cwd=cwd, timeout_s=timeout_s, background=background)
+
+
+def test_a_neighbours_mesh_is_found_when_work_is_a_symlink_to_the_volume(
+    store, monkeypatch
+):
+    """The probe compared `readlink /proc/<pid>/cwd` against the LITERAL `/work`, and
+    inside a Modal Sandbox nothing is ever spelled that way: foamd's own quota check
+    measured `du -sm /work` at 1 MB against `du -sLm /work` at 28633 MB on the same
+    live Sandbox, and its jail check resolves the root with `realpath -m` rather than
+    comparing the string. So the match arm never fired, `_neighbour_work` always
+    answered [], and `shared` collapsed to exactly the pre-fix behaviour this guard
+    was written to replace -- while a neighbour's snappyHexMesh died mid-step."""
+    out = _said(monkeypatch)
+    backend = Sandboxed(("4021", "snappyHexMesh", f"{VOLUME}/other/case"), rows=[])
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.probes, "it asked"
+    assert backend.stopped == 0, "and somebody else's mesh was still running"
+    assert "snappyHexMesh" in out.getvalue()
+
+
+def test_this_studys_own_solver_is_not_mistaken_for_a_neighbour_through_the_symlink(
+    store, quiet_console
+):
+    """The other half of resolving the roots: our own work is under the same physical
+    prefix, so a probe that resolved only the volume root and not the home would call
+    every session its own neighbour and no instance would ever be put down."""
+    backend = Sandboxed(("4023", "simpleFoam", f"{VOLUME}/study-test/case"), rows=[])
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.stopped == 1
+
+
+def test_a_neighbour_copying_a_mesh_is_work_and_not_housekeeping(store, monkeypatch):
+    """`cp`, `mv`, `rm`, `tar`, `gzip` and `find` were all filtered as housekeeping.
+    On this image they are the data-moving half of a real pipeline: a mesh step is one
+    exec block, `cd /work/<B>/case && cp -r ../mesh/constant/polyMesh constant/ &&
+    snappyHexMesh -overwrite`, and during the `cp` -- minutes for a multi-GB mesh over
+    the 9p Volume -- the block's only process was quiet. The exiting session
+    terminated the container mid-copy, and because `/stop` keeps the Volume the
+    half-copied `constant/polyMesh` stayed behind as a corrupt mesh for the next
+    session to inherit."""
+    out = _said(monkeypatch)
+    backend = Sandboxed(("4022", "cp", f"{VOLUME}/other/case"), rows=[])
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.stopped == 0
+    assert "cp" in out.getvalue()
+
+
+def test_the_probe_steps_outside_the_workspace_so_it_cannot_report_itself(store):
+    """It runs in a shell the exec route drops in the workspace root and spawns `cat`
+    and `readlink` once per process it looks at. Hiding those by NAME is what made
+    `cp` and `rm` invisible; stepping out of the workspace first hides them by
+    working directory instead, and hides nothing else."""
+    machine = Machine(links={WORKSPACE_ROOT: VOLUME}, cwd=WORKSPACE_ROOT)
+
+    output = machine.run(
+        cli._NEIGHBOUR_PROBE % (f"'{WORKSPACE_ROOT}/study-test'", f"'{WORKSPACE_ROOT}'")
+    )
+
+    assert output == "", f"the probe reported itself: {output!r}"
 
 
 def test_a_backend_with_no_such_question_is_unaffected(store, quiet_console):

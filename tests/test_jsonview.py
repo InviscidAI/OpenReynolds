@@ -13,12 +13,15 @@ import io
 import json
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
+from click.testing import CliRunner
 
 from conftest import FakeBackend
 from openreynolds import cli, jsonview, trace
+from openreynolds.backend.base import BackendError
 from openreynolds.config import Config
 from openreynolds.jsonview import JsonReader, JsonView, message_text
 from openreynolds.store import JobRecord, Store
@@ -754,3 +757,230 @@ def test_a_trace_row_for_a_tool_that_raised_says_it_did_not_work(tmp_path, monke
 
     row = _json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
     assert row["result"]["ok"] is False
+
+
+# -- a failure has to reach the stream too -------------------------------------
+
+
+class Exploding(FakeLoop):
+    """A provider that fails the way a provider actually fails: not a ProviderError,
+    which the harness survives on purpose, but something nobody planned for."""
+
+    def run(self):
+        raise RuntimeError("kaboom")
+
+
+def a_config(tmp_path):
+    return Config(foamd_url="u", foamd_api_key="k", llm_api_key="sk", model="m",
+                  studies_dir=tmp_path / "studies", capture=False, desk=False,
+                  mesh_tool=False, mirror_interval_s=0.0)
+
+
+def test_a_session_that_crashed_does_not_report_that_it_finished_cleanly(
+    tmp_path, monkeypatch
+):
+    """`outcome` is assigned only by the two run loops, so anything escaping `drive()`
+    left it None -- and `session_end` renders None as "ok". Demonstrated: a
+    RuntimeError from the provider gave exit code 1, a full traceback on stderr, and a
+    final stdout line saying the study finished cleanly. An agent driving the paid
+    service from the stream records the run as successful and does not retry, while
+    the teardown decision that costs money has already been taken. The README promises
+    `session_end` carries "the same outcome the exit code means"."""
+    backend = FakeBackend()
+    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (backend, None, "iid-1"))
+    monkeypatch.setattr(cli, "Loop", Exploding)
+    sink = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", sink)
+
+    with pytest.raises(RuntimeError):
+        cli.session(a_config(tmp_path), study_id=None, instance_id=None, one_shot="go",
+                    output_format="stream-json")
+
+    rows = read(sink)
+    assert rows[-1]["type"] == "session_end", "the stream still ends where it says it does"
+    assert rows[-1]["outcome"] == "crashed", "it said something else"
+    said = [r for r in rows if r["type"] == "error"]
+    assert said and "kaboom" in said[-1]["message"], "and why, before the end"
+
+
+def test_a_crash_is_worth_a_failing_exit_code_if_it_ever_reaches_the_table():
+    """`crashed` normally leaves by the exception itself. It is in the table so that
+    an embedder swallowing the exception cannot turn a crash into a zero."""
+    assert cli.ONE_SHOT_EXIT_CODES["crashed"] == 1
+
+
+def test_a_missing_key_ends_the_stream_with_one_object_rather_than_nothing(monkeypatch):
+    """`OPENREYNOLDS_CONFIG` at `{}` gave exit 1, zero bytes of stdout, and the
+    explanation on stderr -- and exit code 1 already means "the model API failed". An
+    agent reading the documented stream could not tell a missing key from a refused
+    model call from a workspace outage, which are the three things it would handle
+    differently: prompt the person, back off, retry."""
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: Config()))
+
+    result = CliRunner().invoke(cli.main, ["-p", "hi", "--output-format", "stream-json"])
+
+    assert result.exit_code == 1
+    rows = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    assert len(rows) == 1, "the stream ends with exactly one object"
+    assert rows[0]["type"] == "session_end"
+    assert rows[0]["outcome"] == "config"
+    assert "FOAMD_API_KEY" in rows[0]["error"]
+
+
+def test_a_workspace_that_cannot_be_reached_ends_the_stream_with_one_object(
+    tmp_path, monkeypatch
+):
+    """The other half: the acquire raises before the view is ever constructed, so
+    stdout was empty here too -- for the one failure an agent should retry."""
+    def refuse(*a, **k):
+        raise BackendError("no instance available", code="unavailable", status=503)
+
+    monkeypatch.setattr(cli.hosted, "acquire", refuse)
+    sink = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", sink)
+
+    with pytest.raises(SystemExit):
+        cli.session(a_config(tmp_path), study_id=None, instance_id=None, one_shot="go",
+                    output_format="stream-json")
+
+    rows = read(sink)
+    assert types(rows) == ["session_end"]
+    assert rows[0]["outcome"] == "unreachable"
+    assert "no instance available" in rows[0]["error"]
+    assert rows[0]["study"], "and it names the study that never started"
+
+
+# -- one stream, one clock -----------------------------------------------------
+
+
+class Costing(FakeLoop):
+    """A turn that records what it cost, which is what the real one does through
+    `tools.dispatch` and `llm.anthropic_api`."""
+
+    def run(self):
+        trace.event("tool", tool="bash", seconds=1.5, cmd="blockMesh")
+        return super().run()
+
+
+def test_a_cost_row_is_measured_from_the_same_moment_as_the_events_around_it(
+    tmp_path, monkeypatch
+):
+    """`JsonView._t0` starts when the view is built -- after the config load and after
+    the workspace acquire, which against the real service is a container cold start --
+    and `trace._t0` starts at import. Both write a field called `at`, and the README
+    documents one meaning. A captured run read `progress at 2.938`, then `cost at
+    4.125`, then `step at 2.938`: an agent sorting the stream by `at` reorders it, and
+    one differencing a `cost` row against its neighbours to time a tool call gets a
+    figure inflated by the whole startup."""
+    monkeypatch.setattr(trace, "_t0", time.monotonic() - 30.0)
+    """A process that has been up for thirty seconds before the session begins."""
+    backend = FakeBackend()
+    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (backend, None, "iid-1"))
+    monkeypatch.setattr(cli, "Loop", Costing)
+    sink = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", sink)
+
+    cli.session(a_config(tmp_path), study_id=None, instance_id=None, one_shot="go",
+                output_format="stream-json")
+
+    rows = read(sink)
+    assert any(r["type"] == "cost" for r in rows), "the cost row has to be on the stream"
+    moments = [r["at"] for r in rows]
+    assert moments == sorted(moments), "the stream is not monotonic in at"
+    cost = [r for r in rows if r["type"] == "cost"][0]
+    assert cost["at"] < 10.0, "the cost row is still on the process's own clock"
+
+
+def test_the_borrowed_clock_goes_back_when_the_stream_does(monkeypatch):
+    """A trace file the environment asked for is a trace of the process, and the next
+    session in this process is not the one whose view lent its origin."""
+    monkeypatch.setattr(trace, "_t0", trace._t0)
+    borrowed = time.monotonic() + 1000.0
+    trace.to(io.StringIO(), origin=borrowed)
+    assert trace._t0 == borrowed
+    trace.off()
+    assert trace._t0 == trace._IMPORT_T0
+
+
+# -- pictures do not go onto a pseudo-terminal either --------------------------
+
+
+def a_png(tmp_path):
+    import base64 as _b64
+
+    png = tmp_path / "mesh.png"
+    png.write_bytes(_b64.b64decode(
+        b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+        b"YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    ))
+    return png
+
+
+class Pty(io.StringIO):
+    """A stdout that says it is a terminal, which is what a pseudo-terminal says --
+    and an agent harness normally runs a child CLI on one."""
+
+    def isatty(self):
+        return True
+
+
+def test_an_inline_image_is_not_drawn_onto_the_json_stream_on_a_pseudo_terminal(
+    tmp_path, monkeypatch
+):
+    """`images.drawable` only asked `stream.isatty()`, so it was never told that this
+    session speaks NDJSON. Run from kitty/WezTerm/iTerm2 on a pty, a `fetch` of a .png
+    put a kitty graphics payload between two objects; a strict reader resynchronises
+    on the next newline, in the middle of a base64 blob, and never recovers."""
+    from openreynolds import images
+
+    monkeypatch.setenv("TERM", "xterm-kitty")
+    out = Pty()
+    monkeypatch.setattr(sys, "stdout", out)
+    cli._keep_stdout_for_json()
+
+    view = JsonView(out)
+    view.emit("tool", name="fetch", summary="renders/mesh.png")
+    images.show(a_png(tmp_path))  # exactly what `_fetch_hook` does
+    view.emit("info", message="fetched")
+
+    assert types(read(out)) == ["tool", "info"]
+
+
+def test_a_stream_handed_over_on_purpose_is_refused_too_once_the_mode_is_json(
+    tmp_path, monkeypatch
+):
+    """`ConsoleView.delivered` and `show_renders` draw the same way, and in this mode
+    the console they would draw on has already been moved to stderr -- but the module
+    default is stdout, which is the one stream the reader is parsing."""
+    from openreynolds import images
+
+    monkeypatch.setenv("TERM", "xterm-kitty")
+    images.suppress()
+    somewhere = io.StringIO()
+
+    assert images.show(a_png(tmp_path), stream=somewhere) is False
+    assert somewhere.getvalue() == ""
+
+
+# -- the README is the reader's only specification -----------------------------
+
+
+def test_every_object_this_puts_on_the_stream_is_named_in_the_readme():
+    """Every row of the README table mapped to a real emitter; the reverse did not
+    hold. `workspace` and `thinking_begin` were on the stream and in no table and no
+    sentence -- and `workspace` is the SECOND object of every session, so an agent
+    written from the README against a closed set of `type` values (a Go or Rust reader
+    with an exhaustive match, a validator that errors on an unknown type) rejected
+    line 2 of every run it ever made."""
+    import re as _re
+    from pathlib import Path as _Path
+
+    package = _Path(cli.__file__).parent
+    emitted = set()
+    for name in ("jsonview.py", "cli.py"):
+        source = (package / name).read_text(encoding="utf-8")
+        emitted |= set(_re.findall(r'\.emit\(\s*"(\w+)"', source))
+    readme = (package.parent / "README.md").read_text(encoding="utf-8")
+
+    missing = sorted(kind for kind in emitted if f"`{kind}`" not in readme)
+    assert not missing, f"on the stream and nowhere in the README: {missing}"

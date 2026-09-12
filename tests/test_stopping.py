@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import pytest
 
+from shellprobe import Machine, Process
 from openreynolds.backend.base import BackendError, ExecResult, JobStatus
-from openreynolds.stopping import StopReport, running_solvers, stop_everything
+from openreynolds.stopping import StopReport, own_solvers, running_solvers, stop_everything
 
 
 @pytest.fixture(autouse=True)
@@ -387,3 +388,76 @@ def test_a_study_that_predates_homes_is_treated_as_unscoped(backend, store):
     stop_everything(backend, store, force=True, home="/work")
     assert any(c.startswith("ps ") for c in backend.execs)
     assert not any("/proc" in c for c in backend.execs)
+
+
+# -- the probe against a container shaped the way a real one is ----------------
+
+
+VOLUME = "/__modal/volumes/vo-QLeP1IjwPg9DkyX8ENl2HW"
+"""What `/work` actually is inside a Modal Sandbox: a symlink to the Volume's mount.
+The path is from the production transcript that prints one case both ways --
+`/__modal/volumes/vo-QLeP1IjwPg9DkyX8ENl2HW/onera_hisa` from getcwd (physical, which
+is what `/proc/<pid>/cwd` answers) and `/work/onera_hisa` from `$PWD` (logical, which
+is all a shell `cd` updates)."""
+
+
+def sandbox(backend, *processes_, home="/work/study-test"):
+    """Make `backend.exec` RUN the probe against a Sandbox-shaped container.
+
+    Every other test here answers the probe with a canned string, which is how a probe
+    whose `case` patterns matched nothing in production passed every test it had.
+    """
+    machine = Machine(
+        links={"/work": VOLUME},
+        processes=[Process(pid, comm, cwd) for pid, comm, cwd in processes_],
+    )
+
+    def run(cmd, cwd=None, timeout_s=120, *, background=False):
+        backend.execs.append(cmd)
+        if "/proc" in cmd:
+            return ExecResult(0, machine.run(cmd), False, None)
+        return ExecResult(0, "", False, None)
+
+    backend.exec = run
+    return home
+
+
+def test_a_solver_is_found_through_the_symlink_that_work_actually_is(backend, store):
+    """`own_solvers` matched `readlink /proc/<pid>/cwd` against the literal
+    `/work/<study>`, and inside a Sandbox nothing is ever spelled that way -- foamd's
+    own quota check measured `du -sm /work` at 1 MB against `du -sLm /work` at
+    28633 MB on the same live Sandbox, and its jail check resolves the root with
+    `realpath -m` rather than comparing the string. So this answered [] every time it
+    ran in production."""
+    home = sandbox(backend, ("101", "simpleFoam", f"{VOLUME}/study-test/case"))
+
+    assert own_solvers(backend, home) == [("101", "simpleFoam")]
+
+
+def test_an_escaped_mpirun_rank_is_killed_rather_than_reported_as_an_idle_instance(
+    backend, store
+):
+    """The one leak this module exists to catch. With the probe blind, a scoped
+    `stop_everything` reported "nothing was running / the instance is idle" while
+    eight cores kept going -- which is the failure that was first noticed on a bill."""
+    home = sandbox(backend, ("102", "mpirun", f"{VOLUME}/study-test/case"))
+
+    report = stop_everything(backend, store, home=home)
+
+    assert report.survivors == ["mpirun"], "it saw what outlived the job's group"
+    assert not report.clean, "so it does not claim the instance is idle"
+    kills = [c for c in backend.execs if c.startswith("kill -9")]
+    assert kills and "102" in kills[0], "and it killed it, by pid"
+
+
+def test_another_studys_solver_under_the_same_volume_is_still_out_of_reach(backend, store):
+    """Resolving the root must not widen the sweep: every study on the instance lives
+    under the same physical prefix, and a kill that reached them was the 22-minute
+    solve this scoping was written to protect."""
+    home = sandbox(backend, ("103", "simpleFoam", f"{VOLUME}/other-study/case"))
+
+    report = stop_everything(backend, store, home=home)
+
+    assert report.clean
+    assert report.survivors == []
+    assert not any(c.startswith(("pkill", "kill -9")) for c in backend.execs)

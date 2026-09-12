@@ -254,6 +254,55 @@ def test_an_unseen_mesh_type_is_a_question_rather_than_a_verdict(preflight, tmp_
     assert "probe" in warned[0].repair, "the build is the authority, and the probe asks it"
 
 
+def test_a_mesh_type_only_read_out_of_the_source_tree_is_a_warn_and_not_a_run(preflight, tmp_path):
+    """`dynamicRefineFvMesh` was read at the v2512 tag; nothing here has ever run it.
+
+    Until the review of 2026-09-12 the emitter told the agent it "has run on this image"
+    for every name in the table, so a refining case came back `ok` and attested off a
+    source-tree reading. That is the "briefs carry measurements, not constants" failure
+    written into the one file that exists to catch it, and it costs a long adaptive-mesh
+    solve: the agent skips `--only probe`, queues the run, and finds out at the first
+    step whether the type is registered. An unattested type belongs in the warn branch
+    that sends it to the probe, which asks the build itself in seconds.
+    """
+    case = motion_case(tmp_path / "amr", "pimpleFoam",
+                       "dynamicFvMesh   dynamicRefineFvMesh;\n")
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+
+    mesh = [f for f in found if "dynamicRefineFvMesh" in f.measured]
+    assert mesh, "the mesh type must still be reported"
+    assert mesh[0].status == "warn", "nothing here has run it, so it cannot be an ok"
+    assert "has run on this image" not in mesh[0].meaning
+    assert "no run here has used it" in mesh[0].meaning
+    assert "probe" in mesh[0].repair, "the build is the authority and the probe asks it"
+
+
+def test_the_mesh_type_that_did_run_says_where_it_ran(preflight, tmp_path):
+    """The other half of the same rule: an `ok` has to carry its own evidence, so the
+    claim a reader acts on and the run behind it cannot drift apart again."""
+    case = motion_case(tmp_path / "wig7", "interFoam",
+                       "dynamicFvMesh   dynamicMotionSolverFvMesh;\n")
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+
+    mesh = [f for f in found if "dynamicMotionSolverFvMesh" in f.measured]
+    assert mesh and mesh[0].status == "ok"
+    assert "Wigley hull of 2026-08-31" in mesh[0].meaning
+
+
+def test_no_attested_name_can_claim_a_run_without_naming_where_it_ran(preflight):
+    """The table is evidence, not a build manifest, and the entry now carries both
+    facts: what the name does and how this workspace knows it. A name added with
+    `ran=True` and no run behind it is the defect of 2026-09-12 all over again."""
+    entries = list(preflight.MESH_TYPES_ATTESTED.items()) + \
+        list(preflight.MOTION_SOLVERS_ATTESTED.items())
+    for name, seen in entries:
+        assert seen.provenance.strip(), f"{name} says nothing about where it came from"
+        if seen.ran:
+            assert "this image" in seen.provenance, (
+                f"{name} claims a run; the entry must say where that run was"
+            )
+
+
 def test_motion_did_not_become_a_twelfth_top_level_check(preflight):
     """It lives in `--resolve`, where the case that does not move pays nothing for it."""
     assert "motion" not in preflight.CHECKS

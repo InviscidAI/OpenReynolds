@@ -201,8 +201,8 @@ costs nothing and a rule that is enforced costs everything.
 | Command | What it does |
 | --- | --- |
 | `openreynolds` | Start a study. `--study <id>` resumes one, `--instance <id>` attaches to a particular workspace. |
-| `-p "..."` | Run non-interactively and exit. Exit code `0` done, `1` the model API failed, `2` hit `--max-wait` with work still running. |
-| `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. |
+| `-p "..."` | Run non-interactively and exit. Exit code `0` done, `1` the model API failed or the session crashed, `2` hit `--max-wait` with work still running. |
+| `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies` or `doctor` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
 | `openreynolds login` | Sign in; this machine gets its own service key. `--browser` for the device-code flow. |
 | `openreynolds config` | Provider, key, model, context window. `--key-file` and `--from-env` keep keys out of shell history. |
 | `openreynolds doctor` | Check all seven surfaces. Read-only. `--json` answers in one object. |
@@ -222,17 +222,26 @@ step, so you can steer a run without stopping it. `/help` has the rest.
 
 `--output-format stream-json` puts one JSON object per line on stdout and **nothing
 else**: every notice, warning and error the terminal would have shown goes to stderr,
-and inline images are never drawn onto a pipe. Each object carries `v` (the schema),
-`type`, `at` (seconds since the session started) and `study`.
+and inline images are not drawn at all in this mode -- not onto a pipe and not onto a
+pseudo-terminal, which is how an agent harness usually runs a child process. Each
+object carries `v` (the schema), `type`, `at` (seconds since the session started) and
+`study`, and `cost` rows are measured from the same origin as everything else.
 
     openreynolds -p "mesh and solve the elbow" --output-format stream-json
 
 The first object is always `session_start`, with `study_id`, `instance_id`, `model` and
-the local study directory -- `study_id` is what `--study <id>` takes to resume. The last
-is `session_end`, carrying the same outcome the exit code means. In between:
+the local study directory -- `study_id` is what `--study <id>` takes to resume. The
+stream always ends with exactly one `session_end`, carrying the same outcome the exit
+code means: `ok`, `failed`, `timeout`, or `crashed` for an exception that escaped the
+session. A failure before the session could start is that one object and nothing else,
+with an `error` and an outcome of `config` (something is missing from the
+configuration) or `unreachable` (the workspace service could not be reached) -- the
+three cases exit code `1` alone cannot tell apart. In between:
 
 | `type` | What it says |
 | --- | --- |
+| `workspace` | The study's own directory on the instance. The second object of every session. |
+| `thinking_begin` | The model started thinking; `thinking` carries what it thought. |
 | `text` / `thinking` | Model output as it arrives, coalesced to a line rather than a token. |
 | `message` | The whole assistant message once the turn ends, `text` and `thinking` in full. |
 | `tool` / `tool_error` | A tool call, and a tool call that went wrong. |
@@ -242,6 +251,7 @@ is `session_end`, carrying the same outcome the exit code means. In between:
 | `stage` / `narration` / `desk` / `status` | What is happening now, in words. |
 | `mirrored` / `delivered` / `files` / `renders` | Files coming home, and what is in the workspace. |
 | `notice` / `warn` / `info` / `usage` / `watching` / `interjection` / `prompt` | The rest of the terminal's own reporting. |
+| `error` | An exception escaped the session. `session_end` follows with `crashed`. |
 | `cost` | A trace event (see `OPENREYNOLDS_TRACE`), on the same stream. |
 
 Without `-p` the same flag makes a **conversation**: it reads newline-delimited JSON

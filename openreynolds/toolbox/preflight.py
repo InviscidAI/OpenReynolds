@@ -2806,29 +2806,64 @@ def _shock_findings(case: Case, application: str, solver: str) -> list[Finding]:
     return out
 
 
-MESH_TYPES_ATTESTED: dict[str, str] = {
-    "staticfvmesh": "the mesh is held; nothing moves",
-    "dynamicmotionsolverfvmesh": "a motion solver moves the points every step",
-    "dynamicrefinefvmesh": "cells are split and merged in place",
+class Attested(NamedTuple):
+    """A name this workspace recognises, what it does, and HOW the workspace knows it.
+
+    The two facts were one string until the review of 2026-09-12 found the emitter
+    telling an agent that `dynamicRefineFvMesh` "has run on this image" when the table's
+    own docstring said it had only been read out of the source tree. The provenance
+    travels with the entry now, and `ran` is what decides whether the finding is an `ok`
+    or a `warn` that sends the reader to the probe -- so a name cannot be added here
+    without saying where the knowledge came from, which is the whole point of the table.
+    """
+
+    does: str
+    provenance: str
+    ran: bool
+
+
+MESH_TYPES_ATTESTED: dict[str, Attested] = {
+    "staticfvmesh": Attested(
+        "the mesh is held; nothing moves",
+        "it ran on this image on the Wigley hull of 2026-08-31",
+        True,
+    ),
+    "dynamicmotionsolverfvmesh": Attested(
+        "a motion solver moves the points every step",
+        "it ran on this image on the Wigley hull of 2026-08-31",
+        True,
+    ),
+    "dynamicrefinefvmesh": Attested(
+        "cells are split and merged in place",
+        "it was read out of src/dynamicFvMesh/ at the v2512 tag and no run here has "
+        "used it",
+        False,
+    ),
 }
-"""`dynamicFvMesh` types this workspace has evidence for, and what each one does.
+"""`dynamicFvMesh` types this workspace has evidence for, and what that evidence is.
 
 Evidence, not a build manifest. `staticFvMesh` and `dynamicMotionSolverFvMesh` both ran
 on this image on the Wigley hull of 2026-08-31, the two phases of one settle-then-release
 pair; `dynamicRefineFvMesh` and its `hexRef8` engine were read out of `src/dynamicFvMesh/`
-at the v2512 tag and are the only refining mesh there. Every other name -- the overset
-family included -- is left unrecognised on purpose: the tutorial directories for them
-exist on this image, which is not the same fact as the type being registered in the
-build, and the one-step `probe` check asks the build itself in a few seconds. Naming a
-type here that nobody has run would be the "briefs carry measurements, not constants"
-failure written into a checker.
+at the v2512 tag and are the only refining mesh there -- read, not run, which is why it
+carries `ran=False` and reaches the agent as a warn rather than an ok. Every other name
+-- the overset family included -- is left unrecognised on purpose: the tutorial
+directories for them exist on this image, which is not the same fact as the type being
+registered in the build, and the one-step `probe` check asks the build itself in a few
+seconds. Naming a type here as run when nobody has run it would be the "briefs carry
+measurements, not constants" failure written into a checker.
 """
 
-MOTION_SOLVERS_ATTESTED: dict[str, str] = {
-    "sixdofrigidbodymotion": "a rigid body integrated against the flow forces",
+MOTION_SOLVERS_ATTESTED: dict[str, Attested] = {
+    "sixdofrigidbodymotion": Attested(
+        "a rigid body integrated against the flow forces",
+        "it carried the Wigley hull through 4.5 s of free heave and pitch on this image",
+        True,
+    ),
 }
-"""`motionSolver` names this workspace has evidence for. Same rule as above:
-`sixDoFRigidBodyMotion` carried the Wigley hull through 4.5 s of free heave and pitch."""
+"""`motionSolver` names this workspace has evidence for. Same rule and same shape as
+above: the entry says what the evidence is, and only a name something actually ran can
+carry `ran=True`."""
 
 
 def _motion_findings(case: Case, application: str, solver: str) -> list[Finding]:
@@ -2912,11 +2947,29 @@ def _motion_findings(case: Case, application: str, solver: str) -> list[Finding]
             "sixDoFRigidBodyState function object with it",
         ))
     elif mesh_type.lower() in MESH_TYPES_ATTESTED:
-        out.append(Finding(
-            "method", "ok",
-            f"dynamicFvMesh {mesh_type}",
-            MESH_TYPES_ATTESTED[mesh_type.lower()] + ", and it has run on this image",
-        ))
+        # Recognised is not the same fact as run. A type that was only read out of the
+        # source tree gets the warn branch and the probe, exactly as an unrecognised one
+        # does -- the review of 2026-09-12 found `dynamicRefineFvMesh` answering `ok,
+        # and it has run on this image` off a source-tree reading, which sends the agent
+        # past the one check that would have asked the build and into a long AMR solve
+        # that finds out at the first step.
+        seen = MESH_TYPES_ATTESTED[mesh_type.lower()]
+        if seen.ran:
+            out.append(Finding(
+                "method", "ok",
+                f"dynamicFvMesh {mesh_type}",
+                f"{seen.does}, and {seen.provenance}",
+            ))
+        else:
+            out.append(Finding(
+                "method", "warn",
+                f"dynamicFvMesh {mesh_type}",
+                f"{seen.does}, but {seen.provenance}, so this check has no opinion on "
+                "whether it is registered in this build",
+                "the `probe` check constructs the real dynamicFvMesh in one step and is "
+                "the authority on whether the type exists; `--only probe` asks it in "
+                "seconds",
+            ))
     elif mesh_type:
         out.append(Finding(
             "method", "warn",
@@ -2946,11 +2999,21 @@ def _motion_findings(case: Case, application: str, solver: str) -> list[Finding]
             "the `probe` check constructs it and says whether it exists",
         ))
     elif motion_solver:
-        out.append(Finding(
-            "method", "ok",
-            f"motionSolver {motion_solver}",
-            MOTION_SOLVERS_ATTESTED[motion_solver.lower()] + ", and it has run on this image",
-        ))
+        seen = MOTION_SOLVERS_ATTESTED[motion_solver.lower()]
+        if seen.ran:
+            out.append(Finding(
+                "method", "ok",
+                f"motionSolver {motion_solver}",
+                f"{seen.does}, and {seen.provenance}",
+            ))
+        else:
+            out.append(Finding(
+                "method", "warn",
+                f"motionSolver {motion_solver}",
+                f"{seen.does}, but {seen.provenance}, so this check has no opinion on "
+                "whether this build registers it",
+                "the `probe` check constructs it and says whether it exists",
+            ))
     return out
 
 

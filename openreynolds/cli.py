@@ -50,6 +50,18 @@ OUTPUT_FORMATS = ("text", "stream-json")
 """`text` is a person reading a terminal. `stream-json` is one JSON object per line and
 nothing else on stdout, for an agent or a script driving this."""
 
+JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor"})
+"""Subcommands that have a structured answer for the group's `--output-format` to mean
+something. Everything else it is given with is refused rather than answered in prose."""
+
+
+def _json_asked(ctx: click.Context) -> bool:
+    """Whether the group was given `--output-format stream-json` in front of this
+    subcommand. It is the same request as the subcommand's own `--json`, made with the
+    flag an agent already puts in front of everything."""
+    parent = ctx.find_root()
+    return bool((parent.obj or {}).get("output_format") == "stream-json")
+
 tolerant_stdout()
 console = plain_console()
 """Wide when nothing is there to measure: piped output used to fold at rich's
@@ -69,6 +81,28 @@ def _keep_stdout_for_json() -> None:
     global console
     if console.file is not sys.stderr:
         console = plain_console(sys.stderr)
+    # And the other thing that writes bytes onto stdout without going through a view:
+    # an inline image. `images.drawable` asked only `stream.isatty()`, and an agent
+    # harness normally runs a child CLI on a pseudo-terminal -- so with
+    # `TERM=xterm-kitty` a `fetch` of a .png injected a kitty graphics payload into
+    # the middle of the NDJSON stream and a strict reader, resynchronising inside a
+    # base64 blob, never recovered. The mode is the fact; the file descriptor is not.
+    images.suppress()
+
+
+def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
+    """One `session_end` on stdout for a failure that happened before the view existed.
+
+    A missing key and an unreachable workspace service both printed to stderr and
+    exited 1 with stdout completely empty, and exit code 1 already means "the model
+    API failed" -- so an agent reading the documented stream could not tell a missing
+    key from a refused model call from a workspace outage, which are the three things
+    it would handle differently (prompt the person, back off, retry). The stream now
+    always ends with exactly one terminal object, whatever went wrong.
+    """
+    JsonView(sys.stdout).emit(
+        "session_end", study=study_id, outcome=outcome, error=error
+    )
 
 
 @click.group(invoke_without_command=True)
@@ -113,6 +147,22 @@ def main(
 ) -> None:
     """A CFD agent with a real OpenFOAM workspace."""
     if ctx.invoked_subcommand is not None:
+        # `--output-format` is a GROUP option, so the obvious thing for an agent to do
+        # is put it in front of everything -- and this function used to return here
+        # before the mode was applied, which meant `--output-format stream-json
+        # studies` was accepted, parsed, discarded, and answered with four lines of
+        # rich prose on stdout and no hint that the flag did nothing. The two
+        # subcommands that have a JSON answer now take it as one; the rest say they
+        # cannot, rather than silently printing prose at a reader that cannot read it.
+        if output_format != "text":
+            if ctx.invoked_subcommand not in JSON_CAPABLE_COMMANDS:
+                ctx.fail(
+                    f"--output-format {output_format} is for a session; "
+                    f"of the subcommands only "
+                    f"{' and '.join(sorted(JSON_CAPABLE_COMMANDS))} answer in JSON, "
+                    "through their own --json."
+                )
+            ctx.obj = {"output_format": output_format}
         return
 
     if output_format == "stream-json":
@@ -133,6 +183,8 @@ def main(
             "[bold]openreynolds login[/] gets a service key; [bold]openreynolds config[/] "
             "sets the model key. Or set them in the environment."
         )
+        if output_format == "stream-json":
+            _terminal_json("config", f"missing configuration: {', '.join(missing)}")
         raise SystemExit(1)
 
     outcome = session(
@@ -152,8 +204,10 @@ def main(
 
 @main.command("studies")
 @click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
-def studies_cmd(as_json: bool) -> None:
+@click.pass_context
+def studies_cmd(ctx: click.Context, as_json: bool) -> None:
     """List local studies."""
+    as_json = as_json or _json_asked(ctx)
     cfg = Config.load()
     sessions = list_studies(cfg.studies_dir)
     if as_json:
@@ -790,8 +844,10 @@ def video_cmd(frames: str, study_id: str | None, fps: float | None, out_path: st
 
 @main.command("doctor")
 @click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
-def doctor_cmd(as_json: bool) -> None:
+@click.pass_context
+def doctor_cmd(ctx: click.Context, as_json: bool) -> None:
     """Check configuration, connectivity and credentials."""
+    as_json = as_json or _json_asked(ctx)
     cfg = Config.load()
     if as_json:
         # `run_checks` already answers in tuples; the prose is the only thing standing
@@ -1045,6 +1101,8 @@ def session(
             )
     except BackendError as exc:
         console.print(f"[red]Could not reach the workspace service:[/] {exc}")
+        if streaming_json:
+            _terminal_json("unreachable", str(exc), store.session.study_id)
         raise SystemExit(1) from exc
 
     if getattr(backend, "was_already_running", False):
@@ -1205,12 +1263,26 @@ def session(
             stream = JsonView(sys.stdout)
             # The cost events (`turn`, `tool`, `mirror`) join the same stream through
             # the view's own lock, rather than racing it for stdout.
-            trace.to(stream.trace_sink())
+            # ... and on the view's clock, so one stream has one meaning for `at`.
+            trace.to(stream.trace_sink(), origin=stream.origin)
             drive(stream, NullReader() if one_shot else JsonReader())
         elif one_shot or plain or not _tui_available():
             drive(ConsoleView(console), LineReader() if not one_shot else NullReader())
         else:
             force_exit = bool(_run_tui(drive))
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001 - re-raised immediately below
+        # `outcome` is assigned only by the two run loops, so anything escaping
+        # `drive()` left it None -- and `JsonView.session_end` renders None as "ok".
+        # A RuntimeError out of the provider gave exit code 1, a traceback on stderr,
+        # and a final stdout line saying the study finished cleanly; an agent driving
+        # the paid service from the stream recorded the run as successful and did not
+        # retry, while the teardown decision that costs money had already been taken.
+        outcome = outcome or "crashed"
+        if stream is not None:
+            stream.emit("error", message=f"{type(exc).__name__}: {exc}")
+        raise
     finally:
         live_mirror.stop()
         _pickup_results(backend, capture, store.session.home or WORKSPACE_ROOT)
@@ -1244,10 +1316,14 @@ def session(
     return outcome
 
 
-ONE_SHOT_EXIT_CODES = {"ok": 0, "failed": 1, "timeout": 2}
+ONE_SHOT_EXIT_CODES = {"ok": 0, "failed": 1, "timeout": 2, "crashed": 1}
 """What a `-p` run's ending means to the shell that started it. Documented in the
 README, so a script can tell "the model could not be reached" from "the solve is
-still going" without parsing the output."""
+still going" without parsing the output.
+
+`crashed` normally leaves by the exception itself rather than through this table --
+the traceback is worth more than a tidy exit -- and it is mapped anyway so that an
+embedder which swallows the exception cannot turn a crash into a zero."""
 
 WORKSPACE_LISTED = 40
 
@@ -1627,31 +1703,73 @@ def _still_running_on_the_instance(backend: Backend, store: Store) -> list[dict]
 
 
 _NEIGHBOUR_PROBE = r"""self=$$
+cd / 2>/dev/null || true
+mine=%s
+root=%s
+rmine=$(readlink -f "$mine" 2>/dev/null || echo "$mine")
+rroot=$(readlink -f "$root" 2>/dev/null || echo "$root")
 for d in /proc/[0-9]*; do
 p=${d#/proc/}
 [ "$p" = "$self" ] && continue
 c=$(cat "$d/comm" 2>/dev/null) || continue
 w=$(readlink "$d/cwd" 2>/dev/null) || continue
-case "$w" in %s|%s/*) continue ;; esac
-case "$w" in %s|%s/*) printf '%%s %%s\n' "$p" "$c" ;; esac
+case "$w" in "$mine"|"$mine"/*|"$rmine"|"$rmine"/*) continue ;; esac
+case "$w" in "$root"|"$root"/*|"$rroot"|"$rroot"/*) printf '%%s %%s\n' "$p" "$c" ;; esac
 done"""
 """Processes working somewhere in the workspace that is not this study's directory.
 
 The exact inverse of `stopping._OWN_PROBE`, and for the same reason: where a process
 is working is the only thing that distinguishes this study's work from a neighbour's.
+
+Both roots are resolved before they are compared, and that is what makes this fire at
+all. Inside a Modal Sandbox `/work` is a SYMLINK to `/__modal/volumes/vo-<id>`, not a
+directory -- foamd says so in `quota.py` (`du -sm /work` answered 1 MB against
+`du -sLm /work` at 28633 MB on the same live Sandbox) and acts on it in `files.py`,
+which resolves the root with `realpath -m` for its jail check instead of comparing the
+literal string. `/proc/<pid>/cwd` is a kernel magic link: it yields the PHYSICAL path
+however the process got there, because a shell `cd` only updates the logical `$PWD`.
+One production transcript prints the same case twice, as
+`/__modal/volumes/vo-QLeP1IjwPg9DkyX8ENl2HW/onera_hisa` from getcwd and as
+`/work/onera_hisa` from `$PWD`. Interpolating the literals therefore matched nothing
+in production ever: this answered empty every time and `shared` collapsed to exactly
+the pre-fix behaviour it was written to replace. Both spellings are matched, because a
+backend that does not symlink its workspace answers with the logical one.
+
+`cd /` is the other half of not reporting yourself: the probe's own shell and the
+`cat`/`readlink` it spawns per process inherit a working directory outside the
+workspace, so neither arm can match them and no name filter is needed to hide them.
 """
 
 QUIET_COMMANDS = frozenset({
     "sh", "bash", "dash", "cat", "readlink", "ps", "sleep", "env", "tee", "timeout",
-    "printf", "ls", "find", "grep", "sed", "awk", "cut", "head", "tail", "wc", "rm",
-    "cp", "mv", "mkdir", "du", "df", "tar", "gzip", "true", "sshd", "init",
+    "printf", "ls", "df", "true", "sshd", "init",
 })
-"""Not work. The probe runs in a shell and spawns `cat` and `readlink` per process, so
-without this it reports itself; the rest are the housekeeping every container does."""
+"""Not work: shells waiting on their next command, and the housekeeping every
+container does.
+
+`cp`, `mv`, `rm`, `tar`, `gzip`, `find`, `du`, `sed`, `awk`, `cut`, `grep`, `head`,
+`tail`, `wc` and `mkdir` were in here too, as "housekeeping". On this image they are
+the data-moving half of a real pipeline, and while one of them is the running child of
+a mesh-desk bash block it is the ONLY non-quiet process that block has. A neighbour
+part-way through `cp -r ../mesh/constant/polyMesh constant/` -- minutes, for a
+multi-GB mesh over the 9p Volume -- looked exactly like an empty container, so the
+exiting session terminated it mid-copy and, because `/stop` keeps the Volume, left a
+half-copied `constant/polyMesh` for the next session to inherit as a corrupt mesh.
+The same window covered `tar -x` of an uploaded case and `rm -rf processor*` after a
+decompose."""
+
+PROBE_ATTEMPTS = 2
+PROBE_RETRY_PAUSE_S = 2.0
+"""One retry before giving up on the question. A 503 from a control plane mid-deploy,
+or a 429 from the rate limiter, is usually gone a couple of seconds later; a 507 from
+a full volume is not, and that is what the refusal below is for."""
 
 
-def _neighbour_work(backend: Backend, home: str) -> list[str]:
+def _neighbour_work(backend: Backend, home: str) -> list[str] | None:
     """What somebody else is running on this workspace right now, by name.
+
+    `None` means the question could not be put -- which is not the same answer as
+    "nobody is here", and the caller must not read it as one.
 
     The shutdown half of `_close_down` asked `active_jobs()`, which reads JOB ROWS --
     and the mesh desk does all of its work through `backend.exec`, one bash block at a
@@ -1669,15 +1787,32 @@ def _neighbour_work(backend: Backend, home: str) -> list[str]:
     scoped = bool(home) and str(home).rstrip("/") != WORKSPACE_ROOT
     if not scoped:
         return []
-    mine = shlex.quote(str(home).rstrip("/"))
-    root = shlex.quote(WORKSPACE_ROOT)
-    try:
-        result = backend.exec(_NEIGHBOUR_PROBE % (mine, mine, root, root), timeout_s=30)
-    except (BackendError, AttributeError) as exc:
-        # Same asymmetry the job listing takes, and the same reason: a workspace left
-        # up on an unanswerable question bills until a reaper notices.
-        console.print(f"[yellow]could not check for other sessions' work ({exc})[/]")
-        return []
+    probe = _NEIGHBOUR_PROBE % (
+        shlex.quote(str(home).rstrip("/")), shlex.quote(WORKSPACE_ROOT)
+    )
+    result = None
+    for attempt in range(PROBE_ATTEMPTS):
+        try:
+            result = backend.exec(probe, timeout_s=30)
+            break
+        except AttributeError:
+            return []
+        except BackendError as exc:
+            if attempt + 1 < PROBE_ATTEMPTS:
+                time.sleep(PROBE_RETRY_PAUSE_S)
+                continue
+            # Not []. The cost here is asymmetric the wrong way round for a guess:
+            # leaving the workspace up costs at most the reaper's idle window, while
+            # terminating it under a neighbour destroys an in-flight mesh or solve.
+            # And the states that make this fail are exactly the states where a
+            # neighbour is most likely -- a 507 from `quota.ensure_room` once /work is
+            # at its quota (every synchronous exec, this probe included, is refused
+            # before it runs), a 429 from the rate limiter, or the 30 s timeout on a
+            # container that is busy meshing.
+            console.print(f"[yellow]could not check for other sessions' work ({exc})[/]")
+            return None
+    if result is None:
+        return None
     names = []
     for line in (result.output or "").splitlines():
         pid, _, name = line.strip().partition(" ")
@@ -1738,7 +1873,10 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     # either way -- and the probe is a round trip to a container that is about to be
     # let go of.
     neighbours = _neighbour_work(backend, home) if started_it_here and not running else []
-    shared = not started_it_here or bool(neighbours)
+    unanswered = neighbours is None
+    """The probe could not be run at all. Not an answer, and above all not the answer
+    "nobody is here" -- see `_neighbour_work`."""
+    shared = not started_it_here or bool(neighbours) or unanswered
     """Whether anyone else is on this workspace.
 
     Who STARTED the container is the wrong question and always was: the answer that
@@ -1758,9 +1896,16 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
                 f"[yellow]another session is working on this workspace:[/] "
                 f"{', '.join(neighbours)}"
             )
-        console.print(
-            "[dim]this workspace is in use by another session, so it is left up[/]"
-        )
+        if unanswered:
+            console.print(
+                "[yellow]could not tell whether another session is working here, "
+                "so the workspace is left up[/]"
+            )
+            console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
+        else:
+            console.print(
+                "[dim]this workspace is in use by another session, so it is left up[/]"
+            )
     elif running:
         # F-46. `was_already_running` asks who STARTED this workspace, and that is the
         # wrong question to ask about a detached job: jobs outlive sessions by design

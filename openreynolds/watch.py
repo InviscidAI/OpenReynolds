@@ -317,6 +317,15 @@ def _collect_finished(backend: Backend, store: Store, view: View) -> str:
             exit_code=status.exit_code,
         )
         view.info(f"job {record.name or record.job_id[:8]} -> {status.status}")
+        # And in the shape a reader can act on. `view.jobs` used to be called only
+        # from `tools._announce_jobs`, i.e. only when the MODEL asked about a job --
+        # so a job that finished while the harness itself was watching produced the
+        # prose line above and nothing else. A stream-json run of a 40 s job with
+        # `--max-wait 3` carried exactly one `jobs` object, at t=2.9 s and `running`;
+        # the end at t=45.5 s said only `{"type":"info","message":"job solve ->
+        # exited"}`, so the exit code and the end reason never reached the stream at
+        # all. An agent keying off `jobs` never learns its four-hour solve is done.
+        view.jobs(list(store.session.jobs.values()))
         reports.append(_job_report(backend, status))
 
     return "\n\n".join(reports)
