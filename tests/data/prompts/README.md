@@ -1,8 +1,12 @@
-# The eight acceptance prompts
+# The acceptance prompts
 
 v1's final gate (`#8`). Each is run against the CAD desk on the image; the set passes when
 the pass rate is at least the recorded rate of the desk being replaced, with every
 individual regression named even where the aggregate holds.
+
+**Twelve, not eight.** T1–T8 are the original set. T9–T12 were added on 2026-09-12 from
+the two open-source benchmark suites named in §"Where T9–T12 come from" below, each one
+carrying a gap that the first sweep's §6 named and the original eight could not reach.
 
 ## Provenance, stated plainly
 
@@ -30,9 +34,48 @@ better disguise.
 | T6 | STEP with no declared unit | guessing a unit — a factor of 1000 on every length in the study |
 | T7 | sealed cavity driven by cell zones | a correct one-patch mesh refused by a two-patch rule |
 | T8 | conjugate two-region case | a correct multi-region mesh reported as "nothing has been meshed yet" |
+| T9 | flooded bearing, 1 mm clearance | a gap narrower than the cell, bridged silently, with the region count still right |
+| T10 | one turbine blade passage | a trailing edge thinner than the cell, rounded to fit, every printed number still agreeing |
+| T11 | honeycomb flow straightener | a boolean over ~100 cutters that loses a few, invisibly to `checkMesh` |
+| T12 | centrifugal impeller passage | a root fillet that fails to apply and is not reported — MAC's one published failure |
 
-Four exercise authoring, two exercise STEP prep, and two exercise cases the desk being
-replaced could not return at all.
+Of the original eight, four exercise authoring, two exercise STEP prep, and two exercise
+cases the desk being replaced could not return at all. T9–T12 exercise authoring against
+features at the cell scale, and are the corpus's first cases that export a surface without
+ingesting a STEP.
+
+## Where T9–T12 come from
+
+Adapted, with the same honesty the eight are owed, from two open-source text-to-CAD
+benchmark suites:
+
+- [Adam-CAD/CADAM](https://github.com/Adam-CAD/CADAM) — 13 OpenSCAD benchmarks, GPL-3.0.
+  T10 from its axial turbine blisk (12), T11 from its honeycomb bracket (04), T12 from its
+  centrifugal impeller (08).
+- [Pan-Chera/Multi-Agent-CAD](https://github.com/Pan-Chera/Multi-Agent-CAD) — 10 build123d
+  benchmarks P1–P10 with a 141-feature pass/fail record, MIT, sharing its prompt set with
+  [earthtojake/text-to-cad](https://github.com/earthtojake/text-to-cad). T9 from its
+  print-in-place articulable gyroscope, T12 also from its P8.
+
+**What was taken is the geometry, not the case.** Both suites score a *solid model for
+printing*: pass means the feature is present, the body is watertight, the part comes off
+the plate. This corpus scores a *meshable fluid domain*: pass means `checkMesh` is clean
+and every named property was measured and printed. Those are different questions of the
+same shape, so a prompt cannot cross over — the vase, the bolt and the V8 have no fluid
+domain and nothing for this desk to be right or wrong about. What crosses over is the
+*topology*: a twisted blade, a hundred-cell lattice, a 1 mm clearance, a fillet OCCT
+refuses. Each of the four re-poses one of those as an internal-flow case, states the
+dimensions it inherited, and adds the fluid domain, the patches and the property list
+here.
+
+**One of the four is a deliberate overlap.** T12 is MAC's P8, whose item 13 — the blade
+root fillets — is the single failure in its published 140/141. It is in the corpus so that
+one point of the sweep is comparable to a number someone else measured, rather than only
+to our own baseline.
+
+No code, prompt text, or licensed material from either repository is vendored into this
+repository; CADAM's GPL-3.0 makes that a decision rather than a convenience, and it was
+not taken.
 
 ## How each is judged
 

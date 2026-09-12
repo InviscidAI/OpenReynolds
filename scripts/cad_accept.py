@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""The acceptance runs: eight prompts, two arms, and everything each run left behind.
+"""The acceptance runs: the prompt corpus, two arms, and everything each run left behind.
 
-    python3 scripts/cad_accept.py desk --local          # the CAD desk, all eight
+    python3 scripts/cad_accept.py desk --local          # the CAD desk, every case
     python3 scripts/cad_accept.py desk                 # the same, on the hosted image
     python3 scripts/cad_accept.py bash                 # OPENREYNOLDS_MESH_TOOL=0, the A/B
     python3 scripts/cad_accept.py old --only T7,T8     # the desk being replaced
@@ -93,7 +93,10 @@ reported was 2.5x under."""
 
 
 def load_prompts() -> dict[str, dict[str, Any]]:
-    """The eight, read off the committed files rather than restated here.
+    """The corpus, read off the committed files rather than restated here.
+
+    Whatever `T*.md` is on disk is the corpus -- it was eight and is twelve, and the
+    count lives nowhere but the directory, so adding a case is adding a file.
 
     The request is the blockquote under `## Request`; the named properties are the
     bullets under the properties heading, which is what each run is judged on beyond
@@ -414,7 +417,7 @@ def ensure_kernel_deps(backend, wheels: Path | None = None) -> str:
     install` there answers "needs the network, which is sealed in this sandbox" -- so
     the dependency cannot be satisfied at run time by the thing that needs it. Without
     this the desk returns `no kernel on this workspace: No module named
-    'jupyter_client'` and every one of the eight prompts fails before a model is
+    'jupyter_client'` and every one of the prompts fails before a model is
     called, which is how it was found.
 
     So the wheels are carried in from the dev machine, unpacked onto the persistent
