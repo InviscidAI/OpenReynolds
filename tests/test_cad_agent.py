@@ -1258,3 +1258,43 @@ def test_a_watcher_that_raises_does_not_end_the_run(backend, store, monkeypatch)
 
     made.on_turn = explode
     assert made.run("a duct").ok
+
+
+def test_a_desk_can_refuse_and_that_is_a_terminal_not_a_failure(backend, store, monkeypatch):
+    """T6 of the first baseline is why this exists.
+
+    Its fixture is a STEP with the `LENGTH_UNIT` declaration emptied. The desk found the
+    missing unit, wrote the guess into a constant, and shipped a mesh `checkMesh` passed
+    -- and the run recorded `done`, `checkmesh_ok: true`, the corpus's sixth success. The
+    brief had named that outcome in advance: "It passed by luck, and the next file is
+    inches."
+
+    Nothing was wrong with the desk's honesty. There was nowhere to land: a desk that
+    stopped early scored `steps`, indistinguishable from failing, and one that guessed
+    scored `done`.
+    """
+    checking(monkeypatch, PASSES)
+    kernelled(backend)
+    made = desk(backend, store, [
+        block('print("CAD_REFUSED: the STEP declares no length unit")',
+              "This file gives no unit and the extents fit both mm and m."),
+    ])
+    result = made.run("mesh the fluid volume in this STEP")
+
+    assert result.stopped == "refused"
+    assert result.error == "the STEP declares no length unit"
+    assert not result.ok, "a refusal is not a mesh"
+    # No finish check runs: there is nothing to check, and "nothing was meshed" would
+    # bury the reason under a complaint about its absence.
+    assert result.check is None
+
+
+def test_the_refusal_token_in_a_comment_is_not_a_refusal(backend, store, monkeypatch):
+    """The same rule `_is_finish` learned the hard way: the token is the whole cell, or
+    it is a word the desk wrote while explaining itself."""
+    from openreynolds.cad.agent import _refusal
+
+    assert _refusal('print("CAD_REFUSED: no unit")') == "no unit"
+    assert _refusal('print("CAD_REFUSED")') == "no reason given"
+    assert _refusal('# print("CAD_REFUSED: no unit")\nbody = 1') is None
+    assert _refusal("body = 1") is None

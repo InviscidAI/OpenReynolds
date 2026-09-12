@@ -39,7 +39,8 @@ from typing import Any, Callable
 
 from .. import images
 from ..llm import Listener, ProviderError, make_provider
-from .brief import CAD_DONE, remark_message, system_prompt, task_message
+from .brief import (CAD_DONE, CAD_REFUSED, remark_message, system_prompt,
+                    task_message)
 from .cells import Cell, CellLog
 from .check import Check, mesh_regions, verify
 
@@ -357,6 +358,21 @@ class CadDesk:
                 _answer(messages, ids, complaint, is_error=True, note=self._drain())
                 continue
 
+            declined = _refusal(source)
+            if declined is not None:
+                # A terminal, not a failure. The desk is saying the request cannot be
+                # answered correctly and why -- which for a case like T6 *is* the work,
+                # and which nothing could express before: a desk that stopped early was
+                # scored `steps`, and one that guessed was scored `done`.
+                #
+                # No finish check runs. There is no mesh to check, and handing back
+                # "nothing was meshed" would bury the reason under a complaint about
+                # its absence.
+                result.stopped = "refused"
+                result.error = declined
+                result.summary = _summary(turn.text) or declined
+                break
+
             if _is_finish(source) and remark:
                 # Somebody spoke in the same breath as "done". Their words are the
                 # newer instruction, so the run continues rather than closing on a
@@ -395,7 +411,7 @@ class CadDesk:
         self._settle()
         result.seconds = time.monotonic() - started
         result.script = self.log.script()
-        if not result.ok and result.check is None:
+        if not result.ok and result.check is None and result.stopped != "refused":
             # The run ended without saying done -- out of steps, out of time, or the
             # model call failed. What is on disk may still be a finished mesh, and a
             # mesh nobody looked at is exactly the failure this desk exists to end.
@@ -765,6 +781,24 @@ def parse_action(turn: Any) -> tuple[list[str], str, str]:
 
 
 _FINISH = re.compile(rf"^print\(\s*[\"']{CAD_DONE}[\"']\s*\)$")
+
+
+_REFUSE = re.compile(
+    rf"^print\(\s*[\"'](?:{CAD_REFUSED})\s*:?\s*(.*?)[\"']\s*\)$", re.S)
+"""The other terminal. Matched the same way and for the same reason as `_FINISH`: the
+token is the whole cell or it is a word in a comment."""
+
+
+def _refusal(source: str) -> str | None:
+    """The reason the desk gave for not finishing, or None if this is not a refusal.
+
+    Returns the reason rather than a bool because an empty reason is still a refusal -- a
+    desk that declines without saying why has still declined, and scoring that as an
+    ordinary budget exhaustion would lose the one fact that matters about the run."""
+    found = _REFUSE.match(source.strip())
+    if not found:
+        return None
+    return (found.group(1) or "").strip() or "no reason given"
 
 
 def _block_types(turn: Any) -> list[str]:

@@ -9,8 +9,8 @@
 | core sha | `0841924` (clean tree) |
 | cases | T1–T8, **one run per case**, `--parallel 2` |
 | baseline | **none** — first sweep of the corpus, so it takes none and becomes the chain's root |
-| ended `done` | 6/8 (T3 `steps`, T5 `no-progress`) |
-| passed `checkMesh` | 6/8 as recorded — **5/8 honestly**, see T6 below |
+| ended `done` | 6/8 (T3 `steps`, T5 `no-progress`) — but see T6 |
+| passed | **5/8** — T6's criterion is now recorded, see §1.2 |
 | cells | 138 |
 | spend | **$7.49**, and still an undercount — see §1.1 |
 
@@ -49,8 +49,24 @@ At the corpus median of $0.0412/cell, T5's 22 cells are about **$0.91**, and by 
 its 535 s is the second-longest run in the sweep. Ranking failures by the recorded number
 puts T5 last when it belongs near the top. *This is a harness defect, not a result.*
 
-**T6 is counted as a `checkMesh` pass and is actually the sweep's clearest failure.** See §3,
-rank 3. The honest headline is 5/8.
+**T6 was counted as a `checkMesh` pass and is the sweep's clearest failure.** See §3,
+rank 3. It now scores as a failure in the record too — see §1.2. The headline is 5/8.
+
+### 1.2 T6 is now scoreable, and scores as a failure
+
+When this sweep ran, nothing in the record could express a case whose pass is the desk
+*declining*. `checkmesh_ok` scored T6 by whether it finished, and it finished — so the
+corpus's clearest failure was its sixth success, and a later core that correctly refused
+would have read as a regression in the same column.
+
+Since fixed. The desk has a refusal terminal (`print("CAD_REFUSED: <reason>")` →
+`stopped: refused`), `TERMINAL` has a word for it, T6's prompt declares `**Passes as:**
+`refused`` in its own file, and the record carries `expects` alongside a derived `passed`.
+The records here were backfilled: `expects` is a fact about the case and `passed` is
+derived from it, so neither touches what was measured. T6 now reads `passed: false`
+against `stopped: done`, which is the whole point — those two disagreeing is the finding.
+
+Totals in this report are on `passed`, so **5/8**, not the 6/8 the first version printed.
 
 ## 2. Contamination
 

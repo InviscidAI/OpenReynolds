@@ -292,7 +292,7 @@ def table(name: str, against: str = "") -> int:
         # probe measuring something is not the probe saying anything is wrong -- and a
         # column of ids reads as a column of problems, which is how 79% `skipped` came
         # to look like coverage in the first baseline.
-        print("\n| case | ended | cells | first mesh | checkMesh | $ | probes read |")
+        print("\n| case | ended | cells | first mesh | passed | $ | probes read |")
         print("|---|---|---|---|---|---|---|")
         for key, data in clean.items():
             read = data.get("probes", [])
@@ -304,7 +304,7 @@ def table(name: str, against: str = "") -> int:
                    if row.get("state") in ("measured", "pass", "fired")]
             print(f"| {key} | {data.get('stopped', '?')} | {data.get('n_steps', 0)} | "
                   f"{data.get('first_mesh_step') or '-'} | "
-                  f"{'ok' if data.get('checkmesh_ok') else 'no'} | "
+                  f"{_passed(data)} | "
                   f"{data.get('usd', 0):.2f} | "
                   f"{len(got)}/{len(read) or len(probe_ids())} |")
         _totals(clean)
@@ -321,7 +321,7 @@ def table(name: str, against: str = "") -> int:
               "difference below is not the addition's.")
 
     noise = int(manifest.get("noise_steps") or NOISE_STEPS)
-    print(f"\n| case | cells before | after | delta | checkMesh before -> after |")
+    print(f"\n| case | cells before | after | delta | passed before -> after |")
     print("|---|---|---|---|---|")
     better = worse = 0
     for key in sorted(set(before) & set(clean)):
@@ -334,8 +334,7 @@ def table(name: str, against: str = "") -> int:
             worse += 1
         print(f"| {key} | {was.get('n_steps', 0)} | {now.get('n_steps', 0)} | "
               f"{delta:+d} ({moved}) | "
-              f"{'ok' if was.get('checkmesh_ok') else 'no'} -> "
-              f"{'ok' if now.get('checkmesh_ok') else 'no'} |")
+              f"{_passed(was)} -> {_passed(now)} |")
 
     only_here = sorted(set(clean) - set(before))
     only_there = sorted(set(before) - set(clean))
@@ -351,13 +350,28 @@ def table(name: str, against: str = "") -> int:
     return 0
 
 
+def _passed(data: dict[str, Any]) -> str:
+    """Whether this run did what its case asked, for a table a person reads.
+
+    `yes`/`no` off `passed` when the record has it. Records written before the refusal
+    path existed do not, and fall back to `checkMesh` with a `?` -- correct for every
+    case but T6, whose pass is the desk declining and which those records score
+    backwards. Marked rather than silently converted, because the old record genuinely
+    cannot say."""
+    if "passed" in data:
+        return "yes" if data.get("passed") else "no"
+    return ("ok" if data.get("checkmesh_ok") else "no") + "?"
+
+
 def _totals(now: dict[str, dict[str, Any]], before: dict[str, dict[str, Any]] | None = None
             ) -> None:
     def summarise(data: dict[str, dict[str, Any]]) -> str:
-        meshed = sum(1 for row in data.values() if row.get("checkmesh_ok"))
+        meshed = sum(1 for row in data.values()
+                     if (row.get("passed") if "passed" in row
+                         else row.get("checkmesh_ok")))
         cells = sum(int(row.get("n_steps", 0)) for row in data.values())
         spend = sum(float(row.get("usd", 0)) for row in data.values())
-        return f"{meshed}/{len(data)} checkMesh ok, {cells} cells, ${spend:.2f}"
+        return f"{meshed}/{len(data)} passed, {cells} cells, ${spend:.2f}"
 
     print(f"\ntotal: {summarise(now)}")
     if before:

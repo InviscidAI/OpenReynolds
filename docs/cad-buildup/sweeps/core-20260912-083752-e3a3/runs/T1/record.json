@@ -372,5 +372,7 @@
     "killed": false,
     "first_mesh_step": 3,
     "first_mesh_turn": 4
-  }
+  },
+  "expects": "done",
+  "passed": true
 }

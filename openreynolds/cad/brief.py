@@ -45,6 +45,21 @@ was just handed; measured on a local T1 run, seven of twenty-seven. So the path 
 parameter, this is its hosted value, and `CadDesk` passes the one its backend reports."""
 
 CAD_DONE = "CAD_DONE"
+
+CAD_REFUSED = "CAD_REFUSED"
+"""How the desk says it will not finish, and why -- the other terminal the brief names.
+
+`#10` has always asked for this: "It reports up and asks no one. It returns `ok`, its
+reasons and its `stopped` state to the caller." Nothing implemented it, so a desk that
+correctly declined had nowhere to land: it could stop and be scored `steps`, which is
+indistinguishable from failing, or it could guess and be scored `done`.
+
+T6 of the first baseline did the second. Its fixture is a STEP with the `LENGTH_UNIT`
+declaration emptied; the desk found it, wrote `MM_TO_M = 0.001` with "extents imply mm"
+in the comment, and shipped a mesh `checkMesh` passed. The brief names that outcome in
+advance under "A pass that is really a failure" -- "It passed by luck, and the next file
+is inches" -- and the run recorded `done`, `checkmesh_ok: true`. The measurement could
+not express the thing the case exists to test."""
 """The word that ends the run -- checked by the harness, not taken on trust."""
 
 CAD_SYSTEM = f"""\
@@ -238,6 +253,30 @@ check -- the mesh present and named, checkMesh clean, the exported surface close
 patches disjoint, the seed point inside, the picture drawn, and your cells re-run from \
 empty reproducing the geometry. If that check fails you are handed the failure and keep \
 working; it is not a formality and it does not take your word for anything.
+
+# Refusing
+
+Some requests cannot be answered correctly, and answering them anyway is worse than \
+stopping. If you reach one, call run_cell with exactly this source:
+
+    print("{CAD_REFUSED}: the reason, in one line")
+
+and put the full reason in the prose alongside it. That ends the run and hands your \
+reason back to whoever asked. **Do not guess, and do not stop and wait for a human** -- \
+you have no one to ask, and a run that blocks on an answer that is never coming spends \
+its whole budget saying nothing. Reporting up is the finished work, not a failure to do \
+it.
+
+The case for this is narrow and specific: refuse when the request or the file leaves \
+something undetermined that changes every number downstream, and nothing you can measure \
+settles it. A CAD file that declares no unit is the example -- whether its numbers are \
+millimetres or metres is a factor of a thousand on every length, and the extents cannot \
+tell you which, because a plausible part exists at both scales. Guessing right is still \
+guessing.
+
+This is not an escape from difficulty. A shape that is hard to build, a mesher that \
+needs three attempts, a boolean that fails the first way you try it -- none of those are \
+undetermined, and all of them are the work.
 
 If you run out of steps or seconds before you get there, the same check still runs on \
 whatever is in the directory, and you are told what it found -- because an unexamined \
