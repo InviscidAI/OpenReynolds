@@ -11,6 +11,7 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from openreynolds.jsonview import JsonView
 from openreynolds.tui import JobsPane, OpenReynoldsApp, SessionBar, TuiReader, TuiView, _escape
 from openreynolds.view import ConsoleView, View
 from openreynolds.watch import NOTHING
@@ -69,11 +70,12 @@ def test_both_views_satisfy_the_protocol():
     """The loop cannot tell which one it has, which is the point."""
     assert isinstance(ConsoleView(), View)
     assert isinstance(TuiView(idle_app()), View)
+    assert isinstance(JsonView(), View)
 
 
-def test_the_two_views_implement_the_same_surface():
+def test_every_view_implements_the_same_surface():
     surface = {n for n in dir(View) if not n.startswith("_")}
-    for implementation in (ConsoleView, TuiView):
+    for implementation in (ConsoleView, TuiView, JsonView):
         missing = surface - {n for n in dir(implementation) if not n.startswith("_")}
         assert not missing, f"{implementation.__name__} is missing {missing}"
 

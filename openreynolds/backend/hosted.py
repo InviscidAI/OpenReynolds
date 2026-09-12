@@ -1156,17 +1156,17 @@ def acquire(
     """
     client = FoamdClient(base_url, api_key)
     try:
-        was_running = False
+        listed_as_running = False
         if instance_id is None:
             existing = [
                 inst for inst in client.list_instances() if inst.get("status") != "deleted"
             ]
             if existing:
                 instance_id = existing[0]["id"]
-                was_running = existing[0].get("status") == "running"
+                listed_as_running = existing[0].get("status") == "running"
             else:
                 instance_id = client.create_instance()
-        client.start_instance(instance_id)
+        reply = client.start_instance(instance_id)
     except BaseException:
         client.close()
         raise
@@ -1174,5 +1174,16 @@ def acquire(
     # Whether it was already up decides whether whoever asked for it should put it
     # back down again. A command that borrows a container ought to leave the machine
     # as it found it; a session is what containers are for.
-    backend.was_already_running = was_running
+    #
+    # The listing above cannot answer that on its own: it is read BEFORE the start
+    # call, a fresh instance row reads `stopped`, and a row only turns `running` once
+    # the start has happened -- so two sessions listing within the same second both
+    # concluded they had started the workspace, and the first to exit stopped it from
+    # under the other. The start route now says which of the two it did. Its absence is
+    # tolerated so an older service still works: there the pre-start listing is all
+    # there is, which is the behaviour this has always had.
+    started_new = reply.get("started_new") if isinstance(reply, dict) else None
+    backend.was_already_running = (
+        listed_as_running if started_new is None else not bool(started_new)
+    )
     return backend, client, instance_id

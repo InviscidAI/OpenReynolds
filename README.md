@@ -202,10 +202,11 @@ costs nothing and a rule that is enforced costs everything.
 | --- | --- |
 | `openreynolds` | Start a study. `--study <id>` resumes one, `--instance <id>` attaches to a particular workspace. |
 | `-p "..."` | Run non-interactively and exit. Exit code `0` done, `1` the model API failed, `2` hit `--max-wait` with work still running. |
+| `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. |
 | `openreynolds login` | Sign in; this machine gets its own service key. `--browser` for the device-code flow. |
 | `openreynolds config` | Provider, key, model, context window. `--key-file` and `--from-env` keep keys out of shell history. |
-| `openreynolds doctor` | Check all seven surfaces. Read-only. |
-| `openreynolds studies` | List the studies on this machine. |
+| `openreynolds doctor` | Check all seven surfaces. Read-only. `--json` answers in one object. |
+| `openreynolds studies` | List the studies on this machine. `--json` answers in one object. |
 | `openreynolds files` | What is in the workspace, and what has been copied down. |
 | `openreynolds pull` | Bring this study's files down to this machine. |
 | `openreynolds push` | Send a local file (a geometry, say) up to the instance. |
@@ -216,6 +217,37 @@ costs nothing and a rule that is enforced costs everything.
 In a session, `/status` answers locally with no model turn, `/btw` says something
 without interrupting the work, and anything else you type reaches the model at its next
 step, so you can steer a run without stopping it. `/help` has the rest.
+
+## Driving it from a program
+
+`--output-format stream-json` puts one JSON object per line on stdout and **nothing
+else**: every notice, warning and error the terminal would have shown goes to stderr,
+and inline images are never drawn onto a pipe. Each object carries `v` (the schema),
+`type`, `at` (seconds since the session started) and `study`.
+
+    openreynolds -p "mesh and solve the elbow" --output-format stream-json
+
+The first object is always `session_start`, with `study_id`, `instance_id`, `model` and
+the local study directory -- `study_id` is what `--study <id>` takes to resume. The last
+is `session_end`, carrying the same outcome the exit code means. In between:
+
+| `type` | What it says |
+| --- | --- |
+| `text` / `thinking` | Model output as it arrives, coalesced to a line rather than a token. |
+| `message` | The whole assistant message once the turn ends, `text` and `thinking` in full. |
+| `tool` / `tool_error` | A tool call, and a tool call that went wrong. |
+| `step` | One round of think-then-act finished: which round, how long, how many calls. |
+| `jobs` | Every job and its state, whenever any of it changes. |
+| `progress` | What is running and how far along, when the picture changes. |
+| `stage` / `narration` / `desk` / `status` | What is happening now, in words. |
+| `mirrored` / `delivered` / `files` / `renders` | Files coming home, and what is in the workspace. |
+| `notice` / `warn` / `info` / `usage` / `watching` / `interjection` / `prompt` | The rest of the terminal's own reporting. |
+| `cost` | A trace event (see `OPENREYNOLDS_TRACE`), on the same stream. |
+
+Without `-p` the same flag makes a **conversation**: it reads newline-delimited JSON
+from stdin, one message per line, `{"type": "user", "text": "..."}`. A `prompt` event
+says when it is your turn. Anything on stdin that is not an object this understands is
+ignored rather than guessed at.
 
 ## Configuration
 
@@ -235,6 +267,7 @@ containers want:
 | `OPENREYNOLDS_MIRROR_INTERVAL_S` | How often files come home. `0` turns it off. |
 | `OPENREYNOLDS_NARRATE_EVERY_S` | How often a long run wakes the model. `0` turns it off. |
 | `OPENREYNOLDS_CAPTURE` | `0` sends nothing to the platform. |
+| `OPENREYNOLDS_TRACE` | A file to append cost events to: one JSON object per turn, tool call and mirror cycle, with the token counts split apart rather than summed. Unset writes nothing. |
 
 By default the transcript of every study is uploaded to the workspace service as it
 runs, so a study is kept somewhere other than one laptop. `--no-capture` for a session,

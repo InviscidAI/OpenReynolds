@@ -119,18 +119,34 @@ PROGRESS_REPEAT_S = 30.0
 hold one, so the line is printed; every second would be a scroll of nothing."""
 """A scrolling terminal cannot show more than this usefully; the pane can."""
 
+PIPED_WIDTH = 160
+"""How wide a console is when nothing is there to measure.
+
+`rich` falls back to eighty columns when stdout is not a terminal, and eighty columns
+folds a workspace path, a solver command or a residual line in the middle of a token --
+so a piped run was harder to read than the terminal it was copied from, and harder
+still to grep. Nothing is watching a pipe's width, so pick one wide enough for the
+lines this actually prints."""
+
+
+def plain_console(file: Any = None) -> Console:
+    """A console that does not fold its output when nobody is looking at a terminal."""
+    console = Console(file=file)
+    return console if console.is_terminal else Console(file=file, width=PIPED_WIDTH)
+
 
 class ConsoleView(View):
     """The plain streaming terminal."""
 
     def __init__(self, console: Console | None = None):
-        self.console = console or Console()
+        self.console = console or plain_console()
         self._thinking = False
         self._browser: Any = None
         self._watching: list[str] = []
         self._progress_key: tuple = ()
         self._progress_at = 0.0
         self._narration = ""
+        self._jobs: list[tuple] = []
 
     def header(self, study_id: str, instance_id: str, model: str, mirror: Path) -> None:
         self.console.print(
@@ -173,6 +189,43 @@ class ConsoleView(View):
 
     def usage(self, tokens: int, fraction: float) -> None:
         """The plain view has nowhere to keep this, so it stays quiet."""
+
+    def jobs(self, records: list[Any]) -> None:
+        """Say what changed about the jobs, whenever it changes.
+
+        This view inherited the protocol's empty body for its whole life, so it was a
+        silent no-op: every job state change reached the interface and the hosted web
+        app and nothing at all reached a plain or piped terminal. A four-hour solve
+        finishing is the one thing a run wants to be told, and `-p` -- the mode with
+        nobody watching -- was the mode that dropped it.
+
+        Only the changes are printed. The tools report the whole job table on every
+        state change, and reprinting eight unchanged rows each time is how a terminal
+        fills up with nothing.
+        """
+        current = [
+            (
+                str(getattr(r, "job_id", "") or ""),
+                getattr(r, "name", None),
+                getattr(r, "status", ""),
+                getattr(r, "exit_code", None),
+                getattr(r, "end_reason", None),
+            )
+            for r in records
+        ]
+        was = dict((row[0], row) for row in self._jobs)
+        self._jobs = current
+        for job_id, name, status, exit_code, end_reason in current:
+            if was.get(job_id) == (job_id, name, status, exit_code, end_reason):
+                continue
+            label = name or job_id[:8]
+            detail = ""
+            if exit_code is not None:
+                detail = f" (exit {exit_code})"
+            elif end_reason:
+                detail = f" ({end_reason})"
+            style = "green" if status == "running" else "dim"
+            self.console.print(f"[{style}]job {label}: {status}{detail}[/]")
 
     def stage(self, text: str) -> None:
         """No pane to hold one line, so it becomes another line.

@@ -38,9 +38,33 @@ def protocol(env: dict[str, str] | None = None) -> str | None:
     return None
 
 
+def drawable(stream) -> bool:
+    """Whether drawing on this stream could reach an eye.
+
+    `protocol()` answers from environment variables alone, which is the right answer to
+    "what can this terminal do" and the wrong answer to "where are these bytes going".
+    A session started in a kitty window and piped into an agent still had a kitty
+    `TERM`, so every render went into the agent's capture buffer as megabytes of base64
+    escape payload -- unreadable, and enough of it to push the actual answer out of
+    view. A pipe is not a terminal, so nothing is drawn on one.
+    """
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
 def show(path: Path, stream=None) -> bool:
-    """Draw the image inline. Returns whether anything was drawn."""
-    stream = stream or sys.stdout
+    """Draw the image inline. Returns whether anything was drawn.
+
+    A `stream` given explicitly is a caller who already knows where the bytes go and
+    is not second-guessed; the default is stdout, and stdout is drawn on only when it
+    is a terminal.
+    """
+    if stream is None:
+        if not drawable(sys.stdout):
+            return False
+        stream = sys.stdout
     if path.suffix.lower() not in INLINE_SUFFIXES:
         return False
     kind = protocol()

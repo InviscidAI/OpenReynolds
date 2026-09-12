@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from conftest import FakeBackend, ScriptedReader, install_model, message, text_block, tool_block
 from openreynolds import cli
-from openreynolds.backend.base import BackendError, ExecResult, JobStatus
+from openreynolds.backend.base import WORKSPACE_ROOT, BackendError, ExecResult, JobStatus
 from openreynolds.browse import Browser
 from openreynolds.config import Config
 from openreynolds.loop import Loop
@@ -245,6 +245,37 @@ def test_studies_lists_local_studies(tmp_path, monkeypatch):
     assert "1 job(s) running" in result.output
 
 
+def test_studies_can_answer_a_script_instead_of_a_person(tmp_path, monkeypatch):
+    """This and `doctor --json` are the two things something has to run before a first
+    session, and both answered only in rich markup -- so the id needed for `--study`
+    had to be recovered by parsing a styled line."""
+    root = tmp_path / "studies"
+    store = Store(root, "20260823-120000-abcd")
+    store.session.title = "elbow"
+    store.session.instance_id = "iid-1"
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: Config(studies_dir=root)))
+
+    result = CliRunner().invoke(cli.main, ["studies", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["studies"][0]["study_id"] == "20260823-120000-abcd"
+    assert payload["studies"][0]["title"] == "elbow"
+    assert payload["studies"][0]["instance_id"] == "iid-1"
+    assert payload["studies"][0]["running_jobs"] == 1
+
+
+def test_studies_json_with_none_is_still_an_object(tmp_path, monkeypatch):
+    """"No studies under ..." is a sentence, and a script reading it as a study list
+    is a script that has already gone wrong."""
+    monkeypatch.setattr(
+        Config, "load", classmethod(lambda cls: Config(studies_dir=tmp_path / "none"))
+    )
+    result = CliRunner().invoke(cli.main, ["studies", "--json"])
+    assert json.loads(result.output)["studies"] == []
+
+
 def test_studies_with_none(tmp_path, monkeypatch):
     monkeypatch.setattr(
         Config, "load", classmethod(lambda cls: Config(studies_dir=tmp_path / "none"))
@@ -467,6 +498,34 @@ def test_doctor_flags_missing_settings(monkeypatch):
     settings = results[0]
     assert settings[1] is False
     assert "FOAMD_API_KEY" in settings[0]
+
+
+def test_doctor_can_answer_a_script_and_keeps_its_exit_code(monkeypatch):
+    """The verdict was seven lines of prose plus an exit code. `run_checks` already
+    answers in tuples; the prose was the only thing between a script and the answer.
+    The exit code is unchanged, so a caller that reads only that keeps working."""
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: full_config()))
+    stub_service(monkeypatch, instances=[{"id": "abcdefgh1234", "status": "running"}])
+    stub_model(monkeypatch)
+
+    result = CliRunner().invoke(cli.main, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True and payload["failed"] == []
+    assert {row["check"] for row in payload["checks"]} >= {"settings", "model API"}
+
+
+def test_doctor_json_still_fails_when_a_check_fails(monkeypatch):
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: Config()))
+    stub_service(monkeypatch)
+    stub_model(monkeypatch)
+
+    result = CliRunner().invoke(cli.main, ["doctor", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["ok"] is False and payload["failed"]
 
 
 def test_doctor_exits_nonzero_when_something_is_wrong(monkeypatch):
@@ -970,6 +1029,110 @@ def test_an_idle_workspace_is_still_put_down(store, quiet_console):
     assert backend.stopped == 1
 
 
+# -- the shutdown half sees work that never became a job row -------------------
+
+
+class Neighboured(Busy):
+    """A workspace with somebody else's process working in another study's directory.
+
+    The mesh desk does all of its work through `backend.exec`, one bash block at a
+    time -- so there is nothing in the jobs table to find, which is the whole point.
+    """
+
+    def __init__(self, processes=(), **kw):
+        super().__init__(**kw)
+        self.processes = list(processes)
+        self.probes = 0
+
+    def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
+        if "/proc/" in cmd and WORKSPACE_ROOT in cmd:
+            self.probes += 1
+            if "continue ;;" in cmd:  # the neighbour probe, not the own-solver one
+                return ExecResult(0, "".join(f"{p}\n" for p in self.processes), False, None)
+        return super().exec(cmd, cwd=cwd, timeout_s=timeout_s, background=background)
+
+
+def _with_a_home(store):
+    store.session.home = f"{WORKSPACE_ROOT}/study-test"
+    store.save()
+    return store
+
+
+def test_a_neighbours_running_mesh_keeps_the_workspace_up(store, monkeypatch):
+    """The live half of F-26's residue. `_still_running_on_the_instance` reads JOB
+    ROWS, and the mesh desk runs every step as an exec capped around four minutes --
+    so a session that started the instance itself and saw no running job rows called
+    shutdown(), the service terminated the Sandbox, and a neighbouring session's
+    snappyHexMesh died mid-step with a bare 500 on the other side and nothing said on
+    this one."""
+    out = _said(monkeypatch)
+    backend = Neighboured(rows=[], processes=["4021 snappyHexMesh"])
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.probes, "it asked what else is working on the volume"
+    assert backend.stopped == 0, "somebody else's mesh was still running"
+    said = out.getvalue()
+    assert "snappyHexMesh" in said, "and the person is told what stopped it"
+    assert "left up" in said
+
+
+def test_the_probe_does_not_count_its_own_shell_as_somebody_working(store, quiet_console):
+    """It runs in a bash block and spawns `cat` and `readlink` once per process, so
+    without a filter it reports itself and no session ever puts an instance down."""
+    backend = Neighboured(rows=[], processes=["12 bash", "13 cat", "14 readlink", "15 ps"])
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.stopped == 1
+
+
+def test_a_study_with_no_directory_of_its_own_does_not_guess(store, quiet_console):
+    """A home of /work is every study's directory at once, so it distinguishes
+    nothing. Studies that predate homes fall back to it, and the older questions --
+    who started this, what job rows are live -- still decide there."""
+    backend = Neighboured(rows=[], processes=["4021 simpleFoam"])
+
+    cli._close_down(backend, store)
+
+    assert backend.probes == 0, "there was nothing to compare against"
+    assert backend.stopped == 1
+
+
+def test_a_probe_that_cannot_be_run_does_not_keep_the_workspace_up(store, monkeypatch):
+    """The same asymmetry the job listing already takes: a workspace left up on an
+    unanswerable question bills until a reaper notices."""
+    out = _said(monkeypatch)
+
+    class Mute(Neighboured):
+        def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
+            if "/proc/" in cmd and "continue ;;" in cmd:
+                raise BackendError("gateway down", code="unavailable", status=503)
+            return Busy.exec(self, cmd, cwd=cwd, timeout_s=timeout_s, background=background)
+
+    backend = Mute(rows=[])
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.stopped == 1
+    assert "could not check" in out.getvalue()
+
+
+def test_a_workspace_someone_else_is_working_on_is_shared_whoever_started_it(
+    store, monkeypatch
+):
+    """Who STARTED the container is the wrong question and always was. Two sessions
+    listing while the instance row still reads `stopped` both conclude they started
+    it, and the first to exit stops it from under the other."""
+    out = _said(monkeypatch)
+    backend = Neighboured(rows=[], processes=["4021 checkMesh"], already_running=False)
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.stopped == 0
+    assert "another session is working on this workspace" in out.getvalue()
+
+
 def test_a_listing_that_fails_does_not_keep_the_workspace_up(store, monkeypatch):
     """The asymmetry is deliberate. A workspace left up on an unanswerable question
     bills until a reaper notices; the shutdown is the safe default, and the failure
@@ -1406,6 +1569,54 @@ def test_login_declining_to_create_an_account_changes_nothing(monkeypatch, tmp_p
 
     assert result.exit_code == 1
     assert not (tmp_path / "c.json").exists()
+
+
+def test_a_refused_sign_in_names_the_flow_a_google_account_actually_has(
+    monkeypatch, tmp_path
+):
+    """An account created with Google has no password, so signing in fails exactly
+    like a wrong one -- and the only thing said next was an offer to create a second
+    account for an address that already has one. `--browser` is the working path."""
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    refused = BackendError("Invalid login credentials", code="invalid_credentials", status=400)
+    _auth_stubs(monkeypatch, sessions=[refused])
+
+    result = CliRunner().invoke(cli.main, ["login"], input="g@example.com\nwhatever\nn\n")
+
+    assert "Google" in result.output
+    assert "login --browser" in result.output
+
+
+def test_the_login_help_says_which_flow_a_password_less_account_needs(monkeypatch):
+    result = CliRunner().invoke(cli.main, ["login", "--help"])
+    assert "--browser" in result.output
+    assert "Google" in result.output
+
+
+def test_a_terminal_signup_learns_what_a_web_signup_is_told_about_credit(
+    monkeypatch, tmp_path
+):
+    """The web signup says it and the terminal did not, so the same account created
+    two ways learned two different things about what it was starting with.
+
+    Deliberately not checked here: which addresses count. The domain list lives on the
+    service, and a copy in the client goes stale and starts telling people the
+    opposite of what they are about to get."""
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    refused = BackendError("Invalid login credentials", code="invalid_credentials", status=400)
+    _auth_stubs(monkeypatch, sessions=[refused])
+
+    result = CliRunner().invoke(cli.main, ["login"], input="new@example.com\npw\nn\n")
+
+    assert "$10 of credit" in result.output
+    assert "personal address starts at zero" in result.output.lower()
+    import inspect
+
+    assert "gmail" not in inspect.getsource(cli._offer_account).lower(), (
+        "no local guess about which addresses are company addresses"
+    )
 
 
 def test_login_without_a_terminal_needs_the_flags(monkeypatch, tmp_path):

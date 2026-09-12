@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -14,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import click
-from rich.console import Console
 
 from . import __version__
 from .backend import hosted
@@ -35,8 +35,10 @@ from .progress import Tracker
 from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
+from . import trace
 from .tools import ToolContext
-from .view import ConsoleView, View
+from .view import ConsoleView, View, plain_console
+from .jsonview import JsonReader, JsonView
 from .watch import NOTHING, LineReader, NullReader, situation, watch
 
 TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
@@ -44,8 +46,29 @@ TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
 RESULTS_FILE = "results.json"
 """Picked up from the study's own directory if it happens to be there."""
 
+OUTPUT_FORMATS = ("text", "stream-json")
+"""`text` is a person reading a terminal. `stream-json` is one JSON object per line and
+nothing else on stdout, for an agent or a script driving this."""
+
 tolerant_stdout()
-console = Console()
+console = plain_console()
+"""Wide when nothing is there to measure: piped output used to fold at rich's
+eighty-column non-terminal default, in the middle of a workspace path."""
+
+
+def _keep_stdout_for_json() -> None:
+    """Move everything this module says onto stderr, so stdout carries only JSON.
+
+    Roughly fifteen call sites print through the module console -- hard errors, the
+    joined-workspace warning, the API-failure report, close-down, the plain fallback --
+    and a single rich line in the middle of an NDJSON stream is not something a strict
+    reader recovers from: it resynchronises on the next newline, in the middle of an
+    object. Chasing every call site means the next one added puts the bug back, so the
+    stream itself is moved instead: one console, pointed somewhere else.
+    """
+    global console
+    if console.file is not sys.stderr:
+        console = plain_console(sys.stderr)
 
 
 @click.group(invoke_without_command=True)
@@ -67,6 +90,14 @@ console = Console()
     default=0.0,
     help="With -p, stop waiting on jobs after this many minutes (0 = no limit).",
 )
+@click.option(
+    "--output-format",
+    "output_format",
+    type=click.Choice(OUTPUT_FORMATS),
+    default="text",
+    help="stream-json puts one JSON object per line on stdout and nothing else; "
+         "without -p it also reads JSON messages from stdin.",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -78,10 +109,16 @@ def main(
     plain: bool,
     keep_alive: bool,
     max_wait: float,
+    output_format: str,
 ) -> None:
     """A CFD agent with a real OpenFOAM workspace."""
     if ctx.invoked_subcommand is not None:
         return
+
+    if output_format == "stream-json":
+        # Before the configuration check below, which prints in red on the console
+        # this moves: a missing key must not be the one line of prose in the stream.
+        _keep_stdout_for_json()
 
     cfg = Config.load()
     if model:
@@ -106,6 +143,7 @@ def main(
         plain=plain,
         keep_alive=keep_alive,
         max_wait=max_wait,
+        output_format=output_format,
     )
     code = ONE_SHOT_EXIT_CODES.get(outcome or "ok", 0)
     if code:
@@ -113,10 +151,34 @@ def main(
 
 
 @main.command("studies")
-def studies_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+def studies_cmd(as_json: bool) -> None:
     """List local studies."""
     cfg = Config.load()
     sessions = list_studies(cfg.studies_dir)
+    if as_json:
+        # This and `doctor --json` are the two commands something has to run before a
+        # first session, and both answered only in rich markup -- so the id needed for
+        # `--study` had to be recovered by parsing a styled line. Straight to stdout
+        # rather than through the console: this is data, and rich would style it.
+        payload = {
+            "dir": str(cfg.studies_dir),
+            "studies": [
+                {
+                    "study_id": item.study_id,
+                    "title": item.title or "",
+                    "instance_id": item.instance_id,
+                    "model": item.model,
+                    "created_at": item.created_at,
+                    "running_jobs": sum(
+                        1 for job in item.jobs.values() if job.status == "running"
+                    ),
+                }
+                for item in sessions
+            ],
+        }
+        sys.stdout.write(json.dumps(payload, default=str) + "\n")
+        return
     if not sessions:
         console.print(f"No studies under {cfg.studies_dir}")
         return
@@ -213,7 +275,11 @@ def login_cmd(
     service: str | None, name: str | None, email: str | None, password_stdin: bool,
     browser: bool, no_browser: bool,
 ) -> None:
-    """Sign in with your email and password; this machine gets its own service key."""
+    """Sign in with your email and password; this machine gets its own service key.
+
+    An account created with Google has no password, so this will not work for it:
+    use --browser, which approves a short code in the browser instead.
+    """
     cfg = Config.load()
     url = (service or cfg.foamd_url).rstrip("/")
     label = name or socket.gethostname() or "openreynolds"
@@ -273,8 +339,26 @@ def login_cmd(
 
 
 def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) -> dict[str, Any] | None:
-    """Wrong password, or no account yet -- the service cannot tell which, so ask."""
+    """Wrong password, or no account yet -- the service cannot tell which, so ask.
+
+    There is a third case the service cannot distinguish either, and it is the common
+    one: an account created with Google has no password at all, so the sign-in fails
+    exactly like a wrong one and this offered to create a second account for an address
+    that already has one. Naming the browser flow first is what stops that.
+    """
     console.print("Wrong password, or no account with that address yet.")
+    console.print(
+        "If you signed up with Google there is no password to type: run "
+        "[bold]openreynolds login --browser[/] and approve the code instead."
+    )
+    # What a web signup is told at the same moment. The rule about which addresses
+    # count lives on the service, so this says what the credit is and never guesses
+    # whether this address earns it -- a domain list copied into the client goes stale
+    # and starts telling people the opposite of what they are about to get.
+    console.print(
+        "A company email address starts the account with $10 of credit, once, covering "
+        "the workspace and Reynolds' model together. A personal address starts at zero."
+    )
     if not _can_prompt() or not click.confirm(f"Create an account for {email} with this password?", default=False):
         return None
     console.print(f"The terms are at {url}/terms and the privacy note at {url}/privacy.")
@@ -705,9 +789,29 @@ def video_cmd(frames: str, study_id: str | None, fps: float | None, out_path: st
 
 
 @main.command("doctor")
-def doctor_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+def doctor_cmd(as_json: bool) -> None:
     """Check configuration, connectivity and credentials."""
     cfg = Config.load()
+    if as_json:
+        # `run_checks` already answers in tuples; the prose is the only thing standing
+        # between a script and the verdict. The exit code is unchanged, so a caller
+        # that only reads that keeps working.
+        checks = run_checks(cfg)
+        failed = [label for label, ok, _detail in checks if not ok]
+        sys.stdout.write(json.dumps({
+            "config_file": str(config_path()),
+            "config_file_exists": config_path().exists(),
+            "ok": not failed,
+            "failed": failed,
+            "checks": [
+                {"check": label, "ok": ok, "detail": detail}
+                for label, ok, detail in checks
+            ],
+        }, default=str) + "\n")
+        if failed:
+            raise SystemExit(1)
+        return
     console.print(f"config file: [bold]{config_path()}[/]"
                   f"{'' if config_path().exists() else '  (absent; using the environment)'}\n")
 
@@ -889,6 +993,7 @@ def session(
     plain: bool = False,
     keep_alive: bool = False,
     max_wait: float = 0.0,
+    output_format: str = "text",
     interface: Any = None,
 ) -> str | None:
     """Run one study to its end.
@@ -900,12 +1005,24 @@ def session(
     supplying one can change what the user reads and never what the model does.
     Its return value says whether the process has to be force-exited afterwards.
 
+    `output_format` is `text` or `stream-json`. In `stream-json` this session speaks
+    newline-delimited JSON on stdout and nothing else, and everything the harness
+    would have said in prose goes to stderr instead.
+
     Returns how a one-shot run ended (see `_run_one_shot`), and None for an
     interactive session, where whatever happened was said on screen to someone.
     """
     outcome: str | None = None
+    streaming_json = output_format == "stream-json" and interface is None
+    """An `interface` is somebody else's presentation entirely, and giving it a second
+    one would put two views on one session."""
+    if streaming_json:
+        _keep_stdout_for_json()
     resuming = study_id is not None
     store = Store(cfg.studies_dir, study_id or new_study_id())
+    # A trace file written on a machine running three studies could not say which
+    # study any of its rows belonged to. It can now, and it costs one assignment.
+    trace.begin(store.session.study_id)
     known_here = (store.dir / "session.json").is_file()
     """Whether this machine already held the study before this run. A resume without
     it is a study opened somewhere else, and it is named by its id rather than
@@ -989,6 +1106,10 @@ def session(
     def drive(view: View, reader: Any) -> None:
         """One session, against whichever interface is running it."""
         nonlocal outcome
+        # First, before the machinery: this is where the study id reaches whoever is
+        # watching, and a view that answers in objects rather than in prose has nothing
+        # to say about itself until it has been told which study it is.
+        view.header(store.session.study_id, resolved_instance, cfg.model, store.dir)
         # The tools report job state through the view, so a panel showing what is
         # running is current the moment it changes rather than only while polling.
         ctx.view = view
@@ -1044,7 +1165,6 @@ def session(
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
         )
-        view.header(store.session.study_id, resolved_instance, cfg.model, store.dir)
         loop.brief(
             _situation_brief(
                 store,
@@ -1074,9 +1194,19 @@ def session(
                 concierge.stop()
 
     force_exit = False
+    stream: JsonView | None = None
     try:
         if interface is not None:
             force_exit = bool(interface(drive))
+        elif streaming_json:
+            # The fourth interface behind this same seam. `-p` is one prompt and one
+            # structured reply, so there is nothing to read; without it the session is
+            # a conversation and the other side of the stream is stdin.
+            stream = JsonView(sys.stdout)
+            # The cost events (`turn`, `tool`, `mirror`) join the same stream through
+            # the view's own lock, rather than racing it for stdout.
+            trace.to(stream.trace_sink())
+            drive(stream, NullReader() if one_shot else JsonReader())
         elif one_shot or plain or not _tui_available():
             drive(ConsoleView(console), LineReader() if not one_shot else NullReader())
         else:
@@ -1098,6 +1228,12 @@ def session(
             capture.close()
         _close_down(backend, store, keep_alive=keep_alive)
         backend.close()
+        if stream is not None:
+            # Last, and after the teardown that costs money has been decided: a reader
+            # that stops at `session_end` has seen everything. The exit code says the
+            # same thing, and a reader on the far side of a pipe may never see it.
+            stream.session_end(outcome)
+            trace.off()
         if force_exit:
             # The session thread is still inside a network call it cannot be pulled out
             # of. Everything worth keeping is written; waiting for it would leave the
@@ -1490,6 +1626,67 @@ def _still_running_on_the_instance(backend: Backend, store: Store) -> list[dict]
     return [row for row in rows if str(row.get("id") or "") not in mine]
 
 
+_NEIGHBOUR_PROBE = r"""self=$$
+for d in /proc/[0-9]*; do
+p=${d#/proc/}
+[ "$p" = "$self" ] && continue
+c=$(cat "$d/comm" 2>/dev/null) || continue
+w=$(readlink "$d/cwd" 2>/dev/null) || continue
+case "$w" in %s|%s/*) continue ;; esac
+case "$w" in %s|%s/*) printf '%%s %%s\n' "$p" "$c" ;; esac
+done"""
+"""Processes working somewhere in the workspace that is not this study's directory.
+
+The exact inverse of `stopping._OWN_PROBE`, and for the same reason: where a process
+is working is the only thing that distinguishes this study's work from a neighbour's.
+"""
+
+QUIET_COMMANDS = frozenset({
+    "sh", "bash", "dash", "cat", "readlink", "ps", "sleep", "env", "tee", "timeout",
+    "printf", "ls", "find", "grep", "sed", "awk", "cut", "head", "tail", "wc", "rm",
+    "cp", "mv", "mkdir", "du", "df", "tar", "gzip", "true", "sshd", "init",
+})
+"""Not work. The probe runs in a shell and spawns `cat` and `readlink` per process, so
+without this it reports itself; the rest are the housekeeping every container does."""
+
+
+def _neighbour_work(backend: Backend, home: str) -> list[str]:
+    """What somebody else is running on this workspace right now, by name.
+
+    The shutdown half of `_close_down` asked `active_jobs()`, which reads JOB ROWS --
+    and the mesh desk does all of its work through `backend.exec`, one bash block at a
+    time, capped around four minutes a step. So a session that started the instance
+    itself and saw no running job rows called `shutdown()`, the service terminated the
+    Sandbox, and a neighbouring session's snappyHexMesh died mid-step. Nothing was
+    reported on either side: the victim saw a bare 500 and a container reporting two
+    minutes of uptime. This is the residue of F-26 and it is reachable through the web
+    tier's own deploy overlap, without anybody asking for concurrency.
+
+    A workspace root of `/work` is every study's directory at once, so a study that
+    predates homes cannot tell its own work from anyone's and this answers nothing
+    rather than guessing -- `was_already_running` and the job rows still decide there.
+    """
+    scoped = bool(home) and str(home).rstrip("/") != WORKSPACE_ROOT
+    if not scoped:
+        return []
+    mine = shlex.quote(str(home).rstrip("/"))
+    root = shlex.quote(WORKSPACE_ROOT)
+    try:
+        result = backend.exec(_NEIGHBOUR_PROBE % (mine, mine, root, root), timeout_s=30)
+    except (BackendError, AttributeError) as exc:
+        # Same asymmetry the job listing takes, and the same reason: a workspace left
+        # up on an unanswerable question bills until a reaper notices.
+        console.print(f"[yellow]could not check for other sessions' work ({exc})[/]")
+        return []
+    names = []
+    for line in (result.output or "").splitlines():
+        pid, _, name = line.strip().partition(" ")
+        name = name.strip()
+        if pid.isdigit() and name and name not in QUIET_COMMANDS:
+            names.append(name)
+    return sorted(dict.fromkeys(names))
+
+
 def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> None:
     """End the session: stop the work, then put the container down.
 
@@ -1505,8 +1702,8 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     """
     study = store.session.study_id
     home = store.session.home or WORKSPACE_ROOT
-    shared = bool(getattr(backend, "was_already_running", False))
-    """Whether this session joined a workspace somebody else had already started.
+    started_it_here = not bool(getattr(backend, "was_already_running", False))
+    """Whether this session is the one that started the workspace.
 
     An account is capped at one instance and `acquire()` joins the existing one without
     saying so, so a second terminal -- or the web app, or `openreynolds files` -- lands in
@@ -1536,13 +1733,33 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
         console.print(f"  [{'green' if report.clean else 'yellow'}]{line}[/]")
 
     running = _still_running_on_the_instance(backend, store)
+    # Only asked when the answer could change something. A session that joined the
+    # workspace, or that can already see somebody's job running on it, is leaving it up
+    # either way -- and the probe is a round trip to a container that is about to be
+    # let go of.
+    neighbours = _neighbour_work(backend, home) if started_it_here and not running else []
+    shared = not started_it_here or bool(neighbours)
+    """Whether anyone else is on this workspace.
+
+    Who STARTED the container is the wrong question and always was: the answer that
+    matters is whether stopping it now takes somebody else's work with it. Another
+    live session of this account makes the workspace shared whether or not this session
+    was the one that brought it up -- and two sessions that list while the instance row
+    still reads `stopped` both believe they started it, which is how they both arrive
+    here certain they own it."""
     if shared:
-        # Somebody else's session had this workspace up before this one joined it, so
-        # it is theirs to stop. `_release` has said so for every read-only command
-        # since it was written; the session path is the one that never asked.
+        # Somebody else's session had this workspace up before this one joined it, or
+        # is working on it right now, so it is theirs to stop. `_release` has asked the
+        # first half for every read-only command since it was written; the session path
+        # is the one that never asked, and the second half is what a mesh desk needs --
+        # its work is execs, and an exec has no job row for the check above to find.
+        if neighbours:
+            console.print(
+                f"[yellow]another session is working on this workspace:[/] "
+                f"{', '.join(neighbours)}"
+            )
         console.print(
-            "[dim]this workspace was already running when this session joined it, "
-            "so it is left up[/]"
+            "[dim]this workspace is in use by another session, so it is left up[/]"
         )
     elif running:
         # F-46. `was_already_running` asks who STARTED this workspace, and that is the

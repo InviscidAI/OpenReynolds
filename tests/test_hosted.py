@@ -1056,3 +1056,62 @@ def test_an_ordinary_500_is_still_retried(monkeypatch):
     monkeypatch.setattr(client._client, "request", fake_request)
     assert client.request("GET", "/v1/instances").json() == {"ok": True}
     assert len(calls) == 3
+
+
+# -- who owns the workspace at teardown ---------------------------------------
+
+
+class _Joining:
+    """A service that lists one instance and answers the start route.
+
+    The one fact `acquire` has to get right is whether THIS call brought the Sandbox
+    up, because that is what decides whether the session stops it on the way out.
+    """
+
+    def __init__(self, listed_status, start_reply):
+        self.listed_status = listed_status
+        self.start_reply = start_reply
+        self.closed = False
+
+    def list_instances(self):
+        return [{"id": "iid-1", "status": self.listed_status}]
+
+    def create_instance(self):
+        raise AssertionError("there was one to join")
+
+    def start_instance(self, instance_id):
+        return self.start_reply
+
+    def close(self):
+        self.closed = True
+
+
+def _acquired(monkeypatch, listed_status, start_reply):
+    client = _Joining(listed_status, start_reply)
+    monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: client)
+    backend, _client, _iid = hosted_mod.acquire("https://svc.example", "of_live_test")
+    return backend
+
+
+def test_the_start_route_decides_who_owns_the_workspace(monkeypatch):
+    """The listing is read BEFORE the start call and a fresh row reads `stopped`, so
+    two sessions listing within the same second both concluded they had started the
+    workspace -- and the first to exit stopped it from under the other. The start
+    route knows which of the two it did, so it is asked."""
+    joined = _acquired(monkeypatch, "stopped", {"id": "iid-1", "status": "running",
+                                                "started_new": False})
+    assert joined.was_already_running is True, "it joined a Sandbox somebody else had"
+
+    started = _acquired(monkeypatch, "stopped", {"id": "iid-1", "status": "running",
+                                                 "started_new": True})
+    assert started.was_already_running is False, "this call is the one that built it"
+
+
+def test_a_service_that_does_not_say_leaves_the_old_answer_standing(monkeypatch):
+    """`started_new` is additive, so an older deployment answers without it. There the
+    pre-start listing is all there is, which is the behaviour this has always had."""
+    running = _acquired(monkeypatch, "running", {"id": "iid-1", "status": "running"})
+    assert running.was_already_running is True
+
+    stopped = _acquired(monkeypatch, "stopped", {"id": "iid-1", "status": "running"})
+    assert stopped.was_already_running is False
