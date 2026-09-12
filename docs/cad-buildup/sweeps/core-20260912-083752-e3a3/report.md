@@ -163,11 +163,16 @@ Every firing this sweep produced was interrogated, and three probes were found m
 something other than what the desk did. **A gate built on any of them as written would block
 correct work.**
 
-- **`scale` — confirmed wrong, three cases.** It skips with *"the case states no dimension,
-  and this probe is measured against the request"* on T1, T7 and T8, whose briefs state
-  10 mm / 120 mm / 15 mm, 100 × 60 × 40 mm, and 30 mm / 200 mm / 40 × 30 × 10 mm respectively.
-  Three graders flagged it independently. The probe is not reading the dimensions the case
-  states.
+- **`scale` — never handed an input, three cases.** It skips with *"the case states no
+  dimension, and this probe is measured against the request"* on T1, T7 and T8, whose briefs
+  state 10 mm / 120 mm / 15 mm, 100 × 60 × 40 mm, and 30 mm / 200 mm / 40 × 30 × 10 mm
+  respectively. Three graders flagged it independently.
+  **Corrected 2026-09-12 by `core+bench26-20260912-133719-4bbd` §3.2:** this said "the probe
+  is not reading the dimensions the case states", and it is not reading them because it is
+  never given them. `_scale` reads `spec["extent_m"]`; `cad_sweep.py:123` passes `--spec` only
+  when `<run-dir>/spec.json` already exists, and nothing in the pipeline writes that file. The
+  skip is correct behaviour on an empty spec. The fix is a wire between `load_prompts()` and
+  the probe, not a change to the probe.
 - **`location_in_mesh` — false positive on external flow (T2).** It reads only
   `constant/triSurface` and has no notion of the blockMesh background box, so for *any*
   external-flow case a correct point is necessarily `outside`. The desk's own number refutes
