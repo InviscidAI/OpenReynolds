@@ -104,3 +104,29 @@ def test_the_supervisors_own_record_is_not_grepped_back_at_it(tmp_path):
     (run / "record.json").write_text(
         '{"contamination": {"hits": [{"name": ".toolbox"}]}}', encoding="utf-8")
     assert not isolation.scan_run(run).contaminated
+
+
+def test_the_sweep_drivers_own_log_is_not_grepped_back_at_it(tmp_path):
+    """The bug that voided the first corpus sweep.
+
+    `cad_sweep.py` writes the runner's captured stdout to `runner.log` inside the run
+    directory, and that stdout is operator-facing: it names the record directory and the
+    `observe` command to run next, both of which spell out the repo path. Every swept run
+    graded contaminated on it while the standalone path, which writes no such log, graded
+    clean -- so the verdict was about the harness rather than the desk."""
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "runner.log").write_text(
+        f"T1: run 20260912-082722-c66e\n"
+        f"  record {isolation.REPO}/docs/cad-buildup/sweeps/core-1/runs/T1\n"
+        f"  now: python3 scripts/cad_supervise.py observe {isolation.REPO}/x --case /w/t1\n",
+        encoding="utf-8")
+    assert not isolation.scan_run(run).contaminated
+
+    # ...and the exclusion is a statement about that one file, not an amnesty for the run:
+    # the desk's own output sits beside it and is still read.
+    (run / "cells.log").write_text(f"cat {isolation.REPO}/openreynolds/toolbox/x.py",
+                                   encoding="utf-8")
+    found = isolation.scan_run(run)
+    assert found.contaminated
+    assert {hit.where for hit in found.hits} == {"cells.log"}
