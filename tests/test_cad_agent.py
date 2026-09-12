@@ -43,7 +43,9 @@ from openreynolds.cad.brief import CAD_DONE, system_prompt, task_message
 from openreynolds.cad.cells import CellLog, bound_names, free_names
 from openreynolds.cad.check import Check
 from openreynolds.config import Config
-from openreynolds.llm import ProviderError, TextBlock, Turn
+from dataclasses import dataclass
+
+from openreynolds.llm import ProviderError, TextBlock, ToolUseBlock, Turn
 
 RAW_PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 
@@ -67,6 +69,7 @@ class ScriptedProvider:
         self.texts = list(texts)
         self.delay = delay
         self.calls: list[dict] = []
+        self.made = 0
 
     def stream(self, **kwargs):
         if self.delay:
@@ -75,12 +78,67 @@ class ScriptedProvider:
         text = self.texts.pop(0) if len(self.texts) > 1 else self.texts[0]
         if isinstance(text, Exception):
             raise text
-        return Turn(content=[TextBlock(text=text)], provider=self.name,
+        self.made += 1
+        return Turn(content=_blocks(text, self.made), provider=self.name,
+                    stop_reason="tool_use" if isinstance(text, Cell) else "end_turn",
                     tokens={"input": 10, "output": 5})
 
 
-def block(source: str, prose: str = "") -> str:
-    return f"{prose}\n```python\n{source}\n```"
+@dataclass
+class Cell:
+    """A scripted turn that calls `run_cell`, and the prose it came with.
+
+    The tests say `block("x = 1")` and mean "a turn that runs this cell". That intent is
+    unchanged by the channel; what changed is that the cell now leaves the model as a
+    `tool_use` block the API stops on, rather than as a fence in prose that it does not.
+    """
+
+    source: str
+    prose: str = ""
+    calls: int = 1
+    """How many `run_cell` calls this turn makes. More than one is the discipline
+    failure, not a feature."""
+    name: str = "run_cell"
+
+
+def _blocks(text, made: int) -> list:
+    if not isinstance(text, Cell):
+        return [TextBlock(text=text)]
+    out: list = []
+    if text.prose:
+        out.append(TextBlock(text=text.prose))
+    for index in range(text.calls):
+        out.append(ToolUseBlock(id=f"call-{made}-{index}", name=text.name,
+                                input={"source": text.source}))
+    return out
+
+
+def block(source: str, prose: str = "") -> Cell:
+    return Cell(source=source, prose=prose)
+
+
+def observed(provider, call: int = 1) -> list:
+    """The blocks the desk put in front of the model on the way into `call`.
+
+    A cell's result arrives inside a `tool_result` now, so the blocks that used to sit
+    directly in the user message sit one level down. Tests ask what the desk *said*, not
+    which envelope it came in, so this unwraps and they do not have to."""
+    content = provider.calls[call]["messages"][-1]["content"]
+    out: list = []
+    for piece in content:
+        if isinstance(piece, dict) and piece.get("type") == "tool_result":
+            inner = piece.get("content")
+            out.extend(inner if isinstance(inner, list)
+                       else [{"type": "text", "text": str(inner)}])
+        else:
+            out.append(piece)
+    return out
+
+
+def said(provider, call: int = 1) -> str:
+    """Everything the desk said on the way into `call`, as one string."""
+    return "\n".join(b.get("text", "") for b in observed(provider, call)
+                      if isinstance(b, dict) and b.get("type") == "text")
 
 
 DONE = block(f'print("{CAD_DONE}")')
@@ -185,31 +243,67 @@ def checking(monkeypatch, *verdicts):
 
 
 def thread(provider, index=-1) -> str:
-    """Everything the person's side of the thread said, by the given call."""
-    return "\n".join(
-        b.get("text", "") for m in provider.calls[index]["messages"]
-        if m.get("role") == "user" and isinstance(m.get("content"), list)
-        for b in m["content"] if isinstance(b, dict)
-    )
+    """Everything the person's side of the thread said, by the given call.
+
+    Unwraps `tool_result`, because a cell's result is inside one now and the thread is
+    still the thread."""
+    out: list[str] = []
+    for m in provider.calls[index]["messages"]:
+        if m.get("role") != "user" or not isinstance(m.get("content"), list):
+            continue
+        for b in m["content"]:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_result":
+                inner = b.get("content")
+                if isinstance(inner, list):
+                    out.extend(x.get("text", "") for x in inner if isinstance(x, dict))
+                else:
+                    out.append(str(inner))
+            else:
+                out.append(b.get("text", ""))
+    return "\n".join(out)
 
 
 # -- reading a message ---------------------------------------------------------
 
 
-def test_the_one_python_block_is_the_action():
-    assert parse_action("thinking\n```python\nx = 1\n```")[0] == "x = 1"
-    assert parse_action("```py\nx = 1\n```")[0] == "x = 1"
+def turn_of(text, made: int = 1):
+    """A `Turn` as the provider would hand one over, from the scripted shorthand."""
+    return Turn(content=_blocks(text, made), provider="anthropic",
+                stop_reason="tool_use" if isinstance(text, Cell) else "end_turn")
 
 
-def test_no_block_and_two_blocks_are_both_told_what_happened():
-    """Both complaints came across from the bash desk verbatim, because neither was
-    ever about the language in the fence -- they are about the model sending one
-    action, or explaining itself at length instead of acting."""
-    source, complaint = parse_action("I will now consider the geometry at length.")
-    assert source == "" and "no python block" in complaint
-    source, complaint = parse_action("```python\na = 1\n```\nand\n```python\nb = 2\n```")
+def test_the_one_call_is_the_action():
+    ids, source, complaint = parse_action(turn_of(block("x = 1", "thinking")))
+    assert source == "x = 1" and complaint == "" and len(ids) == 1
+    # The prose alongside is not the action and never was.
+    assert parse_action(turn_of(block("x = 1")))[1] == "x = 1"
+
+
+def test_no_call_and_two_calls_are_both_told_what_happened():
+    """Both complaints came across from the bash desk verbatim, because neither was ever
+    about the language in the fence -- they are about the model sending one action, or
+    explaining itself at length instead of acting. The channel changed underneath them
+    and the discipline they ask for did not."""
+    ids, source, complaint = parse_action(
+        turn_of("I will now consider the geometry at length."))
+    assert source == "" and ids == [] and "called no tool" in complaint
+    ids, source, complaint = parse_action(turn_of(Cell(source="a = 1", calls=2)))
     assert source == ""
-    assert "2 python blocks" in complaint and "none of them ran" in complaint
+    assert "2 tool calls" in complaint and "none of them ran" in complaint
+    # Every call is named, because every call has to be answered.
+    assert len(ids) == 2
+
+
+def test_a_call_with_no_source_is_told_so_rather_than_running_nothing():
+    ids, source, complaint = parse_action(turn_of(Cell(source="   ")))
+    assert source == "" and len(ids) == 1 and "no source" in complaint
+
+
+def test_a_tool_that_does_not_exist_is_named_in_the_complaint():
+    ids, source, complaint = parse_action(turn_of(Cell(source="x = 1", name="bash")))
+    assert source == "" and len(ids) == 1 and "bash" in complaint
 
 
 def test_a_message_with_no_block_costs_a_turn_and_not_a_step(backend, store, monkeypatch):
@@ -220,7 +314,7 @@ def test_a_message_with_no_block_costs_a_turn_and_not_a_step(backend, store, mon
     result = made.run("a duct")
     assert result.ok
     assert result.steps == []
-    assert "no python block" in made.provider.calls[1]["messages"][-1]["content"][0]["text"]
+    assert "called no tool" in said(made.provider)
 
 
 # -- running one --------------------------------------------------------------
@@ -237,7 +331,7 @@ def test_a_step_runs_as_a_cell_and_reports_whether_it_raised(backend, store, mon
     assert backend.kernel.started == ["/work/study/valve"]
     step = result.steps[0]
     assert step.cmd == "body = x" and step.exit_code == 1
-    observation = made.provider.calls[1]["messages"][-1]["content"][0]["text"]
+    observation = said(made.provider)
     assert observation.startswith("exit 1")
     assert "Traceback: boom" in observation
 
@@ -250,7 +344,7 @@ def test_what_a_cell_drew_comes_back_without_anybody_naming_it(backend, store, m
     made = desk(backend, store, [block("fig = 1  # plot the body"), DONE])
     result = made.run("a duct")
     assert result.steps[0].image == "1 picture"
-    blocks = made.provider.calls[1]["messages"][-1]["content"]
+    blocks = observed(made.provider)
     assert [b["type"] for b in blocks] == ["text", "image"]
     assert blocks[1]["source"]["media_type"] == "image/png"
     assert blocks[1]["source"]["data"] == images.attachment(RAW_PNG, "image/png")["source"]["data"]
@@ -267,7 +361,7 @@ def test_a_cell_that_drew_forty_times_does_not_put_forty_pictures_in_one_message
     kernelled(backend, {"loop": CellResult(ok=True, stdout="", images=[RAW_PNG] * 40)})
     made = desk(backend, store, [block("fig = 1  # loop over sections"), DONE])
     result = made.run("a duct")
-    blocks = made.provider.calls[1]["messages"][-1]["content"]
+    blocks = observed(made.provider)
     assert sum(b["type"] == "image" for b in blocks) == IMAGES_PER_CELL
     assert "40 pictures came back" in result.steps[0].output
 
@@ -406,7 +500,7 @@ def test_done_is_checked_not_believed(backend, store, monkeypatch):
     result = made.run("a duct")
     assert result.ok
     assert len(calls) == 2
-    refusal = made.provider.calls[1]["messages"][-1]["content"][0]["text"]
+    refusal = said(made.provider)
     assert "did not pass" in refusal and "nothing has been meshed yet" in refusal
     assert result.summary == "now it is real"
 
@@ -497,9 +591,9 @@ def test_meshing_on_step_three_is_not_nudged_at_step_twelve(backend, store, monk
     made = desk(backend, store, [block("body = 1")], mesher_max_steps=NUDGE_AT_STEP + 1)
     original = made._cell
 
-    def counted(source, reasoning, messages):
+    def counted(source, reasoning, messages, ids):
         state["steps"] += 1
-        return original(source, reasoning, messages)
+        return original(source, reasoning, messages, ids)
 
     made._cell = counted
     made.run("a valve")
@@ -639,8 +733,10 @@ def test_a_turn_with_words_and_an_empty_block_keeps_the_words(backend, store, mo
     def stream(**kwargs):
         made.provider.calls.append({**kwargs,
                                     "messages": [dict(m) for m in kwargs["messages"]]})
-        return Turn(content=[TextBlock(text=""), TextBlock(text=block("body = 1"))],
-                    provider="anthropic", tokens={})
+        return Turn(content=[TextBlock(text=""),
+                             ToolUseBlock(id="c1", name="run_cell",
+                                          input={"source": "body = 1"})],
+                    provider="anthropic", stop_reason="tool_use", tokens={})
 
     made.provider.stream = stream
     result = made.run("a duct")
@@ -1066,12 +1162,38 @@ def test_the_case_is_a_directory_name_under_the_study(given, expected, backend, 
     assert made.run("x", case=given).case_rel == expected
 
 
-def test_the_loop_reads_a_python_fence_and_nothing_else():
-    """A bash block is prose now. Nothing in the desk runs a shell except through a
-    cell, so a message that sends one is a message that sent no action."""
-    source, complaint = parse_action("```bash\nblockMesh\n```")
-    assert source == "" and "no python block" in complaint
-    assert not re.search(r"bash", parse_action("no block")[1])
+def test_the_cell_channel_is_a_tool_the_api_enforces(backend, store, monkeypatch):
+    """The one property the whole migration exists for.
+
+    In the first baseline sweep the desk wrote fenced blocks into ordinary text and the
+    harness regexed them out, so the turn boundary was a request in the brief rather than
+    a rule of the protocol -- nothing stopped generation at the closing fence, and twice
+    the desk carried on and wrote the cell's output itself. Across the 55 turns of the
+    two runs that did it, `stop_reason` was `end_turn` every time and `tool_use` never.
+
+    Sending a real tool moves the boundary into the API: the turn stops at `tool_use`,
+    and a `tool_result` is a user-role block the model has no way to author. This asserts
+    the tool is actually on the request -- the guarantee is worth nothing if we forget to
+    ask for it."""
+    checking(monkeypatch, PASSES)
+    kernelled(backend)
+    made = desk(backend, store, [block("x = 1"), DONE])
+    assert made.run("a duct").ok
+    for call in made.provider.calls:
+        names = [t["name"] for t in call["tools"]]
+        assert names == ["run_cell"], names
+        schema = call["tools"][0]["input_schema"]
+        assert schema["required"] == ["source"]
+
+
+def test_a_fence_in_the_prose_is_prose():
+    """It used to be the channel, which is exactly how a run could be talked into
+    believing a cell had run. Now nothing a message *writes* runs -- only what it
+    calls -- so a fenced block in the text is no more an action than a sentence is."""
+    fenced = "Here is what I would run:\n```python\nblockMesh\n```"
+    ids, source, complaint = parse_action(turn_of(fenced))
+    assert source == "" and ids == [] and "called no tool" in complaint
+    assert not re.search(r"bash", parse_action(turn_of("no block"))[2])
 
 
 def test_every_turn_is_reported_to_whatever_is_watching_from_outside(

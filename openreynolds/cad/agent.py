@@ -124,6 +124,50 @@ forty times is the caller's judgement, and here the judgement is to show the fir
 and say how many there were."""
 
 _FENCE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+"""Kept for reading the prose around a cell, not for finding the cell.
+
+Cells arrive as tool calls now. This still strips a fence out of a summary, because a
+desk explaining itself may well quote code at us, and that quote is prose."""
+
+CELL_NAME = "run_cell"
+
+CELL_TOOL: dict[str, Any] = {
+    "name": CELL_NAME,
+    "description": (
+        "Run one cell in the persistent IPython kernel on the machine, with the case "
+        "directory as its working directory, and get back its output. The kernel keeps "
+        "its names between cells, so a shape bound in one cell is still bound in the "
+        "next. Shell commands go inside the cell as subprocess.run([...]), never as "
+        "!command. Anything the cell draws or writes as a .png comes back attached. "
+        "This is the only way anything runs."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "source": {
+                "type": "string",
+                "description": "The Python source of the cell, run as one unit.",
+            },
+        },
+        "required": ["source"],
+    },
+}
+"""The cell channel, as a tool the API enforces rather than a fence we parse.
+
+**This is the fix for the costliest failure in the first baseline sweep.** The desk used
+to write a fenced block into ordinary text and we regexed it out, which meant the turn
+boundary was a request in the brief rather than a rule of the protocol: nothing stopped
+generation at the closing fence, so the model went on writing -- and the likeliest
+continuation after a finished code block is its output. It invented `exit 0`, invented a
+cell count of 9884 where the cell printed 8539, invented a `Mesh OK.` that appears nowhere
+in the log, and then reasoned on all of it. Across 55 turns of the two runs that did it,
+`stop_reason` was `end_turn` 55 times and `tool_use` never once.
+
+With a real tool the boundary is the API's: the model emits a `tool_use` block, the turn
+stops there with `stop_reason='tool_use'`, and it cannot continue. Nor can it forge the
+answer -- a `tool_result` is a user-role block it has no way to author. The failure stops
+being something to detect and starts being something that cannot be expressed.
+"""
 
 
 @dataclass
@@ -225,6 +269,13 @@ class CadDesk:
         self.case_dir = case_dir
         self.log = CellLog()
         self._pending: Cell | None = None
+        self._notes: list[str] = []
+        """Things to tell the desk that are not a tool's result -- a human's remark, a
+        kernel that had to be restarted, where the slow cell got to.
+
+        Buffered rather than posted, because they are all raised at points where a tool
+        call is outstanding, and the message answering a `tool_use` has to open with its
+        `tool_result`. They ride out as trailing text on that same message instead."""
         """A cell that outran its window and has not been judged yet."""
         started = time.monotonic()
         result = CadResult(case_rel=case_rel, case_dir=case_dir)
@@ -240,6 +291,10 @@ class CadDesk:
             result.error = f"no kernel on this workspace: {exc}"
             result.seconds = time.monotonic() - started
             return result
+
+        self._notes = []
+        """One geometry per `run`, so a note left over from the last one is not this
+        one's news."""
 
         system = self._system()
         messages: list[dict[str, Any]] = [
@@ -286,24 +341,30 @@ class CadDesk:
                 # environment". The count is what the dropped turn cannot carry.
                 empty_turns += 1
                 self._beat(turns, result, turn, fenced=False)
-                _observe(messages, _ran_out_of_room(empty_turns))
+                _observe(messages, self._drain(_ran_out_of_room(empty_turns)))
                 continue
             empty_turns = 0
             messages.append(said)
             last_text = turn.text.strip() or last_text
 
+            ids, source, complaint = parse_action(turn)
             remark = self._remark(messages, result)
-
-            source, complaint = parse_action(turn.text)
+            # `fenced` is what the heartbeat and the `no-progress` alarm have always
+            # called "this turn produced something runnable". The channel changed under
+            # the name; the question it answers did not.
             self._beat(turns, result, turn, fenced=bool(source))
             if complaint:
-                _observe(messages, complaint)
+                _answer(messages, ids, complaint, is_error=True, note=self._drain())
                 continue
 
             if _is_finish(source) and remark:
                 # Somebody spoke in the same breath as "done". Their words are the
                 # newer instruction, so the run continues rather than closing on a
-                # shape that was right one message ago.
+                # shape that was right one message ago. The call is still answered:
+                # it was made, and an unanswered call is a 400 on the next request.
+                _answer(messages, ids,
+                        "Held: there is a newer instruction above. Read it and carry on.",
+                        note=self._drain())
                 continue
 
             if _is_finish(source):
@@ -313,13 +374,17 @@ class CadDesk:
                 if check.ok:
                     result.ok = True
                     break
-                _observe(messages, check.as_refusal())
+                _answer(messages, ids, check.as_refusal(), is_error=True,
+                        note=self._drain())
                 continue
 
-            step = self._cell(source, _summary(turn.text), messages)
+            nudge = ""
+            step = self._cell(source, _summary(turn.text), messages, ids)
             result.steps.append(step)
             if len(result.steps) == NUDGE_AT_STEP and not self._has_mesh():
-                _observe(messages, self._nudge())
+                nudge = self._nudge()
+            if nudge:
+                messages[-1]["content"].append({"type": "text", "text": nudge})
             if self.on_step:
                 try:
                     self.on_step(step)
@@ -436,6 +501,21 @@ class CadDesk:
                 for row in rows if row.get("role") == "user"]
         return [line[:600] for line in said if line][-SAID_LINES:]
 
+    def _note(self, text: str) -> None:
+        """Hold something back until there is a tool result to attach it to."""
+        if (text or "").strip():
+            self._notes.append(text.strip())
+
+    def _drain(self, *extra: str) -> str:
+        """Everything buffered, as one block of trailing text, and the buffer emptied.
+
+        Emptied even when nobody uses the return value would be a leak of the wrong kind
+        -- a remark from three steps ago arriving as though it were new -- so every path
+        that answers a call drains, and the drain is what clears it."""
+        notes = [*self._notes, *(t for t in extra if (t or "").strip())]
+        self._notes = []
+        return "\n\n".join(n.strip() for n in notes if (n or "").strip())
+
     def _remark(self, messages: list[dict[str, Any]], result: CadResult) -> str:
         """Anything the person has typed since the last step, put into the thread."""
         if self.interject is None:
@@ -446,7 +526,7 @@ class CadDesk:
             return ""
         if not (text or "").strip():
             return ""
-        _observe(messages, remark_message(text))
+        self._note(remark_message(text))
         result.remarks.append(text.strip())
         return text.strip()
 
@@ -460,7 +540,8 @@ class CadDesk:
         for attempt in (1, 2):
             try:
                 return self.provider.stream(
-                    model=self.model, system=system, messages=messages, tools=[],
+                    model=self.model, system=system, messages=messages,
+                    tools=[CELL_TOOL],
                     effort=self.effort, max_tokens=MAX_REPLY_TOKENS, listener=Listener(),
                 )
             except ProviderError as exc:
@@ -472,7 +553,7 @@ class CadDesk:
     # -- the kernel ------------------------------------------------------------
 
     def _cell(self, source: str, reasoning: str,
-              messages: list[dict[str, Any]]) -> Step:
+              messages: list[dict[str, Any]], ids: list[str]) -> Step:
         self._catch_up(messages)
         cell = self.log.propose(source, reasoning)
         t0 = time.monotonic()
@@ -482,10 +563,13 @@ class CadDesk:
             outcome = self._retry(source, exc, messages)
             if outcome is None:
                 seconds = time.monotonic() - t0
-                _observe(messages, f"the cell could not be run: {exc}")
+                # Still the call's result, even when the call is what broke: the tool
+                # was invoked and the API wants an answer for it either way.
+                _answer(messages, ids, f"the cell could not be run: {exc}",
+                        is_error=True, note=self._drain())
                 return Step(cmd=source, exit_code=-1, seconds=seconds, output=str(exc))
         seconds = time.monotonic() - t0
-        return self._report(cell, outcome, seconds, messages)
+        return self._report(cell, outcome, seconds, messages, ids)
 
     def _retry(self, source: str, exc: Exception,
                messages: list[dict[str, Any]]) -> Any:
@@ -518,9 +602,9 @@ class CadDesk:
             except Exception:  # noqa: BLE001
                 return False
             if not replay.ok:
-                _observe(messages, RECOVERY_FAILED.format(why=why, error=replay.error))
+                self._note(RECOVERY_FAILED.format(why=why, error=replay.error))
                 return False
-        _observe(messages, RECOVERED.format(why=why, cells=len(self.log.cells())))
+        self._note(RECOVERED.format(why=why, cells=len(self.log.cells())))
         return True
 
     def _catch_up(self, messages: list[dict[str, Any]]) -> None:
@@ -537,20 +621,22 @@ class CadDesk:
         try:
             outcome = self.backend.kernel_poll()
         except Exception as exc:  # noqa: BLE001 - not knowing is not a verdict
-            _observe(messages, f"the earlier cell could not be polled: {exc}")
+            self._note(f"the earlier cell could not be polled: {exc}")
             return
         if outcome.still_running:
             self._pending = pending
-            _observe(messages, STILL_RUNNING.format(seconds=outcome.seconds,
-                                                    body=_clip(_streams(outcome), 1000)))
+            self._note(STILL_RUNNING.format(seconds=outcome.seconds,
+                                           body=_clip(_streams(outcome), 1000)))
             return
         head = (f"the cell that outran its window has finished "
                 f"({outcome.seconds:.0f} s, {'ok' if outcome.ok else 'failed'})")
-        _observe(messages, f"{head}\n{_clip(_body(outcome), OUTPUT_CHARS)}".rstrip())
-        self._judge(pending, outcome, messages)
+        self._note(f"{head}\n{_clip(_body(outcome), OUTPUT_CHARS)}".rstrip())
+        refusal = self._judge(pending, outcome)
+        if refusal:
+            self._note(refusal)
 
     def _report(self, cell: Cell, outcome: Any, seconds: float,
-                messages: list[dict[str, Any]]) -> Step:
+                messages: list[dict[str, Any]], ids: list[str]) -> Step:
         """The cell's result into the thread, and the cell into the log or not."""
         body = _clip(_body(outcome), OUTPUT_CHARS)
         head = f"exit {0 if outcome.ok else 1} ({seconds:.0f} s)"
@@ -568,33 +654,42 @@ class CadDesk:
                     f"and the first {IMAGES_PER_CELL} are attached. A cell that draws in "
                     "a loop is worth knowing about, not worth sending: draw the one "
                     "view that answers the question.]").strip()
+        # The cell's own output and its pictures, as the tool's result. A tool result
+        # may be content blocks rather than a string, so the images go back exactly as
+        # they did when this was a plain user message -- what changed is the envelope.
         blocks: list[dict[str, Any]] = [{"type": "text", "text": f"{head}\n{body}".rstrip()}]
         for data in shown:
             blocks.append(images.attachment(data, "image/png"))
-        messages.append({"role": "user", "content": blocks})
 
         if outcome.still_running:
             self._pending = cell
+            refusal = ""
         else:
-            self._judge(cell, outcome, messages)
+            refusal = self._judge(cell, outcome)
+        # The refusal rides in this same message rather than arriving as a second one:
+        # it is about the cell that just ran, and the API wants the tool result to be
+        # the first thing answering a tool call.
+        _answer(messages, ids, blocks, is_error=not outcome.ok,
+                note=self._drain(refusal))
         return Step(cmd=cell.source, exit_code=0 if outcome.ok else 1, seconds=seconds,
                     output=body, image=_picture_words(outcome))
 
-    def _judge(self, cell: Cell, outcome: Any,
-               messages: list[dict[str, Any]]) -> None:
-        """Whether this cell goes in the script, and what the desk is told either way.
+    def _judge(self, cell: Cell, outcome: Any) -> str:
+        """Whether this cell goes in the script, and what to tell the desk either way.
 
         A cell that raised is not in the build: the traceback is already in front of the
         desk and there is nothing to add. A cell that ran clean still has to pass the
         static check, and when it does not the refusal says that it ran -- the kernel
         now holds a binding the script will not have, and a desk that was not told would
         keep building on it.
+
+        Returns the refusal rather than posting it, so the caller can put it in the same
+        message as the cell's result: two user messages in a row, with a tool result in
+        the first, is a shape worth not relying on.
         """
         if not outcome.ok:
-            return
-        refusal = self.log.accept(cell)
-        if refusal:
-            _observe(messages, refusal)
+            return ""
+        return self.log.accept(cell) or ""
 
     def _has_mesh(self) -> bool:
         """Whether anything in the case directory has actually been meshed.
@@ -634,25 +729,39 @@ class CadDesk:
 # -- reading what the model sent ----------------------------------------------
 
 
-def parse_action(text: str) -> tuple[str, str]:
-    """The one cell in a message, or what to say back about it.
+def parse_action(turn: Any) -> tuple[list[str], str, str]:
+    """The one cell this turn asked for, or what to say back about it.
 
-    Returns `(source, "")` or `("", complaint)`. Both halves matter: a model that wrote
-    two blocks has to be told which one would have run, and a model that wrote none is
-    usually explaining itself at length instead of acting. Neither complaint changed
-    when the channel did, because both were about the model's discipline rather than
-    about the language in the fence.
+    Returns `(ids, source, "")` or `(ids, "", complaint)`. Both complaints survived the
+    move off fences unchanged in substance, because both were always about the desk's
+    discipline rather than about the language in the fence.
+
+    **Every id comes back, not just the one we would have run.** The Messages API
+    requires a `tool_result` for each `tool_use` in the turn it is answering, so a
+    complaint about a message that made three calls still has to answer three calls or
+    the next request is a 400 -- and the run would end on the harness's mistake, several
+    steps into a build that was going fine.
     """
-    blocks = [b.strip() for b in _FENCE.findall(text or "") if b.strip()]
-    if not blocks:
-        return "", ("There was no python block in that message, so nothing ran. Send one "
-                    "fenced ```python block containing the cell you want run, and "
-                    "nothing else that needs running.")
-    if len(blocks) > 1:
-        return "", (f"That message had {len(blocks)} python blocks and none of them ran. "
-                    "One block per message: put the whole cell -- the imports, the "
-                    "constants, the measurement -- in a single block.")
-    return blocks[0], ""
+    calls = list(turn.tool_calls or [])
+    ids = [c.id for c in calls]
+    if not calls:
+        return ids, "", ("Nothing ran: that message called no tool. Use the run_cell "
+                         "tool with the cell you want run -- it is the only thing that "
+                         "executes.")
+    if len(calls) > 1:
+        return ids, "", (
+            f"That message made {len(calls)} tool calls and none of them ran. One cell "
+            "per message: put the whole cell -- the imports, the constants, the "
+            "measurement -- in a single call. The kernel is sequential and so is the "
+            "script your cells are concatenated into.")
+    if calls[0].name != CELL_NAME:
+        return ids, "", (f"There is no tool called {calls[0].name!r}. The only tool is "
+                         "run_cell, which runs one cell in the kernel.")
+    source = str((calls[0].input or {}).get("source") or "").strip()
+    if not source:
+        return ids, "", ("That run_cell call carried no source, so nothing ran. Put the "
+                         "cell in the `source` argument.")
+    return ids, source, ""
 
 
 _FINISH = re.compile(rf"^print\(\s*[\"']{CAD_DONE}[\"']\s*\)$")
@@ -827,7 +936,45 @@ def _ran_out_of_room(count: int) -> str:
 
 
 def _observe(messages: list[dict[str, Any]], text: str) -> None:
+    """Say something back that is not a tool's result. Only valid after a turn that made
+    no tool call -- otherwise the call goes unanswered and the next request is a 400."""
     messages.append({"role": "user", "content": [{"type": "text", "text": text}]})
+
+
+def _answer(messages: list[dict[str, Any]], ids: list[str], content: Any,
+            *, is_error: bool = False, note: str = "") -> None:
+    """Answer the turn's tool calls, which is the only way to reply to one.
+
+    Every id is answered, in order, because the API requires a `tool_result` per
+    `tool_use` and refuses the whole request otherwise. The first carries the real
+    content; any others -- a message that called twice when the contract is once --
+    are told plainly that they did not run, rather than being left to look as though
+    they might have.
+
+    `note` rides in the same message as a trailing text block instead of a second user
+    message: it is the nudge, and the thread reads better for having the observation and
+    the aside arrive together.
+    """
+    if not ids:
+        # No call to answer, so nothing needs the tool_result envelope -- but the notes
+        # still do, or a remark made on a turn that called nothing is dropped.
+        text = content if isinstance(content, str) else str(content)
+        _observe(messages, "\n\n".join(t for t in (text, note) if (t or "").strip()))
+        return
+    blocks: list[dict[str, Any]] = [{
+        "type": "tool_result",
+        "tool_use_id": ids[0],
+        "content": content if content else "(no output)",
+        **({"is_error": True} if is_error else {}),
+    }]
+    for extra in ids[1:]:
+        blocks.append({
+            "type": "tool_result", "tool_use_id": extra, "is_error": True,
+            "content": "This call did not run: one cell per message.",
+        })
+    if note:
+        blocks.append({"type": "text", "text": note})
+    messages.append({"role": "user", "content": blocks})
 
 
 def _evict(messages: list[dict[str, Any]]) -> None:
@@ -842,15 +989,36 @@ def _evict(messages: list[dict[str, Any]]) -> None:
     for message in reversed(messages):
         if message.get("role") != "user" or not isinstance(message.get("content"), list):
             continue
-        blocks = message["content"]
-        if not any(isinstance(b, dict) and b.get("type") == "image" for b in blocks):
-            continue
-        seen += 1
-        if seen <= KEEP_IMAGES:
-            continue
-        kept = [b for b in blocks if not (isinstance(b, dict) and b.get("type") == "image")]
-        kept.append({"type": "text", "text": "(the picture from this step is no longer shown)"})
-        message["content"] = kept
+        for blocks, put_back in _picture_holders(message):
+            if not any(isinstance(b, dict) and b.get("type") == "image" for b in blocks):
+                continue
+            seen += 1
+            if seen <= KEEP_IMAGES:
+                continue
+            kept = [b for b in blocks
+                    if not (isinstance(b, dict) and b.get("type") == "image")]
+            kept.append({"type": "text",
+                         "text": "(the picture from this step is no longer shown)"})
+            put_back(kept)
+
+
+def _picture_holders(message: dict[str, Any]):
+    """Every list of blocks in this message that could be holding a picture, with the
+    way to write it back.
+
+    A cell's pictures used to sit directly in a user message and now sit inside that
+    message's `tool_result`, one level down. Eviction that only looked at the top level
+    would find nothing, keep every picture ever drawn, and say nothing about it -- and
+    the bill would not obviously show it either, since a run that never evicts still
+    reads mostly from cache. The one number that would move is the one nobody watches.
+    """
+    content = message["content"]
+    yield content, lambda kept: message.__setitem__("content", kept)
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_result":
+            inner = block.get("content")
+            if isinstance(inner, list):
+                yield inner, lambda kept, b=block: b.__setitem__("content", kept)
 
 
 def _clip(text: str, limit: int) -> str:

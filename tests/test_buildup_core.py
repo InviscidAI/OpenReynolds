@@ -15,7 +15,7 @@ from openreynolds.backend.base import ExecResult
 from openreynolds.buildup import core, isolation
 from openreynolds.cad.brief import CAD_DONE
 from openreynolds.config import Config
-from test_cad_agent import ScriptedProvider, block, kernelled
+from test_cad_agent import ScriptedProvider, block, kernelled, said
 
 MESH_OK = """
 Mesh stats
@@ -171,7 +171,7 @@ def test_a_desk_that_says_done_over_a_refused_mesh_is_handed_the_refusal(backend
     made = core_desk(backend, store, [block(f'print("{CAD_DONE}")')])
     result = made.run("a duct")
     assert not result.ok
-    sent = made.provider.calls[-1]["messages"][-1]["content"][0]["text"]
+    sent = said(made.provider, -1)
     assert "Failed 2 mesh checks." in sent and "not finished" in sent
 
 
