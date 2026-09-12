@@ -246,13 +246,24 @@ def scan(texts: Mapping[str, str], *, toolbox: Path | None = None,
 _TEXT_SUFFIXES = (".txt", ".log", ".json", ".jsonl", ".md", ".py", ".out")
 
 
-OBSERVER_FILES = ("record.json",)
-"""What the supervisor itself writes into the run directory, and skips when it greps it.
+OBSERVER_FILES = ("record.json", "runner.log")
+"""What the harness itself writes into the run directory, and skips when it greps it.
 
 Found immediately: the graded record quotes every contamination hit, so a second pass over
 the same directory reads the supervisor's own words back and finds the house names it had
 just written down. The observer must not be able to contaminate the thing it observes,
-including retrospectively."""
+including retrospectively.
+
+`runner.log` is the same mistake wearing the driver's clothes, and it cost a sweep to see.
+`cad_sweep.py` captures the runner's stdout and writes it here, and that stdout is
+operator-facing: it prints the record directory and the `observe` command to run next, both
+of which spell out the repo path. So every swept run graded contaminated on the harness's
+own chatter while the standalone path -- which prints to a terminal and writes no log --
+graded clean, and the difference was the measuring apparatus rather than the desk.
+
+The exclusion is safe because `runner.log` holds no desk output at all: the desk's cells,
+its replies and its script go to `cells.log`, `replies.jsonl` and `build.py`, which are
+still read. A file the desk cannot write to is not evidence about the desk."""
 
 
 def scan_run(run_dir: Path, *, toolbox: Path | None = None,
