@@ -1,0 +1,674 @@
+{
+  "run_id": "20260912-123315-6758",
+  "case": "T10",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T10-20260912-123315-6758",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T10-20260912-123315-6758/t10",
+  "started_at": "2026-09-12T12:33:15",
+  "ended_at": "2026-09-12T12:42:11",
+  "seconds": 534.0,
+  "n_turns": 30,
+  "n_steps": 28,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 1.7621,
+  "tokens": {
+    "input": 60,
+    "cache_read": 922874,
+    "cache_write": 53898,
+    "output": 38541
+  },
+  "stopped": "steps",
+  "expects": "done",
+  "passed": false,
+  "why": "nothing in the case directory has been meshed yet",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import numpy as np, matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\n\n# ---- parameters (metres) ----\nR_HUB, R_TIP = 0.045, 0.090\nNB      = 28\nPITCH   = 2*np.pi/NB                 # rad\nCHORD   = 0.022\nTMAX    = 0.06                       # 6% thickness\nCAMBER  = np.radians(20.0)           # total camber (turning) angle, design choice\nSTAG_R  = np.radians(30.0)           # stagger at root\nTWIST   = np.radians(35.0)           # further twist to tip\n\ndef stagger(r):\n    f = (r - R_HUB)/(R_TIP - R_HUB)\n    return STAG_R + TWIST*f\n\ndef section(r, n=81):\n    \"\"\"aerofoil section in local (s = r*theta, z) plane, stacked on mid-chord.\"\"\"\n    c = CHORD\n    beta = np.linspace(0, np.pi, n)\n    x = 0.5*c*(1-np.cos(beta))                      # cosine spacing 0..c\n    R = c/(2*np.sin(CAMBER/2))\n    yc = np.sqrt(R**2 - (x-c/2)**2) - R*np.cos(CAMBER/2)\n    dyc = -(x-c/2)/np.sqrt(R**2-(x-c/2)**2)\n    th = np.arctan(dyc)\n    xi = x/c\n    yt = 5*TMAX*c*(0.2969*np.sqrt(xi)-0.1260*xi-0.3516*xi**2+0.2843*xi**3-0.1036*xi**4)\n    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)\n    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)\n    g = stagger(r)\n    def to_sz(xx, yy):\n        xx = xx - c/2\n        z =  xx*np.cos(g) - yy*np.sin(g)\n        s =  xx*np.sin(g) + yy*np.cos(g)\n        return s, z\n    su, zu = to_sz(xu, yu)\n    sl, zl = to_sz(xl, yl)\n    return (su, zu), (sl, zl)\n\nfig, axs = plt.subplots(1, 3, figsize=(13, 4.5))\nfor ax, r, nm in zip(axs, [R_HUB, 0.5*(R_HUB+R_TIP), R_TIP], [\"hub\", \"mid\", \"tip\"]):\n    p = r*PITCH\n    for k in (-1, 0, 1):\n        (su, zu), (sl, zl) = section(r)\n        ax.plot(1000*(su+k*p), 1000*zu, 'b-', lw=1)\n        ax.plot(1000*(sl+k*p), 1000*zl, 'r-', lw=1)\n    ax.set_aspect('equal'); ax.set_title(f\"{nm} r={1000*r:.0f}mm pitch={1000*p:.1f}mm stag={np.degrees(stagger(r)):.0f}d\")\n    ax.set_xlabel(\"s [mm]\"); ax.set_ylabel(\"z [mm]\"); ax.grid(alpha=.3)\nplt.tight_layout(); plt.savefig(\"sections.png\", dpi=110)\n\nfor r in (R_HUB, R_TIP):\n    (su,zu),(sl,zl) = section(r)\n    le = np.array([su[0], zu[0]]); te = np.array([su[-1], zu[-1]])\n    ch = np.hypot(*(te-le))\n    t = np.max(np.hypot(su-sl, zu-zl))\n    print(f\"r={1000*r:.0f}mm chord={1000*ch:.2f}mm tmax/c={t/ch*100:.2f}% stag_meas={np.degrees(np.arctan2(te[0]-le[0], te[1]-le[1])):.2f}d tang.ext={1000*(su.max()-su.min()):.2f}mm pitch={1000*r*PITCH:.2f}mm\")\nprint(\"z extent overall mm:\", 1000*min(section(R_HUB)[0][1].min(), section(R_TIP)[0][1].min()),\n      1000*max(section(R_HUB)[0][1].max(), section(R_TIP)[0][1].max()))",
+      "exit_code": 0,
+      "seconds": 0.35139474645256996,
+      "output": "r=45mm chord=22.00mm tmax/c=6.00% stag_meas=30.00d tang.ext=11.00mm pitch=10.10mm\nr=90mm chord=22.00mm tmax/c=6.00% stag_meas=65.00d tang.ext=19.94mm pitch=20.20mm\nz extent overall mm: -9.548489374528188 9.526279441628827\n[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use(\"Agg\")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]",
+      "image": ""
+    },
+    {
+      "cmd": "from IPython.display import Image, display\ndisplay(Image(\"sections.png\"))",
+      "exit_code": 0,
+      "seconds": 0.10862871911376715,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "from build123d import *\n\nTE_OPEN = 0.010            # TE closure added to half-thickness (fraction of chord), renormalised\nR_LO, R_HI = 0.040, 0.095  # blade extended past hub/shroud for clean trimming\nNSEC, NPT = 9, 41\n\ndef sec_sz(r, n=NPT):\n    c = CHORD\n    beta = np.linspace(0, np.pi, n)\n    x = 0.5*c*(1-np.cos(beta))\n    R = c/(2*np.sin(CAMBER/2))\n    yc = np.sqrt(R**2-(x-c/2)**2) - R*np.cos(CAMBER/2)\n    th = np.arctan(-(x-c/2)/np.sqrt(R**2-(x-c/2)**2))\n    xi = x/c\n    yt = 5*TMAX*c*(0.2969*np.sqrt(xi)-0.1260*xi-0.3516*xi**2+0.2843*xi**3-0.1036*xi**4)\n    yt = yt + TE_OPEN*c*xi\n    yt = yt*(TMAX*c/2)/yt.max()                      # renormalise so max thickness = 6% chord\n    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)\n    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)\n    g = STAG_R + TWIST*(r-R_HUB)/(R_TIP-R_HUB)\n    def to_sz(xx, yy):\n        xx = xx - c/2\n        return xx*np.sin(g)+yy*np.cos(g), xx*np.cos(g)-yy*np.sin(g)\n    return to_sz(xu, yu), to_sz(xl, yl)\n\ndef wrap(r, s, z):\n    t = s/r\n    return [Vector(r*np.cos(ti), r*np.sin(ti), zi) for ti, zi in zip(t, z)]\n\nradii = np.linspace(R_LO, R_HI, NSEC)\nwires = []\nfor r in radii:\n    (su, zu), (sl, zl) = sec_sz(r)\n    pu = wrap(r, su, zu); pl = wrap(r, sl, zl)\n    e_suc = Spline(*pu)                       # LE -> TE, suction/upper side\n    e_prs = Spline(*pl[::-1])                 # TE -> LE, pressure/lower side\n    wires.append(Wire([e_suc, e_prs]))\nblade0 = loft(wires, ruled=False)\nprint(type(blade0), blade0.is_valid(), \"vol mm^3 =\", blade0.volume*1e9, \" faces:\", len(blade0.faces()))\nbb = blade0.bounding_box(); print(\"bbox mm:\", [round(v*1000,2) for v in (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])",
+      "exit_code": 1,
+      "seconds": 2.4069218542426825,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 38\u001b[39m\n\u001b[32m     34\u001b[39m     pu = wrap(r, su, zu); pl = wrap(r, sl, zl)\n\u001b[32m     35\u001b[39m     e_suc = Spline(*pu)                       \u001b[38;5;66;03m# LE -> TE, suction/upper side\u001b[39;00m\n\u001b[32m     36\u001b[39m     e_prs = Spline(*pl[::-\u001b[32m1\u001b[39m])                 \u001b[38;5;66;03m# TE -> LE, pressure/lower side\u001b[39;00m\n\u001b[32m     37\u001b[39m     wires.append(Wire([e_suc, e_prs]))\n\u001b[32m---> \u001b[39m\u001b[32m38\u001b[39m blade0 = loft(wires, ruled=\u001b[38;5;28;01mFalse\u001b[39;00m)\n\u001b[32m     39\u001b[39m print(type(blade0), blade0.is_valid(), \u001b[33m\"vol mm^3 =\"\u001b[39m, blade0.volume*\u001b[32m1e9\u001b[39m, \u001b[33m\" faces:\"\u001b[39m, len(blade0.faces()))\n\u001b[32m     40\u001b[39m bb = blade0.bounding_box(); print(\u001b[33m\"bbox mm:\"\u001b[39m, [round(v*\u001b[32m1000\u001b[39m,\u001b[32m2\u001b[39m) \u001b[38;5;28;01mfor\u001b[39;00m v \u001b[38;5;28;01min\u001b[39;00m (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320\u001b[39m, in \u001b[36mloft\u001b[39m\u001b[34m(sections, ruled, clean, mode)\u001b[39m\n\u001b[32m    317\u001b[39m holes = normalize_list_of_lists(hole_candidates)\n\u001b[32m    319\u001b[39m \u001b[38;5;66;03m# Perform lofts\u001b[39;00m\n\u001b[32m--> \u001b[39m\u001b[32m320\u001b[39m new_solid = \u001b[30;43mSolid\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mmake_loft\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mloft_sections\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mruled\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m    321\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m holes:\n\u001b[32m    322\u001b[39m     \u001b[38;5;66;03m# Since the holes are interior a Solid will be generated here\u001b[39;00m\n\u001b[32m    323\u001b[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434\u001b[39m, in \u001b[36mSolid.make_loft\u001b[39m\u001b[34m(cls, objs, ruled)\u001b[39m\n\u001b[32m   1416\u001b[39m \u001b[38;5;129m@classmethod\u001b[39m\n\u001b[32m   1417\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mmake_loft\u001b[39m(\u001b[38;5;28mcls\u001b[39m, objs: Iterable[Vertex | Wire], ruled: \u001b[38;5;28mbool\u001b[39m = \u001b[38;5;28;01mFalse\u001b[39;00m) -> Solid:\n\u001b[32m   1418\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"make loft\u001b[39;00m\n\u001b[32m   1419\u001b[39m \n\u001b[32m   1420\u001b[39m \u001b[33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m   1432\u001b[39m \u001b[33;03m        Solid: Lofted object\u001b[39;00m\n\u001b[32m   1433\u001b[39m \u001b[33;03m    \"\"\"\u001b[39;00m\n\u001b[32m-> \u001b[39m\u001b[32m1434\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[38;5;28mcls\u001b[39m(TopoDS.Solid(\u001b[30;43m_make_loft\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mobjs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43;01mTrue\u001b[39;49;00m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mruled\u001b[39;49m\u001b[30;43m)\u001b[39;49m))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159\u001b[39m, in \u001b[36m_make_loft\u001b[39m\u001b[34m(objs, filled, ruled)\u001b[39m\n\u001b[32m    157\u001b[39m objs = \u001b[38;5;28mlist\u001b[39m(objs)  \u001b[38;5;66;03m# To determine its length\u001b[39;00m\n\u001b[32m    158\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28mlen\u001b[39m(objs) < \u001b[32m2\u001b[39m:\n\u001b[32m--> \u001b[39m\u001b[32m159\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mMore than one wire is required\u001b[39m\u001b[33m\"\u001b[39m)\n\u001b[32m    160\u001b[39m vertices = [obj \u001b[38;5;28;01mfor\u001b[39;00m obj \u001b[38;5;129;01min\u001b[39;00m objs \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(obj.wrapped, TopoDS_Vertex)]\n\u001b[32m    161\u001b[39m vertex_count = \u001b[38;5;28mlen\u001b[39m(vertices)\n\n\u001b[31mValueError\u001b[39m: More than one wire is required",
+      "image": ""
+    },
+    {
+      "cmd": "import inspect, build123d.operations_part as op\nprint(inspect.getsource(op.loft)[:2200])\nprint(\"wire types:\", [type(w) for w in wires[:2]], len(wires))",
+      "exit_code": 0,
+      "seconds": 0.050585128366947174,
+      "output": "def loft(\n    sections: Face | Sketch | Iterable[Vertex | Face | Sketch] | None = None,\n    ruled: bool = False,\n    clean: bool = True,\n    mode: Mode = Mode.ADD,\n) -> Part:\n    \"\"\"Part Operation: loft\n\n    Loft the pending sketches/faces, across all workplanes, into a solid.\n\n    Args:\n        sections (Vertex, Face, Sketch): slices to loft into object. If not provided, pending_faces\n            will be used. If vertices are to be used, a vertex can be the first, last, or\n            first and last elements.\n        ruled (bool, optional): discontiguous layer tangents. Defaults to False.\n        clean (bool, optional): Remove extraneous internal structure. Defaults to True.\n        mode (Mode, optional): combination mode. Defaults to Mode.ADD.\n    \"\"\"\n\n    def normalize_list_of_lists(lst):\n        lengths = {len(sub) for sub in lst}\n        if lengths <= {0}:\n            return []\n        if lengths == {1}:\n            return [sub[0] for sub in lst]\n        if len(lengths) > 1:\n            raise ValueError(\"The number of holes in the sections must be the same\")\n        raise ValueError(\n            f\"loft supports a maximum of 1 hole per section but one or more section \"\n            f\"has {max(lengths)} hole - loft the perimeter and holes separately and \"\n            f\"subtract the holes\"\n        )\n\n    context: BuildPart | None = BuildPart._get_context(\"loft\")\n\n    section_list = flatten_sequence(sections)\n    validate_inputs(context, \"loft\", section_list)\n\n    # If no explicit sections provided, use pending_faces from context\n    if all(s is None for s in section_list):\n        if context is None or not context.pending_faces:\n            raise ValueError(\"No sections provided\")\n        input_sections = context.pending_faces\n        context.pending_faces = []\n        context.pending_face_planes = []\n    else:\n        input_sections = section_list\n\n    # Validate Vertex placement\n    if any(isinstance(s, Vertex) for s in input_sections):\n        if not isinstance(input_sections[0], Vertex) and not isinstance(\n            input_sections[-1], Vertex\n        ):\n            raise ValueError(\n                \"Vertices must be the first, last, or first and last elem\nwire types: [<class 'build123d.topology.one_d.Wire'>, <class 'build123d.topology.one_d.Wire'>] 9",
+      "image": ""
+    },
+    {
+      "cmd": "from build123d import *\n\nTE_OPEN = 0.010            # TE closure added to half-thickness (fraction of chord), renormalised\nR_LO, R_HI = 0.040, 0.095  # blade extended past hub/shroud for clean trimming\nNSEC, NPT = 9, 41\n\ndef sec_sz(r, n=NPT):\n    \"\"\"aerofoil section in unwrapped (s, z) coords, stacked on mid-chord of the chord line\"\"\"\n    c = CHORD\n    beta = np.linspace(0, np.pi, n)\n    x = 0.5*c*(1-np.cos(beta))\n    R = c/(2*np.sin(CAMBER/2))\n    yc = np.sqrt(R**2-(x-c/2)**2) - R*np.cos(CAMBER/2)\n    th = np.arctan(-(x-c/2)/np.sqrt(R**2-(x-c/2)**2))\n    xi = x/c\n    yt = 5*TMAX*c*(0.2969*np.sqrt(xi)-0.1260*xi-0.3516*xi**2+0.2843*xi**3-0.1036*xi**4)\n    yt = yt + TE_OPEN*c*xi\n    yt = yt*(TMAX*c/2)/yt.max()                      # renormalise: max thickness = 6% chord\n    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)\n    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)\n    g = STAG_R + TWIST*(r-R_HUB)/(R_TIP-R_HUB)\n    def to_sz(xx, yy):\n        xx = xx - c/2\n        return xx*np.sin(g)+yy*np.cos(g), xx*np.cos(g)-yy*np.sin(g)\n    return to_sz(xu, yu), to_sz(xl, yl)\n\ndef wrap(r, s, z):\n    t = s/r\n    return [Vector(r*np.cos(ti), r*np.sin(ti), zi) for ti, zi in zip(t, z)]\n\ndef blade_wires():\n    ws = []\n    for r in np.linspace(R_LO, R_HI, NSEC):\n        (su, zu), (sl, zl) = sec_sz(r)\n        pu, pl = wrap(r, su, zu), wrap(r, sl, zl)\n        ws.append(Wire([Spline(*pu), Spline(*pl[::-1])]))   # LE->TE suction, TE->LE pressure\n    return ws\n\nblade0 = Solid.make_loft(blade_wires(), ruled=False)\nbb = blade0.bounding_box()\nprint(blade0.is_valid(), \"vol mm^3 =\", round(blade0.volume*1e9,1), \"faces:\", len(blade0.faces()))\nprint(\"bbox mm:\", [round(v*1000,2) for v in (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])",
+      "exit_code": 1,
+      "seconds": 0.10071815922856331,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[5]\u001b[39m\u001b[32m, line 41\u001b[39m\n\u001b[32m     37\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m ws\n\u001b[32m     38\u001b[39m \n\u001b[32m     39\u001b[39m blade0 = Solid.make_loft(blade_wires(), ruled=\u001b[38;5;28;01mFalse\u001b[39;00m)\n\u001b[32m     40\u001b[39m bb = blade0.bounding_box()\n\u001b[32m---> \u001b[39m\u001b[32m41\u001b[39m print(blade0.is_valid(), \u001b[33m\"vol mm^3 =\"\u001b[39m, round(blade0.volume*\u001b[32m1e9\u001b[39m,\u001b[32m1\u001b[39m), \u001b[33m\"faces:\"\u001b[39m, len(blade0.faces()))\n\u001b[32m     42\u001b[39m print(\u001b[33m\"bbox mm:\"\u001b[39m, [round(v*\u001b[32m1000\u001b[39m,\u001b[32m2\u001b[39m) \u001b[38;5;28;01mfor\u001b[39;00m v \u001b[38;5;28;01min\u001b[39;00m (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])\n\n\u001b[31mTypeError\u001b[39m: 'bool' object is not callable",
+      "image": ""
+    },
+    {
+      "cmd": "from build123d import *\n\nTE_OPEN = 0.010            # TE closure added to half-thickness (fraction of chord), renormalised\nR_LO, R_HI = 0.040, 0.095  # blade extended past hub/shroud for clean trimming\nNSEC, NPT = 9, 41\n\ndef sec_sz(r, n=NPT):\n    \"\"\"aerofoil section in unwrapped (s, z) coords, stacked on mid-chord of the chord line\"\"\"\n    c = CHORD\n    beta = np.linspace(0, np.pi, n)\n    x = 0.5*c*(1-np.cos(beta))\n    R = c/(2*np.sin(CAMBER/2))\n    yc = np.sqrt(R**2-(x-c/2)**2) - R*np.cos(CAMBER/2)\n    th = np.arctan(-(x-c/2)/np.sqrt(R**2-(x-c/2)**2))\n    xi = x/c\n    yt = 5*TMAX*c*(0.2969*np.sqrt(xi)-0.1260*xi-0.3516*xi**2+0.2843*xi**3-0.1036*xi**4)\n    yt = yt + TE_OPEN*c*xi\n    yt = yt*(TMAX*c/2)/yt.max()                      # renormalise: max thickness = 6% chord\n    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)\n    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)\n    g = STAG_R + TWIST*(r-R_HUB)/(R_TIP-R_HUB)\n    def to_sz(xx, yy):\n        xx = xx - c/2\n        return xx*np.sin(g)+yy*np.cos(g), xx*np.cos(g)-yy*np.sin(g)\n    return to_sz(xu, yu), to_sz(xl, yl)\n\ndef wrap(r, s, z):\n    t = s/r\n    return [Vector(r*np.cos(ti), r*np.sin(ti), zi) for ti, zi in zip(t, z)]\n\ndef blade_wires():\n    ws = []\n    for r in np.linspace(R_LO, R_HI, NSEC):\n        (su, zu), (sl, zl) = sec_sz(r)\n        pu, pl = wrap(r, su, zu), wrap(r, sl, zl)\n        ws.append(Wire([Spline(*pu), Spline(*pl[::-1])]))   # LE->TE suction, TE->LE pressure\n    return ws\n\nblade0 = Solid.make_loft(blade_wires(), ruled=False)\nbb = blade0.bounding_box()\nprint(blade0.is_valid, \"vol mm^3 =\", round(blade0.volume*1e9,1), \"faces:\", len(blade0.faces()))\nprint(\"bbox mm:\", [round(v*1000,2) for v in (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])\nfor i,f in enumerate(blade0.faces()):\n    c = f.center(); print(i, f.geom_type, \"area mm2\", round(f.area*1e6,2), \"ctr mm\", [round(v*1000,2) for v in (c.X,c.Y,c.Z)])",
+      "exit_code": 0,
+      "seconds": 0.10078514833003283,
+      "output": "False vol mm^3 = 724.8 faces: 2\nbbox mm: [39.68, -10.24, -9.89, 95.0, 10.34, 9.93]\n0 GeomType.BSPLINE area mm2 1213.69 ctr mm [67.53, 0.2, -0.27]\n1 GeomType.BSPLINE area mm2 1233.31 ctr mm [67.52, 1.03, -1.21]",
+      "image": ""
+    },
+    {
+      "cmd": "bw = blade_wires()\ncaps = [Face.make_surface(bw[0]), Face.make_surface(bw[-1])]\nblade_solid = Solid(Shell(blade0.faces() + caps))\nprint(\"valid:\", blade_solid.is_valid, \"closed:\", blade_solid.is_valid, \"vol mm^3:\", round(blade_solid.volume*1e9,1),\n      \"faces:\", len(blade_solid.faces()))\nbb = blade_solid.bounding_box(); print(\"bbox mm:\", [round(v*1000,2) for v in (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])",
+      "exit_code": 1,
+      "seconds": 0.15086356829851866,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mRuntimeError\u001b[39m                              Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[7]\u001b[39m\u001b[32m, line 2\u001b[39m\n\u001b[32m      1\u001b[39m bw = blade_wires()\n\u001b[32m----> \u001b[39m\u001b[32m2\u001b[39m caps = [Face.make_surface(bw[\u001b[32m0\u001b[39m]), Face.make_surface(bw[-\u001b[32m1\u001b[39m])]\n\u001b[32m      3\u001b[39m blade_solid = Solid(Shell(blade0.faces() + caps))\n\u001b[32m      4\u001b[39m print(\"valid:\", blade_solid.is_valid, \"closed:\", blade_solid.is_valid, \"vol mm^3:\", round(blade_solid.volume*1e9,1),\n\u001b[32m      5\u001b[39m       \u001b[33m\"faces:\"\u001b[39m, len(blade_solid.faces()))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/two_d.py:1657\u001b[39m, in \u001b[36mFace.make_surface\u001b[39m\u001b[34m(cls, exterior, surface_points, interior_wires)\u001b[39m\n\u001b[32m   1655\u001b[39m surface_face = surface_face.fix()\n\u001b[32m   1656\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m surface_face.is_valid:\n\u001b[32m-> \u001b[39m\u001b[32m1657\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mRuntimeError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mnon planar face is invalid\u001b[39m\u001b[33m\"\u001b[39m)\n\u001b[32m   1659\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m surface_face\n\n\u001b[31mRuntimeError\u001b[39m: non planar face is invalid",
+      "image": ""
+    },
+    {
+      "cmd": "R_LO, R_HI = 0.038, 0.097          # sacrificial planar end sections (outside the trimmed annulus)\nRADII = [0.043, 0.045, 0.050, 0.056, 0.062, 0.068, 0.074, 0.080, 0.086, 0.090, 0.092]\n\ndef flat(r, s, z):                 # planar approximation of the section, in plane X = r\n    return [Vector(r, si, zi) for si, zi in zip(s, z)]\n\ndef blade_wires2():\n    ws = []\n    for r, planar in [(R_LO, True)] + [(x, False) for x in RADII] + [(R_HI, True)]:\n        (su, zu), (sl, zl) = sec_sz(r)\n        f = flat if planar else wrap\n        pu, pl = f(r, su, zu), f(r, sl, zl)\n        ws.append(Wire([Spline(*pu), Spline(*pl[::-1])]))\n    return ws\n\nblade_solid = Solid.make_loft(blade_wires2(), ruled=False)\nbb = blade_solid.bounding_box()\nprint(\"valid:\", blade_solid.is_valid, \"vol mm^3:\", round(blade_solid.volume*1e9,1), \"faces:\", len(blade_solid.faces()))\nprint(\"bbox mm:\", [round(v*1000,2) for v in (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])\nfor i,f in enumerate(blade_solid.faces()):\n    c=f.center(); print(i, f.geom_type, round(f.area*1e6,2), [round(v*1000,2) for v in (c.X,c.Y,c.Z)])",
+      "exit_code": 0,
+      "seconds": 0.2010095976293087,
+      "output": "valid: False vol mm^3: 1232.1 faces: 4\nbbox mm: [38.0, -10.37, -10.02, 97.0, 10.46, 10.06]\n0 GeomType.BSPLINE 1304.01 [67.76, 0.2, -0.27]\n1 GeomType.BSPLINE 1324.92 [67.75, 1.03, -1.21]\n2 GeomType.PLANE -22.32 [38.0, 0.35, -0.96]\n3 GeomType.PLANE 22.32 [97.0, -0.45, -0.91]",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.ShapeFix import ShapeFix_Shape\nfrom OCP.BRepCheck import BRepCheck_Analyzer\nsf = ShapeFix_Shape(blade_solid.wrapped); sf.Perform()\nblade = Solid(sf.Shape())\nprint(\"valid:\", BRepCheck_Analyzer(blade.wrapped).IsValid(), \"vol mm^3:\", round(blade.volume*1e9,2), \"faces:\", len(blade.faces()))\nprint(\"areas mm2:\", [round(f.area*1e6,2) for f in blade.faces()])",
+      "exit_code": 0,
+      "seconds": 0.10071963910013437,
+      "output": "valid: False vol mm^3: 2673572.51 faces: 4\nareas mm2: [1304.01, 22.32, 1324.92, 22.32]",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.ShapeFix import ShapeFix_Shape, ShapeFix_Solid\nfrom OCP.BRepCheck import BRepCheck_Analyzer\n\ndef fix_solid(sol):\n    sf = ShapeFix_Shape(sol.wrapped); sf.Perform()\n    sh = Shell(Shape.cast(sf.Shape()).faces())\n    fx = ShapeFix_Solid()\n    return Solid(fx.SolidFromShell(sh.wrapped))\n\nblade = fix_solid(blade_solid)\nprint(\"valid:\", BRepCheck_Analyzer(blade.wrapped).IsValid(), \"vol mm^3:\", round(blade.volume*1e9,2),\n      \"faces:\", len(blade.faces()), \"areas:\", [round(f.area*1e6,2) for f in blade.faces()])",
+      "exit_code": 1,
+      "seconds": 0.05055725947022438,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mNameError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[10]\u001b[39m\u001b[32m, line 10\u001b[39m\n\u001b[32m      6\u001b[39m     sh = Shell(Shape.cast(sf.Shape()).faces())\n\u001b[32m      7\u001b[39m     fx = ShapeFix_Solid()\n\u001b[32m      8\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m Solid(fx.SolidFromShell(sh.wrapped))\n\u001b[32m      9\u001b[39m \n\u001b[32m---> \u001b[39m\u001b[32m10\u001b[39m blade = fix_solid(blade_solid)\n\u001b[32m     11\u001b[39m print(\"valid:\", BRepCheck_Analyzer(blade.wrapped).IsValid(), \"vol mm^3:\", round(blade.volume*1e9,2),\n\u001b[32m     12\u001b[39m       \u001b[33m\"faces:\"\u001b[39m, len(blade.faces()), \u001b[33m\"areas:\"\u001b[39m, [round(f.area*\u001b[32m1e6\u001b[39m,\u001b[32m2\u001b[39m) \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m blade.faces()])\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[10]\u001b[39m\u001b[32m, line 6\u001b[39m, in \u001b[36mfix_solid\u001b[39m\u001b[34m(sol)\u001b[39m\n\u001b[32m      4\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m fix_solid(sol):\n\u001b[32m      5\u001b[39m     sf = ShapeFix_Shape(sol.wrapped); sf.Perform()\n\u001b[32m----> \u001b[39m\u001b[32m6\u001b[39m     sh = Shell(Shape.cast(sf.Shape()).faces())\n\u001b[32m      7\u001b[39m     fx = ShapeFix_Solid()\n\u001b[32m      8\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m Solid(fx.SolidFromShell(sh.wrapped))\n\n\u001b[31mNameError\u001b[39m: name 'Shape' is not defined",
+      "image": ""
+    },
+    {
+      "cmd": "from build123d.topology import Shape\nfrom OCP.ShapeFix import ShapeFix_Shape, ShapeFix_Solid\nfrom OCP.BRepCheck import BRepCheck_Analyzer\n\ndef fix_solid(sol):\n    sf = ShapeFix_Shape(sol.wrapped); sf.Perform()\n    sh = Shell(Shape.cast(sf.Shape()).faces())\n    return Solid(ShapeFix_Solid().SolidFromShell(sh.wrapped))\n\nblade = fix_solid(blade_solid)\nprint(\"valid:\", BRepCheck_Analyzer(blade.wrapped).IsValid(), \"vol mm^3:\", round(blade.volume*1e9,2),\n      \"faces:\", len(blade.faces()), \"areas:\", [round(f.area*1e6,2) for f in blade.faces()])",
+      "exit_code": 1,
+      "seconds": 0.05055670998990536,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[11]\u001b[39m\u001b[32m, line 10\u001b[39m\n\u001b[32m      6\u001b[39m     sf = ShapeFix_Shape(sol.wrapped); sf.Perform()\n\u001b[32m      7\u001b[39m     sh = Shell(Shape.cast(sf.Shape()).faces())\n\u001b[32m      8\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m Solid(ShapeFix_Solid().SolidFromShell(sh.wrapped))\n\u001b[32m      9\u001b[39m \n\u001b[32m---> \u001b[39m\u001b[32m10\u001b[39m blade = fix_solid(blade_solid)\n\u001b[32m     11\u001b[39m print(\"valid:\", BRepCheck_Analyzer(blade.wrapped).IsValid(), \"vol mm^3:\", round(blade.volume*1e9,2),\n\u001b[32m     12\u001b[39m       \u001b[33m\"faces:\"\u001b[39m, len(blade.faces()), \u001b[33m\"areas:\"\u001b[39m, [round(f.area*\u001b[32m1e6\u001b[39m,\u001b[32m2\u001b[39m) \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m blade.faces()])\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[11]\u001b[39m\u001b[32m, line 7\u001b[39m, in \u001b[36mfix_solid\u001b[39m\u001b[34m(sol)\u001b[39m\n\u001b[32m      5\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m fix_solid(sol):\n\u001b[32m      6\u001b[39m     sf = ShapeFix_Shape(sol.wrapped); sf.Perform()\n\u001b[32m----> \u001b[39m\u001b[32m7\u001b[39m     sh = Shell(Shape.cast(sf.Shape()).faces())\n\u001b[32m      8\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m Solid(ShapeFix_Solid().SolidFromShell(sh.wrapped))\n\n\u001b[31mAttributeError\u001b[39m: 'NoneType' object has no attribute 'faces'",
+      "image": ""
+    },
+    {
+      "cmd": "sf = ShapeFix_Shape(blade_solid.wrapped); sf.Perform()\ns = sf.Shape(); print(type(s), s.ShapeType())\nfrom OCP.TopExp import TopExp_Explorer\nfrom OCP.TopAbs import TopAbs_ShapeEnum\nexp = TopExp_Explorer(s, TopAbs_ShapeEnum.TopAbs_SHELL); shells=[]\nwhile exp.More():\n    shells.append(exp.Current()); exp.Next()\nprint(\"shells:\", len(shells))\nbfix = Solid(ShapeFix_Solid().SolidFromShell(Shell(shells[0])))\nprint(\"valid:\", BRepCheck_Analyzer(bfix.wrapped).IsValid(), \"vol mm^3:\", round(bfix.volume*1e9,2),\n      \"areas:\", [round(f.area*1e6,2) for f in bfix.faces()])",
+      "exit_code": 1,
+      "seconds": 0.05061673931777477,
+      "output": "<class 'OCP.OCP.TopoDS.TopoDS_Shape'> TopAbs_ShapeEnum.TopAbs_SHELL\nshells: 1\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[12]\u001b[39m\u001b[32m, line 9\u001b[39m\n\u001b[32m      5\u001b[39m exp = TopExp_Explorer(s, TopAbs_ShapeEnum.TopAbs_SHELL); shells=[]\n\u001b[32m      6\u001b[39m \u001b[38;5;28;01mwhile\u001b[39;00m exp.More():\n\u001b[32m      7\u001b[39m     shells.append(exp.Current()); exp.Next()\n\u001b[32m      8\u001b[39m print(\u001b[33m\"shells:\"\u001b[39m, len(shells))\n\u001b[32m----> \u001b[39m\u001b[32m9\u001b[39m bfix = Solid(ShapeFix_Solid().SolidFromShell(Shell(shells[\u001b[32m0\u001b[39m])))\n\u001b[32m     10\u001b[39m print(\"valid:\", BRepCheck_Analyzer(bfix.wrapped).IsValid(), \"vol mm^3:\", round(bfix.volume*1e9,2),\n\u001b[32m     11\u001b[39m       \u001b[33m\"areas:\"\u001b[39m, [round(f.area*\u001b[32m1e6\u001b[39m,\u001b[32m2\u001b[39m) \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m bfix.faces()])\n\n\u001b[31mTypeError\u001b[39m: SolidFromShell(): incompatible function arguments. The following argument types are supported:\n    1. (self: OCP.OCP.ShapeFix.ShapeFix_Solid, shell: OCP.OCP.TopoDS.TopoDS_Shell) -> OCP.OCP.TopoDS.TopoDS_Solid\n\nInvoked with: <OCP.OCP.ShapeFix.ShapeFix_Solid object at 0x7d8e839867f0>, <build123d.topology.two_d.Shell object at 0x7d8e8468ee40>",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.TopoDS import TopoDS\nfrom OCP.TopExp import TopExp_Explorer\nfrom OCP.TopAbs import TopAbs_ShapeEnum\n\ndef fix_solid(sol):\n    sf = ShapeFix_Shape(sol.wrapped); sf.Perform()\n    exp = TopExp_Explorer(sf.Shape(), TopAbs_ShapeEnum.TopAbs_SHELL); exp.More()\n    sh = TopoDS.Shell_s(exp.Current())\n    return Solid(ShapeFix_Solid().SolidFromShell(sh))\n\nblade = fix_solid(blade_solid)\nprint(\"valid:\", BRepCheck_Analyzer(blade.wrapped).IsValid(), \"vol mm^3:\", round(blade.volume*1e9,2),\n      \"areas:\", [round(f.area*1e6,2) for f in blade.faces()])",
+      "exit_code": 0,
+      "seconds": 0.10071390960365534,
+      "output": "valid: False vol mm^3: 1232.1 areas: [1304.01, 22.32, 1324.92, 22.32]",
+      "image": ""
+    },
+    {
+      "cmd": "from build123d.topology import Shape\nfrom OCP.ShapeFix import ShapeFix_Shape, ShapeFix_Solid\nfrom OCP.BRepCheck import BRepCheck_Analyzer\nfrom OCP.TopoDS import TopoDS\nfrom OCP.TopExp import TopExp_Explorer\nfrom OCP.TopAbs import TopAbs_ShapeEnum\n\ndef fix_solid(sol):\n    sf = ShapeFix_Shape(sol.wrapped); sf.Perform()\n    exp = TopExp_Explorer(sf.Shape(), TopAbs_ShapeEnum.TopAbs_SHELL); exp.More()\n    return Solid(ShapeFix_Solid().SolidFromShell(TopoDS.Shell_s(exp.Current())))\n\nblade = fix_solid(blade_solid)\nprint(\"blade vol mm^3:\", round(blade.volume*1e9,2))\n\n# axial extent of the blade inside the real annulus -> inlet/outlet one chord beyond\nzs = [sec_sz(r)[i][1] for r in (R_HUB, 0.5*(R_HUB+R_TIP), R_TIP) for i in (0,1)]\nZ_BL_MIN, Z_BL_MAX = min(a.min() for a in zs), max(a.max() for a in zs)\nZ_IN, Z_OUT = Z_BL_MIN - CHORD, Z_BL_MAX + CHORD\nL = Z_OUT - Z_IN\nprint(\"blade z mm:\", round(1000*Z_BL_MIN,2), round(1000*Z_BL_MAX,2), \" domain z mm:\", round(1000*Z_IN,2), round(1000*Z_OUT,2))\n\nprof = Plane.XZ * Pos(0.5*(R_HUB+R_TIP), 0.5*(Z_IN+Z_OUT)) * Rectangle(R_TIP-R_HUB, L)\nsector = Rot(Z=-np.degrees(PITCH)/2) * revolve(prof, Axis.Z, revolution_arc=np.degrees(PITCH))\nprint(\"sector vol mm^3:\", round(sector.volume*1e9,1), \" analytic:\", round(0.5*PITCH*(R_TIP**2-R_HUB**2)*L*1e9,1))",
+      "exit_code": 0,
+      "seconds": 0.050612788647413254,
+      "output": "blade vol mm^3: 1232.1\nblade z mm: -9.54 9.59  domain z mm: -31.54 31.59\nsector vol mm^3: 43035.8  analytic: 43035.8",
+      "image": ""
+    },
+    {
+      "cmd": "blades = {k: Rot(Z=k*np.degrees(PITCH)) * blade for k in (-1, 0, 1)}\nfluid = sector - blades[-1] - blades[0] - blades[1]\nprint(\"valid:\", BRepCheck_Analyzer(fluid.wrapped).IsValid(), \"solids:\", len(fluid.solids()),\n      \"vol mm^3:\", round(fluid.volume*1e9,1), \"faces:\", len(fluid.faces()))\nfor i,f in enumerate(fluid.faces()):\n    c=f.center(); print(i, f.geom_type, round(f.area*1e6,1), \"ctr mm\", [round(v*1000,2) for v in (c.X,c.Y,c.Z)], \"r=\",round(1000*np.hypot(c.X,c.Y),2))",
+      "exit_code": 0,
+      "seconds": 0.5534994546324015,
+      "output": "valid: True solids: 1 vol mm^3: 43026.0 faces: 15\n0 GeomType.CYLINDER 293.5 ctr mm [45.0, -0.0, -12.03] r= 45.0\n1 GeomType.PLANE 2813.4 ctr mm [67.13, -7.56, 0.1] r= 67.55\n2 GeomType.CYLINDER 21.4 ctr mm [45.0, -0.0, -0.18] r= 45.0\n3 GeomType.PLANE 2813.3 ctr mm [67.13, 7.56, 0.1] r= 67.55\n4 GeomType.BSPLINE 37.0 ctr mm [65.76, 7.16, -7.06] r= 66.14\n5 GeomType.BSPLINE 20.2 ctr mm [65.75, 7.16, -7.59] r= 66.14\n6 GeomType.PLANE 681.6 ctr mm [69.85, -0.0, -31.54] r= 69.85\n7 GeomType.PLANE 27.9 ctr mm [61.82, -6.97, -7.44] r= 62.21\n8 GeomType.CYLINDER 322.3 ctr mm [45.0, -0.0, 11.6] r= 45.0\n9 GeomType.PLANE 681.6 ctr mm [69.85, -0.0, 31.59] r= 69.85\n10 GeomType.CYLINDER 1275.1 ctr mm [90.0, -0.0, 0.03] r= 90.0\n11 GeomType.BSPLINE 934.3 ctr mm [67.52, 0.2, -0.27] r= 67.52\n12 GeomType.BSPLINE 937.1 ctr mm [67.51, 1.03, -1.21] r= 67.52\n13 GeomType.BSPLINE 21.3 ctr mm [64.22, -7.07, 7.56] r= 64.61\n14 GeomType.BSPLINE 51.7 ctr mm [66.97, -7.44, 6.48] r= 67.38",
+      "image": ""
+    },
+    {
+      "cmd": "inter0 = sector & blades[0]\ninter_m = sector & blades[-1]\ninter_p = sector & blades[1]\nprint([round(x.volume*1e9,2) for x in (inter0, inter_m, inter_p)])\nprint(\"sum:\", round((inter0.volume+inter_m.volume+inter_p.volume)*1e9,2), \"sector-fluid:\", round((sector.volume-fluid.volume)*1e9,2))",
+      "exit_code": 0,
+      "seconds": 0.2511741165071726,
+      "output": "[0.0, 0.0, 9.46]\nsum: 9.46 sector-fluid: 9.8",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.BRepClass3d import BRepClass3d_SolidClassifier\nfrom OCP.gp import gp_Pnt\nfrom OCP.TopAbs import TopAbs_State\ndef where(sol, p):\n    c = BRepClass3d_SolidClassifier(sol.wrapped, gp_Pnt(*p), 1e-9); return c.State()\npin = (0.068, 0.0, 0.0)           # mid-chord point at mid span: inside the blade\npfar = (0.0680, 0.0, 0.030)       # downstream of blade, inside sector only\nfor nm, s in [(\"blade\", blade), (\"blade_solid(raw loft)\", blade_solid), (\"sector\", sector), (\"fluid\", fluid)]:\n    print(nm, \"pin:\", where(s, pin), \" pfar:\", where(s, pfar))",
+      "exit_code": 0,
+      "seconds": 0.05059113074094057,
+      "output": "blade pin: TopAbs_State.TopAbs_OUT  pfar: TopAbs_State.TopAbs_OUT\nblade_solid(raw loft) pin: TopAbs_State.TopAbs_OUT  pfar: TopAbs_State.TopAbs_OUT\nsector pin: TopAbs_State.TopAbs_IN  pfar: TopAbs_State.TopAbs_IN\nfluid pin: TopAbs_State.TopAbs_OUT  pfar: TopAbs_State.TopAbs_OUT",
+      "image": ""
+    },
+    {
+      "cmd": "r = 0.068\n(su,zu),(sl,zl) = sec_sz(r)\ni = len(su)//2\nsmid, zmid = 0.5*(su[i]+sl[i]), 0.5*(zu[i]+zl[i])\nth = smid/r\npin = (r*np.cos(th), r*np.sin(th), zmid)\nprint(\"pin mm:\", [round(1000*v,2) for v in pin])\nfs = fluid.solids()[0]\npfar = (r*np.cos(th), r*np.sin(th), 0.025)\nfor nm, s in [(\"blade\", blade), (\"sector\", sector.solids()[0]), (\"fluid\", fs)]:\n    print(nm, \"pin:\", where(s, pin), \"pfar:\", where(s, pfar))\nprint(\"fluid solid vol mm^3:\", round(fs.volume*1e9,1))",
+      "exit_code": 0,
+      "seconds": 0.10073747858405113,
+      "output": "pin mm: [np.float64(68.0), np.float64(0.65), np.float64(-0.71)]\nblade pin: TopAbs_State.TopAbs_IN pfar: TopAbs_State.TopAbs_OUT\nsector pin: TopAbs_State.TopAbs_IN pfar: TopAbs_State.TopAbs_IN\nfluid pin: TopAbs_State.TopAbs_IN pfar: TopAbs_State.TopAbs_OUT\nfluid solid vol mm^3: 43026.0",
+      "image": ""
+    },
+    {
+      "cmd": "ss = sector.solids()[0]\ni1 = ss.intersect(blade)\nprint(\"intersect vol mm^3:\", round(i1.volume*1e9,2), \"solids:\", len(i1.solids()))\nc1 = ss.cut(blade)\nprint(\"cut vol mm^3:\", round(c1.volume*1e9,2), \"solids:\", len(c1.solids()), \"valid:\", BRepCheck_Analyzer(c1.wrapped).IsValid())\nprint(\"type blades[0]:\", type(blades[0]), \"vol:\", round(blades[0].volume*1e9,2))",
+      "exit_code": 1,
+      "seconds": 0.15098505839705467,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[19]\u001b[39m\u001b[32m, line 3\u001b[39m\n\u001b[32m      1\u001b[39m ss = sector.solids()[\u001b[32m0\u001b[39m]\n\u001b[32m      2\u001b[39m i1 = ss.intersect(blade)\n\u001b[32m----> \u001b[39m\u001b[32m3\u001b[39m print(\u001b[33m\"intersect vol mm^3:\"\u001b[39m, round(i1.volume*\u001b[32m1e9\u001b[39m,\u001b[32m2\u001b[39m), \u001b[33m\"solids:\"\u001b[39m, len(i1.solids()))\n\u001b[32m      4\u001b[39m c1 = ss.cut(blade)\n\u001b[32m      5\u001b[39m print(\u001b[33m\"cut vol mm^3:\"\u001b[39m, round(c1.volume*\u001b[32m1e9\u001b[39m,\u001b[32m2\u001b[39m), \u001b[33m\"solids:\"\u001b[39m, len(c1.solids()), \u001b[33m\"valid:\"\u001b[39m, BRepCheck_Analyzer(c1.wrapped).IsValid())\n\u001b[32m      6\u001b[39m print(\u001b[33m\"type blades[0]:\"\u001b[39m, type(blades[\u001b[32m0\u001b[39m]), \u001b[33m\"vol:\"\u001b[39m, round(blades[\u001b[32m0\u001b[39m].volume*\u001b[32m1e9\u001b[39m,\u001b[32m2\u001b[39m))\n\n\u001b[31mAttributeError\u001b[39m: 'NoneType' object has no attribute 'volume'",
+      "image": ""
+    },
+    {
+      "cmd": "def blade_wires3():\n    ws = []\n    for r, planar in [(R_LO, True)] + [(x, False) for x in RADII] + [(R_HI, True)]:\n        (su, zu), (sl, zl) = sec_sz(r)\n        f = flat if planar else wrap\n        pu, pl = f(r, su, zu), f(r, sl, zl)\n        e_suc = Spline(*pu)                    # LE -> TE (suction / upper)\n        e_te  = Line(pu[-1], pl[-1])           # trailing edge segment\n        e_prs = Spline(*pl[::-1])              # TE -> LE (pressure / lower)\n        ws.append(Wire([e_suc, e_te, e_prs]))\n    return ws\n\nbl_raw = Solid.make_loft(blade_wires3(), ruled=False)\nblade = fix_solid(bl_raw)\nprint(\"valid:\", BRepCheck_Analyzer(blade.wrapped).IsValid(), \"vol mm^3:\", round(blade.volume*1e9,2),\n      \"faces:\", len(blade.faces()), [round(f.area*1e6,1) for f in blade.faces()])\nss = sector.solids()[0]\ni1 = ss.intersect(blade)\nprint(\"blade\u2229sector vol mm^3:\", None if i1 is None else round(i1.volume*1e9,2))",
+      "exit_code": 1,
+      "seconds": 0.2511933967471123,
+      "output": "valid: True vol mm^3: 1316.85 faces: 5 [1324.9, 23.6, 1304.0, 22.3, 22.3]\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[20]\u001b[39m\u001b[32m, line 19\u001b[39m\n\u001b[32m     15\u001b[39m print(\"valid:\", BRepCheck_Analyzer(blade.wrapped).IsValid(), \"vol mm^3:\", round(blade.volume*1e9,2),\n\u001b[32m     16\u001b[39m       \u001b[33m\"faces:\"\u001b[39m, len(blade.faces()), [round(f.area*\u001b[32m1e6\u001b[39m,\u001b[32m1\u001b[39m) \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m blade.faces()])\n\u001b[32m     17\u001b[39m ss = sector.solids()[\u001b[32m0\u001b[39m]\n\u001b[32m     18\u001b[39m i1 = ss.intersect(blade)\n\u001b[32m---> \u001b[39m\u001b[32m19\u001b[39m print(\u001b[33m\"blade\u2229sector vol mm^3:\"\u001b[39m, \u001b[38;5;28;01mNone\u001b[39;00m \u001b[38;5;28;01mif\u001b[39;00m i1 \u001b[38;5;28;01mis\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m \u001b[38;5;28;01melse\u001b[39;00m round(i1.volume*\u001b[32m1e9\u001b[39m,\u001b[32m2\u001b[39m))\n\n\u001b[31mAttributeError\u001b[39m: 'ShapeList' object has no attribute 'volume'",
+      "image": ""
+    },
+    {
+      "cmd": "blades = {k: Rot(Z=k*np.degrees(PITCH)) * blade for k in (-1, 0, 1)}\nfluid = (sector - blades[-1] - blades[0] - blades[1]).solids()[0]\nprint(\"valid:\", BRepCheck_Analyzer(fluid.wrapped).IsValid(), \"fluid vol mm^3:\", round(fluid.volume*1e9,1),\n      \"removed:\", round((sector.volume-fluid.volume)*1e9,1), \"faces:\", len(fluid.faces()))\nprint(\"blade in annulus vol mm^3:\", round(sum(s.volume for s in ss.intersect(blade).solids())*1e9,1))\nprint(\"fluid pin (inside blade?):\", where(fluid, pin), \" pfar:\", where(fluid, pfar))",
+      "exit_code": 0,
+      "seconds": 0.7024216428399086,
+      "output": "valid: True fluid vol mm^3: 42031.9 removed: 1003.9 faces: 15\nblade in annulus vol mm^3: 978.1\nfluid pin (inside blade?): TopAbs_State.TopAbs_OUT  pfar: TopAbs_State.TopAbs_IN",
+      "image": ""
+    },
+    {
+      "cmd": "sec_solid = sector.solids()[0]\nblades = {k: Rot(Z=k*np.degrees(PITCH)) * blade for k in (-1, 0, 1)}\nfluid = (sector - blades[-1] - blades[0] - blades[1]).solids()[0]\nprint(\"valid:\", BRepCheck_Analyzer(fluid.wrapped).IsValid(), \"fluid vol mm^3:\", round(fluid.volume*1e9,1),\n      \"removed:\", round((sector.volume-fluid.volume)*1e9,1), \"faces:\", len(fluid.faces()))\nprint(\"blade-in-annulus vol mm^3:\", round(sum(s.volume for s in sec_solid.intersect(blade).solids())*1e9,1))\nprint(\"fluid at blade interior point:\", where(fluid, pin), \" downstream point:\", where(fluid, pfar))",
+      "exit_code": 0,
+      "seconds": 0.7024266617372632,
+      "output": "valid: True fluid vol mm^3: 42031.9 removed: 1003.9 faces: 15\nblade-in-annulus vol mm^3: 978.1\nfluid at blade interior point: TopAbs_State.TopAbs_OUT  downstream point: TopAbs_State.TopAbs_IN",
+      "image": ""
+    },
+    {
+      "cmd": "for i,f in enumerate(fluid.faces()):\n    c = f.center(); n = f.normal_at(c)\n    print(i, str(f.geom_type).split('.')[-1], \"A=%8.1f\"%(f.area*1e6), \"ctr mm\",\n          [round(v*1000,2) for v in (c.X,c.Y,c.Z)], \"r=%6.2f\"%(1000*np.hypot(c.X,c.Y)),\n          \"th=%7.2f\"%np.degrees(np.arctan2(c.Y,c.X)), \"n\", [round(v,2) for v in (n.X,n.Y,n.Z)])\nprint(\"pitch deg\", np.degrees(PITCH))",
+      "exit_code": 0,
+      "seconds": 0.1508835181593895,
+      "output": "0 CYLINDER A=   293.5 ctr mm [45.0, -0.0, -12.03] r= 45.00 th=  -0.00 n [-1.0, 0.0, -0.0]\n1 PLANE A=  2776.4 ctr mm [67.2, -7.57, 0.01] r= 67.62 th=  -6.43 n [-0.11, -0.99, 0.0]\n2 BSPLINE A=   937.1 ctr mm [67.51, 1.03, -1.21] r= 67.52 th=   0.87 n [-0.0, -0.69, 0.72]\n3 PLANE A=  2776.4 ctr mm [67.2, 7.57, 0.01] r= 67.62 th=   6.43 n [-0.11, 0.99, -0.0]\n4 BSPLINE A=    37.0 ctr mm [65.77, 7.17, -7.06] r= 66.16 th=   6.22 n [-0.02, 0.73, -0.69]\n5 BSPLINE A=    20.2 ctr mm [65.75, 7.16, -7.59] r= 66.14 th=   6.21 n [-0.07, -0.25, 0.97]\n6 PLANE A=   681.6 ctr mm [69.85, -0.0, -31.54] r= 69.85 th=  -0.00 n [0.0, 0.0, -1.0]\n7 BSPLINE A=   934.9 ctr mm [67.52, 0.2, -0.27] r= 67.52 th=   0.17 n [0.0, 0.66, -0.75]\n8 CYLINDER A=   321.7 ctr mm [45.0, -0.0, 11.6] r= 45.00 th=  -0.00 n [-1.0, 0.0, -0.0]\n9 BSPLINE A=    51.7 ctr mm [66.97, -7.44, 6.47] r= 67.38 th=  -6.34 n [-0.05, -0.81, 0.58]\n10 BSPLINE A=    16.8 ctr mm [67.01, -7.01, 7.44] r= 67.38 th=  -5.97 n [-0.16, -0.59, -0.79]\n11 BSPLINE A=    21.3 ctr mm [64.22, -7.07, 7.56] r= 64.61 th=  -6.28 n [0.03, 0.78, -0.62]\n12 PLANE A=   681.6 ctr mm [69.85, -0.0, 31.59] r= 69.85 th=  -0.00 n [-0.0, -0.0, 1.0]\n13 CYLINDER A=  1252.8 ctr mm [90.0, -0.0, 0.03] r= 90.00 th=  -0.00 n [1.0, -0.0, 0.0]\n14 BSPLINE A=     1.1 ctr mm [86.55, 9.76, 5.04] r= 87.09 th=   6.43 n [-0.03, -0.8, -0.6]\npitch deg 12.857142857142858",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.BRepExtrema import BRepExtrema_DistShapeShape\nfrom OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex\n\ndef dist_pt_face(p, face):\n    v = BRepBuilderAPI_MakeVertex(gp_Pnt(*p)).Vertex()\n    d = BRepExtrema_DistShapeShape(v, face.wrapped); d.Perform(); return d.Value()\n\n# which blade face is suction / TE / pressure, from known section points at r=0.068\nrr = 0.068; (su,zu),(sl,zl) = sec_sz(rr); j = len(su)//2\np_suc = wrap(rr, [su[j]], [zu[j]])[0]; p_prs = wrap(rr, [sl[j]], [zl[j]])[0]\np_te  = wrap(rr, [0.5*(su[-1]+sl[-1])], [0.5*(zu[-1]+zl[-1])])[0]\nbf = blade.faces()\nside_of = {}\nfor nm, p in [(\"suction\", p_suc), (\"pressure\", p_prs), (\"te\", p_te)]:\n    dl = [dist_pt_face(tuple(p), f) for f in bf]\n    k = int(np.argmin(dl)); side_of[k] = nm\n    print(nm, \"-> blade face\", k, \"d=%.2e\"%dl[k], \"areas\", round(bf[k].area*1e6,1))\nprint(side_of)",
+      "exit_code": 1,
+      "seconds": 0.050527279265224934,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[24]\u001b[39m\u001b[32m, line 10\u001b[39m\n\u001b[32m      6\u001b[39m     d = BRepExtrema_DistShapeShape(v, face.wrapped); d.Perform(); \u001b[38;5;28;01mreturn\u001b[39;00m d.Value()\n\u001b[32m      7\u001b[39m \n\u001b[32m      8\u001b[39m \u001b[38;5;66;03m# which blade face is suction / TE / pressure, from known section points at r=0.068\u001b[39;00m\n\u001b[32m      9\u001b[39m rr = \u001b[32m0.068\u001b[39m; (su,zu),(sl,zl) = sec_sz(rr); j = len(su)//\u001b[32m2\u001b[39m\n\u001b[32m---> \u001b[39m\u001b[32m10\u001b[39m p_suc = wrap(rr, [su[j]], [zu[j]])[\u001b[32m0\u001b[39m]; p_prs = wrap(rr, [sl[j]], [zl[j]])[\u001b[32m0\u001b[39m]\n\u001b[32m     11\u001b[39m p_te  = wrap(rr, [\u001b[32m0.5\u001b[39m*(su[-\u001b[32m1\u001b[39m]+sl[-\u001b[32m1\u001b[39m])], [\u001b[32m0.5\u001b[39m*(zu[-\u001b[32m1\u001b[39m]+zl[-\u001b[32m1\u001b[39m])])[\u001b[32m0\u001b[39m]\n\u001b[32m     12\u001b[39m bf = blade.faces()\n\u001b[32m     13\u001b[39m side_of = {}\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[6]\u001b[39m\u001b[32m, line 28\u001b[39m, in \u001b[36mwrap\u001b[39m\u001b[34m(r, s, z)\u001b[39m\n\u001b[32m     27\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m wrap(r, s, z):\n\u001b[32m---> \u001b[39m\u001b[32m28\u001b[39m     t = s/r\n\u001b[32m     29\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m [Vector(r*np.cos(ti), r*np.sin(ti), zi) \u001b[38;5;28;01mfor\u001b[39;00m ti, zi \u001b[38;5;28;01min\u001b[39;00m zip(t, z)]\n\n\u001b[31mTypeError\u001b[39m: unsupported operand type(s) for /: 'list' and 'float'",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.BRepExtrema import BRepExtrema_DistShapeShape\nfrom OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex\n\ndef dist_pt_face(p, face):\n    v = BRepBuilderAPI_MakeVertex(gp_Pnt(*p)).Vertex()\n    d = BRepExtrema_DistShapeShape(v, face.wrapped); d.Perform(); return d.Value()\n\nrr = 0.068; (su,zu),(sl,zl) = sec_sz(rr); j = len(su)//2\np_suc = wrap(rr, np.array([su[j]]), [zu[j]])[0]\np_prs = wrap(rr, np.array([sl[j]]), [zl[j]])[0]\np_te  = wrap(rr, np.array([0.5*(su[-1]+sl[-1])]), [0.5*(zu[-1]+zl[-1])])[0]\nbf = blade.faces()\nside_of = {}\nfor nm, p in [(\"suction\", p_suc), (\"pressure\", p_prs), (\"te\", p_te)]:\n    dl = [dist_pt_face((p.X,p.Y,p.Z), f) for f in bf]\n    k = int(np.argmin(dl)); side_of[k] = nm\n    print(nm, \"-> blade face\", k, \"d=%.2e\"%dl[k], \"area\", round(bf[k].area*1e6,1))",
+      "exit_code": 0,
+      "seconds": 0.10073876846581697,
+      "output": "suction -> blade face 0 d=3.02e-15 area 1324.9\npressure -> blade face 2 d=2.93e-15 area 1304.0\nte -> blade face 1 d=1.79e-08 area 23.6",
+      "image": ""
+    },
+    {
+      "cmd": "def rot_back(p, k):\n    a = -k*PITCH\n    return (p.X*np.cos(a)-p.Y*np.sin(a), p.X*np.sin(a)+p.Y*np.cos(a), p.Z)\n\nnames = {0:\"suction\", 1:\"te\", 2:\"pressure\"}\nfor i,f in enumerate(fluid.faces()):\n    if f.geom_type != GeomType.BSPLINE: continue\n    c = f.center()\n    scores = []\n    for k in (-1,0,1):\n        p = rot_back(c, k)\n        for idx in (0,1,2):\n            scores.append((dist_pt_face(p, bf[idx]), k, names[idx]))\n    scores.sort()\n    print(i, \"A=%7.1f\"%(f.area*1e6), \"best\", scores[0][1], scores[0][2], \"d=%.2e\"%scores[0][0],\n          \"| 2nd\", scores[1][1], scores[1][2], \"d=%.2e\"%scores[1][0])",
+      "exit_code": 0,
+      "seconds": 0.2511132871732116,
+      "output": "2 A=  937.1 best 0 suction d=0.00e+00 | 2nd 0 pressure d=1.25e-03\n4 A=   37.0 best 1 pressure d=1.41e-17 | 2nd 1 suction d=6.02e-04\n5 A=   20.2 best 1 suction d=3.68e-18 | 2nd 1 pressure d=3.00e-04\n7 A=  934.9 best 0 pressure d=1.39e-17 | 2nd 0 suction d=1.25e-03\n9 A=   51.7 best -1 suction d=1.73e-18 | 2nd -1 pressure d=5.07e-04\n10 A=   16.8 best -1 te d=2.60e-18 | 2nd -1 pressure d=1.98e-04\n11 A=   21.3 best -1 pressure d=3.79e-04 | 2nd -1 te d=3.79e-04\n14 A=    1.1 best 0 te d=2.80e-17 | 2nd 0 pressure d=1.98e-04",
+      "image": ""
+    },
+    {
+      "cmd": "def face_side(f):\n    verts, tris = f.tessellate(0.0002)\n    pts = [verts[i] for i in range(0, len(verts), max(1, len(verts)//25))]\n    best = None\n    for k in (-1,0,1):\n        for idx in (0,1,2):\n            d = np.mean([dist_pt_face(rot_back(p, k), bf[idx]) for p in pts])\n            if best is None or d < best[0]: best = (d, k, names[idx])\n    return best\n\npatch_of = {}\nfor i,f in enumerate(fluid.faces()):\n    if f.geom_type != GeomType.BSPLINE: continue\n    d,k,nm = face_side(f)\n    patch_of[i] = (\"blade_suction\" if nm in (\"suction\",\"te\") else \"blade_pressure\")\n    print(i, \"A=%7.1f\"%(f.area*1e6), \"copy\", k, nm, \"mean d=%.2e\"%d, \"->\", patch_of[i])",
+      "exit_code": 0,
+      "seconds": 4.311037363484502,
+      "output": "2 A=  937.1 copy 0 suction mean d=5.73e-04 -> blade_suction\n4 A=   37.0 copy 1 pressure mean d=3.03e-05 -> blade_pressure\n5 A=   20.2 copy 1 suction mean d=5.26e-14 -> blade_suction\n7 A=  934.9 copy 0 pressure mean d=1.82e-05 -> blade_pressure\n9 A=   51.7 copy -1 suction mean d=1.45e-04 -> blade_suction\n10 A=   16.8 copy -1 te mean d=1.87e-11 -> blade_suction\n11 A=   21.3 copy -1 pressure mean d=3.87e-05 -> blade_pressure\n14 A=    1.1 copy 0 te mean d=6.62e-11 -> blade_suction",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.BRepAdaptor import BRepAdaptor_Surface\n\ndef patch_name(f):\n    c = f.center(); n = f.normal_at(c)\n    if f.geom_type == GeomType.CYLINDER:\n        R = BRepAdaptor_Surface(f.wrapped).Cylinder().Radius()\n        return \"hub\" if abs(R-R_HUB) < abs(R-R_TIP) else \"shroud\"\n    if f.geom_type == GeomType.PLANE:\n        if abs(n.Z) > 0.9:\n            return \"inlet\" if n.Z < 0 else \"outlet\"\n        er = Vector(c.X, c.Y, 0); er = er/er.length\n        et = Vector(-er.Y, er.X, 0)                      # +theta direction\n        return \"periodic_pos\" if n.dot(et) > 0 else \"periodic_neg\"\n    d,k,nm = face_side(f)\n    return \"blade_suction\" if nm in (\"suction\",\"te\") else \"blade_pressure\"\n\nfaces = fluid.faces()\nPATCH = [patch_name(f) for f in faces]\nareas = {}\nfor f,p in zip(faces, PATCH): areas[p] = areas.get(p,0)+f.area*1e6\nfor p,a in sorted(areas.items()): print(f\"{p:15s} {a:9.1f} mm2  nfaces={PATCH.count(p)}\")\nexport_step(fluid, \"fluid.step\")\nprint(\"wrote fluid.step\")",
+      "exit_code": 0,
+      "seconds": 4.160759295336902,
+      "output": "blade_pressure      993.2 mm2  nfaces=3\nblade_suction      1027.0 mm2  nfaces=5\nhub                 615.2 mm2  nfaces=2\ninlet               681.6 mm2  nfaces=1\noutlet              681.6 mm2  nfaces=1\nperiodic_neg       2776.4 mm2  nfaces=1\nperiodic_pos       2776.4 mm2  nfaces=1\nshroud             1252.8 mm2  nfaces=1\nwrote fluid.step",
+      "image": ""
+    },
+    {
+      "cmd": "import gmsh\ngmsh.initialize()\ngmsh.option.setNumber(\"General.Terminal\", 0)\ngmsh.model.add(\"passage\")\ngmsh.model.occ.importShapes(\"fluid.step\")\ngmsh.model.occ.synchronize()\nsurfs = gmsh.model.getEntities(2)\nprint(\"gmsh surfaces:\", len(surfs), \" b123d faces:\", len(faces))\nref = [(np.array([f.center().X,f.center().Y,f.center().Z]), f.area) for f in faces]\nmapping = {}\nfor _, s in surfs:\n    com = np.array(gmsh.model.occ.getCenterOfMass(2, s))\n    ar = gmsh.model.occ.getMass(2, s)\n    d = [np.linalg.norm(com-c) + abs(ar-a)/max(a,1e-12)*1e-3 for c,a in ref]\n    i = int(np.argmin(d)); mapping[s] = i\n    print(f\"surf {s:3d} -> face {i:3d} {PATCH[i]:15s} err={d[i]:.2e}\")\nprint(\"unique faces matched:\", len(set(mapping.values())))",
+      "exit_code": 0,
+      "seconds": 0.25111222732812166,
+      "output": "gmsh surfaces: 15  b123d faces: 15\nsurf   1 -> face   0 hub             err=4.60e-03\nsurf   2 -> face   1 periodic_neg    err=1.56e-15\nsurf   3 -> face   2 blade_suction   err=5.98e-04\nsurf   4 -> face   3 periodic_pos    err=1.60e-15\nsurf   5 -> face   4 blade_pressure  err=4.73e-03\nsurf   6 -> face   5 blade_suction   err=3.49e-03\nsurf   7 -> face   6 inlet           err=1.77e-14\nsurf   8 -> face   7 blade_pressure  err=3.57e-04\nsurf   9 -> face   8 hub             err=3.70e-03\nsurf  10 -> face  11 blade_pressure  err=5.30e-03\nsurf  11 -> face  10 blade_suction   err=1.26e-03\nsurf  12 -> face  11 blade_pressure  err=4.30e-03\nsurf  13 -> face  12 outlet          err=1.77e-14\nsurf  14 -> face  13 shroud          err=1.90e-04\nsurf  15 -> face  14 blade_suction   err=1.04e-03\nunique faces matched: 14",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 8324,
+      "fenced": false,
+      "text_chars": 3198,
+      "thinking_chars": 6508,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216508.6466973
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 1550,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 46,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216523.353142
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 222,
+      "fenced": true,
+      "text_chars": 97,
+      "thinking_chars": 237,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216528.2251494
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 3135,
+      "fenced": true,
+      "text_chars": 276,
+      "thinking_chars": 2400,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216571.3133585
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 291,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 190,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216580.0384862
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 1401,
+      "fenced": true,
+      "text_chars": 177,
+      "thinking_chars": 444,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216595.6773405
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 1235,
+      "fenced": true,
+      "text_chars": 101,
+      "thinking_chars": 159,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216608.1902797
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 655,
+      "fenced": true,
+      "text_chars": 159,
+      "thinking_chars": 637,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216617.4387505
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 1825,
+      "fenced": true,
+      "text_chars": 196,
+      "thinking_chars": 1073,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216642.4689314
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 487,
+      "fenced": true,
+      "text_chars": 100,
+      "thinking_chars": 254,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216649.3891938
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 637,
+      "fenced": true,
+      "text_chars": 160,
+      "thinking_chars": 225,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216657.6165104
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 422,
+      "fenced": true,
+      "text_chars": 71,
+      "thinking_chars": 174,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216662.9136944
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 654,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 646,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216671.9796336
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 440,
+      "fenced": true,
+      "text_chars": 66,
+      "thinking_chars": 131,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216677.4554923
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 1639,
+      "fenced": true,
+      "text_chars": 100,
+      "thinking_chars": 963,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216697.3595362
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 465,
+      "fenced": true,
+      "text_chars": 136,
+      "thinking_chars": 214,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216703.310019
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 744,
+      "fenced": true,
+      "text_chars": 122,
+      "thinking_chars": 567,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216714.5486777
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 1692,
+      "fenced": true,
+      "text_chars": 183,
+      "thinking_chars": 1669,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216739.9429479
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 856,
+      "fenced": true,
+      "text_chars": 177,
+      "thinking_chars": 691,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216752.0940888
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 730,
+      "fenced": true,
+      "text_chars": 118,
+      "thinking_chars": 941,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216763.0864012
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 1750,
+      "fenced": true,
+      "text_chars": 258,
+      "thinking_chars": 1330,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216789.1018574
+    },
+    {
+      "turn": 22,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 447,
+      "fenced": true,
+      "text_chars": 98,
+      "thinking_chars": 224,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216795.527173
+    },
+    {
+      "turn": 23,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 481,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 166,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216802.166556
+    },
+    {
+      "turn": 24,
+      "steps": 22,
+      "stop_reason": "tool_use",
+      "output_tokens": 1265,
+      "fenced": true,
+      "text_chars": 149,
+      "thinking_chars": 1204,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216821.5876005
+    },
+    {
+      "turn": 25,
+      "steps": 23,
+      "stop_reason": "tool_use",
+      "output_tokens": 1703,
+      "fenced": true,
+      "text_chars": 143,
+      "thinking_chars": 1139,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216844.7364967
+    },
+    {
+      "turn": 26,
+      "steps": 24,
+      "stop_reason": "tool_use",
+      "output_tokens": 536,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216850.880705
+    },
+    {
+      "turn": 27,
+      "steps": 25,
+      "stop_reason": "tool_use",
+      "output_tokens": 1357,
+      "fenced": true,
+      "text_chars": 141,
+      "thinking_chars": 1240,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216870.602589
+    },
+    {
+      "turn": 28,
+      "steps": 26,
+      "stop_reason": "tool_use",
+      "output_tokens": 868,
+      "fenced": true,
+      "text_chars": 150,
+      "thinking_chars": 1021,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216882.6787064
+    },
+    {
+      "turn": 29,
+      "steps": 27,
+      "stop_reason": "tool_use",
+      "output_tokens": 1895,
+      "fenced": true,
+      "text_chars": 160,
+      "thinking_chars": 1613,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216913.5070338
+    },
+    {
+      "turn": 30,
+      "steps": 28,
+      "stop_reason": "tool_use",
+      "output_tokens": 835,
+      "fenced": true,
+      "text_chars": 154,
+      "thinking_chars": 691,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216929.5157006
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T10-20260912-123315-6758/t10/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T10-20260912-123315-6758/t10/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T10-20260912-123315-6758/t10/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T10-20260912-123315-6758/t10/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T10-20260912-123315-6758/t10/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T10-20260912-123315-6758/t10/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "the blade chord and maximum thickness, measured on the meshed blade patches at root, mid-span and tip",
+      "measured": null
+    },
+    {
+      "property": "the trailing edge thickness, and the cell size there, and how many cells resolve it",
+      "measured": null
+    },
+    {
+      "property": "the passage pitch at the hub and at the tip, measured between the two periodic faces",
+      "measured": null
+    },
+    {
+      "property": "the blade twist from root to tip, in degrees, measured off the geometry",
+      "measured": null
+    },
+    {
+      "property": "the two periodic faces, each with its area, and whether they match face for face",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 30,
+    "steps": 28,
+    "seconds": 535.0,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

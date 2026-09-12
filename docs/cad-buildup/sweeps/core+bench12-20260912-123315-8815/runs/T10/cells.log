@@ -1,0 +1,896 @@
+# -- cell 1 (0.4s, exit 0)
+import numpy as np, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# ---- parameters (metres) ----
+R_HUB, R_TIP = 0.045, 0.090
+NB      = 28
+PITCH   = 2*np.pi/NB                 # rad
+CHORD   = 0.022
+TMAX    = 0.06                       # 6% thickness
+CAMBER  = np.radians(20.0)           # total camber (turning) angle, design choice
+STAG_R  = np.radians(30.0)           # stagger at root
+TWIST   = np.radians(35.0)           # further twist to tip
+
+def stagger(r):
+    f = (r - R_HUB)/(R_TIP - R_HUB)
+    return STAG_R + TWIST*f
+
+def section(r, n=81):
+    """aerofoil section in local (s = r*theta, z) plane, stacked on mid-chord."""
+    c = CHORD
+    beta = np.linspace(0, np.pi, n)
+    x = 0.5*c*(1-np.cos(beta))                      # cosine spacing 0..c
+    R = c/(2*np.sin(CAMBER/2))
+    yc = np.sqrt(R**2 - (x-c/2)**2) - R*np.cos(CAMBER/2)
+    dyc = -(x-c/2)/np.sqrt(R**2-(x-c/2)**2)
+    th = np.arctan(dyc)
+    xi = x/c
+    yt = 5*TMAX*c*(0.2969*np.sqrt(xi)-0.1260*xi-0.3516*xi**2+0.2843*xi**3-0.1036*xi**4)
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    g = stagger(r)
+    def to_sz(xx, yy):
+        xx = xx - c/2
+        z =  xx*np.cos(g) - yy*np.sin(g)
+        s =  xx*np.sin(g) + yy*np.cos(g)
+        return s, z
+    su, zu = to_sz(xu, yu)
+    sl, zl = to_sz(xl, yl)
+    return (su, zu), (sl, zl)
+
+fig, axs = plt.subplots(1, 3, figsize=(13, 4.5))
+for ax, r, nm in zip(axs, [R_HUB, 0.5*(R_HUB+R_TIP), R_TIP], ["hub", "mid", "tip"]):
+    p = r*PITCH
+    for k in (-1, 0, 1):
+        (su, zu), (sl, zl) = section(r)
+        ax.plot(1000*(su+k*p), 1000*zu, 'b-', lw=1)
+        ax.plot(1000*(sl+k*p), 1000*zl, 'r-', lw=1)
+    ax.set_aspect('equal'); ax.set_title(f"{nm} r={1000*r:.0f}mm pitch={1000*p:.1f}mm stag={np.degrees(stagger(r)):.0f}d")
+    ax.set_xlabel("s [mm]"); ax.set_ylabel("z [mm]"); ax.grid(alpha=.3)
+plt.tight_layout(); plt.savefig("sections.png", dpi=110)
+
+for r in (R_HUB, R_TIP):
+    (su,zu),(sl,zl) = section(r)
+    le = np.array([su[0], zu[0]]); te = np.array([su[-1], zu[-1]])
+    ch = np.hypot(*(te-le))
+    t = np.max(np.hypot(su-sl, zu-zl))
+    print(f"r={1000*r:.0f}mm chord={1000*ch:.2f}mm tmax/c={t/ch*100:.2f}% stag_meas={np.degrees(np.arctan2(te[0]-le[0], te[1]-le[1])):.2f}d tang.ext={1000*(su.max()-su.min()):.2f}mm pitch={1000*r*PITCH:.2f}mm")
+print("z extent overall mm:", 1000*min(section(R_HUB)[0][1].min(), section(R_TIP)[0][1].min()),
+      1000*max(section(R_HUB)[0][1].max(), section(R_TIP)[0][1].max()))
+# -- output
+r=45mm chord=22.00mm tmax/c=6.00% stag_meas=30.00d tang.ext=11.00mm pitch=10.10mm
+r=90mm chord=22.00mm tmax/c=6.00% stag_meas=65.00d tang.ext=19.94mm pitch=20.20mm
+z extent overall mm: -9.548489374528188 9.526279441628827
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 2 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("sections.png"))
+# -- output
+
+
+# -- cell 3 (2.4s, exit 1)
+from build123d import *
+
+TE_OPEN = 0.010            # TE closure added to half-thickness (fraction of chord), renormalised
+R_LO, R_HI = 0.040, 0.095  # blade extended past hub/shroud for clean trimming
+NSEC, NPT = 9, 41
+
+def sec_sz(r, n=NPT):
+    c = CHORD
+    beta = np.linspace(0, np.pi, n)
+    x = 0.5*c*(1-np.cos(beta))
+    R = c/(2*np.sin(CAMBER/2))
+    yc = np.sqrt(R**2-(x-c/2)**2) - R*np.cos(CAMBER/2)
+    th = np.arctan(-(x-c/2)/np.sqrt(R**2-(x-c/2)**2))
+    xi = x/c
+    yt = 5*TMAX*c*(0.2969*np.sqrt(xi)-0.1260*xi-0.3516*xi**2+0.2843*xi**3-0.1036*xi**4)
+    yt = yt + TE_OPEN*c*xi
+    yt = yt*(TMAX*c/2)/yt.max()                      # renormalise so max thickness = 6% chord
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    g = STAG_R + TWIST*(r-R_HUB)/(R_TIP-R_HUB)
+    def to_sz(xx, yy):
+        xx = xx - c/2
+        return xx*np.sin(g)+yy*np.cos(g), xx*np.cos(g)-yy*np.sin(g)
+    return to_sz(xu, yu), to_sz(xl, yl)
+
+def wrap(r, s, z):
+    t = s/r
+    return [Vector(r*np.cos(ti), r*np.sin(ti), zi) for ti, zi in zip(t, z)]
+
+radii = np.linspace(R_LO, R_HI, NSEC)
+wires = []
+for r in radii:
+    (su, zu), (sl, zl) = sec_sz(r)
+    pu = wrap(r, su, zu); pl = wrap(r, sl, zl)
+    e_suc = Spline(*pu)                       # LE -> TE, suction/upper side
+    e_prs = Spline(*pl[::-1])                 # TE -> LE, pressure/lower side
+    wires.append(Wire([e_suc, e_prs]))
+blade0 = loft(wires, ruled=False)
+print(type(blade0), blade0.is_valid(), "vol mm^3 =", blade0.volume*1e9, " faces:", len(blade0.faces()))
+bb = blade0.bounding_box(); print("bbox mm:", [round(v*1000,2) for v in (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 38[39m
+[32m     34[39m     pu = wrap(r, su, zu); pl = wrap(r, sl, zl)
+[32m     35[39m     e_suc = Spline(*pu)                       [38;5;66;03m# LE -> TE, suction/upper side[39;00m
+[32m     36[39m     e_prs = Spline(*pl[::-[32m1[39m])                 [38;5;66;03m# TE -> LE, pressure/lower side[39;00m
+[32m     37[39m     wires.append(Wire([e_suc, e_prs]))
+[32m---> [39m[32m38[39m blade0 = loft(wires, ruled=[38;5;28;01mFalse[39;00m)
+[32m     39[39m print(type(blade0), blade0.is_valid(), [33m"vol mm^3 ="[39m, blade0.volume*[32m1e9[39m, [33m" faces:"[39m, len(blade0.faces()))
+[32m     40[39m bb = blade0.bounding_box(); print([33m"bbox mm:"[39m, [round(v*[32m1000[39m,[32m2[39m) [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    157[39m objs = [38;5;28mlist[39m(objs)  [38;5;66;03m# To determine its length[39;00m
+[32m    158[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(objs) < [32m2[39m:
+[32m--> [39m[32m159[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mMore than one wire is required[39m[33m"[39m)
+[32m    160[39m vertices = [obj [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m objs [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj.wrapped, TopoDS_Vertex)]
+[32m    161[39m vertex_count = [38;5;28mlen[39m(vertices)
+
+[31mValueError[39m: More than one wire is required
+
+# -- cell 4 (0.1s, exit 0)
+import inspect, build123d.operations_part as op
+print(inspect.getsource(op.loft)[:2200])
+print("wire types:", [type(w) for w in wires[:2]], len(wires))
+# -- output
+def loft(
+    sections: Face | Sketch | Iterable[Vertex | Face | Sketch] | None = None,
+    ruled: bool = False,
+    clean: bool = True,
+    mode: Mode = Mode.ADD,
+) -> Part:
+    """Part Operation: loft
+
+    Loft the pending sketches/faces, across all workplanes, into a solid.
+
+    Args:
+        sections (Vertex, Face, Sketch): slices to loft into object. If not provided, pending_faces
+            will be used. If vertices are to be used, a vertex can be the first, last, or
+            first and last elements.
+        ruled (bool, optional): discontiguous layer tangents. Defaults to False.
+        clean (bool, optional): Remove extraneous internal structure. Defaults to True.
+        mode (Mode, optional): combination mode. Defaults to Mode.ADD.
+    """
+
+    def normalize_list_of_lists(lst):
+        lengths = {len(sub) for sub in lst}
+        if lengths <= {0}:
+            return []
+        if lengths == {1}:
+            return [sub[0] for sub in lst]
+        if len(lengths) > 1:
+            raise ValueError("The number of holes in the sections must be the same")
+        raise ValueError(
+            f"loft supports a maximum of 1 hole per section but one or more section "
+            f"has {max(lengths)} hole - loft the perimeter and holes separately and "
+            f"subtract the holes"
+        )
+
+    context: BuildPart | None = BuildPart._get_context("loft")
+
+    section_list = flatten_sequence(sections)
+    validate_inputs(context, "loft", section_list)
+
+    # If no explicit sections provided, use pending_faces from context
+    if all(s is None for s in section_list):
+        if context is None or not context.pending_faces:
+            raise ValueError("No sections provided")
+        input_sections = context.pending_faces
+        context.pending_faces = []
+        context.pending_face_planes = []
+    else:
+        input_sections = section_list
+
+    # Validate Vertex placement
+    if any(isinstance(s, Vertex) for s in input_sections):
+        if not isinstance(input_sections[0], Vertex) and not isinstance(
+            input_sections[-1], Vertex
+        ):
+            raise ValueError(
+                "Vertices must be the first, last, or first and last elem
+wire types: [<class 'build123d.topology.one_d.Wire'>, <class 'build123d.topology.one_d.Wire'>] 9
+
+# -- cell 5 (0.1s, exit 1)
+from build123d import *
+
+TE_OPEN = 0.010            # TE closure added to half-thickness (fraction of chord), renormalised
+R_LO, R_HI = 0.040, 0.095  # blade extended past hub/shroud for clean trimming
+NSEC, NPT = 9, 41
+
+def sec_sz(r, n=NPT):
+    """aerofoil section in unwrapped (s, z) coords, stacked on mid-chord of the chord line"""
+    c = CHORD
+    beta = np.linspace(0, np.pi, n)
+    x = 0.5*c*(1-np.cos(beta))
+    R = c/(2*np.sin(CAMBER/2))
+    yc = np.sqrt(R**2-(x-c/2)**2) - R*np.cos(CAMBER/2)
+    th = np.arctan(-(x-c/2)/np.sqrt(R**2-(x-c/2)**2))
+    xi = x/c
+    yt = 5*TMAX*c*(0.2969*np.sqrt(xi)-0.1260*xi-0.3516*xi**2+0.2843*xi**3-0.1036*xi**4)
+    yt = yt + TE_OPEN*c*xi
+    yt = yt*(TMAX*c/2)/yt.max()                      # renormalise: max thickness = 6% chord
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    g = STAG_R + TWIST*(r-R_HUB)/(R_TIP-R_HUB)
+    def to_sz(xx, yy):
+        xx = xx - c/2
+        return xx*np.sin(g)+yy*np.cos(g), xx*np.cos(g)-yy*np.sin(g)
+    return to_sz(xu, yu), to_sz(xl, yl)
+
+def wrap(r, s, z):
+    t = s/r
+    return [Vector(r*np.cos(ti), r*np.sin(ti), zi) for ti, zi in zip(t, z)]
+
+def blade_wires():
+    ws = []
+    for r in np.linspace(R_LO, R_HI, NSEC):
+        (su, zu), (sl, zl) = sec_sz(r)
+        pu, pl = wrap(r, su, zu), wrap(r, sl, zl)
+        ws.append(Wire([Spline(*pu), Spline(*pl[::-1])]))   # LE->TE suction, TE->LE pressure
+    return ws
+
+blade0 = Solid.make_loft(blade_wires(), ruled=False)
+bb = blade0.bounding_box()
+print(blade0.is_valid(), "vol mm^3 =", round(blade0.volume*1e9,1), "faces:", len(blade0.faces()))
+print("bbox mm:", [round(v*1000,2) for v in (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 41[39m
+[32m     37[39m     [38;5;28;01mreturn[39;00m ws
+[32m     38[39m 
+[32m     39[39m blade0 = Solid.make_loft(blade_wires(), ruled=[38;5;28;01mFalse[39;00m)
+[32m     40[39m bb = blade0.bounding_box()
+[32m---> [39m[32m41[39m print(blade0.is_valid(), [33m"vol mm^3 ="[39m, round(blade0.volume*[32m1e9[39m,[32m1[39m), [33m"faces:"[39m, len(blade0.faces()))
+[32m     42[39m print([33m"bbox mm:"[39m, [round(v*[32m1000[39m,[32m2[39m) [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 6 (0.1s, exit 0)
+from build123d import *
+
+TE_OPEN = 0.010            # TE closure added to half-thickness (fraction of chord), renormalised
+R_LO, R_HI = 0.040, 0.095  # blade extended past hub/shroud for clean trimming
+NSEC, NPT = 9, 41
+
+def sec_sz(r, n=NPT):
+    """aerofoil section in unwrapped (s, z) coords, stacked on mid-chord of the chord line"""
+    c = CHORD
+    beta = np.linspace(0, np.pi, n)
+    x = 0.5*c*(1-np.cos(beta))
+    R = c/(2*np.sin(CAMBER/2))
+    yc = np.sqrt(R**2-(x-c/2)**2) - R*np.cos(CAMBER/2)
+    th = np.arctan(-(x-c/2)/np.sqrt(R**2-(x-c/2)**2))
+    xi = x/c
+    yt = 5*TMAX*c*(0.2969*np.sqrt(xi)-0.1260*xi-0.3516*xi**2+0.2843*xi**3-0.1036*xi**4)
+    yt = yt + TE_OPEN*c*xi
+    yt = yt*(TMAX*c/2)/yt.max()                      # renormalise: max thickness = 6% chord
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    g = STAG_R + TWIST*(r-R_HUB)/(R_TIP-R_HUB)
+    def to_sz(xx, yy):
+        xx = xx - c/2
+        return xx*np.sin(g)+yy*np.cos(g), xx*np.cos(g)-yy*np.sin(g)
+    return to_sz(xu, yu), to_sz(xl, yl)
+
+def wrap(r, s, z):
+    t = s/r
+    return [Vector(r*np.cos(ti), r*np.sin(ti), zi) for ti, zi in zip(t, z)]
+
+def blade_wires():
+    ws = []
+    for r in np.linspace(R_LO, R_HI, NSEC):
+        (su, zu), (sl, zl) = sec_sz(r)
+        pu, pl = wrap(r, su, zu), wrap(r, sl, zl)
+        ws.append(Wire([Spline(*pu), Spline(*pl[::-1])]))   # LE->TE suction, TE->LE pressure
+    return ws
+
+blade0 = Solid.make_loft(blade_wires(), ruled=False)
+bb = blade0.bounding_box()
+print(blade0.is_valid, "vol mm^3 =", round(blade0.volume*1e9,1), "faces:", len(blade0.faces()))
+print("bbox mm:", [round(v*1000,2) for v in (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])
+for i,f in enumerate(blade0.faces()):
+    c = f.center(); print(i, f.geom_type, "area mm2", round(f.area*1e6,2), "ctr mm", [round(v*1000,2) for v in (c.X,c.Y,c.Z)])
+# -- output
+False vol mm^3 = 724.8 faces: 2
+bbox mm: [39.68, -10.24, -9.89, 95.0, 10.34, 9.93]
+0 GeomType.BSPLINE area mm2 1213.69 ctr mm [67.53, 0.2, -0.27]
+1 GeomType.BSPLINE area mm2 1233.31 ctr mm [67.52, 1.03, -1.21]
+
+# -- cell 7 (0.2s, exit 1)
+bw = blade_wires()
+caps = [Face.make_surface(bw[0]), Face.make_surface(bw[-1])]
+blade_solid = Solid(Shell(blade0.faces() + caps))
+print("valid:", blade_solid.is_valid, "closed:", blade_solid.is_valid, "vol mm^3:", round(blade_solid.volume*1e9,1),
+      "faces:", len(blade_solid.faces()))
+bb = blade_solid.bounding_box(); print("bbox mm:", [round(v*1000,2) for v in (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[7][39m[32m, line 2[39m
+[32m      1[39m bw = blade_wires()
+[32m----> [39m[32m2[39m caps = [Face.make_surface(bw[[32m0[39m]), Face.make_surface(bw[-[32m1[39m])]
+[32m      3[39m blade_solid = Solid(Shell(blade0.faces() + caps))
+[32m      4[39m print("valid:", blade_solid.is_valid, "closed:", blade_solid.is_valid, "vol mm^3:", round(blade_solid.volume*1e9,1),
+[32m      5[39m       [33m"faces:"[39m, len(blade_solid.faces()))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/two_d.py:1657[39m, in [36mFace.make_surface[39m[34m(cls, exterior, surface_points, interior_wires)[39m
+[32m   1655[39m surface_face = surface_face.fix()
+[32m   1656[39m [38;5;28;01mif[39;00m [38;5;129;01mnot[39;00m surface_face.is_valid:
+[32m-> [39m[32m1657[39m     [38;5;28;01mraise[39;00m [38;5;167;01mRuntimeError[39;00m([33m"[39m[33mnon planar face is invalid[39m[33m"[39m)
+[32m   1659[39m [38;5;28;01mreturn[39;00m surface_face
+
+[31mRuntimeError[39m: non planar face is invalid
+
+# -- cell 8 (0.2s, exit 0)
+R_LO, R_HI = 0.038, 0.097          # sacrificial planar end sections (outside the trimmed annulus)
+RADII = [0.043, 0.045, 0.050, 0.056, 0.062, 0.068, 0.074, 0.080, 0.086, 0.090, 0.092]
+
+def flat(r, s, z):                 # planar approximation of the section, in plane X = r
+    return [Vector(r, si, zi) for si, zi in zip(s, z)]
+
+def blade_wires2():
+    ws = []
+    for r, planar in [(R_LO, True)] + [(x, False) for x in RADII] + [(R_HI, True)]:
+        (su, zu), (sl, zl) = sec_sz(r)
+        f = flat if planar else wrap
+        pu, pl = f(r, su, zu), f(r, sl, zl)
+        ws.append(Wire([Spline(*pu), Spline(*pl[::-1])]))
+    return ws
+
+blade_solid = Solid.make_loft(blade_wires2(), ruled=False)
+bb = blade_solid.bounding_box()
+print("valid:", blade_solid.is_valid, "vol mm^3:", round(blade_solid.volume*1e9,1), "faces:", len(blade_solid.faces()))
+print("bbox mm:", [round(v*1000,2) for v in (bb.min.X,bb.min.Y,bb.min.Z,bb.max.X,bb.max.Y,bb.max.Z)])
+for i,f in enumerate(blade_solid.faces()):
+    c=f.center(); print(i, f.geom_type, round(f.area*1e6,2), [round(v*1000,2) for v in (c.X,c.Y,c.Z)])
+# -- output
+valid: False vol mm^3: 1232.1 faces: 4
+bbox mm: [38.0, -10.37, -10.02, 97.0, 10.46, 10.06]
+0 GeomType.BSPLINE 1304.01 [67.76, 0.2, -0.27]
+1 GeomType.BSPLINE 1324.92 [67.75, 1.03, -1.21]
+2 GeomType.PLANE -22.32 [38.0, 0.35, -0.96]
+3 GeomType.PLANE 22.32 [97.0, -0.45, -0.91]
+
+# -- cell 9 (0.1s, exit 0)
+from OCP.ShapeFix import ShapeFix_Shape
+from OCP.BRepCheck import BRepCheck_Analyzer
+sf = ShapeFix_Shape(blade_solid.wrapped); sf.Perform()
+blade = Solid(sf.Shape())
+print("valid:", BRepCheck_Analyzer(blade.wrapped).IsValid(), "vol mm^3:", round(blade.volume*1e9,2), "faces:", len(blade.faces()))
+print("areas mm2:", [round(f.area*1e6,2) for f in blade.faces()])
+# -- output
+valid: False vol mm^3: 2673572.51 faces: 4
+areas mm2: [1304.01, 22.32, 1324.92, 22.32]
+
+# -- cell 10 (0.1s, exit 1)
+from OCP.ShapeFix import ShapeFix_Shape, ShapeFix_Solid
+from OCP.BRepCheck import BRepCheck_Analyzer
+
+def fix_solid(sol):
+    sf = ShapeFix_Shape(sol.wrapped); sf.Perform()
+    sh = Shell(Shape.cast(sf.Shape()).faces())
+    fx = ShapeFix_Solid()
+    return Solid(fx.SolidFromShell(sh.wrapped))
+
+blade = fix_solid(blade_solid)
+print("valid:", BRepCheck_Analyzer(blade.wrapped).IsValid(), "vol mm^3:", round(blade.volume*1e9,2),
+      "faces:", len(blade.faces()), "areas:", [round(f.area*1e6,2) for f in blade.faces()])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mNameError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[10][39m[32m, line 10[39m
+[32m      6[39m     sh = Shell(Shape.cast(sf.Shape()).faces())
+[32m      7[39m     fx = ShapeFix_Solid()
+[32m      8[39m     [38;5;28;01mreturn[39;00m Solid(fx.SolidFromShell(sh.wrapped))
+[32m      9[39m 
+[32m---> [39m[32m10[39m blade = fix_solid(blade_solid)
+[32m     11[39m print("valid:", BRepCheck_Analyzer(blade.wrapped).IsValid(), "vol mm^3:", round(blade.volume*1e9,2),
+[32m     12[39m       [33m"faces:"[39m, len(blade.faces()), [33m"areas:"[39m, [round(f.area*[32m1e6[39m,[32m2[39m) [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m blade.faces()])
+
+[36mCell[39m[36m [39m[32mIn[10][39m[32m, line 6[39m, in [36mfix_solid[39m[34m(sol)[39m
+[32m      4[39m [38;5;28;01mdef[39;00m fix_solid(sol):
+[32m      5[39m     sf = ShapeFix_Shape(sol.wrapped); sf.Perform()
+[32m----> [39m[32m6[39m     sh = Shell(Shape.cast(sf.Shape()).faces())
+[32m      7[39m     fx = ShapeFix_Solid()
+[32m      8[39m     [38;5;28;01mreturn[39;00m Solid(fx.SolidFromShell(sh.wrapped))
+
+[31mNameError[39m: name 'Shape' is not defined
+
+# -- cell 11 (0.1s, exit 1)
+from build123d.topology import Shape
+from OCP.ShapeFix import ShapeFix_Shape, ShapeFix_Solid
+from OCP.BRepCheck import BRepCheck_Analyzer
+
+def fix_solid(sol):
+    sf = ShapeFix_Shape(sol.wrapped); sf.Perform()
+    sh = Shell(Shape.cast(sf.Shape()).faces())
+    return Solid(ShapeFix_Solid().SolidFromShell(sh.wrapped))
+
+blade = fix_solid(blade_solid)
+print("valid:", BRepCheck_Analyzer(blade.wrapped).IsValid(), "vol mm^3:", round(blade.volume*1e9,2),
+      "faces:", len(blade.faces()), "areas:", [round(f.area*1e6,2) for f in blade.faces()])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[11][39m[32m, line 10[39m
+[32m      6[39m     sf = ShapeFix_Shape(sol.wrapped); sf.Perform()
+[32m      7[39m     sh = Shell(Shape.cast(sf.Shape()).faces())
+[32m      8[39m     [38;5;28;01mreturn[39;00m Solid(ShapeFix_Solid().SolidFromShell(sh.wrapped))
+[32m      9[39m 
+[32m---> [39m[32m10[39m blade = fix_solid(blade_solid)
+[32m     11[39m print("valid:", BRepCheck_Analyzer(blade.wrapped).IsValid(), "vol mm^3:", round(blade.volume*1e9,2),
+[32m     12[39m       [33m"faces:"[39m, len(blade.faces()), [33m"areas:"[39m, [round(f.area*[32m1e6[39m,[32m2[39m) [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m blade.faces()])
+
+[36mCell[39m[36m [39m[32mIn[11][39m[32m, line 7[39m, in [36mfix_solid[39m[34m(sol)[39m
+[32m      5[39m [38;5;28;01mdef[39;00m fix_solid(sol):
+[32m      6[39m     sf = ShapeFix_Shape(sol.wrapped); sf.Perform()
+[32m----> [39m[32m7[39m     sh = Shell(Shape.cast(sf.Shape()).faces())
+[32m      8[39m     [38;5;28;01mreturn[39;00m Solid(ShapeFix_Solid().SolidFromShell(sh.wrapped))
+
+[31mAttributeError[39m: 'NoneType' object has no attribute 'faces'
+
+# -- cell 12 (0.1s, exit 1)
+sf = ShapeFix_Shape(blade_solid.wrapped); sf.Perform()
+s = sf.Shape(); print(type(s), s.ShapeType())
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopAbs import TopAbs_ShapeEnum
+exp = TopExp_Explorer(s, TopAbs_ShapeEnum.TopAbs_SHELL); shells=[]
+while exp.More():
+    shells.append(exp.Current()); exp.Next()
+print("shells:", len(shells))
+bfix = Solid(ShapeFix_Solid().SolidFromShell(Shell(shells[0])))
+print("valid:", BRepCheck_Analyzer(bfix.wrapped).IsValid(), "vol mm^3:", round(bfix.volume*1e9,2),
+      "areas:", [round(f.area*1e6,2) for f in bfix.faces()])
+# -- output
+<class 'OCP.OCP.TopoDS.TopoDS_Shape'> TopAbs_ShapeEnum.TopAbs_SHELL
+shells: 1
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[12][39m[32m, line 9[39m
+[32m      5[39m exp = TopExp_Explorer(s, TopAbs_ShapeEnum.TopAbs_SHELL); shells=[]
+[32m      6[39m [38;5;28;01mwhile[39;00m exp.More():
+[32m      7[39m     shells.append(exp.Current()); exp.Next()
+[32m      8[39m print([33m"shells:"[39m, len(shells))
+[32m----> [39m[32m9[39m bfix = Solid(ShapeFix_Solid().SolidFromShell(Shell(shells[[32m0[39m])))
+[32m     10[39m print("valid:", BRepCheck_Analyzer(bfix.wrapped).IsValid(), "vol mm^3:", round(bfix.volume*1e9,2),
+[32m     11[39m       [33m"areas:"[39m, [round(f.area*[32m1e6[39m,[32m2[39m) [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m bfix.faces()])
+
+[31mTypeError[39m: SolidFromShell(): incompatible function arguments. The following argument types are supported:
+    1. (self: OCP.OCP.ShapeFix.ShapeFix_Solid, shell: OCP.OCP.TopoDS.TopoDS_Shell) -> OCP.OCP.TopoDS.TopoDS_Solid
+
+Invoked with: <OCP.OCP.ShapeFix.ShapeFix_Solid object at 0x7d8e839867f0>, <build123d.topology.two_d.Shell object at 0x7d8e8468ee40>
+
+# -- cell 13 (0.1s, exit 0)
+from OCP.TopoDS import TopoDS
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopAbs import TopAbs_ShapeEnum
+
+def fix_solid(sol):
+    sf = ShapeFix_Shape(sol.wrapped); sf.Perform()
+    exp = TopExp_Explorer(sf.Shape(), TopAbs_ShapeEnum.TopAbs_SHELL); exp.More()
+    sh = TopoDS.Shell_s(exp.Current())
+    return Solid(ShapeFix_Solid().SolidFromShell(sh))
+
+blade = fix_solid(blade_solid)
+print("valid:", BRepCheck_Analyzer(blade.wrapped).IsValid(), "vol mm^3:", round(blade.volume*1e9,2),
+      "areas:", [round(f.area*1e6,2) for f in blade.faces()])
+# -- output
+valid: False vol mm^3: 1232.1 areas: [1304.01, 22.32, 1324.92, 22.32]
+
+# -- cell 14 (0.1s, exit 0)
+from build123d.topology import Shape
+from OCP.ShapeFix import ShapeFix_Shape, ShapeFix_Solid
+from OCP.BRepCheck import BRepCheck_Analyzer
+from OCP.TopoDS import TopoDS
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopAbs import TopAbs_ShapeEnum
+
+def fix_solid(sol):
+    sf = ShapeFix_Shape(sol.wrapped); sf.Perform()
+    exp = TopExp_Explorer(sf.Shape(), TopAbs_ShapeEnum.TopAbs_SHELL); exp.More()
+    return Solid(ShapeFix_Solid().SolidFromShell(TopoDS.Shell_s(exp.Current())))
+
+blade = fix_solid(blade_solid)
+print("blade vol mm^3:", round(blade.volume*1e9,2))
+
+# axial extent of the blade inside the real annulus -> inlet/outlet one chord beyond
+zs = [sec_sz(r)[i][1] for r in (R_HUB, 0.5*(R_HUB+R_TIP), R_TIP) for i in (0,1)]
+Z_BL_MIN, Z_BL_MAX = min(a.min() for a in zs), max(a.max() for a in zs)
+Z_IN, Z_OUT = Z_BL_MIN - CHORD, Z_BL_MAX + CHORD
+L = Z_OUT - Z_IN
+print("blade z mm:", round(1000*Z_BL_MIN,2), round(1000*Z_BL_MAX,2), " domain z mm:", round(1000*Z_IN,2), round(1000*Z_OUT,2))
+
+prof = Plane.XZ * Pos(0.5*(R_HUB+R_TIP), 0.5*(Z_IN+Z_OUT)) * Rectangle(R_TIP-R_HUB, L)
+sector = Rot(Z=-np.degrees(PITCH)/2) * revolve(prof, Axis.Z, revolution_arc=np.degrees(PITCH))
+print("sector vol mm^3:", round(sector.volume*1e9,1), " analytic:", round(0.5*PITCH*(R_TIP**2-R_HUB**2)*L*1e9,1))
+# -- output
+blade vol mm^3: 1232.1
+blade z mm: -9.54 9.59  domain z mm: -31.54 31.59
+sector vol mm^3: 43035.8  analytic: 43035.8
+
+# -- cell 15 (0.6s, exit 0)
+blades = {k: Rot(Z=k*np.degrees(PITCH)) * blade for k in (-1, 0, 1)}
+fluid = sector - blades[-1] - blades[0] - blades[1]
+print("valid:", BRepCheck_Analyzer(fluid.wrapped).IsValid(), "solids:", len(fluid.solids()),
+      "vol mm^3:", round(fluid.volume*1e9,1), "faces:", len(fluid.faces()))
+for i,f in enumerate(fluid.faces()):
+    c=f.center(); print(i, f.geom_type, round(f.area*1e6,1), "ctr mm", [round(v*1000,2) for v in (c.X,c.Y,c.Z)], "r=",round(1000*np.hypot(c.X,c.Y),2))
+# -- output
+valid: True solids: 1 vol mm^3: 43026.0 faces: 15
+0 GeomType.CYLINDER 293.5 ctr mm [45.0, -0.0, -12.03] r= 45.0
+1 GeomType.PLANE 2813.4 ctr mm [67.13, -7.56, 0.1] r= 67.55
+2 GeomType.CYLINDER 21.4 ctr mm [45.0, -0.0, -0.18] r= 45.0
+3 GeomType.PLANE 2813.3 ctr mm [67.13, 7.56, 0.1] r= 67.55
+4 GeomType.BSPLINE 37.0 ctr mm [65.76, 7.16, -7.06] r= 66.14
+5 GeomType.BSPLINE 20.2 ctr mm [65.75, 7.16, -7.59] r= 66.14
+6 GeomType.PLANE 681.6 ctr mm [69.85, -0.0, -31.54] r= 69.85
+7 GeomType.PLANE 27.9 ctr mm [61.82, -6.97, -7.44] r= 62.21
+8 GeomType.CYLINDER 322.3 ctr mm [45.0, -0.0, 11.6] r= 45.0
+9 GeomType.PLANE 681.6 ctr mm [69.85, -0.0, 31.59] r= 69.85
+10 GeomType.CYLINDER 1275.1 ctr mm [90.0, -0.0, 0.03] r= 90.0
+11 GeomType.BSPLINE 934.3 ctr mm [67.52, 0.2, -0.27] r= 67.52
+12 GeomType.BSPLINE 937.1 ctr mm [67.51, 1.03, -1.21] r= 67.52
+13 GeomType.BSPLINE 21.3 ctr mm [64.22, -7.07, 7.56] r= 64.61
+14 GeomType.BSPLINE 51.7 ctr mm [66.97, -7.44, 6.48] r= 67.38
+
+# -- cell 16 (0.3s, exit 0)
+inter0 = sector & blades[0]
+inter_m = sector & blades[-1]
+inter_p = sector & blades[1]
+print([round(x.volume*1e9,2) for x in (inter0, inter_m, inter_p)])
+print("sum:", round((inter0.volume+inter_m.volume+inter_p.volume)*1e9,2), "sector-fluid:", round((sector.volume-fluid.volume)*1e9,2))
+# -- output
+[0.0, 0.0, 9.46]
+sum: 9.46 sector-fluid: 9.8
+
+# -- cell 17 (0.1s, exit 0)
+from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+from OCP.gp import gp_Pnt
+from OCP.TopAbs import TopAbs_State
+def where(sol, p):
+    c = BRepClass3d_SolidClassifier(sol.wrapped, gp_Pnt(*p), 1e-9); return c.State()
+pin = (0.068, 0.0, 0.0)           # mid-chord point at mid span: inside the blade
+pfar = (0.0680, 0.0, 0.030)       # downstream of blade, inside sector only
+for nm, s in [("blade", blade), ("blade_solid(raw loft)", blade_solid), ("sector", sector), ("fluid", fluid)]:
+    print(nm, "pin:", where(s, pin), " pfar:", where(s, pfar))
+# -- output
+blade pin: TopAbs_State.TopAbs_OUT  pfar: TopAbs_State.TopAbs_OUT
+blade_solid(raw loft) pin: TopAbs_State.TopAbs_OUT  pfar: TopAbs_State.TopAbs_OUT
+sector pin: TopAbs_State.TopAbs_IN  pfar: TopAbs_State.TopAbs_IN
+fluid pin: TopAbs_State.TopAbs_OUT  pfar: TopAbs_State.TopAbs_OUT
+
+# -- cell 18 (0.1s, exit 0)
+r = 0.068
+(su,zu),(sl,zl) = sec_sz(r)
+i = len(su)//2
+smid, zmid = 0.5*(su[i]+sl[i]), 0.5*(zu[i]+zl[i])
+th = smid/r
+pin = (r*np.cos(th), r*np.sin(th), zmid)
+print("pin mm:", [round(1000*v,2) for v in pin])
+fs = fluid.solids()[0]
+pfar = (r*np.cos(th), r*np.sin(th), 0.025)
+for nm, s in [("blade", blade), ("sector", sector.solids()[0]), ("fluid", fs)]:
+    print(nm, "pin:", where(s, pin), "pfar:", where(s, pfar))
+print("fluid solid vol mm^3:", round(fs.volume*1e9,1))
+# -- output
+pin mm: [np.float64(68.0), np.float64(0.65), np.float64(-0.71)]
+blade pin: TopAbs_State.TopAbs_IN pfar: TopAbs_State.TopAbs_OUT
+sector pin: TopAbs_State.TopAbs_IN pfar: TopAbs_State.TopAbs_IN
+fluid pin: TopAbs_State.TopAbs_IN pfar: TopAbs_State.TopAbs_OUT
+fluid solid vol mm^3: 43026.0
+
+# -- cell 19 (0.2s, exit 1)
+ss = sector.solids()[0]
+i1 = ss.intersect(blade)
+print("intersect vol mm^3:", round(i1.volume*1e9,2), "solids:", len(i1.solids()))
+c1 = ss.cut(blade)
+print("cut vol mm^3:", round(c1.volume*1e9,2), "solids:", len(c1.solids()), "valid:", BRepCheck_Analyzer(c1.wrapped).IsValid())
+print("type blades[0]:", type(blades[0]), "vol:", round(blades[0].volume*1e9,2))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[19][39m[32m, line 3[39m
+[32m      1[39m ss = sector.solids()[[32m0[39m]
+[32m      2[39m i1 = ss.intersect(blade)
+[32m----> [39m[32m3[39m print([33m"intersect vol mm^3:"[39m, round(i1.volume*[32m1e9[39m,[32m2[39m), [33m"solids:"[39m, len(i1.solids()))
+[32m      4[39m c1 = ss.cut(blade)
+[32m      5[39m print([33m"cut vol mm^3:"[39m, round(c1.volume*[32m1e9[39m,[32m2[39m), [33m"solids:"[39m, len(c1.solids()), [33m"valid:"[39m, BRepCheck_Analyzer(c1.wrapped).IsValid())
+[32m      6[39m print([33m"type blades[0]:"[39m, type(blades[[32m0[39m]), [33m"vol:"[39m, round(blades[[32m0[39m].volume*[32m1e9[39m,[32m2[39m))
+
+[31mAttributeError[39m: 'NoneType' object has no attribute 'volume'
+
+# -- cell 20 (0.3s, exit 1)
+def blade_wires3():
+    ws = []
+    for r, planar in [(R_LO, True)] + [(x, False) for x in RADII] + [(R_HI, True)]:
+        (su, zu), (sl, zl) = sec_sz(r)
+        f = flat if planar else wrap
+        pu, pl = f(r, su, zu), f(r, sl, zl)
+        e_suc = Spline(*pu)                    # LE -> TE (suction / upper)
+        e_te  = Line(pu[-1], pl[-1])           # trailing edge segment
+        e_prs = Spline(*pl[::-1])              # TE -> LE (pressure / lower)
+        ws.append(Wire([e_suc, e_te, e_prs]))
+    return ws
+
+bl_raw = Solid.make_loft(blade_wires3(), ruled=False)
+blade = fix_solid(bl_raw)
+print("valid:", BRepCheck_Analyzer(blade.wrapped).IsValid(), "vol mm^3:", round(blade.volume*1e9,2),
+      "faces:", len(blade.faces()), [round(f.area*1e6,1) for f in blade.faces()])
+ss = sector.solids()[0]
+i1 = ss.intersect(blade)
+print("blade∩sector vol mm^3:", None if i1 is None else round(i1.volume*1e9,2))
+# -- output
+valid: True vol mm^3: 1316.85 faces: 5 [1324.9, 23.6, 1304.0, 22.3, 22.3]
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[20][39m[32m, line 19[39m
+[32m     15[39m print("valid:", BRepCheck_Analyzer(blade.wrapped).IsValid(), "vol mm^3:", round(blade.volume*1e9,2),
+[32m     16[39m       [33m"faces:"[39m, len(blade.faces()), [round(f.area*[32m1e6[39m,[32m1[39m) [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m blade.faces()])
+[32m     17[39m ss = sector.solids()[[32m0[39m]
+[32m     18[39m i1 = ss.intersect(blade)
+[32m---> [39m[32m19[39m print([33m"blade∩sector vol mm^3:"[39m, [38;5;28;01mNone[39;00m [38;5;28;01mif[39;00m i1 [38;5;28;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m round(i1.volume*[32m1e9[39m,[32m2[39m))
+
+[31mAttributeError[39m: 'ShapeList' object has no attribute 'volume'
+
+# -- cell 21 (0.7s, exit 0)
+blades = {k: Rot(Z=k*np.degrees(PITCH)) * blade for k in (-1, 0, 1)}
+fluid = (sector - blades[-1] - blades[0] - blades[1]).solids()[0]
+print("valid:", BRepCheck_Analyzer(fluid.wrapped).IsValid(), "fluid vol mm^3:", round(fluid.volume*1e9,1),
+      "removed:", round((sector.volume-fluid.volume)*1e9,1), "faces:", len(fluid.faces()))
+print("blade in annulus vol mm^3:", round(sum(s.volume for s in ss.intersect(blade).solids())*1e9,1))
+print("fluid pin (inside blade?):", where(fluid, pin), " pfar:", where(fluid, pfar))
+# -- output
+valid: True fluid vol mm^3: 42031.9 removed: 1003.9 faces: 15
+blade in annulus vol mm^3: 978.1
+fluid pin (inside blade?): TopAbs_State.TopAbs_OUT  pfar: TopAbs_State.TopAbs_IN
+
+# -- cell 22 (0.7s, exit 0)
+sec_solid = sector.solids()[0]
+blades = {k: Rot(Z=k*np.degrees(PITCH)) * blade for k in (-1, 0, 1)}
+fluid = (sector - blades[-1] - blades[0] - blades[1]).solids()[0]
+print("valid:", BRepCheck_Analyzer(fluid.wrapped).IsValid(), "fluid vol mm^3:", round(fluid.volume*1e9,1),
+      "removed:", round((sector.volume-fluid.volume)*1e9,1), "faces:", len(fluid.faces()))
+print("blade-in-annulus vol mm^3:", round(sum(s.volume for s in sec_solid.intersect(blade).solids())*1e9,1))
+print("fluid at blade interior point:", where(fluid, pin), " downstream point:", where(fluid, pfar))
+# -- output
+valid: True fluid vol mm^3: 42031.9 removed: 1003.9 faces: 15
+blade-in-annulus vol mm^3: 978.1
+fluid at blade interior point: TopAbs_State.TopAbs_OUT  downstream point: TopAbs_State.TopAbs_IN
+
+# -- cell 23 (0.2s, exit 0)
+for i,f in enumerate(fluid.faces()):
+    c = f.center(); n = f.normal_at(c)
+    print(i, str(f.geom_type).split('.')[-1], "A=%8.1f"%(f.area*1e6), "ctr mm",
+          [round(v*1000,2) for v in (c.X,c.Y,c.Z)], "r=%6.2f"%(1000*np.hypot(c.X,c.Y)),
+          "th=%7.2f"%np.degrees(np.arctan2(c.Y,c.X)), "n", [round(v,2) for v in (n.X,n.Y,n.Z)])
+print("pitch deg", np.degrees(PITCH))
+# -- output
+0 CYLINDER A=   293.5 ctr mm [45.0, -0.0, -12.03] r= 45.00 th=  -0.00 n [-1.0, 0.0, -0.0]
+1 PLANE A=  2776.4 ctr mm [67.2, -7.57, 0.01] r= 67.62 th=  -6.43 n [-0.11, -0.99, 0.0]
+2 BSPLINE A=   937.1 ctr mm [67.51, 1.03, -1.21] r= 67.52 th=   0.87 n [-0.0, -0.69, 0.72]
+3 PLANE A=  2776.4 ctr mm [67.2, 7.57, 0.01] r= 67.62 th=   6.43 n [-0.11, 0.99, -0.0]
+4 BSPLINE A=    37.0 ctr mm [65.77, 7.17, -7.06] r= 66.16 th=   6.22 n [-0.02, 0.73, -0.69]
+5 BSPLINE A=    20.2 ctr mm [65.75, 7.16, -7.59] r= 66.14 th=   6.21 n [-0.07, -0.25, 0.97]
+6 PLANE A=   681.6 ctr mm [69.85, -0.0, -31.54] r= 69.85 th=  -0.00 n [0.0, 0.0, -1.0]
+7 BSPLINE A=   934.9 ctr mm [67.52, 0.2, -0.27] r= 67.52 th=   0.17 n [0.0, 0.66, -0.75]
+8 CYLINDER A=   321.7 ctr mm [45.0, -0.0, 11.6] r= 45.00 th=  -0.00 n [-1.0, 0.0, -0.0]
+9 BSPLINE A=    51.7 ctr mm [66.97, -7.44, 6.47] r= 67.38 th=  -6.34 n [-0.05, -0.81, 0.58]
+10 BSPLINE A=    16.8 ctr mm [67.01, -7.01, 7.44] r= 67.38 th=  -5.97 n [-0.16, -0.59, -0.79]
+11 BSPLINE A=    21.3 ctr mm [64.22, -7.07, 7.56] r= 64.61 th=  -6.28 n [0.03, 0.78, -0.62]
+12 PLANE A=   681.6 ctr mm [69.85, -0.0, 31.59] r= 69.85 th=  -0.00 n [-0.0, -0.0, 1.0]
+13 CYLINDER A=  1252.8 ctr mm [90.0, -0.0, 0.03] r= 90.00 th=  -0.00 n [1.0, -0.0, 0.0]
+14 BSPLINE A=     1.1 ctr mm [86.55, 9.76, 5.04] r= 87.09 th=   6.43 n [-0.03, -0.8, -0.6]
+pitch deg 12.857142857142858
+
+# -- cell 24 (0.1s, exit 1)
+from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
+
+def dist_pt_face(p, face):
+    v = BRepBuilderAPI_MakeVertex(gp_Pnt(*p)).Vertex()
+    d = BRepExtrema_DistShapeShape(v, face.wrapped); d.Perform(); return d.Value()
+
+# which blade face is suction / TE / pressure, from known section points at r=0.068
+rr = 0.068; (su,zu),(sl,zl) = sec_sz(rr); j = len(su)//2
+p_suc = wrap(rr, [su[j]], [zu[j]])[0]; p_prs = wrap(rr, [sl[j]], [zl[j]])[0]
+p_te  = wrap(rr, [0.5*(su[-1]+sl[-1])], [0.5*(zu[-1]+zl[-1])])[0]
+bf = blade.faces()
+side_of = {}
+for nm, p in [("suction", p_suc), ("pressure", p_prs), ("te", p_te)]:
+    dl = [dist_pt_face(tuple(p), f) for f in bf]
+    k = int(np.argmin(dl)); side_of[k] = nm
+    print(nm, "-> blade face", k, "d=%.2e"%dl[k], "areas", round(bf[k].area*1e6,1))
+print(side_of)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[24][39m[32m, line 10[39m
+[32m      6[39m     d = BRepExtrema_DistShapeShape(v, face.wrapped); d.Perform(); [38;5;28;01mreturn[39;00m d.Value()
+[32m      7[39m 
+[32m      8[39m [38;5;66;03m# which blade face is suction / TE / pressure, from known section points at r=0.068[39;00m
+[32m      9[39m rr = [32m0.068[39m; (su,zu),(sl,zl) = sec_sz(rr); j = len(su)//[32m2[39m
+[32m---> [39m[32m10[39m p_suc = wrap(rr, [su[j]], [zu[j]])[[32m0[39m]; p_prs = wrap(rr, [sl[j]], [zl[j]])[[32m0[39m]
+[32m     11[39m p_te  = wrap(rr, [[32m0.5[39m*(su[-[32m1[39m]+sl[-[32m1[39m])], [[32m0.5[39m*(zu[-[32m1[39m]+zl[-[32m1[39m])])[[32m0[39m]
+[32m     12[39m bf = blade.faces()
+[32m     13[39m side_of = {}
+
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 28[39m, in [36mwrap[39m[34m(r, s, z)[39m
+[32m     27[39m [38;5;28;01mdef[39;00m wrap(r, s, z):
+[32m---> [39m[32m28[39m     t = s/r
+[32m     29[39m     [38;5;28;01mreturn[39;00m [Vector(r*np.cos(ti), r*np.sin(ti), zi) [38;5;28;01mfor[39;00m ti, zi [38;5;28;01min[39;00m zip(t, z)]
+
+[31mTypeError[39m: unsupported operand type(s) for /: 'list' and 'float'
+
+# -- cell 25 (0.1s, exit 0)
+from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
+
+def dist_pt_face(p, face):
+    v = BRepBuilderAPI_MakeVertex(gp_Pnt(*p)).Vertex()
+    d = BRepExtrema_DistShapeShape(v, face.wrapped); d.Perform(); return d.Value()
+
+rr = 0.068; (su,zu),(sl,zl) = sec_sz(rr); j = len(su)//2
+p_suc = wrap(rr, np.array([su[j]]), [zu[j]])[0]
+p_prs = wrap(rr, np.array([sl[j]]), [zl[j]])[0]
+p_te  = wrap(rr, np.array([0.5*(su[-1]+sl[-1])]), [0.5*(zu[-1]+zl[-1])])[0]
+bf = blade.faces()
+side_of = {}
+for nm, p in [("suction", p_suc), ("pressure", p_prs), ("te", p_te)]:
+    dl = [dist_pt_face((p.X,p.Y,p.Z), f) for f in bf]
+    k = int(np.argmin(dl)); side_of[k] = nm
+    print(nm, "-> blade face", k, "d=%.2e"%dl[k], "area", round(bf[k].area*1e6,1))
+# -- output
+suction -> blade face 0 d=3.02e-15 area 1324.9
+pressure -> blade face 2 d=2.93e-15 area 1304.0
+te -> blade face 1 d=1.79e-08 area 23.6
+
+# -- cell 26 (0.3s, exit 0)
+def rot_back(p, k):
+    a = -k*PITCH
+    return (p.X*np.cos(a)-p.Y*np.sin(a), p.X*np.sin(a)+p.Y*np.cos(a), p.Z)
+
+names = {0:"suction", 1:"te", 2:"pressure"}
+for i,f in enumerate(fluid.faces()):
+    if f.geom_type != GeomType.BSPLINE: continue
+    c = f.center()
+    scores = []
+    for k in (-1,0,1):
+        p = rot_back(c, k)
+        for idx in (0,1,2):
+            scores.append((dist_pt_face(p, bf[idx]), k, names[idx]))
+    scores.sort()
+    print(i, "A=%7.1f"%(f.area*1e6), "best", scores[0][1], scores[0][2], "d=%.2e"%scores[0][0],
+          "| 2nd", scores[1][1], scores[1][2], "d=%.2e"%scores[1][0])
+# -- output
+2 A=  937.1 best 0 suction d=0.00e+00 | 2nd 0 pressure d=1.25e-03
+4 A=   37.0 best 1 pressure d=1.41e-17 | 2nd 1 suction d=6.02e-04
+5 A=   20.2 best 1 suction d=3.68e-18 | 2nd 1 pressure d=3.00e-04
+7 A=  934.9 best 0 pressure d=1.39e-17 | 2nd 0 suction d=1.25e-03
+9 A=   51.7 best -1 suction d=1.73e-18 | 2nd -1 pressure d=5.07e-04
+10 A=   16.8 best -1 te d=2.60e-18 | 2nd -1 pressure d=1.98e-04
+11 A=   21.3 best -1 pressure d=3.79e-04 | 2nd -1 te d=3.79e-04
+14 A=    1.1 best 0 te d=2.80e-17 | 2nd 0 pressure d=1.98e-04
+
+# -- cell 27 (4.3s, exit 0)
+def face_side(f):
+    verts, tris = f.tessellate(0.0002)
+    pts = [verts[i] for i in range(0, len(verts), max(1, len(verts)//25))]
+    best = None
+    for k in (-1,0,1):
+        for idx in (0,1,2):
+            d = np.mean([dist_pt_face(rot_back(p, k), bf[idx]) for p in pts])
+            if best is None or d < best[0]: best = (d, k, names[idx])
+    return best
+
+patch_of = {}
+for i,f in enumerate(fluid.faces()):
+    if f.geom_type != GeomType.BSPLINE: continue
+    d,k,nm = face_side(f)
+    patch_of[i] = ("blade_suction" if nm in ("suction","te") else "blade_pressure")
+    print(i, "A=%7.1f"%(f.area*1e6), "copy", k, nm, "mean d=%.2e"%d, "->", patch_of[i])
+# -- output
+2 A=  937.1 copy 0 suction mean d=5.73e-04 -> blade_suction
+4 A=   37.0 copy 1 pressure mean d=3.03e-05 -> blade_pressure
+5 A=   20.2 copy 1 suction mean d=5.26e-14 -> blade_suction
+7 A=  934.9 copy 0 pressure mean d=1.82e-05 -> blade_pressure
+9 A=   51.7 copy -1 suction mean d=1.45e-04 -> blade_suction
+10 A=   16.8 copy -1 te mean d=1.87e-11 -> blade_suction
+11 A=   21.3 copy -1 pressure mean d=3.87e-05 -> blade_pressure
+14 A=    1.1 copy 0 te mean d=6.62e-11 -> blade_suction
+
+# -- cell 28 (4.2s, exit 0)
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+
+def patch_name(f):
+    c = f.center(); n = f.normal_at(c)
+    if f.geom_type == GeomType.CYLINDER:
+        R = BRepAdaptor_Surface(f.wrapped).Cylinder().Radius()
+        return "hub" if abs(R-R_HUB) < abs(R-R_TIP) else "shroud"
+    if f.geom_type == GeomType.PLANE:
+        if abs(n.Z) > 0.9:
+            return "inlet" if n.Z < 0 else "outlet"
+        er = Vector(c.X, c.Y, 0); er = er/er.length
+        et = Vector(-er.Y, er.X, 0)                      # +theta direction
+        return "periodic_pos" if n.dot(et) > 0 else "periodic_neg"
+    d,k,nm = face_side(f)
+    return "blade_suction" if nm in ("suction","te") else "blade_pressure"
+
+faces = fluid.faces()
+PATCH = [patch_name(f) for f in faces]
+areas = {}
+for f,p in zip(faces, PATCH): areas[p] = areas.get(p,0)+f.area*1e6
+for p,a in sorted(areas.items()): print(f"{p:15s} {a:9.1f} mm2  nfaces={PATCH.count(p)}")
+export_step(fluid, "fluid.step")
+print("wrote fluid.step")
+# -- output
+blade_pressure      993.2 mm2  nfaces=3
+blade_suction      1027.0 mm2  nfaces=5
+hub                 615.2 mm2  nfaces=2
+inlet               681.6 mm2  nfaces=1
+outlet              681.6 mm2  nfaces=1
+periodic_neg       2776.4 mm2  nfaces=1
+periodic_pos       2776.4 mm2  nfaces=1
+shroud             1252.8 mm2  nfaces=1
+wrote fluid.step
+
+# -- cell 29 (0.3s, exit 0)
+import gmsh
+gmsh.initialize()
+gmsh.option.setNumber("General.Terminal", 0)
+gmsh.model.add("passage")
+gmsh.model.occ.importShapes("fluid.step")
+gmsh.model.occ.synchronize()
+surfs = gmsh.model.getEntities(2)
+print("gmsh surfaces:", len(surfs), " b123d faces:", len(faces))
+ref = [(np.array([f.center().X,f.center().Y,f.center().Z]), f.area) for f in faces]
+mapping = {}
+for _, s in surfs:
+    com = np.array(gmsh.model.occ.getCenterOfMass(2, s))
+    ar = gmsh.model.occ.getMass(2, s)
+    d = [np.linalg.norm(com-c) + abs(ar-a)/max(a,1e-12)*1e-3 for c,a in ref]
+    i = int(np.argmin(d)); mapping[s] = i
+    print(f"surf {s:3d} -> face {i:3d} {PATCH[i]:15s} err={d[i]:.2e}")
+print("unique faces matched:", len(set(mapping.values())))
+# -- output
+gmsh surfaces: 15  b123d faces: 15
+surf   1 -> face   0 hub             err=4.60e-03
+surf   2 -> face   1 periodic_neg    err=1.56e-15
+surf   3 -> face   2 blade_suction   err=5.98e-04
+surf   4 -> face   3 periodic_pos    err=1.60e-15
+surf   5 -> face   4 blade_pressure  err=4.73e-03
+surf   6 -> face   5 blade_suction   err=3.49e-03
+surf   7 -> face   6 inlet           err=1.77e-14
+surf   8 -> face   7 blade_pressure  err=3.57e-04
+surf   9 -> face   8 hub             err=3.70e-03
+surf  10 -> face  11 blade_pressure  err=5.30e-03
+surf  11 -> face  10 blade_suction   err=1.26e-03
+surf  12 -> face  11 blade_pressure  err=4.30e-03
+surf  13 -> face  12 outlet          err=1.77e-14
+surf  14 -> face  13 shroud          err=1.90e-04
+surf  15 -> face  14 blade_suction   err=1.04e-03
+unique faces matched: 14
+

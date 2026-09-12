@@ -1,0 +1,462 @@
+# -- cell 1 (2.2s, exit 0)
+import os, numpy as np
+from build123d import *
+
+mm = 1e-3
+DUCT_L, DUCT_W, DUCT_H = 200*mm, 30*mm, 30*mm
+BLK_L, BLK_W, BLK_T = 40*mm, 30*mm, 10*mm
+X0 = (DUCT_L - BLK_L)/2.0          # 80 mm, block centred halfway along
+
+fluid = Pos(DUCT_L/2, DUCT_W/2, DUCT_H/2) * Box(DUCT_L, DUCT_W, DUCT_H)
+solid = Pos(X0+BLK_L/2, BLK_W/2, -BLK_T/2) * Box(BLK_L, BLK_W, BLK_T)
+
+print("fluid bbox (m):", fluid.bounding_box().min, fluid.bounding_box().max)
+print("solid bbox (m):", solid.bounding_box().min, solid.bounding_box().max)
+print("solid dims mm:", [round(v/mm,3) for v in (solid.bounding_box().size.X, solid.bounding_box().size.Y, solid.bounding_box().size.Z)])
+print("solid volume mm^3:", round(solid.volume/mm**3,1), " expected", 40*30*10)
+print("block centre x mm:", round(solid.center().X/mm,3), " duct mid", round(DUCT_L/2/mm,3))
+print("interface area mm^2:", round(BLK_L*BLK_W/mm**2,1))
+export_step(Compound(children=[fluid, solid]), "duct_block.step")
+print("wrote", os.path.abspath("duct_block.step"))
+# -- output
+fluid bbox (m): Vector: (X=0, Y=0, Z=0) Vector: (X=0.2, Y=0.03, Z=0.03)
+solid bbox (m): Vector: (X=0.08, Y=0, Z=-0.01) Vector: (X=0.12, Y=0.03, Z=0)
+solid dims mm: [40.0, 30.0, 10.0]
+solid volume mm^3: 12000.0  expected 12000
+block centre x mm: 100.0  duct mid 100.0
+interface area mm^2: 1200.0
+wrote /home/qiuzi/.openreynolds-buildup/work/T8-20260912-125539-d5f4/t8/duct_block.step
+
+# -- cell 2 (0.5s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pv.OFF_SCREEN = True
+export_stl(fluid, "fluid.stl"); export_stl(solid, "solid.stl")
+p = pv.Plotter(window_size=(1000,500))
+p.add_mesh(pv.read("fluid.stl"), color="lightblue", opacity=0.35, show_edges=True)
+p.add_mesh(pv.read("solid.stl"), color="orange", show_edges=True)
+p.add_axes(); p.camera_position = [(0.30,-0.30,0.20),(0.10,0.015,0.0),(0,0,1)]
+p.screenshot("look.png")
+print("ok")
+# -- output
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 12:56:19.573 (   0.251s) [    735672A54780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 12:56:19.573 (   0.252s) [    735672A54780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 12:56:19.586 (   0.265s) [    735672A54780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 3 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("look.png"))
+# -- output
+
+
+# -- cell 4 (0.3s, exit 0)
+import os, subprocess, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+
+XS = [0.0, X0, X0+BLK_L, DUCT_L]      # 0, 80, 120, 200 mm
+YS = [0.0, DUCT_W]
+ZS = [-BLK_T, 0.0, DUCT_H]            # -10, 0, 30 mm
+def V(ix,iy,iz): return iz*8 + iy*4 + ix
+verts = [f"({XS[ix]:.6g} {YS[iy]:.6g} {ZS[iz]:.6g})" for iz in range(3) for iy in range(2) for ix in range(4)]
+
+def hexb(ix,iz,n):   # block spanning x[ix..ix+1], full y, z[iz..iz+1]
+    a=[V(ix,0,iz),V(ix+1,0,iz),V(ix+1,1,iz),V(ix,1,iz)]
+    b=[V(ix,0,iz+1),V(ix+1,0,iz+1),V(ix+1,1,iz+1),V(ix,1,iz+1)]
+    return f"    hex ({' '.join(map(str,a+b))}) ({n[0]} {n[1]} {n[2]}) simpleGrading (1 1 1)"
+NX=[16,8,16]; NY=10; NZF=10; NZS=4
+blocks=[hexb(i,1,(NX[i],NY,NZF)) for i in range(3)] + [hexb(1,0,(NX[1],NY,NZS))]
+
+def fx(ix,iz):  return f"({V(ix,0,iz)} {V(ix,0,iz+1)} {V(ix,1,iz+1)} {V(ix,1,iz)})"      # const-x face
+def fy(ix,iy,iz):return f"({V(ix,iy,iz)} {V(ix+1,iy,iz)} {V(ix+1,iy,iz+1)} {V(ix,iy,iz+1)})" # const-y
+def fz(ix,iz):  return f"({V(ix,0,iz)} {V(ix+1,0,iz)} {V(ix+1,1,iz)} {V(ix,1,iz)})"      # const-z
+inlet=[fx(0,1)]; outlet=[fx(3,1)]
+duct=[fz(i,2) for i in range(3)] + [fy(i,j,1) for i in range(3) for j in (0,1)] + [fz(0,1), fz(2,1)]
+blkw=[fz(1,0)] + [fy(1,j,0) for j in (0,1)] + [fx(1,0), fx(2,0)]
+def patch(name,typ,faces): return f"    {name}\n    {{\n        type {typ};\n        faces\n        (\n" + "".join(f"            {f}\n" for f in faces) + "        );\n    }\n"
+
+d = "FoamFile\n{ version 2.0; format ascii; class dictionary; object blockMeshDict; }\n\nscale 1;\n\nvertices\n(\n"
+d += "".join(f"    {v}\n" for v in verts) + ");\n\nblocks\n(\n" + "\n".join(blocks) + "\n);\n\nedges ();\n\nboundary\n(\n"
+d += patch("inlet","patch",inlet)+patch("outlet","patch",outlet)+patch("ductWalls","wall",duct)+patch("blockWalls","wall",blkw)+");\n\nmergePatchPairs ();\n"
+open("system/blockMeshDict","w").write(d)
+
+open("system/controlDict","w").write("FoamFile{version 2.0; format ascii; class dictionary; object controlDict;}\napplication chtMultiRegionFoam;\nstartFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1;\nwriteControl timeStep; writeInterval 1; writeFormat ascii; timeFormat general; runTimeModifiable true;\n")
+open("system/fvSchemes","w").write("FoamFile{version 2.0; format ascii; class dictionary; object fvSchemes;}\nddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write("FoamFile{version 2.0; format ascii; class dictionary; object fvSolution;}\nsolvers{}\n")
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print(r.stdout[-1500:], r.stderr[-1500:])
+# -- output
+te time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 3
+		Number of boundary faces : 18
+		Number of defined boundary faces : 18
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.005 .. 0.005
+        j : 0.003 .. 0.003
+        k : 0.003 .. 0.003
+
+    Block 1 cell size :
+        i : 0.005 .. 0.005
+        j : 0.003 .. 0.003
+        k : 0.003 .. 0.003
+
+    Block 2 cell size :
+        i : 0.005 .. 0.005
+        j : 0.003 .. 0.003
+        k : 0.003 .. 0.003
+
+    Block 3 cell size :
+        i : 0.005 .. 0.005
+        j : 0.003 .. 0.003
+        k : 0.0025 .. 0.0025
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 -0.01) (0.2 0.03 0.03)
+  nPoints: 5357
+  nCells: 4320
+  nFaces: 13932
+  nInternalFaces: 11988
+----------------
+Patches
+----------------
+  patch 0 (start: 11988 size: 100) name: inlet
+  patch 1 (start: 12088 size: 100) name: outlet
+  patch 2 (start: 12188 size: 1520) name: ductWalls
+  patch 3 (start: 13708 size: 224) name: blockWalls
+
+End
+
+# -- cell 5 (0.5s, exit 0)
+ts = """FoamFile{version 2.0; format ascii; class dictionary; object topoSetDict;}
+actions
+(
+  { name solidCells; type cellSet; action new; source boxToCell; box (0.079 -0.1 -0.011) (0.121 0.1 -0.0001); }
+  { name solid; type cellZoneSet; action new; source setToCellZone; set solidCells; }
+  { name fluidCells; type cellSet; action new; source boxToCell; box (-0.1 -0.1 0.0001) (0.3 0.1 0.1); }
+  { name fluid; type cellZoneSet; action new; source setToCellZone; set fluidCells; }
+);
+"""
+open("system/topoSetDict","w").write(ts)
+r=subprocess.run(["topoSet"],capture_output=True,text=True); print(r.stdout[-700:])
+r=subprocess.run(["splitMeshRegions","-cellZones","-overwrite"],capture_output=True,text=True)
+print(r.stdout[-2000:]); print("ERR",r.stderr[-500:])
+# -- output
+eading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet solidCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.079 -0.1 -0.011) (0.121 0.1 -0.0001))
+    cellSet solidCells now size 320
+Created cellZoneSet solid
+    Applying source setToCellZone
+    Adding all cells from cell set: solidCells ...
+    cellZoneSet solid now size 320
+Created cellSet fluidCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((-0.1 -0.1 0.0001) (0.3 0.1 0.1))
+    cellSet fluidCells now size 4000
+Created cellZoneSet fluid
+    Applying source setToCellZone
+    Adding all cells from cell set: fluidCells ...
+    cellZoneSet fluid now size 4000
+
+End
+
+
+owing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Creating single patch per inter-region interface.
+
+Trying to match regions to existing cell zones.
+
+
+Number of regions:2
+
+Writing region per cell file (for manual decomposition) to "/home/qiuzi/.openreynolds-buildup/work/T8-20260912-125539-d5f4/t8/constant/cellToRegion"
+
+Writing region per cell as volScalarField to "/home/qiuzi/.openreynolds-buildup/work/T8-20260912-125539-d5f4/t8/0/cellToRegion"
+
+Region	Cells
+------	-----
+0	4000
+1	320
+
+Region	Zone	Name
+------	----	----
+0	(1)	fluid
+1	(0)	solid
+
+Sizes of interfaces between regions:
+
+Interface	Region	Region	Faces
+---------	------	------	-----
+0		0	1	80
+
+Reading volScalarField: cellToRegion
+
+
+Adding patches
+
+
+Adding patches
+
+For interface between region fluid and solid added patches
+    4	fluid_to_solid
+    5	solid_to_fluid
+
+Region 0
+-------- 
+Creating mesh for region 0 fluid
+Writing dummy "fluid/fvSchemes"
+Writing dummy "fluid/fvSolution"
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region0 points back to base mesh.
+Writing map faceRegionAddressing from region0 faces back to base mesh.
+Writing map cellRegionAddressing from region0 cells back to base mesh.
+Writing map boundaryRegionAddressing from region0 boundary back to base mesh.
+
+Region 1
+-------- 
+Creating mesh for region 1 solid
+Writing dummy "solid/fvSchemes"
+Writing dummy "solid/fvSolution"
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region1 points back to base mesh.
+Writing map faceRegionAddressing from region1 faces back to base mesh.
+Writing map cellRegionAddressing from region1 cells back to base mesh.
+Writing map boundaryRegionAddressing from region1 boundary back to base mesh.
+End
+
+
+ERR
+
+# -- cell 6 (0.4s, exit 0)
+for reg in ("fluid","solid"):
+    r=subprocess.run(["checkMesh","-region",reg],capture_output=True,text=True)
+    tail=r.stdout.strip().splitlines()
+    print("=== ",reg); print("\n".join(tail[-22:]))
+# -- output
+===  fluid
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.2 0.03 0.03)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.18191e-18 4.39932e-18 7.09144e-17) OK.
+    Max cell openness = 9.41148e-17 OK.
+    Max aspect ratio = 1.66667 OK.
+    Minimum face area = 9e-06. Maximum face area = 1.5e-05.  Face area magnitudes OK.
+    Min volume = 4.5e-08. Max volume = 4.5e-08.  Total volume = 0.00018.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.33067e-14 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+===  solid
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0.08 0 -0.01) (0.12 0.03 0)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-5.79549e-18 -1.1591e-17 -8.15826e-17) OK.
+    Max cell openness = 6.77626e-17 OK.
+    Max aspect ratio = 2 OK.
+    Minimum face area = 7.5e-06. Maximum face area = 1.5e-05.  Face area magnitudes OK.
+    Min volume = 3.75e-08. Max volume = 3.75e-08.  Total volume = 1.2e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.66538e-14 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 7 (0.9s, exit 0)
+import shutil
+NX=[32,20,32]; NY=15; NZF=15; NZS=5
+blocks=[hexb(i,1,(NX[i],NY,NZF)) for i in range(3)] + [hexb(1,0,(NX[1],NY,NZS))]
+d = "FoamFile\n{ version 2.0; format ascii; class dictionary; object blockMeshDict; }\n\nscale 1;\n\nvertices\n(\n"
+d += "".join(f"    {v}\n" for v in verts) + ");\n\nblocks\n(\n" + "\n".join(blocks) + "\n);\n\nedges ();\n\nboundary\n(\n"
+d += patch("inlet","patch",inlet)+patch("outlet","patch",outlet)+patch("ductWalls","wall",duct)+patch("blockWalls","wall",blkw)+");\n\nmergePatchPairs ();\n"
+open("system/blockMeshDict","w").write(d)
+for p in ("constant/fluid","constant/solid","0"):
+    shutil.rmtree(p, ignore_errors=True)
+for cmd in (["blockMesh"],["topoSet"],["splitMeshRegions","-cellZones","-overwrite"]):
+    r=subprocess.run(cmd,capture_output=True,text=True); print(cmd[0],"rc",r.returncode)
+print([l for l in r.stdout.splitlines() if "Faces" in l or "\t" in l][-8:])
+# -- output
+blockMesh rc 0
+topoSet rc 0
+splitMeshRegions rc 0
+['------\t----\t----', '0\t(1)\tfluid', '1\t(0)\tsolid', 'Interface\tRegion\tRegion\tFaces', '---------\t------\t------\t-----', '0\t\t0\t1\t300', '    4\tfluid_to_solid', '    5\tsolid_to_fluid']
+
+# -- cell 8 (0.9s, exit 0)
+import re
+for reg in ("fluid","solid"):
+    b=open(f"constant/{reg}/polyMesh/boundary").read()
+    names=re.findall(r"^\s{4}(\w+)$",b,re.M)
+    print(reg,"patches:",names)
+    r=subprocess.run(["checkMesh","-region",reg,"-writeAllFields"],capture_output=True,text=True)
+    print(" ".join([l.strip() for l in r.stdout.splitlines() if "Mesh OK" in l or "cells:" in l or "***" in l or "Max skewness" in l or "non-orthogonality Max" in l]))
+r=subprocess.run(["checkMesh","-region","fluid","-allTopology"],capture_output=True,text=True)
+print([l for l in r.stdout.splitlines() if "fluid_to_solid" in l])
+# -- output
+fluid patches: ['inlet', 'outlet', 'ductWalls', 'fluid_to_solid']
+cells:            18900 Mesh non-orthogonality Max: 0 average: 0 Max skewness = 8.67362e-14 OK. Mesh OK.
+solid patches: ['blockWalls', 'solid_to_fluid']
+cells:            1500 Mesh non-orthogonality Max: 0 average: 0 Max skewness = 4.16334e-14 OK. Mesh OK.
+['    fluid_to_solid      300      336      ok (non-closed singly connected)  ']
+
+# -- cell 9 (0.2s, exit 1)
+import numpy as np, re
+def read_patch(reg,pname):
+    P=open(f"constant/{reg}/polyMesh/points").read(); F=open(f"constant/{reg}/polyMesh/faces").read()
+    B=open(f"constant/{reg}/polyMesh/boundary").read()
+    pts=np.array([list(map(float,m)) for m in re.findall(r"\(([-\d.e+ ]+)\)",P.split("(",1)[1])])
+    faces=[list(map(int,m.split())) for m in re.findall(r"\d+\(([\d ]+)\)",F)]
+    blk=re.search(pname+r"\s*\{(.*?)\}",B,re.S).group(1)
+    n=int(re.search(r"nFaces\s+(\d+)",blk).group(1)); s=int(re.search(r"startFace\s+(\d+)",blk).group(1))
+    typ=re.search(r"type\s+(\w+)",blk).group(1)
+    fl=faces[s:s+n]
+    area=sum(abs(np.cross(pts[f[1]]-pts[f[0]],pts[f[2]]-pts[f[0]])[2])/2*2 for f in fl)  # planar quads, z-normal
+    ids=sorted({i for f in fl for i in f})
+    return typ,n,area,np.array(sorted(map(tuple,np.round(pts[ids],9))))
+tf,nf,af,pf=read_patch("fluid","fluid_to_solid"); ts,ns,asld,ps=read_patch("solid","solid_to_fluid")
+print("fluid_to_solid type",tf,"faces",nf,"area mm^2",round(af/mm**2,3))
+print("solid_to_fluid type",ts,"faces",ns,"area mm^2",round(asld/mm**2,3),"expected",40*30)
+print("identical point sets:",pf.shape==ps.shape and np.allclose(pf,ps), pf.shape)
+print("interface z =",sorted({round(p[2],9) for p in pf}))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 14[39m
+[32m     10[39m     fl=faces[s:s+n]
+[32m     11[39m     area=sum(abs(np.cross(pts[f[[32m1[39m]]-pts[f[[32m0[39m]],pts[f[[32m2[39m]]-pts[f[[32m0[39m]])[[32m2[39m])/[32m2[39m*[32m2[39m [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m fl)  [38;5;66;03m# planar quads, z-normal[39;00m
+[32m     12[39m     ids=sorted({i [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m fl [38;5;28;01mfor[39;00m i [38;5;28;01min[39;00m f})
+[32m     13[39m     [38;5;28;01mreturn[39;00m typ,n,area,np.array(sorted(map(tuple,np.round(pts[ids],[32m9[39m))))
+[32m---> [39m[32m14[39m tf,nf,af,pf=read_patch([33m"fluid"[39m,[33m"fluid_to_solid"[39m); ts,ns,asld,ps=read_patch([33m"solid"[39m,[33m"solid_to_fluid"[39m)
+[32m     15[39m print([33m"fluid_to_solid type"[39m,tf,[33m"faces"[39m,nf,[33m"area mm^2"[39m,round(af/mm**[32m2[39m,[32m3[39m))
+[32m     16[39m print([33m"solid_to_fluid type"[39m,ts,[33m"faces"[39m,ns,[33m"area mm^2"[39m,round(asld/mm**[32m2[39m,[32m3[39m),[33m"expected"[39m,[32m40[39m*[32m30[39m)
+[32m     17[39m print([33m"identical point sets:"[39m,pf.shape==ps.shape [38;5;28;01mand[39;00m np.allclose(pf,ps), pf.shape)
+
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 5[39m, in [36mread_patch[39m[34m(reg, pname)[39m
+[32m      2[39m [38;5;28;01mdef[39;00m read_patch(reg,pname):
+[32m      3[39m     P=open(f"constant/{reg}/polyMesh/points").read(); F=open(f"constant/{reg}/polyMesh/faces").read()
+[32m      4[39m     B=open(f"constant/{reg}/polyMesh/boundary").read()
+[32m----> [39m[32m5[39m     pts=np.array([list(map(float,m)) [38;5;28;01mfor[39;00m m [38;5;28;01min[39;00m re.findall([33mr"\(([-\d.e+ ]+)\)"[39m,P.split([33m"("[39m,[32m1[39m)[[32m1[39m])])
+[32m      6[39m     faces=[list(map(int,m.split())) [38;5;28;01mfor[39;00m m [38;5;28;01min[39;00m re.findall([33mr"\d+\(([\d ]+)\)"[39m,F)]
+[32m      7[39m     blk=re.search(pname+[33mr"\s*\{(.*?)\}"[39m,B,re.S).group([32m1[39m)
+[32m      8[39m     n=int(re.search([33mr"nFaces\s+(\d+)"[39m,blk).group([32m1[39m)); s=int(re.search([33mr"startFace\s+(\d+)"[39m,blk).group([32m1[39m))
+
+[31mValueError[39m: could not convert string to float: ' '
+
+# -- cell 10 (0.3s, exit 0)
+import numpy as np, re
+def read_patch(reg,pname):
+    P=open(f"constant/{reg}/polyMesh/points").read(); F=open(f"constant/{reg}/polyMesh/faces").read()
+    B=open(f"constant/{reg}/polyMesh/boundary").read()
+    pts=np.array([[float(x) for x in m.split()] for m in re.findall(r"\(([^()]*)\)",P.split("(",1)[1])])
+    faces=[[int(x) for x in m.split()] for m in re.findall(r"\d+\(([\d\s]+)\)",F)]
+    blk=re.search(pname+r"\s*\{(.*?)\}",B,re.S).group(1)
+    n=int(re.search(r"nFaces\s+(\d+)",blk).group(1)); s=int(re.search(r"startFace\s+(\d+)",blk).group(1))
+    typ=re.search(r"type\s+(\w+)",blk).group(1); fl=faces[s:s+n]
+    area=sum(np.linalg.norm(sum(np.cross(pts[f[i]],pts[f[(i+1)%len(f)]]) for i in range(len(f))))/2 for f in fl)
+    ids=sorted({i for f in fl for i in f})
+    return typ,n,area,np.array(sorted(map(tuple,np.round(pts[ids],9))))
+tf,nf,af,pf=read_patch("fluid","fluid_to_solid"); ts,ns,asd,ps=read_patch("solid","solid_to_fluid")
+print("fluid_to_solid:",tf,nf,"faces, area mm^2",round(af/mm**2,3))
+print("solid_to_fluid:",ts,ns,"faces, area mm^2",round(asd/mm**2,3),"expected",40*30)
+print("point sets identical:",pf.shape==ps.shape and np.allclose(pf,ps), pf.shape)
+print("interface z(mm):",sorted({round(p[2]/mm,6) for p in pf}),
+      " x range mm:",round(pf[:,0].min()/mm,3),round(pf[:,0].max()/mm,3),
+      " y range mm:",round(pf[:,1].min()/mm,3),round(pf[:,1].max()/mm,3))
+# -- output
+fluid_to_solid: mappedWall 300 faces, area mm^2 1200.0
+solid_to_fluid: mappedWall 300 faces, area mm^2 1200.0 expected 1200
+point sets identical: True (336, 3)
+interface z(mm): [np.float64(0.0)]  x range mm: 80.0 120.0  y range mm: 0.0 30.0
+
+# -- cell 11 (1.4s, exit 0)
+for pn in ("inlet","outlet","ductWalls"):
+    t,n,a,p=read_patch("fluid",pn)
+    print(pn,t,n,"faces area mm^2",round(a/mm**2,2),"x mm",round(p[:,0].min()/mm,2),round(p[:,0].max()/mm,2))
+t,n,a,p=read_patch("solid","blockWalls"); print("blockWalls",t,n,"faces area mm^2",round(a/mm**2,2),"expected",2*(40*10)+2*(30*10)+40*30)
+subprocess.run(["foamToVTK","-region","fluid","-constant","-excludePatches","(inlet outlet)"],capture_output=True)
+subprocess.run(["foamToVTK","-region","solid","-constant"],capture_output=True)
+import glob; print(glob.glob("VTK/**/*.vtp",recursive=True)[:6], glob.glob("VTK/*"))
+# -- output
+inlet patch 225 faces area mm^2 900.0 x mm 0.0 0.0
+outlet patch 225 faces area mm^2 900.0 x mm 200.0 200.0
+ductWalls wall 4740 faces area mm^2 22800.0 x mm 0.0 200.0
+blockWalls wall 650 faces area mm^2 2600.0 expected 2600
+['VTK/solid/t8_1/boundary/blockWalls.vtp', 'VTK/solid/t8_1/boundary/solid_to_fluid.vtp', 'VTK/solid/t8_0/boundary/blockWalls.vtp', 'VTK/solid/t8_0/boundary/solid_to_fluid.vtp', 'VTK/fluid/t8_1/boundary/fluid_to_solid.vtp', 'VTK/fluid/t8_1/boundary/ductWalls.vtp'] ['VTK/solid', 'VTK/fluid']
+
+# -- cell 12 (0.3s, exit 0)
+p = pv.Plotter(window_size=(1100,550)); 
+p.add_mesh(pv.read("VTK/fluid/t8_0/boundary/ductWalls.vtp"), color="lightblue", opacity=0.30, show_edges=True, line_width=1)
+p.add_mesh(pv.read("VTK/fluid/t8_0/boundary/fluid_to_solid.vtp"), color="red", show_edges=True)
+p.add_mesh(pv.read("VTK/solid/t8_0/boundary/blockWalls.vtp"), color="orange", show_edges=True)
+p.camera_position=[(0.30,-0.28,0.18),(0.10,0.015,0.0),(0,0,1)]; p.add_axes(); p.screenshot("mesh.png")
+display(Image("mesh.png"))
+# -- output
+[0m[33m2026-09-12 12:58:12.321 ( 113.000s) [    735672A54780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 12:58:12.322 ( 113.001s) [    735672A54780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

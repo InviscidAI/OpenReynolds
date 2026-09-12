@@ -1,0 +1,630 @@
+# -- cell 1 (2.2s, exit 0)
+import os, subprocess
+from build123d import *
+p = "/home/qiuzi/.openreynolds-buildup/work/T6-20260912-125146-ec8c/geometry/customer_part.step"
+print(os.path.getsize(p))
+print(subprocess.run(["head","-45",p],capture_output=True,text=True).stdout)
+# -- output
+19387
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('Open CASCADE Model'),'2;1');
+FILE_NAME('Open CASCADE Shape Model','2026-09-11T03:37:11',('Author'),(
+    'Open CASCADE'),'Open CASCADE STEP processor 7.9','Open CASCADE 7.9'
+  ,'Unknown');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));
+ENDSEC;
+DATA;
+#1 = APPLICATION_PROTOCOL_DEFINITION('international standard',
+  'automotive_design',2000,#2);
+#2 = APPLICATION_CONTEXT(
+  'core data for automotive mechanical design processes');
+#3 = SHAPE_DEFINITION_REPRESENTATION(#4,#10);
+#4 = PRODUCT_DEFINITION_SHAPE('','',#5);
+#5 = PRODUCT_DEFINITION('design','',#6,#9);
+#6 = PRODUCT_DEFINITION_FORMATION('','',#7);
+#7 = PRODUCT('Open CASCADE STEP translator 7.9 1',
+  'Open CASCADE STEP translator 7.9 1','',(#8));
+#8 = PRODUCT_CONTEXT('',#2,'mechanical');
+#9 = PRODUCT_DEFINITION_CONTEXT('part definition',#2,'design');
+#10 = ADVANCED_BREP_SHAPE_REPRESENTATION('',(#11,#15),#425);
+#11 = AXIS2_PLACEMENT_3D('',#12,#13,#14);
+#12 = CARTESIAN_POINT('',(0.,0.,0.));
+#13 = DIRECTION('',(0.,0.,1.));
+#14 = DIRECTION('',(1.,0.,-0.));
+#15 = MANIFOLD_SOLID_BREP('',#16);
+#16 = CLOSED_SHELL('',(#17,#167,#243,#292,#341,#368,#415));
+#17 = ADVANCED_FACE('',(#18,#137),#32,.F.);
+#18 = FACE_BOUND('',#19,.F.);
+#19 = EDGE_LOOP('',(#20,#55,#83,#111));
+#20 = ORIENTED_EDGE('',*,*,#21,.F.);
+#21 = EDGE_CURVE('',#22,#24,#26,.T.);
+#22 = VERTEX_POINT('',#23);
+#23 = CARTESIAN_POINT('',(0.,0.,0.));
+#24 = VERTEX_POINT('',#25);
+#25 = CARTESIAN_POINT('',(0.,0.,100.));
+#26 = SURFACE_CURVE('',#27,(#31,#43),.PCURVE_S1.);
+#27 = LINE('',#28,#29);
+#28 = CARTESIAN_POINT('',(0.,0.,0.));
+#29 = VECTOR('',#30,1.);
+#30 = DIRECTION('',(0.,0.,1.));
+#31 = PCURVE('',#32,#37);
+#32 = PLANE('',#33);
+#33 = AXIS2_PLACEMENT_3D('',#34,#35,#36);
+
+# -- cell 2 (0.1s, exit 0)
+print(subprocess.run(["grep","-n","UNIT\\|CONICAL\\|CYLINDRICAL\\|TOROIDAL\\|PLANE\\|MANIFOLD",p],capture_output=True,text=True).stdout[-2500:])
+# -- output
+27:#15 = MANIFOLD_SOLID_BREP('',#16);
+44:#32 = PLANE('',#33);
+58:#44 = PLANE('',#45);
+90:#72 = PLANE('',#73);
+122:#100 = PLANE('',#101);
+152:#126 = PLANE('',#127);
+187:#157 = CYLINDRICAL_SURFACE('',#158,20.);
+275:#232 = PLANE('',#233);
+502:GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#429)) GLOBAL_UNIT_ASSIGNED_CONTEXT
+504:  '3D Context with UNIT and UNCERTAINTY') );
+505:#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+506:#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+507:#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+508:#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,
+
+# -- cell 3 (0.1s, exit 0)
+print(subprocess.run(["sed","-n","495,515p",p],capture_output=True,text=True).stdout)
+# -- output
+#419 = ORIENTED_EDGE('',*,*,#298,.T.);
+#420 = ORIENTED_EDGE('',*,*,#348,.T.);
+#421 = ORIENTED_EDGE('',*,*,#249,.F.);
+#422 = FACE_BOUND('',#423,.T.);
+#423 = EDGE_LOOP('',(#424));
+#424 = ORIENTED_EDGE('',*,*,#372,.F.);
+#425 = ( GEOMETRIC_REPRESENTATION_CONTEXT(3) 
+GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#429)) GLOBAL_UNIT_ASSIGNED_CONTEXT
+((#426,#427,#428)) REPRESENTATION_CONTEXT('Context #1',
+  '3D Context with UNIT and UNCERTAINTY') );
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,
+  'distance_accuracy_value','confusion accuracy');
+#430 = PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#7));
+ENDSEC;
+END-ISO-10303-21;
+
+# -- cell 4 (0.2s, exit 1)
+shp = import_step(p)
+print(type(shp))
+solids = shp.solids()
+print("n solids", len(solids), "n faces", len(shp.faces()))
+print("bbox", shp.bounding_box())
+print("volume", shp.volume)
+for s in solids: print(s.is_valid(), s.volume, s.area)
+# -- output
+<class 'build123d.topology.three_d.Solid'>
+n solids 1 n faces 7
+bbox bbox: 0.0 <= x <= 200.0, 0.0 <= y <= 100.0, 0.0 <= z <= 100.0
+volume 1748672.5877128076
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 7[39m
+[32m      3[39m solids = shp.solids()
+[32m      4[39m print([33m"n solids"[39m, len(solids), [33m"n faces"[39m, len(shp.faces()))
+[32m      5[39m print([33m"bbox"[39m, shp.bounding_box())
+[32m      6[39m print([33m"volume"[39m, shp.volume)
+[32m----> [39m[32m7[39m [38;5;28;01mfor[39;00m s [38;5;28;01min[39;00m solids: print(s.is_valid(), s.volume, s.area)
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 5 (0.1s, exit 0)
+for f in shp.faces():
+    print(f.geom_type, f.center(), f.area, getattr(f,'normal_at',lambda:None)() if f.geom_type==GeomType.PLANE else "")
+print("valid:", shp.is_valid)
+# -- output
+GeomType.PLANE Vector: (X=0, Y=50, Z=50) 8743.362938564082 Vector: (X=-1, Y=0, Z=0)
+GeomType.PLANE Vector: (X=100, Y=0, Z=50) 20000.0 Vector: (X=0, Y=-1, Z=0)
+GeomType.PLANE Vector: (X=100, Y=50, Z=100) 20000.0 Vector: (X=0, Y=0, Z=1)
+GeomType.PLANE Vector: (X=100, Y=50, Z=0) 20000.0 Vector: (X=0, Y=0, Z=-1)
+GeomType.PLANE Vector: (X=100, Y=100, Z=50) 20000.0 Vector: (X=0, Y=1, Z=0)
+GeomType.CYLINDER Vector: (X=100, Y=50, Z=30) 25132.741228720002 
+GeomType.PLANE Vector: (X=200, Y=50, Z=50) 8743.362938564082 Vector: (X=1, Y=0, Z=0)
+valid: True
+
+# -- cell 6 (0.1s, exit 0)
+import os, subprocess
+from build123d import *
+
+STEP_PATH = "/home/qiuzi/.openreynolds-buildup/work/T6-20260912-125146-ec8c/geometry/customer_part.step"
+shp = import_step(STEP_PATH)
+print("type:", type(shp), "| solids:", len(shp.solids()), "| faces:", len(shp.faces()))
+print("valid:", shp.is_valid, "| bbox (file units):", shp.bounding_box())
+print("volume:", shp.volume)
+for f in shp.faces():
+    print(f.geom_type, "center", f.center(), "area", round(f.area, 3))
+# -- output
+type: <class 'build123d.topology.three_d.Solid'> | solids: 1 | faces: 7
+valid: True | bbox (file units): bbox: 0.0 <= x <= 200.0, 0.0 <= y <= 100.0, 0.0 <= z <= 100.0
+volume: 1748672.5877128076
+GeomType.PLANE center Vector: (X=0, Y=50, Z=50) area 8743.363
+GeomType.PLANE center Vector: (X=100, Y=0, Z=50) area 20000.0
+GeomType.PLANE center Vector: (X=100, Y=50, Z=100) area 20000.0
+GeomType.PLANE center Vector: (X=100, Y=50, Z=0) area 20000.0
+GeomType.PLANE center Vector: (X=100, Y=100, Z=50) area 20000.0
+GeomType.CYLINDER center Vector: (X=100, Y=50, Z=30) area 25132.741
+GeomType.PLANE center Vector: (X=200, Y=50, Z=50) area 8743.363
+
+# -- cell 7 (0.1s, exit 0)
+cyl = [f for f in shp.faces() if f.geom_type==GeomType.CYLINDER][0]
+print("cyl bbox:", cyl.bounding_box())
+print("radius from surface area / (2*pi*L):", cyl.area/(2*3.141592653589793*200))
+print("block volume - solid volume =", 200*100*100 - shp.volume)
+print("pi r^2 L for r=20:", 3.141592653589793*400*200)
+# -- output
+cyl bbox: bbox: 0.0 <= x <= 200.0, 30.0 <= y <= 70.0, 30.0 <= z <= 70.0
+radius from surface area / (2*pi*L): 20.000000000001318
+block volume - solid volume = 251327.41228719242
+pi r^2 L for r=20: 251327.41228718346
+
+# -- cell 8 (0.1s, exit 0)
+bb = shp.bounding_box()
+block = Box(bb.size.X, bb.size.Y, bb.size.Z).moved(Location(bb.center()))
+fluid_mm = block - shp
+print("fluid solids:", len(fluid_mm.solids()), "valid:", fluid_mm.is_valid)
+print("fluid volume mm^3:", fluid_mm.volume, " bbox:", fluid_mm.bounding_box())
+
+MM = 0.001
+fluid = scale(fluid_mm, MM)
+print("fluid volume m^3:", fluid.volume, " bbox m:", fluid.bounding_box())
+for f in fluid.faces():
+    print(f.geom_type, "area", round(f.area,6), "center", f.center())
+# -- output
+fluid solids: 1 valid: True
+fluid volume mm^3: 251327.41228718346  bbox: bbox: 0.0 <= x <= 200.0, 30.0 <= y <= 70.0, 30.0 <= z <= 70.0
+fluid volume m^3: 0.00025132741228718353  bbox m: bbox: 0.0 <= x <= 0.2, 0.030000000000000002 <= y <= 0.07, 0.030000000000000002 <= z <= 0.07
+GeomType.PLANE area 0.001257 center Vector: (X=0, Y=0.05, Z=0.05)
+GeomType.CYLINDER area 0.025133 center Vector: (X=0.1, Y=0.05, Z=0.03)
+GeomType.PLANE area 0.001257 center Vector: (X=0.2, Y=0.05, Z=0.05)
+
+# -- cell 9 (0.2s, exit 1)
+import pyvista as pv, numpy as np
+export_step(fluid, "fluid.step")
+fluid.export_stl("fluid_check.stl")
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+m = pv.read("fluid_check.stl")
+pl = pv.Plotter(off_screen=True, window_size=(800,500))
+pl.add_mesh(m, color="lightblue", show_edges=True)
+pl.add_axes(); pl.camera_position='iso'
+pl.screenshot("fluid_view.png")
+print("wrote", os.path.getsize("fluid.step"))
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 3[39m
+[32m      1[39m [38;5;28;01mimport[39;00m pyvista [38;5;28;01mas[39;00m pv, numpy [38;5;28;01mas[39;00m np
+[32m      2[39m export_step(fluid, [33m"fluid.step"[39m)
+[32m----> [39m[32m3[39m fluid.export_stl([33m"fluid_check.stl"[39m)
+[32m      4[39m pv.start_xvfb() [38;5;28;01mif[39;00m hasattr(pv,[33m'start_xvfb'[39m) [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m      5[39m m = pv.read([33m"fluid_check.stl"[39m)
+[32m      6[39m pl = pv.Plotter(off_screen=[38;5;28;01mTrue[39;00m, window_size=([32m800[39m,[32m500[39m))
+
+[31mAttributeError[39m: 'Part' object has no attribute 'export_stl'
+
+# -- cell 10 (0.4s, exit 0)
+import pyvista as pv, numpy as np
+export_step(fluid, "fluid.step")
+export_stl(fluid, "fluid_check.stl", tolerance=1e-4)
+m = pv.read("fluid_check.stl")
+pl = pv.Plotter(off_screen=True, window_size=(800,500))
+pl.add_mesh(m, color="lightblue", show_edges=True)
+pl.add_axes(); pl.camera_position='iso'
+pl.screenshot("fluid_view.png")
+print("step bytes", os.path.getsize("fluid.step"))
+# -- output
+step bytes 5967
+
+[0m[33m2026-09-12 12:52:53.650 (   3.140s) [    706D25010780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 12:52:53.650 (   3.140s) [    706D25010780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 12:52:53.663 (   3.153s) [    706D25010780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 11 (0.1s, exit 0)
+from IPython.display import Image, display
+print(os.path.exists("fluid_view.png"), os.path.getsize("fluid_view.png") if os.path.exists("fluid_view.png") else 0)
+display(Image("fluid_view.png"))
+# -- output
+True 99909
+
+# -- cell 12 (0.1s, exit 0)
+import gmsh
+gmsh.initialize()
+gmsh.option.setNumber("General.Terminal",0)
+gmsh.model.add("fluid")
+gmsh.model.occ.importShapes("fluid.step")
+gmsh.model.occ.synchronize()
+print("bbox from gmsh:", gmsh.model.getBoundingBox(-1,-1))
+for dim,tag in gmsh.model.getEntities(2):
+    print(tag, gmsh.model.getType(dim,tag), gmsh.model.occ.getCenterOfMass(dim,tag),
+          gmsh.model.getNormal(tag,[0.5,0.5]))
+# -- output
+bbox from gmsh: (-1e-07, 0.029999900000000003, 0.029999900000000003, 0.20000010000000001, 0.07000010000000001, 0.07000010000000001)
+1 Plane (0.0, 0.05000000000000001, 0.05) [-1.  0.  0.]
+2 Cylinder (0.1, 0.05, 0.05000000000000132) [ 0.         -0.47942554  0.87758256]
+3 Plane (0.2, 0.05000000000000001, 0.05) [ 1. -0. -0.]
+
+# -- cell 13 (0.2s, exit 0)
+import numpy as np
+inlet=outlet=None; walls=[]
+for dim,tag in gmsh.model.getEntities(2):
+    t = gmsh.model.getType(dim,tag)
+    if t=="Plane":
+        n = np.array(gmsh.model.getNormal(tag,[0.5,0.5]))
+        if n[0] < 0: inlet = tag
+        else: outlet = tag
+    else:
+        walls.append(tag)
+print("inlet",inlet,"outlet",outlet,"walls",walls)
+gmsh.model.addPhysicalGroup(2,[inlet],name="inlet")
+gmsh.model.addPhysicalGroup(2,[outlet],name="outlet")
+gmsh.model.addPhysicalGroup(2,walls,name="wall")
+gmsh.model.addPhysicalGroup(3,[v[1] for v in gmsh.model.getEntities(3)],name="internal")
+gmsh.option.setNumber("Mesh.MeshSizeMin",0.006)
+gmsh.option.setNumber("Mesh.MeshSizeMax",0.006)
+gmsh.model.mesh.generate(3)
+gmsh.write("fluid.msh")
+print("nodes",len(gmsh.model.mesh.getNodes()[0]))
+gmsh.finalize()
+# -- output
+inlet 1 outlet 3 walls [2]
+nodes 1509
+
+# -- cell 14 (0.2s, exit 0)
+import gmsh, numpy as np, os
+def build_mesh(lc, fname):
+    gmsh.initialize(); gmsh.option.setNumber("General.Terminal",0)
+    gmsh.model.add("fluid")
+    gmsh.model.occ.importShapes("fluid.step"); gmsh.model.occ.synchronize()
+    inlet=outlet=None; walls=[]
+    for dim,tag in gmsh.model.getEntities(2):
+        if gmsh.model.getType(dim,tag)=="Plane":
+            n=np.array(gmsh.model.getNormal(tag,[0.5,0.5]))
+            if n[0]<0: inlet=tag
+            else: outlet=tag
+        else: walls.append(tag)
+    gmsh.model.addPhysicalGroup(2,[inlet],name="inlet")
+    gmsh.model.addPhysicalGroup(2,[outlet],name="outlet")
+    gmsh.model.addPhysicalGroup(2,walls,name="wall")
+    gmsh.model.addPhysicalGroup(3,[v[1] for v in gmsh.model.getEntities(3)],name="internal")
+    gmsh.option.setNumber("Mesh.MeshSizeMin",lc); gmsh.option.setNumber("Mesh.MeshSizeMax",lc)
+    gmsh.option.setNumber("Mesh.MshFileVersion",2.2)
+    gmsh.model.mesh.generate(3)
+    gmsh.write(fname)
+    n=len(gmsh.model.mesh.getNodes()[0]); gmsh.finalize(); return n
+
+print("nodes:", build_mesh(0.006,"fluid.msh"))
+# -- output
+nodes: 1509
+
+# -- cell 15 (0.3s, exit 0)
+os.makedirs("system",exist_ok=True); os.makedirs("constant",exist_ok=True)
+hdr = lambda cls,obj: f"""FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"""
+open("system/controlDict","w").write(hdr("dictionary","controlDict")+
+ "application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n")
+open("system/fvSchemes","w").write(hdr("dictionary","fvSchemes")+
+ "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(hdr("dictionary","fvSolution")+"solvers{} \n")
+r = subprocess.run(["gmshToFoam","fluid.msh"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-800:])
+# -- output
+0 itoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:4
+    Surface 1	inlet
+    Surface 2	outlet
+    Surface 3	wall
+    Volume 4	internal
+
+Starting to read points at line 12
+Vertices to be read: 1509
+Vertices read:1509
+
+Starting to read cells at line 1524
+Cells to be read: 8025
+
+Mapping region 1 to Foam patch 0
+Mapping region 3 to Foam patch 1
+Mapping region 2 to Foam patch 2
+Mapping region 4 to Foam cellZone 0
+Cells:
+    total:6123
+    hex  :0
+    prism:0
+    pyr  :0
+    tet  :6123
+
+CellZones:
+Zone	Size
+    0	6123
+
+Patch 0 gets name inlet
+Patch 1 gets name wall
+Patch 2 gets name outlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 1902 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+# -- cell 16 (0.1s, exit 0)
+print(open("constant/polyMesh/boundary").read())
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+3
+(
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          99;
+        startFace       11295;
+    }
+    wall
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1704;
+        startFace       11394;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          99;
+        startFace       13098;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 17 (0.3s, exit 0)
+b = open("constant/polyMesh/boundary").read().replace(
+"""    wall
+    {
+        type            patch;
+        physicalType    patch;""",
+"""    wall
+    {
+        type            wall;
+        physicalType    wall;""")
+open("constant/polyMesh/boundary","w").write(b)
+r = subprocess.run(["checkMesh"],capture_output=True,text=True)
+print(r.stdout[-2500:])
+# -- output
+* * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           1509
+    faces:            13197
+    internal faces:   11295
+    cells:            6123
+    faces per cell:   4
+    boundary patches: 3
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    6123
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    inlet               99       61       ok (non-closed singly connected)  
+    wall                1704     873      ok (non-closed singly connected)  
+    outlet              99       61       ok (non-closed singly connected)  
+    ".*"                1902     953      ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            6123         1509         0.000248619  (0 0.0300083 0.03) (0.2 0.0699441 0.07)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0.0300083 0.03) (0.2 0.0699441 0.07)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (7.83637e-17 1.70998e-17 -2.15285e-18) OK.
+    Max cell openness = 2.16347e-16 OK.
+    Max aspect ratio = 7.47001 OK.
+    Minimum face area = 7.32463e-06. Maximum face area = 4.84772e-05.  Face area magnitudes OK.
+    Min volume = 8.99249e-09. Max volume = 1.08825e-07.  Total volume = 0.000248619.  Cell volumes OK.
+    Mesh non-orthogonality Max: 66.8577 average: 21.5458
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.732041 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 18 (3.8s, exit 0)
+import gmsh, numpy as np
+def build_mesh2(lc, fname, curv=40):
+    gmsh.initialize(); gmsh.option.setNumber("General.Terminal",0)
+    gmsh.model.add("fluid")
+    gmsh.model.occ.importShapes("fluid.step"); gmsh.model.occ.synchronize()
+    inlet=outlet=None; walls=[]
+    for dim,tag in gmsh.model.getEntities(2):
+        if gmsh.model.getType(dim,tag)=="Plane":
+            n=np.array(gmsh.model.getNormal(tag,[0.5,0.5]))
+            if n[0]<0: inlet=tag
+            else: outlet=tag
+        else: walls.append(tag)
+    gmsh.model.addPhysicalGroup(2,[inlet],name="inlet")
+    gmsh.model.addPhysicalGroup(2,[outlet],name="outlet")
+    gmsh.model.addPhysicalGroup(2,walls,name="wall")
+    gmsh.model.addPhysicalGroup(3,[v[1] for v in gmsh.model.getEntities(3)],name="internal")
+    gmsh.option.setNumber("Mesh.MeshSizeMin",lc*0.5); gmsh.option.setNumber("Mesh.MeshSizeMax",lc)
+    gmsh.option.setNumber("Mesh.MeshSizeFromCurvature",curv)
+    gmsh.option.setNumber("Mesh.Optimize",1); gmsh.option.setNumber("Mesh.OptimizeNetgen",1)
+    gmsh.option.setNumber("Mesh.MshFileVersion",2.2)
+    gmsh.model.mesh.generate(3)
+    gmsh.write(fname)
+    n=len(gmsh.model.mesh.getNodes()[0]); gmsh.finalize(); return n
+print("nodes:", build_mesh2(0.003,"fluid.msh"))
+# -- output
+nodes: 8583
+
+# -- cell 19 (0.7s, exit 0)
+import shutil
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+subprocess.run(["gmshToFoam","fluid.msh"],capture_output=True,text=True)
+b = open("constant/polyMesh/boundary").read().replace("""    wall
+    {
+        type            patch;
+        physicalType    patch;""","""    wall
+    {
+        type            wall;
+        physicalType    wall;""")
+open("constant/polyMesh/boundary","w").write(b)
+r = subprocess.run(["checkMesh"],capture_output=True,text=True)
+print(r.stdout[r.stdout.find("Mesh stats"):][:600])
+print(r.stdout[r.stdout.find("Checking geometry"):][:1400])
+# -- output
+Mesh stats 
+    points:           8583
+    faces:            83164
+    internal faces:   75884
+    cells:            39762
+    faces per cell:   4
+    boundary patches: 3
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    39762
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Numbe
+Checking geometry...
+    Overall domain bounding box (0 0.0300001 0.03) (0.2 0.069996 0.07)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (1.48173e-16 6.36363e-19 -2.43811e-18) OK.
+    Max cell openness = 2.18388e-16 OK.
+    Max aspect ratio = 4.28661 OK.
+    Minimum face area = 1.36488e-06. Maximum face area = 1.48673e-05.  Face area magnitudes OK.
+    Min volume = 8.11041e-10. Max volume = 1.92867e-08.  Total volume = 0.000250636.  Cell volumes OK.
+    Mesh non-orthogonality Max: 47.2749 average: 15.4453
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.629871 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 20 (0.3s, exit 0)
+open("case.foam","w").write("")
+mesh = pv.OpenFOAMReader("case.foam"); mesh.set_active_time_value(0.0) if mesh.time_values else None
+d = mesh.read()
+internal = d["internalMesh"]
+pl = pv.Plotter(off_screen=True, window_size=(900,500))
+pl.add_mesh(internal.clip('y', origin=(0.1,0.05,0.05)), show_edges=True, color="lightsteelblue")
+pl.add_mesh(d["boundary"]["inlet"], color="red")
+pl.add_mesh(d["boundary"]["outlet"], color="green")
+pl.camera_position='iso'; pl.add_axes()
+pl.screenshot("mesh_view.png")
+display(Image("mesh_view.png"))
+import numpy as np
+bp = d["boundary"]
+for n in ["inlet","outlet","wall"]:
+    print(n, "area", bp[n].compute_cell_sizes(length=False,volume=False)["Area"].sum())
+print("exact inlet area pi*0.02^2 =", np.pi*0.02**2, " wall 2*pi*0.02*0.2 =", 2*np.pi*0.02*0.2)
+# -- output
+inlet area 0.0012519551014171099
+outlet area 0.0012519551014171099
+wall area 0.025115437479970748
+exact inlet area pi*0.02^2 = 0.0012566370614359172  wall 2*pi*0.02*0.2 = 0.02513274122871835
+
+[0m[33m2026-09-12 12:54:03.535 (  73.025s) [    706D25010780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 12:54:03.535 (  73.025s) [    706D25010780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

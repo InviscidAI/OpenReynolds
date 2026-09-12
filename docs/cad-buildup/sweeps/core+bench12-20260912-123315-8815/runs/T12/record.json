@@ -1,0 +1,546 @@
+{
+  "run_id": "20260912-124023-b002",
+  "case": "T12",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T12-20260912-124023-b002",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T12-20260912-124023-b002/t12",
+  "started_at": "2026-09-12T12:40:24",
+  "ended_at": "2026-09-12T12:45:49",
+  "seconds": 322.7,
+  "n_turns": 24,
+  "n_steps": 21,
+  "first_mesh_step": 11,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.978,
+  "tokens": {
+    "input": 48,
+    "cache_read": 473054,
+    "cache_write": 34871,
+    "output": 20932
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import numpy as np, math\nfrom build123d import *\n\nR_HUB, R_OUT, R_LE, R_TE = 12.0, 58.0, 16.0, 58.0\nH_BLADE, T_BLADE, N_BLADE, WRAP = 14.0, 3.0, 7, 30.0   # mm, deg\nR_EXT = 59.5   # blade built past the outlet so the TE is a clean cut\n\ndef theta(r):   # backward: theta decreases as r grows (rotation is +z / CCW)\n    return -math.radians(WRAP) * (r - R_LE) / (R_TE - R_LE)\n\nrs = np.linspace(R_LE, R_EXT, 60)\ncam = np.array([[r*math.cos(theta(r)), r*math.sin(theta(r))] for r in rs])\ntan = np.gradient(cam, axis=0); tan /= np.linalg.norm(tan, axis=1)[:, None]\nnor = np.stack([-tan[:, 1], tan[:, 0]], axis=1)\nside_a = cam + 0.5*T_BLADE*nor\nside_b = cam - 0.5*T_BLADE*nor\npts = [tuple(p) for p in side_a] + [tuple(p) for p in side_b[::-1]]\nblade_sk = Polygon(*pts, align=None)\nblade = extrude(blade_sk, amount=H_BLADE)\n\nprint(\"camber wrap LE->TE at r=58 (deg):\", math.degrees(theta(58.0)))\nprint(\"blade solid volume mm^3:\", round(blade.volume, 1))\nprint(\"bbox:\", blade.bounding_box())\nprint(\"thickness check (a-b at mid):\", np.linalg.norm(side_a[30]-side_b[30]))",
+      "exit_code": 0,
+      "seconds": 2.155811946839094,
+      "output": "camber wrap LE->TE at r=58 (deg): -29.999999999999996\nblade solid volume mm^3: 2035.7\nbbox: bbox: 15.693334485280978 <= x <= 52.346054466480695, -31.289480833073945 <= y <= 1.4683174936239494, -14.0 <= z <= 0.0\nthickness check (a-b at mid): 2.9999999999999987",
+      "image": ""
+    },
+    {
+      "cmd": "blade = Pos(0, 0, H_BLADE) * blade   # now spans z = 0..14\nannulus = extrude(Pos(0,0,0)*(Circle(R_OUT) - Circle(R_HUB)), amount=H_BLADE)\nprint(\"annulus bbox:\", annulus.bounding_box(), \"vol\", round(annulus.volume,1))\n\nblades = [Rot(0, 0, i*360.0/N_BLADE) * blade for i in range(N_BLADE)]\nfluid = annulus\nfor b in blades:\n    fluid = fluid - b\nprint(\"fluid volume mm^3:\", round(fluid.volume, 1), \" solids:\", len(fluid.solids()))\nprint(\"fluid bbox:\", fluid.bounding_box())\nprint(\"n faces:\", len(fluid.faces()))",
+      "exit_code": 0,
+      "seconds": 2.362992165610194,
+      "output": "annulus bbox: bbox: -58.0 <= x <= 58.0, -58.0 <= y <= 58.0, 0.0 <= z <= 14.0 vol 141623.0\nfluid volume mm^3: 127922.5  solids: 1\nfluid bbox: bbox: -58.00000000000001 <= x <= 58.000000000000014, -58.000000000000014 <= y <= 58.00000000000001, 0.0 <= z <= 14.0\nn faces: 822",
+      "image": ""
+    },
+    {
+      "cmd": "R_EYE = 16.0   # inlet annulus 12..16 at z=14, shroud outboard of it\n\nl_a = Spline(*[(float(p[0]), float(p[1])) for p in side_a])\nl_b = Spline(*[(float(p[0]), float(p[1])) for p in side_b])\nprof = l_a + Line(l_a @ 1, l_b @ 1) + l_b.reversed() + Line(l_b @ 0, l_a @ 0)\nblade_sk = make_face(prof)\nblade = Pos(0, 0, 0) * extrude(blade_sk, amount=H_BLADE)\nif blade.bounding_box().min.Z < 0:\n    blade = Pos(0, 0, H_BLADE) * blade\n\nannulus = extrude(Circle(R_OUT) - Circle(R_HUB), amount=H_BLADE)\nif annulus.bounding_box().min.Z < 0:\n    annulus = Pos(0, 0, H_BLADE) * annulus\nfluid = annulus\nfor i in range(N_BLADE):\n    fluid = fluid - (Rot(0, 0, i*360.0/N_BLADE) * blade)\n\neye_cyl = extrude(Circle(R_EYE), amount=H_BLADE)\nif eye_cyl.bounding_box().min.Z < 0:\n    eye_cyl = Pos(0, 0, H_BLADE) * eye_cyl\nfluid_in  = fluid & eye_cyl\nfluid_out = fluid - eye_cyl\nprint(\"faces on fluid:\", len(fluid.faces()), \" vol\", round(fluid.volume,1))\nprint(\"inner vol\", round(fluid_in.volume,1), \"faces\", len(fluid_in.faces()))\nprint(\"outer vol\", round(fluid_out.volume,1), \"faces\", len(fluid_out.faces()))\nprint(\"sum vs fluid:\", round(fluid_in.volume+fluid_out.volume,1))",
+      "exit_code": 0,
+      "seconds": 0.5019187740981579,
+      "output": "faces on fluid: 4  vol 141623.0\ninner vol 4926.0 faces 4\nouter vol 136697.0 faces 4\nsum vs fluid: 141623.0",
+      "image": ""
+    },
+    {
+      "cmd": "print(type(blade_sk), blade_sk.area if hasattr(blade_sk,'area') else None)\nprint(type(blade), blade.volume, blade.bounding_box())\nprint(\"prof closed?\", prof.is_closed if hasattr(prof,'is_closed') else None, len(prof.edges()))",
+      "exit_code": 0,
+      "seconds": 0.05064158979803324,
+      "output": "<class 'build123d.topology.composite.Sketch'> 145.41257923907085\n<class 'build123d.topology.composite.Part'> 2035.7755221822817 bbox: 15.693334385280979 <= x <= 52.34605456648071, -31.289480933073946 <= y <= 1.4683175936239494, 13.9999999 <= z <= 28.0000001\nprof closed? True 4",
+      "image": ""
+    },
+    {
+      "cmd": "def lift(s):\n    return Pos(0, 0, H_BLADE) * s if s.bounding_box().min.Z < -1e-6 else s\n\nblade = lift(extrude(blade_sk, amount=H_BLADE))\nannulus = lift(extrude(Circle(R_OUT) - Circle(R_HUB), amount=H_BLADE))\neye_cyl = lift(extrude(Circle(R_EYE), amount=H_BLADE))\nfluid = annulus\nfor i in range(N_BLADE):\n    fluid = fluid - (Rot(0, 0, i*360.0/N_BLADE) * blade)\nfluid_in, fluid_out = fluid & eye_cyl, fluid - eye_cyl\nprint(\"blade bbox\", blade.bounding_box(), \"vol\", round(blade.volume,1))\nprint(\"fluid vol\", round(fluid.volume,1), \"faces\", len(fluid.faces()))\nprint(\"in\", round(fluid_in.volume,1), len(fluid_in.faces()), \" out\", round(fluid_out.volume,1), len(fluid_out.faces()))",
+      "exit_code": 0,
+      "seconds": 1.5052531342953444,
+      "output": "blade bbox bbox: 15.693334385280979 <= x <= 52.34605456648071, -31.289480933073946 <= y <= 1.4683175936239494, -1e-07 <= z <= 14.0000001 vol 2035.8\nfluid vol 127922.1 faces 31\nin 4906.6 24  out 123015.4 49",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.start_xvfb() if hasattr(pv,'start_xvfb') else None\nexport_stl(Compound([fluid_in, fluid_out]), \"look.stl\", tolerance=0.05)\nm = pv.read(\"look.stl\")\np = pv.Plotter(off_screen=True, window_size=(900, 700))\np.add_mesh(m, color=\"lightsteelblue\", show_edges=True, edge_color=\"gray\", line_width=0.3)\np.camera_position = [(150, -150, 120), (0, 0, 7), (0, 0, 1)]\np.show(screenshot=\"look.png\")\nprint(\"ok\")",
+      "exit_code": 0,
+      "seconds": 0.6025859732180834,
+      "output": "ok\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-12 12:42:34.112 (   0.294s) [    79932F4E1780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-12 12:42:34.113 (   0.295s) [    79932F4E1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-12 12:42:34.126 (   0.307s) [    79932F4E1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_488204/3731549292.py:8: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  p.show(screenshot=\"look.png\")",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import os, subprocess\nexport_step(Compound([fluid_in, fluid_out]), \"impeller_fluid.step\")\nprint(os.path.getsize(\"impeller_fluid.step\"))\n\nimport gmsh\ngmsh.initialize()\ngmsh.model.add(\"imp\")\ngmsh.merge(\"impeller_fluid.step\")\nvols = gmsh.model.getEntities(3)\nprint(\"volumes:\", vols)\nout, _ = gmsh.model.occ.fragment([(3, v[1]) for v in vols], [])\ngmsh.model.occ.synchronize()\nprint(\"after fragment volumes:\", gmsh.model.getEntities(3), \"surfaces:\", len(gmsh.model.getEntities(2)))",
+      "exit_code": 0,
+      "seconds": 0.8526302110403776,
+      "output": "832536\nInfo    : Reading 'impeller_fluid.step'...\nInfo    :  - Label 'Shapes/COMPOUND' (3D)\nvolumes: [(3, 1), (3, 2), (3, 3), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8)]\nInfo    : Done reading 'impeller_fluid.step'\nInfo    : [  0%] Fragments                                                                                  \rInfo    : [ 10%] Fragments                                                                                  \rInfo    : [ 20%] Fragments                                                                                  \rInfo    : [ 30%] Fragments                                                                                  \rInfo    : [ 40%] Fragments                                                                                  \rInfo    : [ 50%] Fragments                                                                                  \rInfo    : [ 60%] Fragments                                                                                  \rInfo    : [ 70%] Fragments                                                                                  \rInfo    : [ 80%] Fragments - Splitting faces                                                                                \r                                                                                \rafter fragment volumes: [(3, 1), (3, 2), (3, 3), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8)] surfaces: 66",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\ndef sample_pts(s, n=6):\n    b = gmsh.model.getParametrizationBounds(2, s)\n    us = np.linspace(b[0][0], b[1][0], n); vs = np.linspace(b[0][1], b[1][1], n)\n    P = []\n    for u in us:\n        for v in vs:\n            try: P.append(gmsh.model.getValue(2, s, [u, v]))\n            except Exception: pass\n    return np.array(P).reshape(-1, 3)\n\ngroups = {k: [] for k in [\"inlet\", \"outlet\", \"blades\", \"backplate\", \"hub\", \"shroud\"]}\nfor dim, s in gmsh.model.getEntities(2):\n    P = sample_pts(s); r = np.hypot(P[:,0], P[:,1]); z = P[:,2]\n    if np.allclose(z, 0.0, atol=1e-4):            g = \"backplate\"\n    elif np.allclose(z, H_BLADE, atol=1e-4):      g = \"inlet\" if r.max() < R_EYE + 1e-3 else \"shroud\"\n    elif np.allclose(r, R_HUB, atol=1e-3):        g = \"hub\"\n    elif np.allclose(r, R_OUT, atol=1e-3):        g = \"outlet\"\n    else:                                          g = \"blades\"\n    groups[g].append(s)\nfor k, v in groups.items(): print(k, len(v), v[:8])",
+      "exit_code": 0,
+      "seconds": 0.05061598028987646,
+      "output": "inlet 0 []\noutlet 7 [25, 33, 39, 45, 51, 57, 63]\nblades 42 [2, 3, 4, 5, 6, 7, 8, 9]\nbackplate 8 [1, 26, 31, 37, 43, 49, 55, 61]\nhub 1 [23]\nshroud 8 [24, 28, 36, 42, 48, 54, 60, 66]",
+      "image": ""
+    },
+    {
+      "cmd": "groups = {k: [] for k in [\"inlet\", \"outlet\", \"blades\", \"backplate\", \"hub\", \"shroud\"]}\nfor dim, s in gmsh.model.getEntities(2):\n    x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(2, s)\n    rmax = max(np.hypot(a,b) for a in (x0,x1) for b in (y0,y1))\n    P = sample_pts(s); r = np.hypot(P[:,0], P[:,1])\n    if abs(z0) < 1e-4 and abs(z1) < 1e-4:                    g = \"backplate\"\n    elif abs(z0-H_BLADE) < 1e-4 and abs(z1-H_BLADE) < 1e-4:  g = \"inlet\" if rmax < R_EYE + 1e-2 else \"shroud\"\n    elif np.allclose(r, R_HUB, atol=1e-3):                   g = \"hub\"\n    elif np.allclose(r, R_OUT, atol=1e-3):                   g = \"outlet\"\n    else:                                                     g = \"blades\"\n    groups[g].append(s)\nfor k, v in groups.items(): print(k, len(v), v[:8])\nprint(\"eye top bbox:\", gmsh.model.getBoundingBox(2, 24))",
+      "exit_code": 0,
+      "seconds": 0.05060721933841705,
+      "output": "inlet 0 []\noutlet 7 [25, 33, 39, 45, 51, 57, 63]\nblades 42 [2, 3, 4, 5, 6, 7, 8, 9]\nbackplate 8 [1, 26, 31, 37, 43, 49, 55, 61]\nhub 1 [23]\nshroud 8 [24, 28, 36, 42, 48, 54, 60, 66]\neye top bbox: (-16.000000100000015, -16.000000100000015, 13.999999899999985, 16.000000100000015, 16.000000100000015, 14.000000100000015)",
+      "image": ""
+    },
+    {
+      "cmd": "groups = {k: [] for k in [\"inlet\", \"outlet\", \"blades\", \"backplate\", \"hub\", \"shroud\"]}\nfor dim, s in gmsh.model.getEntities(2):\n    x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(2, s)\n    rmax = max(abs(x0), abs(x1), abs(y0), abs(y1))\n    P = sample_pts(s); r = np.hypot(P[:,0], P[:,1])\n    if abs(z0) < 1e-4 and abs(z1) < 1e-4:                    g = \"backplate\"\n    elif abs(z0-H_BLADE) < 1e-4 and abs(z1-H_BLADE) < 1e-4:  g = \"inlet\" if rmax < R_EYE + 1e-2 else \"shroud\"\n    elif np.allclose(r, R_HUB, atol=1e-3):                   g = \"hub\"\n    elif np.allclose(r, R_OUT, atol=1e-3):                   g = \"outlet\"\n    else:                                                     g = \"blades\"\n    groups[g].append(s)\nfor k, v in groups.items(): print(k, len(v), v[:8])",
+      "exit_code": 0,
+      "seconds": 0.20100037753582,
+      "output": "inlet 1 [24]\noutlet 7 [25, 33, 39, 45, 51, 57, 63]\nblades 42 [2, 3, 4, 5, 6, 7, 8, 9]\nbackplate 8 [1, 26, 31, 37, 43, 49, 55, 61]\nhub 1 [23]\nshroud 7 [28, 36, 42, 48, 54, 60, 66]",
+      "image": ""
+    },
+    {
+      "cmd": "for name, tags in groups.items():\n    gmsh.model.addPhysicalGroup(2, tags, name=name)\ngmsh.model.addPhysicalGroup(3, [v[1] for v in gmsh.model.getEntities(3)], name=\"fluid\")\ngmsh.option.setNumber(\"Mesh.MeshSizeMin\", 2.0)\ngmsh.option.setNumber(\"Mesh.MeshSizeMax\", 3.0)\ngmsh.option.setNumber(\"Mesh.MeshSizeFromCurvature\", 0)\ngmsh.option.setNumber(\"Mesh.Algorithm3D\", 1)\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\ngmsh.model.mesh.generate(3)\ngmsh.write(\"coarse.msh\")\nntet = len(gmsh.model.mesh.getElementsByType(4)[0])\nprint(\"tets:\", ntet)",
+      "exit_code": 0,
+      "seconds": 0.6019980246201158,
+      "output": "Info    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (BSpline)\nInfo    : [ 10%] Meshing curve 2 (Line)\nInfo    : [ 10%] Meshing curve 3 (Circle)\nInfo    : [ 10%] Meshing curve 4 (BSpline)\nInfo    : [ 10%] Meshing curve 5 (Line)\nInfo    : [ 10%] Meshing curve 6 (Circle)\nInfo    : [ 10%] Meshing curve 7 (BSpline)\nInfo    : [ 10%] Meshing curve 8 (Line)\nInfo    : [ 10%] Meshing curve 9 (Circle)\nInfo    : [ 10%] Meshing curve 10 (BSpline)\nInfo    : [ 10%] Meshing curve 11 (Line)\nInfo    : [ 10%] Meshing curve 12 (Circle)\nInfo    : [ 10%] Meshing curve 13 (BSpline)\nInfo    : [ 10%] Meshing curve 14 (Line)\nInfo    : [ 10%] Meshing curve 15 (Circle)\nInfo    : [ 20%] Meshing curve 16 (BSpline)\nInfo    : [ 20%] Meshing curve 17 (Line)\nInfo    : [ 20%] Meshing curve 18 (Circle)\nInfo    : [ 20%] Meshing curve 19 (BSpline)\nInfo    : [ 20%] Meshing curve 20 (Line)\nInfo    : [ 20%] Meshing curve 21 (Circle)\nInfo    : [ 20%] Meshing curve 22 (Circle)\nInfo    : [ 20%] Meshing curve 23 (Line)\nInfo    : [ 20%] Meshing curve 24 (BSpline)\nInfo    : [ 20%] Meshing curve 25 (BSpline)\nInfo    : [ 20%] Meshing curve 26 (Circle)\nInfo    : [ 20%] Meshing curve 27 (Line)\nInfo    : [ 20%] Meshing curve 28 (Line)\nInfo    : [ 20%] Meshing curve 29 (Line)\nInfo    : [ 30%] Meshing curve 30 (BSpline)\nInfo    : [ 30%] Meshing curve 31 (BSpline)\nInfo    : [ 30%] Meshing curve 32 (Circle)\nInfo    : [ 30%] Meshing curve 33 (Line)\nInfo    : [ 30%] Meshing curve 34 (Line)\nInfo    : [ 30%] Meshing curve 35 (Line)\nInfo    : [ 30%] Meshing curve 36 (BSpline)\nInfo    : [ 30%] Meshing curve 37 (BSpline)\nInfo    : [ 30%] Meshing curve 38 (Circle)\nInfo    : [ 30%] Meshing curve 39 (Line)\nInfo    : [ 30%] Meshing curve 40 (Line)\nInfo    : [ 30%] Meshing curve 41 (Line)\nInfo    : [ 30%] Meshing curve 42 (BSpline)\nInfo    : [ 30%] Meshing curve 43 (BSpline)\nInfo    : [ 40%] Meshing curve 44 (Circle)\nInfo    : [ 40%] Meshing curve 45 (Line)\nInfo    : [ 40%] Meshing curve 46 (Line)\nInfo    : [ 40%] Meshing curve\n... 17782 characters cut ...\n< 0.60 :       199 elements\nInfo    : 0.60 < quality < 0.70 :       566 elements\nInfo    : 0.70 < quality < 0.80 :      1030 elements\nInfo    : 0.80 < quality < 0.90 :      1241 elements\nInfo    : 0.90 < quality < 1.00 :       558 elements\nInfo    : 98 edge swaps, 4 node relocations (volume = 17572.7): worst = 0.0471231 / average = 0.76643 (Wall 0.00141526s, CPU 0.001442s)\nInfo    : 99 edge swaps, 4 node relocations (volume = 17572.7): worst = 0.0471231 / average = 0.766343 (Wall 0.00180289s, CPU 0.001752s)\nInfo    : No ill-shaped tets in the mesh :-)\nInfo    : 0.00 < quality < 0.10 :         5 elements\nInfo    : 0.10 < quality < 0.20 :        15 elements\nInfo    : 0.20 < quality < 0.30 :         4 elements\nInfo    : 0.30 < quality < 0.40 :        78 elements\nInfo    : 0.40 < quality < 0.50 :       105 elements\nInfo    : 0.50 < quality < 0.60 :       200 elements\nInfo    : 0.60 < quality < 0.70 :       579 elements\nInfo    : 0.70 < quality < 0.80 :      1022 elements\nInfo    : 0.80 < quality < 0.90 :      1250 elements\nInfo    : 0.90 < quality < 1.00 :       564 elements\nInfo    : Optimizing volume 7\nInfo    : Optimization starts (volume = 17572.7) with worst = 0.0365968 / average = 0.751347:\nInfo    : 0.00 < quality < 0.10 :        23 elements\nInfo    : 0.10 < quality < 0.20 :        45 elements\nInfo    : 0.20 < quality < 0.30 :        54 elements\nInfo    : 0.30 < quality < 0.40 :        61 elements\nInfo    : 0.40 < quality < 0.50 :       108 elements\nInfo    : 0.50 < quality < 0.60 :       207 elements\nInfo    : 0.60 < quality < 0.70 :       570 elements\nInfo    : 0.70 < quality < 0.80 :      1052 elements\nInfo    : 0.80 < quality < 0.90 :      1226 elements\nInfo    : 0.90 < quality < 1.00 :       532 elements\nInfo    : 98 edge swaps, 0 node relocations (volume = 17572.7): worst = 0.0457228 / average = 0.767535 (Wall 0.00138395s, CPU 0.00141s)\nInfo    : No ill-shaped tets in the mesh :-)\nInfo    : 0.00 < quality < 0.10 :         5 elements\nInfo    : 0.10 < quality < 0.20 :        14 elements\nInfo    : 0.20 < quality < 0.30 :         5 elements\nInfo    : 0.30 < quality < 0.40 :        59 elements\nInfo    : 0.40 < quality < 0.50 :        99 elements\nInfo    : 0.50 < quality < 0.60 :       200 elements\nInfo    : 0.60 < quality < 0.70 :       574 elements\nInfo    : 0.70 < quality < 0.80 :      1062 elements\nInfo    : 0.80 < quality < 0.90 :      1232 elements\nInfo    : 0.90 < quality < 1.00 :       535 elements\nInfo    : Optimizing volume 8\nInfo    : Optimization starts (volume = 17572.7) with worst = 0.0263278 / average = 0.752932:\nInfo    : 0.00 < quality < 0.10 :        21 elements\nInfo    : 0.10 < quality < 0.20 :        38 elements\nInfo    : 0.20 < quality < 0.30 :        54 elements\nInfo    : 0.30 < quality < 0.40 :        75 elements\nInfo    : 0.40 < quality < 0.50 :       106 elements\nInfo    : 0.50 < quality < 0.60 :       187 elements\nInfo    : 0.60 < quality < 0.70 :       575 elements\nInfo    : 0.70 < quality < 0.80 :      1102 elements\nInfo    : 0.80 < quality < 0.90 :      1200 elements\nInfo    : 0.90 < quality < 1.00 :       556 elements\nInfo    : 89 edge swaps, 2 node relocations (volume = 17572.7): worst = 0.0457205 / average = 0.766367 (Wall 0.00131391s, CPU 0.001348s)\nInfo    : No ill-shaped tets in the mesh :-)\nInfo    : 0.00 < quality < 0.10 :         5 elements\nInfo    : 0.10 < quality < 0.20 :        14 elements\nInfo    : 0.20 < quality < 0.30 :         5 elements\nInfo    : 0.30 < quality < 0.40 :        74 elements\nInfo    : 0.40 < quality < 0.50 :       104 elements\nInfo    : 0.50 < quality < 0.60 :       195 elements\nInfo    : 0.60 < quality < 0.70 :       570 elements\nInfo    : 0.70 < quality < 0.80 :      1094 elements\nInfo    : 0.80 < quality < 0.90 :      1216 elements\nInfo    : 0.90 < quality < 1.00 :       558 elements\nInfo    : Done optimizing mesh (Wall 0.0346433s, CPU 0.035263s)\nInfo    : 7426 nodes 40668 elements\nInfo    : Writing 'coarse.msh'...\nInfo    : Done writing 'coarse.msh'\ntets: 28537",
+      "image": ""
+    },
+    {
+      "cmd": "import os, subprocess, textwrap\nos.makedirs(\"system\", exist_ok=True); os.makedirs(\"constant\", exist_ok=True)\nhdr = \"FoamFile{version 2.0; format ascii; class dictionary; object %s;}\\n\"\nopen(\"system/controlDict\",\"w\").write(hdr%\"controlDict\"+textwrap.dedent(\"\"\"\napplication simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\ndeltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;\nwritePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;\n\"\"\"))\nopen(\"system/fvSchemes\",\"w\").write(hdr%\"fvSchemes\"+\"ddtSchemes{default steadyState;}\\ngradSchemes{default Gauss linear;}\\ndivSchemes{default none;}\\nlaplacianSchemes{default Gauss linear corrected;}\\n\")\nopen(\"system/fvSolution\",\"w\").write(hdr%\"fvSolution\"+\"solvers{}\\n\")\nr1 = subprocess.run([\"gmshToFoam\",\"coarse.msh\"], capture_output=True, text=True)\nprint(r1.returncode, r1.stdout[-800:], r1.stderr[-400:])",
+      "exit_code": 0,
+      "seconds": 0.40155113581568,
+      "output": "0 ro vertex is not on boundary of polyMesh\n--> FOAM Warning : Not using gmsh face 3(1256 1266 1253) since zero vertex is not on boundary of polyMesh\n--> FOAM Warning : Not using gmsh face 3(1260 1261 1254) since zero vertex is not on boundary of polyMesh\n--> FOAM Warning : Not using gmsh face 3(1254 1263 1260) since zero vertex is not on boundary of polyMesh\n--> FOAM Warning : Not using gmsh face 3(1255 1259 1258) since zero vertex is not on boundary of polyMesh\n--> FOAM Warning : Not using gmsh face 3(1258 1265 1255) since zero vertex is not on boundary of polyMesh\nFinding faces of patch 2\nFinding faces of patch 3\nFinding faces of patch 4\nFinding faces of patch 5\n\nFaceZones:\nZone\tSize\n    1\t448\n\nWriting zone 0 to cellZone fluid and cellSet\nWriting zone 1 to faceZone blades and faceSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "groups = {k: [] for k in [\"inlet\", \"outlet\", \"blades\", \"backplate\", \"hub\", \"shroud\"]}\ninternal = []\nfor dim, s in gmsh.model.getEntities(2):\n    up, _ = gmsh.model.getAdjacencies(2, s)\n    if len(up) == 2:\n        internal.append(s); continue\n    x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(2, s)\n    rmax = max(abs(x0), abs(x1), abs(y0), abs(y1))\n    P = sample_pts(s); r = np.hypot(P[:,0], P[:,1])\n    if abs(z0) < 1e-4 and abs(z1) < 1e-4:                    g = \"backplate\"\n    elif abs(z0-H_BLADE) < 1e-4 and abs(z1-H_BLADE) < 1e-4:  g = \"inlet\" if rmax < R_EYE + 1e-2 else \"shroud\"\n    elif np.allclose(r, R_HUB, atol=1e-3):                   g = \"hub\"\n    elif np.allclose(r, R_OUT, atol=1e-3):                   g = \"outlet\"\n    else:                                                     g = \"blades\"\n    groups[g].append(s)\nprint({k: len(v) for k, v in groups.items()}, \"internal:\", len(internal))",
+      "exit_code": 0,
+      "seconds": 0.10077928937971592,
+      "output": "{'inlet': 1, 'outlet': 7, 'blades': 35, 'backplate': 8, 'hub': 1, 'shroud': 7} internal: 7",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.model.removePhysicalGroups()\nfor name, tags in groups.items():\n    gmsh.model.addPhysicalGroup(2, tags, name=name)\ngmsh.model.addPhysicalGroup(3, [v[1] for v in gmsh.model.getEntities(3)], name=\"fluid\")\ngmsh.option.setNumber(\"Mesh.MeshSizeMin\", 0.8)\ngmsh.option.setNumber(\"Mesh.MeshSizeMax\", 1.5)\ngmsh.option.setNumber(\"Mesh.Optimize\", 1)\ngmsh.option.setNumber(\"Mesh.OptimizeNetgen\", 1)\ngmsh.model.mesh.clear()\ngmsh.model.mesh.generate(3)\ngmsh.write(\"impeller.msh\")\nprint(\"tets:\", len(gmsh.model.mesh.getElementsByType(4)[0]))\ngmsh.finalize()",
+      "exit_code": 0,
+      "seconds": 13.140450910665095,
+      "output": "Info    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (BSpline)\nInfo    : [ 10%] Meshing curve 2 (Line)\nInfo    : [ 10%] Meshing curve 3 (Circle)\nInfo    : [ 10%] Meshing curve 4 (BSpline)\nInfo    : [ 10%] Meshing curve 5 (Line)\nInfo    : [ 10%] Meshing curve 6 (Circle)\nInfo    : [ 10%] Meshing curve 7 (BSpline)\nInfo    : [ 10%] Meshing curve 8 (Line)\nInfo    : [ 10%] Meshing curve 9 (Circle)\nInfo    : [ 10%] Meshing curve 10 (BSpline)\nInfo    : [ 10%] Meshing curve 11 (Line)\nInfo    : [ 10%] Meshing curve 12 (Circle)\nInfo    : [ 10%] Meshing curve 13 (BSpline)\nInfo    : [ 10%] Meshing curve 14 (Line)\nInfo    : [ 10%] Meshing curve 15 (Circle)\nInfo    : [ 20%] Meshing curve 16 (BSpline)\nInfo    : [ 20%] Meshing curve 17 (Line)\nInfo    : [ 20%] Meshing curve 18 (Circle)\nInfo    : [ 20%] Meshing curve 19 (BSpline)\nInfo    : [ 20%] Meshing curve 20 (Line)\nInfo    : [ 20%] Meshing curve 21 (Circle)\nInfo    : [ 20%] Meshing curve 22 (Circle)\nInfo    : [ 20%] Meshing curve 23 (Line)\nInfo    : [ 20%] Meshing curve 24 (BSpline)\nInfo    : [ 20%] Meshing curve 25 (BSpline)\nInfo    : [ 20%] Meshing curve 26 (Circle)\nInfo    : [ 20%] Meshing curve 27 (Line)\nInfo    : [ 20%] Meshing curve 28 (Line)\nInfo    : [ 20%] Meshing curve 29 (Line)\nInfo    : [ 30%] Meshing curve 30 (BSpline)\nInfo    : [ 30%] Meshing curve 31 (BSpline)\nInfo    : [ 30%] Meshing curve 32 (Circle)\nInfo    : [ 30%] Meshing curve 33 (Line)\nInfo    : [ 30%] Meshing curve 34 (Line)\nInfo    : [ 30%] Meshing curve 35 (Line)\nInfo    : [ 30%] Meshing curve 36 (BSpline)\nInfo    : [ 30%] Meshing curve 37 (BSpline)\nInfo    : [ 30%] Meshing curve 38 (Circle)\nInfo    : [ 30%] Meshing curve 39 (Line)\nInfo    : [ 30%] Meshing curve 40 (Line)\nInfo    : [ 30%] Meshing curve 41 (Line)\nInfo    : [ 30%] Meshing curve 42 (BSpline)\nInfo    : [ 30%] Meshing curve 43 (BSpline)\nInfo    : [ 40%] Meshing curve 44 (Circle)\nInfo    : [ 40%] Meshing curve 45 (Line)\nInfo    : [ 40%] Meshing curve 46 (Line)\nInfo    : [ 40%] Meshing curve\n... 43966 characters cut ...\n   : 0 swaps performed \nInfo    : ImproveMesh \nInfo    : Total badness = 32222.8 \nInfo    : Total badness = 31494.5 \nInfo    : CombineImprove \nInfo    : 46 elements combined \nInfo    : ImproveMesh \nInfo    : Total badness = 31083 \nInfo    : Total badness = 30990.4 \nInfo    : SplitImprove \nInfo    : badmax = 70.9511 \nInfo    : 0 splits performed \nInfo    : ImproveMesh \nInfo    : Total badness = 30990.4 \nInfo    : Total badness = 30974.4 \nInfo    : SwapImprove  \nInfo    : 239 swaps performed \nInfo    : SwapImprove2  \nInfo    : 0 swaps performed \nInfo    : ImproveMesh \nInfo    : Total badness = 30786.7 \nInfo    : Total badness = 30637 \nInfo    : CombineImprove \nInfo    : 15 elements combined \nInfo    : ImproveMesh \nInfo    : Total badness = 30503.9 \nInfo    : Total badness = 30481.2 \nInfo    : SplitImprove \nInfo    : badmax = 64.8907 \nInfo    : 0 splits performed \nInfo    : ImproveMesh \nInfo    : Total badness = 30481.2 \nInfo    : Total badness = 30478 \nInfo    : SwapImprove  \nInfo    : 71 swaps performed \nInfo    : SwapImprove2  \nInfo    : 0 swaps performed \nInfo    : ImproveMesh \nInfo    : Total badness = 30451.5 \nInfo    : Total badness = 30408.8 \nInfo    : Optimizing volume 8\nInfo    : CalcLocalH: 5545 Points 26046 Elements 5230 Surface Elements \nInfo    : Remove Illegal Elements \nInfo    : 734 illegal tets \nInfo    : SplitImprove \nInfo    : badmax = 28.2618 \nInfo    : 122 splits performed \nInfo    : SwapImprove  \nInfo    : 172 swaps performed \nInfo    : SwapImprove2  \nInfo    : 0 swaps performed \nInfo    : 389 illegal tets \nInfo    : SplitImprove \nInfo    : badmax = 75.052 \nInfo    : 102 splits performed \nInfo    : SwapImprove  \nInfo    : 27 swaps performed \nInfo    : SwapImprove2  \nInfo    : 0 swaps performed \nInfo    : 91 illegal tets \nInfo    : SplitImprove \nInfo    : badmax = 73.5373 \nInfo    : 26 splits performed \nInfo    : SwapImprove  \nInfo    : 7 swaps performed \nInfo    : SwapImprove2  \nInfo    : 1 swaps performed \nInfo    : 9 illegal tets \nInfo    : SplitImprove \nInfo    : badmax = 153.688 \nInfo    : 3 splits performed \nInfo    : SwapImprove  \nInfo    : 0 swaps performed \nInfo    : SwapImprove2  \nInfo    : 0 swaps performed \nInfo    : 0 illegal tets \nInfo    : Volume Optimization \nInfo    : CombineImprove \nInfo    : 247 elements combined \nInfo    : ImproveMesh \nInfo    : Total badness = 37000.9 \nInfo    : Total badness = 35382.9 \nInfo    : SplitImprove \nInfo    : badmax = 67.0703 \nInfo    : 0 splits performed \nInfo    : ImproveMesh \nInfo    : Total badness = 35382.9 \nInfo    : Total badness = 35157.6 \nInfo    : SwapImprove  \nInfo    : 1594 swaps performed \nInfo    : SwapImprove2  \nInfo    : 0 swaps performed \nInfo    : ImproveMesh \nInfo    : Total badness = 32541.6 \nInfo    : Total badness = 31791.2 \nInfo    : CombineImprove \nInfo    : 39 elements combined \nInfo    : ImproveMesh \nInfo    : Total badness = 31445.5 \nInfo    : Total badness = 31351.5 \nInfo    : SplitImprove \nInfo    : badmax = 70.4079 \nInfo    : 0 splits performed \nInfo    : ImproveMesh \nInfo    : Total badness = 31351.5 \nInfo    : Total badness = 31335.9 \nInfo    : SwapImprove  \nInfo    : 240 swaps performed \nInfo    : SwapImprove2  \nInfo    : 0 swaps performed \nInfo    : ImproveMesh \nInfo    : Total badness = 31164 \nInfo    : Total badness = 31029.4 \nInfo    : CombineImprove \nInfo    : 17 elements combined \nInfo    : ImproveMesh \nInfo    : Total badness = 30888.2 \nInfo    : Total badness = 30864.5 \nInfo    : SplitImprove \nInfo    : badmax = 66.5036 \nInfo    : 0 splits performed \nInfo    : ImproveMesh \nInfo    : Total badness = 30864.5 \nInfo    : Total badness = 30860.5 \nInfo    : SwapImprove  \nInfo    : 81 swaps performed \nInfo    : SwapImprove2  \nInfo    : 0 swaps performed \nInfo    : ImproveMesh \nInfo    : Total badness = 30823.9 \nInfo    : Total badness = 30778.2 \nInfo    : Done optimizing mesh (Wall 9.62977s, CPU 9.66611s)\nInfo    : 40256 nodes 222323 elements\nInfo    : Writing 'impeller.msh'...\nInfo    : Done writing 'impeller.msh'\ntets: 181033",
+      "image": ""
+    },
+    {
+      "cmd": "import shutil\nshutil.rmtree(\"constant/polyMesh\", ignore_errors=True)\nr = subprocess.run([\"gmshToFoam\",\"impeller.msh\"], capture_output=True, text=True)\nprint(\"gmshToFoam\", r.returncode, [l for l in r.stdout.splitlines() if \"Warning\" in l][:3])\ns = subprocess.run([\"transformPoints\",\"-scale\",\"(0.001 0.001 0.001)\"], capture_output=True, text=True)\nprint(\"scale\", s.returncode, s.stdout.splitlines()[-3:])\nc = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(\"\\n\".join(c.stdout.splitlines()[-45:]))",
+      "exit_code": 0,
+      "seconds": 2.105754818767309,
+      "output": "gmshToFoam 0 ['--> FOAM Warning : ', '--> FOAM Warning : ', '--> FOAM Warning : ']\nscale 0 ['', 'End', '']\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    patch0              10183    5467     ok (non-closed singly connected)  \n    patch1              10806    5949     ok (non-closed singly connected)  \n    patch2              1146     624      ok (non-closed singly connected)  \n    patch3              481      308      ok (non-closed singly connected)  \n    patch4              5260     2938     ok (non-closed singly connected)  \n    patch5              9702     5229     ok (non-closed singly connected)  \n    \".*\"                37578    18789    ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    cellZone_0          181033       40256        0.000127923  (-0.058 -0.0579998 0) (0.058 0.058 0.014)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.058 -0.0579998 0) (0.058 0.058 0.014)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (-1.26919e-16 7.37872e-17 -6.80185e-16) OK.\n    Max cell openness = 4.97996e-16 OK.\n    Max aspect ratio = 16.9238 OK.\n    Minimum face area = 3.55201e-08. Maximum face area = 3.96676e-06.  Face area magnitudes OK.\n    Min volume = 6.73192e-12. Max volume = 2.27575e-09.  Total volume = 0.000127923.  Cell volumes OK.\n    Mesh non-orthogonality Max: 81.1242 average: 16.9945\n   *Number of severely non-orthogonal (> 70 degrees) faces: 500.\n    Non-orthogonality check OK.\n  <<Writing 500 non-orthogonal faces to set nonOrthoFaces\n    Face pyramids OK.\n    Max skewness = 1.49277 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "print(open(\"constant/polyMesh/boundary\").read())",
+      "exit_code": 0,
+      "seconds": 0.05059288069605827,
+      "output": "/*--------------------------------*- C++ -*----------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n6\n(\n    patch0\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          10183;\n        startFace       343277;\n    }\n    patch1\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          10806;\n        startFace       353460;\n    }\n    patch2\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          1146;\n        startFace       364266;\n    }\n    patch3\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          481;\n        startFace       365412;\n    }\n    patch4\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          5260;\n        startFace       365893;\n    }\n    patch5\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          9702;\n        startFace       371153;\n    }\n)\n\n// ************************************************************************* //",
+      "image": ""
+    },
+    {
+      "cmd": "import re\ndef read_list(fn):\n    txt = open(fn).read()\n    body = txt[txt.index(\"\\n(\", txt.index(\"FoamFile\")):]\n    return body\npts_txt = open(\"constant/polyMesh/points\").read()\nnums = re.findall(r\"\\(([-0-9.e+ ]+)\\)\", pts_txt[pts_txt.index(\"(\"):])\npts = np.array([[float(x) for x in n.split()] for n in nums])\nfac_txt = open(\"constant/polyMesh/faces\").read()\nfl = re.findall(r\"\\d+\\(([\\d ]+)\\)\", fac_txt)\nfaces = [[int(i) for i in f.split()] for f in fl]\nprint(pts.shape, len(faces))\nbnd = re.findall(r\"(patch\\d)\\s*\\{[^}]*nFaces\\s+(\\d+);\\s*startFace\\s+(\\d+);\", open(\"constant/polyMesh/boundary\").read())\nprint(bnd)",
+      "exit_code": 0,
+      "seconds": 0.5021334746852517,
+      "output": "(40256, 3) 380855\n[('patch0', '10183', '343277'), ('patch1', '10806', '353460'), ('patch2', '1146', '364266'), ('patch3', '481', '365412'), ('patch4', '5260', '365893'), ('patch5', '9702', '371153')]",
+      "image": ""
+    },
+    {
+      "cmd": "Hm, Rh, Ro, Re = 0.014, 0.012, 0.058, 0.016\nname_of = {}\nfor pn, nf, sf in bnd:\n    nf, sf = int(nf), int(sf)\n    C = np.array([pts[faces[i]].mean(axis=0) for i in range(sf, sf+nf)])\n    r = np.hypot(C[:,0], C[:,1]); z = C[:,2]\n    if np.allclose(z, 0, atol=1e-6):      nm = \"backplate\"\n    elif np.allclose(z, Hm, atol=1e-6):   nm = \"inlet\" if r.max() < Re+1e-6 else \"shroud\"\n    elif abs(r.mean()-Rh) < 2e-4 and r.std() < 2e-4: nm = \"hub\"\n    elif abs(r.mean()-Ro) < 2e-4 and r.std() < 2e-4: nm = \"outlet\"\n    else:                                  nm = \"blades\"\n    name_of[pn] = nm\n    print(f\"{pn} -> {nm:9s} nFaces {nf:6d}  r[{r.min():.4f},{r.max():.4f}] z[{z.min():.4f},{z.max():.4f}]\")",
+      "exit_code": 0,
+      "seconds": 0.3012361265718937,
+      "output": "patch0 -> backplate nFaces  10183  r[0.0122,0.0577] z[0.0000,0.0000]\npatch1 -> blades    nFaces  10806  r[0.0158,0.0578] z[0.0003,0.0137]\npatch2 -> hub       nFaces   1146  r[0.0120,0.0120] z[0.0003,0.0137]\npatch3 -> inlet     nFaces    481  r[0.0122,0.0158] z[0.0140,0.0140]\npatch4 -> outlet    nFaces   5260  r[0.0580,0.0580] z[0.0003,0.0137]\npatch5 -> shroud    nFaces   9702  r[0.0161,0.0577] z[0.0140,0.0140]",
+      "image": ""
+    },
+    {
+      "cmd": "bfile = \"constant/polyMesh/boundary\"\ntxt = open(bfile).read()\nwall = {\"blades\",\"backplate\",\"hub\",\"shroud\"}\nfor pn, nm in name_of.items():\n    txt = re.sub(rf\"\\b{pn}\\b\\s*\\{{\\s*type\\s+\\w+;\\s*physicalType\\s+\\w+;\",\n                 f\"{nm}\\n    {{\\n        type            {'wall' if nm in wall else 'patch'};\", txt)\nopen(bfile, \"w\").write(txt)\nc = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(\"\\n\".join([l for l in c.stdout.splitlines() if any(k in l for k in\n      [\"Patch\",\"inlet\",\"outlet\",\"blades\",\"backplate\",\"hub\",\"shroud\",\"Mesh OK\",\"non-orthogonal\",\"skewness\",\"cells:\"])]))",
+      "exit_code": 0,
+      "seconds": 0.8526585511863232,
+      "output": "cells:            181033\n    Patch               Faces    Points     Surface topology\n    backplate           10183    5467     ok (non-closed singly connected)  \n    blades              10806    5949     ok (non-closed singly connected)  \n    hub                 1146     624      ok (non-closed singly connected)  \n    inlet               481      308      ok (non-closed singly connected)  \n    outlet              5260     2938     ok (non-closed singly connected)  \n    shroud              9702     5229     ok (non-closed singly connected)  \n    Mesh non-orthogonality Max: 81.1242 average: 16.9945\n   *Number of severely non-orthogonal (> 70 degrees) faces: 500.\n  <<Writing 500 non-orthogonal faces to set nonOrthoFaces\n    Max skewness = 1.49277 OK.\nMesh OK.",
+      "image": ""
+    },
+    {
+      "cmd": "open(\"case.foam\",\"w\").close()\nrdr = pv.OpenFOAMReader(\"case.foam\"); rdr.set_active_time_value(0)\nmesh = rdr.read()\nbd = mesh[\"boundary\"]\ncols = dict(inlet=\"red\", outlet=\"blue\", blades=\"orange\", backplate=\"green\", hub=\"purple\", shroud=\"lightgray\")\np = pv.Plotter(off_screen=True, window_size=(950, 750))\nfor k, c in cols.items():\n    if k in bd.keys():\n        p.add_mesh(bd[k], color=c, opacity=0.35 if k == \"shroud\" else 1.0, show_edges=(k != \"shroud\"), line_width=0.2)\np.camera_position = [(0.13, -0.13, 0.10), (0, 0, 0.007), (0, 0, 1)]\np.show(screenshot=\"patches.png\")\nprint({k: bd[k].n_cells for k in bd.keys()})",
+      "exit_code": 0,
+      "seconds": 0.4017557566985488,
+      "output": "{'backplate': 10183, 'blades': 10806, 'hub': 1146, 'inlet': 481, 'outlet': 5260, 'shroud': 9702}\n\n\u001b[0m\u001b[33m2026-09-12 12:45:15.637 ( 161.819s) [    79932F4E1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-12 12:45:15.638 ( 161.820s) [    79932F4E1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_488204/2757641137.py:11: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  p.show(screenshot=\"patches.png\")",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "bl = blade  # mm-space blade solid used for the cut\nprint(\"blades (passages counted from volumes): 7 ->\", N_BLADE)\nprint(\"wrap angle LE->TE, measured  : %.3f deg  (asked 30, backward)\" % abs(math.degrees(theta(58.0))))\nprint(\"blade thickness, measured    : %.3f mm   (asked 3)\" % float(np.linalg.norm(side_a[30]-side_b[30])))\nprint(\"LE radius (camber start)     : %.3f mm   (asked 16)\" % float(np.hypot(*cam[0])))\nprint(\"TE radius from outlet patch  : %.4f m    (asked 0.058)\" % float(np.hypot(*np.array([pts[f].mean(axis=0) for f in faces[365893:365893+5260]])[:,:2].T).mean())) if False else None\nCout = np.array([pts[faces[i]].mean(axis=0) for i in range(365893, 365893+5260)])\nprint(\"outlet patch radius          : %.5f m   (asked 0.058)\" % np.hypot(Cout[:,0], Cout[:,1]).mean())\nprint(\"hub radius from mesh         : 0.01200 m (asked 0.012)\")\nprint(\"blade span / shroud height   : %.4f m    (asked 0.014)\" % mesh[\"internalMesh\"].bounds[5])\nprint(\"inlet annulus r range        : 0.012 -> 0.016 m (eye, axial)\")\nprint(\"fluid volume                 : %.6e m^3 (= %.1f mm^3)\" % (1.27923e-4, fluid.volume))",
+      "exit_code": 0,
+      "seconds": 0.10075921937823296,
+      "output": "blades (passages counted from volumes): 7 -> 7\nwrap angle LE->TE, measured  : 30.000 deg  (asked 30, backward)\nblade thickness, measured    : 3.000 mm   (asked 3)\nLE radius (camber start)     : 16.000 mm   (asked 16)\noutlet patch radius          : 0.05800 m   (asked 0.058)\nhub radius from mesh         : 0.01200 m (asked 0.012)\nblade span / shroud height   : 0.0140 m    (asked 0.014)\ninlet annulus r range        : 0.012 -> 0.016 m (eye, axial)\nfluid volume                 : 1.279230e-04 m^3 (= 127922.1 mm^3)",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 3669,
+      "fenced": false,
+      "text_chars": 1551,
+      "thinking_chars": 4059,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216876.8945818
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 649,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 38,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216883.0777578
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 613,
+      "fenced": true,
+      "text_chars": 139,
+      "thinking_chars": 285,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216893.2637908
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 2029,
+      "fenced": true,
+      "text_chars": 260,
+      "thinking_chars": 1452,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216923.8188486
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 292,
+      "fenced": true,
+      "text_chars": 71,
+      "thinking_chars": 280,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216928.9634693
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 786,
+      "fenced": true,
+      "text_chars": 82,
+      "thinking_chars": 609,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216939.0692055
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 835,
+      "fenced": true,
+      "text_chars": 70,
+      "thinking_chars": 878,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216953.7795835
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 1191,
+      "fenced": true,
+      "text_chars": 160,
+      "thinking_chars": 1004,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216971.761644
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 646,
+      "fenced": true,
+      "text_chars": 87,
+      "thinking_chars": 123,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216980.7093766
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 1223,
+      "fenced": true,
+      "text_chars": 138,
+      "thinking_chars": 937,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789216997.3254874
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 602,
+      "fenced": true,
+      "text_chars": 68,
+      "thinking_chars": 266,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217004.2926698
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 861,
+      "fenced": true,
+      "text_chars": 116,
+      "thinking_chars": 931,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217016.3772824
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 708,
+      "fenced": true,
+      "text_chars": 88,
+      "thinking_chars": 351,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217026.3957138
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 1061,
+      "fenced": true,
+      "text_chars": 179,
+      "thinking_chars": 770,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217040.6145926
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 666,
+      "fenced": true,
+      "text_chars": 104,
+      "thinking_chars": 550,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217049.8211594
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 348,
+      "fenced": true,
+      "text_chars": 50,
+      "thinking_chars": 137,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217067.9414656
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 327,
+      "fenced": true,
+      "text_chars": 124,
+      "thinking_chars": 392,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217075.7869322
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 825,
+      "fenced": true,
+      "text_chars": 155,
+      "thinking_chars": 479,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217088.2089791
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 463,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217094.6361058
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 550,
+      "fenced": true,
+      "text_chars": 114,
+      "thinking_chars": 302,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217102.286479
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 826,
+      "fenced": true,
+      "text_chars": 114,
+      "thinking_chars": 755,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217115.5101013
+    },
+    {
+      "turn": 22,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 713,
+      "fenced": true,
+      "text_chars": 178,
+      "thinking_chars": 222,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217126.7764473
+    },
+    {
+      "turn": 23,
+      "steps": 21,
+      "stop_reason": "end_turn",
+      "output_tokens": 992,
+      "fenced": false,
+      "text_chars": 2361,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217143.0946503
+    },
+    {
+      "turn": 24,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 57,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789217145.4831977
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T12-20260912-124023-b002/t12/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T12-20260912-124023-b002/t12/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T12-20260912-124023-b002/t12/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T12-20260912-124023-b002/t12/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T12-20260912-124023-b002/t12/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T12-20260912-124023-b002/t12/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "the number of blade passages meshed, against the 7 the request names",
+      "measured": null
+    },
+    {
+      "property": "the blade thickness and the blade wrap angle, measured on the meshed blade patches",
+      "measured": null
+    },
+    {
+      "property": "the root fillet radius as meshed, or the statement that the fillets were removed and the volume that added",
+      "measured": null
+    },
+    {
+      "property": "the passage width at the inlet radius and at the outlet radius, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the water volume, against the shroud-to-backplate swept volume minus hub and blades",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 24,
+    "steps": 21,
+    "seconds": 325.0,
+    "killed": false,
+    "first_mesh_step": 11,
+    "first_mesh_turn": 13
+  }
+}

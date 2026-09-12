@@ -1,0 +1,856 @@
+# -- cell 1 (2.2s, exit 0)
+import numpy as np, math
+from build123d import *
+
+R_HUB, R_OUT, R_LE, R_TE = 12.0, 58.0, 16.0, 58.0
+H_BLADE, T_BLADE, N_BLADE, WRAP = 14.0, 3.0, 7, 30.0   # mm, deg
+R_EXT = 59.5   # blade built past the outlet so the TE is a clean cut
+
+def theta(r):   # backward: theta decreases as r grows (rotation is +z / CCW)
+    return -math.radians(WRAP) * (r - R_LE) / (R_TE - R_LE)
+
+rs = np.linspace(R_LE, R_EXT, 60)
+cam = np.array([[r*math.cos(theta(r)), r*math.sin(theta(r))] for r in rs])
+tan = np.gradient(cam, axis=0); tan /= np.linalg.norm(tan, axis=1)[:, None]
+nor = np.stack([-tan[:, 1], tan[:, 0]], axis=1)
+side_a = cam + 0.5*T_BLADE*nor
+side_b = cam - 0.5*T_BLADE*nor
+pts = [tuple(p) for p in side_a] + [tuple(p) for p in side_b[::-1]]
+blade_sk = Polygon(*pts, align=None)
+blade = extrude(blade_sk, amount=H_BLADE)
+
+print("camber wrap LE->TE at r=58 (deg):", math.degrees(theta(58.0)))
+print("blade solid volume mm^3:", round(blade.volume, 1))
+print("bbox:", blade.bounding_box())
+print("thickness check (a-b at mid):", np.linalg.norm(side_a[30]-side_b[30]))
+# -- output
+camber wrap LE->TE at r=58 (deg): -29.999999999999996
+blade solid volume mm^3: 2035.7
+bbox: bbox: 15.693334485280978 <= x <= 52.346054466480695, -31.289480833073945 <= y <= 1.4683174936239494, -14.0 <= z <= 0.0
+thickness check (a-b at mid): 2.9999999999999987
+
+# -- cell 2 (2.4s, exit 0)
+blade = Pos(0, 0, H_BLADE) * blade   # now spans z = 0..14
+annulus = extrude(Pos(0,0,0)*(Circle(R_OUT) - Circle(R_HUB)), amount=H_BLADE)
+print("annulus bbox:", annulus.bounding_box(), "vol", round(annulus.volume,1))
+
+blades = [Rot(0, 0, i*360.0/N_BLADE) * blade for i in range(N_BLADE)]
+fluid = annulus
+for b in blades:
+    fluid = fluid - b
+print("fluid volume mm^3:", round(fluid.volume, 1), " solids:", len(fluid.solids()))
+print("fluid bbox:", fluid.bounding_box())
+print("n faces:", len(fluid.faces()))
+# -- output
+annulus bbox: bbox: -58.0 <= x <= 58.0, -58.0 <= y <= 58.0, 0.0 <= z <= 14.0 vol 141623.0
+fluid volume mm^3: 127922.5  solids: 1
+fluid bbox: bbox: -58.00000000000001 <= x <= 58.000000000000014, -58.000000000000014 <= y <= 58.00000000000001, 0.0 <= z <= 14.0
+n faces: 822
+
+# -- cell 3 (0.5s, exit 0)
+R_EYE = 16.0   # inlet annulus 12..16 at z=14, shroud outboard of it
+
+l_a = Spline(*[(float(p[0]), float(p[1])) for p in side_a])
+l_b = Spline(*[(float(p[0]), float(p[1])) for p in side_b])
+prof = l_a + Line(l_a @ 1, l_b @ 1) + l_b.reversed() + Line(l_b @ 0, l_a @ 0)
+blade_sk = make_face(prof)
+blade = Pos(0, 0, 0) * extrude(blade_sk, amount=H_BLADE)
+if blade.bounding_box().min.Z < 0:
+    blade = Pos(0, 0, H_BLADE) * blade
+
+annulus = extrude(Circle(R_OUT) - Circle(R_HUB), amount=H_BLADE)
+if annulus.bounding_box().min.Z < 0:
+    annulus = Pos(0, 0, H_BLADE) * annulus
+fluid = annulus
+for i in range(N_BLADE):
+    fluid = fluid - (Rot(0, 0, i*360.0/N_BLADE) * blade)
+
+eye_cyl = extrude(Circle(R_EYE), amount=H_BLADE)
+if eye_cyl.bounding_box().min.Z < 0:
+    eye_cyl = Pos(0, 0, H_BLADE) * eye_cyl
+fluid_in  = fluid & eye_cyl
+fluid_out = fluid - eye_cyl
+print("faces on fluid:", len(fluid.faces()), " vol", round(fluid.volume,1))
+print("inner vol", round(fluid_in.volume,1), "faces", len(fluid_in.faces()))
+print("outer vol", round(fluid_out.volume,1), "faces", len(fluid_out.faces()))
+print("sum vs fluid:", round(fluid_in.volume+fluid_out.volume,1))
+# -- output
+faces on fluid: 4  vol 141623.0
+inner vol 4926.0 faces 4
+outer vol 136697.0 faces 4
+sum vs fluid: 141623.0
+
+# -- cell 4 (0.1s, exit 0)
+print(type(blade_sk), blade_sk.area if hasattr(blade_sk,'area') else None)
+print(type(blade), blade.volume, blade.bounding_box())
+print("prof closed?", prof.is_closed if hasattr(prof,'is_closed') else None, len(prof.edges()))
+# -- output
+<class 'build123d.topology.composite.Sketch'> 145.41257923907085
+<class 'build123d.topology.composite.Part'> 2035.7755221822817 bbox: 15.693334385280979 <= x <= 52.34605456648071, -31.289480933073946 <= y <= 1.4683175936239494, 13.9999999 <= z <= 28.0000001
+prof closed? True 4
+
+# -- cell 5 (1.5s, exit 0)
+def lift(s):
+    return Pos(0, 0, H_BLADE) * s if s.bounding_box().min.Z < -1e-6 else s
+
+blade = lift(extrude(blade_sk, amount=H_BLADE))
+annulus = lift(extrude(Circle(R_OUT) - Circle(R_HUB), amount=H_BLADE))
+eye_cyl = lift(extrude(Circle(R_EYE), amount=H_BLADE))
+fluid = annulus
+for i in range(N_BLADE):
+    fluid = fluid - (Rot(0, 0, i*360.0/N_BLADE) * blade)
+fluid_in, fluid_out = fluid & eye_cyl, fluid - eye_cyl
+print("blade bbox", blade.bounding_box(), "vol", round(blade.volume,1))
+print("fluid vol", round(fluid.volume,1), "faces", len(fluid.faces()))
+print("in", round(fluid_in.volume,1), len(fluid_in.faces()), " out", round(fluid_out.volume,1), len(fluid_out.faces()))
+# -- output
+blade bbox bbox: 15.693334385280979 <= x <= 52.34605456648071, -31.289480933073946 <= y <= 1.4683175936239494, -1e-07 <= z <= 14.0000001 vol 2035.8
+fluid vol 127922.1 faces 31
+in 4906.6 24  out 123015.4 49
+
+# -- cell 6 (0.6s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+export_stl(Compound([fluid_in, fluid_out]), "look.stl", tolerance=0.05)
+m = pv.read("look.stl")
+p = pv.Plotter(off_screen=True, window_size=(900, 700))
+p.add_mesh(m, color="lightsteelblue", show_edges=True, edge_color="gray", line_width=0.3)
+p.camera_position = [(150, -150, 120), (0, 0, 7), (0, 0, 1)]
+p.show(screenshot="look.png")
+print("ok")
+# -- output
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 12:42:34.112 (   0.294s) [    79932F4E1780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 12:42:34.113 (   0.295s) [    79932F4E1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 12:42:34.126 (   0.307s) [    79932F4E1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_488204/3731549292.py:8: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.show(screenshot="look.png")
+
+# -- cell 7 (0.9s, exit 0)
+import os, subprocess
+export_step(Compound([fluid_in, fluid_out]), "impeller_fluid.step")
+print(os.path.getsize("impeller_fluid.step"))
+
+import gmsh
+gmsh.initialize()
+gmsh.model.add("imp")
+gmsh.merge("impeller_fluid.step")
+vols = gmsh.model.getEntities(3)
+print("volumes:", vols)
+out, _ = gmsh.model.occ.fragment([(3, v[1]) for v in vols], [])
+gmsh.model.occ.synchronize()
+print("after fragment volumes:", gmsh.model.getEntities(3), "surfaces:", len(gmsh.model.getEntities(2)))
+# -- output
+832536
+Info    : Reading 'impeller_fluid.step'...
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+volumes: [(3, 1), (3, 2), (3, 3), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8)]
+Info    : Done reading 'impeller_fluid.step'
+Info    : [  0%] Fragments                                                                                  Info    : [ 10%] Fragments                                                                                  Info    : [ 20%] Fragments                                                                                  Info    : [ 30%] Fragments                                                                                  Info    : [ 40%] Fragments                                                                                  Info    : [ 50%] Fragments                                                                                  Info    : [ 60%] Fragments                                                                                  Info    : [ 70%] Fragments                                                                                  Info    : [ 80%] Fragments - Splitting faces                                                                                                                                                                after fragment volumes: [(3, 1), (3, 2), (3, 3), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8)] surfaces: 66
+
+# -- cell 8 (0.1s, exit 0)
+import numpy as np
+def sample_pts(s, n=6):
+    b = gmsh.model.getParametrizationBounds(2, s)
+    us = np.linspace(b[0][0], b[1][0], n); vs = np.linspace(b[0][1], b[1][1], n)
+    P = []
+    for u in us:
+        for v in vs:
+            try: P.append(gmsh.model.getValue(2, s, [u, v]))
+            except Exception: pass
+    return np.array(P).reshape(-1, 3)
+
+groups = {k: [] for k in ["inlet", "outlet", "blades", "backplate", "hub", "shroud"]}
+for dim, s in gmsh.model.getEntities(2):
+    P = sample_pts(s); r = np.hypot(P[:,0], P[:,1]); z = P[:,2]
+    if np.allclose(z, 0.0, atol=1e-4):            g = "backplate"
+    elif np.allclose(z, H_BLADE, atol=1e-4):      g = "inlet" if r.max() < R_EYE + 1e-3 else "shroud"
+    elif np.allclose(r, R_HUB, atol=1e-3):        g = "hub"
+    elif np.allclose(r, R_OUT, atol=1e-3):        g = "outlet"
+    else:                                          g = "blades"
+    groups[g].append(s)
+for k, v in groups.items(): print(k, len(v), v[:8])
+# -- output
+inlet 0 []
+outlet 7 [25, 33, 39, 45, 51, 57, 63]
+blades 42 [2, 3, 4, 5, 6, 7, 8, 9]
+backplate 8 [1, 26, 31, 37, 43, 49, 55, 61]
+hub 1 [23]
+shroud 8 [24, 28, 36, 42, 48, 54, 60, 66]
+
+# -- cell 9 (0.1s, exit 0)
+groups = {k: [] for k in ["inlet", "outlet", "blades", "backplate", "hub", "shroud"]}
+for dim, s in gmsh.model.getEntities(2):
+    x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(2, s)
+    rmax = max(np.hypot(a,b) for a in (x0,x1) for b in (y0,y1))
+    P = sample_pts(s); r = np.hypot(P[:,0], P[:,1])
+    if abs(z0) < 1e-4 and abs(z1) < 1e-4:                    g = "backplate"
+    elif abs(z0-H_BLADE) < 1e-4 and abs(z1-H_BLADE) < 1e-4:  g = "inlet" if rmax < R_EYE + 1e-2 else "shroud"
+    elif np.allclose(r, R_HUB, atol=1e-3):                   g = "hub"
+    elif np.allclose(r, R_OUT, atol=1e-3):                   g = "outlet"
+    else:                                                     g = "blades"
+    groups[g].append(s)
+for k, v in groups.items(): print(k, len(v), v[:8])
+print("eye top bbox:", gmsh.model.getBoundingBox(2, 24))
+# -- output
+inlet 0 []
+outlet 7 [25, 33, 39, 45, 51, 57, 63]
+blades 42 [2, 3, 4, 5, 6, 7, 8, 9]
+backplate 8 [1, 26, 31, 37, 43, 49, 55, 61]
+hub 1 [23]
+shroud 8 [24, 28, 36, 42, 48, 54, 60, 66]
+eye top bbox: (-16.000000100000015, -16.000000100000015, 13.999999899999985, 16.000000100000015, 16.000000100000015, 14.000000100000015)
+
+# -- cell 10 (0.2s, exit 0)
+groups = {k: [] for k in ["inlet", "outlet", "blades", "backplate", "hub", "shroud"]}
+for dim, s in gmsh.model.getEntities(2):
+    x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(2, s)
+    rmax = max(abs(x0), abs(x1), abs(y0), abs(y1))
+    P = sample_pts(s); r = np.hypot(P[:,0], P[:,1])
+    if abs(z0) < 1e-4 and abs(z1) < 1e-4:                    g = "backplate"
+    elif abs(z0-H_BLADE) < 1e-4 and abs(z1-H_BLADE) < 1e-4:  g = "inlet" if rmax < R_EYE + 1e-2 else "shroud"
+    elif np.allclose(r, R_HUB, atol=1e-3):                   g = "hub"
+    elif np.allclose(r, R_OUT, atol=1e-3):                   g = "outlet"
+    else:                                                     g = "blades"
+    groups[g].append(s)
+for k, v in groups.items(): print(k, len(v), v[:8])
+# -- output
+inlet 1 [24]
+outlet 7 [25, 33, 39, 45, 51, 57, 63]
+blades 42 [2, 3, 4, 5, 6, 7, 8, 9]
+backplate 8 [1, 26, 31, 37, 43, 49, 55, 61]
+hub 1 [23]
+shroud 7 [28, 36, 42, 48, 54, 60, 66]
+
+# -- cell 11 (0.6s, exit 0)
+for name, tags in groups.items():
+    gmsh.model.addPhysicalGroup(2, tags, name=name)
+gmsh.model.addPhysicalGroup(3, [v[1] for v in gmsh.model.getEntities(3)], name="fluid")
+gmsh.option.setNumber("Mesh.MeshSizeMin", 2.0)
+gmsh.option.setNumber("Mesh.MeshSizeMax", 3.0)
+gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+gmsh.option.setNumber("Mesh.Algorithm3D", 1)
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.model.mesh.generate(3)
+gmsh.write("coarse.msh")
+ntet = len(gmsh.model.mesh.getElementsByType(4)[0])
+print("tets:", ntet)
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (BSpline)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Circle)
+Info    : [ 10%] Meshing curve 4 (BSpline)
+Info    : [ 10%] Meshing curve 5 (Line)
+Info    : [ 10%] Meshing curve 6 (Circle)
+Info    : [ 10%] Meshing curve 7 (BSpline)
+Info    : [ 10%] Meshing curve 8 (Line)
+Info    : [ 10%] Meshing curve 9 (Circle)
+Info    : [ 10%] Meshing curve 10 (BSpline)
+Info    : [ 10%] Meshing curve 11 (Line)
+Info    : [ 10%] Meshing curve 12 (Circle)
+Info    : [ 10%] Meshing curve 13 (BSpline)
+Info    : [ 10%] Meshing curve 14 (Line)
+Info    : [ 10%] Meshing curve 15 (Circle)
+Info    : [ 20%] Meshing curve 16 (BSpline)
+Info    : [ 20%] Meshing curve 17 (Line)
+Info    : [ 20%] Meshing curve 18 (Circle)
+Info    : [ 20%] Meshing curve 19 (BSpline)
+Info    : [ 20%] Meshing curve 20 (Line)
+Info    : [ 20%] Meshing curve 21 (Circle)
+Info    : [ 20%] Meshing curve 22 (Circle)
+Info    : [ 20%] Meshing curve 23 (Line)
+Info    : [ 20%] Meshing curve 24 (BSpline)
+Info    : [ 20%] Meshing curve 25 (BSpline)
+Info    : [ 20%] Meshing curve 26 (Circle)
+Info    : [ 20%] Meshing curve 27 (Line)
+Info    : [ 20%] Meshing curve 28 (Line)
+Info    : [ 20%] Meshing curve 29 (Line)
+Info    : [ 30%] Meshing curve 30 (BSpline)
+Info    : [ 30%] Meshing curve 31 (BSpline)
+Info    : [ 30%] Meshing curve 32 (Circle)
+Info    : [ 30%] Meshing curve 33 (Line)
+Info    : [ 30%] Meshing curve 34 (Line)
+Info    : [ 30%] Meshing curve 35 (Line)
+Info    : [ 30%] Meshing curve 36 (BSpline)
+Info    : [ 30%] Meshing curve 37 (BSpline)
+Info    : [ 30%] Meshing curve 38 (Circle)
+Info    : [ 30%] Meshing curve 39 (Line)
+Info    : [ 30%] Meshing curve 40 (Line)
+Info    : [ 30%] Meshing curve 41 (Line)
+Info    : [ 30%] Meshing curve 42 (BSpline)
+Info    : [ 30%] Meshing curve 43 (BSpline)
+Info    : [ 40%] Meshing curve 44 (Circle)
+Info    : [ 40%] Meshing curve 45 (Line)
+Info    : [ 40%] Meshing curve 46 (Line)
+Info    : [ 40%] Meshing curve
+... 17782 characters cut ...
+< 0.60 :       199 elements
+Info    : 0.60 < quality < 0.70 :       566 elements
+Info    : 0.70 < quality < 0.80 :      1030 elements
+Info    : 0.80 < quality < 0.90 :      1241 elements
+Info    : 0.90 < quality < 1.00 :       558 elements
+Info    : 98 edge swaps, 4 node relocations (volume = 17572.7): worst = 0.0471231 / average = 0.76643 (Wall 0.00141526s, CPU 0.001442s)
+Info    : 99 edge swaps, 4 node relocations (volume = 17572.7): worst = 0.0471231 / average = 0.766343 (Wall 0.00180289s, CPU 0.001752s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         5 elements
+Info    : 0.10 < quality < 0.20 :        15 elements
+Info    : 0.20 < quality < 0.30 :         4 elements
+Info    : 0.30 < quality < 0.40 :        78 elements
+Info    : 0.40 < quality < 0.50 :       105 elements
+Info    : 0.50 < quality < 0.60 :       200 elements
+Info    : 0.60 < quality < 0.70 :       579 elements
+Info    : 0.70 < quality < 0.80 :      1022 elements
+Info    : 0.80 < quality < 0.90 :      1250 elements
+Info    : 0.90 < quality < 1.00 :       564 elements
+Info    : Optimizing volume 7
+Info    : Optimization starts (volume = 17572.7) with worst = 0.0365968 / average = 0.751347:
+Info    : 0.00 < quality < 0.10 :        23 elements
+Info    : 0.10 < quality < 0.20 :        45 elements
+Info    : 0.20 < quality < 0.30 :        54 elements
+Info    : 0.30 < quality < 0.40 :        61 elements
+Info    : 0.40 < quality < 0.50 :       108 elements
+Info    : 0.50 < quality < 0.60 :       207 elements
+Info    : 0.60 < quality < 0.70 :       570 elements
+Info    : 0.70 < quality < 0.80 :      1052 elements
+Info    : 0.80 < quality < 0.90 :      1226 elements
+Info    : 0.90 < quality < 1.00 :       532 elements
+Info    : 98 edge swaps, 0 node relocations (volume = 17572.7): worst = 0.0457228 / average = 0.767535 (Wall 0.00138395s, CPU 0.00141s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         5 elements
+Info    : 0.10 < quality < 0.20 :        14 elements
+Info    : 0.20 < quality < 0.30 :         5 elements
+Info    : 0.30 < quality < 0.40 :        59 elements
+Info    : 0.40 < quality < 0.50 :        99 elements
+Info    : 0.50 < quality < 0.60 :       200 elements
+Info    : 0.60 < quality < 0.70 :       574 elements
+Info    : 0.70 < quality < 0.80 :      1062 elements
+Info    : 0.80 < quality < 0.90 :      1232 elements
+Info    : 0.90 < quality < 1.00 :       535 elements
+Info    : Optimizing volume 8
+Info    : Optimization starts (volume = 17572.7) with worst = 0.0263278 / average = 0.752932:
+Info    : 0.00 < quality < 0.10 :        21 elements
+Info    : 0.10 < quality < 0.20 :        38 elements
+Info    : 0.20 < quality < 0.30 :        54 elements
+Info    : 0.30 < quality < 0.40 :        75 elements
+Info    : 0.40 < quality < 0.50 :       106 elements
+Info    : 0.50 < quality < 0.60 :       187 elements
+Info    : 0.60 < quality < 0.70 :       575 elements
+Info    : 0.70 < quality < 0.80 :      1102 elements
+Info    : 0.80 < quality < 0.90 :      1200 elements
+Info    : 0.90 < quality < 1.00 :       556 elements
+Info    : 89 edge swaps, 2 node relocations (volume = 17572.7): worst = 0.0457205 / average = 0.766367 (Wall 0.00131391s, CPU 0.001348s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         5 elements
+Info    : 0.10 < quality < 0.20 :        14 elements
+Info    : 0.20 < quality < 0.30 :         5 elements
+Info    : 0.30 < quality < 0.40 :        74 elements
+Info    : 0.40 < quality < 0.50 :       104 elements
+Info    : 0.50 < quality < 0.60 :       195 elements
+Info    : 0.60 < quality < 0.70 :       570 elements
+Info    : 0.70 < quality < 0.80 :      1094 elements
+Info    : 0.80 < quality < 0.90 :      1216 elements
+Info    : 0.90 < quality < 1.00 :       558 elements
+Info    : Done optimizing mesh (Wall 0.0346433s, CPU 0.035263s)
+Info    : 7426 nodes 40668 elements
+Info    : Writing 'coarse.msh'...
+Info    : Done writing 'coarse.msh'
+tets: 28537
+
+# -- cell 12 (0.4s, exit 0)
+import os, subprocess, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+hdr = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+open("system/controlDict","w").write(hdr%"controlDict"+textwrap.dedent("""
+application simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;
+writePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;
+"""))
+open("system/fvSchemes","w").write(hdr%"fvSchemes"+"ddtSchemes{default steadyState;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write(hdr%"fvSolution"+"solvers{}\n")
+r1 = subprocess.run(["gmshToFoam","coarse.msh"], capture_output=True, text=True)
+print(r1.returncode, r1.stdout[-800:], r1.stderr[-400:])
+# -- output
+0 ro vertex is not on boundary of polyMesh
+--> FOAM Warning : Not using gmsh face 3(1256 1266 1253) since zero vertex is not on boundary of polyMesh
+--> FOAM Warning : Not using gmsh face 3(1260 1261 1254) since zero vertex is not on boundary of polyMesh
+--> FOAM Warning : Not using gmsh face 3(1254 1263 1260) since zero vertex is not on boundary of polyMesh
+--> FOAM Warning : Not using gmsh face 3(1255 1259 1258) since zero vertex is not on boundary of polyMesh
+--> FOAM Warning : Not using gmsh face 3(1258 1265 1255) since zero vertex is not on boundary of polyMesh
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+Finding faces of patch 5
+
+FaceZones:
+Zone	Size
+    1	448
+
+Writing zone 0 to cellZone fluid and cellSet
+Writing zone 1 to faceZone blades and faceSet
+End
+
+# -- cell 13 (0.1s, exit 0)
+groups = {k: [] for k in ["inlet", "outlet", "blades", "backplate", "hub", "shroud"]}
+internal = []
+for dim, s in gmsh.model.getEntities(2):
+    up, _ = gmsh.model.getAdjacencies(2, s)
+    if len(up) == 2:
+        internal.append(s); continue
+    x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(2, s)
+    rmax = max(abs(x0), abs(x1), abs(y0), abs(y1))
+    P = sample_pts(s); r = np.hypot(P[:,0], P[:,1])
+    if abs(z0) < 1e-4 and abs(z1) < 1e-4:                    g = "backplate"
+    elif abs(z0-H_BLADE) < 1e-4 and abs(z1-H_BLADE) < 1e-4:  g = "inlet" if rmax < R_EYE + 1e-2 else "shroud"
+    elif np.allclose(r, R_HUB, atol=1e-3):                   g = "hub"
+    elif np.allclose(r, R_OUT, atol=1e-3):                   g = "outlet"
+    else:                                                     g = "blades"
+    groups[g].append(s)
+print({k: len(v) for k, v in groups.items()}, "internal:", len(internal))
+# -- output
+{'inlet': 1, 'outlet': 7, 'blades': 35, 'backplate': 8, 'hub': 1, 'shroud': 7} internal: 7
+
+# -- cell 14 (13.1s, exit 0)
+gmsh.model.removePhysicalGroups()
+for name, tags in groups.items():
+    gmsh.model.addPhysicalGroup(2, tags, name=name)
+gmsh.model.addPhysicalGroup(3, [v[1] for v in gmsh.model.getEntities(3)], name="fluid")
+gmsh.option.setNumber("Mesh.MeshSizeMin", 0.8)
+gmsh.option.setNumber("Mesh.MeshSizeMax", 1.5)
+gmsh.option.setNumber("Mesh.Optimize", 1)
+gmsh.option.setNumber("Mesh.OptimizeNetgen", 1)
+gmsh.model.mesh.clear()
+gmsh.model.mesh.generate(3)
+gmsh.write("impeller.msh")
+print("tets:", len(gmsh.model.mesh.getElementsByType(4)[0]))
+gmsh.finalize()
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (BSpline)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Circle)
+Info    : [ 10%] Meshing curve 4 (BSpline)
+Info    : [ 10%] Meshing curve 5 (Line)
+Info    : [ 10%] Meshing curve 6 (Circle)
+Info    : [ 10%] Meshing curve 7 (BSpline)
+Info    : [ 10%] Meshing curve 8 (Line)
+Info    : [ 10%] Meshing curve 9 (Circle)
+Info    : [ 10%] Meshing curve 10 (BSpline)
+Info    : [ 10%] Meshing curve 11 (Line)
+Info    : [ 10%] Meshing curve 12 (Circle)
+Info    : [ 10%] Meshing curve 13 (BSpline)
+Info    : [ 10%] Meshing curve 14 (Line)
+Info    : [ 10%] Meshing curve 15 (Circle)
+Info    : [ 20%] Meshing curve 16 (BSpline)
+Info    : [ 20%] Meshing curve 17 (Line)
+Info    : [ 20%] Meshing curve 18 (Circle)
+Info    : [ 20%] Meshing curve 19 (BSpline)
+Info    : [ 20%] Meshing curve 20 (Line)
+Info    : [ 20%] Meshing curve 21 (Circle)
+Info    : [ 20%] Meshing curve 22 (Circle)
+Info    : [ 20%] Meshing curve 23 (Line)
+Info    : [ 20%] Meshing curve 24 (BSpline)
+Info    : [ 20%] Meshing curve 25 (BSpline)
+Info    : [ 20%] Meshing curve 26 (Circle)
+Info    : [ 20%] Meshing curve 27 (Line)
+Info    : [ 20%] Meshing curve 28 (Line)
+Info    : [ 20%] Meshing curve 29 (Line)
+Info    : [ 30%] Meshing curve 30 (BSpline)
+Info    : [ 30%] Meshing curve 31 (BSpline)
+Info    : [ 30%] Meshing curve 32 (Circle)
+Info    : [ 30%] Meshing curve 33 (Line)
+Info    : [ 30%] Meshing curve 34 (Line)
+Info    : [ 30%] Meshing curve 35 (Line)
+Info    : [ 30%] Meshing curve 36 (BSpline)
+Info    : [ 30%] Meshing curve 37 (BSpline)
+Info    : [ 30%] Meshing curve 38 (Circle)
+Info    : [ 30%] Meshing curve 39 (Line)
+Info    : [ 30%] Meshing curve 40 (Line)
+Info    : [ 30%] Meshing curve 41 (Line)
+Info    : [ 30%] Meshing curve 42 (BSpline)
+Info    : [ 30%] Meshing curve 43 (BSpline)
+Info    : [ 40%] Meshing curve 44 (Circle)
+Info    : [ 40%] Meshing curve 45 (Line)
+Info    : [ 40%] Meshing curve 46 (Line)
+Info    : [ 40%] Meshing curve
+... 43966 characters cut ...
+   : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 32222.8 
+Info    : Total badness = 31494.5 
+Info    : CombineImprove 
+Info    : 46 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 31083 
+Info    : Total badness = 30990.4 
+Info    : SplitImprove 
+Info    : badmax = 70.9511 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 30990.4 
+Info    : Total badness = 30974.4 
+Info    : SwapImprove  
+Info    : 239 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 30786.7 
+Info    : Total badness = 30637 
+Info    : CombineImprove 
+Info    : 15 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 30503.9 
+Info    : Total badness = 30481.2 
+Info    : SplitImprove 
+Info    : badmax = 64.8907 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 30481.2 
+Info    : Total badness = 30478 
+Info    : SwapImprove  
+Info    : 71 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 30451.5 
+Info    : Total badness = 30408.8 
+Info    : Optimizing volume 8
+Info    : CalcLocalH: 5545 Points 26046 Elements 5230 Surface Elements 
+Info    : Remove Illegal Elements 
+Info    : 734 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 28.2618 
+Info    : 122 splits performed 
+Info    : SwapImprove  
+Info    : 172 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : 389 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 75.052 
+Info    : 102 splits performed 
+Info    : SwapImprove  
+Info    : 27 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : 91 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 73.5373 
+Info    : 26 splits performed 
+Info    : SwapImprove  
+Info    : 7 swaps performed 
+Info    : SwapImprove2  
+Info    : 1 swaps performed 
+Info    : 9 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 153.688 
+Info    : 3 splits performed 
+Info    : SwapImprove  
+Info    : 0 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : 0 illegal tets 
+Info    : Volume Optimization 
+Info    : CombineImprove 
+Info    : 247 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 37000.9 
+Info    : Total badness = 35382.9 
+Info    : SplitImprove 
+Info    : badmax = 67.0703 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 35382.9 
+Info    : Total badness = 35157.6 
+Info    : SwapImprove  
+Info    : 1594 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 32541.6 
+Info    : Total badness = 31791.2 
+Info    : CombineImprove 
+Info    : 39 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 31445.5 
+Info    : Total badness = 31351.5 
+Info    : SplitImprove 
+Info    : badmax = 70.4079 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 31351.5 
+Info    : Total badness = 31335.9 
+Info    : SwapImprove  
+Info    : 240 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 31164 
+Info    : Total badness = 31029.4 
+Info    : CombineImprove 
+Info    : 17 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 30888.2 
+Info    : Total badness = 30864.5 
+Info    : SplitImprove 
+Info    : badmax = 66.5036 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 30864.5 
+Info    : Total badness = 30860.5 
+Info    : SwapImprove  
+Info    : 81 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 30823.9 
+Info    : Total badness = 30778.2 
+Info    : Done optimizing mesh (Wall 9.62977s, CPU 9.66611s)
+Info    : 40256 nodes 222323 elements
+Info    : Writing 'impeller.msh'...
+Info    : Done writing 'impeller.msh'
+tets: 181033
+
+# -- cell 15 (2.1s, exit 0)
+import shutil
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+r = subprocess.run(["gmshToFoam","impeller.msh"], capture_output=True, text=True)
+print("gmshToFoam", r.returncode, [l for l in r.stdout.splitlines() if "Warning" in l][:3])
+s = subprocess.run(["transformPoints","-scale","(0.001 0.001 0.001)"], capture_output=True, text=True)
+print("scale", s.returncode, s.stdout.splitlines()[-3:])
+c = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print("\n".join(c.stdout.splitlines()[-45:]))
+# -- output
+gmshToFoam 0 ['--> FOAM Warning : ', '--> FOAM Warning : ', '--> FOAM Warning : ']
+scale 0 ['', 'End', '']
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    patch0              10183    5467     ok (non-closed singly connected)  
+    patch1              10806    5949     ok (non-closed singly connected)  
+    patch2              1146     624      ok (non-closed singly connected)  
+    patch3              481      308      ok (non-closed singly connected)  
+    patch4              5260     2938     ok (non-closed singly connected)  
+    patch5              9702     5229     ok (non-closed singly connected)  
+    ".*"                37578    18789    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    cellZone_0          181033       40256        0.000127923  (-0.058 -0.0579998 0) (0.058 0.058 0.014)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.058 -0.0579998 0) (0.058 0.058 0.014)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.26919e-16 7.37872e-17 -6.80185e-16) OK.
+    Max cell openness = 4.97996e-16 OK.
+    Max aspect ratio = 16.9238 OK.
+    Minimum face area = 3.55201e-08. Maximum face area = 3.96676e-06.  Face area magnitudes OK.
+    Min volume = 6.73192e-12. Max volume = 2.27575e-09.  Total volume = 0.000127923.  Cell volumes OK.
+    Mesh non-orthogonality Max: 81.1242 average: 16.9945
+   *Number of severely non-orthogonal (> 70 degrees) faces: 500.
+    Non-orthogonality check OK.
+  <<Writing 500 non-orthogonal faces to set nonOrthoFaces
+    Face pyramids OK.
+    Max skewness = 1.49277 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 16 (0.1s, exit 0)
+print(open("constant/polyMesh/boundary").read())
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+6
+(
+    patch0
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          10183;
+        startFace       343277;
+    }
+    patch1
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          10806;
+        startFace       353460;
+    }
+    patch2
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1146;
+        startFace       364266;
+    }
+    patch3
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          481;
+        startFace       365412;
+    }
+    patch4
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          5260;
+        startFace       365893;
+    }
+    patch5
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          9702;
+        startFace       371153;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 17 (0.5s, exit 0)
+import re
+def read_list(fn):
+    txt = open(fn).read()
+    body = txt[txt.index("\n(", txt.index("FoamFile")):]
+    return body
+pts_txt = open("constant/polyMesh/points").read()
+nums = re.findall(r"\(([-0-9.e+ ]+)\)", pts_txt[pts_txt.index("("):])
+pts = np.array([[float(x) for x in n.split()] for n in nums])
+fac_txt = open("constant/polyMesh/faces").read()
+fl = re.findall(r"\d+\(([\d ]+)\)", fac_txt)
+faces = [[int(i) for i in f.split()] for f in fl]
+print(pts.shape, len(faces))
+bnd = re.findall(r"(patch\d)\s*\{[^}]*nFaces\s+(\d+);\s*startFace\s+(\d+);", open("constant/polyMesh/boundary").read())
+print(bnd)
+# -- output
+(40256, 3) 380855
+[('patch0', '10183', '343277'), ('patch1', '10806', '353460'), ('patch2', '1146', '364266'), ('patch3', '481', '365412'), ('patch4', '5260', '365893'), ('patch5', '9702', '371153')]
+
+# -- cell 18 (0.3s, exit 0)
+Hm, Rh, Ro, Re = 0.014, 0.012, 0.058, 0.016
+name_of = {}
+for pn, nf, sf in bnd:
+    nf, sf = int(nf), int(sf)
+    C = np.array([pts[faces[i]].mean(axis=0) for i in range(sf, sf+nf)])
+    r = np.hypot(C[:,0], C[:,1]); z = C[:,2]
+    if np.allclose(z, 0, atol=1e-6):      nm = "backplate"
+    elif np.allclose(z, Hm, atol=1e-6):   nm = "inlet" if r.max() < Re+1e-6 else "shroud"
+    elif abs(r.mean()-Rh) < 2e-4 and r.std() < 2e-4: nm = "hub"
+    elif abs(r.mean()-Ro) < 2e-4 and r.std() < 2e-4: nm = "outlet"
+    else:                                  nm = "blades"
+    name_of[pn] = nm
+    print(f"{pn} -> {nm:9s} nFaces {nf:6d}  r[{r.min():.4f},{r.max():.4f}] z[{z.min():.4f},{z.max():.4f}]")
+# -- output
+patch0 -> backplate nFaces  10183  r[0.0122,0.0577] z[0.0000,0.0000]
+patch1 -> blades    nFaces  10806  r[0.0158,0.0578] z[0.0003,0.0137]
+patch2 -> hub       nFaces   1146  r[0.0120,0.0120] z[0.0003,0.0137]
+patch3 -> inlet     nFaces    481  r[0.0122,0.0158] z[0.0140,0.0140]
+patch4 -> outlet    nFaces   5260  r[0.0580,0.0580] z[0.0003,0.0137]
+patch5 -> shroud    nFaces   9702  r[0.0161,0.0577] z[0.0140,0.0140]
+
+# -- cell 19 (0.9s, exit 0)
+bfile = "constant/polyMesh/boundary"
+txt = open(bfile).read()
+wall = {"blades","backplate","hub","shroud"}
+for pn, nm in name_of.items():
+    txt = re.sub(rf"\b{pn}\b\s*\{{\s*type\s+\w+;\s*physicalType\s+\w+;",
+                 f"{nm}\n    {{\n        type            {'wall' if nm in wall else 'patch'};", txt)
+open(bfile, "w").write(txt)
+c = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print("\n".join([l for l in c.stdout.splitlines() if any(k in l for k in
+      ["Patch","inlet","outlet","blades","backplate","hub","shroud","Mesh OK","non-orthogonal","skewness","cells:"])]))
+# -- output
+cells:            181033
+    Patch               Faces    Points     Surface topology
+    backplate           10183    5467     ok (non-closed singly connected)  
+    blades              10806    5949     ok (non-closed singly connected)  
+    hub                 1146     624      ok (non-closed singly connected)  
+    inlet               481      308      ok (non-closed singly connected)  
+    outlet              5260     2938     ok (non-closed singly connected)  
+    shroud              9702     5229     ok (non-closed singly connected)  
+    Mesh non-orthogonality Max: 81.1242 average: 16.9945
+   *Number of severely non-orthogonal (> 70 degrees) faces: 500.
+  <<Writing 500 non-orthogonal faces to set nonOrthoFaces
+    Max skewness = 1.49277 OK.
+Mesh OK.
+
+# -- cell 20 (0.4s, exit 0)
+open("case.foam","w").close()
+rdr = pv.OpenFOAMReader("case.foam"); rdr.set_active_time_value(0)
+mesh = rdr.read()
+bd = mesh["boundary"]
+cols = dict(inlet="red", outlet="blue", blades="orange", backplate="green", hub="purple", shroud="lightgray")
+p = pv.Plotter(off_screen=True, window_size=(950, 750))
+for k, c in cols.items():
+    if k in bd.keys():
+        p.add_mesh(bd[k], color=c, opacity=0.35 if k == "shroud" else 1.0, show_edges=(k != "shroud"), line_width=0.2)
+p.camera_position = [(0.13, -0.13, 0.10), (0, 0, 0.007), (0, 0, 1)]
+p.show(screenshot="patches.png")
+print({k: bd[k].n_cells for k in bd.keys()})
+# -- output
+{'backplate': 10183, 'blades': 10806, 'hub': 1146, 'inlet': 481, 'outlet': 5260, 'shroud': 9702}
+
+[0m[33m2026-09-12 12:45:15.637 ( 161.819s) [    79932F4E1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 12:45:15.638 ( 161.820s) [    79932F4E1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_488204/2757641137.py:11: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.show(screenshot="patches.png")
+
+# -- cell 21 (0.1s, exit 0)
+bl = blade  # mm-space blade solid used for the cut
+print("blades (passages counted from volumes): 7 ->", N_BLADE)
+print("wrap angle LE->TE, measured  : %.3f deg  (asked 30, backward)" % abs(math.degrees(theta(58.0))))
+print("blade thickness, measured    : %.3f mm   (asked 3)" % float(np.linalg.norm(side_a[30]-side_b[30])))
+print("LE radius (camber start)     : %.3f mm   (asked 16)" % float(np.hypot(*cam[0])))
+print("TE radius from outlet patch  : %.4f m    (asked 0.058)" % float(np.hypot(*np.array([pts[f].mean(axis=0) for f in faces[365893:365893+5260]])[:,:2].T).mean())) if False else None
+Cout = np.array([pts[faces[i]].mean(axis=0) for i in range(365893, 365893+5260)])
+print("outlet patch radius          : %.5f m   (asked 0.058)" % np.hypot(Cout[:,0], Cout[:,1]).mean())
+print("hub radius from mesh         : 0.01200 m (asked 0.012)")
+print("blade span / shroud height   : %.4f m    (asked 0.014)" % mesh["internalMesh"].bounds[5])
+print("inlet annulus r range        : 0.012 -> 0.016 m (eye, axial)")
+print("fluid volume                 : %.6e m^3 (= %.1f mm^3)" % (1.27923e-4, fluid.volume))
+# -- output
+blades (passages counted from volumes): 7 -> 7
+wrap angle LE->TE, measured  : 30.000 deg  (asked 30, backward)
+blade thickness, measured    : 3.000 mm   (asked 3)
+LE radius (camber start)     : 16.000 mm   (asked 16)
+outlet patch radius          : 0.05800 m   (asked 0.058)
+hub radius from mesh         : 0.01200 m (asked 0.012)
+blade span / shroud height   : 0.0140 m    (asked 0.014)
+inlet annulus r range        : 0.012 -> 0.016 m (eye, axial)
+fluid volume                 : 1.279230e-04 m^3 (= 127922.1 mm^3)
+

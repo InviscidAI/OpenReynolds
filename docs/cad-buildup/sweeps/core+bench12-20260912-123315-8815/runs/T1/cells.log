@@ -1,0 +1,379 @@
+# -- cell 1 (0.1s, exit 0)
+import os, numpy as np
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+
+W, LEG, RC, TH = 0.010, 0.120, 0.015, 0.001
+Ri, Ro = RC - W/2, RC + W/2
+CY = RC
+def P(r, th_deg):
+    t = np.radians(th_deg)
+    return (r*np.sin(t), CY - r*np.cos(t))
+
+pts2d = [(-LEG,-W/2), (0.0,-W/2), (0.0,W/2), (-LEG,W/2),
+         P(Ro,90), P(Ri,90), P(Ro,180), P(Ri,180),
+         (-LEG, CY+Ro), (-LEG, CY+Ri)]
+for i,p in enumerate(pts2d): print(i, tuple(round(v,5) for v in p))
+print("Ri,Ro =", Ri, Ro, "| 90deg arc len =", round(RC*np.pi/2,5))
+# -- output
+0 (-0.12, -0.005)
+1 (0.0, -0.005)
+2 (0.0, 0.005)
+3 (-0.12, 0.005)
+4 (np.float64(0.02), np.float64(0.015))
+5 (np.float64(0.01), np.float64(0.015))
+6 (np.float64(0.0), np.float64(0.035))
+7 (np.float64(0.0), np.float64(0.025))
+8 (-0.12, 0.035)
+9 (-0.12, 0.025)
+Ri,Ro = 0.009999999999999998 0.02 | 90deg arc len = 0.02356
+
+# -- cell 2 (0.2s, exit 0)
+import subprocess
+nW, nLeg, nBend = 6, 24, 8   # coarse first
+
+verts = []
+for z in (0.0, TH):
+    for (x,y) in pts2d:
+        verts.append((round(x,9)+0.0, round(y,9)+0.0, z))
+vtxt = "\n".join(f"    ({v[0]:.6f} {v[1]:.6f} {v[2]:.6f})" for v in verts)
+
+def arc(a, b, r, th):
+    p = P(r, th)
+    return f"    arc {a} {b} ({p[0]:.6f} {p[1]:.6f} 0.000000)\n    arc {a+10} {b+10} ({p[0]:.6f} {p[1]:.6f} {TH:.6f})"
+
+blocks = f"""
+    hex (0 1 2 3 10 11 12 13) ({nLeg} {nW} 1) simpleGrading (1 1 1)
+    hex (1 4 5 2 11 14 15 12) ({nBend} {nW} 1) simpleGrading (1 1 1)
+    hex (4 6 7 5 14 16 17 15) ({nBend} {nW} 1) simpleGrading (1 1 1)
+    hex (6 8 9 7 16 18 19 17) ({nLeg} {nW} 1) simpleGrading (1 1 1)
+"""
+edges = "\n".join([arc(1,4,Ro,45), arc(2,5,Ri,45), arc(4,6,Ro,135), arc(5,7,Ri,135)])
+
+bnd = """
+    inlet  { type patch; faces ( (0 10 13 3) ); }
+    outlet { type patch; faces ( (9 19 18 8) ); }
+    walls  { type wall;  faces (
+        (0 1 11 10) (3 13 12 2)
+        (1 4 14 11) (2 12 15 5)
+        (4 6 16 14) (5 15 17 7)
+        (6 8 18 16) (7 17 19 9)
+    ); }
+    frontAndBack { type empty; faces (
+        (0 3 2 1) (1 2 5 4) (4 5 7 6) (6 7 9 8)
+        (10 11 12 13) (11 14 15 12) (14 16 17 15) (16 18 19 17)
+    ); }
+"""
+head = """FoamFile{version 2.0; format ascii; class dictionary; object blockMeshDict;}
+scale 1;
+"""
+open("system/blockMeshDict","w").write(
+    head + "vertices (\n"+vtxt+"\n);\nblocks (" + blocks + ");\nedges (\n" + edges +
+    "\n);\nboundary (" + bnd + ");\nmergePatchPairs ();\n")
+
+open("system/controlDict","w").write("""FoamFile{version 2.0; format ascii; class dictionary; object controlDict;}
+application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1;
+""")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-1500:])
+# -- output
+0 kMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 3
+		Number of boundary faces : 18
+		Number of defined boundary faces : 18
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.005 .. 0.005
+        j : 0.00166667 .. 0.00166667
+        k : 0.001 .. 0.001
+
+    Block 1 cell size :
+        i : 0.00392066 .. 0.00392066
+        j : 0.00166667 .. 0.00166667
+        k : 0.001 .. 0.001
+
+    Block 2 cell size :
+        i : 0.00392066 .. 0.00392066
+        j : 0.00166667 .. 0.00166667
+        k : 0.001 .. 0.001
+
+    Block 3 cell size :
+        i : 0.005 .. 0.005
+        j : 0.00166667 .. 0.00166667
+        k : 0.001 .. 0.001
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.12 -0.005 0) (0.02 0.035 0.001)
+  nPoints: 910
+  nCells: 384
+  nFaces: 1606
+  nInternalFaces: 698
+----------------
+Patches
+----------------
+  patch 0 (start: 698 size: 6) name: inlet
+  patch 1 (start: 704 size: 6) name: outlet
+  patch 2 (start: 710 size: 128) name: walls
+  patch 3 (start: 838 size: 768) name: frontAndBack
+
+End
+
+# -- cell 3 (0.4s, exit 0)
+import subprocess, pyvista as pv
+pv.start_xvfb() if False else None
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-1200:])
+# -- output
+2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 12 2026
+Time   : 12:34:41
+Host   : yc-demo
+PID    : 484590
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260912-123315-015a/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+
+# -- cell 4 (0.1s, exit 0)
+print(len(r.stdout)); print(r.stdout[1500:])
+# -- output
+1797
+* * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+# -- cell 5 (0.1s, exit 0)
+print("RC", r.returncode); print(r.stderr[-2000:])
+# -- output
+RC 1
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T1-20260912-123315-015a/t1/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 6 (0.2s, exit 0)
+open("system/fvSchemes","w").write("""FoamFile{version 2.0; format ascii; class dictionary; object fvSchemes;}
+ddtSchemes{default Euler;} gradSchemes{default Gauss linear;}
+divSchemes{default none; div(phi,U) Gauss linearUpwind grad(U);}
+laplacianSchemes{default Gauss linear corrected;}
+interpolationSchemes{default linear;} snGradSchemes{default corrected;}
+""")
+open("system/fvSolution","w").write("""FoamFile{version 2.0; format ascii; class dictionary; object fvSolution;}
+solvers{ p{solver PCG; preconditioner DIC; tolerance 1e-6; relTol 0.05;}
+         U{solver smoothSolver; smoother symGaussSeidel; tolerance 1e-8; relTol 0;} }
+PISO{nCorrectors 2; nNonOrthogonalCorrectors 1;}
+""")
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[r.stdout.find("Checking geometry"):])
+# -- output
+Checking geometry...
+    Overall domain bounding box (-0.12 -0.005 0) (0.02 0.035 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (-5.35206e-19 -1.45844e-17 -2.763e-15) OK.
+    Max cell openness = 2.03288e-16 OK.
+    Max aspect ratio = 3 OK.
+    Minimum face area = 1.66665e-06. Maximum face area = 8.33333e-06.  Face area magnitudes OK.
+    Min volume = 3.52241e-09. Max volume = 8.33333e-09.  Total volume = 2.86821e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 2.25639 average: 0.243582
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.20666 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 7 (0.3s, exit 0)
+import pyvista as pv, numpy as np, matplotlib.pyplot as plt
+pv.OFF_SCREEN = True
+m = pv.OpenFOAMReader("system/controlDict")  # placeholder; use POLY reader below
+m = pv.POpenFOAMReader("case.foam") if False else None
+open("case.foam","w").close()
+rd = pv.POpenFOAMReader("case.foam"); rd.set_active_time_value(0.0) if rd.time_values else None
+msh = rd.read()["internalMesh"]
+p = pv.Plotter(off_screen=True, window_size=(1000,500))
+p.add_mesh(msh.extract_all_edges(), color="k", line_width=1)
+p.view_xy(); p.camera.zoom(1.3); p.screenshot("mesh_coarse.png")
+print(msh.n_cells, msh.bounds)
+# -- output
+384 BoundsTuple(x_min = -0.11999999731779099,
+            x_max =  0.019999999552965164,
+            y_min = -0.004999999888241291,
+            y_max =  0.03500000014901161,
+            z_min =  0.0,
+            z_max =  0.0010000000474974513)
+
+[0m[33m2026-09-12 12:35:08.128 (  26.985s) [    73C8C0A47780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 12:35:08.129 (  26.985s) [    73C8C0A47780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 12:35:08.142 (  26.998s) [    73C8C0A47780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[no picture came back from this cell, and it looks like it drew one. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 8 (0.7s, exit 0)
+import matplotlib.pyplot as plt, numpy as np
+ed = msh.extract_all_edges()
+pts = ed.points; lines = ed.lines.reshape(-1,3)[:,1:]
+fig, ax = plt.subplots(figsize=(11,4))
+for a,b in lines:
+    if pts[a][2] < 1e-9 and pts[b][2] < 1e-9:
+        ax.plot([pts[a][0],pts[b][0]],[pts[a][1],pts[b][1]], 'k-', lw=0.6)
+ax.set_aspect('equal'); ax.set_title("U-bend, coarse (384 cells), z=0 plane")
+fig
+# -- output
+
+
+# -- cell 9 (0.1s, exit 0)
+bl = rd.read()["boundary"]
+def patch(n): return bl[n]
+wp = patch("walls").points
+inl, out = patch("inlet"), patch("outlet")
+C = np.array([0.0, 0.015])
+r = np.hypot(wp[:,0]-C[0], wp[:,1]-C[1])
+bend = wp[wp[:,0] > 1e-6]
+rb = np.hypot(bend[:,0]-C[0], bend[:,1]-C[1])
+print("bend wall radii: inner", round(rb[rb<0.015].min(),5), round(rb[rb<0.015].max(),5),
+      "| outer", round(rb[rb>0.015].min(),5), round(rb[rb>0.015].max(),5))
+print("centreline radius =", round(0.5*(rb[rb<0.015].mean()+rb[rb>0.015].mean()),5), "target 0.015")
+print("passage width from radii =", round(rb[rb>0.015].mean()-rb[rb<0.015].mean(),5), "target 0.010")
+print("inlet area", inl.area, "=> width", round(inl.area/0.001,5), " y-range", inl.bounds[2:4])
+print("outlet area", out.area, " y-range", out.bounds[2:4])
+print("lower leg length: x from", wp[:,0].min(), "to bend start 0.0 =>", round(0-wp[:,0].min(),4), "target 0.120")
+# -- output
+bend wall radii: inner 0.01 0.01 | outer 0.02 0.02
+centreline radius = 0.015 target 0.015
+passage width from radii = 0.01 target 0.010
+inlet area 1.0000000251457085e-05 => width 0.01  y-range (-0.004999999888241291, 0.004999999888241291)
+outlet area 1.0000000251457085e-05  y-range (0.02500000037252903, 0.03500000014901161)
+lower leg length: x from -0.12 to bend start 0.0 => 0.12 target 0.120
+
+# -- cell 10 (0.5s, exit 0)
+nW, nLeg, nBend = 20, 96, 24   # 0.5 mm across passage, ~1.25 mm along legs, ~1.0 mm along bend
+blocks = f"""
+    hex (0 1 2 3 10 11 12 13) ({nLeg} {nW} 1) simpleGrading (1 1 1)
+    hex (1 4 5 2 11 14 15 12) ({nBend} {nW} 1) simpleGrading (1 1 1)
+    hex (4 6 7 5 14 16 17 15) ({nBend} {nW} 1) simpleGrading (1 1 1)
+    hex (6 8 9 7 16 18 19 17) ({nLeg} {nW} 1) simpleGrading (1 1 1)
+"""
+open("system/blockMeshDict","w").write(
+    head + "vertices (\n"+vtxt+"\n);\nblocks (" + blocks + ");\nedges (\n" + edges +
+    "\n);\nboundary (" + bnd + ");\nmergePatchPairs ();\n")
+rb_ = subprocess.run(["blockMesh"], capture_output=True, text=True)
+rc_ = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(rb_.stdout[rb_.stdout.find("Mesh Information"):])
+print(rc_.stdout[rc_.stdout.find("Checking geometry"):])
+# -- output
+Mesh Information
+----------------
+  boundingBox: (-0.12 -0.005 0) (0.02 0.035 0.001)
+  nPoints: 10122
+  nCells: 4800
+  nFaces: 19460
+  nInternalFaces: 9340
+----------------
+Patches
+----------------
+  patch 0 (start: 9340 size: 20) name: inlet
+  patch 1 (start: 9360 size: 20) name: outlet
+  patch 2 (start: 9380 size: 480) name: walls
+  patch 3 (start: 9860 size: 9600) name: frontAndBack
+
+End
+
+
+Checking geometry...
+    Overall domain bounding box (-0.12 -0.005 0) (0.02 0.035 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (-1.30709e-18 -4.67898e-19 -3.53932e-17) OK.
+    Max cell openness = 2.08995e-16 OK.
+    Max aspect ratio = 2.5 OK.
+    Minimum face area = 3.35186e-07. Maximum face area = 1.30876e-06.  Face area magnitudes OK.
+    Min volume = 3.35186e-10. Max volume = 6.45851e-10.  Total volume = 2.8709e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0.906262 average: 0.0490932
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.0778141 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 11 (5.9s, exit 0)
+rd2 = pv.POpenFOAMReader("case.foam"); msh2 = rd2.read()["internalMesh"]
+ed2 = msh2.extract_all_edges(); pts = ed2.points; lines = ed2.lines.reshape(-1,3)[:,1:]
+fig, ax = plt.subplots(figsize=(11,4))
+for a,b in lines:
+    if pts[a][2] < 1e-9 and pts[b][2] < 1e-9:
+        ax.plot([pts[a][0],pts[b][0]],[pts[a][1],pts[b][1]], 'k-', lw=0.25)
+ax.set_aspect('equal'); ax.set_title(f"U-bend, {msh2.n_cells} cells")
+V = (2*LEG*W + W*np.pi*RC)*TH
+print("volume analytic", round(V,10), "mesh", round(msh2.volume,10), "rel diff", round(abs(V-msh2.volume)/V,5))
+fig
+# -- output
+volume analytic 2.8712e-06 mesh 2.8709e-06 rel diff 0.00012
+

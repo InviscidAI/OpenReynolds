@@ -1,0 +1,586 @@
+# -- cell 1 (2.2s, exit 0)
+import os, numpy as np
+from build123d import *
+
+# all dimensions in METRES (OpenFOAM reads metres)
+R_RING_O, R_RING_I = 0.030, 0.023     # outer ring: 30 / 23 mm
+R_SPIN_O, R_SPIN_I = 0.022, 0.015     # inner spinner: 22 / 15 mm
+H = 0.010                             # both 10 mm tall, centred on XY plane
+
+housing_bore = Pos(0, 0, -H/2) * Cylinder(R_RING_I, H, align=(Align.CENTER, Align.CENTER, Align.MIN))
+spinner = Pos(0, 0, -H/2) * (Cylinder(R_SPIN_O, H, align=(Align.CENTER, Align.CENTER, Align.MIN))
+                             - Cylinder(R_SPIN_I, H, align=(Align.CENTER, Align.CENTER, Align.MIN)))
+oil = housing_bore - spinner
+
+print("solids in oil:", len(oil.solids()))
+for s in oil.solids():
+    bb = s.bounding_box()
+    print(f"  vol={s.volume:.4e}  r_max={max(bb.max.X,bb.max.Y):.5f}  z=[{bb.min.Z:.4f},{bb.max.Z:.4f}]")
+print("clearance = R_RING_I - R_SPIN_O =", (R_RING_I - R_SPIN_O)*1000, "mm")
+print("analytic bore vol", np.pi*R_SPIN_I**2*H, " clearance vol", np.pi*(R_RING_I**2-R_SPIN_O**2)*H)
+print("total oil volume", oil.volume)
+# -- output
+solids in oil: 2
+  vol=1.4137e-06  r_max=0.02300  z=[-0.0050,0.0050]
+  vol=7.0686e-06  r_max=0.01500  z=[-0.0050,0.0050]
+clearance = R_RING_I - R_SPIN_O = 1.0000000000000009 mm
+analytic bore vol 7.068583470577034e-06  clearance vol 1.413716694115407e-06
+total oil volume 8.482300164692445e-06
+
+# -- cell 2 (0.1s, exit 0)
+import os, numpy as np, subprocess
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+
+# ---- mesh resolution (coarse first) ----
+N_ANG   = 8   # cells per 90deg quadrant
+N_CORE  = 8   # cells across the O-grid core block
+N_BORE  = 5   # radial cells from core to r=15mm
+N_CLR   = 3   # radial cells across the 1 mm clearance
+N_Z     = 5   # cells through the 10 mm height
+
+ang = [45 + 90*k for k in range(4)]
+def pt(r, adeg, z): return (r*np.cos(np.radians(adeg)), r*np.sin(np.radians(adeg)), z)
+ZL, ZU = -H/2, H/2
+C = 0.35355*R_SPIN_I          # O-grid core half-diagonal radius
+
+verts, vidx = [], {}
+def V(key, p):
+    vidx[key] = len(verts); verts.append(p)
+for z, zt in ((ZL,'L'), (ZU,'U')):
+    for k in range(4):
+        V(f'i{k}{zt}', pt(C, ang[k], z))          # core square
+        V(f'o{k}{zt}', pt(R_SPIN_I, ang[k], z))   # bore wall r=15
+        V(f'p{k}{zt}', pt(R_SPIN_O, ang[k], z))   # spinner OD r=22
+        V(f'q{k}{zt}', pt(R_RING_I, ang[k], z))   # ring bore r=23
+def vs(*keys): return " ".join(str(vidx[k]) for k in keys)
+
+blocks = [f"hex ({vs(*[f'i{k}L' for k in range(4)], *[f'i{k}U' for k in range(4)])}) ({N_CORE} {N_CORE} {N_Z}) simpleGrading (1 1 1)"]
+for k in range(4):
+    j = (k+1) % 4
+    blocks.append(f"hex ({vs(f'i{k}L',f'o{k}L',f'o{j}L',f'i{j}L',f'i{k}U',f'o{k}U',f'o{j}U',f'i{j}U')}) ({N_BORE} {N_ANG} {N_Z}) simpleGrading (1 1 1)")
+for k in range(4):
+    j = (k+1) % 4
+    blocks.append(f"hex ({vs(f'p{k}L',f'q{k}L',f'q{j}L',f'p{j}L',f'p{k}U',f'q{k}U',f'q{j}U',f'p{j}U')}) ({N_CLR} {N_ANG} {N_Z}) simpleGrading (1 1 1)")
+
+edges = []
+for pre, rad in (('o', R_SPIN_I), ('p', R_SPIN_O), ('q', R_RING_I)):
+    for zt, z in (('L', ZL), ('U', ZU)):
+        for k in range(4):
+            j = (k+1) % 4
+            m = pt(rad, ang[k]+45, z)
+            edges.append(f"arc {vidx[f'{pre}{k}{zt}']} {vidx[f'{pre}{j}{zt}']} ({m[0]:.9g} {m[1]:.9g} {m[2]:.9g})")
+
+def quad(a,b,c,d): return f"({vs(a,b,c,d)})"
+f_ring, f_spin, f_top, f_bot = [], [], [], []
+for k in range(4):
+    j = (k+1) % 4
+    f_ring.append(quad(f'q{k}L', f'q{k}U', f'q{j}U', f'q{j}L'))                 # r=23 ring wetted
+    f_spin.append(quad(f'o{k}L', f'o{j}L', f'o{j}U', f'o{k}U'))                 # r=15 bore wall
+    f_spin.append(quad(f'p{k}L', f'p{k}U', f'p{j}U', f'p{j}L'))                 # r=22 spinner OD
+    f_top.append(quad(f'i{k}U', f'o{k}U', f'o{j}U', f'i{j}U'))
+    f_top.append(quad(f'p{k}U', f'q{k}U', f'q{j}U', f'p{j}U'))
+    f_bot.append(quad(f'i{k}L', f'i{j}L', f'o{j}L', f'o{k}L'))
+    f_bot.append(quad(f'p{k}L', f'p{j}L', f'q{j}L', f'q{k}L'))
+f_top.append(quad(*[f'i{k}U' for k in range(4)]))
+f_bot.append(f"({vs(*[f'i{k}L' for k in range(3,-1,-1)])})")
+print(len(blocks), "blocks,", len(edges), "arcs; est cells:",
+      N_CORE**2*N_Z + 4*N_BORE*N_ANG*N_Z + 4*N_CLR*N_ANG*N_Z)
+# -- output
+9 blocks, 24 arcs; est cells: 1600
+
+# -- cell 3 (0.2s, exit 0)
+def blk(name, typ, faces):
+    return f"    {name}\n    {{\n        type {typ};\n        faces\n        (\n" + \
+           "".join(f"            {f}\n" for f in faces) + "        );\n    }\n"
+
+dict_txt = (
+"FoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object blockMeshDict;\n}\n\n"
+"scale 1;\n\nvertices\n(\n" +
+"".join(f"    ({p[0]:.9g} {p[1]:.9g} {p[2]:.9g})\n" for p in verts) +
+");\n\nblocks\n(\n" + "".join(f"    {b}\n" for b in blocks) +
+");\n\nedges\n(\n" + "".join(f"    {e}\n" for e in edges) +
+");\n\nboundary\n(\n" +
+blk("outerRingWall", "wall", f_ring) +
+blk("spinnerWall",   "wall", f_spin) +
+blk("oilTop",        "patch", f_top) +
+blk("oilBottom",     "patch", f_bot) +
+");\n\nmergePatchPairs ();\n")
+open("system/blockMeshDict", "w").write(dict_txt)
+
+open("system/controlDict", "w").write(
+"FoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object controlDict;\n}\n"
+"application blockMesh;\nstartFrom startTime;\nstartTime 0;\nstopAt endTime;\nendTime 1;\n"
+"deltaT 1;\nwriteControl timeStep;\nwriteInterval 1;\n")
+open("system/fvSchemes", "w").write(
+"FoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object fvSchemes;\n}\n"
+"ddtSchemes{default steadyState;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\n"
+"laplacianSchemes{default Gauss linear corrected;}\ninterpolationSchemes{default linear;}\n"
+"snGradSchemes{default corrected;}\n")
+open("system/fvSolution", "w").write(
+"FoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object fvSolution;\n}\nsolvers{}\n")
+
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode)
+print(r.stdout[-1800:])
+print(r.stderr[-800:])
+# -- output
+0
+lock offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.000937491 .. 0.000937491
+        j : 0.000937491 .. 0.000937491
+        k : 0.002 .. 0.002
+
+    Block 1 cell size :
+        i : 0.00193935 .. 0.00193935
+        j : 0.000937491 .. 0.000937491
+        k : 0.002 .. 0.002
+
+    Block 2 cell size :
+        i : 0.00193935 .. 0.00193935
+        j : 0.000937491 .. 0.000937491
+        k : 0.002 .. 0.002
+
+    Block 3 cell size :
+        i : 0.00193935 .. 0.00193935
+        j : 0.000937491 .. 0.000937491
+        k : 0.002 .. 0.002
+
+    Block 4 cell size :
+        i : 0.00193935 .. 0.00193935
+        j : 0.000937491 .. 0.000937491
+        k : 0.002 .. 0.002
+
+    Block 5 cell size :
+        i : 0.000333333 .. 0.000333333
+        j : 0.00431275 .. 0.00431275
+        k : 0.002 .. 0.002
+
+    Block 6 cell size :
+        i : 0.000333333 .. 0.000333333
+        j : 0.00431275 .. 0.00431275
+        k : 0.002 .. 0.002
+
+    Block 7 cell size :
+        i : 0.000333333 .. 0.000333333
+        j : 0.00431275 .. 0.00431275
+        k : 0.002 .. 0.002
+
+    Block 8 cell size :
+        i : 0.000333333 .. 0.000333333
+        j : 0.00431275 .. 0.00431275
+        k : 0.002 .. 0.002
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.023 -0.023 -0.005) (0.023 0.023 0.005)
+  nPoints: 2214
+  nCells: 1600
+  nFaces: 5360
+  nInternalFaces: 4240
+----------------
+Patches
+----------------
+  patch 0 (start: 4240 size: 160) name: outerRingWall
+  patch 1 (start: 4400 size: 320) name: spinnerWall
+  patch 2 (start: 4720 size: 320) name: oilTop
+  patch 3 (start: 5040 size: 320) name: oilBottom
+
+End
+
+# -- cell 4 (0.2s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+out = r.stdout
+print(out[out.index("Mesh stats"):])
+# -- output
+Mesh stats 
+    points:           2214
+    faces:            5360
+    internal faces:   4240
+    cells:            1600
+    faces per cell:   6
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     1600
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+   *Number of regions: 2
+    The mesh has multiple regions which are not connected by any face.
+  <<Writing region information to "constant/cellToRegion"
+  <<Writing region 0 with 1120 cells to cellSet region0
+  <<Writing region 1 with 480 cells to cellSet region1
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    outerRingWall       160      192      ok (non-closed singly connected)  
+    spinnerWall         320      384      ok (non-closed singly connected)  
+    oilTop              320      369      ok (non-closed singly connected)  
+    oilBottom           320      369      ok (non-closed singly connected)  
+    ".*"                1120     1122     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.023 -0.023 -0.005) (0.023 0.023 0.005)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.79783e-18 3.26413e-18 -5.40758e-16) OK.
+    Max cell openness = 2.93802e-16 OK.
+    Max aspect ratio = 6.04511 OK.
+    Minimum face area = 6.66667e-07. Maximum face area = 9.01758e-06.  Face area magnitudes OK.
+    Min volume = 1.75778e-09. Max volume = 1.22196e-08.  Total volume = 8.4279e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 26.3847 average: 5.57075
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.496071 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 5 (0.5s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv, "start_xvfb") else None
+pv.global_theme.allow_empty_mesh = True
+mesh = pv.OpenFOAMReader("case.foam") if os.path.exists("case.foam") else None
+open("case.foam", "w").close()
+rdr = pv.OpenFOAMReader("case.foam"); rdr.set_active_time_value(0.0)
+blocks = rdr.read(); internal = blocks["internalMesh"]
+bnd = blocks["boundary"]
+p = pv.Plotter(off_screen=True, window_size=(900, 450), shape=(1, 2))
+p.subplot(0, 0)
+cols = {"outerRingWall": "firebrick", "spinnerWall": "steelblue", "oilTop": "gold", "oilBottom": "seagreen"}
+for n, c in cols.items(): p.add_mesh(bnd[n], color=c, show_edges=True, line_width=0.5, label=n)
+p.add_legend(size=(0.4, 0.25)); p.camera_position = "iso"
+p.subplot(0, 1)
+p.add_mesh(internal.clip("y"), show_edges=True, color="lightgray")
+p.camera_position = [(0.06, -0.06, 0.05), (0, 0, 0), (0, 0, 1)]
+p.screenshot("look_coarse.png"); print("ok")
+# -- output
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 13:00:14.601 (   0.281s) [    7ED6EB20A780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 13:00:14.601 (   0.281s) [    7ED6EB20A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 13:00:14.614 (   0.294s) [    7ED6EB20A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 6 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("look_coarse.png"))
+# -- output
+
+
+# -- cell 7 (0.4s, exit 1)
+def write_blockmeshdict(n_ang, n_core, n_bore, n_clr, n_z):
+    verts, vidx = [], {}
+    def V(key, p): vidx[key] = len(verts); verts.append(p)
+    for z, zt in ((ZL, 'L'), (ZU, 'U')):
+        for k in range(4):
+            V(f'i{k}{zt}', pt(C, ang[k], z));        V(f'o{k}{zt}', pt(R_SPIN_I, ang[k], z))
+            V(f'p{k}{zt}', pt(R_SPIN_O, ang[k], z)); V(f'q{k}{zt}', pt(R_RING_I, ang[k], z))
+    def vs(*ks): return " ".join(str(vidx[k]) for k in ks)
+    bl = [f"hex ({vs(*[f'i{k}L' for k in range(4)], *[f'i{k}U' for k in range(4)])}) ({n_core} {n_core} {n_z}) simpleGrading (1 1 1)"]
+    for k in range(4):
+        j = (k+1) % 4
+        bl.append(f"hex ({vs(f'i{k}L',f'o{k}L',f'o{j}L',f'i{j}L',f'i{k}U',f'o{k}U',f'o{j}U',f'i{j}U')}) ({n_bore} {n_ang} {n_z}) simpleGrading (1 1 1)")
+    for k in range(4):
+        j = (k+1) % 4
+        bl.append(f"hex ({vs(f'p{k}L',f'q{k}L',f'q{j}L',f'p{j}L',f'p{k}U',f'q{k}U',f'q{j}U',f'p{j}U')}) ({n_clr} {n_ang} {n_z}) simpleGrading (1 1 1)")
+    ed = []
+    for pre, rad in (('o', R_SPIN_I), ('p', R_SPIN_O), ('q', R_RING_I)):
+        for zt in ('L', 'U'):
+            z = ZL if zt == 'L' else ZU
+            for k in range(4):
+                j = (k+1) % 4; m = pt(rad, ang[k]+45, z)
+                ed.append(f"arc {vidx[f'{pre}{k}{zt}']} {vidx[f'{pre}{j}{zt}']} ({m[0]:.9g} {m[1]:.9g} {m[2]:.9g})")
+    def quad(a,b,c,d): return f"({vs(a,b,c,d)})"
+    fr, fsp, ft, fb = [], [], [], []
+    for k in range(4):
+        j = (k+1) % 4
+        fr.append(quad(f'q{k}L', f'q{k}U', f'q{j}U', f'q{j}L'))
+        fsp.append(quad(f'o{k}L', f'o{j}L', f'o{j}U', f'o{k}U')); fsp.append(quad(f'p{k}L', f'p{k}U', f'p{j}U', f'p{j}L'))
+        ft.append(quad(f'i{k}U', f'o{k}U', f'o{j}U', f'i{j}U')); ft.append(quad(f'p{k}U', f'q{k}U', f'q{j}U', f'p{j}U'))
+        fb.append(quad(f'i{k}L', f'i{j}L', f'o{j}L', f'o{k}L')); fb.append(quad(f'p{k}L', f'p{j}L', f'q{j}L', f'q{k}L'))
+    ft.append(quad(*[f'i{k}U' for k in range(4)]))
+    fb.append(f"({vs(*[f'i{k}L' for k in range(3,-1,-1)])})")
+    txt = ("FoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object blockMeshDict;\n}\n\n"
+           "scale 1;\n\nvertices\n(\n" + "".join(f"    ({p[0]:.9g} {p[1]:.9g} {p[2]:.9g})\n" for p in verts) +
+           ");\n\nblocks\n(\n" + "".join(f"    {b}\n" for b in bl) +
+           ");\n\nedges\n(\n" + "".join(f"    {e}\n" for e in ed) +
+           ");\n\nboundary\n(\n" + blk("outerRingWall","wall",fr) + blk("spinnerWall","wall",fsp) +
+           blk("oilTop","patch",ft) + blk("oilBottom","patch",fb) + ");\n\nmergePatchPairs ();\n")
+    open("system/blockMeshDict", "w").write(txt)
+
+write_blockmeshdict(n_ang=20, n_core=14, n_bore=9, n_clr=4, n_z=8)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[r.stdout.index("Mesh Information"):])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[7][39m[32m, line 43[39m
+[32m     39[39m     open([33m"system/blockMeshDict"[39m, [33m"w"[39m).write(txt)
+[32m     40[39m 
+[32m     41[39m write_blockmeshdict(n_ang=[32m20[39m, n_core=[32m14[39m, n_bore=[32m9[39m, n_clr=[32m4[39m, n_z=[32m8[39m)
+[32m     42[39m r = subprocess.run([[33m"blockMesh"[39m], capture_output=[38;5;28;01mTrue[39;00m, text=[38;5;28;01mTrue[39;00m)
+[32m---> [39m[32m43[39m print(r.returncode, r.stdout[r.stdout.index([33m"Mesh Information"[39m):])
+
+[31mValueError[39m: substring not found
+
+# -- cell 8 (0.1s, exit 0)
+print(r.returncode); print(r.stdout[-1500:]); print("ERR:", r.stderr[-1500:])
+# -- output
+1
+---------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 12 2026
+Time   : 13:00:47
+Host   : yc-demo
+PID    : 502904
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T9-20260912-125650-d1da/t9
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 12
+		Number of boundary faces : 30
+		Number of defined boundary faces : 30
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)..
+ERR: 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+Sub-division mismatch between face 2 of block 0(15 9) and face 0 of block 1(21 9)
+
+    From void Foam::blockMesh::calcTopologicalMerge()
+    in file blockMesh/blockMeshMergeTopological.C at line 416.
+
+FOAM exiting
+
+# -- cell 9 (0.3s, exit 0)
+write_blockmeshdict(n_ang=16, n_core=16, n_bore=9, n_clr=4, n_z=8)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode)
+i = r.stdout.find("Mesh Information")
+print(r.stdout[i:] if i > 0 else r.stderr[-600:])
+# -- output
+0
+Mesh Information
+----------------
+  boundingBox: (-0.023 -0.023 -0.005) (0.023 0.023 0.005)
+  nPoints: 10665
+  nCells: 8704
+  nFaces: 27968
+  nInternalFaces: 24256
+----------------
+Patches
+----------------
+  patch 0 (start: 24256 size: 512) name: outerRingWall
+  patch 1 (start: 24768 size: 1024) name: spinnerWall
+  patch 2 (start: 25792 size: 1088) name: oilTop
+  patch 3 (start: 26880 size: 1088) name: oilBottom
+
+End
+
+# -- cell 10 (0.3s, exit 0)
+def write_blockmeshdict(n_ang, n_bore, n_clr, n_z):
+    """Cylindrical O-grid for the oil: core+bore (r<15mm) and clearance shell (22-23mm).
+    The O-grid core must share n_ang subdivisions with the blocks around it."""
+    n_core = n_ang
+    verts, vidx = [], {}
+    def V(key, p): vidx[key] = len(verts); verts.append(p)
+    for z, zt in ((ZL, 'L'), (ZU, 'U')):
+        for k in range(4):
+            V(f'i{k}{zt}', pt(C, ang[k], z));        V(f'o{k}{zt}', pt(R_SPIN_I, ang[k], z))
+            V(f'p{k}{zt}', pt(R_SPIN_O, ang[k], z)); V(f'q{k}{zt}', pt(R_RING_I, ang[k], z))
+    def vs(*ks): return " ".join(str(vidx[k]) for k in ks)
+    bl = [f"hex ({vs(*[f'i{k}L' for k in range(4)], *[f'i{k}U' for k in range(4)])}) ({n_core} {n_core} {n_z}) simpleGrading (1 1 1)"]
+    for k in range(4):
+        j = (k+1) % 4
+        bl.append(f"hex ({vs(f'i{k}L',f'o{k}L',f'o{j}L',f'i{j}L',f'i{k}U',f'o{k}U',f'o{j}U',f'i{j}U')}) ({n_bore} {n_ang} {n_z}) simpleGrading (1 1 1)")
+    for k in range(4):
+        j = (k+1) % 4
+        bl.append(f"hex ({vs(f'p{k}L',f'q{k}L',f'q{j}L',f'p{j}L',f'p{k}U',f'q{k}U',f'q{j}U',f'p{j}U')}) ({n_clr} {n_ang} {n_z}) simpleGrading (1 1 1)")
+    ed = []
+    for pre, rad in (('o', R_SPIN_I), ('p', R_SPIN_O), ('q', R_RING_I)):
+        for zt in ('L', 'U'):
+            z = ZL if zt == 'L' else ZU
+            for k in range(4):
+                j = (k+1) % 4; m = pt(rad, ang[k]+45, z)
+                ed.append(f"arc {vidx[f'{pre}{k}{zt}']} {vidx[f'{pre}{j}{zt}']} ({m[0]:.9g} {m[1]:.9g} {m[2]:.9g})")
+    def quad(a,b,c,d): return f"({vs(a,b,c,d)})"
+    fr, fsp, ft, fb = [], [], [], []
+    for k in range(4):
+        j = (k+1) % 4
+        fr.append(quad(f'q{k}L', f'q{k}U', f'q{j}U', f'q{j}L'))                     # ring wetted, r=23
+        fsp.append(quad(f'o{k}L', f'o{j}L', f'o{j}U', f'o{k}U'))                    # spinner bore wall, r=15
+        fsp.append(quad(f'p{k}L', f'p{k}U', f'p{j}U', f'p{j}L'))                    # spinner OD, r=22
+        ft.append(quad(f'i{k}U', f'o{k}U', f'o{j}U', f'i{j}U')); ft.append(quad(f'p{k}U', f'q{k}U', f'q{j}U', f'p{j}U'))
+        fb.append(quad(f'i{k}L', f'i{j}L', f'o{j}L', f'o{k}L')); fb.append(quad(f'p{k}L', f'p{j}L', f'q{j}L', f'q{k}L'))
+    ft.append(quad(*[f'i{k}U' for k in range(4)]))
+    fb.append(f"({vs(*[f'i{k}L' for k in range(3,-1,-1)])})")
+    txt = ("FoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object blockMeshDict;\n}\n\n"
+           "scale 1;\n\nvertices\n(\n" + "".join(f"    ({p[0]:.9g} {p[1]:.9g} {p[2]:.9g})\n" for p in verts) +
+           ");\n\nblocks\n(\n" + "".join(f"    {b}\n" for b in bl) +
+           ");\n\nedges\n(\n" + "".join(f"    {e}\n" for e in ed) +
+           ");\n\nboundary\n(\n" + blk("outerRingWall","wall",fr) + blk("spinnerWall","wall",fsp) +
+           blk("oilTop","patch",ft) + blk("oilBottom","patch",fb) + ");\n\nmergePatchPairs ();\n")
+    open("system/blockMeshDict", "w").write(txt)
+
+write_blockmeshdict(n_ang=16, n_bore=9, n_clr=4, n_z=8)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+i = r.stdout.find("Mesh Information")
+print(r.returncode, r.stdout[i:] if i > 0 else r.stderr[-600:])
+# -- output
+0 Mesh Information
+----------------
+  boundingBox: (-0.023 -0.023 -0.005) (0.023 0.023 0.005)
+  nPoints: 10665
+  nCells: 8704
+  nFaces: 27968
+  nInternalFaces: 24256
+----------------
+Patches
+----------------
+  patch 0 (start: 24256 size: 512) name: outerRingWall
+  patch 1 (start: 24768 size: 1024) name: spinnerWall
+  patch 2 (start: 25792 size: 1088) name: oilTop
+  patch 3 (start: 26880 size: 1088) name: oilBottom
+
+End
+
+# -- cell 11 (0.3s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+o = r.stdout; print(o[o.index("Checking topology"):o.index("Checking patch topology")])
+print(o[o.index("    Overall domain"):o.index("Mesh OK") + 8] if "Mesh OK" in o else o[-900:])
+# -- output
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+   *Number of regions: 2
+    The mesh has multiple regions which are not connected by any face.
+  <<Writing region information to "constant/cellToRegion"
+  <<Writing region 0 with 6656 cells to cellSet region0
+  <<Writing region 1 with 2048 cells to cellSet region1
+
+
+    Overall domain bounding box (-0.023 -0.023 -0.005) (0.023 0.023 0.005)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (7.24194e-17 -6.12153e-17 5.98453e-16) OK.
+    Max cell openness = 2.88157e-16 OK.
+    Max aspect ratio = 6.27009 OK.
+    Minimum face area = 2.19722e-07. Maximum face area = 2.82139e-06.  Face area magnitudes OK.
+    Min volume = 2.74653e-10. Max volume = 2.208e-09.  Total volume = 8.46868e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 32.6276 average: 5.86809
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.568168 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+# -- cell 12 (0.1s, exit 0)
+rdr2 = pv.OpenFOAMReader("case.foam"); rdr2.set_active_time_value(0.0)
+bnd2 = rdr2.read()["boundary"]
+exp = {"outerRingWall": 2*np.pi*R_RING_I*H,
+       "spinnerWall":   2*np.pi*(R_SPIN_I + R_SPIN_O)*H,
+       "oilTop":        np.pi*R_SPIN_I**2 + np.pi*(R_RING_I**2 - R_SPIN_O**2),
+       "oilBottom":     np.pi*R_SPIN_I**2 + np.pi*(R_RING_I**2 - R_SPIN_O**2)}
+for n in exp:
+    s = bnd2[n]; a = s.compute_cell_sizes(length=False, volume=False)["Area"].sum()
+    P = s.points; rr = np.hypot(P[:,0], P[:,1])
+    print(f"{n:14s} area={a:.5e} (exact {exp[n]:.5e}, {100*(a/exp[n]-1):+.2f}%)  "
+          f"r=[{rr.min()*1000:.3f},{rr.max()*1000:.3f}]mm  z=[{P[:,2].min()*1000:+.3f},{P[:,2].max()*1000:+.3f}]mm")
+print(f"\nmeasured clearance = {(R_RING_I-R_SPIN_O)*1000:.3f} mm, height = {H*1000:.1f} mm, "
+      f"mesh volume 8.46868e-06 vs exact {oil.volume:.5e} ({100*(8.46868e-06/oil.volume-1):+.2f}%)")
+# -- output
+outerRingWall  area=1.44455e-03 (exact 1.44513e-03, -0.04%)  r=[23.000,23.000]mm  z=[-5.000,+5.000]mm
+spinnerWall    area=2.32384e-03 (exact 2.32478e-03, -0.04%)  r=[15.000,22.000]mm  z=[-5.000,+5.000]mm
+oilTop         area=8.46868e-04 (exact 8.48230e-04, -0.16%)  r=[0.000,23.000]mm  z=[+5.000,+5.000]mm
+oilBottom      area=8.46868e-04 (exact 8.48230e-04, -0.16%)  r=[0.000,23.000]mm  z=[-5.000,-5.000]mm
+
+measured clearance = 1.000 mm, height = 10.0 mm, mesh volume 8.46868e-06 vs exact 8.48230e-06 (-0.16%)
+
+# -- cell 13 (0.2s, exit 0)
+p = pv.Plotter(off_screen=True, window_size=(900, 450), shape=(1, 2))
+p.subplot(0, 0)
+for n, c in (("outerRingWall","firebrick"),("spinnerWall","steelblue"),("oilTop","gold"),("oilBottom","seagreen")):
+    p.add_mesh(bnd2[n], color=c, show_edges=True, line_width=0.4, label=n)
+p.add_legend(size=(0.42,0.26)); p.camera_position = "iso"
+p.subplot(0, 1)
+p.add_mesh(rdr2.read()["internalMesh"].clip("y"), show_edges=True, color="lightgray")
+p.camera_position = [(0.055,-0.055,0.045),(0,0,0),(0,0,1)]
+p.screenshot("look_final.png"); display(Image("look_final.png"))
+# -- output
+[0m[33m2026-09-12 13:01:37.933 (  83.612s) [    7ED6EB20A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 13:01:37.933 (  83.613s) [    7ED6EB20A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

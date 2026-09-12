@@ -1,0 +1,6 @@
+T6: run 20260912-125146-ec8c
+  workspace /home/qiuzi/.openreynolds-buildup/work/T6-20260912-125146-ec8c clean (0 entries, 39 house names, no toolbox)
+  fixture customer_part.step -> /home/qiuzi/.openreynolds-buildup/work/T6-20260912-125146-ec8c/geometry/customer_part.step
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+bench12-20260912-123315-8815/runs/T6
+  done in 154.7s, 20 cells, $0.52, checkMesh ok, failed (wants refused)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+bench12-20260912-123315-8815/runs/T6 --case /home/qiuzi/.openreynolds-buildup/work/T6-20260912-125146-ec8c/t6

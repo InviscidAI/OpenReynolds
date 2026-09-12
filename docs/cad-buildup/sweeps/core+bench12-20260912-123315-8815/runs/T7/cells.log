@@ -1,0 +1,310 @@
+# -- cell 1 (0.2s, exit 0)
+import os, subprocess
+CASE = "/home/qiuzi/.openreynolds-buildup/work/T7-20260912-125423-1f17/t7"
+os.chdir(CASE)
+for d in ["system", "constant"]:
+    os.makedirs(d, exist_ok=True)
+
+# All dimensions in METRES (request was mm).
+LX, LY, LZ = 0.100, 0.060, 0.040      # cavity
+CUBE = 0.020                           # heater/cooler cube edge
+GAP = 0.005                            # gap from floor/ceiling and from end walls
+HEAT = (GAP, GAP + CUBE, (LY - CUBE) / 2, (LY + CUBE) / 2, GAP, GAP + CUBE)
+COOL = (LX - GAP - CUBE, LX - GAP, (LY - CUBE) / 2, (LY + CUBE) / 2, LZ - GAP - CUBE, LZ - GAP)
+NX, NY, NZ = 20, 12, 8                 # coarse: 5 mm cells
+
+head = "FoamFile\n{ version 2.0; format ascii; class dictionary; object %s; }\n"
+bm = head % "blockMeshDict" + f"""
+scale 1;
+vertices
+(
+ (0 0 0) ({LX} 0 0) ({LX} {LY} 0) (0 {LY} 0)
+ (0 0 {LZ}) ({LX} 0 {LZ}) ({LX} {LY} {LZ}) (0 {LY} {LZ})
+);
+blocks ( hex (0 1 2 3 4 5 6 7) ({NX} {NY} {NZ}) simpleGrading (1 1 1) );
+edges ();
+boundary
+(
+    walls
+    {{
+        type wall;
+        faces
+        (
+            (0 3 2 1) (4 5 6 7) (0 1 5 4) (3 7 6 2) (0 4 7 3) (1 2 6 5)
+        );
+    }}
+);
+mergePatchPairs ();
+"""
+open("system/blockMeshDict", "w").write(bm)
+
+ctrl = head % "controlDict" + """
+application scalarTransportFoam; startFrom startTime; startTime 0; stopAt endTime;
+endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;
+"""
+open("system/controlDict", "w").write(ctrl)
+open("system/fvSchemes", "w").write(head % "fvSchemes" + "ddtSchemes{default steadyState;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\ninterpolationSchemes{default linear;}\nsnGradSchemes{default corrected;}\n")
+open("system/fvSolution", "w").write(head % "fvSolution" + "solvers{}\n")
+
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stdout[-800:], r.returncode)
+print("HEAT", HEAT, "\nCOOL", COOL)
+# -- output
+Check topology
+
+	Basic statistics
+		Number of internal faces : 0
+		Number of boundary faces : 6
+		Number of defined boundary faces : 6
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 0) (0.1 0.06 0.04)
+  nPoints: 2457
+  nCells: 1920
+  nFaces: 6256
+  nInternalFaces: 5264
+----------------
+Patches
+----------------
+  patch 0 (start: 5264 size: 992) name: walls
+
+End
+
+ 0
+HEAT (0.005, 0.025, 0.019999999999999997, 0.04, 0.005, 0.025) 
+COOL (0.075, 0.095, 0.019999999999999997, 0.04, 0.015000000000000003, 0.035)
+
+# -- cell 2 (0.2s, exit 0)
+def topo_dict(heat, cool):
+    def blk(name, b):
+        return f"""
+    {{ name {name}Set; type cellSet; action new; source boxToCell;
+      box ({b[0]} {b[2]} {b[4]}) ({b[1]} {b[3]} {b[5]}); }}
+    {{ name {name}; type cellZoneSet; action new; source setToCellZone; set {name}Set; }}
+"""
+    return head % "topoSetDict" + "actions (\n" + blk("heater", heat) + blk("cooler", cool) + ");\n"
+
+open("system/topoSetDict", "w").write(topo_dict(HEAT, COOL))
+r = subprocess.run(["topoSet"], capture_output=True, text=True)
+print(r.stdout[-1200:], r.returncode)
+# -- output
+/home/qiuzi/.openreynolds-buildup/work/T7-20260912-125423-1f17/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet heaterSet
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.005 0.02 0.005) (0.025 0.04 0.025))
+    cellSet heaterSet now size 64
+Created cellZoneSet heater
+    Applying source setToCellZone
+    Adding all cells from cell set: heaterSet ...
+    cellZoneSet heater now size 64
+Created cellSet coolerSet
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.075 0.02 0.015) (0.095 0.04 0.035))
+    cellSet coolerSet now size 64
+Created cellZoneSet cooler
+    Applying source setToCellZone
+    Adding all cells from cell set: coolerSet ...
+    cellZoneSet cooler now size 64
+
+End
+
+ 0
+
+# -- cell 3 (0.6s, exit 0)
+import pyvista as pv, numpy as np
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+from pyvista import examples
+mesh = pv.OpenFOAMReader("case.foam") if os.path.exists("case.foam") else None
+open("case.foam","w").write("")
+r = pv.OpenFOAMReader("case.foam"); r.set_active_time_value(0.0)
+blk = r.read()
+internal = blk["internalMesh"]
+cz = np.zeros(internal.n_cells)
+import re
+txt = open("constant/polyMesh/cellZones").read()
+def zone_ids(name):
+    m = re.search(name + r"\s*\{.*?List<label>\s*\d+\s*\((.*?)\)", txt, re.S)
+    return np.array([int(x) for x in m.group(1).split()])
+h, c = zone_ids("heater"), zone_ids("cooler")
+cz[h] = 1; cz[c] = 2
+internal.cell_data["zone"] = cz
+p = pv.Plotter(off_screen=True, window_size=(900,650))
+p.add_mesh(internal.extract_cells(np.concatenate([h,c])), scalars="zone", cmap=["red","blue"], show_edges=True)
+p.add_mesh(internal.extract_all_edges(), color="grey", opacity=0.25)
+p.show_axes(); p.camera_position='iso'
+p.screenshot("coarse.png"); print(len(h), len(c))
+# -- output
+64 64
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-12 12:55:09.663 (   0.363s) [    7D191A2BD780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-12 12:55:09.663 (   0.364s) [    7D191A2BD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-12 12:55:09.676 (   0.377s) [    7D191A2BD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 4 (0.1s, exit 0)
+from IPython.display import Image, display
+print(os.path.exists("coarse.png"), os.path.getsize("coarse.png") if os.path.exists("coarse.png") else 0)
+display(Image("coarse.png"))
+# -- output
+True 117793
+
+# -- cell 5 (0.1s, exit 0)
+cc = internal.cell_centers().points
+for nm, ids in [("heater", h), ("cooler", c)]:
+    pts = cc[ids]
+    lo, hi = pts.min(0) - 0.0025, pts.max(0) + 0.0025   # cell half-size 2.5mm
+    print(nm, "extent mm:", np.round(lo*1000,3), np.round(hi*1000,3), "edge mm:", np.round((hi-lo)*1000,3))
+print("cavity bbox mm:", np.round(np.array(internal.bounds)*1000,3))
+# -- output
+heater extent mm: [ 5. 20.  5.] [25. 40. 25.] edge mm: [20. 20. 20.]
+cooler extent mm: [75. 20. 15.] [95. 40. 35.] edge mm: [20. 20. 20.]
+cavity bbox mm: [  0. 100.   0.  60.   0.  40.]
+
+# -- cell 6 (0.7s, exit 0)
+NX, NY, NZ = 40, 24, 16   # final: 2.5 mm cells
+open("system/blockMeshDict", "w").write(bm.replace("(20 12 8)", f"({NX} {NY} {NZ})"))
+for cmd in (["blockMesh"], ["topoSet"], ["checkMesh"]):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    print("###", cmd[0], r.returncode)
+    print(r.stdout[-900:])
+# -- output
+### blockMesh 0
+ section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 0
+		Number of boundary faces : 6
+		Number of defined boundary faces : 6
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+Deleting polyMesh directory "constant/polyMesh"
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.0025 .. 0.0025
+        j : 0.0025 .. 0.0025
+        k : 0.0025 .. 0.0025
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 0) (0.1 0.06 0.04)
+  nPoints: 17425
+  nCells: 15360
+  nFaces: 48064
+  nInternalFaces: 44096
+----------------
+Patches
+----------------
+  patch 0 (start: 44096 size: 3968) name: walls
+
+End
+
+
+### topoSet 0
+s 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet heaterSet
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.005 0.02 0.005) (0.025 0.04 0.025))
+    cellSet heaterSet now size 512
+Created cellZoneSet heater
+    Applying source setToCellZone
+    Adding all cells from cell set: heaterSet ...
+    cellZoneSet heater now size 512
+Created cellSet coolerSet
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.075 0.02 0.015) (0.095 0.04 0.035))
+    cellSet coolerSet now size 512
+Created cellZoneSet cooler
+    Applying source setToCellZone
+    Adding all cells from cell set: coolerSet ...
+    cellZoneSet cooler now size 512
+
+End
+
+
+### checkMesh 0
+(0.025 0.04 0.025)
+    cooler              512          729          8e-06        (0.075 0.02 0.015) (0.095 0.04 0.035)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.1 0.06 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-5.12318e-19 4.48791e-17 4.63477e-17) OK.
+    Max cell openness = 1.35525e-16 OK.
+    Max aspect ratio = 1 OK.
+    Minimum face area = 6.25e-06. Maximum face area = 6.25e-06.  Face area magnitudes OK.
+    Min volume = 1.5625e-08. Max volume = 1.5625e-08.  Total volume = 0.00024.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.33067e-14 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
