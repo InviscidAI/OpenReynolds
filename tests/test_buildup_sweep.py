@@ -52,7 +52,7 @@ def make_sweep(tmp_path: Path, name: str, runs: dict[str, dict], **manifest) -> 
                     record.Record(case=case, arm="core", **fields))
     (directory / "sweep.json").write_text(json.dumps(
         {"sweep_id": name, "label": name, "model": "claude-opus-5", "effort": "medium",
-         "git_sha": "abc123", "noise_steps": 8, "cases": sorted(runs),
+         "git_sha": "abc123", "noise_fraction": 0.30, "cases": sorted(runs),
          "started_at": next(RAN_AT), **manifest}),
         encoding="utf-8")
     return directory
@@ -81,17 +81,38 @@ def test_eight_of_eight_is_the_significance_the_last_round_reported():
 
 
 def test_a_difference_inside_the_noise_band_is_not_a_difference(tmp_path, capsys):
-    """Measured on T1 with Opus at medium: the same prompt lands within three to eight
-    cells of itself. So an eight-cell move has not been shown to be a move, and a report
-    that reads one as a result is reading the sampling."""
+    """Run-to-run spread on the same prompt is roughly a third either way, so a move
+    smaller than that has not been shown to be a move and a report reading one as a
+    result is reading the sampling."""
     before = make_sweep(tmp_path, "core-1", {
         "T1": dict(n_steps=20, checkmesh_ok=True), "T2": dict(n_steps=20, checkmesh_ok=True)})
     after = make_sweep(tmp_path, "core+x-2", {
-        "T1": dict(n_steps=12, checkmesh_ok=True),   # -8, the band's edge
-        "T2": dict(n_steps=11, checkmesh_ok=True)})  # -9, outside it
+        "T1": dict(n_steps=14, checkmesh_ok=True),   # -6, exactly 30% of 20
+        "T2": dict(n_steps=13, checkmesh_ok=True)})  # -7, outside it
     sweep.table(str(after), str(before))
     out = capsys.readouterr().out
-    assert "-8 (noise)" in out and "-9 (fewer)" in out
+    assert "-6 (noise)" in out and "-7 (fewer)" in out
+    assert "1 cases used fewer cells, 0 more" in out
+
+
+def test_the_band_is_the_case_s_own_scale_and_not_the_corpus_average(tmp_path, capsys):
+    """The reason it stopped being a flat count.
+
+    The first baseline's cases ran 10 to 28 cells. A flat eight-cell band meant T7 at 10
+    had to finish in one cell to register anything, while T3 at 28 could shed eight and
+    be called unchanged -- the same number meaning two different things. A share means
+    the small case can move and the large one still has to move proportionally."""
+    before = make_sweep(tmp_path, "core-1", {
+        "SMALL": dict(n_steps=10, checkmesh_ok=True),
+        "LARGE": dict(n_steps=28, checkmesh_ok=True)})
+    after = make_sweep(tmp_path, "core+x-2", {
+        "SMALL": dict(n_steps=6, checkmesh_ok=True),    # -4 on 10: a real move
+        "LARGE": dict(n_steps=21, checkmesh_ok=True)})  # -7 on 28: still inside the band
+    sweep.table(str(after), str(before))
+    out = capsys.readouterr().out
+    assert "-4 (fewer)" in out, "a small case must be able to register a change"
+    assert "-7 (noise)" in out, "a large case must move proportionally, not absolutely"
+    # Under the old flat band these verdicts were exactly reversed.
     assert "1 cases used fewer cells, 0 more" in out
 
 
@@ -149,7 +170,7 @@ def test_a_sweep_records_what_the_core_was_when_it_ran():
     """A re-sweep after an addition compares two sweeps, so 'the same core apart from the
     addition' has to be checkable rather than remembered."""
     assert sweep.git_sha()
-    assert sweep.NOISE_STEPS == 8
+    assert sweep.NOISE_FRACTION == 0.30
 
 
 def test_the_default_is_one_run_per_case():

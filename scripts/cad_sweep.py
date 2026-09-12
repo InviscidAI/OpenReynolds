@@ -46,14 +46,21 @@ from openreynolds.buildup import record  # noqa: E402
 
 SWEEPS = ROOT / "docs" / "cad-buildup" / "sweeps"
 
-NOISE_STEPS = 8
-"""How big a per-case step difference has to be before it is a difference at all.
+NOISE_FRACTION = 0.30
+"""How much of its own cell count a case has to move before it has moved at all.
 
-Measured on T1 with Opus at medium: the same prompt, unchanged, lands within a band of
-three to eight steps. So a case that moves by eight or fewer has not been shown to move,
-and a report that reads such a flip as a result is reading the sampling. It is one
-number from one case and it is the threshold the whole comparison rests on -- re-measure
-it when the model or the brief changes, and say so here when you do."""
+**A share, not a count.** It used to be a flat eight cells, measured on T1 and applied to
+everything, and against the first baseline's corpus that was close to useless: the cases
+ran 10 to 28 cells, so T7 at 10 would have had to finish in one cell to register any
+change, and three of the eight had a band wider than half their whole measurement. A
+threshold taken from one case does not transfer to a corpus whose cases differ by 3x.
+
+Run-to-run spread on the same prompt is roughly proportional -- about a third either way
+-- so the band is too. A case that ran 10 cells has to move by 3, one that ran 28 by 9,
+and both mean the same thing.
+
+Still a threshold somebody chose, and it still rests on the comparison. Re-measure with
+`--repeat` when the model or the brief changes, and say so here when you do."""
 
 DEADLINE_S = 1500.0
 """What the supervisor is given before it calls a run wedged on its own authority.
@@ -147,7 +154,7 @@ def drive(label: str, names: list[str], repeat: int, parallel: int, work: str,
     manifest = {
         "sweep_id": identifier, "label": label, "cases": names, "repeat": repeat,
         "model": cfg.mesher_model or cfg.model, "effort": cfg.mesher_effort,
-        "git_sha": git_sha(), "noise_steps": NOISE_STEPS,
+        "git_sha": git_sha(), "noise_fraction": NOISE_FRACTION,
         "baseline": _resolve_baseline(baseline),
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "runs": [],
     }
@@ -320,14 +327,18 @@ def table(name: str, against: str = "") -> int:
         print("\nWARNING: the model or the effort moved between these sweeps, so the "
               "difference below is not the addition's.")
 
-    noise = int(manifest.get("noise_steps") or NOISE_STEPS)
+    noise = float(manifest.get("noise_fraction") or NOISE_FRACTION)
     print(f"\n| case | cells before | after | delta | passed before -> after |")
     print("|---|---|---|---|---|")
     better = worse = 0
     for key in sorted(set(before) & set(clean)):
         was, now = before[key], clean[key]
         delta = int(now.get("n_steps", 0)) - int(was.get("n_steps", 0))
-        moved = "noise" if abs(delta) <= noise else ("fewer" if delta < 0 else "more")
+        # Against what the case used *before*, so the band is the case's own scale and
+        # not the corpus's average. A case that ran no cells has a band of zero, which is
+        # right: going from nothing to something is a change at any size.
+        band = noise * int(was.get("n_steps", 0))
+        moved = "noise" if abs(delta) <= band else ("fewer" if delta < 0 else "more")
         if moved == "fewer":
             better += 1
         elif moved == "more":
@@ -343,7 +354,7 @@ def table(name: str, against: str = "") -> int:
               f"{', '.join(sorted(only_here + only_there))}")
 
     print(f"\n{better} cases used fewer cells, {worse} more, "
-          f"the rest within the {noise}-cell noise band.")
+          f"the rest within {noise:.0%} of their own cell count.")
     print(f"sign test over the cases that moved: p = {sign_test(better, worse):.3f}")
     print("The verdict is this line, not any single row: one case's flip is sampling.")
     _totals(clean, before)
