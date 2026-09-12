@@ -6,6 +6,59 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] - 2026-09-12
+
+### Added
+
+- **A fourth interface: `--output-format stream-json`.** A program can now drive a
+  session and read it as data. `openreynolds/jsonview.py` implements the whole `View`
+  protocol as NDJSON on stdout, one JSON object a line, locked and flushed per line so a
+  reader never sees half a record; `JsonReader` is the other half for anything that
+  wants to consume it in Python. `studies --json` and `doctor --json` answer the same
+  way. The seam already carried three interfaces (the terminal, the hosted app, the
+  quiet mode), so this is a fourth implementation rather than a new pathway, and
+  stdout purity is held by a test: nothing but NDJSON may reach it, which is why
+  `images.suppress()` exists (a graphics escape sequence in the middle of the stream
+  leaves a strict reader resynchronising inside a base64 blob, permanently).
+- **Trace rows carry identity.** Every tool call now records its `tool_use_id` and a
+  `result` of `{ok, bytes}`, so a transcript can be joined call-to-answer by a program
+  instead of by eye.
+- **The mesh is allowed to move.** `mesh_look.py` reports cell and face zones, the
+  motion ladder in the field notes covers `solidBodyMotion`, AMI and morphing meshes,
+  preflight carries motion rules, and a "When the mesh moves" note is drawn entirely
+  from what the free-surface Wigley run actually paid for.
+
+### Fixed
+
+- **A picture the model will not accept no longer costs the session.** Two long runs
+  died on `400 invalid_request_error: Could not process image`, both immediately after
+  the agent redrew a figure and read it back, one 27 minutes in and one 2 h 23 m in.
+  Two defects had to line up. `attachment` base64-encoded whatever it was handed, and
+  base64 of half a PNG is well-formed base64, so nothing between the disk and the API
+  could tell: `images.incomplete` now checks that a file carries the marker saying it
+  ENDED (PNG's IEND, JPEG's EOI, GIF's trailer, WebP's RIFF length) and a partial
+  render comes back as a sentence saying it is not ready. And a 400 ended the run,
+  which was right about waiting and wrong about repair, because the bad bytes sit in a
+  thread this process owns: `Loop.drop_images` replaces every image with a note and the
+  turn is retried once.
+- **A resumed session says which workspace it joined.** `acquire()` took `existing[0]`
+  from an unordered listing. With one instance per account that was not a choice; with
+  several it attaches a resume to whichever row the service returned first, and the
+  failure does not look like a wrong choice, it looks like a workspace that lost its
+  files. The listing is ordered most-recently-active first, by the same key the
+  service's own repair step uses, and the join notice says how many workspaces the
+  account holds and that `--instance` picks another.
+- **`/work` is resolved before it is compared.** It is a symlink to
+  `/__modal/volumes/vo-<id>`, and `/proc/<pid>/cwd` yields the physical path, so any
+  probe that string-matched a cwd against the literal `/work` matched nothing in
+  production. That had silently disabled the escaped-solver probe for its whole life.
+  `stopping.py` and `toolbox/disk.py` resolve the root first.
+- **A leaving session stops killing its neighbour's work.** A session that joins a
+  workspace somebody else started no longer sweeps or stops it on the way out.
+
+
 ### Added
 
 - The mesh desk (`openreynolds/mesher/`): geometry and meshing are now one small agent
