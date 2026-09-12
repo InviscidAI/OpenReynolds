@@ -391,6 +391,12 @@ class CadDesk:
             self.on_turn(turn=turns, steps=len(result.steps),
                          stop_reason=getattr(turn, "stop_reason", ""),
                          output_tokens=int((getattr(turn, "tokens", None) or {}).get("output", 0)),
+                         # The cumulative totals as of this turn, not this turn's alone.
+                         # A run that is killed never returns its `result`, so the
+                         # accounting has to have been handed out before the kill or it
+                         # is not recoverable: `replies.jsonl` carries `output` only, and
+                         # the price needs the cache and input counts too.
+                         tokens=dict(result.tokens),
                          fenced=fenced, text_chars=len(turn.text or ""),
                          thinking_chars=_thinking_chars(turn),
                          text=turn.text or "", block_types=_block_types(turn))

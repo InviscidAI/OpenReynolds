@@ -91,3 +91,69 @@ def test_the_runner_never_syncs_a_toolbox(tmp_path):
     text = (ROOT / "scripts" / "cad_buildup.py").read_text(encoding="utf-8")
     assert "put_tree" not in text
     assert "sync_toolbox" not in text
+
+
+def test_the_record_carries_the_accounting_before_the_run_returns(tmp_path, monkeypatch):
+    """T5 of the first baseline sweep recorded $0.00 against 22 cells and 535 s.
+
+    Not a free run -- an unrecorded one. The accounting was written once, from `result`,
+    after `desk.run` returned, and a killed run never returns: the watcher signals the
+    process group, the default SIGTERM disposition terminates without unwinding, so
+    neither the `except` nor the `finally` runs and the record keeps its defaults. The
+    ending was recorded by the watcher and the price of reaching it was not, so the case
+    sorted last in a report that ranks failures by cost.
+
+    So the invariant is not "the totals are right at the end" -- it is that they are on
+    disk **while the run is still going**, which is the only state a kill can observe.
+    This test reads `record.json` back at each turn boundary, from inside the run.
+    """
+    module = load_runner()
+
+    seen: list[dict] = []
+
+    class StubDesk:
+        on_turn = None
+        on_step = None
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, *_args, **_kwargs):
+            # Two turns, each spending, and after each one the record as a killer
+            # would find it on disk.
+            for turn, total in ((1, {"input": 10, "output": 1000}),
+                                (2, {"input": 10, "output": 3000})):
+                self.on_turn(turn=turn, steps=0, stop_reason="end_turn",
+                             output_tokens=total["output"], tokens=dict(total),
+                             fenced=True, text_chars=5, thinking_chars=0,
+                             text="hi", block_types=["text"])
+                seen.append(record.load(run_dir_holder[0]))
+            raise AssertionError("the kill lands here; the run never returns")
+
+    run_dir_holder: list[Path] = []
+    real_prepare = module.prepare
+
+    def prepare(case, parent, run_dir):
+        run_dir_holder.append(Path(run_dir))
+        return real_prepare(case, parent, run_dir)
+
+    from openreynolds.buildup import record
+
+    monkeypatch.setattr(module, "prepare", prepare)
+    monkeypatch.setattr(module.core, "CoreDesk", StubDesk)
+    monkeypatch.setattr(module, "find_bashrc", lambda: "/dev/null", raising=False)
+
+    with pytest.raises(AssertionError, match="the kill lands here"):
+        module.drive("T1", tmp_path / "work", tmp_path / "runs", 0, 0.0)
+
+    assert len(seen) == 2, seen
+    # Not defaults: the price of the run so far is readable at every turn boundary.
+    assert seen[0]["tokens"] == {"input": 10, "output": 1000}
+    assert seen[0]["usd"] > 0
+    # `seconds` is asserted present rather than positive: this stub returns in under the
+    # 0.1 s the field is rounded to, so a `> 0` here would be testing the clock.
+    assert "seconds" in seen[0]
+    # And it tracks, rather than being written once and left.
+    assert seen[1]["tokens"] == {"input": 10, "output": 3000}
+    assert seen[1]["usd"] > seen[0]["usd"]
+    assert seen[1]["n_turns"] == 2
