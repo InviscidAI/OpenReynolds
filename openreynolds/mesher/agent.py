@@ -18,6 +18,7 @@ Three things it does own, because they are what the model cannot check about its
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 import time
@@ -27,7 +28,11 @@ from typing import Any, Callable
 from .. import images
 from ..llm import Listener, ProviderError, make_provider
 from .brief import MESH_DONE, remark_message, system_prompt, task_message
-from .check import Check, verify
+from .check import LOOK, Check, verify
+
+SNAPSHOT_REL = "renders/mesh_before.json"
+"""Where the pre-run measurement is kept. Beside the render the check writes, so a
+case directory still holds exactly one place for what the desk measured."""
 
 MAX_STEPS = 30
 """Enough for a shape, a look, two or three revisions, a refine and a finish. A run
@@ -160,6 +165,15 @@ class Mesher:
             result.seconds = time.monotonic() - started
             return result
 
+        before = self._snapshot(case_dir)
+        """What was already in this case directory when the run started.
+
+        Only ever non-empty on a re-run -- an edit, a "make it 2 mm wider". It exists
+        so the finish check can answer the one question it could not previously ask:
+        did anything actually change? A desk that rebuilds the OLD geometry, verifies
+        the OLD geometry and reports success passes every other clause, because after a
+        no-op there is a perfectly valid mesh of the right rough size."""
+
         system = system_prompt(STEP_TIMEOUT_S)
         messages: list[dict[str, Any]] = [
             {"role": "user", "content": [{"type": "text",
@@ -214,7 +228,7 @@ class Mesher:
 
             if _is_finish(cmd):
                 result.summary = _summary(turn.text)
-                check = verify(self.backend, case_dir, case_rel, request)
+                check = verify(self.backend, case_dir, case_rel, request, before)
                 result.check = check
                 if check.ok:
                     result.ok = True
@@ -240,12 +254,51 @@ class Mesher:
             # mesh nobody looked at is exactly the failure this desk exists to end.
             # Measured, not assumed: a T10 run built 91,000 cells, hit a 400 on its
             # next model call, and was reported as "nothing was meshed".
-            result.check = verify(self.backend, case_dir, case_rel, request)
+            result.check = verify(self.backend, case_dir, case_rel, request, before)
             result.ok = result.check.ok
         if not result.summary:
             result.summary = _summary(last_text)
         result.png = self._render_bytes(result)
         return result
+
+    def _snapshot(self, case_dir: str) -> dict:
+        """The mesh already in the case directory, measured, or {} if there is none.
+
+        Whether a mesh is there is asked DIRECTLY, with a `stat` of the one file that
+        settles it, rather than smuggled into the shell as `test -f ... && ...`. Two
+        reasons, and the second is the one that matters: a shell guard makes the
+        "nothing was here" answer indistinguishable from "the look produced nothing",
+        and a backend that cannot answer at all then looks like a case with a mesh in
+        it. Asked directly, every failure -- missing file, unreachable workspace,
+        unreadable JSON -- falls to the same safe default of NO snapshot, which means
+        the no-op guard simply does not fire. A guard that cannot fire is the right
+        failure mode here; one that fires on bad information would refuse correct
+        first-time meshes.
+
+        `--no-check` skips checkMesh and draws no picture: all this needs is cell
+        count, bounds and patch areas.
+        """
+        try:
+            info = self.backend.stat(f"{case_dir}/constant/polyMesh/points")
+        except Exception:  # noqa: BLE001 - no mesh here is the common path
+            return {}
+        if getattr(info, "is_dir", False) or not getattr(info, "size", 0):
+            return {}
+        cmd = (f"python3 {LOOK} . --no-check --json {SNAPSHOT_REL} >/dev/null 2>&1; "
+               f"cat {SNAPSHOT_REL}")
+        try:
+            outcome = self.backend.exec(cmd, cwd=case_dir, timeout_s=120)
+        except Exception:  # noqa: BLE001 - no snapshot is not a reason not to mesh
+            return {}
+        text = outcome.output or ""
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            return {}
+        try:
+            payload = json.loads(text[start:end + 1])
+        except ValueError:
+            return {}
+        return payload if isinstance(payload, dict) and payload.get("cells") else {}
 
     # -- the person ------------------------------------------------------------
 
