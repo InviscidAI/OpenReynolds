@@ -12,8 +12,8 @@ how to work. This repository is the plumbing that lets it, and the plumbing is
 deliberately not allowed to tell it what to do.
 
 **[tryreynolds.com](https://tryreynolds.com)** &middot;
-[Documentation](https://tryreynolds.com/docs/) &middot;
-[Worked studies](https://tryreynolds.com/studies/) &middot;
+[Documentation](https://tryreynolds.com/docs) &middot;
+[Worked studies](https://tryreynolds.com/studies) &middot;
 [Hosted app](https://app.tryreynolds.com) &middot;
 [PyPI](https://pypi.org/project/openreynolds/)
 
@@ -21,7 +21,7 @@ You do not need to know OpenFOAM to use it. You bring the engineering question: 
 geometry, the fluid, the speed, and what you want measured. Choosing the solver,
 writing the dictionaries, sizing the mesh and reading the residuals is the agent's job.
 
-[![A study in progress: the conversation and the agent's tool calls on the left, the mesh it built on the right, and the solver's own residuals across the top.](https://tryreynolds.com/figures/ui-app-study.jpg?v=1)](https://tryreynolds.com)
+[![A study in progress: the conversation and the agent's tool calls on the left, the mesh it built on the right, and the solver's own residuals across the top.](https://tryreynolds.com/figures/ui-app-study.jpg?v=2)](https://tryreynolds.com)
 
 <sub>A study in progress. What the agent says is on the left, what it did to the
 workspace is underneath, and what it built is on the right. The bar across the top is
@@ -30,14 +30,14 @@ the solver's own numbers, read out of the log while the job runs.</sub>
 ## What comes out
 
 Every one of these is from a real run, with its transcript published beside it at
-[tryreynolds.com/studies](https://tryreynolds.com/studies/).
+[tryreynolds.com/studies](https://tryreynolds.com/studies).
 
 | | |
 |---|---|
-| ![The lambda shock on the ONERA M6 wing, upper-surface pressure coefficient.](https://tryreynolds.com/figures/studies/m6-cp-upper-surface.png) | ![Vortex shedding past a cylinder at Re = 100.](https://tryreynolds.com/figures/studies/cyl-shedding.gif) |
-| **[The lambda-shock, at one seventh the mesh](https://tryreynolds.com/studies/onera-m6-transonic.html)** <br> <sub>ONERA M6 at Mach 0.8395. Shock positions within 0.06 chord of the 1979 wind-tunnel data, on 1.79 million cells.</sub> | **[Four numbers, four published bands, one animation](https://tryreynolds.com/studies/vortex-shedding-cylinder.html)** <br> <sub>Vortex shedding at Re = 100, with the Strouhal number checked against the published band.</sub> |
-| ![Conjugate heat transfer on a finned heat sink.](https://tryreynolds.com/figures/studies/hs-temp.png) | ![Mach number through a converging-diverging nozzle.](https://tryreynolds.com/figures/studies/nozzle-mach.png) |
-| **[A heat sink, and an energy balance closed to 99.7%](https://tryreynolds.com/studies/finned-heat-sink.html)** <br> <sub>Conjugate heat transfer, with the energy balance closed as its own check.</sub> | **[The solver said it had converged. The agent checked.](https://tryreynolds.com/studies/converging-diverging-nozzle.html)** <br> <sub>A nozzle designed for Mach 2, run overexpanded, and the disagreement caught.</sub> |
+| ![The lambda shock on the ONERA M6 wing, upper-surface pressure coefficient.](https://tryreynolds.com/figures/studies/m6-cp-upper-surface.png?v=2) | ![Vortex shedding past a cylinder at Re = 100.](https://tryreynolds.com/figures/studies/cyl-shedding.gif?v=2) |
+| **[The lambda-shock, at one seventh the mesh](https://tryreynolds.com/studies/onera-m6-transonic)** <br> <sub>ONERA M6 at Mach 0.8395. Shock positions within 0.06 chord of the 1979 wind-tunnel data, on 1.79 million cells.</sub> | **[Four numbers, four published bands, one animation](https://tryreynolds.com/studies/vortex-shedding-cylinder)** <br> <sub>Vortex shedding at Re = 100, with the Strouhal number checked against the published band.</sub> |
+| ![Conjugate heat transfer on a finned heat sink.](https://tryreynolds.com/figures/studies/hs-temp.png?v=2) | ![Mach number through a converging-diverging nozzle.](https://tryreynolds.com/figures/studies/nozzle-mach.png?v=2) |
+| **[A heat sink, and an energy balance closed to 99.7%](https://tryreynolds.com/studies/finned-heat-sink)** <br> <sub>Conjugate heat transfer, with the energy balance closed as its own check.</sub> | **[The solver said it had converged. The agent checked.](https://tryreynolds.com/studies/converging-diverging-nozzle)** <br> <sub>A nozzle designed for Mach 2, run overexpanded, and the disagreement caught.</sub> |
 
 ```bash
 pip install openreynolds     # or: uvx openreynolds · pipx install openreynolds · npm i -g openreynolds
@@ -101,7 +101,7 @@ these.
 | `job_check` | Ask how a job is doing. It can hold the answer until the job ends, and returns early the moment you type. |
 | `job_kill` | Stop a job, and confirm it actually stopped. |
 | `fetch` | Read something from the open web: a paper, a benchmark table, a geometry reference. |
-| `geometry` | Turn a shape described in words into a case on the workspace, with a picture of it and its measurements. A second loop, running beside the agent with gmsh in-process, composes the shape, draws it, measures it and revises it before committing — the write-and-look laps that took the main loop four remote round trips each. Needs `pip install openreynolds[geometry]`; without it the tool says so and the toolbox scripts do the same from a hand-written spec. |
+| `mesh` | Describe a shape in words and get an OpenFOAM mesh of it on the workspace. A separate agent builds it on the same machine: it picks the mesher (gmsh body-fitted, `blockMesh`, `snappyHexMesh`, cfMesh), writes the geometry as a script, renders the mesh, measures it, and revises until `checkMesh` passes and the shape measures up to what was asked for. Saying it is done is not what ends it — the mesh has to be there, pass, carry patch names somebody chose, and have a script that rebuilds it. |
 
 ## The rule this repository keeps
 
@@ -290,7 +290,7 @@ or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
 | `cli.py` | Entry point, session assembly, subcommands. |
 | `loop.py` | The tool-use loop: streaming, interjections, thread refresh. |
 | `tools.py` | The eight tool schemas and their handlers. |
-| `geometry/` | The geometry segment: `desk.py` is the desk behind the `geometry` tool (its own brief, its own model client, laps of build → draw → measure → revise in-process, then the case committed to the workspace); the modules beside it are the kernel that runs anywhere gmsh does. |
+| `mesher/` | The agent behind the `mesh` tool: `brief.py` is what it is told, `agent.py` runs it one fenced `bash` block at a time on the instance that already has gmsh and OpenFOAM, and `check.py` decides whether it is finished. Geometry and meshing used to be a stack of generators and a spec language here; this replaced all of it on 2026-09-07. |
 | `watch.py` | Job polling, wake facts, progress, narration. |
 | `mirror.py` / `store.py` | Files home, and the local `./studies/<id>/` record. |
 | `backend/` | The `Backend` protocol. `hosted.py` is the only module that knows the service exists. |
