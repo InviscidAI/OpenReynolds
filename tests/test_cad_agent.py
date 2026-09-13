@@ -275,7 +275,7 @@ def turn_of(text, made: int = 1):
 
 
 def test_the_one_call_is_the_action():
-    ids, source, complaint = parse_action(turn_of(block("x = 1", "thinking")))
+    ids, source, complaint, _ = parse_action(turn_of(block("x = 1", "thinking")))
     assert source == "x = 1" and complaint == "" and len(ids) == 1
     # The prose alongside is not the action and never was.
     assert parse_action(turn_of(block("x = 1")))[1] == "x = 1"
@@ -286,10 +286,10 @@ def test_no_call_and_two_calls_are_both_told_what_happened():
     about the language in the fence -- they are about the model sending one action, or
     explaining itself at length instead of acting. The channel changed underneath them
     and the discipline they ask for did not."""
-    ids, source, complaint = parse_action(
+    ids, source, complaint, _ = parse_action(
         turn_of("I will now consider the geometry at length."))
     assert source == "" and ids == [] and "called no tool" in complaint
-    ids, source, complaint = parse_action(turn_of(Cell(source="a = 1", calls=2)))
+    ids, source, complaint, _ = parse_action(turn_of(Cell(source="a = 1", calls=2)))
     assert source == ""
     assert "2 tool calls" in complaint and "none of them ran" in complaint
     # Every call is named, because every call has to be answered.
@@ -297,12 +297,12 @@ def test_no_call_and_two_calls_are_both_told_what_happened():
 
 
 def test_a_call_with_no_source_is_told_so_rather_than_running_nothing():
-    ids, source, complaint = parse_action(turn_of(Cell(source="   ")))
+    ids, source, complaint, _ = parse_action(turn_of(Cell(source="   ")))
     assert source == "" and len(ids) == 1 and "no source" in complaint
 
 
 def test_a_tool_that_does_not_exist_is_named_in_the_complaint():
-    ids, source, complaint = parse_action(turn_of(Cell(source="x = 1", name="bash")))
+    ids, source, complaint, _ = parse_action(turn_of(Cell(source="x = 1", name="bash")))
     assert source == "" and len(ids) == 1 and "bash" in complaint
 
 
@@ -1191,7 +1191,7 @@ def test_a_fence_in_the_prose_is_prose():
     believing a cell had run. Now nothing a message *writes* runs -- only what it
     calls -- so a fenced block in the text is no more an action than a sentence is."""
     fenced = "Here is what I would run:\n```python\nblockMesh\n```"
-    ids, source, complaint = parse_action(turn_of(fenced))
+    ids, source, complaint, _ = parse_action(turn_of(fenced))
     assert source == "" and ids == [] and "called no tool" in complaint
     assert not re.search(r"bash", parse_action(turn_of("no block"))[2])
 

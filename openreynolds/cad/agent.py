@@ -171,6 +171,75 @@ being something to detect and starts being something that cannot be expressed.
 """
 
 
+DECLARE_NAME = "declare_complete"
+
+DECLARE_TOOL: dict[str, Any] = {
+    "name": DECLARE_NAME,
+    "description": (
+        "Declare this case finished, or declare that it cannot be answered correctly. "
+        "Calling this runs the checks. checkMesh is the only binding one: if it fails "
+        "you are told why and the run carries on. Every other check is advisory -- it is "
+        "reported to you and recorded, and none of them can block a finish.\n\n"
+        "If you already know a check is going to flag something that is correct -- an "
+        "open surface because you built a zero-thickness baffle, a meshing point outside "
+        "the exported surface because the flow is external -- name it in `waive` with "
+        "your reason on this call, before you see the result. That is a prediction and "
+        "it is recorded as one. Naming it after it has flagged is also allowed and is "
+        "recorded differently. Naming a check that then does not flag is recorded too: "
+        "it means you expected something about your own geometry that was not there."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "outcome": {
+                "type": "string",
+                "enum": ["complete", "refuse"],
+                "description": (
+                    "`complete` when the mesh is built and you are done. `refuse` when "
+                    "the request cannot be answered correctly -- a file that declares no "
+                    "unit, a request that states no dimension at all -- in which case "
+                    "you do not build anything and `reason` says why."),
+            },
+            "reason": {
+                "type": "string",
+                "description": "Required when refusing: why, in one line.",
+            },
+            "waive": {
+                "type": "array",
+                "description": (
+                    "Advisory checks you expect to flag, and why that is correct here."),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "check": {"type": "string", "enum": [
+                            "union_closure", "normals", "self_intersection",
+                            "location_in_mesh", "coverage", "scale"]},
+                        "because": {"type": "string"},
+                    },
+                    "required": ["check", "because"],
+                },
+            },
+        },
+        "required": ["outcome"],
+    },
+}
+"""The finish, as an act rather than a sentinel the harness greps for.
+
+`print("CAD_DONE")` still works and is still how the shipped desk finishes. This is the
+same boundary made explicit, and the reason to move it is that the boundary is where the
+gates belong: something has to run the advisory checks, and a cell that happens to print a
+token is not a place to hang them.
+
+`checkmesh` is not in the `waive` enum. It is binding, so it cannot be waived, and a
+schema that will not form the call is better than a handler that rejects it afterwards.
+
+The enum is written out here rather than imported from `buildup.gate.WAIVABLE`, which is
+the same list: `buildup` imports this module, so importing back would be a cycle. The two
+copies are held together by a test rather than by an import, the same way
+`scripts/cad_probes.py` holds its recorded answers against the prose ones.
+"""
+
+
 @dataclass
 class Step:
     """One lap, as the record keeps it.
@@ -348,7 +417,7 @@ class CadDesk:
             messages.append(said)
             last_text = turn.text.strip() or last_text
 
-            ids, source, complaint = parse_action(turn)
+            ids, source, complaint, declare = parse_action(turn)
             remark = self._remark(messages, result)
             # `fenced` is what the heartbeat and the `no-progress` alarm have always
             # called "this turn produced something runnable". The channel changed under
@@ -356,6 +425,33 @@ class CadDesk:
             self._beat(turns, result, turn, fenced=bool(source))
             if complaint:
                 _answer(messages, ids, complaint, is_error=True, note=self._drain())
+                continue
+
+            if declare is not None:
+                if declare.get("outcome") == "refuse":
+                    # The same terminal `print("CAD_REFUSED: ...")` reaches, arrived at
+                    # by an act the schema enforces rather than a string the desk has to
+                    # remember. The reason is required by `parse_action`, so it is here.
+                    result.stopped = "refused"
+                    result.error = str(declare.get("reason") or "").strip()
+                    result.summary = _summary(turn.text) or result.error
+                    break
+                if remark:
+                    _answer(messages, ids,
+                            "Held: there is a newer instruction above. Read it and carry "
+                            "on.", note=self._drain())
+                    continue
+                check, advisory = self._declare(declare, case_rel, request)
+                result.check = check
+                result.summary = _summary(turn.text) or result.summary
+                if check.ok:
+                    result.ok = True
+                    break
+                # checkMesh is the only thing that can say "not yet". The advisory text
+                # rides along with it so one answer carries both.
+                _answer(messages, ids,
+                        "\n\n".join(x for x in (check.as_refusal(), advisory) if x),
+                        is_error=True, note=self._drain())
                 continue
 
             declined = _refusal(source)
@@ -557,7 +653,7 @@ class CadDesk:
             try:
                 return self.provider.stream(
                     model=self.model, system=system, messages=messages,
-                    tools=[CELL_TOOL],
+                    tools=self._tools(),
                     effort=self.effort, max_tokens=MAX_REPLY_TOKENS, listener=Listener(),
                 )
             except ProviderError as exc:
@@ -565,6 +661,22 @@ class CadDesk:
                     raise
                 time.sleep(RETRY_PAUSE_S)
         raise AssertionError("unreachable")
+
+    def _tools(self) -> list[dict[str, Any]]:
+        """The tools this desk is offered. A seam, because the core desk has a second.
+
+        The shipped desk is handed exactly what it was handed before this existed, so the
+        seam changed no behaviour here -- only where behaviour can be added without
+        reaching into the loop."""
+        return [CELL_TOOL]
+
+    def _declare(self, payload: dict[str, Any], case_rel: str,
+                 request: str) -> tuple[Any, str]:
+        """Handle a `declare_complete` call, returning `(check, advisory_text)`.
+
+        Only a desk that offers the tool can receive the call, so the base desk's version
+        exists to be overridden and to keep the contract readable in one place."""
+        raise NotImplementedError(f"{type(self).__name__} offers no {DECLARE_NAME}")
 
     # -- the kernel ------------------------------------------------------------
 
@@ -745,7 +857,7 @@ class CadDesk:
 # -- reading what the model sent ----------------------------------------------
 
 
-def parse_action(turn: Any) -> tuple[list[str], str, str]:
+def parse_action(turn: Any) -> tuple[list[str], str, str, dict[str, Any] | None]:
     """The one cell this turn asked for, or what to say back about it.
 
     Returns `(ids, source, "")` or `(ids, "", complaint)`. Both complaints survived the
@@ -763,21 +875,32 @@ def parse_action(turn: Any) -> tuple[list[str], str, str]:
     if not calls:
         return ids, "", ("Nothing ran: that message called no tool. Use the run_cell "
                          "tool with the cell you want run -- it is the only thing that "
-                         "executes.")
+                         "executes."), None
     if len(calls) > 1:
         return ids, "", (
             f"That message made {len(calls)} tool calls and none of them ran. One cell "
             "per message: put the whole cell -- the imports, the constants, the "
             "measurement -- in a single call. The kernel is sequential and so is the "
-            "script your cells are concatenated into.")
+            "script your cells are concatenated into."), None
+    if calls[0].name == DECLARE_NAME:
+        payload = dict(calls[0].input or {})
+        outcome = str(payload.get("outcome") or "").strip()
+        if outcome not in ("complete", "refuse"):
+            return ids, "", (f"That {DECLARE_NAME} call gave outcome {outcome!r}. It has "
+                             "to be `complete` or `refuse`."), None
+        if outcome == "refuse" and not str(payload.get("reason") or "").strip():
+            return ids, "", ("A refusal has to say why. Call it again with `reason` set "
+                             "to the one line that explains what cannot be answered."), None
+        return ids, "", "", payload
     if calls[0].name != CELL_NAME:
-        return ids, "", (f"There is no tool called {calls[0].name!r}. The only tool is "
-                         "run_cell, which runs one cell in the kernel.")
+        return ids, "", (f"There is no tool called {calls[0].name!r}. The tools are "
+                         "run_cell, which runs one cell in the kernel, and "
+                         f"{DECLARE_NAME}."), None
     source = str((calls[0].input or {}).get("source") or "").strip()
     if not source:
         return ids, "", ("That run_cell call carried no source, so nothing ran. Put the "
-                         "cell in the `source` argument.")
-    return ids, source, ""
+                         "cell in the `source` argument."), None
+    return ids, source, "", None
 
 
 _FINISH = re.compile(rf"^print\(\s*[\"']{CAD_DONE}[\"']\s*\)$")

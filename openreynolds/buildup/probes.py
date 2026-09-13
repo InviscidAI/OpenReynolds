@@ -100,16 +100,19 @@ REGISTRY: tuple[Probe, ...] = (
           "around the part; snappy succeeds and checkMesh passes a valid mesh of the "
           "wrong volume",
           "cast a ray from the point the case actually used against the exported "
-          "surface after the run, and count parity"),
+          "surface after the run, and count parity",
+          state=ACTIVE),
     Probe("union_closure",
           "the exported patch set has free edges, so the meshed volume is not the one "
           "intended; nothing errors because an open surface is a legal STL",
           "open edges on the welded union, never per file -- individual patch files "
-          "are open surfaces by construction and a per-file check passes nothing real"),
+          "are open surfaces by construction and a per-file check passes nothing real",
+          state=ACTIVE),
     Probe("normals",
           "inconsistent outward orientation turns a solid into a void for snappy, "
           "which meshes the complement without complaint",
-          "edges walked twice in the same direction on the welded union"),
+          "edges walked twice in the same direction on the welded union",
+          state=ACTIVE),
     Probe("coverage",
           "a face assigned to two patches, or to none; an unassigned face lands "
           "silently in a default patch and takes whatever boundary condition it carries",
@@ -123,7 +126,8 @@ REGISTRY: tuple[Probe, ...] = (
     Probe("self_intersection",
           "the exported surface crosses itself, so the volume it bounds is not "
           "well defined and the mesher resolves it silently either way",
-          "triangle-triangle intersection between non-neighbours on the union"),
+          "triangle-triangle intersection between non-neighbours on the union",
+          state=ACTIVE),
 )
 
 BY_ID = {probe.id: probe for probe in REGISTRY}

@@ -96,8 +96,22 @@ def test_the_graded_record_keeps_the_probe_evidence_and_the_workspace_is_untouch
 
 
 def test_the_registry_is_printable_so_a_report_can_cite_it():
+    """What a report needs is both buckets, covering every probe, with nothing invented.
+
+    This used to assert `active == []` and six dormant, which was a census of the registry
+    on the day it was written rather than the property the test is named for -- and it
+    went false on 2026-09-13 when four rows were activated. The fourth assertion of that
+    shape in this suite, so it is worth saying plainly: pin what the command *guarantees*,
+    which is that the two buckets partition `probes.REGISTRY`, and let the contents move."""
+    from openreynolds.buildup import probes
+
     code, answer = supervise("registry")
-    assert code == 0 and answer["active"] == [] and len(answer["dormant"]) == 6
+    assert code == 0
+    assert set(answer) >= {"active", "dormant"}
+    printed = sorted(answer["active"] + answer["dormant"])
+    assert printed == sorted(probe.id for probe in probes.REGISTRY), (
+        "the command prints the registry, not a list kept beside it")
+    assert not (set(answer["active"]) & set(answer["dormant"])), "a probe is in one bucket"
 
 
 def test_a_run_directory_with_no_record_says_so_rather_than_inventing_one(tmp_path):

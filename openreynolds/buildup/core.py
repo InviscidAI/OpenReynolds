@@ -32,9 +32,11 @@ from __future__ import annotations
 
 import re
 import shlex
+from pathlib import Path
 from typing import Any
 
-from ..cad.agent import STEP_TIMEOUT_S, CadDesk
+from ..cad.agent import CELL_TOOL, DECLARE_TOOL, STEP_TIMEOUT_S, CadDesk
+from . import gate, probes
 from ..cad.brief import CAD_DONE
 from ..cad.check import Check, Finding, mesh_regions
 
@@ -136,17 +138,27 @@ named is worth more than a verdict you implied.
 
 # Finishing
 
-When the geometry is built and the mesh exists and `checkMesh` passes, send this as your \
-python block:
+When the geometry is built and the mesh exists, call the `declare_complete` tool with \
+`outcome: "complete"`, and put your closing summary in the prose beside it: what you \
+built, the numbers you measured against the request, what you could not check.
 
-```python
-print("{CAD_DONE}")
-```
+That call runs the checks. **`checkMesh` is the only one that can hold the run open** -- it \
+runs per region, and a run that declares complete over a mesh it refuses is handed the \
+refusal and keeps working. Every other check is advisory: you are told what it found and \
+it is recorded, and none of it blocks the finish.
 
-and put your closing summary in the prose above it: what you built, the numbers you \
-measured against the request, what you could not check. The harness then runs `checkMesh` \
-itself, per region, and a run that says done over a mesh it refuses is handed the refusal \
-and keeps working.
+**If you already know an advisory check is going to flag something that is correct, say so \
+on the same call.** Put it in `waive` with your reason -- an open surface because the part \
+is a zero-thickness baffle, a meshing point outside the exported surface because the flow \
+is external. Said before you see the result that is a prediction about your own geometry, \
+and it is recorded as one. Said after the check has flagged, it is still allowed and \
+recorded differently. Naming a check that then does not flag is recorded too, and means \
+you expected something about your own geometry that was not there.
+
+**When the request cannot be answered correctly** -- a file that declares no length unit, a \
+request that states no dimension at all -- call `declare_complete` with \
+`outcome: "refuse"` and a one-line `reason`, and build nothing. Reporting up is the work in \
+that case; guessing is not.
 
 If you run out of steps or seconds before you get there, `checkMesh` still runs on \
 whatever is in the directory and you are told what it found -- an unexamined mesh is the \
@@ -167,6 +179,13 @@ opening steps looking for what it was told it had. Measured on a local run of th
 this replaces: seven steps of twenty-seven."""
 
 CHECKMESH_TIMEOUT_S = 600
+
+GATE_TIMEOUT_S = 300
+"""How long the advisory gates may take without the watcher calling the run stale.
+
+Declared for the same reason `checkMesh` is: the 420 s staleness threshold counts silence,
+and a gate run is silent. T23 welded 544,306 triangles, which is the shape of the case
+that makes this more than a formality."""
 """`checkMesh` on a few million cells is a minute; ten is a mesh that is not coming back."""
 
 _STATS = {
@@ -308,6 +327,11 @@ class CoreDesk(CadDesk):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.toolbox = ""
+        self._declares: list[dict[str, Any]] = []
+        self._warned: set[str] = set()
+        """Which advisory checks have raised a concern on some earlier declare. A waiver
+        naming a check already in here is a reaction; one naming a check that is not is a
+        prediction. `gate.evaluate` does the labelling and the desk cannot reach it."""
 
     def _system(self) -> str:
         return CORE_SYSTEM.format(step_timeout=STEP_TIMEOUT_S)
@@ -321,3 +345,39 @@ class CoreDesk(CadDesk):
         # the core -- §7 leaves the replay criterion open, and grading the request is the
         # supervisor's -- so they are deliberately unused here.
         return verify(self.backend, self.case_dir, case_rel, mark=self._mark)
+
+    # -- the declared finish, and the advisory gates that run at it -------------
+
+    def _tools(self) -> list[dict[str, Any]]:
+        return [CELL_TOOL, DECLARE_TOOL]
+
+    def _declare(self, payload: dict[str, Any], case_rel: str,
+                 request: str) -> tuple[Check, str]:
+        """Run every check, bind on `checkMesh` alone, and report the rest.
+
+        The advisory half is why this exists. `union_closure` measured 259 free edges on
+        T26 -- the tread-column tangency the case was written around -- wrote it into the
+        record, and the run scored `passed: true`, because the probes observe from the
+        supervisor and have no channel into the run. Nothing told the desk. This is the
+        channel, and it stays advisory: four of the six probes have been wrong at least
+        once, so a gate built on them would block correct work, while a warning built on
+        them costs nothing when wrong and is the only thing that will ever produce the
+        evidence to repair them.
+        """
+        check = self._verify(case_rel, request, self.log.script())
+        states: list[gate.GateState] = []
+        try:
+            self._mark("gates", GATE_TIMEOUT_S)
+            found = [r.as_dict() if hasattr(r, "as_dict") else dict(r)
+                     for r in probes.run_all(Path(self.case_dir), {})]
+            states = gate.evaluate(found, payload.get("waive") or (), self._warned)
+        except Exception as exc:  # noqa: BLE001 - an advisory check may not end a run
+            states = [gate.GateState("gates", gate.NOT_RUN, f"{type(exc).__name__}: {exc}")]
+        # What has already fired is what separates a prediction from a reaction on the
+        # next declare, and the desk does not get a say in it.
+        self._warned |= {s.check for s in states
+                         if s.state in (gate.WARNED, gate.XFAIL, gate.WAIVED)}
+        self._declares.append(gate.Declaration(
+            outcome="complete", reason=str(payload.get("reason") or ""),
+            states=states, checkmesh_ok=bool(check.ok)).as_dict())
+        return check, gate.render(states, self.case_dir)
