@@ -116,7 +116,72 @@ non-closed surfaces and all four passed.
   two independent instances (T26's tangency, the closure gap) rather than the one that was
   withdrawn.
 
-### What a proper comparison would take
+### The shared half, measured — by reusing geometry the runs already produced
+
+*Added 2026-09-13, in answer to "doesn't producing the mesh already require producing the
+geometry first?" It does, and the answer costs nothing: the part solids are in each run's
+committed `build.py`.*
+
+**Where the fluid domain is a cavity in or around a part, the part must be built and is
+therefore gradeable.** `T18: solid = barrel + fins + head`. `T19: shaft_solid = shaft_cyl -
+keybox`. `T26: column`, `tread_solid`. Their feature lists are itemised one bullet per feature,
+so our geometry can be graded on their own checklist with no model spend at all.
+
+**The limit is not the geometry, it is that a fluid domain only needs the wetted boundary.**
+T20 built `fluid = seg1 + seg2 + seg3` and no flange — water in a bore is a cylinder, so P2's
+bolt holes and fillets do not exist to grade. T21 built the internal cavity and never the
+enclosure shell, so "uniform wall thickness" has no referent. Both are correct CFD
+simplification and both delete features their checklist scores. That truncation is systematic,
+not incidental.
+
+Grading the four gradeable overlaps on the features **both** briefs ask for:
+
+| ours ← theirs | shared features | us | their full list |
+|---|---|---|---|
+| T18 ← P7 finned cylinder | 7 | **7/7** | 17 |
+| T19 ← P4 shaft + keyway | 6 | **4/6** | 11 |
+| T21 ← P5 enclosure | 5 | **5/5** | 12 |
+| T26 ← P9 staircase | 8 | **7/8** | 16 |
+| | **26** | **23/26** | 57 |
+
+On those same 26 features, from their published per-item results:
+
+| | on the 26 shared features |
+|---|---|
+| **MAC** | **26/26** — including P9 item 8, which it corrected unprompted |
+| **`cad` skill** | **25/26** — failed item 8, shipped the disconnected staircase |
+| **this desk** | **23/26** |
+
+**This is the first like-for-like number in this document, and the ranking is MAC > skill > us.**
+The denominator is 26 of their 141, or 18% of their checklist, and it is one run each side at
+different models. It is small and it is real.
+
+#### What our three failures are, and they are not all equal
+
+- **T26, the tangency.** A real failure and the one that discriminates: their own feature list
+  states it as *"tread inner ends approach the column (this feature is physically infeasible and
+  would cause the model to collapse and fracture)"* — the infeasibility **is** the graded item.
+  MAC caught it, the skill did not, we did not.
+- **T19, the two missing shaft steps.** Our brief named a 50 mm and a 30 mm step; the desk built
+  only the 40 mm sealed length. Those steps lie outside the seal and have **no wetted surface in
+  the domain we asked for**, so the desk was right to skip them and the brief was over-specified.
+  Counting them against the desk is the same error as T9's unpassable brief. Ruling them brief
+  noise gives **25/26 — level with the skill, one behind MAC, on the single feature that
+  separates the three systems.**
+
+#### The finding that makes this worth repeating
+
+**All three failures are invisible to this corpus's own criterion.** T19 ended `done` with a
+clean `checkMesh` and nothing in its property list asked about the steps. T26 ended `done`, and
+its brief's tangency property went ungraded because property grading is judgement and no run
+fails on it. **Grading on their checklist found defects ours structurally cannot see**, for free,
+from records already on disk.
+
+That argues for adopting the feature-list form as a complement to `checkMesh` and the property
+list — not as a replacement. `checkMesh` cannot see a leaky surface either (§ the closure gap),
+and a binary topological checklist is exactly the shape of check that can.
+
+### What a full comparison would still take
 
 The shared half is unmeasured because this corpus never scores it separately. The fix is cheap
 and specific: **run P1–P10 against this desk and grade the output on their 141-feature criteria**
