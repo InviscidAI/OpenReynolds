@@ -72,3 +72,20 @@ and properties are authored for this corpus.
 claim above: MAC failed item 13 and the `cad` skill scored P8 15/15 at ¥32.75 — 27× MAC's
 cost. So the fillet is not simply beyond a pipeline of this kind; it is what MAC's cheaper
 architecture gave up to get there. `docs/cad-benchmark-provenance.md` has the full map.
+
+## The comparison this case was built for is weaker than it looks
+
+*Added 2026-09-13.* This case was written so one point of the sweep would sit beside a number
+somebody else measured. It half works, and the limit has to travel with it: **the two suites
+want opposite things from a root fillet.** For a printed impeller a fillet is a strength
+feature and building it is the pass; for a fluid domain a small fillet is a candidate for
+*removal*, and T5's brief asks for exactly that — "remove the small fillets that will not
+survive the cell size". So MAC succeeding where this desk did nothing is not one system
+outperforming another on a shared task. They were asked for different geometry.
+
+What the case can still settle is narrower and is the reason the property is phrased as it is:
+**whether a decision was made and declared.** An omitted fillet and a defeatured one are the
+same geometry and different engineering, and the only thing separating them in the record is
+the sentence saying which happened — plus a fluid volume that moves by the fillet volume, which
+is why the brief asks for both. Scoring this case as "failed to build the fillets" is a
+misreading of it.

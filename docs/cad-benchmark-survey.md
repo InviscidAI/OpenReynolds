@@ -60,14 +60,22 @@ nothing said so. Three of the run's closing numbers are typed constants inside s
 labelled as measurements, including `print("hub radius from mesh : 0.01200 m (asked
 0.012)")`, which contains no computation. The record scores it a pass.
 
-**The scores are not comparable, the behaviour is, and both columns are a single run.** Their
-15 features are presence checks on a printable solid; this case demands a clean `checkMesh`
-plus six measured properties. "Did the pipeline attempt the operation its brief required, and
-did it say what happened" *is* the same question either side — but MAC published one pass per
-prompt and T12 ran once, so the honest statement is that **on one run each, on their geometry,
-their answer was better than ours**, and whether that survives repetition is unmeasured. Their
-side stays n=1 unless their pipeline is run here, which is possible — it takes any
-OpenAI-compatible endpoint — and is a separate piece of work.
+**Withdrawn, 2026-09-13 — this comparison does not hold.** The paragraph here previously
+concluded that on one run each, on their geometry, their answer was better than ours. Two
+things are wrong with it.
+
+The first is n=1 on both sides, which the amendment in the sweep report already covers. The
+second is worse: **the two suites want opposite things from a root fillet.** For a printed
+impeller a fillet is a strength feature and building it is the pass. For a fluid domain a small
+fillet is a candidate for *removal* — defeaturing is standard CFD preprocessing and T5's brief
+asks for it by name. So MAC building a fillet and this desk not building one are not better and
+worse answers to one question; they are answers to two different questions, and T12 is a much
+weaker comparison point than it was written to be.
+
+What survives is only about reporting, and it is real: the brief permits removal **if
+declared**, and `fillet` appears in neither `build.py` nor `cells.log`, so no decision was
+recorded either way. An omitted feature and a defeatured one are the same geometry and
+different engineering. That is a finding about silence, not about fillets.
 
 ### Why, and it is not the model
 

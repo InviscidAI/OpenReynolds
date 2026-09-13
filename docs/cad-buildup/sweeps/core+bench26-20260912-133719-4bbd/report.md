@@ -198,7 +198,49 @@ correctly, as it happens. T25's is a machine specified from nothing. The brief p
 `LENGTH_UNIT`."* **The answer is worse than that: it does neither.** Two cases, two different
 triggers, both failed — which is a finding about the principle rather than about one sample.
 
-### Ranks 2 and 3 — the surfaces the export requirement produced are not clean
+### Ranks 2 and 3 — there is no closure assertion anywhere in the desk's path
+
+*Rewritten 2026-09-13. The first version of this section reported dirty surfaces. The question
+"how can a leaky surface ship silently — is there no assertion?" has an answer, and it is the
+finding rather than the symptom.*
+
+**There is no assertion.** `grep -ci` over `openreynolds/buildup/core.py` and `record.py` for
+`open_edges`, `free_edges`, `is_closed`, `watertight`, `manifold` and `closure` returns **0 for
+every one**, and the core desk's brief never mentions closure, watertightness or leakage. The
+only thing that looks at closure is the `union_closure` probe, which by design lives in the
+supervisor — a separate process, reading the case off disk, **with no channel into the
+conversation** — and no probe is a gate.
+
+So the chain is:
+
+1. the desk exports a surface; nothing checks that it closes;
+2. `snappyHexMesh` meshes it — and snappy is a Cartesian cutter, so it emits closed cells
+   **whatever the input surface did**;
+3. `checkMesh` validates the *volume mesh*, which is therefore closed, and prints `Mesh OK.`;
+4. `checkmesh_ok` is the pass criterion, so the run passes;
+5. `union_closure` notices, from outside, and gates nothing.
+
+**A leaky surface does not produce a bad mesh. It produces a good mesh of the wrong volume.**
+That is the failure `checkMesh` is structurally unable to see, and `checkMesh` is the desk's
+sole authority. The corpus now has it four times — T16, T17, T18, T26 — every one
+`checkmesh_ok: true, passed: true`.
+
+**One honest qualification, which the probe states itself:** *"Open is not the same as wrong: a
+baffle is a zero-thickness wall on purpose, and snappy meshes one deliberately."* True, and it
+does not rescue these four: T18's fins are `Cylinder(R_F, 0.003)` solids unioned into the
+barrel and T26's treads are 40 mm thick, so a deliberate baffle is not the explanation. It does
+mean the gap is not "assert closure" but **"declare what was intended and check against it"** —
+which is the same missing declaration `coverage` needs a manifest for. One gap, two probes.
+
+**T26 makes the point twice over.** Its 259 free edges are almost certainly the tread–column
+tangency the case exists to catch, surfacing as unwelded coincident edges. So the case's central
+defect *was* measured, *was* written into the record, and the run still scored `passed: true`.
+The desk never mentioned the tangency and the harness detected it and passed anyway. Its fluid
+volume is nonetheless right to 0.04% — 13.25043 m³ against 13.256 analytic — so the boolean did
+not lose material. The geometry is sound and its description is not, which is precisely the
+distinction nothing in the record can make.
+
+### The numbers behind that
 
 Making the export mandatory got the probes their input, and the input is worse than the two
 earlier sweeps suggested, because there was almost nothing to read then.
