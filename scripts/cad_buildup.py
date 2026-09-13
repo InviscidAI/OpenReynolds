@@ -272,6 +272,10 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     entry.stopped = result.stopped or "done"
     entry.mesh_exists = bool(result.check and result.check.regions)
     entry.checkmesh_ok = bool(result.check and result.check.ok)
+    # Every declare the desk made, with what the advisory gates said and what it
+    # waived. Read off the desk rather than the result because it is the desk that
+    # ran them, and a run that ended on a budget still made the declares it made.
+    entry.declares = list(getattr(desk, "_declares", []) or [])
     entry.why = "; ".join(result.check.missing) if result.check else ""
     entry.properties = [{"property": text, "measured": None} for text in prompt["properties"]]
     # Did this run do what its case asked? For nearly every case that is the mesh; for a

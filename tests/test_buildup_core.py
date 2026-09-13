@@ -72,7 +72,18 @@ def test_the_brief_carries_the_line_that_was_the_largest_measured_effect():
     """One short runnable cell a turn. On the hardest prompt it turned three consecutive
     total failures into a completed mesh, and it is not a tool."""
     assert "One short runnable cell a turn." in core.CORE_SYSTEM
-    assert CAD_DONE in core.CORE_SYSTEM
+
+
+def test_the_core_brief_teaches_exactly_one_way_to_finish():
+    """It used to be `print("CAD_DONE")`; since 2026-09-13 it is `declare_complete`.
+
+    Both still *work* -- the sentinel path is untouched and is how the shipped desk
+    finishes -- but the core brief teaches one of them, because a brief that teaches two
+    is a sweep that cannot say which one the desk used. This assertion used to live in
+    the test above, bundled beside the cell-a-turn line it has nothing to do with."""
+    assert "declare_complete" in core.CORE_SYSTEM
+    assert CAD_DONE not in core.CORE_SYSTEM
+    assert core.CORE_SYSTEM.count("# Finishing") == 1
 
 
 def test_the_core_desk_renders_the_core_brief_and_holds_no_toolbox(backend, store):

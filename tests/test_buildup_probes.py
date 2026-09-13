@@ -199,8 +199,16 @@ def test_no_probe_carries_a_verdict_any_more():
     Three probes fired across the first baseline and the supervisor overturned all three,
     while the two runs that were really wrong produced no probe signal at all. Every
     measurement was right and every verdict was wrong, so the verdicts are gone: nothing
-    in the registry returns `fired` or `pass`, and no exit code turns on one."""
-    assert {probe.state for probe in probes.REGISTRY} == {probes.DORMANT}
+    in the registry returns `fired` or `pass`, and no exit code turns on one.
+
+    This used to assert every row was `dormant`, which was a census of the registry rather
+    than the property the test is named for -- and it went false on 2026-09-13 when four
+    rows were activated. **Activation is orthogonal to verdicts**, and that is the thing
+    worth pinning: an active probe still only measures, and what its numbers mean is still
+    the supervisor's to say and now also the desk's to answer at `declare_complete`."""
+    assert {probe.state for probe in probes.REGISTRY} <= {probes.DORMANT, probes.ACTIVE}
+    assert probes.ACTIVE in {probe.state for probe in probes.REGISTRY}, (
+        "four rows are active; a registry that has gone all-dormant again has lost them")
     root = case(Path(tempfile.mkdtemp()), point=(5, 5, 5))
     found = probes.run_all(root, {"extent_m": 1.0})
     assert probes.fired(found) == []

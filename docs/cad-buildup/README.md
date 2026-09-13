@@ -38,7 +38,10 @@ verdict. Additions arrive one at a time, each carrying the measured failure that
 it and a test that demonstrates that failure in its absence.
 
 It is the same loop as the shipped desk (`openreynolds/cad/agent.py`), differing in
-exactly three seams: the brief, the nudge, and what verifies the finish.
+exactly five seams: the brief, the nudge, what verifies the finish, **the tools it is
+offered** and **what happens when it declares itself complete**. The last two arrived on
+2026-09-13 with the declare gate below; before that there were three, and the shipped desk
+is still handed exactly what it was handed then.
 
 ## Where things are
 
@@ -120,3 +123,55 @@ noting from this run: the desk printed passage width, leg length and bend angle 
 request, but derived the width from its own parameters rather than measuring it at the
 inlet, mid-leg and crown as the case asks. That is the kind of gap `checkMesh` cannot see
 and the finish check was never going to catch.
+
+## The declared finish, and the advisory gates — added 2026-09-13
+
+**The failure it closes** is `no_closure_assertion_between_export_and_meshing`, from
+`core+bench26-20260912-133719-4bbd`. Nothing in the desk's path asserted that an exported
+surface closes: `grep` for `open_edges`, `free_edges`, `is_closed`, `watertight`,
+`manifold` and `closure` over `core.py` and `record.py` returned zero for every term.
+`snappyHexMesh` is a Cartesian cutter, so it emits closed cells whatever the input surface
+did; `checkMesh` then validates the volume mesh and passes. **A leaky surface does not
+produce a bad mesh, it produces a good mesh of the wrong volume** — which is the one thing
+the desk's sole authority is structurally unable to see. Four cases exported non-closed
+surfaces and all four scored `passed: true`.
+
+T26 is the sharpest instance and is the test: `union_closure` measured 259 free edges —
+the tread-column tangency the case was written around — the record kept the number, and
+nothing told the desk, because a probe is the supervisor's and the supervisor has no
+channel into the run.
+
+**What was added.** A second tool, `declare_complete`, and with it the two new seams:
+
+| | |
+|---|---|
+| `_tools()` | what the desk is offered. `CadDesk` returns `[CELL_TOOL]` exactly as before; `CoreDesk` adds `DECLARE_TOOL` |
+| `_declare()` | runs `checkMesh` **and** the six probes, binds on `checkMesh` alone, returns the rest as advice |
+
+`checkMesh` is the only binding check and is absent from the `waive` enum, so waiving it
+cannot be expressed. Everything else is reported and recorded and blocks nothing — which
+is the answer §7 left open, decided on the evidence: four of the six probes have been
+wrong at least once, so a gate built on them would block correct work, while a warning
+built on them costs nothing when wrong.
+
+**Waivers, and why the order matters.** The desk may name a check in `waive` with a
+reason. Named *before* that check has ever fired, it is a prediction — falsifiable, made
+without the result in hand — and records as `xfail`. Named *after*, it is a reaction by a
+desk that now has an interest in dismissing the finding, and records as `waived`. The desk
+states the waiver; `gate.evaluate` picks the label from `self._warned`, so the stronger
+claim cannot be claimed. A named check that then does not fire records as `xpass`, which
+is what makes blanket-waiving self-punishing: name all six, and five come back `xpass` in
+the record.
+
+**What it is not.** It does not make a desk want to refuse. T6 and T25 are the corpus's two
+refusal failures and neither reached for refusal at all, so moving the terminal off
+`print("CAD_REFUSED: ...")` onto a schema arm is an affordance argument, not a measured
+one. It is recorded as such.
+
+**The test that demonstrates the failure in its absence** is
+`tests/test_buildup_gate.py::test_t26_measured_its_own_defect_and_nothing_told_the_desk`.
+It reads T26's committed record, asserts `passed: true` beside 259 free edges, and shows
+that `gate.render` on those same recorded probes produces the sentence nobody said. Twelve
+more pin the labelling, the enum, and the path scrubbing — which is the one thing here
+that voids a sweep if it is wrong, because gate text reaching the desk puts a house path
+into the conversation that `scan_run` greps the whole thread for.

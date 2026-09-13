@@ -89,6 +89,14 @@ class Record:
     properties: list[dict[str, Any]] = field(default_factory=list)
     """The case's named properties and whether the run measured and printed each. A
     property nobody measured is a property nobody built."""
+    declares: list[dict[str, Any]] = field(default_factory=list)
+    """Every `declare_complete` the run made, with what the advisory gates said and what
+    the desk waived.
+
+    Separate from `probes`, which is the supervisor's independent reading of the same
+    case. Holding both is the point: a check the desk waived as a deliberate baffle, and
+    which the supervisor then reads as a leak, is a finding that neither column could
+    produce alone."""
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
