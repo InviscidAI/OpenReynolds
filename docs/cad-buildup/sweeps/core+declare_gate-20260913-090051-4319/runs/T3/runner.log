@@ -1,0 +1,5 @@
+T3: run 20260913-090835-e67d
+  workspace /home/qiuzi/.openreynolds-buildup/work/T3-20260913-090835-e67d clean (0 entries, 39 house names, no toolbox)
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+declare_gate-20260913-090051-4319/runs/T3
+  provider in 2.2s, 0 cells, $0.00, checkMesh not ok, failed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+declare_gate-20260913-090051-4319/runs/T3 --case /home/qiuzi/.openreynolds-buildup/work/T3-20260913-090835-e67d/t3

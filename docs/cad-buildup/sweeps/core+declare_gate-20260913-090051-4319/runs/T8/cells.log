@@ -1,0 +1,325 @@
+# -- cell 1 (0.1s, exit 0)
+import os, subprocess, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+
+# metres
+XS = [0.0, 0.08, 0.12, 0.20]   # duct length 200 mm, block 40 mm centred at 100 mm
+YS = [0.0, 0.03]               # duct width 30 mm = block width
+ZS = [-0.01, 0.0, 0.03]        # block 10 mm thick below floor; duct height 30 mm
+
+verts = []; vid = {}
+def V(i,j,k):
+    key=(i,j,k)
+    if key not in vid:
+        vid[key]=len(verts); verts.append((XS[i],YS[j],ZS[k]))
+    return vid[key]
+
+def hexblk(i0,i1,k0,k1,nx,ny,nz):
+    v=[V(i0,0,k0),V(i1,0,k0),V(i1,1,k0),V(i0,1,k0),
+       V(i0,0,k1),V(i1,0,k1),V(i1,1,k1),V(i0,1,k1)]
+    return f"    hex ({' '.join(map(str,v))}) ({nx} {ny} {nz}) simpleGrading (1 1 1)"
+
+NY, NZF, NZS = 6, 6, 2
+blocks = [hexblk(0,1,1,2,16,NY,NZF), hexblk(1,2,1,2,8,NY,NZF), hexblk(2,3,1,2,16,NY,NZF),
+          hexblk(1,2,0,1,8,NY,NZS)]
+print(len(verts)); print("\n".join(blocks))
+# -- output
+20
+    hex (0 1 2 3 4 5 6 7) (16 6 6) simpleGrading (1 1 1)
+    hex (1 8 9 2 5 10 11 6) (8 6 6) simpleGrading (1 1 1)
+    hex (8 12 13 9 10 14 15 11) (16 6 6) simpleGrading (1 1 1)
+    hex (16 17 18 19 1 8 9 2) (8 6 2) simpleGrading (1 1 1)
+
+# -- cell 2 (0.1s, exit 0)
+def fx(i,k0,k1): return [V(i,0,k0),V(i,1,k0),V(i,1,k1),V(i,0,k1)]
+def fy(j,i0,i1,k0,k1): return [V(i0,j,k0),V(i1,j,k0),V(i1,j,k1),V(i0,j,k1)]
+def fz(k,i0,i1): return [V(i0,0,k),V(i1,0,k),V(i1,1,k),V(i0,1,k)]
+
+patches = {
+ "inlet":  ("patch", [fx(0,1,2)]),
+ "outlet": ("patch", [fx(3,1,2)]),
+ "duct_walls": ("wall",
+    [fz(2,0,1),fz(2,1,2),fz(2,2,3)]                       # ceiling
+  + [fz(1,0,1),fz(1,2,3)]                                  # floor either side of block
+  + [fy(0,i,i+1,1,2) for i in range(3)]                    # side y=0
+  + [fy(1,i,i+1,1,2) for i in range(3)]),                  # side y=30mm
+ "solid_walls": ("wall",
+    [fz(0,1,2)]                                            # block bottom
+  + [fx(1,0,1), fx(2,0,1)]                                 # block ends
+  + [fy(0,1,2,0,1), fy(1,1,2,0,1)]),                       # block sides
+}
+def blk(name,typ,faces):
+    s=f"    {name}\n    {{\n        type {typ};\n        faces\n        (\n"
+    for f in faces: s+= "            ("+" ".join(map(str,f))+")\n"
+    return s+"        );\n    }\n"
+
+dictstr = ("FoamFile{version 2.0; format ascii; class dictionary; object blockMeshDict;}\n"
+ "scale 1;\n\nvertices\n(\n" + "".join(f"    ({x} {y} {z})\n" for x,y,z in verts) + ");\n\n"
+ "blocks\n(\n" + "\n".join(blocks) + "\n);\n\nedges();\n\nboundary\n(\n"
+ + "".join(blk(n,t,f) for n,(t,f) in patches.items()) + ");\n\nmergePatchPairs();\n")
+open("system/blockMeshDict","w").write(dictstr)
+print(len(verts), sum(len(f) for _,f in patches.values()))
+# -- output
+20 18
+
+# -- cell 3 (0.2s, exit 0)
+open("system/controlDict","w").write("""FoamFile{version 2.0;format ascii;class dictionary;object controlDict;}
+application chtMultiRegionFoam; startFrom startTime; startTime 0; stopAt endTime;
+endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;""")
+open("system/fvSchemes","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSchemes;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSolution;}\nsolvers{}\n")
+r=subprocess.run(["blockMesh"],capture_output=True,text=True); print(r.stdout[-1500:], r.stderr[-2000:])
+# -- output
+ime
+
+Creating block mesh from "system/blockMeshDict"
+No non-linear block edges defined
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 3
+		Number of boundary faces : 18
+		Number of defined boundary faces : 18
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+    Block 1 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+    Block 2 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+    Block 3 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 -0.01) (0.2 0.03 0.03)
+  nPoints: 2135
+  nCells: 1536
+  nFaces: 5152
+  nInternalFaces: 4064
+----------------
+Patches
+----------------
+  patch 0 (start: 4064 size: 36) name: inlet
+  patch 1 (start: 4100 size: 36) name: outlet
+  patch 2 (start: 4136 size: 912) name: duct_walls
+  patch 3 (start: 5048 size: 104) name: solid_walls
+
+End
+
+# -- cell 4 (0.2s, exit 0)
+open("system/topoSetDict","w").write("""FoamFile{version 2.0;format ascii;class dictionary;object topoSetDict;}
+actions
+(
+ {name solidCells; type cellSet; action new; source boxToCell; box (0.079 -0.001 -0.011)(0.121 0.031 -0.0001);}
+ {name solid; type cellZoneSet; action new; source setToCellZone; set solidCells;}
+ {name fluidCells; type cellSet; action new; source boxToCell; box (-0.001 -0.001 0.0001)(0.201 0.031 0.031);}
+ {name fluid; type cellZoneSet; action new; source setToCellZone; set fluidCells;}
+);""")
+r=subprocess.run(["topoSet"],capture_output=True,text=True); print(r.stdout[-800:], r.stderr[-500:])
+# -- output
+* * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet solidCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.079 -0.001 -0.011) (0.121 0.031 -0.0001))
+    cellSet solidCells now size 96
+Created cellZoneSet solid
+    Applying source setToCellZone
+    Adding all cells from cell set: solidCells ...
+    cellZoneSet solid now size 96
+Created cellSet fluidCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((-0.001 -0.001 0.0001) (0.201 0.031 0.031))
+    cellSet fluidCells now size 1440
+Created cellZoneSet fluid
+    Applying source setToCellZone
+    Adding all cells from cell set: fluidCells ...
+    cellZoneSet fluid now size 1440
+
+End
+
+# -- cell 5 (0.2s, exit 0)
+r=subprocess.run(["splitMeshRegions","-cellZones","-overwrite"],capture_output=True,text=True)
+print(r.stdout[-2500:], r.stderr[-800:])
+print(sorted(os.listdir("constant")))
+# -- output
+ated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T8-20260913-090850-13a4/t8
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Creating single patch per inter-region interface.
+
+Trying to match regions to existing cell zones.
+
+
+Number of regions:2
+
+Writing region per cell file (for manual decomposition) to "/home/qiuzi/.openreynolds-buildup/work/T8-20260913-090850-13a4/t8/constant/cellToRegion"
+
+Writing region per cell as volScalarField to "/home/qiuzi/.openreynolds-buildup/work/T8-20260913-090850-13a4/t8/0/cellToRegion"
+
+Region	Cells
+------	-----
+0	1440
+1	96
+
+Region	Zone	Name
+------	----	----
+0	(1)	fluid
+1	(0)	solid
+
+Sizes of interfaces between regions:
+
+Interface	Region	Region	Faces
+---------	------	------	-----
+0		0	1	48
+
+Reading volScalarField: cellToRegion
+
+
+Adding patches
+
+
+Adding patches
+
+For interface between region fluid and solid added patches
+    4	fluid_to_solid
+    5	solid_to_fluid
+
+Region 0
+-------- 
+Creating mesh for region 0 fluid
+Writing dummy "fluid/fvSchemes"
+Writing dummy "fluid/fvSolution"
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region0 points back to base mesh.
+Writing map faceRegionAddressing from region0 faces back to base mesh.
+Writing map cellRegionAddressing from region0 cells back to base mesh.
+Writing map boundaryRegionAddressing from region0 boundary back to base mesh.
+
+Region 1
+-------- 
+Creating mesh for region 1 solid
+Writing dummy "solid/fvSchemes"
+Writing dummy "solid/fvSolution"
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region1 points back to base mesh.
+Writing map faceRegionAddressing from region1 faces back to base mesh.
+Writing map cellRegionAddressing from region1 cells back to base mesh.
+Writing map boundaryRegionAddressing from region1 boundary back to base mesh.
+End
+
+ 
+['cellToRegion', 'fluid', 'polyMesh', 'solid']
+
+# -- cell 6 (0.4s, exit 0)
+for reg in ["fluid","solid"]:
+    r=subprocess.run(["checkMesh","-region",reg],capture_output=True,text=True)
+    print(reg, [l for l in r.stdout.splitlines() if "Mesh OK" in l or "***" in l or "cells:" in l or "boundingBox" in l or "patch" in l.lower() and "Patches" not in l][:20])
+# -- output
+fluid ['    cells:            1440', '    boundary patches: 4', 'Checking patch topology for multiply connected surfaces...', '    Patch               Faces    Points     Surface topology', 'Mesh OK.']
+solid ['    cells:            96', '    boundary patches: 2', 'Checking patch topology for multiply connected surfaces...', '    Patch               Faces    Points     Surface topology', 'Mesh OK.']
+
+# -- cell 7 (0.1s, exit 0)
+import numpy as np, re
+def bbox(reg):
+    t=open(f"constant/{reg}/polyMesh/points").read()
+    pts=np.array(re.findall(r"\(([-\d.e ]+)\)",t.split("(",1)[1]),dtype=object)
+    P=np.array([list(map(float,s.split())) for s in pts])
+    return P.min(0),P.max(0),len(P)
+for reg in ["fluid","solid"]:
+    lo,hi,n=bbox(reg); print(reg,"min",lo,"max",hi,"size(mm)",(hi-lo)*1000)
+print("interface area mm^2 =", 48*5*5, " expected", 40*30)
+# -- output
+fluid min [0. 0. 0.] max [0.2  0.03 0.03] size(mm) [200.  30.  30.]
+solid min [ 0.08  0.   -0.01] max [0.12 0.03 0.  ] size(mm) [40. 30. 10.]
+interface area mm^2 = 1200  expected 1200
+
+# -- cell 8 (0.9s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+p=pv.Plotter(off_screen=True,window_size=(1100,600))
+f=pv.OpenFOAMReader("case.foam") if False else None
+open("case.foam","w").close()
+for reg,col in [("fluid","lightblue"),("solid","orange")]:
+    rd=pv.POpenFOAMReader("case.foam"); rd.case_type="reconstructed"
+    m=pv.read(f"constant/{reg}/polyMesh/points") if False else None
+import subprocess
+subprocess.run(["foamToVTK","-region","fluid","-constant"],capture_output=True)
+subprocess.run(["foamToVTK","-region","solid","-constant"],capture_output=True)
+print(os.listdir("VTK") if os.path.isdir("VTK") else os.listdir("."))
+# -- output
+['solid', 'fluid']
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 09:10:06.174 (   0.228s) [    7576318DF780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 09:10:06.175 (   0.229s) [    7576318DF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:10:06.187 (   0.241s) [    7576318DF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 9 (0.1s, exit 0)
+import glob
+print(glob.glob("VTK/*/*"))
+# -- output
+['VTK/solid/t8_1.vtm', 'VTK/solid/t8_1', 'VTK/solid/t8_0.vtm', 'VTK/solid/t8.vtm.series', 'VTK/solid/t8_0', 'VTK/fluid/t8_1.vtm', 'VTK/fluid/t8_1', 'VTK/fluid/t8_0.vtm', 'VTK/fluid/t8.vtm.series', 'VTK/fluid/t8_0']
+

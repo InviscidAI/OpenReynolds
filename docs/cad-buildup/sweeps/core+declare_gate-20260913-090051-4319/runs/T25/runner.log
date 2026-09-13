@@ -1,0 +1,5 @@
+T25: run 20260913-090828-f1f9
+  workspace /home/qiuzi/.openreynolds-buildup/work/T25-20260913-090828-f1f9 clean (0 entries, 39 house names, no toolbox)
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+declare_gate-20260913-090051-4319/runs/T25
+  provider in 2.2s, 0 cells, $0.00, checkMesh not ok, failed (wants refused)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+declare_gate-20260913-090051-4319/runs/T25 --case /home/qiuzi/.openreynolds-buildup/work/T25-20260913-090828-f1f9/t25

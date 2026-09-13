@@ -1,0 +1,594 @@
+{
+  "run_id": "20260913-090051-5ad2",
+  "case": "T1",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1",
+  "started_at": "2026-09-13T09:00:52",
+  "ended_at": "2026-09-13T09:04:27",
+  "seconds": 211.7,
+  "n_turns": 24,
+  "n_steps": 22,
+  "first_mesh_step": 7,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 1.1177,
+  "tokens": {
+    "input": 48,
+    "cache_read": 384943,
+    "cache_write": 85454,
+    "output": 15636
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import os, subprocess\nfrom build123d import *\nprint(os.getcwd(), os.listdir(\".\"))\n\nW   = 0.010    # passage width\nL   = 0.120    # leg length\nRc  = 0.015    # bend centreline radius\nRi, Ro = Rc - W/2, Rc + W/2\nX0  = -L\nyc  = Rc\n\nl1 = Line((X0, -W/2), (0.0, -W/2))\na_out = CenterArc((0.0, yc), Ro, -90, 180)\nl2 = Line((0.0, yc+Ro), (X0, yc+Ro))\noutlet_e = Line((X0, yc+Ro), (X0, yc+Ri))\nl3 = Line((X0, yc+Ri), (0.0, yc+Ri))\na_in = CenterArc((0.0, yc), Ri, 90, -180)\nl4 = Line((0.0, W/2), (X0, W/2))\ninlet_e = Line((X0, W/2), (X0, -W/2))\nwire = Wire([l1.edge(), a_out.edge(), l2.edge(), outlet_e.edge(), l3.edge(), a_in.edge(), l4.edge(), inlet_e.edge()])\nprint(\"closed:\", wire.is_closed)\nface = Face(wire)\nprint(\"area mm^2:\", face.area*1e6, \" bbox:\", face.bounding_box())",
+      "exit_code": 0,
+      "seconds": 2.1573290964588523,
+      "output": "/home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1 []\nclosed: True\narea mm^2: 2871.238898038469  bbox: bbox: -0.12 <= x <= 0.02, -0.005000000000000001 <= y <= 0.035, 0.0 <= z <= 0.0",
+      "image": ""
+    },
+    {
+      "cmd": "import matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt, numpy as np\nfig, ax = plt.subplots(figsize=(8,3))\nfor e in face.edges():\n    p = np.array([tuple(v) for v in e.tessellate(0.002)])\n    ax.plot(p[:,0]*1000, p[:,1]*1000, '-k')\nfor nm, e in [(\"inlet\", inlet_e.edge()), (\"outlet\", outlet_e.edge())]:\n    c = e.center(); ax.plot(c.X*1000, c.Y*1000, 'ro'); ax.annotate(nm, (c.X*1000, c.Y*1000))\nax.set_aspect('equal'); ax.grid(True); ax.set_xlabel(\"x [mm]\"); ax.set_ylabel(\"y [mm]\")\nplt.tight_layout(); plt.show()\nexport_step(Part() if False else face, \"ubend.step\")\nprint(os.path.getsize(\"ubend.step\"))",
+      "exit_code": 1,
+      "seconds": 0.2009853282943368,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mIndexError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[2]\u001b[39m\u001b[32m, line 7\u001b[39m\n\u001b[32m      3\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m matplotlib.pyplot \u001b[38;5;28;01mas\u001b[39;00m plt, numpy \u001b[38;5;28;01mas\u001b[39;00m np\n\u001b[32m      4\u001b[39m fig, ax = plt.subplots(figsize=(\u001b[32m8\u001b[39m,\u001b[32m3\u001b[39m))\n\u001b[32m      5\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m e \u001b[38;5;28;01min\u001b[39;00m face.edges():\n\u001b[32m      6\u001b[39m     p = np.array([tuple(v) \u001b[38;5;28;01mfor\u001b[39;00m v \u001b[38;5;28;01min\u001b[39;00m e.tessellate(\u001b[32m0.002\u001b[39m)])\n\u001b[32m----> \u001b[39m\u001b[32m7\u001b[39m     ax.plot(p[:,\u001b[32m0\u001b[39m]*\u001b[32m1000\u001b[39m, p[:,\u001b[32m1\u001b[39m]*\u001b[32m1000\u001b[39m, \u001b[33m'-k'\u001b[39m)\n\u001b[32m      8\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m nm, e \u001b[38;5;28;01min\u001b[39;00m [(\u001b[33m\"inlet\"\u001b[39m, inlet_e.edge()), (\u001b[33m\"outlet\"\u001b[39m, outlet_e.edge())]:\n\u001b[32m      9\u001b[39m     c = e.center(); ax.plot(c.X*\u001b[32m1000\u001b[39m, c.Y*\u001b[32m1000\u001b[39m, \u001b[33m'ro'\u001b[39m); ax.annotate(nm, (c.X*\u001b[32m1000\u001b[39m, c.Y*\u001b[32m1000\u001b[39m))\n\u001b[32m     10\u001b[39m ax.set_aspect(\u001b[33m'equal'\u001b[39m); ax.grid(\u001b[38;5;28;01mTrue\u001b[39;00m); ax.set_xlabel(\u001b[33m\"x [mm]\"\u001b[39m); ax.set_ylabel(\u001b[33m\"y [mm]\"\u001b[39m)\n\n\u001b[31mIndexError\u001b[39m: index 0 is out of bounds for axis 1 with size 0",
+      "image": ""
+    },
+    {
+      "cmd": "fig, ax = plt.subplots(figsize=(8,3))\nfor e in face.edges():\n    pts = e @ np.linspace(0,1,60)\n    p = np.array([(q.X,q.Y) for q in pts])\n    ax.plot(p[:,0]*1000, p[:,1]*1000, '-k')\nfor nm, e in [(\"inlet\", inlet_e.edge()), (\"outlet\", outlet_e.edge())]:\n    c = e.center(); ax.plot(c.X*1000, c.Y*1000, 'ro'); ax.annotate(nm, (c.X*1000, c.Y*1000))\nax.set_aspect('equal'); ax.grid(True); ax.set_xlabel(\"x [mm]\"); ax.set_ylabel(\"y [mm]\")\nplt.tight_layout(); plt.show()\nexport_step(face, \"ubend.step\")\nprint(os.path.getsize(\"ubend.step\"))",
+      "exit_code": 1,
+      "seconds": 0.2510843565687537,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 3\u001b[39m\n\u001b[32m      1\u001b[39m fig, ax = plt.subplots(figsize=(\u001b[32m8\u001b[39m,\u001b[32m3\u001b[39m))\n\u001b[32m      2\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m e \u001b[38;5;28;01min\u001b[39;00m face.edges():\n\u001b[32m----> \u001b[39m\u001b[32m3\u001b[39m     pts = e @ np.linspace(\u001b[32m0\u001b[39m,\u001b[32m1\u001b[39m,\u001b[32m60\u001b[39m)\n\u001b[32m      4\u001b[39m     p = np.array([(q.X,q.Y) \u001b[38;5;28;01mfor\u001b[39;00m q \u001b[38;5;28;01min\u001b[39;00m pts])\n\u001b[32m      5\u001b[39m     ax.plot(p[:,\u001b[32m0\u001b[39m]*\u001b[32m1000\u001b[39m, p[:,\u001b[32m1\u001b[39m]*\u001b[32m1000\u001b[39m, \u001b[33m'-k'\u001b[39m)\n\u001b[32m      6\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m nm, e \u001b[38;5;28;01min\u001b[39;00m [(\u001b[33m\"inlet\"\u001b[39m, inlet_e.edge()), (\u001b[33m\"outlet\"\u001b[39m, outlet_e.edge())]:\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/one_d.py:665\u001b[39m, in \u001b[36mMixin1D.__matmul__\u001b[39m\u001b[34m(self, position)\u001b[39m\n\u001b[32m    663\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34m__matmul__\u001b[39m(\u001b[38;5;28mself\u001b[39m, position: \u001b[38;5;28mfloat\u001b[39m) -> Vector:\n\u001b[32m    664\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"Position on wire operator @\"\"\"\u001b[39;00m\n\u001b[32m--> \u001b[39m\u001b[32m665\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mself\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mposition_at\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mposition\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/one_d.py:1289\u001b[39m, in \u001b[36mMixin1D.position_at\u001b[39m\u001b[34m(self, position, position_mode)\u001b[39m\n\u001b[32m   1276\u001b[39m \u001b[38;5;250m\u001b[39m\u001b[33;03m\"\"\"Position At\u001b[39;00m\n\u001b[32m   1277\u001b[39m \n\u001b[32m   1278\u001b[39m \u001b[33;03mGenerate a position along the underlying Wire.\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m   1286\u001b[39m \u001b[33;03m    Vector: position on the underlying curve\u001b[39;00m\n\u001b[32m   1287\u001b[39m \u001b[33;03m\"\"\"\u001b[39;00m\n\u001b[32m   1288\u001b[39m \u001b[38;5;66;03m# Find the TopoDS_Edge and parameter on that edge at given position\u001b[39;00m\n\u001b[32m-> \u001b[39m\u001b[32m1289\u001b[39m edge_curve_adaptor, occt_edge_param, _ = \u001b[30;43mself\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43m_occt_param_at\u001b[39;49m\u001b[30;43m(\u001b[39;49m\n\u001b[32m   1290\u001b[39m \u001b[30;43m    \u001b[39;49m\u001b[30;43mposition\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mposition_mode\u001b[39;49m\n\u001b[32m   1291\u001b[39m \u001b[30;43m\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m   1293\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m Vector(edge_curve_adaptor.Value(occt_edge_param))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/one_d.py:3054\u001b[39m, in \u001b[36mEdge._occt_param_at\u001b[39m\u001b[34m(self, position, position_mode)\u001b[39m\n\u001b[32m   3051\u001b[39m         position = \u001b[38;5;28mself\u001b[39m.length - position\n\u001b[32m   3052\u001b[39m     value = position / \u001b[38;5;28mself\u001b[39m.length\n\u001b[32m-> \u001b[39m\u001b[32m3054\u001b[39m occt_param = \u001b[30;43mGCPnts_AbscissaPoint\u001b[39;49m\u001b[30;43m(\u001b[39;49m\n\u001b[32m   3055\u001b[39m \u001b[30;43m    \u001b[39;49m\u001b[30;43mcomp_curve\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mlength\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mvalue\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mcomp_curve\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mFirstParameter\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m   3056\u001b[39m \u001b[30;43m\u001b[39;49m\u001b[30;43m)\u001b[39;49m.Parameter()\n\u001b[32m   3057\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m comp_curve, occt_param, \u001b[38;5;28mself\u001b[39m.is_forward\n\n\u001b[31mTypeError\u001b[39m: __init__(): incompatible constructor arguments. The following argument types are supported:\n    1. OCP.OCP.GCPnts.GCPnts_AbscissaPoint()\n    2. OCP.OCP.GCPnts.GCPnts_AbscissaPoint(theC: OCP.OCP.Adaptor3d.Adaptor3d_Curve, theAbscissa: float, theU0: float)\n    3. OCP.OCP.GCPnts.GCPnts_AbscissaPoint(theTol: float, theC: OCP.OCP.Adaptor3d.Adaptor3d_Curve, theAbscissa: float, theU0: float)\n    4. OCP.OCP.GCPnts.GCPnts_AbscissaPoint(theTol: float, theC: OCP.OCP.Adaptor2d.Adaptor2d_Curve2d, theAbscissa: float, theU0: float)\n    5. OCP.OCP.GCPnts.GCPnts_AbscissaPoint(theC: OCP.OCP.Adaptor2d.Adaptor2d_Curve2d, theAbscissa: float, theU0: float)\n    6. OCP.OCP.GCPnts.GCPnts_AbscissaPoint(theC: OCP.OCP.Adaptor3d.Adaptor3d_Curve, theAbscissa: float, theU0: float, theUi: float)\n    7. OCP.OCP.GCPnts.GCPnts_AbscissaPoint(theC: OCP.OCP.Adaptor2d.Adaptor2d_Curve2d, theAbscissa: float, theU0: float, theUi: float)\n    8. OCP.OCP.GCPnts.GCPnts_AbscissaPoint(theC: OCP.OCP.Adaptor3d.Adaptor3d_Curve, theAbscissa: float, theU0: float, theUi: float, theTol: float)\n    9. OCP.OCP.GCPnts.GCPnts_AbscissaPoint(theC: OCP.OCP.Adaptor2d.Adaptor2d_Curve2d, theAbscissa: float, theU0: float, theUi: float, theTol: float)\n\nInvoked with: <OCP.OCP.BRepAdaptor.BRepAdaptor_Curve object at 0x7892ef250830>, array([0.        , 0.0020339 , 0.0040678 , 0.00610169, 0.00813559,\n       0.01016949, 0.01220339, 0.01423729, 0.01627119, 0.01830508,\n       0.02033898, 0.02237288, 0.02440678, 0.02644068, 0.02847458,\n       0.03050847, 0.03254237, 0.03457627, 0.03661017, 0.03864407,\n       0.04067797, 0.04271186, 0.04474576, 0.04677966, 0.04881356,\n       0.05084746, 0.05288136, 0.05491525, 0.05694915, 0.05898305,\n       0.06101695, 0.06305085, 0.06508475, 0.06711864, 0.06915254,\n       0.07118644, 0.07322034, 0.07525424, 0.07728814, 0.07932203,\n       0.08135593, 0.08338983, 0.08542373, 0.08745763, 0.08949153,\n       0.09152542, 0.09355932, 0.09559322, 0.09762712, 0.09966102,\n       0.10169492, 0.10372881, 0.10576271, 0.10779661, 0.10983051,\n       0.11186441, 0.11389831, 0.1159322 , 0.1179661 , 0.12      ]), 0.0",
+      "image": ""
+    },
+    {
+      "cmd": "fig, ax = plt.subplots(figsize=(8,3))\nfor e in face.edges():\n    p = np.array([[(e@t).X,(e@t).Y] for t in np.linspace(0,1,60)])\n    ax.plot(p[:,0]*1000, p[:,1]*1000, '-k')\nfor nm, e in [(\"inlet\", inlet_e.edge()), (\"outlet\", outlet_e.edge())]:\n    c = e.center(); ax.plot(c.X*1000, c.Y*1000, 'ro'); ax.annotate(nm, (c.X*1000, c.Y*1000))\nax.set_aspect('equal'); ax.grid(True); ax.set_xlabel(\"x [mm]\"); ax.set_ylabel(\"y [mm]\")\nplt.tight_layout(); plt.show()\nexport_step(face, \"ubend.step\")\nprint(os.path.getsize(\"ubend.step\"))",
+      "exit_code": 0,
+      "seconds": 0.1007382795214653,
+      "output": "8201\n[no picture came back from this cell, and it looks like it drew one. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\nimport matplotlib.pyplot as plt\nfrom build123d import export_step\n\nfig, ax = plt.subplots(figsize=(8,3))\nfor e in face.edges():\n    p = np.array([[(e@t).X,(e@t).Y] for t in np.linspace(0,1,60)])\n    ax.plot(p[:,0]*1000, p[:,1]*1000, '-k')\nfor nm, e in [(\"inlet\", inlet_e.edge()), (\"outlet\", outlet_e.edge())]:\n    c = e.center(); ax.plot(c.X*1000, c.Y*1000, 'ro'); ax.annotate(nm, (c.X*1000, c.Y*1000))\nax.set_aspect('equal'); ax.grid(True); ax.set_xlabel(\"x [mm]\"); ax.set_ylabel(\"y [mm]\")\nplt.tight_layout()\nexport_step(face, \"ubend.step\")\nprint(os.path.getsize(\"ubend.step\"))\nfig",
+      "exit_code": 0,
+      "seconds": 0.15093770809471607,
+      "output": "8201",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import gmsh, numpy as np\nTH = 0.001          # 2D thickness, one cell\nLC = 0.0025         # coarse: 4 cells across the 10 mm passage\n\ngmsh.initialize()\ngmsh.option.setNumber(\"General.Terminal\", 1)\ngmsh.model.add(\"ubend\")\ngmsh.model.occ.importShapes(\"ubend.step\")\ngmsh.model.occ.synchronize()\nsurfs = gmsh.model.getEntities(2)\nprint(\"surfaces:\", surfs)\nfor d,t in gmsh.model.getEntities(1):\n    com = gmsh.model.occ.getCenterOfMass(d,t)\n    print(t, np.round(com,4))\ngmsh.finalize()",
+      "exit_code": 0,
+      "seconds": 0.05070986971259117,
+      "output": "surfaces: [(2, 1)]\nInfo    :  - Label 'Shapes/FACE' (2D)\n1 [-0.06  -0.005  0.   ]\n2 [0.0127 0.015  0.    ]\n3 [-0.06   0.035  0.   ]\n4 [-0.12  0.03  0.  ]\n5 [-0.06   0.025  0.   ]\n6 [0.0064 0.015  0.    ]\n7 [-0.06   0.005  0.   ]\n8 [-0.12  0.    0.  ]",
+      "image": ""
+    },
+    {
+      "cmd": "import gmsh, numpy as np\nTH = 0.001\nLC = 0.0025\n\ndef build_mesh(lc, fname=\"ubend.msh\"):\n    gmsh.initialize()\n    gmsh.option.setNumber(\"General.Terminal\", 1)\n    gmsh.model.add(\"ubend\")\n    gmsh.model.occ.importShapes(\"ubend.step\")\n    gmsh.model.occ.synchronize()\n    com_of = {t: np.array(gmsh.model.occ.getCenterOfMass(1,t)) for _,t in gmsh.model.getEntities(1)}\n    out = gmsh.model.occ.extrude([(2,1)], 0,0,TH, numElements=[1], recombine=True)\n    gmsh.model.occ.synchronize()\n    vol = [t for d,t in out if d==3][0]\n    gmsh.option.setNumber(\"Mesh.RecombineAll\",1)\n    gmsh.option.setNumber(\"Mesh.MeshSizeMin\", lc)\n    gmsh.option.setNumber(\"Mesh.MeshSizeMax\", lc)\n    gmsh.option.setNumber(\"Mesh.MeshSizeFromCurvature\", 0)\n    # classify boundary faces of the volume by construction geometry\n    groups = {\"inlet\":[], \"outlet\":[], \"walls\":[], \"frontAndBack\":[]}\n    for d,t in gmsh.model.getBoundary([(3,vol)], oriented=False):\n        c = np.array(gmsh.model.occ.getCenterOfMass(2,t))\n        if abs(c[2]) < 1e-9 or abs(c[2]-TH) < 1e-9:\n            groups[\"frontAndBack\"].append(t)          # the two z-planes of the 2D slab\n        else:\n            key = min(com_of, key=lambda k: np.linalg.norm(com_of[k][:2]-c[:2]))\n            groups[\"inlet\" if key==8 else \"outlet\" if key==4 else \"walls\"].append(t)\n    for name, tags in groups.items():\n        gmsh.model.addPhysicalGroup(2, tags, name=name)\n    gmsh.model.addPhysicalGroup(3, [vol], name=\"fluid\")\n    gmsh.model.mesh.generate(3)\n    gmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\n    gmsh.write(fname)\n    n_hex = len(gmsh.model.mesh.getElementsByType(5)[0])\n    gmsh.finalize()\n    return groups, n_hex\n\ngroups, n_hex = build_mesh(LC)\nprint(groups, \"hexes:\", n_hex)",
+      "exit_code": 0,
+      "seconds": 0.2009669179096818,
+      "output": "Info    :  - Label 'Shapes/FACE' (2D)\nInfo    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Line)\nInfo    : [ 10%] Meshing curve 2 (Circle)\nInfo    : [ 10%] Meshing curve 3 (Line)\nInfo    : [ 20%] Meshing curve 4 (Line)\nInfo    : [ 20%] Meshing curve 5 (Line)\nInfo    : [ 30%] Meshing curve 6 (Circle)\nInfo    : [ 30%] Meshing curve 7 (Line)\nInfo    : [ 30%] Meshing curve 8 (Line)\nInfo    : [ 40%] Meshing curve 9 (Extruded)\nInfo    : [ 40%] Meshing curve 10 (Extruded)\nInfo    : [ 50%] Meshing curve 11 (Extruded)\nInfo    : [ 50%] Meshing curve 12 (Extruded)\nInfo    : [ 60%] Meshing curve 13 (Extruded)\nInfo    : [ 60%] Meshing curve 14 (Extruded)\nInfo    : [ 60%] Meshing curve 15 (Extruded)\nInfo    : [ 70%] Meshing curve 16 (Extruded)\nInfo    : [ 70%] Meshing curve 17 (Extruded)\nInfo    : [ 80%] Meshing curve 18 (Extruded)\nInfo    : [ 80%] Meshing curve 19 (Extruded)\nInfo    : [ 80%] Meshing curve 20 (Extruded)\nInfo    : [ 90%] Meshing curve 21 (Extruded)\nInfo    : [ 90%] Meshing curve 22 (Extruded)\nInfo    : [100%] Meshing curve 23 (Extruded)\nInfo    : [100%] Meshing curve 24 (Extruded)\nInfo    : Done meshing 1D (Wall 0.00050416s, CPU 9.9e-05s)\nInfo    : Meshing 2D...\nInfo    : [  0%] Meshing surface 1 (Plane, Frontal-Delaunay)\nInfo    : [  0%] Blossom: 1677 internal 240 closed\nInfo    : [  0%] Blossom recombination completed (Wall 0.101065s, CPU 0.019097s): 596 quads, 0 triangles, 0 invalid quads, 0 quads with Q < 0.1, avg Q = 0.799097, min Q = 0.502622\nInfo    : [ 20%] Meshing surface 2 (Extruded)\nInfo    : [ 30%] Meshing surface 3 (Extruded)\nInfo    : [ 40%] Meshing surface 4 (Extruded)\nInfo    : [ 50%] Meshing surface 5 (Extruded)\nInfo    : [ 60%] Meshing surface 6 (Extruded)\nInfo    : [ 70%] Meshing surface 7 (Extruded)\nInfo    : [ 80%] Meshing surface 8 (Extruded)\nInfo    : [ 90%] Meshing surface 9 (Extruded)\nInfo    : [100%] Meshing surface 10 (Extruded)\nInfo    : Done meshing 2D (Wall 0.13016s, CPU 0.048266s)\nInfo    : Meshing 3D...\nInfo    : Meshing volume 1 (Extruded)\nInfo    : Done meshing 3D (Wall 0.00304828s, CPU 0.001939s)\nInfo    : Optimizing mesh...\nInfo    : Done optimizing mesh (Wall 1.61501e-05s, CPU 2.9e-05s)\nInfo    : 1434 nodes 2532 elements\nInfo    : Writing 'ubend.msh'...\nInfo    : Done writing 'ubend.msh'\n{'inlet': [9], 'outlet': [5], 'walls': [2, 3, 4, 6, 7, 8], 'frontAndBack': [1, 10]} hexes: 596",
+      "image": ""
+    },
+    {
+      "cmd": "import os, subprocess, textwrap\nos.makedirs(\"system\", exist_ok=True)\ndef foam(cls, obj, body):\n    return textwrap.dedent(f\"\"\"\\\n    FoamFile {{ version 2.0; format ascii; class {cls}; object {obj}; }}\n    \"\"\") + body\nopen(\"system/controlDict\",\"w\").write(foam(\"dictionary\",\"controlDict\",\"\"\"\napplication     simpleFoam;\nstartFrom       startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1;\nwriteControl    timeStep; writeInterval 100; purgeWrite 0;\nwriteFormat ascii; writePrecision 6; writeCompression off;\ntimeFormat general; timePrecision 6; runTimeModifiable true;\n\"\"\"))\nopen(\"system/fvSchemes\",\"w\").write(foam(\"dictionary\",\"fvSchemes\",\"\"\"\nddtSchemes { default steadyState; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; div(phi,U) bounded Gauss linearUpwind grad(U); }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\n\"\"\"))\nopen(\"system/fvSolution\",\"w\").write(foam(\"dictionary\",\"fvSolution\",\"\"\"\nsolvers { p { solver GAMG; tolerance 1e-6; relTol 0.01; smoother GaussSeidel; }\n          U { solver smoothSolver; smoother symGaussSeidel; tolerance 1e-8; relTol 0.1; } }\nSIMPLE { nNonOrthogonalCorrectors 0; consistent yes; }\n\"\"\"))\nr = subprocess.run([\"gmshToFoam\",\"ubend.msh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[-1500:], r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.2512023663148284,
+      "output": "0 llowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nStarting to read mesh format at line 2\nRead format version 2.2  ascii 0\n\nStarting to read physical names at line 5\nPhysical names:5\n    Surface 1\tinlet\n    Surface 2\toutlet\n    Surface 3\twalls\n    Surface 4\tfrontAndBack\n    Volume 5\tfluid\n\nStarting to read points at line 13\nVertices to be read: 1434\nVertices read:1434\n\nStarting to read cells at line 1450\nCells to be read: 2028\n\nMapping region 4 to Foam patch 0\nMapping region 3 to Foam patch 1\nMapping region 2 to Foam patch 2\nMapping region 1 to Foam patch 3\nMapping region 5 to Foam cellZone 0\nCells:\n    total:596\n    hex  :596\n    prism:0\n    pyr  :0\n    tet  :0\n\nCellZones:\nZone\tSize\n    0\t596\n\nPatch 0 gets name frontAndBack\nPatch 1 gets name walls\nPatch 2 gets name outlet\nPatch 3 gets name inlet\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 1432 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone fluid and cellSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "print(open(\"constant/polyMesh/boundary\").read())",
+      "exit_code": 0,
+      "seconds": 0.05060166958719492,
+      "output": "/*--------------------------------*- C++ -*----------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n4\n(\n    frontAndBack\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          1192;\n        startFace       1072;\n    }\n    walls\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          232;\n        startFace       2264;\n    }\n    outlet\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          4;\n        startFace       2496;\n    }\n    inlet\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          4;\n        startFace       2500;\n    }\n)\n\n// ************************************************************************* //",
+      "image": ""
+    },
+    {
+      "cmd": "import re, subprocess\ndef fix_boundary():\n    p = \"constant/polyMesh/boundary\"\n    s = open(p).read()\n    s = s.replace(\"\"\"    frontAndBack\n    {\n        type            patch;\n        physicalType    patch;\"\"\", \"\"\"    frontAndBack\n    {\n        type            empty;\n        physicalType    empty;\"\"\")\n    s = s.replace(\"\"\"    walls\n    {\n        type            patch;\n        physicalType    patch;\"\"\", \"\"\"    walls\n    {\n        type            wall;\n        physicalType    wall;\"\"\")\n    open(p,\"w\").write(s)\nfix_boundary()\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(r.stdout[-2500:])",
+      "exit_code": 0,
+      "seconds": 0.20097935665398836,
+      "output": "in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           1434\n    internal points:  0\n    faces:            2504\n    internal faces:   1072\n    cells:            596\n    faces per cell:   6\n    boundary patches: 4\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     596\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    frontAndBack        1192     1434     ok (non-closed singly connected)  \n    walls               232      468      ok (non-closed singly connected)  \n    outlet              4        10       ok (non-closed singly connected)  \n    inlet               4        10       ok (non-closed singly connected)  \n    \".*\"                1432     1434     ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    fluid               596          1434         2.87103e-06  (-0.12 -0.005 0) (0.02 0.035 0.001)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.12 -0.005 0) (0.02 0.035 0.001)\n    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)\n    Mesh has 2 solution (non-empty) directions (1 1 0)\n    All edges aligned with or perpendicular to non-empty directions.\n    Boundary openness (-2.00522e-19 4.14413e-18 1.47676e-18) OK.\n    Max cell openness = 1.99561e-16 OK.\n    Max aspect ratio = 1.92748 OK.\n    Minimum face area = 1.26727e-06. Maximum face area = 8.74959e-06.  Face area magnitudes OK.\n    Min volume = 2.30758e-09. Max volume = 8.74959e-09.  Total volume = 2.87103e-06.  Cell volumes OK.\n    Mesh non-orthogonality Max: 30.7718 average: 14.313\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.603495 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "LC_FINE = 0.0005   # 20 cells across the 10 mm passage\ngroups, n_hex = build_mesh(LC_FINE)\nprint(groups, \"hexes:\", n_hex)",
+      "exit_code": 0,
+      "seconds": 1.4543041251599789,
+      "output": "Info    :  - Label 'Shapes/FACE' (2D)\nInfo    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Line)\nInfo    : [ 10%] Meshing curve 2 (Circle)\nInfo    : [ 10%] Meshing curve 3 (Line)\nInfo    : [ 20%] Meshing curve 4 (Line)\nInfo    : [ 20%] Meshing curve 5 (Line)\nInfo    : [ 30%] Meshing curve 6 (Circle)\nInfo    : [ 30%] Meshing curve 7 (Line)\nInfo    : [ 30%] Meshing curve 8 (Line)\nInfo    : [ 40%] Meshing curve 9 (Extruded)\nInfo    : [ 40%] Meshing curve 10 (Extruded)\nInfo    : [ 50%] Meshing curve 11 (Extruded)\nInfo    : [ 50%] Meshing curve 12 (Extruded)\nInfo    : [ 60%] Meshing curve 13 (Extruded)\nInfo    : [ 60%] Meshing curve 14 (Extruded)\nInfo    : [ 60%] Meshing curve 15 (Extruded)\nInfo    : [ 70%] Meshing curve 16 (Extruded)\nInfo    : [ 70%] Meshing curve 17 (Extruded)\nInfo    : [ 80%] Meshing curve 18 (Extruded)\nInfo    : [ 80%] Meshing curve 19 (Extruded)\nInfo    : [ 80%] Meshing curve 20 (Extruded)\nInfo    : [ 90%] Meshing curve 21 (Extruded)\nInfo    : [ 90%] Meshing curve 22 (Extruded)\nInfo    : [100%] Meshing curve 23 (Extruded)\nInfo    : [100%] Meshing curve 24 (Extruded)\nInfo    : Done meshing 1D (Wall 0.0006868s, CPU 0.000722s)\nInfo    : Meshing 2D...\nInfo    : [  0%] Meshing surface 1 (Plane, Frontal-Delaunay)\nInfo    : [  0%] Blossom: 40121 internal 1190 closed\nInfo    : [  0%] Blossom recombination completed (Wall 0.828155s, CPU 0.823624s): 13340 quads, 0 triangles, 0 invalid quads, 0 quads with Q < 0.1, avg Q = 0.811825, min Q = 0.50006\nInfo    : [ 20%] Meshing surface 2 (Extruded)\nInfo    : [ 30%] Meshing surface 3 (Extruded)\nInfo    : [ 40%] Meshing surface 4 (Extruded)\nInfo    : [ 50%] Meshing surface 5 (Extruded)\nInfo    : [ 60%] Meshing surface 6 (Extruded)\nInfo    : [ 70%] Meshing surface 7 (Extruded)\nInfo    : [ 80%] Meshing surface 8 (Extruded)\nInfo    : [ 90%] Meshing surface 9 (Extruded)\nInfo    : [100%] Meshing surface 10 (Extruded)\nInfo    : Done meshing 2D (Wall 1.25883s, CPU 1.25092s)\nInfo    : Meshing 3D...\nInfo    : Meshing volume 1 (Extruded)\nInfo    : Done meshing 3D (Wall 0.0518216s, CPU 0.051853s)\nInfo    : Optimizing mesh...\nInfo    : Done optimizing mesh (Wall 0.00036821s, CPU 0.000385s)\nInfo    : 27872 nodes 43614 elements\nInfo    : Writing 'ubend.msh'...\nInfo    : Done writing 'ubend.msh'\n{'inlet': [9], 'outlet': [5], 'walls': [2, 3, 4, 6, 7, 8], 'frontAndBack': [1, 10]} hexes: 13340",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"gmshToFoam\",\"ubend.msh\"], capture_output=True, text=True); print(r.returncode)\nfix_boundary()\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nout = r.stdout\nprint(open(\"constant/polyMesh/boundary\").read()[-900:])\nprint(out[out.index(\"Checking geometry\"):][:1600])",
+      "exit_code": 0,
+      "seconds": 0.7524230908602476,
+      "output": "0\n ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n4\n(\n    frontAndBack\n    {\n        type            empty;\n        physicalType    empty;\n        nFaces          26680;\n        startFace       26085;\n    }\n    walls\n    {\n        type            wall;\n        physicalType    wall;\n        nFaces          1150;\n        startFace       52765;\n    }\n    outlet\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          20;\n        startFace       53915;\n    }\n    inlet\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          20;\n        startFace       53935;\n    }\n)\n\n// ************************************************************************* //\n\nChecking geometry...\n    Overall domain bounding box (-0.12 -0.005 0) (0.02 0.035 0.001)\n    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)\n    Mesh has 2 solution (non-empty) directions (1 1 0)\n    All edges aligned with or perpendicular to non-empty directions.\n    Boundary openness (-2.37265e-18 2.47291e-18 -4.53929e-19) OK.\n    Max cell openness = 2.16906e-16 OK.\n    Max aspect ratio = 1.94577 OK.\n    Minimum face area = 9.45164e-08. Maximum face area = 7.78347e-07.  Face area magnitudes OK.\n    Min volume = 9.45164e-11. Max volume = 4.12058e-10.  Total volume = 2.87124e-06.  Cell volumes OK.\n    Mesh non-orthogonality Max: 33.6203 average: 9.51267\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.545333 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np, pyvista as pv\npv.start_xvfb() if False else None\nmesh = pv.read(\"ubend.msh\") if False else None\n\n# measure from the OpenFOAM mesh points directly\ntxt = open(\"constant/polyMesh/points\").read()\nbody = txt[txt.index(\"(\")+1:txt.rindex(\")\")]\npts = np.array([[float(v) for v in ln.strip()[1:-1].split()] for ln in body.strip().splitlines() if ln.strip().startswith(\"(\")])\nprint(\"points\", pts.shape, \"z values\", np.unique(pts[:,2]))\nsl = pts[np.isclose(pts[:,2],0.0)]\n# wall points near bend: radius about (0, 0.015)\nrad = np.hypot(sl[:,0], sl[:,1]-0.015)\nbend = sl[sl[:,0] > 0.0005]\nrb = np.hypot(bend[:,0], bend[:,1]-0.015)\nprint(\"bend inner radius  :\", rb.min(), \" expected\", 0.010)\nprint(\"bend outer radius  :\", rb.max(), \" expected\", 0.020)\nprint(\"=> centreline R    :\", 0.5*(rb.min()+rb.max()), \" expected 0.015\")\nprint(\"passage width (low leg, at x=-0.06):\", sl[np.isclose(sl[:,0],-0.06,atol=2e-4) & (sl[:,1]<0.015)][:,1].ptp())\nprint(\"x extent of legs   :\", sl[:,0].min(), \"to 0.0 tangent; leg length\", 0.0-sl[:,0].min(), \"expected\", 0.120)\nprint(\"leg centreline separation:\", 0.030, \"= 2*Rc; y span\", sl[:,1].min(), sl[:,1].max())",
+      "exit_code": 1,
+      "seconds": 0.3513315552845597,
+      "output": "points (27872, 3) z values [0.    0.001]\nbend inner radius  : 0.00999999999601371  expected 0.01\nbend outer radius  : 0.02000000000561121  expected 0.02\n=> centreline R    : 0.01500000000081246  expected 0.015\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[13]\u001b[39m\u001b[32m, line 18\u001b[39m\n\u001b[32m     14\u001b[39m rb = np.hypot(bend[:,\u001b[32m0\u001b[39m], bend[:,\u001b[32m1\u001b[39m]-\u001b[32m0.015\u001b[39m)\n\u001b[32m     15\u001b[39m print(\u001b[33m\"bend inner radius  :\"\u001b[39m, rb.min(), \u001b[33m\" expected\"\u001b[39m, \u001b[32m0.010\u001b[39m)\n\u001b[32m     16\u001b[39m print(\u001b[33m\"bend outer radius  :\"\u001b[39m, rb.max(), \u001b[33m\" expected\"\u001b[39m, \u001b[32m0.020\u001b[39m)\n\u001b[32m     17\u001b[39m print(\u001b[33m\"=> centreline R    :\"\u001b[39m, \u001b[32m0.5\u001b[39m*(rb.min()+rb.max()), \u001b[33m\" expected 0.015\"\u001b[39m)\n\u001b[32m---> \u001b[39m\u001b[32m18\u001b[39m print(\u001b[33m\"passage width (low leg, at x=-0.06):\"\u001b[39m, sl[np.isclose(sl[:,\u001b[32m0\u001b[39m],-\u001b[32m0.06\u001b[39m,atol=\u001b[32m2e-4\u001b[39m) & (sl[:,\u001b[32m1\u001b[39m]<\u001b[32m0.015\u001b[39m)][:,\u001b[32m1\u001b[39m].ptp())\n\u001b[32m     19\u001b[39m print(\u001b[33m\"x extent of legs   :\"\u001b[39m, sl[:,\u001b[32m0\u001b[39m].min(), \u001b[33m\"to 0.0 tangent; leg length\"\u001b[39m, \u001b[32m0.0\u001b[39m-sl[:,\u001b[32m0\u001b[39m].min(), \u001b[33m\"expected\"\u001b[39m, \u001b[32m0.120\u001b[39m)\n\u001b[32m     20\u001b[39m print(\u001b[33m\"leg centreline separation:\"\u001b[39m, \u001b[32m0.030\u001b[39m, \u001b[33m\"= 2*Rc; y span\"\u001b[39m, sl[:,\u001b[32m1\u001b[39m].min(), sl[:,\u001b[32m1\u001b[39m].max())\n\n\u001b[31mAttributeError\u001b[39m: 'numpy.ndarray' object has no attribute 'ptp'",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\ntxt = open(\"constant/polyMesh/points\").read()\nbody = txt[txt.index(\"(\")+1:txt.rindex(\")\")]\npts = np.array([[float(v) for v in ln.strip()[1:-1].split()] for ln in body.strip().splitlines() if ln.strip().startswith(\"(\")])\nsl = pts[np.isclose(pts[:,2],0.0)]\nbend = sl[sl[:,0] > 0.0005]\nrb = np.hypot(bend[:,0], bend[:,1]-0.015)\nlow = sl[np.isclose(sl[:,0],-0.06,atol=2e-4) & (sl[:,1]<0.015)][:,1]\nup  = sl[np.isclose(sl[:,0],-0.06,atol=2e-4) & (sl[:,1]>0.015)][:,1]\nprint(\"bend inner / outer / centreline R :\", rb.min(), rb.max(), 0.5*(rb.min()+rb.max()), \"| expected 0.010 0.020 0.015\")\nprint(\"lower leg width at x=-60mm :\", low.max()-low.min(), \"expected 0.010; centreline y =\", 0.5*(low.max()+low.min()))\nprint(\"upper leg width at x=-60mm :\", up.max()-up.min(), \"expected 0.010; centreline y =\", 0.5*(up.max()+up.min()))\nprint(\"leg length (open end x to bend tangent x=0):\", 0.0-sl[:,0].min(), \"expected 0.120\")\nprint(\"slab thickness z:\", np.unique(pts[:,2]))\nprint(\"fluid volume / thickness = plan area:\", 2.87124e-06/0.001, \"expected\", 2*0.120*0.010 + np.pi/2*(0.020**2-0.010**2))",
+      "exit_code": 0,
+      "seconds": 0.05059470050036907,
+      "output": "bend inner / outer / centreline R : 0.00999999999601371 0.02000000000561121 0.01500000000081246 | expected 0.010 0.020 0.015\nlower leg width at x=-60mm : 0.01 expected 0.010; centreline y = 0.0\nupper leg width at x=-60mm : 0.010000000000000002 expected 0.010; centreline y = 0.030000000000000002\nleg length (open end x to bend tangent x=0): 0.12 expected 0.120\nslab thickness z: [0.    0.001]\nfluid volume / thickness = plan area: 0.0028712399999999997 expected 0.002871238898038469",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\nfrom IPython.display import Image\npv.OFF_SCREEN = True\nr = subprocess.run([\"foamToVTK\",\"-constant\",\"-noInternal\" ], capture_output=True, text=True)\nr2 = subprocess.run([\"foamToVTK\",\"-constant\"], capture_output=True, text=True)\nimport glob; print(sorted(glob.glob(\"VTK/*\"))[:10])",
+      "exit_code": 0,
+      "seconds": 0.5518557140603662,
+      "output": "['VTK/t1.vtm.series', 'VTK/t1_0', 'VTK/t1_0.vtm']",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\nfrom IPython.display import Image\nblk = pv.read(\"VTK/t1_0.vtm\")\ngrid = blk[0] if not isinstance(blk[0], pv.MultiBlock) else blk[0][0]\nprint(grid)\np = pv.Plotter(off_screen=True, window_size=(1400,500))\np.add_mesh(grid, show_edges=True, color=\"lightsteelblue\", line_width=1)\np.view_xy(); p.enable_parallel_projection()\np.screenshot(\"mesh.png\")\nImage(\"mesh.png\")",
+      "exit_code": 0,
+      "seconds": 0.4952614437788725,
+      "output": "UnstructuredGrid (0x78927518fd60)\n  N Cells:    13340\n  N Points:   27872\n  X Bounds:   -1.200e-01, 2.000e-02\n  Y Bounds:   -5.000e-03, 3.500e-02\n  Z Bounds:   0.000e+00, 1.000e-03\n  N Arrays:   1\n\n\u001b[0m\u001b[33m2026-09-13 09:03:04.335 (  14.826s) [    7893DF39C780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 09:03:04.336 (  14.827s) [    7893DF39C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 09:03:04.349 (  14.839s) [    7893DF39C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "p = pv.Plotter(off_screen=True, window_size=(900,900))\np.add_mesh(grid.clip_box([-0.01,0.025,-0.008,0.038,-1,1], invert=False), show_edges=True, color=\"lightsteelblue\")\np.view_xy(); p.enable_parallel_projection(); p.camera.zoom(1.3)\np.screenshot(\"bend.png\")\nImage(\"bend.png\")",
+      "exit_code": 0,
+      "seconds": 0.20142789743840694,
+      "output": "\u001b[0m\u001b[33m2026-09-13 09:03:08.274 (  18.764s) [    7893DF39C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 09:03:08.274 (  18.765s) [    7893DF39C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "from build123d import Rectangle, Pos, Compound, export_step, Plane, Face, Wire, Line, CenterArc\n# three sub-faces, sharing the two tangent lines at x=0\nleg_lo = Pos(-L/2, 0.0) * Rectangle(L, W)                    # x in [-0.12,0], y in [-0.005,0.005]\nleg_up = Pos(-L/2, 2*Rc) * Rectangle(L, W)                   # y in [0.025,0.035]\nbw = Wire([Line((0,-W/2),(0,0)).edge()])  # placeholder not used\nbend_w = Wire([CenterArc((0.0,yc), Ro, -90, 180).edge(),\n               Line((0.0, yc+Ro), (0.0, yc+Ri)).edge(),\n               CenterArc((0.0,yc), Ri, 90, -180).edge(),\n               Line((0.0, W/2), (0.0, -W/2)).edge()])\nbend_f = Face(bend_w)\nprint(\"areas mm^2:\", leg_lo.area*1e6, bend_f.area*1e6, leg_up.area*1e6, \"sum\", (leg_lo.area+bend_f.area+leg_up.area)*1e6)\nexport_step(Compound([leg_lo, bend_f, leg_up]), \"ubend_parts.step\")\nprint(os.path.getsize(\"ubend_parts.step\"))",
+      "exit_code": 0,
+      "seconds": 0.050626909360289574,
+      "output": "areas mm^2: 1200.0 471.2388980384689 1200.0 sum 2871.238898038469\n11563",
+      "image": ""
+    },
+    {
+      "cmd": "import gmsh, numpy as np\nTH = 0.001\nDS = 0.0005                      # target cell size 0.5 mm -> 20 cells across the 10 mm passage\n\ndef build_struct(ds, fname=\"ubend.msh\"):\n    n_w   = int(round(W/ds)) + 1                 # nodes across passage\n    n_len = int(round(L/ds)) + 1                 # nodes along each leg\n    n_arc = int(round(np.pi*Rc/ds)) + 1          # nodes along the bend (centreline arc length)\n    gmsh.initialize(); gmsh.option.setNumber(\"General.Terminal\", 0)\n    gmsh.model.add(\"ubend\")\n    gmsh.model.occ.importShapes(\"ubend_parts.step\")\n    gmsh.model.occ.synchronize()\n    surfs = [t for d,t in gmsh.model.getEntities(2)]\n    frag, _ = gmsh.model.occ.fragment([(2,surfs[0])], [(2,t) for t in surfs[1:]])\n    gmsh.model.occ.synchronize()\n    surfs = [t for d,t in gmsh.model.getEntities(2)]\n    com_of = {}\n    for _,t in gmsh.model.getEntities(1):\n        ln = gmsh.model.occ.getMass(1,t); com_of[t] = (np.array(gmsh.model.occ.getCenterOfMass(1,t)), ln)\n        n = n_w if abs(ln-W) < 1e-9 else (n_len if abs(ln-L) < 1e-9 else n_arc)\n        gmsh.model.mesh.setTransfiniteCurve(t, n)\n    for t in surfs:\n        gmsh.model.mesh.setTransfiniteSurface(t); gmsh.model.mesh.setRecombine(2, t)\n    out = gmsh.model.occ.extrude([(2,t) for t in surfs], 0,0,TH, numElements=[1], recombine=True)\n    gmsh.model.occ.synchronize()\n    vols = [t for d,t in out if d==3]\n    groups = {\"inlet\":[], \"outlet\":[], \"walls\":[], \"frontAndBack\":[]}\n    for d,t in gmsh.model.getBoundary([(3,v) for v in vols], oriented=False, combined=True):\n        c = np.array(gmsh.model.occ.getCenterOfMass(2,abs(t)))\n        if abs(c[2]) < 1e-9 or abs(c[2]-TH) < 1e-9:\n            groups[\"frontAndBack\"].append(abs(t))\n        else:\n            key = min(com_of, key=lambda k: np.linalg.norm(com_of[k][0][:2]-c[:2]))\n            cc, ln = com_of[key]\n            if abs(ln-W) < 1e-9 and abs(cc[0]+L) < 1e-9:\n                groups[\"inlet\" if cc[1] < Rc else \"outlet\"].append(abs(t))\n            else:\n                groups[\"walls\"].append(abs(t))\n    for name, tags in groups.items(): gmsh.model.addPhysicalGroup(2, tags, name=name)\n    gmsh.model.addPhysicalGroup(3, vols, name=\"fluid\")\n    gmsh.model.mesh.generate(3)\n    gmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2); gmsh.write(fname)\n    nh = len(gmsh.model.mesh.getElementsByType(5)[0]); gmsh.finalize()\n    return groups, nh, (n_w, n_len, n_arc)\n\ngroups, nh, ns = build_struct(DS)\nprint(groups, \"hexes:\", nh, \"nodes(w,len,arc):\", ns)",
+      "exit_code": 0,
+      "seconds": 0.15093130804598331,
+      "output": "{'inlet': [4], 'outlet': [13], 'walls': [5, 7, 9, 11, 14, 15], 'frontAndBack': [1, 2, 3, 8, 12, 16]} hexes: 11480 nodes(w,len,arc): (21, 241, 95)",
+      "image": ""
+    },
+    {
+      "cmd": "import shutil\nshutil.rmtree(\"constant/polyMesh\", ignore_errors=True)\nr = subprocess.run([\"gmshToFoam\",\"ubend.msh\"], capture_output=True, text=True); print(r.returncode, r.stdout[-400:])\nfix_boundary()\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True); out=r.stdout\nprint(out[out.index(\"Mesh stats\"):out.index(\"Checking topology\")])\nprint(out[out.index(\"Checking geometry\"):][:1500])",
+      "exit_code": 0,
+      "seconds": 0.6521547129377723,
+      "output": "0  Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 24148 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone fluid and cellSet\nEnd\n\n\nMesh stats \n    points:           24150\n    internal points:  0\n    faces:            46514\n    internal faces:   22366\n    cells:            11480\n    faces per cell:   6\n    boundary patches: 4\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     11480\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     0\n\n\nChecking geometry...\n    Overall domain bounding box (-0.12 -0.005 0) (0.02 0.035 0.001)\n    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)\n    Mesh has 2 solution (non-empty) directions (1 1 0)\n    All edges aligned with or perpendicular to non-empty directions.\n    Boundary openness (9.3572e-19 -1.5172e-17 4.7362e-19) OK.\n    Max cell openness = 2.16499e-16 OK.\n    Max aspect ratio = 1.441 OK.\n    Minimum face area = 1.71252e-07. Maximum face area = 6.68393e-07.  Face area magnitudes OK.\n    Min volume = 1.71252e-10. Max volume = 3.29973e-10.  Total volume = 2.87115e-06.  Cell volumes OK.\n    Mesh non-orthogonality Max: 0.440584 average: 0.0135383\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.01784 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "b = open(\"constant/polyMesh/boundary\").read()\nprint(b[b.index(\"4\\n(\"):])\nsubprocess.run([\"foamToVTK\",\"-constant\"], capture_output=True, text=True)\nblk = pv.read(\"VTK/t1_0.vtm\"); grid = blk[0]\np = pv.Plotter(off_screen=True, window_size=(1000,900))\np.add_mesh(grid.clip_box([-0.012,0.025,-0.008,0.038,-1,1], invert=False), show_edges=True, color=\"lightsteelblue\")\np.view_xy(); p.enable_parallel_projection(); p.camera.zoom(1.3); p.screenshot(\"bend2.png\")\nImage(\"bend2.png\")",
+      "exit_code": 0,
+      "seconds": 0.5520942742004991,
+      "output": "4\n(\n    frontAndBack\n    {\n        type            empty;\n        physicalType    empty;\n        nFaces          22960;\n        startFace       22366;\n    }\n    inlet\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          20;\n        startFace       45326;\n    }\n    walls\n    {\n        type            wall;\n        physicalType    wall;\n        nFaces          1148;\n        startFace       45346;\n    }\n    outlet\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          20;\n        startFace       46494;\n    }\n)\n\n// ************************************************************************* //\n\n\n\u001b[0m\u001b[33m2026-09-13 09:03:58.335 (  68.826s) [    7893DF39C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 09:03:58.336 (  68.826s) [    7893DF39C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import numpy as np\nfaces_txt = open(\"constant/polyMesh/faces\").read()\nfb = faces_txt[faces_txt.index(\"(\")+1:faces_txt.rindex(\")\")].strip().splitlines()\nfl = [l for l in fb if \"(\" in l]\ndef face_nodes(l): return [int(v) for v in l[l.index(\"(\")+1:l.index(\")\")].split()]\npts_txt = open(\"constant/polyMesh/points\").read()\npb = pts_txt[pts_txt.index(\"(\")+1:pts_txt.rindex(\")\")]\nP = np.array([[float(v) for v in ln.strip()[1:-1].split()] for ln in pb.strip().splitlines() if ln.strip().startswith(\"(\")])\nfor name, start, n in [(\"inlet\",45326,20), (\"outlet\",46494,20)]:\n    c = np.array([P[face_nodes(fl[i])].mean(0) for i in range(start, start+n)])\n    print(name, \"centroid\", np.round(c.mean(0),5), \" y range\", round(c[:,1].min(),5), round(c[:,1].max(),5), \" x\", np.unique(np.round(c[:,0],5)))",
+      "exit_code": 0,
+      "seconds": 0.0506119504570961,
+      "output": "inlet centroid [-0.12    0.      0.0005]  y range -0.00475 0.00475  x [-0.12]\noutlet centroid [-0.12    0.03    0.0005]  y range 0.02525 0.03475  x [-0.12]",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 1699,
+      "fenced": false,
+      "text_chars": 1135,
+      "thinking_chars": 1135,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290076.1969945
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 526,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 43,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290080.8567567
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 593,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 422,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290090.1720812
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 359,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290093.9308805
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 355,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290098.1551297
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 398,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 76,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290102.041286
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 639,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 594,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290111.4874563
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 1150,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 35,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290124.5139122
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 968,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 649,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290136.9925678
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 154,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 209,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290140.250398
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 409,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 244,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290144.4662707
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 373,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 697,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290150.953023
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 184,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290154.9587853
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 1019,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 383,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290169.4845889
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 648,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290177.0286045
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 205,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 77,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290180.2147007
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 240,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290184.1481671
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 216,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 81,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290188.2619932
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 1160,
+      "fenced": true,
+      "text_chars": 202,
+      "thinking_chars": 763,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290205.1166818
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 1970,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 679,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290227.3833508
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 366,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 251,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290232.4943714
+    },
+    {
+      "turn": 22,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 369,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 204,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290237.9858856
+    },
+    {
+      "turn": 23,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 534,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 290,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290245.4595852
+    },
+    {
+      "turn": 24,
+      "steps": 22,
+      "stop_reason": "tool_use",
+      "output_tokens": 1102,
+      "fenced": false,
+      "text_chars": 1814,
+      "thinking_chars": 259,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789290262.5981305
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "passage width, 10 mm, at the inlet, at mid-leg and at the crown of the bend",
+      "measured": null
+    },
+    {
+      "property": "leg length, 120 mm, both legs",
+      "measured": null
+    },
+    {
+      "property": "centreline bend radius, 15 mm",
+      "measured": null
+    },
+    {
+      "property": "included angle of the bend, 180 degrees",
+      "measured": null
+    },
+    {
+      "property": "the mesh is exactly one cell thick, and both side patches are typed `empty`",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "n/a",
+          "concern": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/t",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/t",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260913-090051-5ad2/t1/constant/t",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 24,
+    "steps": 22,
+    "seconds": 215.0,
+    "killed": false,
+    "first_mesh_step": 7,
+    "first_mesh_turn": 9
+  }
+}

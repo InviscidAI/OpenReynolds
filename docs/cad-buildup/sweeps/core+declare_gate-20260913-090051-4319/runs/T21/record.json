@@ -1,0 +1,105 @@
+{
+  "run_id": "20260913-090815-0761",
+  "case": "T21",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T21-20260913-090815-0761",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T21-20260913-090815-0761/t21",
+  "started_at": "2026-09-13T09:08:16",
+  "ended_at": "2026-09-13T09:08:22",
+  "seconds": 2.2,
+  "n_turns": 0,
+  "n_steps": 0,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0,
+  "tokens": {},
+  "stopped": "provider",
+  "expects": "done",
+  "passed": false,
+  "why": "nothing in the case directory has been meshed yet",
+  "contaminated": false,
+  "completed": true,
+  "trace": [],
+  "beats": [],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T21-20260913-090815-0761/t21/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T21-20260913-090815-0761/t21/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T21-20260913-090815-0761/t21/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T21-20260913-090815-0761/t21/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T21-20260913-090815-0761/t21/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T21-20260913-090815-0761/t21/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "each blind hole's depth, measured on the mesh, and the 13 mm of standoff remaining below it",
+      "measured": null
+    },
+    {
+      "property": "the blind hole diameters, measured on the meshed hole patches",
+      "measured": null
+    },
+    {
+      "property": "the four standoffs' heights and centre positions, measured on the mesh, against 15 mm in from each corner",
+      "measured": null
+    },
+    {
+      "property": "the vent's area and its height above the floor, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the air volume, against the internal box volume minus four standoffs plus four blind holes",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 0,
+    "steps": 0,
+    "seconds": 5.0,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

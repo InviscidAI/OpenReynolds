@@ -1,0 +1,64 @@
+# -- cell 1 (2.2s, exit 0)
+import os
+from build123d import *
+
+R_RING_IN, R_RING_OUT, H_RING = 0.023, 0.030, 0.010
+R_SPIN_OUT, R_SPIN_IN, H_SPIN = 0.022, 0.015, 0.008
+
+ring_bore = Cylinder(R_RING_IN, H_RING)
+spinner   = Cylinder(R_SPIN_OUT, H_SPIN) - Cylinder(R_SPIN_IN, H_SPIN)
+oil = ring_bore - spinner
+
+print("oil volume m^3:", oil.volume)
+bb = oil.bounding_box()
+print("bbox min", bb.min, "max", bb.max)
+print("radial clearance mm:", (R_RING_IN-R_SPIN_OUT)*1000,
+      " axial gap mm:", (H_RING-H_SPIN)/2*1000)
+print("n faces:", len(oil.faces()), " solids:", len(oil.solids()))
+# -- output
+oil volume m^3: 1.0109645159251956e-05
+bbox min Vector: (X=-0.023, Y=-0.023, Z=-0.005) max Vector: (X=0.023, Y=0.023, Z=0.005)
+radial clearance mm: 1.0000000000000009  axial gap mm: 1.0
+n faces: 7  solids: 1
+
+# -- cell 2 (0.1s, exit 0)
+import numpy as np
+for i,f in enumerate(oil.faces()):
+    c = f.center()
+    print(i, f.geom_type, "area=%.6e"%f.area, "c=(%.4f,%.4f,%.4f)"%(c.X,c.Y,c.Z),
+          "r_at_pt=%.4f"%np.hypot(*f.center_location.position.to_tuple()[:2]),
+          "normal=", f.normal_at(f.center() if f.geom_type==GeomType.PLANE else None))
+# -- output
+0 GeomType.CYLINDER area=1.445133e-03 c=(-0.0230,0.0000,0.0000) r_at_pt=0.0230 normal= Vector: (X=-1, Y=0, Z=0)
+1 GeomType.PLANE area=1.661903e-03 c=(0.0000,-0.0000,0.0050) r_at_pt=0.0000 normal= Vector: (X=0, Y=0, Z=1)
+2 GeomType.PLANE area=1.661903e-03 c=(0.0000,-0.0000,-0.0050) r_at_pt=0.0000 normal= Vector: (X=0, Y=0, Z=-1)
+3 GeomType.CYLINDER area=1.105841e-03 c=(-0.0220,0.0000,0.0000) r_at_pt=0.0220 normal= Vector: (X=1, Y=0, Z=0)
+4 GeomType.PLANE area=8.136725e-04 c=(0.0000,-0.0000,0.0040) r_at_pt=0.0000 normal= Vector: (X=0, Y=0, Z=-1)
+5 GeomType.PLANE area=8.136725e-04 c=(0.0000,-0.0000,-0.0040) r_at_pt=0.0000 normal= Vector: (X=0, Y=0, Z=1)
+6 GeomType.CYLINDER area=7.539822e-04 c=(-0.0150,0.0000,0.0000) r_at_pt=0.0150 normal= Vector: (X=-1, Y=0, Z=0)
+
+/tmp/ipykernel_860682/1139717748.py:5: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  "r_at_pt=%.4f"%np.hypot(*f.center_location.position.to_tuple()[:2]),
+
+# -- cell 3 (9.8s, exit 0)
+import os, numpy as np
+os.makedirs("constant/triSurface", exist_ok=True)
+F = oil.faces()
+patches = {
+    "ring_wall":       [F[0]],
+    "ring_end_top":    [F[1]],
+    "ring_end_bottom": [F[2]],
+    "spinner_wall":    [F[3], F[4], F[5], F[6]],
+}
+for name, fl in patches.items():
+    shp = Compound(children=[Face(f.wrapped) for f in fl]) if len(fl) > 1 else fl[0]
+    export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=2e-6, angular_tolerance=0.05)
+    print(name, "%.6e m2"%sum(f.area for f in fl), os.path.getsize(f"constant/triSurface/{name}.stl"))
+print("total area", sum(f.area for f in F))
+# -- output
+ring_wall 1.445133e-03 m2 106684
+ring_end_top 1.661903e-03 m2 53284
+ring_end_bottom 1.661903e-03 m2 53284
+spinner_wall 3.487168e-03 m2 380684
+total area 0.008256105493633975
+

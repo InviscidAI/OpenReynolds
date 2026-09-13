@@ -1,0 +1,105 @@
+{
+  "run_id": "20260913-090823-b658",
+  "case": "T24",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T24-20260913-090823-b658",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T24-20260913-090823-b658/t24",
+  "started_at": "2026-09-13T09:08:24",
+  "ended_at": "2026-09-13T09:08:30",
+  "seconds": 2.2,
+  "n_turns": 0,
+  "n_steps": 0,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0,
+  "tokens": {},
+  "stopped": "provider",
+  "expects": "done",
+  "passed": false,
+  "why": "nothing in the case directory has been meshed yet",
+  "contaminated": false,
+  "completed": true,
+  "trace": [],
+  "beats": [],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T24-20260913-090823-b658/t24/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T24-20260913-090823-b658/t24/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T24-20260913-090823-b658/t24/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T24-20260913-090823-b658/t24/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T24-20260913-090823-b658/t24/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T24-20260913-090823-b658/t24/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "each inlet port's face normal, and the angle between it and the local tangent at that port, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "each inlet's area and its height above the floor, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the four ports' angular positions around the cylinder, measured, and the spread from 90 degrees apart",
+      "measured": null
+    },
+    {
+      "property": "the chamber volume and the four duct volumes separately, against the request",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 0,
+    "steps": 0,
+    "seconds": 5.0,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}
