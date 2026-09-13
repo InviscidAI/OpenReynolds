@@ -36,6 +36,98 @@ The corpus has since been grown to 26 cases — fifteen further distinct geometr
 five repeats of three — and the claim stands or falls on the next sweep. §"What the outcomes
 say" below is written as of one run per case and should be read that way.
 
+## The comparison, stated properly
+
+*Rewritten 2026-09-13, after two of its claims were withdrawn. This is the answer to "how do we
+compare", and most of it is an account of why the question is barely answerable yet.*
+
+### Six prompts overlap. One of them is a comparison.
+
+Six corpus cases are their prompts. Testing each for like-for-like comparability:
+
+| ours | ← theirs | what they scored | what we were scored on | a comparison? |
+|---|---|---|---|---|
+| T20 | P2 flange | both 10/10 | fluid domain, mesh, 6 properties | **no** — they were never asked to mesh |
+| T19 | P4 shaft+keyway | both 11/11 | fluid domain, 0.05 mm gap | **no** — same |
+| T21 | P5 enclosure | MAC 12/12 · skill 11/12 | fluid domain, blind-hole depth | **no** — same |
+| T18 | P7 finned cylinder | both 17/17 | fluid domain, fin gaps | **no** — same |
+| T12 | P8 impeller | MAC 14/15 · skill 15/15 | fluid domain, fillet decision | **no** — withdrawn; the two suites want *opposite* things from a root fillet |
+| T26 | P9 staircase | MAC corrected it · skill shipped the defect | did it notice the spec does not close | **yes** — the question is task-independent |
+
+**Five of the six are not comparisons, and the reason is structural rather than incidental:
+this corpus's criterion begins where theirs ends.** They score feature presence on a printable
+solid. We score a clean `checkMesh` plus every named property measured and printed. "We passed
+T20 and so did they" describes two different tasks that happen to share a prompt. There is no
+quantity both sides scored.
+
+T26 survives because its question does not depend on what the geometry is *for*: the tread
+meets the column along a tangent line, so the spec does not close, and any system must either
+notice or not.
+
+### The one comparison, and we lose it
+
+| | on P9 / T26 |
+|---|---|
+| **MAC** | found the tangency unprompted, kept a safe overlap, logged it as a defensive correction |
+| **`cad` skill** | shipped the disconnected version; their report prints both renders side by side |
+| **this desk** | `fluid = shaft - column - tread_solid`, meshed it, printed `shaft ID 2.400 (asked 2.400)`, never mentioned the tangency. The brief's central properties — the gap *with its sign*, the count of treads in contact — appear nowhere |
+
+And the harness saw it. `union_closure` recorded **259 free edges** on the welded surface —
+almost certainly the tangency, as unwelded coincident edges — and the run still scored
+`passed: true`, because no probe is a gate and `checkMesh` validates the volume mesh rather than
+the surface it came from. **The defect was measured, written into the record, and passed.**
+
+One run, and a different model on each side (`claude-opus-5` against `qwen3.7-max`). So: one
+observation, and it goes against us.
+
+### What is measurable, and is not in our favour
+
+| | per case | model calls per case |
+|---|---|---|
+| MAC | ~$0.14 | **5** |
+| `cad` skill | ~$1.76 | 131 |
+| **this desk** | **$1.01** | **20.3** |
+
+Across 35 runs and $26.21 over 26 distinct cases. The dollar figures are not clean — different
+models — but **calls per case is an architectural quantity and it is the one MAC's entire thesis
+is about**: four agents passing compact structured state versus one agent working a growing
+conversation. We are at 4× MAC's call count. We are cheaper than the skill, and the skill is the
+baseline MAC was built to beat.
+
+### What is established by reading the code, on both sides
+
+Every geometric operation in MAC's generated code carries a post-condition and emits a named
+diagnostic when it fails — `MISSED_CUT`, `FILLET_DEGRADED`, `FILLET_PARTIAL`. This desk has no
+equivalent, and the sweep of 2026-09-12 demonstrated the same class of gap in a place that
+matters more: **nothing in the desk's path asserts that an exported surface closes.** `grep` for
+`open_edges`, `free_edges`, `is_closed`, `watertight`, `manifold`, `closure` over
+`openreynolds/buildup/core.py` and `record.py` returns zero for every term. Four cases exported
+non-closed surfaces and all four passed.
+
+### So, plainly
+
+- **On the half we own — solid → fluid domain → mesh — there is no comparison to make.** Neither
+  repo does it; `OpenFOAM`, `snappyHexMesh`, `blockMesh` and `checkMesh` appear in neither
+  repository. That is not a win, it is an absence of a competitor.
+- **On the half we share, we have one valid observation and we lost it.** We cannot currently
+  claim to be better or worse at CAD authoring than either system.
+- **On architecture we are measurably on the wrong side**, by the metric its authors chose.
+- **The one actionable difference is the post-condition discipline**, and it is now supported by
+  two independent instances (T26's tangency, the closure gap) rather than the one that was
+  withdrawn.
+
+### What a proper comparison would take
+
+The shared half is unmeasured because this corpus never scores it separately. The fix is cheap
+and specific: **run P1–P10 against this desk and grade the output on their 141-feature criteria**
+— their own checklist, their own binary pass/fail, on our geometry. Ten runs, roughly $10, and it
+yields the first like-for-like number anyone has on the shared task. Removing the model variable
+too would mean running MAC here on Opus 5 through its OpenAI-compatible endpoint; that is a
+separate piece of work and its dependency conflicts are documented in its own README.
+
+Until one of those is done, the honest summary is: **one comparison, lost; no rate; and a cost
+profile that resembles the baseline they beat.**
+
 ## What the outcomes say
 
 ### The one case where the comparison is direct
