@@ -1,0 +1,687 @@
+# -- cell 1 (0.2s, exit 0)
+import numpy as np, matplotlib.pyplot as plt, os
+mm = 1e-3
+OD, DEPTH, PITCH, TURNS, GAP, ALPHA = 40.0, 1.0, 2.0, 6, 0.2, np.deg2rad(15.0)
+Rc, Rr = OD/2, OD/2 - DEPTH
+flat = (PITCH - 2*DEPTH*np.tan(ALPHA))/2          # crest flat = root flat
+zB = DEPTH*np.tan(ALPHA)
+# jar (neck) groove wall, azimuth 0, local z ; interior of groove is to the RIGHT of A->B->C->D
+A = np.array([Rc, 0.0]); B = np.array([Rr, zB]); C = np.array([Rr, zB+flat]); D = np.array([Rc, 2*zB+flat])
+def right_n(p,q):
+    u = (q-p)/np.linalg.norm(q-p); return np.array([u[1], -u[0]])
+def inter(p1,d1,p2,d2):
+    t = np.linalg.solve(np.column_stack([d1,-d2]), p2-p1); return p1+t[0]*d1
+segs = [(A,B),(B,C),(C,D)]
+off = [(p+GAP*right_n(p,q), q+GAP*right_n(p,q)) for p,q in segs]
+Bp = inter(off[0][0], off[0][1]-off[0][0], off[1][0], off[1][1]-off[1][0])
+Cp = inter(off[1][0], off[1][1]-off[1][0], off[2][0], off[2][1]-off[2][0])
+Ap = inter(off[0][0], off[0][1]-off[0][0], np.array([Rc,0.]), np.array([0.,1.]))   # clip at crest cyl
+Dp = inter(off[2][0], off[2][1]-off[2][0], np.array([Rc,0.]), np.array([0.,1.]))
+prof = [A,B,C,D,Dp,Cp,Bp,Ap]
+for n,p in zip("A B C D D' C' B' A'".split(), prof): print(f"{n:3s} r={p[0]:.4f} z={p[1]:.4f}")
+print("crest flat =", flat, " land width =", Ap[1]-A[1], " gap at root =", Bp[0]-B[0])
+P = np.array(prof+[A])
+plt.figure(figsize=(5,4)); plt.plot(P[:,0],P[:,1],'-o'); plt.axis('equal'); plt.xlabel('r [mm]'); plt.ylabel('z [mm]'); plt.grid(1); plt.show()
+# -- output
+A   r=20.0000 z=0.0000
+B   r=19.0000 z=0.2679
+C   r=19.0000 z=1.0000
+D   r=20.0000 z=1.2679
+D'  r=20.0000 z=1.0609
+C'  r=19.2000 z=0.8465
+B'  r=19.2000 z=0.4214
+A'  r=20.0000 z=0.2071
+crest flat = 0.7320508075688773  land width = 0.20705523608201643  gap at root = 0.1999999999999993
+
+# -- cell 2 (0.2s, exit 0)
+import gmsh
+NQ, NEL_Q = 4*TURNS, 10          # quarter-turn steps, layers per quarter (coarse)
+NT, NF, NR = 2, 3, 3             # elems across gap, along flank, along root flat
+gmsh.initialize(); gmsh.option.setNumber("General.Terminal",1)
+gmsh.model.add("helix_gap")
+g = gmsh.model.geo
+pts = [g.addPoint(p[0]*mm, 0.0, p[1]*mm) for p in prof]
+lines = [g.addLine(pts[i], pts[(i+1)%8]) for i in range(8)]   # AB BC CD DD' D'C' C'B' B'A' A'A
+loop = g.addCurveLoop(lines); base = g.addPlaneSurface([loop])
+for l,n in zip(lines, [NF,NR,NF,NT,NF,NR,NF,NT]): g.mesh.setTransfiniteCurve(l, n+1)
+g.mesh.setTransfiniteSurface(base, "Left", [pts[0], pts[3], pts[4], pts[7]])
+g.mesh.setRecombine(2, base)
+lat = {i: [] for i in range(8)}
+top = base
+for k in range(NQ):
+    out = g.twist([(2,top)], 0,0,0, 0,0,PITCH*mm/4, 0,0,1, np.pi/2, [NEL_Q], [], True)
+    top = out[0][1]
+    for i in range(8): lat[i].append(out[2+i][1])
+g.synchronize()
+print("top surface:", top, " n lateral per line:", len(lat[0]))
+print("bbox:", np.round(np.array(gmsh.model.getBoundingBox(-1,-1))/mm,3))
+# -- output
+top surface: 1016  n lateral per line: 24
+bbox: [-20.    -20.      0.     20.     20.     13.268]
+
+# -- cell 3 (0.1s, exit 0)
+names = ["AB","BC","CD","DD'","D'C'","C'B'","B'A'","A'A"]
+for i in range(8):
+    bb = np.array(gmsh.model.getBoundingBox(2, lat[i][0]))/mm
+    rmin = min(np.hypot(bb[0],bb[1]), np.hypot(bb[3],bb[4]))
+    print(f"{names[i]:5s} surf {lat[i][0]:4d}  x[{bb[0]:7.3f},{bb[3]:7.3f}] y[{bb[1]:7.3f},{bb[4]:7.3f}] z[{bb[2]:6.3f},{bb[5]:6.3f}]")
+# -- output
+AB    surf   21  x[  0.000, 20.000] y[  0.000, 20.000] z[ 0.000, 0.768]
+BC    surf   25  x[  0.000, 19.000] y[  0.000, 19.000] z[ 0.268, 1.500]
+CD    surf   29  x[  0.000, 20.000] y[  0.000, 20.000] z[ 1.000, 1.768]
+DD'   surf   33  x[  0.000, 20.000] y[  0.000, 20.000] z[ 1.061, 1.768]
+D'C'  surf   37  x[  0.000, 20.000] y[  0.000, 20.000] z[ 0.847, 1.561]
+C'B'  surf   41  x[  0.000, 19.200] y[  0.000, 19.200] z[ 0.421, 1.347]
+B'A'  surf   45  x[  0.000, 20.000] y[  0.000, 20.000] z[ 0.207, 0.921]
+A'A   surf   49  x[  0.000, 20.000] y[  0.000, 20.000] z[ 0.000, 0.707]
+
+# -- cell 4 (0.1s, exit 0)
+def rmax(s):
+    bb=np.array(gmsh.model.getBoundingBox(2,s))/mm; return max(np.hypot(bb[0],bb[1]),np.hypot(bb[3],bb[4]),np.hypot(bb[0],bb[4]),np.hypot(bb[3],bb[1]))
+print("neck root chain rmax:", np.round([rmax(s) for s in lat[1]],3).max(), np.round([rmax(s) for s in lat[1]],3).min())
+print("lid  root chain rmax:", np.round([rmax(s) for s in lat[5]],3).max(), np.round([rmax(s) for s in lat[5]],3).min())
+print("land A'A chain rmax :", np.round([rmax(s) for s in lat[7]],3).min())
+# -- output
+neck root chain rmax: 26.87 26.87
+lid  root chain rmax: 27.153 27.153
+land A'A chain rmax : 28.284
+
+# -- cell 5 (0.2s, exit 1)
+pg = {}
+pg["neck_flank"] = gmsh.model.addPhysicalGroup(2, [s for i in (0,1,2) for s in lat[i]]); gmsh.model.setPhysicalName(2, pg["neck_flank"], "neck_flank")
+pg["lid_flank"]  = gmsh.model.addPhysicalGroup(2, [s for i in (4,5,6) for s in lat[i]]); gmsh.model.setPhysicalName(2, pg["lid_flank"], "lid_flank")
+pg["crest_land"] = gmsh.model.addPhysicalGroup(2, [s for i in (3,7) for s in lat[i]]); gmsh.model.setPhysicalName(2, pg["crest_land"], "crest_land")
+pg["helix_inner"]= gmsh.model.addPhysicalGroup(2, [base]); gmsh.model.setPhysicalName(2, pg["helix_inner"], "helix_inner")
+pg["helix_outer"]= gmsh.model.addPhysicalGroup(2, [top]);  gmsh.model.setPhysicalName(2, pg["helix_outer"], "helix_outer")
+vols = [v for (d,v) in gmsh.model.getEntities(3)]
+pgv = gmsh.model.addPhysicalGroup(3, vols); gmsh.model.setPhysicalName(3, pgv, "gap")
+gmsh.model.mesh.generate(3)
+print("nodes", len(gmsh.model.mesh.getNodes()[0]))
+for et,tags in zip(*gmsh.model.mesh.getElementTypes() and (gmsh.model.mesh.getElementTypes(), [gmsh.model.mesh.getElementsByType(t)[0] for t in gmsh.model.mesh.getElementTypes()])):
+    print("elem type", et, "count", len(tags))
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Line)
+Info    : [ 10%] Meshing curve 5 (Line)
+Info    : [ 10%] Meshing curve 6 (Line)
+Info    : [ 10%] Meshing curve 7 (Line)
+Info    : [ 10%] Meshing curve 8 (Line)
+Info    : [ 10%] Meshing curve 10 (Extruded)
+Info    : [ 10%] Meshing curve 11 (Extruded)
+Info    : [ 10%] Meshing curve 12 (Extruded)
+Info    : [ 10%] Meshing curve 13 (Extruded)
+Info    : [ 10%] Meshing curve 14 (Extruded)
+Info    : [ 10%] Meshing curve 15 (Extruded)
+Info    : [ 10%] Meshing curve 16 (Extruded)
+Info    : [ 10%] Meshing curve 17 (Extruded)
+Info    : [ 10%] Meshing curve 19 (Extruded)
+Info    : [ 10%] Meshing curve 20 (Extruded)
+Info    : [ 10%] Meshing curve 24 (Extruded)
+Info    : [ 10%] Meshing curve 28 (Extruded)
+Info    : [ 10%] Meshing curve 32 (Extruded)
+Info    : [ 10%] Meshing curve 36 (Extruded)
+Info    : [ 10%] Meshing curve 40 (Extruded)
+Info    : [ 10%] Meshing curve 44 (Extruded)
+Info    : [ 10%] Meshing curve 52 (Extruded)
+Info    : [ 10%] Meshing curve 53 (Extruded)
+Info    : [ 10%] Meshing curve 54 (Extruded)
+Info    : [ 10%] Meshing curve 55 (Extruded)
+Info    : [ 10%] Meshing curve 56 (Extruded)
+Info    : [ 10%] Meshing curve 57 (Extruded)
+Info    : [ 10%] Meshing curve 58 (Extruded)
+Info    : [ 10%] Meshing curve 59 (Extruded)
+Info    : [ 10%] Meshing curve 61 (Extruded)
+Info    : [ 10%] Meshing curve 62 (Extruded)
+Info    : [ 10%] Meshing curve 66 (Extruded)
+Info    : [ 10%] Meshing curve 70 (Extruded)
+Info    : [ 10%] Meshing curve 74 (Extruded)
+Info    : [ 10%] Meshing curve 78 (Extruded)
+Info    : [ 10%] Meshing curve 82 (Extruded)
+Info    : [ 10%] Meshing curve 86 (Extruded)
+Info    : [ 20%] Meshing curve 94 (Extruded)
+Info    : [ 20%] Meshing curve 95 (Extruded)
+Info    : [ 20%] Meshing curve 96 (Extruded)
+Info    : [ 20%] Meshing curve 97 (Extruded)
+Info    : [ 20%] Meshing curve 98 (E
+... 24824 characters cut ...
+Info    : [ 90%] Meshing surface 869 (Extruded)
+Info    : [ 90%] Meshing surface 873 (Extruded)
+Info    : [ 90%] Meshing surface 877 (Extruded)
+Info    : [ 90%] Meshing surface 881 (Extruded)
+Info    : [ 90%] Meshing surface 885 (Extruded)
+Info    : [ 90%] Meshing surface 889 (Extruded)
+Info    : [ 90%] Meshing surface 890 (Extruded)
+Info    : [ 90%] Meshing surface 903 (Extruded)
+Info    : [ 90%] Meshing surface 907 (Extruded)
+Info    : [ 90%] Meshing surface 911 (Extruded)
+Info    : [ 90%] Meshing surface 915 (Extruded)
+Info    : [ 90%] Meshing surface 919 (Extruded)
+Info    : [ 90%] Meshing surface 923 (Extruded)
+Info    : [100%] Meshing surface 927 (Extruded)
+Info    : [100%] Meshing surface 931 (Extruded)
+Info    : [100%] Meshing surface 932 (Extruded)
+Info    : [100%] Meshing surface 945 (Extruded)
+Info    : [100%] Meshing surface 949 (Extruded)
+Info    : [100%] Meshing surface 953 (Extruded)
+Info    : [100%] Meshing surface 957 (Extruded)
+Info    : [100%] Meshing surface 961 (Extruded)
+Info    : [100%] Meshing surface 965 (Extruded)
+Info    : [100%] Meshing surface 969 (Extruded)
+Info    : [100%] Meshing surface 973 (Extruded)
+Info    : [100%] Meshing surface 974 (Extruded)
+Info    : [100%] Meshing surface 987 (Extruded)
+Info    : [100%] Meshing surface 991 (Extruded)
+Info    : [100%] Meshing surface 995 (Extruded)
+Info    : [100%] Meshing surface 999 (Extruded)
+Info    : [100%] Meshing surface 1003 (Extruded)
+Info    : [100%] Meshing surface 1007 (Extruded)
+Info    : [100%] Meshing surface 1011 (Extruded)
+Info    : [100%] Meshing surface 1015 (Extruded)
+Info    : [100%] Meshing surface 1016 (Extruded)
+Info    : Done meshing 2D (Wall 0.0371343s, CPU 0.039004s)
+Info    : Meshing 3D...
+Info    : Meshing volume 1 (Extruded)
+Info    : Meshing volume 2 (Extruded)
+Info    : Meshing volume 3 (Extruded)
+Info    : Meshing volume 4 (Extruded)
+Info    : Meshing volume 5 (Extruded)
+Info    : Meshing volume 6 (Extruded)
+Info    : Meshing volume 7 (Extruded)
+Info    : Meshing volume 8 (Extruded)
+Info    : Meshing volume 9 (Extruded)
+Info    : Meshing volume 10 (Extruded)
+Info    : Meshing volume 11 (Extruded)
+Info    : Meshing volume 12 (Extruded)
+Info    : Meshing volume 13 (Extruded)
+Info    : Meshing volume 14 (Extruded)
+Info    : Meshing volume 15 (Extruded)
+Info    : Meshing volume 16 (Extruded)
+Info    : Meshing volume 17 (Extruded)
+Info    : Meshing volume 18 (Extruded)
+Info    : Meshing volume 19 (Extruded)
+Info    : Meshing volume 20 (Extruded)
+Info    : Meshing volume 21 (Extruded)
+Info    : Meshing volume 22 (Extruded)
+Info    : Meshing volume 23 (Extruded)
+Info    : Meshing volume 24 (Extruded)
+Info    : Done meshing 3D (Wall 0.0147614s, CPU 0.015392s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 8.76e-05s, CPU 0.000105s)
+Info    : 7998 nodes 13488 elements
+nodes 7998
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 11[39m
+[32m      7[39m vols = [v [38;5;28;01mfor[39;00m (d,v) [38;5;28;01min[39;00m gmsh.model.getEntities([32m3[39m)]
+[32m      8[39m pgv = gmsh.model.addPhysicalGroup([32m3[39m, vols); gmsh.model.setPhysicalName([32m3[39m, pgv, [33m"gap"[39m)
+[32m      9[39m gmsh.model.mesh.generate([32m3[39m)
+[32m     10[39m print([33m"nodes"[39m, len(gmsh.model.mesh.getNodes()[[32m0[39m]))
+[32m---> [39m[32m11[39m [38;5;28;01mfor[39;00m et,tags [38;5;28;01min[39;00m zip(*gmsh.model.mesh.getElementTypes() [38;5;28;01mand[39;00m (gmsh.model.mesh.getElementTypes(), [gmsh.model.mesh.getElementsByType(t)[[32m0[39m] [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m gmsh.model.mesh.getElementTypes()])):
+[32m     12[39m     print([33m"elem type"[39m, et, [33m"count"[39m, len(tags))
+
+[31mValueError[39m: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+
+# -- cell 6 (0.1s, exit 0)
+gmsh.model.removePhysicalGroups()
+def addpg(name, surfs, dim=2):
+    t = gmsh.model.addPhysicalGroup(dim, surfs); gmsh.model.setPhysicalName(dim, t, name); return t
+pg = {}
+pg["neck_flank"]  = addpg("neck_flank",  [s for i in (0,1,2) for s in lat[i]])
+pg["lid_flank"]   = addpg("lid_flank",   [s for i in (4,5,6) for s in lat[i]])
+pg["crest_land"]  = addpg("crest_land",  [s for i in (3,7) for s in lat[i]])
+pg["helix_inner"] = addpg("helix_inner", [base])
+pg["helix_outer"] = addpg("helix_outer", [top])
+addpg("gap", [v for (d,v) in gmsh.model.getEntities(3)], dim=3)
+gmsh.model.mesh.generate(3)
+et = gmsh.model.mesh.getElementTypes()
+print({int(t): len(gmsh.model.mesh.getElementsByType(t)[0]) for t in et})   # 5=hex, 3=quad
+# radius range of the nodes of each 2D group -> identity check
+for n,t in pg.items():
+    nt,_ = gmsh.model.mesh.getNodesForPhysicalGroup(2, t)
+    c = gmsh.model.mesh.getNodes()[1].reshape(-1,3)
+    idx = {tag:i for i,tag in enumerate(gmsh.model.mesh.getNodes()[0])}
+    P3 = c[[idx[x] for x in nt]]
+    r = np.hypot(P3[:,0],P3[:,1])/mm
+    print(f"{n:12s} nodes={len(nt):5d} r=[{r.min():.3f},{r.max():.3f}] z=[{P3[:,2].min()/mm:.3f},{P3[:,2].max()/mm:.3f}]")
+# -- output
+Info    : Meshing 3D...
+Info    : Meshing volume 1 (Extruded)
+Info    : Meshing volume 2 (Extruded)
+Info    : Meshing volume 3 (Extruded)
+Info    : Meshing volume 4 (Extruded)
+Info    : Meshing volume 5 (Extruded)
+Info    : Meshing volume 6 (Extruded)
+Info    : Meshing volume 7 (Extruded)
+Info    : Meshing volume 8 (Extruded)
+Info    : Meshing volume 9 (Extruded)
+Info    : Meshing volume 10 (Extruded)
+Info    : Meshing volume 11 (Extruded)
+Info    : Meshing volume 12 (Extruded)
+Info    : Meshing volume 13 (Extruded)
+Info    : Meshing volume 14 (Extruded)
+Info    : Meshing volume 15 (Extruded)
+Info    : Meshing volume 16 (Extruded)
+Info    : Meshing volume 17 (Extruded)
+Info    : Meshing volume 18 (Extruded)
+Info    : Meshing volume 19 (Extruded)
+Info    : Meshing volume 20 (Extruded)
+Info    : Meshing volume 21 (Extruded)
+Info    : Meshing volume 22 (Extruded)
+Info    : Meshing volume 23 (Extruded)
+Info    : Meshing volume 24 (Extruded)
+Info    : Done meshing 3D (Wall 0.0146347s, CPU 0.015497s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 0.000102s, CPU 9.2e-05s)
+Info    : 7998 nodes 13488 elements
+{1: 2470, 3: 5730, 5: 4320, 15: 968}
+neck_flank   nodes= 2410 r=[19.000,20.000] z=[0.000,13.268]
+lid_flank    nodes= 2410 r=[19.200,20.000] z=[0.207,13.061]
+crest_land   nodes= 1446 r=[20.000,20.000] z=[0.000,13.268]
+helix_inner  nodes=   30 r=[19.000,20.000] z=[0.000,1.268]
+helix_outer  nodes=   30 r=[19.000,20.000] z=[12.000,13.268]
+
+# -- cell 7 (0.5s, exit 0)
+os.makedirs("constant/triSurface", exist_ok=True)
+ntag, ncoord, _ = gmsh.model.mesh.getNodes()
+idx = {t:i for i,t in enumerate(ntag)}; XYZ = ncoord.reshape(-1,3)
+def write_stl(name, surfs):
+    tris = []
+    for s in surfs:
+        ets, etags, enodes = gmsh.model.mesh.getElements(2, s)
+        for et, en in zip(ets, enodes):
+            k = {2:3, 3:4}[et]; conn = en.reshape(-1, k)
+            for c in conn:
+                p = XYZ[[idx[t] for t in c]]
+                tris.append(p[[0,1,2]])
+                if k == 4: tris.append(p[[0,2,3]])
+    with open(f"constant/triSurface/{name}.stl","w") as f:
+        f.write(f"solid {name}\n")
+        for t in tris:
+            n = np.cross(t[1]-t[0], t[2]-t[0]); n = n/max(np.linalg.norm(n),1e-30)
+            f.write(f" facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\n  outer loop\n")
+            for v in t: f.write(f"   vertex {v[0]:.8e} {v[1]:.8e} {v[2]:.8e}\n")
+            f.write("  endloop\n endfacet\n")
+        f.write(f"endsolid {name}\n")
+    return len(tris)
+groups = {"neck_flank":[s for i in (0,1,2) for s in lat[i]], "lid_flank":[s for i in (4,5,6) for s in lat[i]],
+          "crest_land":[s for i in (3,7) for s in lat[i]], "helix_inner":[base], "helix_outer":[top]}
+for n,s in groups.items(): print(n, write_stl(n,s), "tris")
+# -- output
+neck_flank 4320 tris
+lid_flank 4320 tris
+crest_land 1920 tris
+helix_inner 36 tris
+helix_outer 36 tris
+
+# -- cell 8 (0.7s, exit 0)
+hex_tags, hex_nodes = gmsh.model.mesh.getElementsByType(5)
+H = hex_nodes.reshape(-1,8)
+cent = np.array([XYZ[[idx[t] for t in h]].mean(axis=0) for h in H])
+face_owner = {}
+for ci,h in enumerate(H):
+    for f in [(0,1,2,3),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]:
+        face_owner[frozenset(h[list(f)])] = ci
+def write_stl(name, surfs):
+    tris, flipped = [], 0
+    for s in surfs:
+        ets, etags, enodes = gmsh.model.mesh.getElements(2, s)
+        for et, en in zip(ets, enodes):
+            k = {2:3, 3:4}[et]; conn = en.reshape(-1, k)
+            for c in conn:
+                p = XYZ[[idx[t] for t in c]]
+                n = np.cross(p[1]-p[0], p[2]-p[0])
+                if np.dot(n, p.mean(axis=0) - cent[face_owner[frozenset(c)]]) < 0:
+                    p = p[::-1]; flipped += 1
+                tris.append(p[[0,1,2]])
+                if k == 4: tris.append(p[[0,2,3]])
+    with open(f"constant/triSurface/{name}.stl","w") as f:
+        f.write(f"solid {name}\n")
+        for t in tris:
+            n = np.cross(t[1]-t[0], t[2]-t[0]); n = n/max(np.linalg.norm(n),1e-30)
+            f.write(f" facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\n  outer loop\n")
+            for v in t: f.write(f"   vertex {v[0]:.8e} {v[1]:.8e} {v[2]:.8e}\n")
+            f.write("  endloop\n endfacet\n")
+        f.write(f"endsolid {name}\n")
+    return len(tris), flipped
+for n,s in groups.items(): print(n, write_stl(n,s))
+# -- output
+neck_flank (4320, 0)
+lid_flank (4320, 0)
+crest_land (1920, 0)
+helix_inner (36, 18)
+helix_outer (36, 0)
+
+# -- cell 9 (0.7s, exit 0)
+import pyvista as pv
+mesh = pv.PolyData()
+for n in groups: mesh = mesh + pv.read(f"constant/triSurface/{n}.stl")
+m = mesh.clean(tolerance=1e-9)
+print("open edges:", m.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False).n_cells)
+V = m.volume
+print(f"STL volume  = {V*1e9:.2f} mm^3")
+# analytic: cross-section area x mean helix length
+Ax = 0.5*abs(sum(prof[i][0]*prof[(i+1)%8][1]-prof[(i+1)%8][0]*prof[i][1] for i in range(8)))
+print(f"section area = {Ax:.4f} mm^2 ; rough sweep vol = {Ax*2*np.pi*19.6*TURNS:.2f} mm^3")
+p = pv.Plotter(off_screen=True, window_size=(900,700))
+for n,c in zip(groups, ["lightsteelblue","lightcoral","lightgray","green","red"]):
+    p.add_mesh(pv.read(f"constant/triSurface/{n}.stl"), color=c, show_edges=(n in("helix_inner","helix_outer")))
+p.camera_position="iso"; p.show(screenshot="gap.png")
+# -- output
+open edges: 0
+STL volume  = 356.30 mm^3
+section area = 0.4884 mm^2 ; rough sweep vol = 360.89 mm^3
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 12:59:43.579 (   0.370s) [    779EA71FD780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 12:59:43.580 (   0.371s) [    779EA71FD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 12:59:43.591 (   0.382s) [    779EA71FD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_88442/2898663823.py:14: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.camera_position="iso"; p.show(screenshot="gap.png")
+
+# -- cell 10 (0.3s, exit 0)
+import subprocess
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.option.setNumber("Mesh.SaveAll", 0)
+gmsh.write("gap.msh")
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+open("system/controlDict","w").write("""FoamFile{version 2.0;format ascii;class dictionary;object controlDict;}
+application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1;\n""")
+open("system/fvSchemes","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSchemes;}\nddtSchemes{default steadyState;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSolution;}\nsolvers{}\n")
+r = subprocess.run(["gmshToFoam","gap.msh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-800:], r.stderr[-500:])
+# -- output
+Info    : Writing 'gap.msh'...
+Info    : Done writing 'gap.msh'
+0 rism:0
+    pyr  :0
+    tet  :0
+
+CellZones:
+Zone	Size
+    0	4320
+
+Patch 0 gets name patch0
+Patch 1 gets name patch1
+Patch 2 gets name patch2
+Patch 3 gets name patch3
+Patch 4 gets name patch4
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 5316 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone cellZone_0 and cellSet
+End
+
+# -- cell 11 (0.1s, exit 0)
+txt = open("gap.msh").read().splitlines()
+print(txt[:14])
+i = txt.index("$Elements"); print(txt[i:i+3]); print(txt[i+2].split()[:8]); 
+import collections
+c = collections.Counter(l.split()[1] for l in txt[i+2:txt.index("$EndElements")])
+print("elem types:", c)
+# -- output
+['$MeshFormat', '2.2 0 8', '$EndMeshFormat', '$PhysicalNames', '6', '2 1 "neck_flank"', '2 2 "lid_flank"', '2 3 "crest_land"', '2 4 "helix_inner"', '2 5 "helix_outer"', '3 6 "gap"', '$EndPhysicalNames', '$Nodes', '7230']
+['$Elements', '9636', '1 3 2 10 1 1 201 2279 214']
+['1', '3', '2', '10', '1', '1', '201', '2279']
+elem types: Counter({'3': 5316, '5': 4320})
+
+# -- cell 12 (0.1s, exit 0)
+print(gmsh.model.getPhysicalGroups())
+print([(d,t,gmsh.model.getPhysicalName(d,t)) for d,t in gmsh.model.getPhysicalGroups()])
+# -- output
+[(2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (3, 12)]
+[(2, 7, ''), (2, 8, ''), (2, 9, ''), (2, 10, ''), (2, 11, ''), (3, 12, '')]
+
+# -- cell 13 (0.3s, exit 0)
+gmsh.finalize(); gmsh.initialize(); gmsh.option.setNumber("General.Terminal",0)
+NQ, NEL_Q = 4*TURNS, 30          # quarter-turn steps ; layers per quarter -> ~1.0 mm along helix
+NT, NF, NR = 3, 3, 3             # across gap ; along each flank ; along root flat
+gmsh.model.add("helix_gap"); g = gmsh.model.geo
+pts = [g.addPoint(p[0]*mm, 0.0, p[1]*mm) for p in prof]
+lines = [g.addLine(pts[i], pts[(i+1)%8]) for i in range(8)]   # AB BC CD DD' D'C' C'B' B'A' A'A
+base = g.addPlaneSurface([g.addCurveLoop(lines)])
+for l,n in zip(lines, [NF,NR,NF,NT,NF,NR,NF,NT]): g.mesh.setTransfiniteCurve(l, n+1)
+g.mesh.setTransfiniteSurface(base, "Left", [pts[0], pts[3], pts[4], pts[7]]); g.mesh.setRecombine(2, base)
+lat = {i: [] for i in range(8)}; top = base
+for k in range(NQ):
+    out = g.twist([(2,top)], 0,0,0, 0,0,PITCH*mm/4, 0,0,1, np.pi/2, [NEL_Q], [], True)
+    top = out[0][1]
+    for i in range(8): lat[i].append(out[2+i][1])
+g.synchronize()
+groups = {"neck_flank":[s for i in (0,1,2) for s in lat[i]], "lid_flank":[s for i in (4,5,6) for s in lat[i]],
+          "crest_land":[s for i in (3,7) for s in lat[i]], "helix_inner":[base], "helix_outer":[top]}
+for j,(n,s) in enumerate(groups.items()): gmsh.model.addPhysicalGroup(2, s, j+1, n)
+gmsh.model.addPhysicalGroup(3, [v for d,v in gmsh.model.getEntities(3)], 99, "gap")
+gmsh.model.mesh.generate(3)
+print([(d,t,gmsh.model.getPhysicalName(d,t)) for d,t in gmsh.model.getPhysicalGroups()])
+print({int(t): len(gmsh.model.mesh.getElementsByType(t)[0]) for t in gmsh.model.mesh.getElementTypes()})
+# -- output
+[(2, 1, 'neck_flank'), (2, 2, 'lid_flank'), (2, 3, 'crest_land'), (2, 4, 'helix_inner'), (2, 5, 'helix_outer'), (3, 99, 'gap')]
+{1: 6360, 3: 17955, 5: 19440, 15: 968}
+
+# -- cell 14 (2.8s, exit 0)
+ntag, ncoord, _ = gmsh.model.mesh.getNodes()
+idx = {t:i for i,t in enumerate(ntag)}; XYZ = ncoord.reshape(-1,3)
+H = gmsh.model.mesh.getElementsByType(5)[1].reshape(-1,8)
+cent = np.array([XYZ[[idx[t] for t in h]].mean(axis=0) for h in H])
+face_owner = {}
+for ci,h in enumerate(H):
+    for f in [(0,1,2,3),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]:
+        face_owner[frozenset(h[list(f)])] = ci
+for n,s in groups.items(): print(n, write_stl(n,s))
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2); gmsh.option.setNumber("Mesh.SaveAll", 0)
+gmsh.write("gap.msh")
+subprocess.run(["rm","-rf","constant/polyMesh"]); 
+r = subprocess.run(["gmshToFoam","gap.msh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-600:])
+# -- output
+neck_flank (12960, 0)
+lid_flank (12960, 0)
+crest_land (8640, 0)
+helix_inner (54, 27)
+helix_outer (54, 0)
+0  FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 17334 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone gap and cellSet
+End
+
+# -- cell 15 (0.1s, exit 0)
+print(open("constant/polyMesh/boundary").read()[-1600:])
+# -- output
+------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+5
+(
+    helix_inner
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          27;
+        startFace       49653;
+    }
+    neck_flank
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          6480;
+        startFace       49680;
+    }
+    crest_land
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4320;
+        startFace       56160;
+    }
+    lid_flank
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          6480;
+        startFace       60480;
+    }
+    helix_outer
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          27;
+        startFace       66960;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 16 (1.3s, exit 0)
+for p in ["neck_flank","lid_flank","crest_land"]:
+    subprocess.run(["foamDictionary","constant/polyMesh/boundary","-entry",f"entry0/{p}/type","-set","wall"],capture_output=True)
+    subprocess.run(["foamDictionary","constant/polyMesh/boundary","-entry",f"entry0/{p}/physicalType","-set","wall"],capture_output=True)
+r = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True)
+print(r.stdout[-2600:])
+# -- output
+dificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           28840
+    faces:            66987
+    internal faces:   49653
+    cells:            19440
+    faces per cell:   6
+    boundary patches: 5
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     19440
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    helix_inner         27       40       ok (non-closed singly connected)  
+    neck_flank          6480     7210     ok (non-closed singly connected)  
+    crest_land          4320     5768     ok (non-closed singly connected)  
+    lid_flank           6480     7210     ok (non-closed singly connected)  
+    helix_outer         27       40       ok (non-closed singly connected)  
+    ".*"                17334    17336    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    gap                 19440        28840        3.5778e-07   (-0.02 -0.02 0) (0.02 0.02 0.0132679)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.02 -0.02 0) (0.02 0.02 0.0132679)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (1.00502e-17 1.49269e-17 3.47e-18) OK.
+    Max cell openness = 2.82086e-16 OK.
+    Max aspect ratio = 13.9279 OK.
+    Minimum face area = 1.05839e-08. Maximum face area = 3.58256e-07.  Face area magnitudes OK.
+    Min volume = 1.06161e-11. Max volume = 2.30907e-11.  Total volume = 3.5778e-07.  Cell volumes OK.
+    Mesh non-orthogonality Max: 30.7037 average: 13.5625
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.72528 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 17 (0.3s, exit 0)
+neck = pv.read("constant/triSurface/neck_flank.stl"); lid = pv.read("constant/triSurface/lid_flank.stl")
+u = pv.PolyData()
+for n in groups: u = u + pv.read(f"constant/triSurface/{n}.stl")
+u = u.clean(tolerance=1e-9)
+d = np.abs(lid.cell_centers().compute_implicit_distance(neck)["implicit_distance"])/mm
+zi = pv.read("constant/triSurface/helix_inner.stl").points[:,2]/mm; zo = pv.read("constant/triSurface/helix_outer.stl").points[:,2]/mm
+rn = np.hypot(neck.points[:,0],neck.points[:,1])/mm
+print(f"{'neck OD':22s} asked 40      built {2*rn.max():.3f} mm")
+print(f"{'thread depth':22s} asked 1       built {rn.max()-rn.min():.3f} mm")
+print(f"{'gap (lid->neck)':22s} asked 0.2     built {np.median(d):.3f} mm  (range {d.min():.3f}-{d.max():.3f})")
+print(f"{'pitch':22s} asked 2       built {(zo.min()-zi.min())/TURNS:.3f} mm")
+print(f"{'threaded height':22s} asked 12      built {zo.min()-zi.min():.3f} mm  ({TURNS} turns)")
+print(f"{'flank half-angle':22s} 15 deg (trapezoidal, 30 deg included)")
+print(f"union free edges = {u.extract_feature_edges(boundary_edges=True,feature_edges=False,manifold_edges=False).n_cells}, STL volume = {u.volume*1e9:.2f} mm^3, mesh volume = 357.78 mm^3")
+# -- output
+neck OD                asked 40      built 40.000 mm
+thread depth           asked 1       built 1.000 mm
+gap (lid->neck)        asked 0.2     built 0.200 mm  (range 0.200-0.200)
+pitch                  asked 2       built 2.000 mm
+threaded height        asked 12      built 12.000 mm  (6 turns)
+flank half-angle       15 deg (trapezoidal, 30 deg included)
+union free edges = 0, STL volume = 357.72 mm^3, mesh volume = 357.78 mm^3
+

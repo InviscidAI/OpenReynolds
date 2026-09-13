@@ -1,0 +1,590 @@
+# -- cell 1 (2.8s, exit 0)
+from build123d import *
+import numpy as np, os
+
+# --- parameters (metres) ---
+R_SHAFT = 1.200      # internal radius of shaft (2400 mm dia)
+H       = 3.000      # shaft height
+R_COL   = 0.100      # central column radius (200 mm dia)
+N_TR    = 20         # treads
+L_TR    = 1.100      # tread radial length, column surface -> shaft wall
+D_TR    = 0.250      # tread depth (tangential)
+T_TR    = 0.040      # tread thickness
+RISE    = 0.150      # rise per tread
+TURN    = 18.0       # deg per tread
+
+shaft  = Pos(0, 0, H/2) * Cylinder(R_SHAFT, H)
+column = Pos(0, 0, H/2) * Cylinder(R_COL, H)
+
+# tread solid runs from the axis (x=0) outward so it welds into the column;
+# the exposed span outside the column is exactly L_TR = 1.1 m
+def tread(i):
+    ztop = RISE * (i + 1)
+    return Rot(0, 0, TURN * i) * Pos((R_COL + L_TR) / 2, 0, ztop - T_TR / 2) * \
+           Box(R_COL + L_TR, D_TR, T_TR)
+
+treads = [tread(i) for i in range(N_TR)]
+solid_obstacles = column
+for t in treads:
+    solid_obstacles = solid_obstacles + t
+
+fluid = shaft - solid_obstacles
+print("fluid volume", fluid.volume)
+print("check: shaft-col-treads =",
+      np.pi*(R_SHAFT**2-R_COL**2)*H - N_TR*L_TR*D_TR*T_TR)
+print("bbox", fluid.bounding_box())
+# -- output
+fluid volume 13.25043359146991
+check: shaft-col-treads = 13.25743248390021
+bbox bbox: -1.2 <= x <= 1.2, -1.2000000000000002 <= y <= 1.2000000000000002, 0.0 <= z <= 3.0
+
+# -- cell 2 (0.1s, exit 0)
+TOL = 1e-6
+groups = {"shaftWall": [], "column": [], "treads": [], "floor": [], "topOpening": []}
+for f in fluid.faces():
+    gt = f.geom_type
+    c = f.center()
+    if gt == GeomType.PLANE:
+        n = f.normal_at(c)
+        if abs(abs(n.Z) - 1) < 1e-6 and abs(c.Z) < TOL:
+            groups["floor"].append(f); continue
+        if abs(abs(n.Z) - 1) < 1e-6 and abs(c.Z - H) < TOL:
+            groups["topOpening"].append(f); continue
+        groups["treads"].append(f); continue
+    if gt == GeomType.CYLINDER:
+        r = f.radius
+        if abs(r - R_SHAFT) < 1e-6: groups["shaftWall"].append(f); continue
+        if abs(r - R_COL) < 1e-6:   groups["column"].append(f); continue
+    groups["treads"].append(f)
+
+for k, v in groups.items():
+    print(k, len(v), "area", round(sum(x.area for x in v), 4))
+print("total area", round(sum(f.area for f in fluid.faces()), 4))
+# -- output
+shaftWall 1 area 22.4191
+column 1 area 1.6336
+treads 119 area 13.0158
+floor 1 area 4.4925
+topOpening 1 area 4.2087
+total area 45.7697
+
+# -- cell 3 (0.2s, exit 0)
+import subprocess
+os.makedirs("constant/triSurface", exist_ok=True)
+for k, v in groups.items():
+    sh = Compound(children=[Face(f.wrapped) for f in v]) if len(v) > 1 else v[0]
+    export_stl(sh, f"constant/triSurface/{k}.stl", tolerance=0.004, angular_tolerance=0.2, ascii_format=True)
+    # rename the ascii solid to the patch name so snappy sees the region name
+    p = f"constant/triSurface/{k}.stl"
+    txt = open(p).read().replace("solid ", f"solid {k} ", 1)
+    lines = txt.splitlines()
+    lines = [(f"solid {k}" if l.startswith("solid") else (f"endsolid {k}" if l.startswith("endsolid") else l)) for l in lines]
+    open(p, "w").write("\n".join(lines) + "\n")
+    print(k, os.path.getsize(p)//1024, "KB", sum(1 for l in lines if l.startswith("  facet")) or sum(1 for l in lines if "facet normal" in l), "facets")
+# -- output
+shaftWall 80 KB 326 facets
+column 353 KB 1429 facets
+treads 399 KB 1617 facets
+floor 31 KB 126 facets
+topOpening 23 KB 96 facets
+
+# -- cell 4 (0.5s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+names = list(groups)
+meshes = {n: pv.read(f"constant/triSurface/{n}.stl") for n in names}
+union = meshes[names[0]].copy()
+for n in names[1:]:
+    union = union.merge(meshes[n])
+union = union.clean(tolerance=1e-6)
+edges = union.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False)
+print("free edges in union:", edges.n_cells, " cells:", union.n_cells)
+
+pl = pv.Plotter(off_screen=True, window_size=(800, 800))
+cols = dict(shaftWall="lightgray", column="red", treads="tan", floor="steelblue", topOpening="green")
+for n in names:
+    pl.add_mesh(meshes[n].clip(normal="y", origin=(0,0,0)) if n=="shaftWall" else meshes[n],
+                color=cols[n], opacity=0.5 if n=="shaftWall" else 1.0, show_edges=False)
+pl.camera_position = [(5, -5, 4.5), (0, 0, 1.5), (0, 0, 1)]
+pl.screenshot("look.png")
+print("ok")
+# -- output
+free edges in union: 0  cells: 3594
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 13:50:03.920 (   0.285s) [    7CB3FE4A3780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 13:50:03.921 (   0.285s) [    7CB3FE4A3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:50:03.934 (   0.298s) [    7CB3FE4A3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 5 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("look.png"))
+# -- output
+
+
+# -- cell 6 (0.1s, exit 0)
+import math
+pt = (1.0*math.cos(math.radians(9)), 1.0*math.sin(math.radians(9)), 1.5)
+probe = pv.PolyData(np.array([pt]))
+sel = probe.select_enclosed_points(union.extract_surface().triangulate(), tolerance=1e-9)
+print(pt, "inside fluid:", bool(sel["SelectedPoints"][0]))
+# -- output
+(0.9876883405951378, 0.15643446504023087, 1.5) inside fluid: True
+
+/tmp/ipykernel_136308/1416921424.py:4: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  sel = probe.select_enclosed_points(union.extract_surface().triangulate(), tolerance=1e-9)
+/tmp/ipykernel_136308/1416921424.py:4: PyVistaDeprecationWarning: This filter is deprecated. Use `select_interior_points` instead.
+  sel = probe.select_enclosed_points(union.extract_surface().triangulate(), tolerance=1e-9)
+
+# -- cell 7 (0.3s, exit 0)
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+HEAD = ("FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n")
+
+open("system/controlDict","w").write(HEAD%"controlDict"+
+ "application snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\n"
+ "deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; writePrecision 6;\n"
+ "runTimeModifiable true;\n")
+open("system/fvSchemes","w").write(HEAD%"fvSchemes"+
+ "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;}\n"
+ "laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;}\n"
+ "snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(HEAD%"fvSolution"+"solvers{} \n")
+
+NX, NY, NZ = 26, 26, 32
+open("system/blockMeshDict","w").write(HEAD%"blockMeshDict"+f"""
+scale 1;
+vertices ((-1.3 -1.3 -0.1) (1.3 -1.3 -0.1) (1.3 1.3 -0.1) (-1.3 1.3 -0.1)
+          (-1.3 -1.3 3.1) (1.3 -1.3 3.1) (1.3 1.3 3.1) (-1.3 1.3 3.1));
+blocks (hex (0 1 2 3 4 5 6 7) ({NX} {NY} {NZ}) simpleGrading (1 1 1));
+edges ();
+boundary (background {{ type patch; faces ((0 3 2 1) (4 5 6 7) (0 1 5 4) (2 3 7 6) (1 2 6 5) (0 4 7 3)); }});
+""")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-400:], r.stderr[-500:])
+# -- output
+0         i : 0.1 .. 0.1
+        j : 0.1 .. 0.1
+        k : 0.1 .. 0.1
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-1.3 -1.3 -0.1) (1.3 1.3 3.1)
+  nPoints: 24057
+  nCells: 21632
+  nFaces: 67236
+  nInternalFaces: 62556
+----------------
+Patches
+----------------
+  patch 0 (start: 62556 size: 4680) name: background
+
+End
+
+# -- cell 8 (0.3s, exit 0)
+pat = ["shaftWall","column","treads","floor","topOpening"]
+open("system/surfaceFeatureExtractDict","w").write(HEAD%"surfaceFeatureExtractDict"+
+  "".join(f'{p}.stl {{ extractionMethod extractFromSurface; includedAngle 150; writeObj no; }}\n' for p in pat))
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-300:], r.stderr[-300:])
+print(sorted(os.listdir("constant/triSurface")))
+# -- output
+0 eynolds-buildup/work/T26-20260913-134838-d752/t26/constant/extendedFeatureEdgeMesh/topOpening.extendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T26-20260913-134838-d752/t26/constant/triSurface/topOpening.eMesh"
+ExecutionTime = 0.02 s  ClockTime = 0 s
+
+End
+
+ 
+['column.eMesh', 'column.stl', 'floor.eMesh', 'floor.stl', 'shaftWall.eMesh', 'shaftWall.stl', 'topOpening.eMesh', 'topOpening.stl', 'treads.eMesh', 'treads.stl']
+
+# -- cell 9 (29.2s, exit 0)
+LOC = "(0.98769 0.15643 1.5)"
+lvl = {"shaftWall":(1,1),"column":(2,2),"treads":(2,2),"floor":(1,1),"topOpening":(1,1)}
+geom = "".join(f'{p}.stl {{ type triSurfaceMesh; name {p}; }}\n' for p in pat)
+refs = "".join(f'{p} {{ level ({lvl[p][0]} {lvl[p][1]}); patchInfo {{ type wall; }} }}\n' for p in pat)
+feats = "".join(f'{{ file "{p}.eMesh"; level 1; }}\n' for p in pat)
+open("system/snappyHexMeshDict","w").write(HEAD%"snappyHexMeshDict"+f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{ {geom} }}
+castellatedMeshControls
+{{
+    maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; nCellsBetweenLevels 2;
+    features ( {feats} );
+    refinementSurfaces {{ {refs} }}
+    resolveFeatureAngle 30;
+    refinementRegions {{}}
+    locationInMesh {LOC};
+    allowFreeStandingZoneFaces false;
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+    nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.2; finalLayerThickness 0.5;
+    minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3;
+    nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedianAxisAngle 90;
+    nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+    minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001;
+    minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+writeFlags (); mergeTolerance 1e-6;
+""")
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-500:])
+# -- output
+0 ----------------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:107308  faces:357745  points:143118
+Cells per refinement level:
+    0	7678
+    1	35806
+    2	63824
+Writing mesh to time constant
+Wrote mesh in = 0.26 s.
+Mesh snapped in = 18.23 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 28.89 s.
+End
+
+# -- cell 10 (0.9s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+out = r.stdout
+import re
+print(out[out.index("Mesh stats"):out.index("Checking geometry")])
+print(out[out.index("Checking geometry"):][-1800:])
+# -- output
+Mesh stats 
+    points:           143118
+    faces:            357745
+    internal faces:   320465
+    cells:            107308
+    faces per cell:   6.32022
+    boundary patches: 5
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     89392
+    prisms:        4538
+    wedges:        0
+    pyramids:      0
+    tet wedges:    45
+    tetrahedra:    0
+    polyhedra:     13333
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   96
+            5   1489
+            6   3200
+            7   17
+            8   16
+            9   5014
+           10   38
+           11   32
+           12   2188
+           14   7
+           15   916
+           18   320
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+               shaftWall     9675    10527  ok (non-closed singly connected)
+                  column     2401     2714  ok (non-closed singly connected)
+                  treads    21327    22469  ok (non-closed singly connected)
+                   floor     1890     1957  ok (non-closed singly connected)
+              topOpening     1987     2099  ok (non-closed singly connected)
+                    ".*"    37280    38248      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+
+Checking geometry...
+    Overall domain bounding box (-1.19927 -1.19948 0) (1.2 1.19959 3.0002)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-5.60522e-17 -1.04059e-16 -7.02622e-17) OK.
+    Max cell openness = 3.58792e-16 OK.
+    Max aspect ratio = 4.62438 OK.
+    Minimum face area = 3.87782e-05. Maximum face area = 0.0113166.  Face area magnitudes OK.
+    Min volume = 2.47457e-06. Max volume = 0.00118139.  Total volume = 13.2305.  Cell volumes OK.
+    Mesh non-orthogonality Max: 52.6632 average: 11.5216
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.75362 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 11 (0.2s, exit 0)
+open("case.foam","w").write("")
+rd = pv.OpenFOAMReader("case.foam"); rd.set_constant_time_value(0) if False else None
+rd.enable_all_patch_arrays()
+blk = rd.read()
+bnd = blk["boundary"]
+cad = {k: sum(f.area for f in v) for k, v in groups.items()}
+for n in bnd.keys():
+    a = bnd[n].extract_surface().compute_cell_sizes(length=False, volume=False)["Area"].sum()
+    print(f"{n:11s} mesh {a:8.4f}   cad {cad[n]:8.4f}   diff {100*(a-cad[n])/cad[n]:+.2f}%")
+# -- output
+shaftWall   mesh  22.4059   cad  22.4191   diff -0.06%
+column      mesh   1.6257   cad   1.6336   diff -0.49%
+treads      mesh  12.9908   cad  13.0158   diff -0.19%
+floor       mesh   4.4836   cad   4.4925   diff -0.20%
+topOpening  mesh   4.1991   cad   4.2087   diff -0.23%
+
+/tmp/ipykernel_136308/1039513036.py:8: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  a = bnd[n].extract_surface().compute_cell_sizes(length=False, volume=False)["Area"].sum()
+
+# -- cell 12 (0.3s, exit 0)
+pl = pv.Plotter(off_screen=True, window_size=(900, 900))
+cols = dict(shaftWall="lightgray", column="red", treads="tan", floor="steelblue", topOpening="green")
+for n in bnd.keys():
+    s = bnd[n].extract_surface().clip(normal="y", origin=(0, 0.02, 0))
+    pl.add_mesh(s, color=cols[n], show_edges=True, line_width=0.3, edge_color="k")
+pl.camera_position = [(6, -5.5, 4.5), (0, 0, 1.5), (0, 0, 1)]
+pl.screenshot("mesh.png"); display(Image("mesh.png"))
+# -- output
+[0m[33m2026-09-13 13:51:50.480 ( 106.844s) [    7CB3FE4A3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_136308/1085092633.py:4: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  s = bnd[n].extract_surface().clip(normal="y", origin=(0, 0.02, 0))
+[0m[33m2026-09-13 13:51:50.481 ( 106.845s) [    7CB3FE4A3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 13 (0.4s, exit 0)
+vol = blk["internalMesh"].clip(normal="y", origin=(0,0,0))
+pl = pv.Plotter(off_screen=True, window_size=(900, 900))
+pl.add_mesh(vol, color="whitesmoke", show_edges=True, line_width=0.3, edge_color="k")
+for n, c in [("treads","tan"),("column","red")]:
+    pl.add_mesh(bnd[n].extract_surface().clip(normal="y", origin=(0,0,0)), color=c, show_edges=True, line_width=0.3)
+pl.camera_position = [(0.2, -7, 3.0), (0, 0, 1.5), (0, 0, 1)]
+pl.screenshot("cut.png"); display(Image("cut.png"))
+# -- output
+[0m[33m2026-09-13 13:51:58.360 ( 114.724s) [    7CB3FE4A3780]vtkTableBasedClipDataSe:1410  WARN| vtkTableBasedClipDataSet (0x5e2604e1ab30): Output points used by cells not supported by vtkTableBasedClipDataSet will appear twice. To avoid this, consider using vtkClipDataSet directly[0m
+/tmp/ipykernel_136308/2715851228.py:5: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  pl.add_mesh(bnd[n].extract_surface().clip(normal="y", origin=(0,0,0)), color=c, show_edges=True, line_width=0.3)
+[0m[33m2026-09-13 13:51:58.426 ( 114.790s) [    7CB3FE4A3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:51:58.427 ( 114.791s) [    7CB3FE4A3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 14 (0.4s, exit 0)
+pl = pv.Plotter(off_screen=True, window_size=(900, 900))
+pl.add_mesh(vol, color="whitesmoke", show_edges=True, line_width=0.3, edge_color="k")
+for n, c in [("treads","tan"),("column","red")]:
+    pl.add_mesh(bnd[n].extract_surface().clip(normal="y", origin=(0,0,0)), color=c, show_edges=True, line_width=0.3)
+pl.camera_position = [(0.2, 7, 3.0), (0, 0, 1.5), (0, 0, 1)]
+pl.screenshot("cut2.png"); display(Image("cut2.png"))
+# -- output
+[0m[33m2026-09-13 13:52:06.846 ( 123.210s) [    7CB3FE4A3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_136308/3615998374.py:4: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  pl.add_mesh(bnd[n].extract_surface().clip(normal="y", origin=(0,0,0)), color=c, show_edges=True, line_width=0.3)
+[0m[33m2026-09-13 13:52:06.847 ( 123.211s) [    7CB3FE4A3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 15 (0.3s, exit 0)
+lvl = {"shaftWall":(2,2),"column":(2,3),"treads":(3,3),"floor":(2,2),"topOpening":(1,1)}
+refs = "".join(f'{p} {{ level ({lvl[p][0]} {lvl[p][1]}); patchInfo {{ type wall; }} }}\n' for p in pat)
+d = open("system/snappyHexMeshDict").read()
+import re
+d = re.sub(r"refinementSurfaces \{\{?.*?\}\n \}", "refinementSurfaces { "+refs+" }", d, flags=re.S)
+open("system/snappyHexMeshDict","w").write(d)
+print(d[d.index("refinementSurfaces"):d.index("resolveFeatureAngle")])
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+p = subprocess.Popen(["snappyHexMesh","-overwrite"], stdout=open("snappy.log","w"), stderr=subprocess.STDOUT)
+print("started", p.pid)
+# -- output
+refinementSurfaces { shaftWall { level (2 2); patchInfo { type wall; } }
+column { level (2 3); patchInfo { type wall; } }
+treads { level (3 3); patchInfo { type wall; } }
+floor { level (2 2); patchInfo { type wall; } }
+topOpening { level (1 1); patchInfo { type wall; } }
+ }
+    
+started 138088
+
+# -- cell 16 (0.4s, exit 0)
+p.kill(); p.wait()
+refs = "".join(f'{q} {{ level ({lvl[q][0]} {lvl[q][1]}); patchInfo {{ type {"patch" if q=="topOpening" else "wall"}; }} }}\n' for q in pat)
+d = open("system/snappyHexMeshDict").read()
+d = re.sub(r"refinementSurfaces \{.*?\n \}", "refinementSurfaces { "+refs+" }", d, flags=re.S)
+open("system/snappyHexMeshDict","w").write(d)
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+p = subprocess.Popen(["snappyHexMesh","-overwrite"], stdout=open("snappy.log","w"), stderr=subprocess.STDOUT)
+print("restarted", p.pid, "topOpening ->", "type patch" in d)
+# -- output
+restarted 138141 topOpening -> True
+
+# -- cell 17 (180.1s, exit 0)
+import time
+time.sleep(180); print(p.poll()); print(open("snappy.log").read()[-700:])
+# -- output
+0
+ 82.51 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 131.09 s.
+End
+
+# -- cell 18 (3.3s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True); out = r.stdout
+print(out[out.index("Mesh stats"):out.index("Overall number")])
+print(out[out.index("Checking patch topology"):out.index("Checking faceZone")])
+print(out[out.index("Checking geometry"):][-1200:])
+# -- output
+Mesh stats 
+    points:           586253
+    faces:            1473915
+    internal faces:   1340269
+    cells:            444325
+    faces per cell:   6.33362
+    boundary patches: 5
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+               shaftWall    35015    36469  ok (non-closed singly connected)
+                  column     6782     7649  ok (non-closed singly connected)
+                  treads    81299    83421  ok (non-closed singly connected)
+                   floor     7201     7291  ok (non-closed singly connected)
+              topOpening     3349     3679  ok (non-closed singly connected)
+                    ".*"   133646   135782      ok (closed singly connected)
+
+
+
+Checking geometry...
+    Overall domain bounding box (-1.19927 -1.1996 -5.79717e-08) (1.2 1.19973 3.00001)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.07839e-16 8.08769e-18 2.37307e-15) OK.
+    Max cell openness = 3.65474e-16 OK.
+    Max aspect ratio = 4.18149 OK.
+    Minimum face area = 2.40007e-05. Maximum face area = 0.0104516.  Face area magnitudes OK.
+    Min volume = 2.55552e-07. Max volume = 0.0010493.  Total volume = 13.2341.  Cell volumes OK.
+    Mesh non-orthogonality Max: 49.0048 average: 11.0652
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.90987 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 19 (0.7s, exit 0)
+# measured properties of the built geometry, against the request
+c0, c1 = treads[0].center(), treads[1].center()
+ang = lambda c: math.degrees(math.atan2(c.Y, c.X))
+bb0 = treads[0].bounding_box()
+print("turn per tread (deg): ", round(ang(c1)-ang(c0), 4), " asked 18")
+print("rise per tread (m):   ", round(c1.Z-c0.Z, 5), " asked 0.150")
+print("tread thickness (m):  ", round(bb0.max.Z-bb0.min.Z, 5), " asked 0.040")
+print("tread depth (m):      ", round(bb0.max.Y-bb0.min.Y, 5), " asked 0.250")
+print("tread exposed radial span (m):", round(bb0.max.X-R_COL, 5), " asked 1.100")
+print("shaft radius / height (m):", R_SHAFT, H, " column radius:", R_COL)
+print("top tread top z:", round(treads[-1].bounding_box().max.Z,4), " n treads:", len(treads))
+rd2 = pv.OpenFOAMReader("case.foam"); rd2.enable_all_patch_arrays(); b2 = rd2.read()["boundary"]
+for n in b2.keys():
+    a = b2[n].extract_surface().compute_cell_sizes(length=False, volume=False)["Area"].sum()
+    print(f"{n:11s} mesh area {a:8.4f}  cad {cad[n]:8.4f}  {100*(a-cad[n])/cad[n]:+.2f}%")
+# -- output
+turn per tread (deg):  18.0  asked 18
+rise per tread (m):    0.15  asked 0.150
+tread thickness (m):   0.04  asked 0.040
+tread depth (m):       0.25  asked 0.250
+tread exposed radial span (m): 1.1  asked 1.100
+shaft radius / height (m): 1.2 3.0  column radius: 0.1
+top tread top z: 3.0  n treads: 20
+shaftWall   mesh area  22.4093  cad  22.4191  -0.04%
+column      mesh area   1.6298  cad   1.6336  -0.23%
+treads      mesh area  13.0107  cad  13.0158  -0.04%
+floor       mesh area   4.4849  cad   4.4925  -0.17%
+topOpening  mesh area   4.2012  cad   4.2087  -0.18%
+
+/tmp/ipykernel_136308/1297581759.py:14: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  a = b2[n].extract_surface().compute_cell_sizes(length=False, volume=False)["Area"].sum()
+
+# -- cell 20 (0.9s, exit 0)
+vol2 = rd2.read()["internalMesh"].clip(normal="y", origin=(0,0,0))
+pl = pv.Plotter(off_screen=True, window_size=(900,900))
+pl.add_mesh(vol2, color="whitesmoke", show_edges=True, line_width=0.2, edge_color="gray")
+pl.add_mesh(b2["treads"].extract_surface(algorithm=None).clip(normal="y", origin=(0,0,0)), color="tan")
+pl.add_mesh(b2["column"].extract_surface(algorithm=None).clip(normal="y", origin=(0,0,0)), color="red")
+pl.camera_position = [(0.2, 7, 3.0), (0,0,1.5), (0,0,1)]
+pl.screenshot("final.png"); display(Image("final.png"))
+# -- output
+[0m[33m2026-09-13 13:56:01.236 ( 357.600s) [    7CB3FE4A3780]vtkTableBasedClipDataSe:1410  WARN| vtkTableBasedClipDataSet (0x5e260f1caf40): Output points used by cells not supported by vtkTableBasedClipDataSet will appear twice. To avoid this, consider using vtkClipDataSet directly[0m
+[0m[33m2026-09-13 13:56:01.465 ( 357.829s) [    7CB3FE4A3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:56:01.466 ( 357.830s) [    7CB3FE4A3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

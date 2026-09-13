@@ -1,0 +1,654 @@
+# -- cell 1 (2.2s, exit 0)
+import numpy as np, os, subprocess
+from build123d import *
+
+mm = 1e-3
+R_BP, T_BP = 60*mm, 4*mm          # backplate (reference only)
+R_HUB, H_HUB = 12*mm, 18*mm       # hub rises 18 mm from backplate top
+Z0 = T_BP                          # backplate top surface, z = 4 mm
+Z_SHR = Z0 + 14*mm                 # shroud, 14 mm above backplate  -> 18 mm
+Z_TOP = Z0 + H_HUB                 # hub top / inlet plane -> 22 mm
+R1, R2 = 16*mm, 58*mm              # blade leading / trailing radius
+T_BL, N_BL = 3*mm, 7               # blade thickness, count
+WRAP = np.radians(30.0)            # backward sweep, against rotation
+
+def camber(n=60):
+    r = np.linspace(R1, R2, n)
+    th = -WRAP*(r-R1)/(R2-R1)      # negative = backward (against +theta rotation)
+    return r, th
+
+r, th = camber()
+print("wrap deg =", np.degrees(th[0]-th[-1]), " r1,r2 mm =", r[0]/mm, r[-1]/mm)
+print("pitch at R1 (mm) =", 2*np.pi*R1/N_BL/mm, " passage gap =", (2*np.pi*R1/N_BL-T_BL)/mm)
+print("passage gap at R2 (mm) =", (2*np.pi*R2/N_BL-T_BL)/mm)
+# -- output
+wrap deg = 29.999999999999996  r1,r2 mm = 16.0 58.0
+pitch at R1 (mm) = 14.361566416410483  passage gap = 11.361566416410483
+passage gap at R2 (mm) = 49.060678259488
+
+# -- cell 2 (0.2s, exit 0)
+R2E = 60*mm   # blade extended past the 58 mm outlet so the outlet cylinder trims it
+
+def blade_face(n=80):
+    rr = np.linspace(R1, R2E, n)
+    tt = -WRAP*(rr-R1)/(R2-R1)
+    x, y = rr*np.cos(tt), rr*np.sin(tt)
+    dx, dy = np.gradient(x), np.gradient(y)
+    L = np.hypot(dx, dy); nx, ny = -dy/L, dx/L
+    a = [(x[i]+1.5*mm*nx[i], y[i]+1.5*mm*ny[i]) for i in range(n)]
+    b = [(x[i]-1.5*mm*nx[i], y[i]-1.5*mm*ny[i]) for i in range(n)]
+    return Polygon(*(a + b[::-1]), align=None)
+
+bf = blade_face()
+blade0 = extrude(bf, amount=Z_SHR-Z0).moved(Location((0,0,Z0)))
+blades = Compound([blade0.moved(Rot(0,0,360/N_BL*k)) for k in range(N_BL)])
+print("blade vol mm^3", blade0.volume/mm**3, "  z-range", blade0.bounding_box().min.Z/mm, blade0.bounding_box().max.Z/mm)
+# -- output
+blade vol mm^3 2061.9091406818648   z-range -10.000000000000002 4.0
+
+# -- cell 3 (0.2s, exit 0)
+bf = blade_face()
+bl_raw = extrude(bf, amount=Z_SHR-Z0)
+bb = bl_raw.bounding_box(); print("raw z", bb.min.Z/mm, bb.max.Z/mm)
+blade0 = Pos(0, 0, Z0 - bb.min.Z) * bl_raw
+bb = blade0.bounding_box(); print("placed z", bb.min.Z/mm, bb.max.Z/mm)
+blades = Compound([Rot(0, 0, 360/N_BL*k) * blade0 for k in range(N_BL)])
+print("n solids", len(blades.solids()), " total vol mm^3", blades.volume/mm**3)
+# -- output
+raw z -14.000000000000002 0.0
+placed z 4.0 18.0
+n solids 7  total vol mm^3 14433.363984773045
+
+# -- cell 4 (1.6s, exit 0)
+R_EYE = R1   # shroud eye inner radius = blade leading-edge radius
+disc = Pos(0,0,(Z0+Z_SHR)/2) * Cylinder(R2, Z_SHR-Z0)
+eye  = Pos(0,0,(Z_SHR+Z_TOP)/2) * Cylinder(R_EYE, Z_TOP-Z_SHR)
+hub  = Pos(0,0,(Z0+Z_TOP)/2) * Cylinder(R_HUB, Z_TOP-Z0)
+fluid = (disc + eye) - hub - blades
+print("solids:", len(fluid.solids()), " vol mm^3:", fluid.volume/mm**3)
+bb = fluid.bounding_box(); print("bbox mm", bb.min, bb.max)
+print("faces:", len(fluid.faces()))
+# -- output
+solids: 1  vol mm^3: 129329.72542407781
+bbox mm Vector: (X=-0.058, Y=-0.058, Z=0.004) Vector: (X=0.058, Y=0.058, Z=0.022)
+faces: 1089
+
+# -- cell 5 (0.2s, exit 0)
+def classify(f):
+    t = f.geom_type
+    c = f.center()
+    if t == GeomType.PLANE:
+        n = f.normal_at(c)
+        if abs(abs(n.Z)-1) < 1e-6:
+            if abs(c.Z-Z0) < 1e-7:    return "backplate"
+            if abs(c.Z-Z_TOP) < 1e-7: return "inlet"
+            if abs(c.Z-Z_SHR) < 1e-7: return "shroud"
+        return "blades"
+    if t == GeomType.CYLINDER:
+        rad = (f.center() - Vector(0,0,c.Z)).length
+        ax = f.axis_of_rotation if hasattr(f,'axis_of_rotation') else None
+        if abs(rad-R2) < 1e-6 and c.Z < Z_SHR:  return "outlet"
+        if abs(rad-R_HUB) < 1e-6:               return "hub"
+        if abs(rad-R_EYE) < 1e-6 and c.Z > Z_SHR: return "shroud"
+    return "blades"
+
+groups = {}
+for f in fluid.faces():
+    groups.setdefault(classify(f), []).append(f)
+for k,v in groups.items():
+    print(k, len(v), "area mm^2", sum(x.area for x in v)/mm**2)
+# -- output
+outlet 7 area mm^2 4739.178247219305
+blades 1064 area mm^2 9424.107227459179
+shroud 15 area mm^2 9190.308193160794
+inlet 1 area mm^2 351.85837720205683
+hub 1 area mm^2 1357.168026350791
+backplate 1 area mm^2 9137.306565376186
+
+# -- cell 6 (0.1s, exit 0)
+V = np.array([[v.X,v.Y,v.Z] for v in blade0.vertices()])
+rad = np.hypot(V[:,0],V[:,1]); ang = np.degrees(np.arctan2(V[:,1],V[:,0]))
+le = ang[np.abs(rad-R1)<0.4*mm]; te = ang[np.abs(rad-R2)<1.0*mm]
+print("LE theta", le.mean(), " TE theta(at r~58)", te.mean(), " wrap deg =", le.mean()-te.mean())
+# thickness: distance between the two offset flanks at mid-chord
+rm = 37*mm; tm = -WRAP*(rm-R1)/(R2-R1)
+p = Vector(rm*np.cos(tm), rm*np.sin(tm), 11*mm)
+print("mid-chord thickness mm =", 2*abs(blade0.distance_to(p) if hasattr(blade0,'distance_to') else 0))
+print("blade height mm =", (blade0.bounding_box().max.Z-blade0.bounding_box().min.Z)/mm,
+      " blade solid vol/(h*t) -> camber len mm =", blade0.volume/(14*mm*3*mm)/mm)
+# -- output
+LE theta -1.920059997879216  TE theta(at r~58) -30.031140619508793  wrap deg = 28.111080621629576
+mid-chord thickness mm = 0.0029983220071694437
+blade height mm = 14.000000000000002  blade solid vol/(h*t) -> camber len mm = 49.09307477813961
+
+# -- cell 7 (0.1s, exit 0)
+Vb = V[np.abs(V[:,2]-Z0)<1e-9]                      # bottom face vertices
+rb = np.hypot(Vb[:,0],Vb[:,1])
+le2 = Vb[np.argsort(rb)[:2]]                        # two leading-edge corners
+mid_le = le2.mean(axis=0)
+# trailing camber point at r=58 from the blade's outer flank pair
+mask = np.abs(rb-R2E)<0.5*mm
+te2 = Vb[mask]; mid_te = te2.mean(axis=0)
+a = lambda p: np.degrees(np.arctan2(p[1],p[0]))
+print("LE camber r,theta =", np.hypot(*mid_le[:2])/mm, a(mid_le))
+print("TE camber r,theta =", np.hypot(*mid_te[:2])/mm, a(mid_te))
+th58 = -np.degrees(WRAP)*(R2-R1)/(R2-R1)
+print("wrap over 16->58 mm, design =", np.degrees(WRAP), " built(16->60) =", a(mid_le)-a(mid_te))
+print("built wrap scaled to r=58 =", (a(mid_le)-a(mid_te))*(R2-R1)/(R2E-R1))
+# -- output
+LE camber r,theta = 16.042544921306074 -5.4562677651830205
+TE camber r,theta = 60.066680196883425 -29.68122363926508
+wrap over 16->58 mm, design = 29.999999999999996  built(16->60) = 24.22495587408206
+built wrap scaled to r=58 = 23.123821516169244
+
+# -- cell 8 (0.1s, exit 0)
+rb_ang = np.degrees(np.arctan2(Vb[:,1], Vb[:,0]))
+def camber_theta(r0, w=0.6*mm):
+    m = np.abs(rb-r0) < w
+    return 0.5*(rb_ang[m].max()+rb_ang[m].min()), m.sum()
+for r0 in [16.1, 30, 44, 58]:
+    t_, n_ = camber_theta(r0*mm); print(f"r={r0:5.1f} mm  camber theta = {t_:7.3f} deg  (n={n_})")
+t16,_ = camber_theta(16.1*mm); t58,_ = camber_theta(58*mm)
+print("built wrap 16->58 =", t16-t58, "deg   vs requested 30")
+# -- output
+r= 16.1 mm  camber theta =  -0.207 deg  (n=3)
+r= 30.0 mm  camber theta = -10.109 deg  (n=5)
+r= 44.0 mm  camber theta = -19.866 deg  (n=5)
+r= 58.0 mm  camber theta = -30.016 deg  (n=5)
+built wrap 16->58 = 29.808861305084406 deg   vs requested 30
+
+# -- cell 9 (0.2s, exit 1)
+os.makedirs("constant/triSurface", exist_ok=True)
+for name, faces in groups.items():
+    sh = Compound(children=[Shape.cast(f.wrapped) for f in faces]) if len(faces)>1 else faces[0]
+    export_stl(sh, f"constant/triSurface/{name}.stl", tolerance=5e-5, angular_tolerance=0.2)
+    print(name, os.path.getsize(f"constant/triSurface/{name}.stl"))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mNameError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 3[39m
+[32m      1[39m os.makedirs([33m"constant/triSurface"[39m, exist_ok=[38;5;28;01mTrue[39;00m)
+[32m      2[39m [38;5;28;01mfor[39;00m name, faces [38;5;28;01min[39;00m groups.items():
+[32m----> [39m[32m3[39m     sh = Compound(children=[Shape.cast(f.wrapped) [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m faces]) [38;5;28;01mif[39;00m len(faces)>[32m1[39m [38;5;28;01melse[39;00m faces[[32m0[39m]
+[32m      4[39m     export_stl(sh, f"constant/triSurface/{name}.stl", tolerance=[32m5e-5[39m, angular_tolerance=[32m0.2[39m)
+[32m      5[39m     print(name, os.path.getsize(f"constant/triSurface/{name}.stl"))
+
+[31mNameError[39m: name 'Shape' is not defined
+
+# -- cell 10 (0.8s, exit 0)
+os.makedirs("constant/triSurface", exist_ok=True)
+for name, faces in groups.items():
+    sh = Compound(children=list(faces)) if len(faces) > 1 else faces[0]
+    export_stl(sh, f"constant/triSurface/{name}.stl", tolerance=5e-5, angular_tolerance=0.2)
+    print(name, len(faces), os.path.getsize(f"constant/triSurface/{name}.stl"))
+# -- output
+outlet 7 41384
+blades 1064 107184
+shroud 15 128734
+inlet 1 41584
+hub 1 44584
+backplate 1 85084
+
+# -- cell 11 (0.5s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+pl = pv.Plotter(off_screen=True, window_size=(900,700))
+cols = dict(blades="firebrick", backplate="steelblue", hub="orange", shroud="lightgray", inlet="green", outlet="purple")
+for n,c in cols.items():
+    m = pv.read(f"constant/triSurface/{n}.stl")
+    pl.add_mesh(m, color=c, opacity=0.35 if n=="shroud" else 1.0, show_edges=False)
+pl.camera_position = [(0.14,-0.12,0.12),(0,0,0.011),(0,0,1)]
+pl.screenshot("view1.png"); print("ok")
+# -- output
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 12:57:11.514 (   0.250s) [    75EC62341780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 12:57:11.515 (   0.250s) [    75EC62341780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 12:57:11.527 (   0.263s) [    75EC62341780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 12 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("view1.png"))
+# -- output
+
+
+# -- cell 13 (0.3s, exit 0)
+import textwrap, shutil
+for d in ["system","constant"]: os.makedirs(d, exist_ok=True)
+head = lambda cls,obj: f"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"
+open("system/controlDict","w").write(head("dictionary","controlDict")+
+ "application snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\n"
+ "deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; writePrecision 6;\n"
+ "runTimeModifiable true;\n")
+open("system/fvSchemes","w").write(head("dictionary","fvSchemes")+
+ "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;}\n"
+ "laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;}\n"
+ "snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(head("dictionary","fvSolution")+"solvers{}\n")
+N = 40
+open("system/blockMeshDict","w").write(head("dictionary","blockMeshDict")+f"""
+scale 1;
+vertices ( (-0.0605 -0.0605 0.0035) (0.0605 -0.0605 0.0035) (0.0605 0.0605 0.0035) (-0.0605 0.0605 0.0035)
+           (-0.0605 -0.0605 0.0225) (0.0605 -0.0605 0.0225) (0.0605 0.0605 0.0225) (-0.0605 0.0605 0.0225) );
+blocks ( hex (0 1 2 3 4 5 6 7) ({N} {N} 7) simpleGrading (1 1 1) );
+edges (); boundary ( bg {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); }} );
+""")
+print(subprocess.run(["blockMesh"],capture_output=True,text=True).stdout[-400:])
+# -- output
+: 0.003025 .. 0.003025
+        k : 0.00271429 .. 0.00271429
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.0605 -0.0605 0.0035) (0.0605 0.0605 0.0225)
+  nPoints: 13448
+  nCells: 11200
+  nFaces: 35760
+  nInternalFaces: 31440
+----------------
+Patches
+----------------
+  patch 0 (start: 31440 size: 4320) name: bg
+
+End
+
+# -- cell 14 (12.8s, exit 0)
+names = ["inlet","outlet","blades","backplate","hub","shroud"]
+geom = "\n".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in names)
+refs = "\n".join(f'    {n} {{ level ({1 if n=="blades" else 1} {1 if n=="blades" else 1}); patchInfo {{ type {"patch" if n in ("inlet","outlet") else "wall"}; }} }}' for n in names)
+th=np.radians(12.0); pin=(0.035*np.cos(th),0.035*np.sin(th),0.011)
+open("system/snappyHexMeshDict","w").write(head("dictionary","snappyHexMeshDict")+f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geom}
+}}
+castellatedMeshControls
+{{
+  maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2; features (); 
+  refinementSurfaces {{
+{refs}
+  }}
+  resolveFeatureAngle 30; refinementRegions {{}};
+  locationInMesh ({pin[0]:.6f} {pin[1]:.6f} {pin[2]:.6f}); allowFreeStandingZoneFaces true;
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+  nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}}; expansionRatio 1.2; finalLayerThickness 0.3;
+  minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1;
+  nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3;
+  minMedianAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-14; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001;
+  minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6; debug 0;
+""")
+print("pin", pin)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.stdout[-1500:])
+# -- output
+pin (np.float64(0.0342351660256832), np.float64(0.007276909178621577), 0.011)
+ness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Detected 0 error faces on boundaries that have been merged. These will be restored to their original faces.
+
+Detected 21 error faces in mesh. Restoring neighbours of faces in error.
+
+Edge intersection testing:
+    Number of edges             : 103250
+    Number of edges to retest   : 647
+    Number of intersected edges : 14847
+Snapped mesh : cells:31341  faces:103250  points:40945
+Cells per refinement level:
+    0	1815
+    1	29526
+Writing mesh to time constant
+Wrote mesh in = 0.08 s.
+Mesh snapped in = 8.42 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-14                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 12.52 s.
+End
+
+# -- cell 15 (0.4s, exit 0)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True)
+print(r.stdout[r.stdout.find("Mesh stats"):r.stdout.find("Checking geometry")])
+print(r.stdout[-900:])
+# -- output
+Mesh stats 
+    points:           40945
+    faces:            103250
+    internal faces:   88403
+    cells:            31341
+    faces per cell:   6.11509
+    boundary patches: 6
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     26627
+    prisms:        2569
+    wedges:        0
+    pyramids:      0
+    tet wedges:    5
+    tetrahedra:    0
+    polyhedra:     2140
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   60
+            5   546
+            6   85
+            9   857
+           12   359
+           15   223
+           18   10
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      148      240  ok (non-closed singly connected)
+                  outlet     1980     2340  ok (non-closed singly connected)
+                  blades     4154     4730  ok (non-closed singly connected)
+               backplate     3983     4446  ok (non-closed singly connected)
+                     hub      598      665  ok (non-closed singly connected)
+                  shroud     3984     4425  ok (non-closed singly connected)
+                    ".*"    14847    14983      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+
+         PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.0580126 -0.0580027 0.0039389) (0.0580016 0.0580098 0.0220213)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-5.50775e-17 -1.07107e-16 1.15651e-15) OK.
+    Max cell openness = 3.22464e-16 OK.
+    Max aspect ratio = 15.0611 OK.
+    Minimum face area = 4.15784e-08. Maximum face area = 1.17525e-05.  Face area magnitudes OK.
+    Min volume = 2.41389e-10. Max volume = 3.20435e-08.  Total volume = 0.000129309.  Cell volumes OK.
+    Mesh non-orthogonality Max: 63.498 average: 10.3617
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.478 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 16 (29.1s, exit 0)
+N2 = 61
+open("system/blockMeshDict","w").write(head("dictionary","blockMeshDict")+f"""
+scale 1;
+vertices ( (-0.0605 -0.0605 0.0035) (0.0605 -0.0605 0.0035) (0.0605 0.0605 0.0035) (-0.0605 0.0605 0.0035)
+           (-0.0605 -0.0605 0.0225) (0.0605 -0.0605 0.0225) (0.0605 0.0605 0.0225) (-0.0605 0.0605 0.0225) );
+blocks ( hex (0 1 2 3 4 5 6 7) ({N2} {N2} 10) simpleGrading (1 1 1) );
+edges (); boundary ( bg {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); }} );
+""")
+subprocess.run(["blockMesh"],check=True,capture_output=True)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.stdout[-300:])
+c=subprocess.run(["checkMesh"],capture_output=True,text=True).stdout
+print(c[c.find("Checking patch topology"):c.find("Checking faceZone")])
+print([l for l in c.splitlines() if "Total volume" in l or "non-orthogonality" in l.lower() or "skewness" in l or l.strip().startswith("cells:")][:8])
+print(c.strip()[-40:])
+# -- output
+tion weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 27.81 s.
+End
+
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      288      400  ok (non-closed singly connected)
+                  outlet     4155     4761  ok (non-closed singly connected)
+                  blades     8490     9602  ok (non-closed singly connected)
+               backplate     8744     9426  ok (non-closed singly connected)
+                     hub     1296     1416  ok (non-closed singly connected)
+                  shroud     8997     9597  ok (non-closed singly connected)
+                    ".*"    31970    32263      ok (closed singly connected)
+
+
+
+['    cells:            84316', '    Min volume = 9.35255e-11. Max volume = 9.75754e-09.  Total volume = 0.000129321.  Cell volumes OK.', '    Mesh non-orthogonality Max: 64.5227 average: 8.93115', '    Non-orthogonality check OK.', '    Max skewness = 2.67273 OK.']
+ion match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 17 (0.8s, exit 0)
+subprocess.run(["foamToVTK","-constant","-excludePatches","()"],capture_output=True,text=True)
+import glob; print(glob.glob("VTK/**/*.vt*",recursive=True)[:12])
+# -- output
+['VTK/t12_0.vtm', 'VTK/t12.vtm.series', 'VTK/t12_0/boundary.vtm', 'VTK/t12_0/internal.vtu', 'VTK/t12_0/boundary/backplate.vtp', 'VTK/t12_0/boundary/shroud.vtp', 'VTK/t12_0/boundary/inlet.vtp', 'VTK/t12_0/boundary/hub.vtp', 'VTK/t12_0/boundary/outlet.vtp', 'VTK/t12_0/boundary/blades.vtp']
+
+# -- cell 18 (0.4s, exit 0)
+pl = pv.Plotter(off_screen=True, window_size=(1000,800), shape=(1,2))
+for j,cam in enumerate([[(0.13,-0.11,0.14),(0,0,0.012),(0,0,1)],[(0.0,-0.001,0.30),(0,0,0.012),(0,1,0)]]):
+    pl.subplot(0,j)
+    for n,c in cols.items():
+        m = pv.read(f"VTK/t12_0/boundary/{n}.vtp")
+        if n=="shroud" and j==1: continue
+        pl.add_mesh(m, color=c, show_edges=True, edge_color="k", line_width=0.3)
+    pl.camera_position = cam
+pl.screenshot("mesh.png"); display(Image("mesh.png"))
+# -- output
+[0m[33m2026-09-13 12:58:55.949 ( 104.685s) [    75EC62341780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 12:58:55.950 ( 104.685s) [    75EC62341780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 19 (1.1s, exit 0)
+for n in names:
+    o=subprocess.run(["surfaceCheck",f"constant/triSurface/{n}.stl"],capture_output=True,text=True).stdout
+    key=[l for l in o.splitlines() if "illegal" in l or "open edges" in l or "intersect" in l or "Surface is not closed" in l or "triangles" in l.lower()][:4]
+    print(n, key)
+# -- output
+inlet ['Triangles    : 830 in 1 region(s)', 'Surface has no illegal triangles.', 'Surface is not closed since not all edges (1660) connected to two faces:']
+outlet ['Triangles    : 826 in 1 region(s)', 'Surface has no illegal triangles.', 'Surface is not closed since not all edges (1659) connected to two faces:']
+blades ['Triangles    : 2142 in 1 region(s)', 'Surface has no illegal triangles.', 'Surface is not closed since not all edges (4291) connected to two faces:']
+backplate ['Triangles    : 1700 in 1 region(s)', 'Surface has no illegal triangles.', 'Surface is not closed since not all edges (3400) connected to two faces:']
+hub ['Triangles    : 890 in 1 region(s)', 'Surface has no illegal triangles.', 'Surface is not closed since not all edges (1780) connected to two faces:']
+shroud ['Triangles    : 2573 in 1 region(s)', 'Surface has no illegal triangles.', 'Surface is not closed since not all edges (4722) connected to two faces:']
+
+# -- cell 20 (0.1s, exit 0)
+print(open("constant/triSurface/inlet.stl","rb").read(300))
+m = pv.read("constant/triSurface/inlet.stl")
+print(m.n_points, m.n_cells)
+mc = m.clean(tolerance=1e-8)
+fe = mc.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False)
+print("after clean:", mc.n_points, " open edges:", fe.n_cells)
+# -- output
+b'STL Exported by Open CASCADE Technology [dev.opencascade.org]\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00>\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80?@\x83h<\x86"\xf2\xbbX9\xb4<\x1f\xff.<\x0e;\xb3\xbbX9\xb4<\xc4\x82-<\x1f\xeb\xb8\xbbX9\xb4<\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80?\xeb}\xf0\xbbH\xf0h<X9\xb4<\xaf\x0b\xf7\xbb\xb67g<X9\xb4<E\x80\xb7\xbb\xf8\xe2-<X9\xb4<\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80?\xeb}\xf0\xbbH\xf0h<X9\xb4<E\x80\xb7\xbb\xf8\xe2-<X9\xb4<\x1d\xcd\xb1\xbbY\\/<X9\xb4<\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80?\xee\xdc\x82<\xa2\xc2l:X9\xb4<q0D<\xf24M:X9\xb4<V_D<\xf5\xf3\x19:X9\xb4<\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80?\xee\xdc\x82<'
+830 830
+after clean: 830  open edges: 830
+
+# -- cell 21 (0.9s, exit 0)
+def export_group(name, faces, tol=5e-5, ang=0.2):
+    tris = []
+    for f in faces:
+        vs, ts = f.tessellate(tolerance=tol, angular_tolerance=ang)
+        for t in ts:
+            tris.append([vs[i] for i in t])
+    with open(f"constant/triSurface/{name}.stl","w") as fh:
+        fh.write(f"solid {name}\n")
+        for a,b,c in tris:
+            u, v = b-a, c-a
+            n = u.cross(v); n = n.normalized() if n.length > 0 else Vector(0,0,1)
+            fh.write(f" facet normal {n.X:.9e} {n.Y:.9e} {n.Z:.9e}\n  outer loop\n")
+            for p in (a,b,c): fh.write(f"   vertex {p.X:.9e} {p.Y:.9e} {p.Z:.9e}\n")
+            fh.write("  endloop\n endfacet\n")
+        fh.write(f"endsolid {name}\n")
+    return len(tris)
+
+for n in names: print(n, export_group(n, groups[n]))
+# -- output
+inlet 830
+outlet 826
+blades 2142
+backplate 1700
+hub 890
+shroud 2573
+
+# -- cell 22 (0.1s, exit 0)
+import pyvista as pv
+u = pv.PolyData()
+for n in names: u = u.merge(pv.read(f"constant/triSurface/{n}.stl"))
+uc = u.clean(absolute=True, tolerance=1e-9)
+fe = uc.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False)
+print("union points", uc.n_points, "cells", uc.n_cells, "free edges", fe.n_cells)
+# -- output
+union points 5562 cells 8961 free edges 2177
+
+# -- cell 23 (0.4s, exit 0)
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.BRep import BRep_Tool
+from OCP.TopLoc import TopLoc_Location
+from OCP.TopAbs import TopAbs_REVERSED
+
+BRepMesh_IncrementalMesh(fluid.wrapped, 5e-5, False, 0.2, True)
+
+def export_group2(name, faces):
+    tris = []
+    for f in faces:
+        loc = TopLoc_Location(); tri = BRep_Tool.Triangulation_s(f.wrapped, loc)
+        if tri is None: print("no tri", name); continue
+        trsf = loc.Transformation(); rev = f.wrapped.Orientation() == TopAbs_REVERSED
+        P = [tri.Node(i+1).Transformed(trsf) for i in range(tri.NbNodes())]
+        for k in range(tri.NbTriangles()):
+            a,b,c = tri.Triangle(k+1).Get()
+            idx = (a-1,c-1,b-1) if rev else (a-1,b-1,c-1)
+            tris.append([P[i] for i in idx])
+    with open(f"constant/triSurface/{name}.stl","w") as fh:
+        fh.write(f"solid {name}\n")
+        for a,b,c in tris:
+            u = np.array([b.X()-a.X(), b.Y()-a.Y(), b.Z()-a.Z()]); v = np.array([c.X()-a.X(), c.Y()-a.Y(), c.Z()-a.Z()])
+            n = np.cross(u,v); L = np.linalg.norm(n); n = n/L if L>0 else np.array([0,0,1.])
+            fh.write(f" facet normal {n[0]:.9e} {n[1]:.9e} {n[2]:.9e}\n  outer loop\n")
+            for p in (a,b,c): fh.write(f"   vertex {p.X():.9e} {p.Y():.9e} {p.Z():.9e}\n")
+            fh.write("  endloop\n endfacet\n")
+        fh.write(f"endsolid {name}\n")
+    return len(tris)
+
+for n in names: print(n, export_group2(n, groups[n]))
+# -- output
+inlet 830
+outlet 826
+blades 2142
+backplate 1700
+hub 890
+shroud 2573
+
+# -- cell 24 (0.1s, exit 0)
+u = pv.PolyData()
+for n in names: u = u.merge(pv.read(f"constant/triSurface/{n}.stl"))
+uc = u.clean(absolute=True, tolerance=1e-9)
+fe = uc.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False)
+print("union points", uc.n_points, "cells", uc.n_cells, "free edges", fe.n_cells)
+print("volume of union:", uc.volume/mm**3, " vs CAD", fluid.volume/mm**3)
+# -- output
+union points 5562 cells 8961 free edges 2177
+volume of union: 129325.92274634974  vs CAD 129329.72542407781
+
+# -- cell 25 (0.1s, exit 0)
+pts = fe.points
+r_ = np.hypot(pts[:,0],pts[:,1]); z_ = pts[:,2]
+import collections
+print("z hist", collections.Counter(np.round(z_/mm,1)).most_common(8))
+print("r range", r_.min()/mm, r_.max()/mm)
+print("n free-edge pts", len(pts))
+# -- output
+z hist [(np.float32(22.0), 1503), (np.float32(4.0), 667)]
+r range 11.999999 16.0
+n free-edge pts 2170
+
+# -- cell 26 (0.2s, exit 0)
+pl = pv.Plotter(off_screen=True, window_size=(800,700))
+pl.add_mesh(uc, color="lightgray", opacity=0.3)
+pl.add_mesh(fe, color="red", line_width=3)
+pl.camera_position=[(0.09,-0.08,0.09),(0,0,0.013),(0,0,1)]
+pl.screenshot("fe.png"); display(Image("fe.png"))
+print(fe.n_cells, uc.n_cells)
+# -- output
+2177 8961
+
+[0m[33m2026-09-13 13:00:39.211 ( 207.947s) [    75EC62341780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:00:39.212 ( 207.948s) [    75EC62341780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 27 (0.8s, exit 0)
+fluid2 = fluid.clean()
+print("faces", len(fluid2.faces()), "vol", fluid2.volume/mm**3)
+groups2 = {}
+for f in fluid2.faces(): groups2.setdefault(classify(f), []).append(f)
+print({k:len(v) for k,v in groups2.items()})
+BRepMesh_IncrementalMesh(fluid2.wrapped, 5e-5, False, 0.2, True)
+for n in names: export_group2(n, groups2[n])
+u = pv.PolyData()
+for n in names: u = u.merge(pv.read(f"constant/triSurface/{n}.stl"))
+uc = u.clean(absolute=True, tolerance=1e-9)
+fe = uc.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False)
+print("free edges", fe.n_cells, " vol", uc.volume/mm**3)
+# -- output
+faces 1089 vol 129329.72542407781
+{'outlet': 7, 'blades': 1064, 'shroud': 15, 'inlet': 1, 'hub': 1, 'backplate': 1}
+free edges 2177  vol 129325.92274634974
+
+# -- cell 28 (0.1s, exit 0)
+from OCP.TopExp import TopExp
+from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+m = TopTools_IndexedDataMapOfShapeListOfShape()
+TopExp.MapShapesAndAncestors_s(fluid2.wrapped, TopAbs_EDGE, TopAbs_FACE, m)
+cnt = collections.Counter()
+lonely=[]
+for i in range(1, m.Extent()+1):
+    k = m.FindFromIndex(i).Extent(); cnt[k]+=1
+    if k==1: lonely.append(m.FindKey(i))
+print(cnt)
+for e in lonely[:6]:
+    ed = Edge(e); c=ed.center(); print("lonely edge len",ed.length/mm,"center",c, "r",np.hypot(c.X,c.Y)/mm)
+# -- output
+Counter({2: 3246})
+

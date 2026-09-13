@@ -1,0 +1,1014 @@
+# -- cell 1 (2.5s, exit 0)
+import numpy as np, os
+from build123d import *
+
+R_out, R_in, GAP, N_VANE, W_VANE = 0.160, 0.095, 0.012, 36, 0.008
+
+annulus = Cylinder(R_out, GAP) - Cylinder(R_in, GAP)
+vane1 = Box(0.090, W_VANE, GAP*1.2).moved(Pos((R_in+R_out)/2, 0, 0))
+vanes = [vane1.moved(Rot(0, 0, 360.0*i/N_VANE)) for i in range(N_VANE)]
+fluid = annulus - vanes
+print(fluid.volume, len(fluid.solids()), fluid.bounding_box())
+# -- output
+0.0004001833478597384 36 bbox: -0.15994999218505765 <= x <= 0.15994999218505765, -0.15994999218505765 <= y <= 0.15994999218505765, -0.006 <= z <= 0.006000000000000002
+
+# -- cell 2 (0.1s, exit 0)
+groups = {"frictionTop": [], "frictionBottom": [], "vanes": [], "inlet": [], "outlet": []}
+for f in fluid.faces():
+    c = f.center()
+    if f.geom_type == GeomType.PLANE:
+        n = f.normal_at(c)
+        if abs(n.Z) > 0.99:
+            groups["frictionTop" if c.Z > 0 else "frictionBottom"].append(f)
+        else:
+            groups["vanes"].append(f)
+    elif f.geom_type == GeomType.CYLINDER:
+        r = (c.X**2 + c.Y**2)**0.5
+        groups["outlet" if r > (R_in+R_out)/2 else "inlet"].append(f)
+    else:
+        raise RuntimeError(f.geom_type)
+for k, v in groups.items():
+    print(k, len(v), round(sum(f.area for f in v), 6))
+# -- output
+frictionTop 36 0.033349
+frictionBottom 36 0.033349
+vanes 72 0.05619
+inlet 36 0.003706
+outlet 36 0.008607
+
+# -- cell 3 (0.4s, exit 0)
+import os
+os.makedirs("constant/triSurface", exist_ok=True)
+TOL = 0.0005
+
+def tri_of(faces):
+    tris = []
+    for f in faces:
+        v, t = f.tessellate(TOL)
+        v = [(p.X, p.Y, p.Z) for p in v]
+        for a, b, c in t:
+            tris.append((v[a], v[b], v[c]))
+    return tris
+
+def write_solid(fh, name, tris):
+    fh.write(f"solid {name}\n")
+    for p0, p1, p2 in tris:
+        u = np.subtract(p1, p0); w = np.subtract(p2, p0)
+        n = np.cross(u, w); ln = np.linalg.norm(n)
+        n = n/ln if ln > 0 else n
+        fh.write(f" facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\n  outer loop\n")
+        for p in (p0, p1, p2):
+            fh.write(f"   vertex {p[0]:.8e} {p[1]:.8e} {p[2]:.8e}\n")
+        fh.write("  endloop\n endfacet\n")
+    fh.write(f"endsolid {name}\n")
+
+alltris = {k: tri_of(v) for k, v in groups.items()}
+for k, t in alltris.items():
+    with open(f"constant/triSurface/{k}.stl", "w") as fh:
+        write_solid(fh, k, t)
+with open("constant/triSurface/brakeDisc.stl", "w") as fh:
+    for k, t in alltris.items():
+        write_solid(fh, k, t)
+print({k: len(t) for k, t in alltris.items()}, os.listdir("constant/triSurface"))
+# -- output
+{'frictionTop': 444, 'frictionBottom': 444, 'vanes': 144, 'inlet': 648, 'outlet': 896} ['brakeDisc.stl', 'inlet.stl', 'vanes.stl', 'outlet.stl', 'frictionBottom.stl', 'frictionTop.stl']
+
+# -- cell 4 (0.2s, exit 1)
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.BRep import BRep_Tool
+from OCP.TopAbs import TopAbs_REVERSED
+
+BRepMesh_IncrementalMesh(fluid.wrapped, 0.0005, False, 0.3, True)
+
+def tri_of(faces):
+    tris = []
+    for f in faces:
+        loc = TopLoc_Location()
+        poly = BRep_Tool.Triangulation_s(f.wrapped, loc)
+        trsf = loc.Transformation()
+        pts = [poly.Node(i).Transformed(trsf) for i in range(1, poly.NbNodes()+1)]
+        rev = f.wrapped.Orientation() == TopAbs_REVERSED
+        for i in range(1, poly.NbTriangles()+1):
+            a, b, c = poly.Triangle(i).Get()
+            if rev: a, c = c, a
+            tris.append(tuple((p.X(), p.Y(), p.Z()) for p in (pts[a-1], pts[b-1], pts[c-1])))
+    return tris
+
+alltris = {k: tri_of(v) for k, v in groups.items()}
+for k, t in alltris.items():
+    with open(f"constant/triSurface/{k}.stl", "w") as fh:
+        write_solid(fh, k, t)
+with open("constant/triSurface/brakeDisc.stl", "w") as fh:
+    for k, t in alltris.items():
+        write_solid(fh, k, t)
+print({k: len(t) for k, t in alltris.items()})
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mNameError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 21[39m
+[32m     17[39m             [38;5;28;01mif[39;00m rev: a, c = c, a
+[32m     18[39m             tris.append(tuple((p.X(), p.Y(), p.Z()) [38;5;28;01mfor[39;00m p [38;5;28;01min[39;00m (pts[a-[32m1[39m], pts[b-[32m1[39m], pts[c-[32m1[39m])))
+[32m     19[39m     [38;5;28;01mreturn[39;00m tris
+[32m     20[39m 
+[32m---> [39m[32m21[39m alltris = {k: tri_of(v) [38;5;28;01mfor[39;00m k, v [38;5;28;01min[39;00m groups.items()}
+[32m     22[39m [38;5;28;01mfor[39;00m k, t [38;5;28;01min[39;00m alltris.items():
+[32m     23[39m     [38;5;28;01mwith[39;00m open(f"constant/triSurface/{k}.stl", [33m"w"[39m) [38;5;28;01mas[39;00m fh:
+[32m     24[39m         write_solid(fh, k, t)
+
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 10[39m, in [36mtri_of[39m[34m(faces)[39m
+[32m      7[39m [38;5;28;01mdef[39;00m tri_of(faces):
+[32m      8[39m     tris = []
+[32m      9[39m     [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m faces:
+[32m---> [39m[32m10[39m         loc = TopLoc_Location()
+[32m     11[39m         poly = BRep_Tool.Triangulation_s(f.wrapped, loc)
+[32m     12[39m         trsf = loc.Transformation()
+[32m     13[39m         pts = [poly.Node(i).Transformed(trsf) [38;5;28;01mfor[39;00m i [38;5;28;01min[39;00m range([32m1[39m, poly.NbNodes()+[32m1[39m)]
+
+[31mNameError[39m: name 'TopLoc_Location' is not defined
+
+# -- cell 5 (0.2s, exit 0)
+from OCP.TopLoc import TopLoc_Location
+alltris = {k: tri_of(v) for k, v in groups.items()}
+for k, t in alltris.items():
+    with open(f"constant/triSurface/{k}.stl", "w") as fh:
+        write_solid(fh, k, t)
+with open("constant/triSurface/brakeDisc.stl", "w") as fh:
+    for k, t in alltris.items():
+        write_solid(fh, k, t)
+print({k: len(t) for k, t in alltris.items()})
+# -- output
+{'frictionTop': 444, 'frictionBottom': 444, 'vanes': 144, 'inlet': 648, 'outlet': 896}
+
+# -- cell 6 (0.1s, exit 0)
+from collections import Counter
+def key(p): return tuple(round(c, 9) for c in p)
+ec = Counter(); dc = Counter()
+for t in [tt for v in alltris.values() for tt in v]:
+    k = [key(p) for p in t]
+    for i in range(3):
+        e = (k[i], k[(i+1) % 3])
+        ec[frozenset(e)] += 1; dc[e] += 1
+print("edges", len(ec), "free", sum(1 for v in ec.values() if v == 1), "nonmanifold", sum(1 for v in ec.values() if v > 2))
+print("bad-oriented(dup dir)", sum(1 for v in dc.values() if v > 1))
+# -- output
+edges 5080 free 2432 nonmanifold 0
+bad-oriented(dup dir) 0
+
+# -- cell 7 (0.1s, exit 0)
+for nd in (7, 6, 5):
+    ec2 = Counter()
+    for t in [tt for v in alltris.values() for tt in v]:
+        k = [tuple(round(c, nd) for c in p) for p in t]
+        for i in range(3):
+            ec2[frozenset((k[i], k[(i+1) % 3]))] += 1
+    print(nd, "edges", len(ec2), "free", sum(1 for v in ec2.values() if v == 1))
+free = [e for e, v in ec.items() if v == 1][:3]
+print(free)
+# -- output
+7 edges 5080 free 2432
+6 edges 5080 free 2432
+5 edges 5080 free 2432
+[frozenset({(0.094168361, -0.012542716, 0.006), (0.094379508, -0.01084013, 0.006)}), frozenset({(0.158214585, -0.023835794, 0.006), (0.158613559, -0.021017585, 0.006)}), frozenset({(0.094559875, -0.009134008, 0.006), (0.094379508, -0.01084013, 0.006)})]
+
+# -- cell 8 (0.1s, exit 0)
+def nodes(name, cond):
+    s = set()
+    for t in alltris[name]:
+        for p in t:
+            if cond(p): s.add(key(p))
+    return s
+c = lambda p: abs(p[2]-0.006) < 1e-9 and abs((p[0]**2+p[1]**2)**0.5-0.095) < 1e-6 and p[1] < 0 and p[0] > 0.09
+a = nodes("frictionTop", c); b = nodes("inlet", c)
+print(len(a), len(b)); print(sorted(a)[:5]); print(sorted(b)[:5])
+# -- output
+12 20
+[(0.090559712, -0.028704329, 0.006), (0.091063303, -0.027064274, 0.006), (0.091537194, -0.025415392, 0.006), (0.091981231, -0.023758222, 0.006), (0.09239527, -0.022093303, 0.006)]
+[(0.090559712, -0.028704329, 0.006), (0.090843142, -0.027794309, 0.006), (0.091117427, -0.026881491, 0.006), (0.09138254, -0.025965967, 0.006), (0.091638454, -0.025047829, 0.006)]
+
+# -- cell 9 (0.1s, exit 0)
+NU, NV, NZ = 14, 6, 3
+half = W_VANE/2
+xA_i, xA_o = (R_in**2-half**2)**0.5, (R_out**2-half**2)**0.5
+pitch = 2*np.pi/N_VANE
+
+def rot(p, a): return np.array([p[0]*np.cos(a)-p[1]*np.sin(a), p[0]*np.sin(a)+p[1]*np.cos(a)])
+P00, P10 = np.array([xA_i, half]), np.array([xA_o, half])
+P01, P11 = rot([xA_i, -half], pitch), rot([xA_o, -half], pitch)
+thI = (np.arctan2(P00[1], P00[0]), np.arctan2(P01[1], P01[0]))
+thO = (np.arctan2(P10[1], P10[0]), np.arctan2(P11[1], P11[0]))
+
+def grid2d():
+    g = np.zeros((NU+1, NV+1, 2))
+    for i in range(NU+1):
+        u = i/NU
+        A, B = P00+u*(P10-P00), P01+u*(P11-P01)
+        for j in range(NV+1):
+            v = j/NV
+            tI, tO = thI[0]+v*(thI[1]-thI[0]), thO[0]+v*(thO[1]-thO[0])
+            I = R_in*np.array([np.cos(tI), np.sin(tI)]); O = R_out*np.array([np.cos(tO), np.sin(tO)])
+            g[i, j] = ((1-v)*A + v*B + (1-u)*I + u*O
+                       - ((1-u)*(1-v)*P00 + u*(1-v)*P10 + (1-u)*v*P01 + u*v*P11))
+    return g
+
+G = grid2d()
+print(np.linalg.norm(G[0,0]-P00), np.linalg.norm(G[NU,NV]-P11), np.linalg.norm(G[0,3]), np.linalg.norm(G[NU,3]))
+# -- output
+0.0 0.0 0.095 0.16000000000000006
+
+# -- cell 10 (0.2s, exit 0)
+zs = np.linspace(-GAP/2, GAP/2, NZ+1)
+Nd = np.zeros((NU+1, NV+1, NZ+1, 3))
+Nd[:, :, :, :2] = G[:, :, None, :]
+Nd[:, :, :, 2] = zs[None, None, :]
+
+def quad(p0, p1, p2, p3, ref):
+    n = np.cross(np.array(p1)-p0, np.array(p2)-p0)
+    if np.dot(n, ref) < 0: p0, p1, p2, p3 = p0, p3, p2, p1
+    return [(tuple(p0), tuple(p1), tuple(p2)), (tuple(p0), tuple(p2), tuple(p3))]
+
+base = {k: [] for k in groups}
+for i in range(NU):
+    for j in range(NV):
+        base["frictionTop"] += quad(Nd[i,j,NZ], Nd[i+1,j,NZ], Nd[i+1,j+1,NZ], Nd[i,j+1,NZ], [0,0,1])
+        base["frictionBottom"] += quad(Nd[i,j,0], Nd[i+1,j,0], Nd[i+1,j+1,0], Nd[i,j+1,0], [0,0,-1])
+for i in range(NU):
+    for k in range(NZ):
+        base["vanes"] += quad(Nd[i,0,k], Nd[i+1,0,k], Nd[i+1,0,k+1], Nd[i,0,k+1], [0,-1,0])
+        base["vanes"] += quad(Nd[i,NV,k], Nd[i+1,NV,k], Nd[i+1,NV,k+1], Nd[i,NV,k+1], rot([0,1,0], pitch).tolist()+[0])
+for j in range(NV):
+    for k in range(NZ):
+        cin = -np.array([*Nd[0,j,k][:2], 0]); cout = np.array([*Nd[NU,j,k][:2], 0])
+        base["inlet"] += quad(Nd[0,j,k], Nd[0,j+1,k], Nd[0,j+1,k+1], Nd[0,j,k+1], cin)
+        base["outlet"] += quad(Nd[NU,j,k], Nd[NU,j+1,k], Nd[NU,j+1,k+1], Nd[NU,j,k+1], cout)
+
+alltris = {k: [] for k in base}
+for s in range(N_VANE):
+    a = s*pitch; ca, sa = np.cos(a), np.sin(a)
+    for k, tl in base.items():
+        for t in tl:
+            alltris[k].append(tuple((p[0]*ca-p[1]*sa, p[0]*sa+p[1]*ca, p[2]) for p in t))
+print({k: len(v) for k, v in alltris.items()})
+# -- output
+{'frictionTop': 6048, 'frictionBottom': 6048, 'vanes': 6048, 'inlet': 1296, 'outlet': 1296}
+
+# -- cell 11 (1.5s, exit 0)
+ec = Counter(); dc = Counter(); vol = 0.0
+for t in [tt for v in alltris.values() for tt in v]:
+    k = [key(p) for p in t]
+    for i in range(3):
+        ec[frozenset((k[i], k[(i+1) % 3]))] += 1; dc[(k[i], k[(i+1) % 3])] += 1
+    p0, p1, p2 = (np.array(p) for p in t)
+    vol += np.dot(p0, np.cross(p1, p2))/6
+print("free", sum(1 for v in ec.values() if v == 1), "nonmanifold", sum(1 for v in ec.values() if v > 2),
+      "same-dir-dup", sum(1 for v in dc.values() if v > 1))
+print("STL volume", vol, "CAD volume", fluid.volume)
+# -- output
+free 0 nonmanifold 0 same-dir-dup 0
+STL volume 0.00040014055813630665 CAD volume 0.0004001833478597384
+
+# -- cell 12 (1.4s, exit 0)
+for k, t in alltris.items():
+    with open(f"constant/triSurface/{k}.stl", "w") as fh:
+        write_solid(fh, k, t)
+with open("constant/triSurface/brakeDisc.stl", "w") as fh:
+    for k in ["frictionTop", "frictionBottom", "vanes", "inlet", "outlet"]:
+        write_solid(fh, k, alltris[k])
+print(subprocess.run(["ls", "-la", "constant/triSurface"], capture_output=True, text=True).stdout if 'subprocess' in dir() else os.listdir("constant/triSurface"))
+# -- output
+['brakeDisc.stl', 'inlet.stl', 'vanes.stl', 'outlet.stl', 'frictionBottom.stl', 'frictionTop.stl']
+
+# -- cell 13 (10.9s, exit 0)
+import subprocess, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+hdr = lambda cls, obj: f"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"
+open("system/controlDict", "w").write(hdr("dictionary", "controlDict") + textwrap.dedent("""
+application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1;
+"""))
+open("system/fvSchemes", "w").write(hdr("dictionary", "fvSchemes") + "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution", "w").write(hdr("dictionary", "fvSolution") + "solvers{}\n")
+open("system/meshDict", "w").write(hdr("dictionary", "meshDict") + textwrap.dedent("""
+surfaceFile "constant/triSurface/brakeDisc.stl";
+maxCellSize 0.003;
+boundaryCellSize 0.003;
+"""))
+r = subprocess.run(["cartesianMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-800:])
+# -- output
+0 ks/polyMeshGenChecksGeometry.C at line 3004
+    1 faces with severe warpage(flatness < 0.8) found.
+
+--> FOAM Warning : 
+    From bool Foam::Module::polyMeshGenChecks::checkCellPartTetrahedra(const Foam::Module::polyMeshGen&, bool, Foam::scalar, Foam::labelHashSet*, const Foam::boolList*)
+    in file utilities/meshes/polyMeshGenChecks/polyMeshGenChecksGeometry.C at line 1582
+    6 zero or negative part tetrahedra detected.
+Iteration 1. Number of bad faces is 6
+--> FOAM Warning : 
+    From bool Foam::Module::polyMeshGenChecks::checkFaceFlatness(const Foam::Module::polyMeshGen&, bool, Foam::scalar, Foam::labelHashSet*, const Foam::boolList*)
+    in file utilities/meshes/polyMeshGenChecks/polyMeshGenChecksGeometry.C at line 3004
+    1 faces with severe warpage(flatness < 0.8) found.
+
+Iteration 2. Number of bad faces is 1
+Iteration 0. Number of bad faces is 0
+Finished untangling the mesh
+Finished smoothing the mesh
+Iteration 0. Number of bad faces is 3
+Iteration 1. Number of bad faces is 2
+Iteration 2. Number of bad faces is 2
+Iteration 3. Number of bad faces is 2
+Iteration 4. Number of bad faces is 2
+Iteration 5. Number of bad faces is 2
+Iteration 6. Number of bad faces is 2
+Iteration 7. Number of bad faces is 2
+Iteration 8. Number of bad faces is 2
+Iteration 9. Number of bad faces is 2
+Starting untangling the mesh
+Iteration 0. Number of bad faces is 0
+Finished untangling the mesh
+Renumbering the mesh
+Finished renumbering the mesh
+ExecutionTime = 308.02 s  ClockTime = 11 s
+
+End
+
+# -- cell 14 (0.2s, exit 0)
+r = subprocess.run(["checkMesh", "-constant"], capture_output=True, text=True)
+print(r.stdout[-2500:])
+print(open("constant/polyMesh/boundary").read()[-1200:])
+# -- output
+dificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           1060
+    internal points:  536
+    faces:            2885
+    internal faces:   2337
+    cells:            918
+    faces per cell:   5.68845
+    boundary patches: 5
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     684
+    prisms:        52
+    wedges:        0
+    pyramids:      130
+    tet wedges:    0
+    tetrahedra:    52
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    frictionTop         140      160      ok (non-closed singly connected)  
+    frictionBottom      88       105      ok (non-closed singly connected)  
+    vanes               262      325      ok (non-closed singly connected)  
+    inlet               12       17       ok (non-closed singly connected)  
+    outlet              46       59       ok (non-closed singly connected)  
+    ".*"                548      524      ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.0509473 -0.156825 -0.006) (-0.0204212 -0.0905597 0.006)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (1.84748e-18 -7.3899e-18 9.9806e-17) OK.
+    Max cell openness = 2.06591e-16 OK.
+    Max aspect ratio = 5.30676 OK.
+    Minimum face area = 1.81778e-07. Maximum face area = 1.94704e-05.  Face area magnitudes OK.
+    Min volume = 5.609e-11. Max volume = 2.79023e-08.  Total volume = 1.08812e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 68.2422 average: 13.9566
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.51749 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+
+----------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+
+5
+(
+frictionTop
+{
+    type wall;
+    nFaces 140;
+    startFace 2337;
+}
+
+frictionBottom
+{
+    type wall;
+    nFaces 88;
+    startFace 2477;
+}
+
+vanes
+{
+    type wall;
+    nFaces 262;
+    startFace 2565;
+}
+
+inlet
+{
+    type wall;
+    nFaces 12;
+    startFace 2827;
+}
+
+outlet
+{
+    type wall;
+    nFaces 46;
+    startFace 2839;
+}
+
+)
+
+
+// ************************************************************************* //
+
+# -- cell 15 (0.4s, exit 0)
+CELL = 0.003
+nx = int(round(2*0.165/CELL))
+open("system/blockMeshDict", "w").write(hdr("dictionary", "blockMeshDict") + f"""
+scale 1;
+vertices ((-0.165 -0.165 -0.009)(0.165 -0.165 -0.009)(0.165 0.165 -0.009)(-0.165 0.165 -0.009)
+          (-0.165 -0.165 0.009)(0.165 -0.165 0.009)(0.165 0.165 0.009)(-0.165 0.165 0.009));
+blocks (hex (0 1 2 3 4 5 6 7) ({nx} {nx} 6) simpleGrading (1 1 1));
+edges (); boundary ((box {{type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3));}}));
+""")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-400:], r.stderr[-400:])
+# -- output
+-6 _L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+ ::blockMesh::mergeStrategy, int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libblockMesh.so
+#5  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/blockMesh
+#6  ? in /lib/x86_64-linux-gnu/libc.so.6
+#7  __libc_start_main in /lib/x86_64-linux-gnu/libc.so.6
+#8  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/blockMesh
+=============
+
+# -- cell 16 (0.3s, exit 0)
+import shutil
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode); print(r.stdout[:3000])
+# -- output
+-6
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 13 2026
+Time   : 13:38:46
+Host   : yc-demo
+PID    : 121459
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T22-20260913-133506-8ff5/t22
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+
+# -- cell 17 (0.1s, exit 0)
+print("\n".join(l for l in r.stdout.splitlines() if "cwd" not in l and "POSIX" not in l and "Warning" not in l)[-2000:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 13 2026
+Time   : 13:38:46
+Host   : yc-demo
+PID    : 121459
+I/O    : uncollated
+Case   : /home/qiuzi/.openreynolds-buildup/work/T22-20260913-133506-8ff5/t22
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+# -- cell 18 (0.6s, exit 0)
+open("system/blockMeshDict", "w").write(hdr("dictionary", "blockMeshDict") + f"""
+scale 1;
+vertices ((-0.165 -0.165 -0.009)(0.165 -0.165 -0.009)(0.165 0.165 -0.009)(-0.165 0.165 -0.009)
+          (-0.165 -0.165 0.009)(0.165 -0.165 0.009)(0.165 0.165 0.009)(-0.165 0.165 0.009));
+blocks (hex (0 1 2 3 4 5 6 7) ({nx} {nx} 6) simpleGrading (1 1 1));
+edges ();
+boundary
+(
+    box {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); }}
+);
+""")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, [l for l in r.stdout.splitlines() if "cells" in l or "nCells" in l][-3:])
+# -- output
+0 ['Creating cells', '  nCells: 72600']
+
+# -- cell 19 (1.0s, exit 0)
+seeds = "\n".join(f"    ((%.6f %.6f 0.0) fluid)" % (0.1275*np.cos(pitch*(i+0.5)), 0.1275*np.sin(pitch*(i+0.5))) for i in range(N_VANE))
+patches = {"frictionTop": "wall", "frictionBottom": "wall", "vanes": "wall", "inlet": "patch", "outlet": "patch"}
+geom = "\n".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in patches)
+refs = "\n".join(f'    {n} {{ level (1 1); patchInfo {{ type {t}; }} }}' for n, t in patches.items())
+open("system/snappyHexMeshDict", "w").write(hdr("dictionary", "snappyHexMeshDict") + f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geom}
+}}
+castellatedMeshControls
+{{
+  maxLocalCells 2000000; maxGlobalCells 8000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+  features ();
+  refinementSurfaces
+  {{
+{refs}
+  }}
+  refinementRegions {{}}
+  locationsInMesh
+  (
+{seeds}
+  );
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5; nFeatureSnapIter 10;
+  implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.2; finalLayerThickness 0.3; minThickness 0.1;
+  nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;
+  maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0;
+  nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;
+  minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6; debug 0;
+""")
+r = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print(r.returncode, "\n".join(l for l in r.stdout.splitlines() if "cwd" not in l)[-1500:])
+# -- output
+1 s
+
+Reading features.
+Read features in = 0 s
+
+
+Determining initial surface intersections
+-----------------------------------------
+
+Edge intersection testing:
+    Number of edges             : 231220
+    Number of edges to retest   : 0
+    Number of intersected edges : 0
+Edge intersection testing:
+    Number of edges             : 231220
+    Number of edges to retest   : 231220
+    Number of intersected edges : 17280
+Calculated surface intersections in = 0.41 s
+
+Initial mesh : cells:72600  faces:231220  points:86247
+Cells per refinement level:
+    0	72600
+Setting refinement level of surface to be consistent with curvature.
+Checked curvature refinement in = 0 s
+
+
+Adding patches for surface regions
+----------------------------------
+
+Patch Type                Region                        
+----- ----                ------                        
+frictionTop:
+
+1     wall                frictionTop                   
+
+frictionBottom:
+
+2     wall                frictionBottom                
+
+vanes:
+
+3     wall                vanes                         
+
+inlet:
+
+4     patch               inlet                         
+
+outlet:
+
+5     patch               outlet                        
+
+Added patches in = 0.01 s
+
+Edge intersection testing:
+    Number of edges             : 231220
+    Number of edges to retest   : 0
+    Number of intersected edges : 17280
+Decomposition method none [1]
+
+Refinement phase
+----------------
+
+Found point (0.127015 0.011112 0) in cell 42777 on processor 0
+
+# -- cell 20 (0.1s, exit 0)
+print(r.stderr[-1500:]); print("----"); print("\n".join(l for l in r.stdout.splitlines()[-40:] if "cwd" not in l))
+# -- output
+--> FOAM FATAL ERROR: (openfoam-2512)
+Point (0.123156 0.032999 0) is not inside the mesh or on a face or edge.
+Bounding box of the mesh:(-0.165 -0.165 -0.009) (0.165 0.165 0.009)
+
+    From static Foam::labelList Foam::refinementParameters::findCells(bool, const Foam::polyMesh&, const Foam::pointField&)
+    in file snappyHexMeshDriver/refinementParameters/refinementParameters.C at line 249.
+
+FOAM exiting
+
+
+----
+Checked curvature refinement in = 0 s
+
+
+Adding patches for surface regions
+----------------------------------
+
+Patch Type                Region                        
+----- ----                ------                        
+frictionTop:
+
+1     wall                frictionTop                   
+
+frictionBottom:
+
+2     wall                frictionBottom                
+
+vanes:
+
+3     wall                vanes                         
+
+inlet:
+
+4     patch               inlet                         
+
+outlet:
+
+5     patch               outlet                        
+
+Added patches in = 0.01 s
+
+Edge intersection testing:
+    Number of edges             : 231220
+    Number of edges to retest   : 0
+    Number of intersected edges : 17280
+Decomposition method none [1]
+
+Refinement phase
+----------------
+
+Found point (0.127015 0.011112 0) in cell 42777 on processor 0
+
+# -- cell 21 (29.8s, exit 0)
+seeds = "\n".join("    ((%.6f %.6f 0.000731) fluid)" % (0.12731*np.cos(pitch*(i+0.5)), 0.12731*np.sin(pitch*(i+0.5))) for i in range(N_VANE))
+d = open("system/snappyHexMeshDict").read()
+import re
+d = re.sub(r"locationsInMesh\s*\(.*?\);", "locationsInMesh\n  (\n" + seeds + "\n  );", d, flags=re.S)
+open("system/snappyHexMeshDict", "w").write(d)
+r = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print(r.returncode, r.stderr[-600:])
+print("\n".join(l for l in r.stdout.splitlines()[-25:] if "cwd" not in l))
+# -- output
+0 
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:95904  faces:323272  points:134460
+Cells per refinement level:
+    0	3040
+    1	92864
+Writing mesh to time constant
+Wrote mesh in = 0.24 s.
+Mesh snapped in = 15.64 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 29.43 s.
+End
+
+# -- cell 22 (0.9s, exit 0)
+r = subprocess.run(["checkMesh", "-constant"], capture_output=True, text=True)
+o = "\n".join(l for l in r.stdout.splitlines() if "cwd" not in l)
+i = o.find("Mesh stats")
+print(o[i:i+2600])
+# -- output
+Mesh stats 
+    points:           134460
+    faces:            323272
+    internal faces:   264344
+    cells:            95904
+    faces per cell:   6.12713
+    boundary patches: 5
+    point zones:      1
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     84992
+    prisms:        5232
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     5680
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            5   2640
+            9   816
+           12   992
+           15   1040
+           18   192
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+   *Number of regions: 36
+    The mesh has multiple regions which are not connected by any face.
+  <<Writing region information to "constant/cellToRegion"
+  <<Writing region 0 with 2708 cells to cellSet region0
+  <<Writing region 1 with 2708 cells to cellSet region1
+  <<Writing region 2 with 2700 cells to cellSet region2
+  <<Writing region 3 with 2700 cells to cellSet region3
+  <<Writing region 4 with 2670 cells to cellSet region4
+  <<Writing region 5 with 2670 cells to cellSet region5
+  <<Writing region 6 with 2600 cells to cellSet region6
+  <<Writing region 7 with 2600 cells to cellSet region7
+  <<Writing region 8 with 2620 cells to cellSet region8
+  <<Writing region 9 with 2620 cells to cellSet region9
+  <<Writing region 10 with 2600 cells to cellSet region10
+  <<Writing region 11 with 2600 cells to cellSet region11
+  <<Writing region 12 with 2670 cells to cellSet region12
+  <<Writing region 13 with 2670 cells to cellSet region13
+  <<Writing region 14 with 2700 cells to cellSet region14
+  <<Writing region 15 with 2700 cells to cellSet region15
+  <<Writing region 16 with 2708 cells to cellSet region16
+  <<Writing region 17 with 2708 cells to cellSet region17
+  <<Writing region 18 with 2708 cells to cellSet region18
+  <<Writing region 19 with 2708 cells to cellSet region19
+  <<Writing region 20 with 2700 cells to cellSet region20
+  <<Writing region 21 with 2700 cells to cellSet region21
+  <<Writing region 22 with 2670 cells to cellSet region22
+  <<Writing region 23 with 2670 cells to cellSet region23
+  <<Writing region 24 with 2600 cells to cellSet region24
+  <<Writing region 25 with 2600 cells to cellSet region25
+  <<Writing region 26 with 2620 cells to cellSet region26
+  <<Writing region 27 with 2620 cells to cellSet region27
+  <<Writing region 28 with 2600 cells to cellSet regi
+
+# -- cell 23 (0.1s, exit 0)
+j = o.find("Checking patch topology")
+print(o[j:])
+# -- output
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+             frictionTop    14672    17108  ok (non-closed singly connected)
+          frictionBottom    14672    17108  ok (non-closed singly connected)
+                   vanes    24448    30120  ok (non-closed singly connected)
+                   inlet     1504     2116  ok (non-closed singly connected)
+                  outlet     3632     4692  ok (non-closed singly connected)
+                    ".*"    58928    60328      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+                CellZone        Cells       Points       VolumeBoundingBox
+                  fluid        95904       134460  0.000396121 (-0.159918 -0.159918 -0.006) (0.159918 0.159918 0.006)
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.159918 -0.159918 -0.006) (0.159918 0.159918 0.006)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (1.72408e-16 8.50026e-17 5.14516e-16) OK.
+    Max cell openness = 3.46533e-16 OK.
+    Max aspect ratio = 3.9736 OK.
+    Minimum face area = 8.29284e-07. Maximum face area = 1.10538e-05.  Face area magnitudes OK.
+    Min volume = 9.99209e-10. Max volume = 3.38654e-08.  Total volume = 0.000396121.  Cell volumes OK.
+    Mesh non-orthogonality Max: 35.6713 average: 9.52379
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.11669 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 24 (1.2s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv, "start_xvfb") else None
+os.makedirs("VTK", exist_ok=True)
+subprocess.run(["foamToVTK", "-constant", "-latestTime"], capture_output=True, text=True)
+import glob; print(glob.glob("VTK/**/*.vt*", recursive=True)[:10])
+# -- output
+['VTK/t22.vtm.series', 'VTK/t22_0.vtm', 'VTK/t22_0/boundary.vtm', 'VTK/t22_0/internal.vtu', 'VTK/t22_0/boundary/vanes.vtp', 'VTK/t22_0/boundary/inlet.vtp', 'VTK/t22_0/boundary/frictionTop.vtp', 'VTK/t22_0/boundary/outlet.vtp', 'VTK/t22_0/boundary/frictionBottom.vtp']
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+
+# -- cell 25 (0.4s, exit 0)
+pv.global_theme.allow_empty_mesh = True
+pl = pv.Plotter(off_screen=True, window_size=(1100, 900))
+cols = {"frictionTop": "lightsteelblue", "frictionBottom": "lightgray", "vanes": "orange", "inlet": "green", "outlet": "red"}
+for n, c in cols.items():
+    m = pv.read(f"VTK/t22_0/boundary/{n}.vtp")
+    if n == "frictionTop":
+        m = m.clip(normal=(0, 1, 0), origin=(0, 0, 0))
+    pl.add_mesh(m, color=c, show_edges=(n != "frictionTop"), edge_color="k", line_width=0.3, label=n)
+pl.add_legend(); pl.camera_position = "iso"; pl.camera.azimuth = 20
+pl.screenshot("view_iso.png"); print("ok")
+# -- output
+ok
+
+[0m[33m2026-09-13 13:40:31.562 (   6.240s) [    7C50A9DAA780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 13:40:31.563 (   6.241s) [    7C50A9DAA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:40:31.575 (   6.254s) [    7C50A9DAA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 26 (0.2s, exit 0)
+import matplotlib; matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+img = plt.imread("view_iso.png"); print(img.shape, img.mean())
+plt.figure(figsize=(9, 7)); plt.imshow(img); plt.axis("off"); plt.show()
+# -- output
+(900, 1100, 3) 0.90708417
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 27 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("view_iso.png"))
+# -- output
+
+
+# -- cell 28 (0.1s, exit 0)
+P = {n: pv.read(f"VTK/t22_0/boundary/{n}.vtp").points for n in cols}
+rad = lambda p: np.hypot(p[:, 0], p[:, 1])
+print("inlet  r  min/max  %.4f %.4f  (target 0.095)" % (rad(P["inlet"]).min(), rad(P["inlet"]).max()))
+print("outlet r  min/max  %.4f %.4f  (target 0.160)" % (rad(P["outlet"]).min(), rad(P["outlet"]).max()))
+print("frictionTop z %.4f..%.4f ; Bottom z %.4f..%.4f (gap target 0.012)" %
+      (P["frictionTop"][:,2].min(), P["frictionTop"][:,2].max(), P["frictionBottom"][:,2].min(), P["frictionBottom"][:,2].max()))
+# vane width: tangential gap between two adjacent passages at mid radius, from vane patch points
+v = P["vanes"]; sel = v[(np.abs(v[:,2]) < 1e-4) & (np.abs(rad(v)-0.1275) < 1e-3)]
+th = np.sort(np.unique(np.round(np.arctan2(sel[:,1], sel[:,0]), 4)))
+print("distinct vane-face angles near r=127.5mm:", len(th), " chordal width samples (mm):",
+      np.round(np.diff(th)[np.diff(th) < 0.08]*0.1275*1000, 2)[:6])
+# -- output
+inlet  r  min/max  0.0950 0.0961  (target 0.095)
+outlet r  min/max  0.1587 0.1600  (target 0.160)
+frictionTop z 0.0046..0.0060 ; Bottom z -0.0060..-0.0046 (gap target 0.012)
+distinct vane-face angles near r=127.5mm: 72  chordal width samples (mm): [8.02 7.98 8.01 8.01 8.01 8.01]
+

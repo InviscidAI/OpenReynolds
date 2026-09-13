@@ -1,0 +1,693 @@
+{
+  "run_id": "20260913-131904-8788",
+  "case": "T19",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T19-20260913-131904-8788",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T19-20260913-131904-8788/t19",
+  "started_at": "2026-09-13T13:19:04",
+  "ended_at": "2026-09-13T13:26:25",
+  "seconds": 436.9,
+  "n_turns": 30,
+  "n_steps": 28,
+  "first_mesh_step": 15,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 1.4596,
+  "tokens": {
+    "input": 60,
+    "cache_read": 773542,
+    "cache_write": 49387,
+    "output": 30553
+  },
+  "stopped": "steps",
+  "expects": "done",
+  "passed": false,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import os, subprocess, numpy as np\nfrom build123d import *\n\nR_S, R_B, L = 20.0, 20.05, 60.0      # mm: shaft radius, bore radius, sealed length\nKW_W, KW_D = 12.0, 5.0               # mm: keyway width, depth\n\nbore  = Pos(0,0,0) * Cylinder(R_B, L, align=(Align.CENTER, Align.CENTER, Align.MIN))\nshaft = Pos(0,0,0) * Cylinder(R_S, L, align=(Align.CENTER, Align.CENTER, Align.MIN))\nkey   = Pos(0, R_S - KW_D + 50.0, L/2) * Box(KW_W, 100.0, L)   # slot from y=R_S-KW_D outward\nfluid = bore - (shaft - key)\n\nprint(type(fluid), fluid.volume)\nprint(\"bbox\", fluid.bounding_box())\nprint(\"n faces\", len(fluid.faces()), \"n solids\", len(fluid.solids()))",
+      "exit_code": 0,
+      "seconds": 2.2089478220000274,
+      "output": "<class 'build123d.topology.composite.Part'> 3758.4483039004117\nbbox bbox: -20.05 <= x <= 20.05, -20.05 <= y <= 20.05, 0.0 <= z <= 60.0\nn faces 7 n solids 1",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\n# analytic cross-section area by quadrature: bore disk minus (shaft disk minus keyway pocket)\nx = np.linspace(-6.0, 6.0, 200001)\nA_key = np.trapz(np.sqrt(R_S**2 - x**2) - (R_S - KW_D), x)   # shaft material removed by slot\nA = np.pi*R_B**2 - (np.pi*R_S**2 - A_key)\nprint(\"analytic area mm^2\", A, \" volume mm^3\", A*L, \" b123d\", fluid.volume)\n\nfor i, f in enumerate(fluid.faces()):\n    g = f.geom_type\n    c = f.center()\n    print(i, g, \"area=%.4f\" % f.area, \"ctr=(%.3f,%.3f,%.3f)\" % (c.X,c.Y,c.Z),\n          \"R=%.4f\" % (f.radius if g==GeomType.CYLINDER else -1),\n          \"n=\", tuple(round(v,3) for v in f.normal_at(c)) if g==GeomType.PLANE else \"\")",
+      "exit_code": 1,
+      "seconds": 0.25109700700022586,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[2]\u001b[39m\u001b[32m, line 4\u001b[39m\n\u001b[32m      1\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m numpy \u001b[38;5;28;01mas\u001b[39;00m np\n\u001b[32m      2\u001b[39m \u001b[38;5;66;03m# analytic cross-section area by quadrature: bore disk minus (shaft disk minus keyway pocket)\u001b[39;00m\n\u001b[32m      3\u001b[39m x = np.linspace(-\u001b[32m6.0\u001b[39m, \u001b[32m6.0\u001b[39m, \u001b[32m200001\u001b[39m)\n\u001b[32m----> \u001b[39m\u001b[32m4\u001b[39m A_key = np.trapz(np.sqrt(R_S**\u001b[32m2\u001b[39m - x**\u001b[32m2\u001b[39m) - (R_S - KW_D), x)   \u001b[38;5;66;03m# shaft material removed by slot\u001b[39;00m\n\u001b[32m      5\u001b[39m A = np.pi*R_B**\u001b[32m2\u001b[39m - (np.pi*R_S**\u001b[32m2\u001b[39m - A_key)\n\u001b[32m      6\u001b[39m print(\u001b[33m\"analytic area mm^2\"\u001b[39m, A, \u001b[33m\" volume mm^3\"\u001b[39m, A*L, \u001b[33m\" b123d\"\u001b[39m, fluid.volume)\n\u001b[32m      7\u001b[39m \n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/numpy/__init__.py:769\u001b[39m, in \u001b[36m__getattr__\u001b[39m\u001b[34m(attr)\u001b[39m\n\u001b[32m    762\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m attr \u001b[38;5;129;01min\u001b[39;00m __expired_attributes__:\n\u001b[32m    763\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mAttributeError\u001b[39;00m(\n\u001b[32m    764\u001b[39m         \u001b[33mf\u001b[39m\u001b[33m\"\u001b[39m\u001b[33m`np.\u001b[39m\u001b[38;5;132;01m{\u001b[39;00mattr\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m` was removed in the NumPy 2.0 release. \u001b[39m\u001b[33m\"\u001b[39m\n\u001b[32m    765\u001b[39m         \u001b[33mf\u001b[39m\u001b[33m\"\u001b[39m\u001b[38;5;132;01m{\u001b[39;00m__expired_attributes__[attr]\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m\"\u001b[39m,\n\u001b[32m    766\u001b[39m         name=\u001b[38;5;28;01mNone\u001b[39;00m\n\u001b[32m    767\u001b[39m     )\n\u001b[32m--> \u001b[39m\u001b[32m769\u001b[39m \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mAttributeError\u001b[39;00m(\u001b[33mf\u001b[39m\u001b[33m\"\u001b[39m\u001b[33mmodule \u001b[39m\u001b[38;5;132;01m{\u001b[39;00m\u001b[34m__name__\u001b[39m\u001b[38;5;132;01m!r}\u001b[39;00m\u001b[33m has no attribute \u001b[39m\u001b[38;5;132;01m{\u001b[39;00mattr\u001b[38;5;132;01m!r}\u001b[39;00m\u001b[33m\"\u001b[39m)\n\n\u001b[31mAttributeError\u001b[39m: module 'numpy' has no attribute 'trapz'",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\nx = np.linspace(-6.0, 6.0, 200001)\nA_key = np.trapezoid(np.sqrt(R_S**2 - x**2) - (R_S - KW_D), x)\nA = np.pi*R_B**2 - (np.pi*R_S**2 - A_key)\nprint(\"analytic area mm^2 %.5f volume %.4f  b123d %.4f\" % (A, A*L, fluid.volume))\nfor i, f in enumerate(fluid.faces()):\n    g = f.geom_type; c = f.center()\n    print(i, g, \"area=%.4f\" % f.area, \"ctr=(%.3f,%.3f,%.3f)\" % (c.X,c.Y,c.Z),\n          \"R=%.4f\" % (f.radius if g==GeomType.CYLINDER else -1),\n          \"n=\", tuple(round(v,3) for v in f.normal_at(c)) if g==GeomType.PLANE else \"\")",
+      "exit_code": 1,
+      "seconds": 0.050640770999962115,
+      "output": "analytic area mm^2 62.64081 volume 3758.4483  b123d 3758.4483\n0 GeomType.CYLINDER area=7558.6719 ctr=(-20.050,0.000,30.000) R=20.0500 n= \n1 GeomType.PLANE area=62.6408 ctr=(0.000,15.613,60.000) R=-1.0000 n= (0.0, 0.0, 1.0)\n2 GeomType.PLANE area=62.6408 ctr=(0.000,15.613,0.000) R=-1.0000 n= (-0.0, -0.0, -1.0)\n3 GeomType.PLANE area=244.7270 ctr=(6.000,17.039,30.000) R=-1.0000 n= (1.0, 0.0, -0.0)\n4 GeomType.PLANE area=720.0000 ctr=(0.000,15.000,30.000) R=-1.0000 n= (0.0, -1.0, -0.0)\n5 GeomType.PLANE area=244.7270 ctr=(-6.000,17.039,30.000) R=-1.0000 n= (-1.0, -0.0, 0.0)\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 9\u001b[39m\n\u001b[32m      5\u001b[39m print(\u001b[33m\"analytic area mm^2 %.5f volume %.4f  b123d %.4f\"\u001b[39m % (A, A*L, fluid.volume))\n\u001b[32m      6\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m i, f \u001b[38;5;28;01min\u001b[39;00m enumerate(fluid.faces()):\n\u001b[32m      7\u001b[39m     g = f.geom_type; c = f.center()\n\u001b[32m      8\u001b[39m     print(i, g, \"area=%.4f\" % f.area, \"ctr=(%.3f,%.3f,%.3f)\" % (c.X,c.Y,c.Z),\n\u001b[32m----> \u001b[39m\u001b[32m9\u001b[39m           \u001b[33m\"R=%.4f\"\u001b[39m % (f.radius \u001b[38;5;28;01mif\u001b[39;00m g==GeomType.CYLINDER \u001b[38;5;28;01melse\u001b[39;00m -\u001b[32m1\u001b[39m),\n\u001b[32m     10\u001b[39m           \u001b[33m\"n=\"\u001b[39m, tuple(round(v,\u001b[32m3\u001b[39m) \u001b[38;5;28;01mfor\u001b[39;00m v \u001b[38;5;28;01min\u001b[39;00m f.normal_at(c)) \u001b[38;5;28;01mif\u001b[39;00m g==GeomType.PLANE \u001b[38;5;28;01melse\u001b[39;00m \u001b[33m\"\"\u001b[39m)\n\n\u001b[31mTypeError\u001b[39m: must be real number, not NoneType",
+      "image": ""
+    },
+    {
+      "cmd": "f6 = fluid.faces()[6]\nimport math\nprint(f6.geom_type, f6.area, f6.center())\nth = math.degrees(math.asin(6.0/R_S))\nprint(\"expected shaft face area\", 2*math.pi*R_S*L*(360-2*th)/360, \" keyway half-angle deg\", th)\nprint(\"expected bore area\", 2*math.pi*R_B*L)\nprint(\"expected flank height\", math.sqrt(R_S**2-36)-(R_S-KW_D))",
+      "exit_code": 0,
+      "seconds": 0.05057954100038842,
+      "output": "GeomType.CYLINDER 6808.559998978549 Vector: (X=0, Y=-20, Z=30)\nexpected shaft face area 6808.559998978549  keyway half-angle deg 17.457603123722095\nexpected bore area 7558.671924537042\nexpected flank height 4.078784028338912",
+      "image": ""
+    },
+    {
+      "cmd": "import os, math\nfrom build123d import export_stl, Compound, Shell\nos.makedirs(\"constant/triSurface\", exist_ok=True)\n\ngroups = {k: [] for k in [\"shaft\",\"keywayFloor\",\"keywayFlanks\",\"bore\",\"inletHP\",\"outletLP\"]}\nfor f in fluid.faces():\n    c = f.center()\n    if f.geom_type == GeomType.CYLINDER:\n        r = math.hypot(*[getattr(f.center(), a) for a in \"XY\"])  # placeholder\n        # distinguish by area-consistent radius: sample a point on the surface\n        p = f.center()\n        rad = math.hypot(p.X, p.Y)\n        groups[\"bore\" if abs(rad-R_B) < abs(rad-R_S) else \"shaft\"].append(f)\n    else:\n        n = f.normal_at(c)\n        if abs(n.Z) > 0.9:\n            groups[\"inletHP\" if c.Z < L/2 else \"outletLP\"].append(f)   # z=0 is the 50 mm (oil) end\n        elif abs(n.Y) > 0.9:\n            groups[\"keywayFloor\"].append(f)\n        else:\n            groups[\"keywayFlanks\"].append(f)\nprint({k: (len(v), round(sum(f.area for f in v),3)) for k,v in groups.items()})",
+      "exit_code": 0,
+      "seconds": 0.05070565100004387,
+      "output": "{'shaft': (1, 6808.56), 'keywayFloor': (1, 720.0), 'keywayFlanks': (2, 489.454), 'bore': (1, 7558.672), 'inletHP': (1, 62.641), 'outletLP': (1, 62.641)}",
+      "image": ""
+    },
+    {
+      "cmd": "from build123d import Compound, export_stl\nimport numpy as np\nSC = 0.001   # mm -> m, applied once at export\nfor name, fl in groups.items():\n    comp = Compound(children=[f.scale(SC) for f in fl])\n    ok = export_stl(comp, f\"constant/triSurface/{name}.stl\", tolerance=1e-6, angular_tolerance=0.05)\n    print(name, ok, os.path.getsize(f\"constant/triSurface/{name}.stl\"))",
+      "exit_code": 0,
+      "seconds": 2.8105194360000496,
+      "output": "shaft True 89884\nkeywayFloor True 184\nkeywayFlanks True 284\nbore True 99584\ninletHP True 94884\noutletLP True 94884",
+      "image": ""
+    },
+    {
+      "cmd": "for name, fl in groups.items():\n    comp = Compound(children=[f.scale(SC) for f in fl])\n    export_stl(comp, f\"constant/triSurface/{name}.stl\", tolerance=1e-6, angular_tolerance=0.05, ascii_format=True)\n    txt = open(f\"constant/triSurface/{name}.stl\").read().replace(\"solid \\n\",\"solid %s\\n\"%name)\n    lines = txt.splitlines()\n    lines[0] = \"solid \" + name\n    lines[-1] = \"endsolid \" + name\n    open(f\"constant/triSurface/{name}.stl\",\"w\").write(\"\\n\".join(lines)+\"\\n\")\n    v = np.array([[float(t) for t in l.split()[1:]] for l in lines if l.strip().startswith(\"vertex\")])\n    print(name, len(v)//3, \"tris  bbox\", np.round(v.min(0),5), np.round(v.max(0),5))",
+      "exit_code": 0,
+      "seconds": 2.85861458699992,
+      "output": "shaft 1796 tris  bbox [-0.02 -0.02  0.  ] [0.02    0.01908 0.06   ]\nkeywayFloor 2 tris  bbox [-6. 15.  0.] [-5.988 15.     0.06 ]\nkeywayFlanks 4 tris  bbox [-0.006  0.015  0.   ] [0.006   0.01908 0.06   ]\nbore 1990 tris  bbox [-0.02005 -0.02005  0.     ] [0.02005 0.02005 0.06   ]\ninletHP 1896 tris  bbox [-0.02005 -0.02005  0.     ] [0.02005 0.02005 0.     ]\noutletLP 1896 tris  bbox [-0.02005 -0.02005  0.06   ] [0.02005 0.02005 0.06   ]",
+      "image": ""
+    },
+    {
+      "cmd": "print(\"fluid volume now:\", fluid.volume)\nf = fluid.faces()[4]\nprint(f.area, f.center())\ntry:\n    vt, tr = f.tessellate(1e-3)\n    print(len(vt), len(tr), vt[0])\nexcept Exception as e:\n    print(\"tess err\", e)",
+      "exit_code": 0,
+      "seconds": 0.05065596100030234,
+      "output": "fluid volume now: 3758.4483039004117\n720.0 Vector: (X=0, Y=15, Z=30)\n4 2 Vector: (X=-6, Y=15, Z=0)",
+      "image": ""
+    },
+    {
+      "cmd": "SC = 0.001  # mm -> m, applied explicitly here\ndef write_stl(path, name, faces, tol=1e-3):\n    with open(path, \"w\") as fh:\n        fh.write(\"solid %s\\n\" % name)\n        n = 0\n        for f in faces:\n            vt, tr = f.tessellate(tol)\n            P = np.array([[v.X, v.Y, v.Z] for v in vt]) * SC\n            for a, b, c in tr:\n                p, q, r = P[a], P[b], P[c]\n                nv = np.cross(q-p, r-p); L2 = np.linalg.norm(nv)\n                if L2 == 0: continue\n                nv /= L2\n                fh.write(\"facet normal %g %g %g\\n outer loop\\n\" % tuple(nv))\n                for v in (p, q, r): fh.write(\"  vertex %.9g %.9g %.9g\\n\" % tuple(v))\n                fh.write(\" endloop\\nendfacet\\n\"); n += 1\n        fh.write(\"endsolid %s\\n\" % name)\n    return n\n\nfor name, fl in groups.items():\n    n = write_stl(f\"constant/triSurface/{name}.stl\", name, fl)\n    v = np.array([[float(t) for t in l.split()[1:]] for l in open(f\"constant/triSurface/{name}.stl\") if l.strip().startswith(\"vertex\")])\n    print(name, n, \"tris  bbox\", np.round(v.min(0),6), np.round(v.max(0),6))",
+      "exit_code": 0,
+      "seconds": 0.10082378300012351,
+      "output": "shaft 228 tris  bbox [-0.019995 -0.02      0.      ] [0.019995 0.019079 0.06    ]\nkeywayFloor 2 tris  bbox [-0.006  0.015  0.   ] [0.006 0.015 0.06 ]\nkeywayFlanks 4 tris  bbox [-0.006  0.015  0.   ] [0.006    0.019079 0.06    ]\nbore 252 tris  bbox [-0.02005  -0.020044  0.      ] [0.02005  0.020044 0.06    ]\ninletHP 243 tris  bbox [-0.02005  -0.020044  0.      ] [0.02005  0.020044 0.      ]\noutletLP 243 tris  bbox [-0.02005  -0.020044  0.06    ] [0.02005  0.020044 0.06    ]",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.BRep import BRep_Tool\nfrom OCP.TopLoc import TopLoc_Location\nfrom OCP.TopAbs import TopAbs_REVERSED\nfrom OCP.BRepMesh import BRepMesh_IncrementalMesh\n\nBRepMesh_IncrementalMesh(fluid.wrapped, 1e-3, False, 0.1, True)  # deflection 1e-3 mm on whole solid\n\ndef face_tris(face):\n    loc = TopLoc_Location()\n    poly = BRep_Tool.Triangulation_s(face.wrapped, loc)\n    trsf = loc.Transformation()\n    P = np.array([[(p := poly.Node(i).Transformed(trsf)).X(), p.Y(), p.Z()] for i in range(1, poly.NbNodes()+1)])\n    T = []\n    rev = face.wrapped.Orientation() == TopAbs_REVERSED\n    for i in range(1, poly.NbTriangles()+1):\n        a, b, c = poly.Triangle(i).Get()\n        T.append((a-1, c-1, b-1) if rev else (a-1, b-1, c-1))\n    return P*SC, np.array(T)\n\ntot = 0\nfor name, fl in groups.items():\n    with open(f\"constant/triSurface/{name}.stl\",\"w\") as fh:\n        fh.write(\"solid %s\\n\"%name); n=0\n        for f in fl:\n            P, T = face_tris(f)\n            for a,b,c in T:\n                p,q,r = P[a],P[b],P[c]\n                nv = np.cross(q-p, r-p); s = np.linalg.norm(nv)\n                if s == 0: continue\n                nv/=s\n                fh.write(\"facet normal %g %g %g\\n outer loop\\n\"%tuple(nv))\n                for v in (p,q,r): fh.write(\"  vertex %.9g %.9g %.9g\\n\"%tuple(v))\n                fh.write(\" endloop\\nendfacet\\n\"); n+=1\n        fh.write(\"endsolid %s\\n\"%name)\n    tot += n; print(name, n)\nprint(\"total tris\", tot)",
+      "exit_code": 0,
+      "seconds": 0.2010271350000039,
+      "output": "shaft 804\nkeywayFloor 2\nkeywayFlanks 4\nbore 890\ninletHP 850\noutletLP 850\ntotal tris 3400",
+      "image": ""
+    },
+    {
+      "cmd": "import glob, collections\nV=[]; F=[]\nfor p in sorted(glob.glob(\"constant/triSurface/*.stl\")):\n    v=np.array([[float(t) for t in l.split()[1:]] for l in open(p) if l.strip().startswith(\"vertex\")])\n    F.append(v.reshape(-1,3,3))\nVt=np.vstack([f.reshape(-1,3) for f in F])\nkey=np.round(Vt/1e-9).astype(np.int64)\nuniq,inv=np.unique(key,axis=0,return_inverse=True)\ntris=inv.reshape(-1,3)\nec=collections.Counter()\nfor t in tris:\n    for a,b in ((0,1),(1,2),(2,0)): ec[tuple(sorted((t[a],t[b])))]+=1\nprint(\"tris\",len(tris),\"verts\",len(uniq),\"free edges\",sum(1 for v in ec.values() if v!=2))\nprint(\"Euler V-E+F =\", len(uniq)-len(ec)+len(tris))",
+      "exit_code": 0,
+      "seconds": 0.05068250100021032,
+      "output": "tris 3400 verts 1700 free edges 0\nEuler V-E+F = 0",
+      "image": ""
+    },
+    {
+      "cmd": "import gmsh, math\ngmsh.initialize()\ngmsh.option.setNumber(\"General.Terminal\", 0)\ngmsh.model.add(\"seal\")\nocc = gmsh.model.occ\n\nNR, NC, NL = 4, 28, 15          # radial cells across clearance, circ. cells per ring block, axial layers\nXK, YF = KW_W/2, R_S - KW_D     # keyway half width, floor y  (mm)\nYS = math.sqrt(R_S**2 - XK**2)\nphi1 = math.atan2(YS, XK); phi2 = math.pi - phi1          # keyway opening angles\nspan = 2*math.pi - (phi2 - phi1)\nang = [phi1 - i*span/4 for i in range(5)]                  # 4 ring blocks, station 4 == phi2-2pi\n\nctr = occ.addPoint(0, 0, 0)\nps = [occ.addPoint(R_S*math.cos(a), R_S*math.sin(a), 0) for a in ang]\npb = [occ.addPoint(R_B*math.cos(a), R_B*math.sin(a), 0) for a in ang]\nSarc = [occ.addCircleArc(ps[i], ctr, ps[i+1]) for i in range(4)]\nBarc = [occ.addCircleArc(pb[i], ctr, pb[i+1]) for i in range(4)]\nrad  = [occ.addLine(ps[i], pb[i]) for i in range(5)]\nring = []\nfor i in range(4):\n    lp = occ.addCurveLoop([Sarc[i], rad[i+1], -Barc[i], -rad[i]])\n    ring.append(occ.addPlaneSurface([lp]))\n# pocket\npf0, pf1 = occ.addPoint(-XK, YF, 0), occ.addPoint(XK, YF, 0)\nfloor = occ.addLine(pf0, pf1)\nflankR = occ.addLine(pf1, ps[0])           # ps[0] = (XK, YS)\nflankL = occ.addLine(ps[4], pf0)           # ps[4] = (-XK, YS)\ntopArc = occ.addCircleArc(pb[4], ctr, pb[0])\npocket = occ.addPlaneSurface([occ.addCurveLoop([floor, flankR, rad[0], topArc, -rad[4], flankL])])\nocc.synchronize()\nprint(\"ring\", ring, \"pocket\", pocket)\nprint(\"station angles deg\", [round(math.degrees(a),3) for a in ang])\nprint(\"2D areas: ring\", sum(gmsh.model.occ.getMass(2,s) for s in ring), \"pocket\", gmsh.model.occ.getMass(2,pocket),\n      \"total\", sum(gmsh.model.occ.getMass(2,s) for s in ring)+gmsh.model.occ.getMass(2,pocket), \"vs\", A)",
+      "exit_code": 0,
+      "seconds": 0.05084065999972154,
+      "output": "ring [1, 2, 3, 4] pocket 5\nstation angles deg [72.542, -8.729, -90.0, -171.271, -252.542]\n2D areas: ring 5.680892249147683 pocket 56.95991281585833 total 62.64080506500601 vs 62.640805064817414",
+      "image": ""
+    },
+    {
+      "cmd": "import gmsh, math, numpy as np\nx = np.linspace(-XK if False else -KW_W/2, KW_W/2, 200001)\nA = np.pi*R_B**2 - (np.pi*R_S**2 - np.trapezoid(np.sqrt(R_S**2 - x**2) - (R_S - KW_D), x))\n\nif gmsh.isInitialized(): gmsh.clear()\nelse: gmsh.initialize()\ngmsh.option.setNumber(\"General.Terminal\", 0)\ngmsh.model.add(\"seal\")\nocc = gmsh.model.occ\n\nNR, NC, NL = 4, 28, 15          # radial cells across clearance, circ. cells per ring block, axial layers\nXK, YF = KW_W/2, R_S - KW_D\nYS = math.sqrt(R_S**2 - XK**2)\nphi1 = math.atan2(YS, XK); phi2 = math.pi - phi1\nspan = 2*math.pi - (phi2 - phi1)\nang = [phi1 - i*span/4 for i in range(5)]\n\nctr = occ.addPoint(0, 0, 0)\nps = [occ.addPoint(R_S*math.cos(a), R_S*math.sin(a), 0) for a in ang]\npb = [occ.addPoint(R_B*math.cos(a), R_B*math.sin(a), 0) for a in ang]\nSarc = [occ.addCircleArc(ps[i], ctr, ps[i+1]) for i in range(4)]\nBarc = [occ.addCircleArc(pb[i], ctr, pb[i+1]) for i in range(4)]\nrad  = [occ.addLine(ps[i], pb[i]) for i in range(5)]\nring = [occ.addPlaneSurface([occ.addCurveLoop([Sarc[i], rad[i+1], -Barc[i], -rad[i]])]) for i in range(4)]\npf0, pf1 = occ.addPoint(-XK, YF, 0), occ.addPoint(XK, YF, 0)\nfloor  = occ.addLine(pf0, pf1)\nflankR = occ.addLine(pf1, ps[0])\nflankL = occ.addLine(ps[4], pf0)\ntopArc = occ.addCircleArc(pb[4], ctr, pb[0])\npocket = occ.addPlaneSurface([occ.addCurveLoop([floor, flankR, rad[0], topArc, -rad[4], flankL])])\nocc.synchronize()\nprint(\"station angles deg\", [round(math.degrees(a),3) for a in ang])\nprint(\"2D area total %.9f vs analytic %.9f\" % (sum(occ.getMass(2,s) for s in ring)+occ.getMass(2,pocket), A))",
+      "exit_code": 0,
+      "seconds": 0.05062664600018252,
+      "output": "station angles deg [72.542, -8.729, -90.0, -171.271, -252.542]\n2D area total 62.640805065 vs analytic 62.640805065",
+      "image": ""
+    },
+    {
+      "cmd": "base = ring + [pocket]\nfor i in range(4):\n    gmsh.model.mesh.setTransfiniteCurve(Sarc[i], NC+1)\n    gmsh.model.mesh.setTransfiniteCurve(Barc[i], NC+1)\n    gmsh.model.mesh.setTransfiniteSurface(ring[i])\nfor r in rad: gmsh.model.mesh.setTransfiniteCurve(r, NR+1)\nfor s in base: gmsh.model.mesh.setRecombine(2, s)\ngmsh.model.mesh.setSize([(0, p) for p in (pf0, pf1)], 1.0)\ngmsh.option.setNumber(\"Mesh.MeshSizeMin\", 0.0125)\ngmsh.option.setNumber(\"Mesh.MeshSizeMax\", 1.0)\ngmsh.option.setNumber(\"Mesh.MeshSizeExtendFromBoundary\", 1)\n\nout = occ.extrude([(2, s) for s in base], 0, 0, L, numElements=[NL], recombine=True)\nocc.synchronize()\nvols = [t for d, t in out if d == 3]\nprint(\"volumes\", vols, \"total vol %.6f vs %.6f\" % (sum(occ.getMass(3,v) for v in vols), A*L))\n\ncurve_of = {}\nfor nm, cs in [(\"shaft\", Sarc), (\"bore\", Barc+[topArc]), (\"keywayFloor\", [floor]), (\"keywayFlanks\", [flankR, flankL])]:\n    for c in cs: curve_of[c] = nm\nlat = {}\ntops = []\nfor d, t in gmsh.model.getEntities(2):\n    if t in base: continue\n    cur = [abs(c) for _, c in gmsh.model.getBoundary([(2, t)], combined=False, oriented=False)]\n    hit = {curve_of[c] for c in cur if c in curve_of}\n    internal = any(c in rad for c in cur)\n    if hit: lat.setdefault(hit.pop() if len(hit)==1 else \"AMBIG\", []).append(t)\n    elif internal: pass\n    else: tops.append(t)\nprint(\"lateral map\", {k: len(v) for k, v in lat.items()}, \"tops\", tops)",
+      "exit_code": 0,
+      "seconds": 0.05064886700029092,
+      "output": "volumes [1, 2, 3, 4, 5] total vol 3758.448304 vs 3758.448304\nlateral map {'shaft': 4, 'bore': 5, 'keywayFloor': 1, 'keywayFlanks': 2} tops [10, 14, 18, 22, 27]",
+      "image": ""
+    },
+    {
+      "cmd": "for nm, ts in lat.items():\n    gmsh.model.addPhysicalGroup(2, ts, name=nm)\ngmsh.model.addPhysicalGroup(2, base, name=\"inletHP\")     # z=0 : the 50 mm (oil-side) end\ngmsh.model.addPhysicalGroup(2, tops, name=\"outletLP\")    # z=60 mm : the 30 mm end\ngmsh.model.addPhysicalGroup(3, vols, name=\"oil\")\ngmsh.option.setNumber(\"Mesh.ScalingFactor\", 0.001)       # mm -> m at write\ngmsh.model.mesh.generate(3)\ngmsh.write(\"seal.msh\")\net, ec_, _ = gmsh.model.mesh.getElements(3)\nprint([(int(a), len(b)) for a, b in zip(et, ec_)])   # 5=hex, 6=prism, 4=tet\nprint(\"nodes\", len(gmsh.model.mesh.getNodes()[0]))",
+      "exit_code": 0,
+      "seconds": 0.1509038799999871,
+      "output": "[(5, 8010), (6, 120)]\nnodes 10705",
+      "image": ""
+    },
+    {
+      "cmd": "import os, subprocess, textwrap\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\ngmsh.write(\"seal.msh\")\nos.makedirs(\"system\", exist_ok=True)\nhdr = \"FoamFile{version 2.0; format ascii; class dictionary; object %s;}\\n\"\nopen(\"system/controlDict\",\"w\").write(hdr%\"controlDict\"+textwrap.dedent(\"\"\"\napplication icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\ndeltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; writePrecision 6;\ntimeFormat general; runTimeModifiable true;\"\"\"))\nopen(\"system/fvSchemes\",\"w\").write(hdr%\"fvSchemes\"+\"ddtSchemes{default Euler;}\\ngradSchemes{default Gauss linear;}\\ndivSchemes{default none;}\\nlaplacianSchemes{default Gauss linear corrected;}\\n\")\nopen(\"system/fvSolution\",\"w\").write(hdr%\"fvSolution\"+\"solvers{}\\n\")\nr = subprocess.run([\"gmshToFoam\",\"seal.msh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[-1500:], r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.3012819679997847,
+      "output": "0 ascii 0\n\nStarting to read physical names at line 5\nPhysical names:7\n    Surface 1\tshaft\n    Surface 2\tbore\n    Surface 3\tkeywayFloor\n    Surface 4\tkeywayFlanks\n    Surface 5\tinletHP\n    Surface 6\toutletLP\n    Volume 7\toil\n\nStarting to read points at line 15\nVertices to be read: 10704\nVertices read:10704\n\nStarting to read cells at line 10722\nCells to be read: 13144\n\nMapping region 5 to Foam patch 0\nMapping region 6 to Foam patch 1\nMapping region 1 to Foam patch 2\nMapping region 2 to Foam patch 3\nMapping region 3 to Foam patch 4\nMapping region 4 to Foam patch 5\nMapping region 7 to Foam cellZone 0\nCells:\n    total:8130\n    hex  :8010\n    prism:120\n    pyr  :0\n    tet  :0\n\nCellZones:\nZone\tSize\n    0\t8130\n\nPatch 0 gets name inletHP\nPatch 1 gets name outletLP\nPatch 2 gets name shaft\nPatch 3 gets name bore\nPatch 4 gets name keywayFloor\nPatch 5 gets name keywayFlanks\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 5014 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\nFinding faces of patch 4\nFinding faces of patch 5\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone oil and cellSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "print(open(\"constant/polyMesh/boundary\").read()[-2000:])",
+      "exit_code": 0,
+      "seconds": 0.0505939180002315,
+      "output": "/*--------------------------------*- C++ -*----------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n6\n(\n    inletHP\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          542;\n        startFace       21823;\n    }\n    outletLP\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          542;\n        startFace       22365;\n    }\n    shaft\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          1680;\n        startFace       22907;\n    }\n    bore\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          1890;\n        startFace       24587;\n    }\n    keywayFloor\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          180;\n        startFace       26477;\n    }\n    keywayFlanks\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          180;\n        startFace       26657;\n    }\n)\n\n// ************************************************************************* //",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(r.stdout[-2600:])",
+      "exit_code": 0,
+      "seconds": 0.25109021099979145,
+      "output": "st&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           10704\n    faces:            26837\n    internal faces:   21823\n    cells:            8130\n    faces per cell:   5.98524\n    boundary patches: 6\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     8010\n    prisms:        120\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    inletHP             542      669      ok (non-closed singly connected)  \n    outletLP            542      669      ok (non-closed singly connected)  \n    shaft               1680     1808     ok (non-closed singly connected)  \n    bore                1890     2016     ok (non-closed singly connected)  \n    keywayFloor         180      208      ok (non-closed singly connected)  \n    keywayFlanks        180      224      ok (non-closed singly connected)  \n    \".*\"                5014     5006     ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    oil                 8130         10704        3.75598e-06  (-0.02005 -0.02005 0) (0.02005 0.02005 0.06)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.02005 -0.02005 0) (0.02005 0.02005 0.06)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (3.26936e-17 -2.85665e-16 -1.45759e-18) OK.\n    Max cell openness = 3.20074e-15 OK.\n    Max aspect ratio = 614.7 OK.\n    Minimum face area = 5.45282e-09. Maximum face area = 4.84794e-06.  Face area magnitudes OK.\n    Min volume = 2.18113e-11. Max volume = 4.76439e-09.  Total volume = 3.75598e-06.  Cell volumes OK.\n    Mesh non-orthogonality Max: 23.2786 average: 3.68638\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.525343 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.start_xvfb() if hasattr(pv,\"start_xvfb\") else None\npv.global_theme.window_size=[1300,600]\nm = pv.read(\"seal.msh\")  # gmsh mesh (already in m)\np = pv.Plotter(off_screen=True, shape=(1,2))\np.subplot(0,0); p.add_mesh(m.slice(normal='z', origin=(0,0,0.03)), show_edges=True, color='steelblue')\np.camera_position='xy'; p.camera.zoom(1.3)\np.subplot(0,1)\nzoom = m.slice(normal='z', origin=(0,0,0.03)).clip_box([-0.008,0.008,0.014,0.0205,-1,1], invert=False)\np.add_mesh(zoom, show_edges=True, color='indianred'); p.camera_position='xy'\np.screenshot(\"view_section.png\"); print(\"ok\")",
+      "exit_code": 1,
+      "seconds": 0.6535551389997636,
+      "output": "/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mKeyError\u001b[39m                                  Traceback (most recent call last)\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/reader.py:129\u001b[39m, in \u001b[36mget_reader\u001b[39m\u001b[34m(filename, force_ext)\u001b[39m\n\u001b[32m    128\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m--> \u001b[39m\u001b[32m129\u001b[39m     Reader = \u001b[30;43mCLASS_READERS\u001b[39;49m\u001b[30;43m[\u001b[39;49m\u001b[30;43mext\u001b[39;49m\u001b[30;43m]\u001b[39;49m\n\u001b[32m    130\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mKeyError\u001b[39;00m:\n\n\u001b[31mKeyError\u001b[39m: '.msh'\n\nDuring handling of the above exception, another exception occurred:\n\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:451\u001b[39m, in \u001b[36m_read_dispatch\u001b[39m\u001b[34m(filename, force_ext, file_format, progress_bar, validate)\u001b[39m\n\u001b[32m    450\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m--> \u001b[39m\u001b[32m451\u001b[39m     reader = \u001b[30;43mpv\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mget_reader\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mfilename\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mforce_ext\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m    452\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m:\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/reader.py:143\u001b[39m, in \u001b[36mget_reader\u001b[39m\u001b[34m(filename, force_ext)\u001b[39m\n\u001b[32m    142\u001b[39m         msg = \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33m`pyvista.get_reader` does not support a file with the \u001b[39m\u001b[38;5;132;01m{\u001b[39;00mext\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m extension\u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m--> \u001b[39m\u001b[32m143\u001b[39m         \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01\n... 1910 characters cut ...\n\u001b[39m p.camera_position=\u001b[33m'xy'\u001b[39m; p.camera.zoom(\u001b[32m1.3\u001b[39m)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243\u001b[39m, in \u001b[36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f\u001b[39m\u001b[34m(*args, **kwargs)\u001b[39m\n\u001b[32m    239\u001b[39m             warn_external(msg, PyVistaDeprecationWarning)\n\u001b[32m    241\u001b[39m         warn_positional_args()\n\u001b[32m--> \u001b[39m\u001b[32m243\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mf\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43margs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43mkwargs\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:347\u001b[39m, in \u001b[36mread\u001b[39m\u001b[34m(filename, force_ext, file_format, progress_bar, cls, validate)\u001b[39m\n\u001b[32m    230\u001b[39m \u001b[38;5;129m@_deprecate_positional_args\u001b[39m(allowed=[\u001b[33m'\u001b[39m\u001b[33mfilename\u001b[39m\u001b[33m'\u001b[39m])\n\u001b[32m    231\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mread\u001b[39m(  \u001b[38;5;66;03m# noqa: PLR0917\u001b[39;00m\n\u001b[32m    232\u001b[39m     filename: PathStrSeq,\n\u001b[32m   (...)\u001b[39m\u001b[32m    238\u001b[39m     validate: \u001b[38;5;28mbool\u001b[39m | \u001b[38;5;28;01mNone\u001b[39;00m = \u001b[38;5;28;01mNone\u001b[39;00m,\n\u001b[32m    239\u001b[39m ) -> DataObject:\n\u001b[32m    240\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"Read any file type supported by ``vtk`` or ``meshio``.\u001b[39;00m\n\u001b[32m    241\u001b[39m \n\u001b[32m    242\u001b[39m \u001b[33;03m    Automatically determines the correct reader to use then wraps the\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m    345\u001b[39m \n\u001b[32m    346\u001b[39m \u001b[33;03m    \"\"\"\u001b[39;00m\n\u001b[32m--> \u001b[39m\u001b[32m347\u001b[39m     result = \u001b[30;43m_read_dispatch\u001b[39;49m\u001b[30;43m(\u001b[39;49m\n\u001b[32m    348\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mfilename\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    349\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mforce_ext\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mforce_ext\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    350\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mfile_format\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mfile_format\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    351\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mprogress_bar\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mprogress_bar\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    352\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mvalidate\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mvalidate\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    353\u001b[39m \u001b[30;43m    \u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m    354\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28mcls\u001b[39m \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m \u001b[38;5;129;01mand\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(result, \u001b[38;5;28mcls\u001b[39m):\n\u001b[32m    355\u001b[39m         msg = (\n\u001b[32m    356\u001b[39m             \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33mExpected an instance of \u001b[39m\u001b[38;5;132;01m{\u001b[39;00m\u001b[38;5;28mcls\u001b[39m.\u001b[34m__name__\u001b[39m\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m when reading \u001b[39m\u001b[38;5;132;01m{\u001b[39;00mfilename\u001b[38;5;132;01m!r}\u001b[39;00m\u001b[33m, \u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m    357\u001b[39m             \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33mbut got \u001b[39m\u001b[38;5;132;01m{\u001b[39;00m\u001b[38;5;28mtype\u001b[39m(result).\u001b[34m__name__\u001b[39m\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m.\u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m    358\u001b[39m         )\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:460\u001b[39m, in \u001b[36m_read_dispatch\u001b[39m\u001b[34m(filename, force_ext, file_format, progress_bar, validate)\u001b[39m\n\u001b[32m    458\u001b[39m     \u001b[38;5;28;01mfrom\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34;01mmeshio\u001b[39;00m\u001b[34;01m.\u001b[39;00m\u001b[34;01m_exceptions\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[38;5;28;01mimport\u001b[39;00m ReadError  \u001b[38;5;66;03m# noqa: PLC0415\u001b[39;00m\n\u001b[32m    459\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mImportError\u001b[39;00m:\n\u001b[32m--> \u001b[39m\u001b[32m460\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mOSError\u001b[39;00m(msg)\n\u001b[32m    461\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m    462\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m read_meshio(filename)\n\n\u001b[31mOSError\u001b[39m: This file was not able to be automatically read by pyvista.\n  '/home/qiuzi/.openreynolds-buildup/work/T19-20260913-131904-8788/t19/seal.msh'",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\nopen(\"case.foam\",\"w\").close()\nrd = pv.OpenFOAMReader(\"case.foam\"); rd.enable_all_patch_arrays()\nm = rd.read()[\"internalMesh\"]\nsl = m.slice(normal='z', origin=(0,0,0.03))\np = pv.Plotter(off_screen=True, shape=(1,2), window_size=[1400,650])\np.subplot(0,0); p.add_mesh(sl, show_edges=True, color='steelblue', line_width=0.3); p.view_xy(); p.camera.zoom(1.4)\np.subplot(0,1)\np.add_mesh(sl.clip_box([-0.008,0.008,0.0145,0.0205,-1,1], invert=False), show_edges=True, color='indianred'); p.view_xy(); p.camera.zoom(1.4)\np.screenshot(\"view_section.png\"); print(m.n_cells)",
+      "exit_code": 0,
+      "seconds": 0.2510940219999611,
+      "output": "8130\n\n\u001b[0m\u001b[33m2026-09-13 13:24:54.994 (   6.828s) [    75BB6B071780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 13:24:54.994 (   6.829s) [    75BB6B071780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 13:24:55.007 (   6.841s) [    75BB6B071780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": ""
+    },
+    {
+      "cmd": "from IPython.display import Image, display\nprint(os.path.getsize(\"view_section.png\"))\ndisplay(Image(\"view_section.png\"))",
+      "exit_code": 0,
+      "seconds": 0.11439339799972004,
+      "output": "121459",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "p = pv.Plotter(off_screen=True, window_size=[1200,500])\np.add_mesh(sl.clip_box([-0.002,0.002,0.0199,0.02010,-1,1], invert=False), show_edges=True, color='seagreen')\np.view_xy(); p.camera.zoom(1.0); p.screenshot(\"view_gap.png\")\ndisplay(Image(\"view_gap.png\"))",
+      "exit_code": 0,
+      "seconds": 0.12634930900003383,
+      "output": "\u001b[0m\u001b[33m2026-09-13 13:25:07.797 (  19.632s) [    75BB6B071780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 13:25:07.797 (  19.632s) [    75BB6B071780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import matplotlib; matplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\nsub = sl.clip_box([-0.0015,0.0015,0.0199,0.02010,-1,1], invert=False)\nfig, ax = plt.subplots(figsize=(11,4))\nP = sub.points; \nfor c in range(sub.n_cells):\n    ids = sub.get_cell(c).point_ids\n    poly = P[list(ids)+[ids[0]]]\n    ax.plot(poly[:,0]*1e3, poly[:,1]*1e3, 'k-', lw=0.6)\nax.axhline(20.0, color='b', lw=1); ax.axhline(20.05, color='r', lw=1)\nax.set_xlabel(\"x [mm]\"); ax.set_ylabel(\"y [mm]\"); ax.set_title(\"clearance at top of bore: shaft r=20 (blue), bore r=20.05 (red)\")\nfig.tight_layout(); fig.savefig(\"view_gap.png\", dpi=110); print(sub.n_cells)",
+      "exit_code": 0,
+      "seconds": 0.20093309200001386,
+      "output": "13\n[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use(\"Agg\")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]",
+      "image": ""
+    },
+    {
+      "cmd": "import matplotlib.pyplot as plt\nsub = sl.clip_box([-0.0015,0.0015,0.0199,0.02010,-1,1], invert=False)\nfig, ax = plt.subplots(figsize=(11,4))\nP = sub.points\nfor c in range(sub.n_cells):\n    ids = list(sub.get_cell(c).point_ids)\n    poly = P[ids+[ids[0]]]\n    ax.plot(poly[:,0]*1e3, poly[:,1]*1e3, 'k-', lw=0.6)\nax.axhline(20.0, color='b', lw=1); ax.axhline(20.05, color='r', lw=1)\nax.set_xlabel(\"x [mm]\"); ax.set_ylabel(\"y [mm]\"); ax.set_title(\"clearance: shaft r=20 (blue), bore r=20.05 (red)\")\nfig.tight_layout(); fig",
+      "exit_code": 0,
+      "seconds": 0.23565878899989912,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "sub = sl.clip_box([-0.0015,0.0015,-0.02010,-0.01999,-1,1], invert=False)\nfig, ax = plt.subplots(figsize=(11,4))\nP = sub.points\nfor c in range(sub.n_cells):\n    ids = list(sub.get_cell(c).point_ids); poly = P[ids+[ids[0]]]\n    ax.plot(poly[:,0]*1e3, poly[:,1]*1e3, 'k-', lw=0.6)\nax.axhline(-20.0, color='b', lw=1); ax.axhline(-20.05, color='r', lw=1)\nax.set_title(\"radial clearance, bottom: %d cells in window\" % sub.n_cells); ax.set_xlabel(\"x [mm]\"); ax.set_ylabel(\"y [mm]\")\nfig.tight_layout(); fig",
+      "exit_code": 0,
+      "seconds": 0.289773036999577,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "NR, NC, NL = 6, 48, 30          # refined: radial cells across clearance, circ. per ring block, axial layers\ngmsh.clear(); gmsh.model.add(\"seal2\"); occ = gmsh.model.occ\nctr = occ.addPoint(0,0,0)\nps = [occ.addPoint(R_S*math.cos(a), R_S*math.sin(a), 0) for a in ang]\npb = [occ.addPoint(R_B*math.cos(a), R_B*math.sin(a), 0) for a in ang]\nSarc = [occ.addCircleArc(ps[i], ctr, ps[i+1]) for i in range(4)]\nBarc = [occ.addCircleArc(pb[i], ctr, pb[i+1]) for i in range(4)]\nrad  = [occ.addLine(ps[i], pb[i]) for i in range(5)]\nring = [occ.addPlaneSurface([occ.addCurveLoop([Sarc[i], rad[i+1], -Barc[i], -rad[i]])]) for i in range(4)]\npf0, pf1 = occ.addPoint(-XK, YF, 0), occ.addPoint(XK, YF, 0)\nfloor  = occ.addLine(pf0, pf1); flankR = occ.addLine(pf1, ps[0]); flankL = occ.addLine(ps[4], pf0)\ntopArc = occ.addCircleArc(pb[4], ctr, pb[0])\npocket = occ.addPlaneSurface([occ.addCurveLoop([floor, flankR, rad[0], topArc, -rad[4], flankL])])\nocc.synchronize()\nbase = ring + [pocket]\nfor i in range(4):\n    gmsh.model.mesh.setTransfiniteCurve(Sarc[i], NC+1); gmsh.model.mesh.setTransfiniteCurve(Barc[i], NC+1)\n    gmsh.model.mesh.setTransfiniteSurface(ring[i])\nfor r_ in rad: gmsh.model.mesh.setTransfiniteCurve(r_, NR+1)\nfor s in base: gmsh.model.mesh.setRecombine(2, s)\ngmsh.model.mesh.setSize([(0,p) for p in (pf0,pf1)], 0.6)\ngmsh.option.setNumber(\"Mesh.MeshSizeMin\", 0.008); gmsh.option.setNumber(\"Mesh.MeshSizeMax\", 0.6)\nout = occ.extrude([(2,s) for s in base], 0, 0, L, numElements=[NL], recombine=True)\nocc.synchronize()\nvols = [t for d,t in out if d==3]\nprint(\"volume %.6f vs %.6f mm3\" % (sum(occ.getMass(3,v) for v in vols), A*L))",
+      "exit_code": 0,
+      "seconds": 0.05060963599999013,
+      "output": "volume 3758.448304 vs 3758.448304 mm3",
+      "image": ""
+    },
+    {
+      "cmd": "curve_of = {}\nfor nm, cs in [(\"shaft\", Sarc), (\"bore\", Barc+[topArc]), (\"keywayFloor\", [floor]), (\"keywayFlanks\", [flankR, flankL])]:\n    for c in cs: curve_of[c] = nm\nlat = {}; tops = []\nfor d, t in gmsh.model.getEntities(2):\n    if t in base: continue\n    cur = [abs(c) for _, c in gmsh.model.getBoundary([(2,t)], combined=False, oriented=False)]\n    hit = {curve_of[c] for c in cur if c in curve_of}\n    if len(hit) == 1: lat.setdefault(hit.pop(), []).append(t)\n    elif hit: raise RuntimeError(\"ambiguous lateral %d\" % t)\n    elif not any(c in rad for c in cur): tops.append(t)\nfor nm, ts in lat.items(): gmsh.model.addPhysicalGroup(2, ts, name=nm)\ngmsh.model.addPhysicalGroup(2, base, name=\"inletHP\")    # z=0, the 50 mm (high-pressure oil) end\ngmsh.model.addPhysicalGroup(2, tops, name=\"outletLP\")   # z=60 mm, the 30 mm end\ngmsh.model.addPhysicalGroup(3, vols, name=\"oil\")\ngmsh.option.setNumber(\"Mesh.ScalingFactor\", 0.001)      # mm -> m at write\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\ngmsh.model.mesh.generate(3); gmsh.write(\"seal.msh\")\nprint({k: len(v) for k,v in lat.items()}, \"tops\", len(tops))\nprint([(int(a), len(b)) for a,b in zip(*gmsh.model.mesh.getElements(3)[:2])])",
+      "exit_code": 0,
+      "seconds": 0.3513944010001069,
+      "output": "{'shaft': 4, 'bore': 5, 'keywayFloor': 1, 'keywayFlanks': 2} tops 5\n[(5, 40890), (6, 360)]",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"gmshToFoam\",\"seal.msh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[-400:])\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(r.stdout[r.stdout.find(\"Mesh stats\"):][:900])\nprint(r.stdout[r.stdout.find(\"Checking geometry\"):][:1400])",
+      "exit_code": 0,
+      "seconds": 1.003117138000107,
+      "output": "0 :word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 16010 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\nFinding faces of patch 4\nFinding faces of patch 5\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone oil and cellSet\nEnd\n\n\nMesh stats \n    points:           49290\n    faces:            131575\n    internal faces:   115565\n    cells:            41250\n    faces per cell:   5.99127\n    boundary patches: 6\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     40890\n    prisms:        360\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    inletHP             1375     1590     ok (non-closed singly connected)  \n    outletLP            1375     1590     ok (non-closed singly conne\nChecking geometry...\n    Overall domain bounding box (-0.0200498 -0.02005 0) (0.0200498 0.02005 0.06)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (8.22681e-19 -3.04743e-16 -1.06189e-17) OK.\n    Max cell openness = 2.35115e-15 OK.\n    Max aspect ratio = 459.885 OK.\n    Minimum face area = 2.31375e-09. Maximum face area = 1.5368e-06.  Face area magnitudes OK.\n    Min volume = 4.6275e-12. Max volume = 8.51859e-10.  Total volume = 3.75746e-06.  Cell volumes OK.\n    Mesh non-orthogonality Max: 33.6645 average: 3.323\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.58809 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "rd = pv.OpenFOAMReader(\"case.foam\"); rd.enable_all_patch_arrays(); d = rd.read()\nbl = d[\"boundary\"]\nprint(list(bl.keys()))\ndef rad(pts): return np.hypot(pts[:,0], pts[:,1])*1e3\nfor k in bl.keys():\n    P = bl[k].points\n    print(\"%-13s faces=%6d  r[mm] %.4f..%.4f  y %.4f..%.4f  x %.4f..%.4f  z %.4f..%.4f\"\n          % (k, bl[k].n_cells, rad(P).min(), rad(P).max(), P[:,1].min()*1e3, P[:,1].max()*1e3,\n             P[:,0].min()*1e3, P[:,0].max()*1e3, P[:,2].min()*1e3, P[:,2].max()*1e3))",
+      "exit_code": 0,
+      "seconds": 0.10070265200010908,
+      "output": "['inletHP', 'outletLP', 'shaft', 'bore', 'keywayFloor', 'keywayFlanks']\ninletHP       faces=  1375  r[mm] 15.0000..20.0500  y -20.0500..20.0500  x -20.0498..20.0498  z 0.0000..0.0000\noutletLP      faces=  1375  r[mm] 15.0000..20.0500  y -20.0500..20.0500  x -20.0498..20.0498  z 60.0000..60.0000\nshaft         faces=  5760  r[mm] 20.0000..20.0000  y -20.0000..19.0788  x -19.9998..19.9998  z 0.0000..60.0000\nbore          faces=  6420  r[mm] 20.0500..20.0500  y -20.0500..20.0500  x -20.0498..20.0498  z 0.0000..60.0000\nkeywayFloor   faces=   600  r[mm] 15.0000..16.1555  y 15.0000..15.0000  x -6.0000..6.0000  z 0.0000..60.0000\nkeywayFlanks  faces=   480  r[mm] 16.1555..20.0000  y 15.0000..19.0788  x -6.0000..6.0000  z 0.0000..60.0000",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 6379,
+      "fenced": false,
+      "text_chars": 1009,
+      "thinking_chars": 6351,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305636.3542604
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 403,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 38,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305640.4666727
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 719,
+      "fenced": true,
+      "text_chars": 166,
+      "thinking_chars": 503,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305652.646207
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 372,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305657.1404176
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 730,
+      "fenced": true,
+      "text_chars": 114,
+      "thinking_chars": 626,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305669.047433
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 1165,
+      "fenced": true,
+      "text_chars": 168,
+      "thinking_chars": 929,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305685.5080235
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 270,
+      "fenced": true,
+      "text_chars": 106,
+      "thinking_chars": 84,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305690.2510908
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 532,
+      "fenced": true,
+      "text_chars": 100,
+      "thinking_chars": 299,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305700.6279461
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 716,
+      "fenced": true,
+      "text_chars": 204,
+      "thinking_chars": 575,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305713.9971638
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 859,
+      "fenced": true,
+      "text_chars": 136,
+      "thinking_chars": 467,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305725.355473
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 1621,
+      "fenced": true,
+      "text_chars": 223,
+      "thinking_chars": 1035,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305745.8388064
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 469,
+      "fenced": true,
+      "text_chars": 112,
+      "thinking_chars": 180,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305752.5079265
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 3639,
+      "fenced": true,
+      "text_chars": 229,
+      "thinking_chars": 3469,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305801.0897737
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 2156,
+      "fenced": true,
+      "text_chars": 134,
+      "thinking_chars": 1554,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305827.215343
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 898,
+      "fenced": true,
+      "text_chars": 191,
+      "thinking_chars": 167,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305838.031631
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 619,
+      "fenced": true,
+      "text_chars": 113,
+      "thinking_chars": 502,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305846.7920918
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 668,
+      "fenced": true,
+      "text_chars": 70,
+      "thinking_chars": 307,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305856.0444715
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 543,
+      "fenced": true,
+      "text_chars": 86,
+      "thinking_chars": 750,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305866.5434918
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 302,
+      "fenced": true,
+      "text_chars": 75,
+      "thinking_chars": 396,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305872.5780437
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 1039,
+      "fenced": true,
+      "text_chars": 108,
+      "thinking_chars": 1035,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305888.128328
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 420,
+      "fenced": true,
+      "text_chars": 31,
+      "thinking_chars": 98,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305894.94033
+    },
+    {
+      "turn": 22,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 133,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 173,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305898.2619236
+    },
+    {
+      "turn": 23,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 575,
+      "fenced": true,
+      "text_chars": 156,
+      "thinking_chars": 589,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305907.7741644
+    },
+    {
+      "turn": 24,
+      "steps": 22,
+      "stop_reason": "tool_use",
+      "output_tokens": 697,
+      "fenced": true,
+      "text_chars": 165,
+      "thinking_chars": 223,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305918.3001866
+    },
+    {
+      "turn": 25,
+      "steps": 23,
+      "stop_reason": "tool_use",
+      "output_tokens": 356,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305922.6335917
+    },
+    {
+      "turn": 26,
+      "steps": 24,
+      "stop_reason": "tool_use",
+      "output_tokens": 681,
+      "fenced": true,
+      "text_chars": 128,
+      "thinking_chars": 278,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305932.3694534
+    },
+    {
+      "turn": 27,
+      "steps": 25,
+      "stop_reason": "tool_use",
+      "output_tokens": 2021,
+      "fenced": true,
+      "text_chars": 224,
+      "thinking_chars": 1321,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305957.9293983
+    },
+    {
+      "turn": 28,
+      "steps": 26,
+      "stop_reason": "tool_use",
+      "output_tokens": 683,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305965.9078927
+    },
+    {
+      "turn": 29,
+      "steps": 27,
+      "stop_reason": "tool_use",
+      "output_tokens": 191,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305969.342248
+    },
+    {
+      "turn": 30,
+      "steps": 28,
+      "stop_reason": "tool_use",
+      "output_tokens": 697,
+      "fenced": true,
+      "text_chars": 117,
+      "thinking_chars": 553,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305980.641816
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 3,400 triangles across 6 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "bore.stl",
+          "inletHP.stl",
+          "keywayFlanks.stl",
+          "keywayFloor.stl",
+          "outletLP.stl",
+          "shaft.stl"
+        ],
+        "triangles": 3400
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the triSurface directory",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 3400
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 89 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 89
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the radial clearance, measured between the meshed shaft and bore patches, at three angular positions away from the keyway",
+      "measured": null
+    },
+    {
+      "property": "the keyway depth and width, measured on the meshed keyway patches",
+      "measured": null
+    },
+    {
+      "property": "the ratio of keyway cross-sectional area to annular clearance area, from both measured",
+      "measured": null
+    },
+    {
+      "property": "how many cells span the 0.05 mm clearance, counted on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 30,
+    "steps": 28,
+    "seconds": 440.0,
+    "killed": false,
+    "first_mesh_step": 15,
+    "first_mesh_turn": 17
+  }
+}

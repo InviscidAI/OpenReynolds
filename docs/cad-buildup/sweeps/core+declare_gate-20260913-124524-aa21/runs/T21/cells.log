@@ -1,0 +1,383 @@
+# -- cell 1 (2.2s, exit 0)
+import os, subprocess
+from build123d import *
+
+# --- parameters (metres) ---
+LX, LY, LZ = 0.160, 0.100, 0.040      # internal box
+TW = 0.003                             # wall thickness
+SD, SH = 0.010, 0.025                  # standoff dia, height
+HD, HDP = 0.004, 0.012                 # blind hole dia, depth (from standoff top)
+INSET = 0.015                          # standoff centre inset from each corner
+VW, VH, VZ = 0.030, 0.020, 0.010       # vent width(y), height(z), bottom above floor
+
+air = Pos(LX/2, LY/2, LZ/2) * Box(LX, LY, LZ)
+duct = Pos(-TW/2, LY/2, VZ + VH/2) * Box(TW, VW, VH)
+fluid = air + duct
+
+for cx in (INSET, LX - INSET):
+    for cy in (INSET, LY - INSET):
+        post = Pos(cx, cy, SH/2) * Cylinder(SD/2, SH)
+        hole = Pos(cx, cy, SH - HDP/2) * Cylinder(HD/2, HDP)
+        fluid = fluid - (post - hole)
+
+print(fluid.volume, len(fluid.faces()), fluid.bounding_box())
+# -- output
+0.0006345492041555149 27 bbox: -0.003 <= x <= 0.16, 0.0 <= y <= 0.1, 0.0 <= z <= 0.04
+
+# -- cell 2 (0.1s, exit 0)
+from collections import defaultdict
+import numpy as np
+groups = defaultdict(list)
+for f in fluid.faces():
+    gt = f.geom_type
+    c = f.center()
+    if gt == GeomType.CYLINDER:
+        r = f.radius
+        groups["standoffs" if abs(r-SD/2) < 1e-6 else "holes"].append(f)
+    else:
+        n = f.normal_at(c)
+        if abs(n.Z) > 0.9:
+            z = c.Z
+            if abs(z) < 1e-9: groups["floor"].append(f)
+            elif abs(z-LZ) < 1e-9: groups["top"].append(f)
+            elif abs(z-SH) < 1e-9: groups["standoffs"].append(f)   # standoff top annulus
+            elif abs(z-(SH-HDP)) < 1e-9: groups["holes"].append(f) # blind hole bottom
+            else: groups["walls"].append(f)
+        elif abs(n.X) > 0.9 and abs(c.X + TW) < 1e-9:
+            groups["vent"].append(f)
+        else:
+            groups["walls"].append(f)
+for k,v in groups.items():
+    print(k, len(v), round(sum(f.area for f in v),8))
+# -- output
+walls 8 0.0205
+top 1 0.016
+floor 1 0.01568584
+standoffs 8 0.00340549
+vent 1 0.0006
+holes 8 0.00065345
+
+# -- cell 3 (0.3s, exit 0)
+os.makedirs("constant/triSurface", exist_ok=True)
+for name, fs in groups.items():
+    shp = Compound(children=[Face(f.wrapped) for f in fs]) if len(fs) > 1 else fs[0]
+    export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=1e-4, angular_tolerance=0.15, ascii_format=True)
+    # rename solid to patch name so snappy gets sensible region names
+    p = f"constant/triSurface/{name}.stl"
+    txt = open(p).read().replace("solid ", f"solid {name} ", 1)
+    open(p,"w").write(txt)
+print(subprocess.run("ls -la constant/triSurface", shell=True, capture_output=True, text=True).stdout)
+print(subprocess.run("head -2 constant/triSurface/holes.stl", shell=True, capture_output=True, text=True).stdout)
+# -- output
+total 1280
+drwxrwxr-x 2 qiuzi qiuzi   4096 Sep 13 13:32 .
+drwxrwxr-x 3 qiuzi qiuzi   4096 Sep 13 13:32 ..
+-rw-rw-r-- 1 qiuzi qiuzi 162448 Sep 13 13:32 floor.stl
+-rw-rw-r-- 1 qiuzi qiuzi 477686 Sep 13 13:32 holes.stl
+-rw-rw-r-- 1 qiuzi qiuzi 639610 Sep 13 13:32 standoffs.stl
+-rw-rw-r-- 1 qiuzi qiuzi    526 Sep 13 13:32 top.stl
+-rw-rw-r-- 1 qiuzi qiuzi    527 Sep 13 13:32 vent.stl
+-rw-rw-r-- 1 qiuzi qiuzi   5588 Sep 13 13:32 walls.stl
+
+solid holes 
+ facet normal  9.998023e-01  1.988219e-02  0.000000e+00
+
+# -- cell 4 (0.5s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+pl = pv.Plotter(off_screen=True, window_size=(1000,700))
+cols = dict(walls="lightgray", floor="tan", top="skyblue", vent="red", standoffs="green", holes="magenta")
+for k,c in cols.items():
+    pl.add_mesh(pv.read(f"constant/triSurface/{k}.stl"), color=c, opacity=0.45 if k in ("walls","top") else 1.0, show_edges=(k=="holes"))
+pl.camera_position=[(0.3,-0.25,0.2),(0.08,0.05,0.02),(0,0,1)]
+pl.screenshot("view.png"); print("ok")
+# -- output
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 13:32:20.806 (   0.253s) [    7AD5134D2780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 13:32:20.806 (   0.254s) [    7AD5134D2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:32:20.819 (   0.266s) [    7AD5134D2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 5 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("view.png"))
+# -- output
+
+
+# -- cell 6 (0.5s, exit 0)
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+def w(p,s): open(p,"w").write(s)
+HDR = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+w("system/controlDict", HDR%"controlDict" + "application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n")
+w("system/fvSchemes", HDR%"fvSchemes" + "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+w("system/fvSolution", HDR%"fvSolution" + "solvers{} \n")
+X0,X1,Y0,Y1,Z0,Z1 = -0.005,0.165,-0.005,0.105,-0.005,0.045
+nx,ny,nz = 34,22,10
+w("system/blockMeshDict", HDR%"blockMeshDict" + f"""
+scale 1;
+vertices
+(
+ ({X0} {Y0} {Z0}) ({X1} {Y0} {Z0}) ({X1} {Y1} {Z0}) ({X0} {Y1} {Z0})
+ ({X0} {Y0} {Z1}) ({X1} {Y0} {Z1}) ({X1} {Y1} {Z1}) ({X0} {Y1} {Z1})
+);
+blocks (hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1));
+edges ();
+boundary ( bg {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); }} );
+""")
+print(subprocess.run("blockMesh > log.blockMesh 2>&1; tail -4 log.blockMesh", shell=True, capture_output=True, text=True).stdout)
+# -- output
+patch 0 (start: 21132 size: 2616) name: bg
+
+End
+
+# -- cell 7 (0.3s, exit 0)
+names = ["walls","floor","top","vent","standoffs","holes"]
+w("system/surfaceFeatureExtractDict", HDR%"surfaceFeatureExtractDict" +
+  "".join(f"{n}.stl {{ extractionMethod extractFromSurface; extractFromSurfaceCoeffs {{ includedAngle 150; }} writeObj no; }}\n" for n in names))
+r=subprocess.run("surfaceFeatureExtract > log.sfe 2>&1; ls constant/triSurface/*.eMesh", shell=True, capture_output=True, text=True)
+print(r.stdout, r.stderr[-500:])
+# -- output
+constant/triSurface/floor.eMesh
+constant/triSurface/holes.eMesh
+constant/triSurface/standoffs.eMesh
+constant/triSurface/top.eMesh
+constant/triSurface/vent.eMesh
+constant/triSurface/walls.eMesh
+
+# -- cell 8 (13.2s, exit 0)
+LEV = {"walls":(1,1),"floor":(1,1),"top":(1,1),"vent":(1,1),"standoffs":(2,2),"holes":(3,3)}
+geom = "".join(f"{n}.stl {{ type triSurfaceMesh; name {n}; }}\n" for n in names)
+refs = "".join(f"{n} {{ level ({LEV[n][0]} {LEV[n][1]}); patchInfo {{ type wall; }} }}\n" for n in names)
+feats = "".join(f'{{ file "{n}.eMesh"; level {max(LEV[n])}; }}\n' for n in names)
+w("system/snappyHexMeshDict", HDR%"snappyHexMeshDict" + f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{ {geom} }}
+castellatedMeshControls
+{{
+    maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+    nCellsBetweenLevels 2; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+    features ( {feats} );
+    refinementSurfaces {{ {refs} }}
+    refinementRegions {{}}
+    locationInMesh (0.0813 0.0517 0.0351);
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5; nFeatureSnapIter 15;
+    implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers{{}} expansionRatio 1.2; finalLayerThickness 0.5; minThickness 0.1;
+    nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;
+    maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0;
+    nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+    minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;
+    minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6; debug 0;
+""")
+r=subprocess.run("snappyHexMesh -overwrite > log.snappy 2>&1; tail -25 log.snappy", shell=True, capture_output=True, text=True)
+print(r.stdout)
+# -- output
+faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:30844  faces:102928  points:41464
+Cells per refinement level:
+    0	2780
+    1	17360
+    2	7376
+    3	3328
+Writing mesh to time constant
+Wrote mesh in = 0.08 s.
+Mesh snapped in = 7.7 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 12.97 s.
+End
+
+# -- cell 9 (0.6s, exit 0)
+r=subprocess.run("checkMesh -allTopology > log.checkMesh 2>&1; grep -E 'patch|Mesh OK|\\*\\*\\*|cells:|Overall' -i log.checkMesh | head -40", shell=True, capture_output=True, text=True)
+print(r.stdout)
+print(open("constant/polyMesh/boundary").read()[-900:])
+# -- output
+cells:            30844
+    boundary patches: 6
+Overall number of cells of each type:
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+    Overall domain bounding box (-0.003 0 0) (0.16 0.1 0.04)
+Mesh OK.
+
+ups        1(wall);
+        nFaces          3272;
+        startFace       90440;
+    }
+    floor
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          2832;
+        startFace       93712;
+    }
+    top
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          2560;
+        startFace       96544;
+    }
+    vent
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          96;
+        startFace       99104;
+    }
+    standoffs
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          2384;
+        startFace       99200;
+    }
+    holes
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          1344;
+        startFace       101584;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 10 (1.5s, exit 0)
+LEV = {"walls":(1,1),"floor":(1,1),"top":(1,1),"vent":(2,2),"standoffs":(2,3),"holes":(4,4)}
+PTYPE = {"top":"patch","vent":"patch"}
+refs = "".join(f"{n} {{ level ({LEV[n][0]} {LEV[n][1]}); patchInfo {{ type {PTYPE.get(n,'wall')}; }} }}\n" for n in names)
+feats = "".join(f'{{ file "{n}.eMesh"; level {max(LEV[n])}; }}\n' for n in names)
+d = open("system/snappyHexMeshDict").read()
+import re
+d = re.sub(r"features \( .*? \);", f"features ( {feats} );", d, flags=re.S)
+d = re.sub(r"refinementSurfaces \{\{?.*?\}\}?\n\s*refinementRegions", f"refinementSurfaces {{ {refs} }}\n    refinementRegions", d, flags=re.S)
+w("system/snappyHexMeshDict", d)
+r=subprocess.run("snappyHexMesh -overwrite > log.snappy 2>&1; tail -6 log.snappy; checkMesh > log.checkMesh 2>&1; grep -E 'cells:|Mesh OK|\\*\\*\\*' log.checkMesh", shell=True, capture_output=True, text=True)
+print(r.stdout)
+# -- output
+#8  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+#9  ? in /lib/x86_64-linux-gnu/libc.so.6
+#10  __libc_start_main in /lib/x86_64-linux-gnu/libc.so.6
+#11  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+=============
+Aborted (core dumped)
+    cells:            30844
+Mesh OK.
+
+# -- cell 11 (0.1s, exit 0)
+print(subprocess.run("grep -n -A3 'FOAM FATAL' log.snappy | head -20", shell=True, capture_output=True, text=True).stdout)
+print(open("system/snappyHexMeshDict").read()[:1400])
+# -- output
+167:--> FOAM FATAL ERROR: (openfoam-2512)
+168-cell 6736 of level 2 does not seem to have 8 points of equal or lower level
+169-cellPoints:7(8707 7343 10802 9943 9944 10338 9315)
+170-pointLevels:7(2 1 2 2 2 2 2)
+
+FoamFile{version 2.0; format ascii; class dictionary; object snappyHexMeshDict;}
+
+castellatedMesh true; snap true; addLayers false;
+geometry { walls.stl { type triSurfaceMesh; name walls; }
+floor.stl { type triSurfaceMesh; name floor; }
+top.stl { type triSurfaceMesh; name top; }
+vent.stl { type triSurfaceMesh; name vent; }
+standoffs.stl { type triSurfaceMesh; name standoffs; }
+holes.stl { type triSurfaceMesh; name holes; }
+ }
+castellatedMeshControls
+{
+    maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+    nCellsBetweenLevels 2; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+    features ( { file "walls.eMesh"; level 1; }
+{ file "floor.eMesh"; level 1; }
+{ file "top.eMesh"; level 1; }
+{ file "vent.eMesh"; level 2; }
+{ file "standoffs.eMesh"; level 3; }
+{ file "holes.eMesh"; level 4; }
+ );
+    refinementSurfaces { walls { level (1 1); patchInfo { type wall; } }
+floor { level (1 1); patchInfo { type wall; } }
+top { level (1 1); patchInfo { type patch; } }
+vent { level (2 2); patchInfo { type patch; } }
+standoffs { level (2 3); patchInfo { type wall; } }
+holes { level (4 4); patchInfo { type wall; } }
+ }
+    refinementRegions {}
+    locationInMesh (0.0813 0.0517 0.0351);
+}
+snapControls { nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5; nFeatureSnapIter 15;
+    implicitFeatureSnap false; explicitFeatureSnap true; mult
+
+# -- cell 12 (36.0s, exit 0)
+r=subprocess.run("blockMesh > log.blockMesh 2>&1 && snappyHexMesh -overwrite > log.snappy 2>&1; tail -8 log.snappy; checkMesh -allTopology > log.checkMesh 2>&1; grep -E 'cells:|Mesh OK|\\*\\*\\*|<<' log.checkMesh", shell=True, capture_output=True, text=True)
+print(r.stdout)
+# -- output
+faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 34.62 s.
+End
+
+    cells:            56876
+Mesh OK.
+
+# -- cell 13 (0.7s, exit 0)
+open("t21.foam","w").write("")
+rd = pv.OpenFOAMReader("t21.foam"); rd.enable_all_patch_arrays(); m = rd.read()
+bd = m["boundary"]
+analytic = dict(walls=0.0205, floor=0.01568584, top=0.016, vent=0.0006, standoffs=0.00340549, holes=0.00065345)
+for k in bd.keys():
+    a = bd[k].compute_cell_sizes(length=False, volume=False)["Area"].sum()
+    print(f"{k:10s} mesh={a:.6f}  analytic={analytic[k]:.6f}  err={100*(a-analytic[k])/analytic[k]:+.2f}%")
+print("internal volume:", m["internalMesh"].compute_cell_sizes(length=False,area=False)["Volume"].sum(), "vs CAD", fluid.volume)
+# -- output
+walls      mesh=0.020500  analytic=0.020500  err=-0.00%
+floor      mesh=0.015687  analytic=0.015686  err=+0.01%
+top        mesh=0.016000  analytic=0.016000  err=-0.00%
+vent       mesh=0.000600  analytic=0.000600  err=-0.00%
+standoffs  mesh=0.003399  analytic=0.003405  err=-0.19%
+holes      mesh=0.000652  analytic=0.000653  err=-0.16%
+internal volume: 0.0006347379726928355 vs CAD 0.0006345492041555149
+
+# -- cell 14 (0.3s, exit 0)
+hb = bd["holes"].bounds; sb = bd["standoffs"].bounds
+print("holes bbox z: %.4f..%.4f (expect 0.0130..0.0250, depth %.4f vs 0.012)"%(hb[4],hb[5],hb[5]-hb[4]))
+print("standoffs bbox z: %.4f..%.4f (expect 0..0.025)"%(sb[4],sb[5]))
+pts = bd["standoffs"].points
+import numpy as np
+for cx in (0.015,0.145):
+    for cy in (0.015,0.085):
+        sel = pts[(abs(pts[:,0]-cx)<0.006)&(abs(pts[:,1]-cy)<0.006)]
+        rr = np.hypot(sel[:,0]-cx, sel[:,1]-cy)
+        print(f"post ({cx},{cy}): n={len(sel)} max radius={rr.max():.5f} (expect 0.0050)")
+sl = m["internalMesh"].slice(normal="y", origin=(0.08,0.015,0.02))
+pl = pv.Plotter(off_screen=True, window_size=(1100,450)); pl.add_mesh(sl, show_edges=True, color="w")
+pl.view_xz(); pl.camera.zoom(1.4); pl.screenshot("slice.png"); display(Image("slice.png"))
+# -- output
+holes bbox z: 0.0130..0.0250 (expect 0.0130..0.0250, depth 0.0120 vs 0.012)
+standoffs bbox z: 0.0000..0.0250 (expect 0..0.025)
+post (0.015,0.015): n=1636 max radius=0.00500 (expect 0.0050)
+post (0.015,0.085): n=1636 max radius=0.00500 (expect 0.0050)
+post (0.145,0.015): n=1591 max radius=0.00500 (expect 0.0050)
+post (0.145,0.085): n=1581 max radius=0.00500 (expect 0.0050)
+
+[0m[33m2026-09-13 13:34:42.424 ( 141.871s) [    7AD5134D2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:34:42.424 ( 141.872s) [    7AD5134D2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

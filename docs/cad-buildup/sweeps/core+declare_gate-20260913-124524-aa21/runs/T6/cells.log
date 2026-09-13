@@ -1,0 +1,194 @@
+# -- cell 1 (0.1s, exit 0)
+import subprocess
+p="/home/qiuzi/.openreynolds-buildup/work/T6-20260913-140447-9a29/geometry/customer_part.step"
+print(subprocess.run(["head","-60",p],capture_output=True,text=True).stdout)
+print(subprocess.run(["grep","-c","","%s"%p],capture_output=True,text=True).stdout)
+# -- output
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('Open CASCADE Model'),'2;1');
+FILE_NAME('Open CASCADE Shape Model','2026-09-11T03:37:11',('Author'),(
+    'Open CASCADE'),'Open CASCADE STEP processor 7.9','Open CASCADE 7.9'
+  ,'Unknown');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));
+ENDSEC;
+DATA;
+#1 = APPLICATION_PROTOCOL_DEFINITION('international standard',
+  'automotive_design',2000,#2);
+#2 = APPLICATION_CONTEXT(
+  'core data for automotive mechanical design processes');
+#3 = SHAPE_DEFINITION_REPRESENTATION(#4,#10);
+#4 = PRODUCT_DEFINITION_SHAPE('','',#5);
+#5 = PRODUCT_DEFINITION('design','',#6,#9);
+#6 = PRODUCT_DEFINITION_FORMATION('','',#7);
+#7 = PRODUCT('Open CASCADE STEP translator 7.9 1',
+  'Open CASCADE STEP translator 7.9 1','',(#8));
+#8 = PRODUCT_CONTEXT('',#2,'mechanical');
+#9 = PRODUCT_DEFINITION_CONTEXT('part definition',#2,'design');
+#10 = ADVANCED_BREP_SHAPE_REPRESENTATION('',(#11,#15),#425);
+#11 = AXIS2_PLACEMENT_3D('',#12,#13,#14);
+#12 = CARTESIAN_POINT('',(0.,0.,0.));
+#13 = DIRECTION('',(0.,0.,1.));
+#14 = DIRECTION('',(1.,0.,-0.));
+#15 = MANIFOLD_SOLID_BREP('',#16);
+#16 = CLOSED_SHELL('',(#17,#167,#243,#292,#341,#368,#415));
+#17 = ADVANCED_FACE('',(#18,#137),#32,.F.);
+#18 = FACE_BOUND('',#19,.F.);
+#19 = EDGE_LOOP('',(#20,#55,#83,#111));
+#20 = ORIENTED_EDGE('',*,*,#21,.F.);
+#21 = EDGE_CURVE('',#22,#24,#26,.T.);
+#22 = VERTEX_POINT('',#23);
+#23 = CARTESIAN_POINT('',(0.,0.,0.));
+#24 = VERTEX_POINT('',#25);
+#25 = CARTESIAN_POINT('',(0.,0.,100.));
+#26 = SURFACE_CURVE('',#27,(#31,#43),.PCURVE_S1.);
+#27 = LINE('',#28,#29);
+#28 = CARTESIAN_POINT('',(0.,0.,0.));
+#29 = VECTOR('',#30,1.);
+#30 = DIRECTION('',(0.,0.,1.));
+#31 = PCURVE('',#32,#37);
+#32 = PLANE('',#33);
+#33 = AXIS2_PLACEMENT_3D('',#34,#35,#36);
+#34 = CARTESIAN_POINT('',(0.,0.,0.));
+#35 = DIRECTION('',(1.,0.,-0.));
+#36 = DIRECTION('',(0.,0.,1.));
+#37 = DEFINITIONAL_REPRESENTATION('',(#38),#42);
+#38 = LINE('',#39,#40);
+#39 = CARTESIAN_POINT('',(0.,0.));
+#40 = VECTOR('',#41,1.);
+#41 = DIRECTION('',(1.,0.));
+#42 = ( GEOMETRIC_REPRESENTATION_CONTEXT(2) 
+PARAMETRIC_REPRESENTATION_CONTEXT() REPRESENTATION_CONTEXT('2D SPACE',''
+  ) );
+#43 = PCURVE('',#44,#49);
+#44 = PLANE('',#45);
+#45 = AXIS2_PLACEMENT_3D('',#46,#47,#48);
+#46 = CARTESIAN_POINT('',(0.,0.,0.));
+
+512
+
+# -- cell 2 (0.1s, exit 0)
+print(subprocess.run(["grep","-n","UNIT\\|CONVERSION\\|SI_UNIT\\|MANIFOLD_SOLID_BREP\\|SHAPE_REPRESENTATION",p],capture_output=True,text=True).stdout)
+# -- output
+22:#10 = ADVANCED_BREP_SHAPE_REPRESENTATION('',(#11,#15),#425);
+27:#15 = MANIFOLD_SOLID_BREP('',#16);
+502:GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#429)) GLOBAL_UNIT_ASSIGNED_CONTEXT
+504:  '3D Context with UNIT and UNCERTAINTY') );
+505:#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+506:#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+507:#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+508:#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,
+
+# -- cell 3 (0.1s, exit 0)
+print("".join(open(p).readlines()[495:512]))
+# -- output
+#420 = ORIENTED_EDGE('',*,*,#348,.T.);
+#421 = ORIENTED_EDGE('',*,*,#249,.F.);
+#422 = FACE_BOUND('',#423,.T.);
+#423 = EDGE_LOOP('',(#424));
+#424 = ORIENTED_EDGE('',*,*,#372,.F.);
+#425 = ( GEOMETRIC_REPRESENTATION_CONTEXT(3) 
+GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#429)) GLOBAL_UNIT_ASSIGNED_CONTEXT
+((#426,#427,#428)) REPRESENTATION_CONTEXT('Context #1',
+  '3D Context with UNIT and UNCERTAINTY') );
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,
+  'distance_accuracy_value','confusion accuracy');
+#430 = PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#7));
+ENDSEC;
+END-ISO-10303-21;
+
+# -- cell 4 (2.4s, exit 1)
+from build123d import *
+s = import_step(p)
+solids = s.solids()
+print(type(s), "solids:", len(solids), "faces:", len(s.faces()))
+print("valid:", s.is_valid())
+bb = s.bounding_box()
+print("bbox min", bb.min, "max", bb.max, "size", bb.size)
+print("volume", s.volume, "area", s.area)
+# -- output
+<class 'build123d.topology.three_d.Solid'> solids: 1 faces: 7
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 5[39m
+[32m      1[39m [38;5;28;01mfrom[39;00m build123d [38;5;28;01mimport[39;00m *
+[32m      2[39m s = import_step(p)
+[32m      3[39m solids = s.solids()
+[32m      4[39m print(type(s), [33m"solids:"[39m, len(solids), [33m"faces:"[39m, len(s.faces()))
+[32m----> [39m[32m5[39m print([33m"valid:"[39m, s.is_valid())
+[32m      6[39m bb = s.bounding_box()
+[32m      7[39m print([33m"bbox min"[39m, bb.min, [33m"max"[39m, bb.max, [33m"size"[39m, bb.size)
+[32m      8[39m print([33m"volume"[39m, s.volume, [33m"area"[39m, s.area)
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 5 (0.1s, exit 1)
+print("valid:", s.is_valid)
+bb = s.bounding_box()
+print("bbox min", bb.min, "max", bb.max, "size", bb.size)
+print("volume", s.volume, "area", s.area)
+for f in s.faces():
+    print(type(f.geometry_type) and f.geometry_type, f.area, f.center())
+# -- output
+valid: True
+bbox min Vector: (X=0, Y=0, Z=0) max Vector: (X=200, Y=100, Z=100) size Vector: (X=200, Y=100, Z=100)
+volume 1748672.5877128076 area 122619.46710584816
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 6[39m
+[32m      2[39m bb = s.bounding_box()
+[32m      3[39m print([33m"bbox min"[39m, bb.min, [33m"max"[39m, bb.max, [33m"size"[39m, bb.size)
+[32m      4[39m print([33m"volume"[39m, s.volume, [33m"area"[39m, s.area)
+[32m      5[39m [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m s.faces():
+[32m----> [39m[32m6[39m     print(type(f.geometry_type) [38;5;28;01mand[39;00m f.geometry_type, f.area, f.center())
+
+[31mAttributeError[39m: 'Face' object has no attribute 'geometry_type'
+
+# -- cell 6 (0.1s, exit 0)
+for i,f in enumerate(s.faces()):
+    print(i, f.geom_type, round(f.area,1), f.center(), f.normal_at(f.center()) if f.geom_type=="PLANE" else "")
+# -- output
+0 GeomType.PLANE 8743.4 Vector: (X=0, Y=50, Z=50) 
+1 GeomType.PLANE 20000.0 Vector: (X=100, Y=0, Z=50) 
+2 GeomType.PLANE 20000.0 Vector: (X=100, Y=50, Z=100) 
+3 GeomType.PLANE 20000.0 Vector: (X=100, Y=50, Z=0) 
+4 GeomType.PLANE 20000.0 Vector: (X=100, Y=100, Z=50) 
+5 GeomType.CYLINDER 25132.7 Vector: (X=100, Y=50, Z=30) 
+6 GeomType.PLANE 8743.4 Vector: (X=200, Y=50, Z=50)
+
+# -- cell 7 (0.1s, exit 0)
+from build123d import *
+
+STEP_PATH = "/home/qiuzi/.openreynolds-buildup/work/T6-20260913-140447-9a29/geometry/customer_part.step"
+
+s = import_step(STEP_PATH)
+print("solids:", len(s.solids()), " faces:", len(s.faces()), " valid:", s.is_valid)
+bb = s.bounding_box()
+print("bbox min", bb.min, "max", bb.max, "size", bb.size)
+print("volume", s.volume, "area", s.area)
+for i, f in enumerate(s.faces()):
+    print(i, f.geom_type, round(f.area, 1), f.center())
+
+import re
+txt = open(STEP_PATH).read()
+for m in re.findall(r"#\d+ = \([^;]*UNIT[^;]*\);", txt, re.S):
+    print(" ".join(m.split()))
+# -- output
+solids: 1  faces: 7  valid: True
+bbox min Vector: (X=0, Y=0, Z=0) max Vector: (X=200, Y=100, Z=100) size Vector: (X=200, Y=100, Z=100)
+volume 1748672.5877128076 area 122619.46710584816
+0 GeomType.PLANE 8743.4 Vector: (X=0, Y=50, Z=50)
+1 GeomType.PLANE 20000.0 Vector: (X=100, Y=0, Z=50)
+2 GeomType.PLANE 20000.0 Vector: (X=100, Y=50, Z=100)
+3 GeomType.PLANE 20000.0 Vector: (X=100, Y=50, Z=0)
+4 GeomType.PLANE 20000.0 Vector: (X=100, Y=100, Z=50)
+5 GeomType.CYLINDER 25132.7 Vector: (X=100, Y=50, Z=30)
+6 GeomType.PLANE 8743.4 Vector: (X=200, Y=50, Z=50)
+#425 = ( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#429)) GLOBAL_UNIT_ASSIGNED_CONTEXT ((#426,#427,#428)) REPRESENTATION_CONTEXT('Context #1', '3D Context with UNIT and UNCERTAINTY') );
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+

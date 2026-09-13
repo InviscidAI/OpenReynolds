@@ -1,0 +1,676 @@
+# -- cell 1 (2.2s, exit 0)
+import subprocess, math, numpy as np
+from build123d import *
+print(subprocess.run(["bash","-lc","pwd; ls -la"],capture_output=True,text=True).stdout)
+# -- output
+/home/qiuzi/.openreynolds-buildup/work/T24-20260913-134122-f074/t24
+total 8
+drwxrwxr-x 2 qiuzi qiuzi 4096 Sep 13 13:41 .
+drwxrwxr-x 5 qiuzi qiuzi 4096 Sep 13 13:41 ..
+
+# -- cell 2 (0.3s, exit 1)
+R    = 0.060      # internal radius (120 mm dia)
+H    = 0.200      # vessel height
+R_OUT= 0.020      # outlet radius (40 mm dia)
+Z_P  = 0.040      # port centre height above floor
+PW   = 0.020      # port width (tangential-ish, horizontal)
+PH   = 0.030      # port height
+LD   = 0.050      # duct length outside, along its own axis from the wall point
+OVER = 0.018      # overlap into the vessel (trimmed by the union)
+ALPHA= 15.0       # degrees off the local tangent
+NP   = 4
+
+vessel = Cylinder(radius=R, height=H).moved(Location((0,0,H/2)))
+
+thetas = [i*2*math.pi/NP for i in range(NP)]
+ducts, dirs, Ps = [], [], []
+for th in thetas:
+    rhat = Vector(math.cos(th), math.sin(th), 0)
+    that = Vector(-math.sin(th), math.cos(th), 0)      # local tangent (CCW)
+    d = (that*math.cos(math.radians(ALPHA)) - rhat*math.sin(math.radians(ALPHA)))  # inward flow dir
+    P = rhat*R + Vector(0,0,Z_P)                       # axis crosses the wall here
+    C = P + d*((OVER - LD)/2)
+    phi = math.degrees(math.atan2(d.Y, d.X))
+    ducts.append(Location(C, (0,0,phi)) * Box(LD+OVER, PW, PH))
+    dirs.append(d); Ps.append(P)
+
+fluid = vessel + ducts[0] + ducts[1] + ducts[2] + ducts[3]
+print(fluid.is_valid(), len(fluid.solids()), fluid.volume, fluid.bounding_box())
+print("duct dir[0]", dirs[0], "angle off tangent",
+      math.degrees(math.acos(dirs[0].dot(Vector(-math.sin(0),math.cos(0),0)))))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 27[39m
+[32m     23[39m     ducts.append(Location(C, ([32m0[39m,[32m0[39m,phi)) * Box(LD+OVER, PW, PH))
+[32m     24[39m     dirs.append(d); Ps.append(P)
+[32m     25[39m 
+[32m     26[39m fluid = vessel + ducts[[32m0[39m] + ducts[[32m1[39m] + ducts[[32m2[39m] + ducts[[32m3[39m]
+[32m---> [39m[32m27[39m print(fluid.is_valid(), len(fluid.solids()), fluid.volume, fluid.bounding_box())
+[32m     28[39m print("duct dir[0]", dirs[0], "angle off tangent",
+[32m     29[39m       math.degrees(math.acos(dirs[[32m0[39m].dot(Vector(-math.sin([32m0[39m),math.cos([32m0[39m),[32m0[39m)))))
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 3 (0.1s, exit 0)
+print(fluid.is_valid, len(fluid.solids()), fluid.volume, fluid.bounding_box())
+t0 = Vector(0,1,0)
+print("angle off tangent (deg):", math.degrees(math.acos(dirs[0].dot(t0))))
+print("faces:", len(fluid.faces()))
+# -- output
+True 1 0.002386072102732616 bbox: -0.08260021051801672 <= x <= 0.08260021051801675, -0.0826002105180167 <= y <= 0.0826002105180167, 0.0 <= z <= 0.2
+angle off tangent (deg): 14.999999999999996
+faces: 27
+
+# -- cell 4 (0.1s, exit 0)
+import subprocess, math, numpy as np
+from build123d import *
+
+R    = 0.060      # internal radius (120 mm dia)
+H    = 0.200      # vessel height
+R_OUT= 0.020      # outlet radius (40 mm dia)
+Z_P  = 0.040      # port centre height above floor
+PW   = 0.020      # port width (horizontal, across the duct)
+PH   = 0.030      # port height
+LD   = 0.050      # duct length outside, along its own axis from the wall point
+OVER = 0.018      # overlap into the vessel (absorbed by the union)
+ALPHA= 15.0       # degrees off the local tangent
+NP   = 4
+
+vessel = Cylinder(radius=R, height=H).moved(Location((0,0,H/2)))
+
+thetas = [i*2*math.pi/NP for i in range(NP)]
+ducts, dirs, Ps = [], [], []
+for th in thetas:
+    rhat = Vector(math.cos(th), math.sin(th), 0)
+    that = Vector(-math.sin(th), math.cos(th), 0)      # local tangent (CCW)
+    d = that*math.cos(math.radians(ALPHA)) - rhat*math.sin(math.radians(ALPHA))  # inward flow dir
+    P = rhat*R + Vector(0,0,Z_P)                       # duct axis crosses the wall here
+    C = P + d*((OVER - LD)/2)
+    phi = math.degrees(math.atan2(d.Y, d.X))
+    ducts.append(Location(C, (0,0,phi)) * Box(LD+OVER, PW, PH))
+    dirs.append(d); Ps.append(P)
+
+fluid = vessel + ducts[0] + ducts[1] + ducts[2] + ducts[3]
+print(fluid.is_valid, len(fluid.solids()), "V =", fluid.volume, fluid.bounding_box())
+print("angle off tangent (deg):", math.degrees(math.acos(dirs[0].dot(Vector(0,1,0)))))
+print("n faces:", len(fluid.faces()))
+# -- output
+True 1 V = 0.002386072102732616 bbox: -0.08260021051801672 <= x <= 0.08260021051801675, -0.0826002105180167 <= y <= 0.0826002105180167, 0.0 <= z <= 0.2
+angle off tangent (deg): 14.999999999999996
+n faces: 27
+
+# -- cell 5 (0.1s, exit 0)
+for i,f in enumerate(fluid.faces()):
+    c=f.center(); print(i, f.geom_type, "area=%.5f"%f.area, "c=(%.3f,%.3f,%.3f)"%(c.X,c.Y,c.Z))
+# -- output
+0 GeomType.CYLINDER area=0.07046 c=(-0.060,0.000,0.100)
+1 GeomType.PLANE area=0.00103 c=(0.067,-0.021,0.025)
+2 GeomType.PLANE area=0.01131 c=(0.000,-0.000,0.000)
+3 GeomType.PLANE area=0.00024 c=(0.061,0.019,0.040)
+4 GeomType.PLANE area=0.00103 c=(0.067,-0.021,0.055)
+5 GeomType.PLANE area=0.01131 c=(0.000,-0.000,0.200)
+6 GeomType.PLANE area=0.00088 c=(0.059,-0.037,0.040)
+7 GeomType.PLANE area=0.00024 c=(-0.019,0.061,0.040)
+8 GeomType.PLANE area=0.00103 c=(0.021,0.067,0.025)
+9 GeomType.PLANE area=0.00103 c=(0.021,0.067,0.055)
+10 GeomType.PLANE area=0.00088 c=(0.037,0.059,0.040)
+11 GeomType.PLANE area=0.00024 c=(-0.061,-0.019,0.040)
+12 GeomType.PLANE area=0.00103 c=(-0.067,0.021,0.025)
+13 GeomType.PLANE area=0.00103 c=(-0.067,0.021,0.055)
+14 GeomType.PLANE area=0.00088 c=(-0.059,0.037,0.040)
+15 GeomType.PLANE area=0.00024 c=(0.019,-0.061,0.040)
+16 GeomType.PLANE area=0.00103 c=(-0.021,-0.067,0.055)
+17 GeomType.PLANE area=0.00088 c=(-0.037,-0.059,0.040)
+18 GeomType.PLANE area=0.00103 c=(-0.021,-0.067,0.025)
+19 GeomType.PLANE area=0.00204 c=(0.074,-0.013,0.040)
+20 GeomType.PLANE area=0.00060 c=(0.073,-0.048,0.040)
+21 GeomType.PLANE area=0.00204 c=(0.013,0.074,0.040)
+22 GeomType.PLANE area=0.00060 c=(0.048,0.073,0.040)
+23 GeomType.PLANE area=0.00204 c=(-0.074,0.013,0.040)
+24 GeomType.PLANE area=0.00060 c=(-0.073,0.048,0.040)
+25 GeomType.PLANE area=0.00204 c=(-0.013,-0.074,0.040)
+26 GeomType.PLANE area=0.00060 c=(-0.048,-0.073,0.040)
+
+# -- cell 6 (0.1s, exit 0)
+from OCP.BRepFeat import BRepFeat_SplitShape
+top_face = [f for f in fluid.faces() if f.geom_type==GeomType.PLANE and abs(f.center().Z-H)<1e-9][0]
+circ = Wire(Pos(0,0,H)*Circle(R_OUT).wire())
+sp = BRepFeat_SplitShape(fluid.wrapped)
+sp.Add(circ.wrapped, top_face.wrapped)
+sp.Build()
+fluid_s = Solid(sp.Shape())
+print(fluid_s.is_valid, len(fluid_s.faces()), abs(fluid_s.volume-fluid.volume))
+for f in fluid_s.faces():
+    if abs(f.center().Z-H)<1e-9: print("  top-plane face area=%.6f"%f.area)
+# -- output
+True 28 4.336808689942018e-19
+  top-plane face area=0.010053
+  top-plane face area=0.001257
+
+# -- cell 7 (0.1s, exit 0)
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.BRep import BRep_Tool
+from OCP.TopAbs import TopAbs_REVERSED
+from OCP.TopLoc import TopLoc_Location
+
+BRepMesh_IncrementalMesh(fluid_s.wrapped, 0.0004, False, 0.25, True)
+
+def face_tris(f):
+    loc = TopLoc_Location(); tri = BRep_Tool.Triangulation_s(f.wrapped, loc)
+    trsf = loc.Transformation()
+    pts = [tri.Node(i+1).Transformed(trsf) for i in range(tri.NbNodes())]
+    V = np.array([[p.X(),p.Y(),p.Z()] for p in pts])
+    rev = f.wrapped.Orientation()==TopAbs_REVERSED
+    T=[]
+    for i in range(tri.NbTriangles()):
+        a,b,c = tri.Triangle(i+1).Get()
+        T.append((a-1,c-1,b-1) if rev else (a-1,b-1,c-1))
+    return V, np.array(T)
+
+patches = {}   # name -> list of (V,T)
+unassigned = []
+ns = [Vector(0,0,1).cross(d) for d in dirs]
+for f in fluid_s.faces():
+    c = f.center(); name=None
+    if f.geom_type==GeomType.PLANE and abs(c.Z)<1e-9: name="floor"
+    elif f.geom_type==GeomType.PLANE and abs(c.Z-H)<1e-9:
+        name = "outlet" if f.area < 0.005 else "top"
+    elif f.geom_type==GeomType.CYLINDER and abs(Vector(c.X,c.Y,0).length-R)<1e-6: name="cylinderWall"
+    else:
+        for i,(P,d,n) in enumerate(zip(Ps,dirs,ns)):
+            v = c-P; s,y,z = v.dot(d), v.dot(n), c.Z-Z_P
+            if abs(y)<=PW/2+1e-6 and abs(z)<=PH/2+1e-6 and -LD-1e-6<=s<=OVER+1e-6:
+                name = f"inlet{i+1}" if abs(s+LD)<1e-6 else f"ductWall{i+1}"
+                break
+    if name is None: unassigned.append(f)
+    else: patches.setdefault(name,[]).append(face_tris(f))
+
+print("unassigned:", len(unassigned))
+for k in sorted(patches): print(k, "faces=%d"%len(patches[k]), "tris=%d"%sum(len(t) for _,t in patches[k]),
+                                "area=%.6f"%sum(f.area for f in fluid_s.faces() if False) or "")
+# -- output
+unassigned: 0
+cylinderWall faces=1 tris=168 area=0.000000
+ductWall1 faces=5 tris=24 area=0.000000
+ductWall2 faces=5 tris=22 area=0.000000
+ductWall3 faces=5 tris=22 area=0.000000
+ductWall4 faces=5 tris=22 area=0.000000
+floor faces=1 tris=49 area=0.000000
+inlet1 faces=1 tris=2 area=0.000000
+inlet2 faces=1 tris=2 area=0.000000
+inlet3 faces=1 tris=2 area=0.000000
+inlet4 faces=1 tris=2 area=0.000000
+outlet faces=1 tris=49 area=0.000000
+top faces=1 tris=102 area=0.000000
+
+# -- cell 8 (0.1s, exit 0)
+import os
+os.makedirs("constant/triSurface", exist_ok=True)
+
+def write_stl(name, blocks, path):
+    with open(path,"w") as fh:
+        fh.write(f"solid {name}\n")
+        for V,T in blocks:
+            for t in T:
+                p0,p1,p2 = V[t[0]],V[t[1]],V[t[2]]
+                n = np.cross(p1-p0,p2-p0); L=np.linalg.norm(n); n = n/L if L>0 else n
+                fh.write("facet normal %e %e %e\n outer loop\n"%tuple(n))
+                for p in (p0,p1,p2): fh.write("  vertex %e %e %e\n"%tuple(p))
+                fh.write(" endloop\nendfacet\n")
+        fh.write(f"endsolid {name}\n")
+
+def tri_area(blocks):
+    a=0.0
+    for V,T in blocks:
+        for t in T: a += 0.5*np.linalg.norm(np.cross(V[t[1]]-V[t[0]],V[t[2]]-V[t[0]]))
+    return a
+
+for name, blocks in patches.items():
+    write_stl(name, blocks, f"constant/triSurface/{name}.stl")
+for k in sorted(patches): print("%-13s area=%.6f m2"%(k, tri_area(patches[k])))
+print("inlet target area = %.6f"%(PW*PH), " outlet target = %.6f"%(math.pi*R_OUT**2))
+# -- output
+cylinderWall  area=0.070416 m2
+ductWall1     area=0.005237 m2
+ductWall2     area=0.005238 m2
+ductWall3     area=0.005238 m2
+ductWall4     area=0.005238 m2
+floor         area=0.011281 m2
+inlet1        area=0.000600 m2
+inlet2        area=0.000600 m2
+inlet3        area=0.000600 m2
+inlet4        area=0.000600 m2
+outlet        area=0.001253 m2
+top           area=0.010028 m2
+inlet target area = 0.000600  outlet target = 0.001257
+
+# -- cell 9 (0.2s, exit 0)
+allV=[]; allT=[]; off=0
+for name in sorted(patches):
+    for V,T in patches[name]:
+        allV.append(V); allT.append(np.array(T)+off); off+=len(V)
+AV=np.vstack(allV); AT=np.vstack(allT)
+key=np.round(AV/1e-9).astype(np.int64)
+uniq,inv=np.unique(key,axis=0,return_inverse=True)
+WT=inv[AT]
+from collections import Counter
+ec=Counter()
+for t in WT:
+    for a,b in ((t[0],t[1]),(t[1],t[2]),(t[2],t[0])): ec[(min(a,b),max(a,b))]+=1
+print("tris",len(WT),"nodes",len(uniq),"free edges",sum(1 for v in ec.values() if v==1),
+      "non-manifold",sum(1 for v in ec.values() if v>2))
+with open("constant/triSurface/swirl.stl","w") as out:
+    for name in sorted(patches):
+        out.write(open(f"constant/triSurface/{name}.stl").read())
+print(subprocess.run(["surfaceCheck","constant/triSurface/swirl.stl"],capture_output=True,text=True).stdout[-700:])
+# -- output
+tris 466 nodes 235 free edges 0 non-manifold 0
+   0.6 .. 0.65  : 0
+    0.65 .. 0.7  : 0
+    0.7 .. 0.75  : 0.0515021
+    0.75 .. 0.8  : 0.0171674
+    0.8 .. 0.85  : 0
+    0.85 .. 0.9  : 0
+    0.9 .. 0.95  : 0
+    0.95 .. 1  : 0
+
+    min 2.80445e-05 for triangle 98
+    max 0.769678 for triangle 188
+
+Edges:
+    min 0.00246243 for edge 508 points (0.0163239 0.0115555 0.2)(0.0147802 0.0134739 0.2)
+    max 0.200136 for edge 53 points (0.0331419 0.0500161 0)(0.0267443 0.0537098 0.2)
+
+Checking for points less than 1e-6 of bounding box ((0.1652 0.1652 0.2) metre) apart.
+Found 0 nearby points.
+
+Surface is closed. All edges connected to two faces.
+
+Number of unconnected parts : 1
+
+Number of zones (connected area with consistent normal) : 1
+
+
+End
+
+# -- cell 10 (0.3s, exit 0)
+BRepMesh_IncrementalMesh(fluid_s.wrapped, 0.0001, False, 0.2, True)
+patches = {}
+for f in fluid_s.faces():
+    c = f.center(); name=None
+    if f.geom_type==GeomType.PLANE and abs(c.Z)<1e-9: name="floor"
+    elif f.geom_type==GeomType.PLANE and abs(c.Z-H)<1e-9:
+        name = "outlet" if f.area < 0.005 else "top"
+    elif f.geom_type==GeomType.CYLINDER and abs(Vector(c.X,c.Y,0).length-R)<1e-6: name="cylinderWall"
+    else:
+        for i,(P,d,n) in enumerate(zip(Ps,dirs,ns)):
+            v = c-P; s,y,z = v.dot(d), v.dot(n), c.Z-Z_P
+            if abs(y)<=PW/2+1e-6 and abs(z)<=PH/2+1e-6 and -LD-1e-6<=s<=OVER+1e-6:
+                name = f"inlet{i+1}" if abs(s+LD)<1e-6 else f"ductWall{i+1}"
+                break
+    patches.setdefault(name,[]).append(face_tris(f))
+for name, blocks in patches.items(): write_stl(name, blocks, f"constant/triSurface/{name}.stl")
+with open("constant/triSurface/swirl.stl","w") as out:
+    for name in sorted(patches): out.write(open(f"constant/triSurface/{name}.stl").read())
+r=subprocess.run(["surfaceCheck","constant/triSurface/swirl.stl"],capture_output=True,text=True).stdout
+print(sum(len(t) for b in patches.values() for _,t in b),"tris;",
+      [l for l in r.splitlines() if "closed" in l or "unconnected" in l])
+print("cylWall area %.6f vs analytic %.6f"%(tri_area(patches["cylinderWall"]), 2*math.pi*R*H - 0))
+# -- output
+638 tris; ['Surface is closed. All edges connected to two faces.', 'Number of unconnected parts : 1']
+cylWall area 0.070441 vs analytic 0.075398
+
+# -- cell 11 (0.6s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pl = pv.Plotter(off_screen=True, window_size=(900,700))
+cols = {"cylinderWall":"lightgrey","floor":"tan","top":"wheat","outlet":"red",
+        **{f"inlet{i}":"blue" for i in range(1,5)}, **{f"ductWall{i}":"green" for i in range(1,5)}}
+for n,c in cols.items():
+    pl.add_mesh(pv.read(f"constant/triSurface/{n}.stl"), color=c, opacity=0.45 if n=="cylinderWall" else 1.0, show_edges=True)
+pl.camera_position=[(0.35,-0.30,0.28),(0,0,0.08),(0,0,1)]
+pl.screenshot("geom.png"); print("ok")
+# -- output
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 13:44:49.640 (   0.256s) [    7584C084B780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 13:44:49.641 (   0.256s) [    7584C084B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:44:49.653 (   0.269s) [    7584C084B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 12 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("geom.png"))
+# -- output
+
+
+# -- cell 13 (1.6s, exit 0)
+import os, textwrap
+os.makedirs("system",exist_ok=True); os.makedirs("constant",exist_ok=True)
+hdr=lambda cls,obj:f"FoamFile{{version 2.0;format ascii;class {cls};object {obj};}}\n"
+open("system/controlDict","w").write(hdr("dictionary","controlDict")+
+ "application simpleFoam;startFrom startTime;startTime 0;stopAt endTime;endTime 1;deltaT 1;writeControl timeStep;writeInterval 1;\n")
+open("system/fvSchemes","w").write(hdr("dictionary","fvSchemes")+"ddtSchemes{default steadyState;}gradSchemes{default Gauss linear;}divSchemes{default none;}laplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write(hdr("dictionary","fvSolution")+"solvers{}\n")
+open("system/meshDict","w").write(hdr("dictionary","meshDict")+textwrap.dedent("""
+surfaceFile "constant/triSurface/swirl.stl";
+maxCellSize 0.008;
+boundaryCellSize 0.008;
+"""))
+r=subprocess.run(["cartesianMesh"],capture_output=True,text=True)
+print(r.stdout[-1500:], r.stderr[-800:])
+# -- output
+Optimizing surface vertices. Iteration:.....
+Starting untangling the surface of the volume mesh
+Number of inverted boundary faces is 46
+Number of inverted boundary faces is 46
+Number of inverted boundary faces is 46
+Smoothing remaining inverted vertices 
+Number of inverted boundary faces is 11
+Number of inverted boundary faces is 8
+Number of inverted boundary faces is 6
+Number of inverted boundary faces is 6
+Number of inverted boundary faces is 6
+Smoothing remaining inverted vertices 
+Number of inverted boundary faces is 0
+Finished untangling the surface of the volume mesh
+Found 2144 boundary faces 
+Found 0 corners at the surface of the volume mesh
+Found 224 edge points at the surface of the volume mesh
+Starting smoothing the mesh
+Starting untangling the mesh
+--> FOAM Warning : 
+    From bool Foam::Module::polyMeshGenChecks::checkCellPartTetrahedra(const Foam::Module::polyMeshGen&, bool, Foam::scalar, Foam::labelHashSet*, const Foam::boolList*)
+    in file utilities/meshes/polyMeshGenChecks/polyMeshGenChecksGeometry.C at line 1582
+    8 zero or negative part tetrahedra detected.
+Iteration 0. Number of bad faces is 8
+Iteration 1. Number of bad faces is 0
+Finished untangling the mesh
+Finished smoothing the mesh
+Iteration 0. Number of bad faces is 7
+Iteration 1. Number of bad faces is 0
+Starting untangling the mesh
+Iteration 0. Number of bad faces is 0
+Finished untangling the mesh
+Renumbering the mesh
+Finished renumbering the mesh
+ExecutionTime = 29.21 s  ClockTime = 1 s
+
+End
+
+# -- cell 14 (0.5s, exit 0)
+print(subprocess.run(["bash","-lc","checkMesh 2>&1 | tail -40; echo ---; foamListTimes -withZero 2>/dev/null; ls constant/polyMesh"],capture_output=True,text=True).stdout)
+# -- output
+ductWall3           64       74       ok (non-closed singly connected)  
+    ductWall4           64       74       ok (non-closed singly connected)  
+    floor               224      233      ok (non-closed singly connected)  
+    inlet1              7        10       ok (non-closed singly connected)  
+    inlet2              7        10       ok (non-closed singly connected)  
+    inlet3              7        10       ok (non-closed singly connected)  
+    inlet4              7        10       ok (non-closed singly connected)  
+    outlet              20       25       ok (non-closed singly connected)  
+    top                 208      224      ok (non-closed singly connected)  
+    ".*"                2144     2082     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.0826002 -0.0826002 0) (0.0768528 0.0768462 0.2)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.06024e-17 -2.8873e-17 -4.54819e-17) OK.
+    Max cell openness = 3.0461e-16 OK.
+    Max aspect ratio = 6.43896 OK.
+    Minimum face area = 2.8778e-07. Maximum face area = 0.000124116.  Face area magnitudes OK.
+    Min volume = 9.60744e-11. Max volume = 7.4722e-07.  Total volume = 0.00234468.  Cell volumes OK.
+    Mesh non-orthogonality Max: 59.1403 average: 8.17509
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.60986 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+---
+boundary
+faces
+meshMetaDict
+neighbour
+owner
+points
+
+# -- cell 15 (11.2s, exit 0)
+loc = "\n".join(f"  {p} {{ cellSize 0.0025; }}" for p in
+      [f"inlet{i}" for i in range(1,5)]+[f"ductWall{i}" for i in range(1,5)]+["outlet"])
+open("system/meshDict","w").write(hdr("dictionary","meshDict")+f"""
+surfaceFile "constant/triSurface/swirl.stl";
+maxCellSize 0.005;
+boundaryCellSize 0.005;
+localRefinement
+{{
+{loc}
+}}
+""")
+r=subprocess.run(["cartesianMesh"],capture_output=True,text=True)
+print(r.stdout[-300:]); print(r.stderr[-300:])
+# -- output
+ces is 0
+Finished untangling the mesh
+Finished smoothing the mesh
+Iteration 0. Number of bad faces is 0
+Starting untangling the mesh
+Iteration 0. Number of bad faces is 0
+Finished untangling the mesh
+Renumbering the mesh
+Finished renumbering the mesh
+ExecutionTime = 313.32 s  ClockTime = 11 s
+
+End
+
+# -- cell 16 (0.5s, exit 0)
+out=subprocess.run(["bash","-lc","checkMesh 2>&1"],capture_output=True,text=True).stdout
+print("\n".join(out.splitlines()[-52:]))
+# -- output
+Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+            cylinderWall     4719     4987  ok (non-closed singly connected)
+               ductWall1      874      914  ok (non-closed singly connected)
+               ductWall2      874      914  ok (non-closed singly connected)
+               ductWall3      874      914  ok (non-closed singly connected)
+               ductWall4      878      917  ok (non-closed singly connected)
+                   floor      526      547  ok (non-closed singly connected)
+                  inlet1      117      131  ok (non-closed singly connected)
+                  inlet2      117      131  ok (non-closed singly connected)
+                  inlet3      117      131  ok (non-closed singly connected)
+                  inlet4      117      131  ok (non-closed singly connected)
+                  outlet      228      241  ok (non-closed singly connected)
+                     top      622      678  ok (non-closed singly connected)
+                    ".*"    10063    10018      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.0826002 -0.0826002 0) (0.0826002 0.0826002 0.2)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (6.17192e-18 8.75351e-17 -2.53602e-16) OK.
+    Max cell openness = 2.71159e-16 OK.
+    Max aspect ratio = 8.25822 OK.
+    Minimum face area = 3.786e-07. Maximum face area = 3.50276e-05.  Face area magnitudes OK.
+    Min volume = 1.61644e-10. Max volume = 1.48581e-07.  Total volume = 0.002379.  Cell volumes OK.
+    Mesh non-orthogonality Max: 60.3105 average: 6.50105
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.81503 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 17 (0.1s, exit 0)
+open("case.foam","w").write("")
+m = pv.OpenFOAMReader("case.foam"); m.set_active_time_value(0)
+mb = m.read(); bnd = mb["boundary"]
+for nm in ["inlet1","inlet2","inlet3","inlet4","outlet"]:
+    s = bnd[nm].compute_normals(); s = s.compute_cell_sizes(length=False,volume=False)
+    A = s["Area"].sum(); c = np.array(s.cell_centers().points).mean(axis=0)
+    n = np.average(s.cell_normals, axis=0, weights=s["Area"]); n/=np.linalg.norm(n)
+    th = math.atan2(c[1],c[0]); tan=np.array([-math.sin(th),math.cos(th),0])
+    ang = math.degrees(math.asin(abs(np.dot(n,tan)))) if nm.startswith("inlet") else float('nan')
+    print("%-7s A=%.6f m2  c=(%.3f,%.3f,%.3f)  angle_off_tangent=%.2f deg"%(nm,A,*c,90-ang if False else ang))
+# -- output
+inlet1  A=0.000585 m2  c=(0.073,-0.048,0.039)  angle_off_tangent=41.58 deg
+inlet2  A=0.000585 m2  c=(0.048,0.073,0.039)  angle_off_tangent=41.58 deg
+inlet3  A=0.000585 m2  c=(-0.073,0.048,0.039)  angle_off_tangent=41.58 deg
+inlet4  A=0.000585 m2  c=(-0.048,-0.073,0.039)  angle_off_tangent=41.58 deg
+outlet  A=0.001252 m2  c=(0.000,0.000,0.200)  angle_off_tangent=nan deg
+
+# -- cell 18 (0.1s, exit 0)
+for i,nm in enumerate(["inlet1","inlet2","inlet3","inlet4"]):
+    s = bnd[nm].compute_cell_sizes(length=False,volume=False)
+    c = np.array(s.cell_centers().points).mean(axis=0)
+    P = np.array([Ps[i].X,Ps[i].Y,Ps[i].Z]); axis = P-c; axis/=np.linalg.norm(axis)
+    th = math.atan2(P[1],P[0]); tan=np.array([-math.sin(th),math.cos(th),0])
+    rad=np.array([math.cos(th),math.sin(th),0.])
+    print("%-7s axis-to-tangent=%.2f deg  radial(inward) comp=%.3f  c_z=%.4f (target 0.0400)"
+          %(nm, math.degrees(math.acos(np.clip(np.dot(axis,tan),-1,1))), -np.dot(axis,rad), c[2]))
+print("duct axis length inlet->wall: %.4f m (target %.3f)"%(np.linalg.norm(P-c), LD))
+# -- output
+inlet1  axis-to-tangent=15.23 deg  radial(inward) comp=0.262  c_z=0.0392 (target 0.0400)
+inlet2  axis-to-tangent=15.23 deg  radial(inward) comp=0.262  c_z=0.0392 (target 0.0400)
+inlet3  axis-to-tangent=15.23 deg  radial(inward) comp=0.262  c_z=0.0392 (target 0.0400)
+inlet4  axis-to-tangent=15.23 deg  radial(inward) comp=0.262  c_z=0.0392 (target 0.0400)
+duct axis length inlet->wall: 0.0500 m (target 0.050)
+
+# -- cell 19 (15.3s, exit 0)
+loc = "\n".join(f"  {p} {{ cellSize 0.00125; }}" for p in
+      [f"inlet{i}" for i in range(1,5)]+[f"ductWall{i}" for i in range(1,5)]) + \
+      "\n  outlet { cellSize 0.0025; }"
+open("system/meshDict","w").write(hdr("dictionary","meshDict")+f"""
+surfaceFile "constant/triSurface/swirl.stl";
+maxCellSize 0.005;
+boundaryCellSize 0.005;
+localRefinement
+{{
+{loc}
+}}
+""")
+r=subprocess.run(["cartesianMesh"],capture_output=True,text=True)
+print(r.stdout[-200:], r.stderr[-200:])
+print("\n".join([l for l in subprocess.run(["checkMesh"],capture_output=True,text=True).stdout.splitlines()
+                 if any(k in l for k in ["cells:","Mesh OK","FAILED","skewness","non-orthogonality","Total volume","aspect"])]))
+# -- output
+s 0
+Starting untangling the mesh
+Iteration 0. Number of bad faces is 0
+Finished untangling the mesh
+Renumbering the mesh
+Finished renumbering the mesh
+ExecutionTime = 409.24 s  ClockTime = 14 s
+
+End
+
+ 
+    cells:            74179
+    Max aspect ratio = 8.3048 OK.
+    Min volume = 1.61203e-11. Max volume = 1.48966e-07.  Total volume = 0.00238143.  Cell volumes OK.
+    Mesh non-orthogonality Max: 60.3014 average: 6.22719
+    Max skewness = 2.00904 OK.
+Mesh OK.
+
+# -- cell 20 (0.2s, exit 0)
+mb = pv.OpenFOAMReader("case.foam").read(); bnd = mb["boundary"]
+for i,nm in enumerate(["inlet1","inlet2","inlet3","inlet4","outlet"]):
+    s = bnd[nm].compute_cell_sizes(length=False,volume=False)
+    A=s["Area"].sum(); c=np.array(s.cell_centers().points).mean(axis=0)
+    print("%-7s A=%.6f (target %.6f)  c_z=%.4f"%(nm,A,PW*PH if i<4 else math.pi*R_OUT**2,c[2]))
+print("mesh volume 0.00238143 vs CAD %.6f"%fluid_s.volume)
+# -- output
+inlet1  A=0.000597 (target 0.000600)  c_z=0.0395
+inlet2  A=0.000597 (target 0.000600)  c_z=0.0395
+inlet3  A=0.000597 (target 0.000600)  c_z=0.0395
+inlet4  A=0.000597 (target 0.000600)  c_z=0.0395
+outlet  A=0.001252 (target 0.001257)  c_z=0.2000
+mesh volume 0.00238143 vs CAD 0.002386
+
+# -- cell 21 (0.3s, exit 0)
+internal = mb["internalMesh"]
+pl = pv.Plotter(off_screen=True, window_size=(1000,450), shape=(1,2))
+pl.subplot(0,0)
+for n,c in cols.items(): pl.add_mesh(bnd[n], color=c, show_edges=True, line_width=0.3)
+pl.camera_position=[(0.32,-0.28,0.26),(0,0,0.09),(0,0,1)]
+pl.subplot(0,1)
+pl.add_mesh(internal.clip("z", origin=(0,0,Z_P), invert=False).slice(normal="z", origin=(0,0,Z_P)),
+            show_edges=True, color="lightblue")
+pl.camera_position="xy"
+pl.screenshot("mesh.png"); display(Image("mesh.png"))
+# -- output
+[0m[33m2026-09-13 13:46:35.904 ( 106.520s) [    7584C084B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:46:35.905 ( 106.521s) [    7584C084B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:46:35.939 ( 106.554s) [    7584C084B780]vtkTableBasedClipDataSe:1410  WARN| vtkTableBasedClipDataSet (0x5d9c18606120): Output points used by cells not supported by vtkTableBasedClipDataSet will appear twice. To avoid this, consider using vtkClipDataSet directly[0m
+[0m[33m2026-09-13 13:46:35.998 ( 106.614s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 67968-67968 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:35.998 ( 106.614s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:46:35.999 ( 106.615s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:46:35.999 ( 106.615s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:46:35.999 ( 106.615s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:46:35.999 ( 106.615s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 68142-68142 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:35.999 ( 106.615s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| Th
+... 10749 characters cut ...
+es of edge 71427-71427 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.022 ( 106.638s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 71672-71672 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.023 ( 106.639s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:46:36.023 ( 106.639s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:46:36.024 ( 106.639s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 71899-71899 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.024 ( 106.639s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 71902-71902 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.024 ( 106.640s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 71922-71922 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.024 ( 106.640s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 71918-71918 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.025 ( 106.640s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 71992-71992 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.025 ( 106.640s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 71989-71989 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.025 ( 106.640s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 72031-72031 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.025 ( 106.640s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:46:36.025 ( 106.641s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 72094-72094 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.025 ( 106.641s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 72097-72097 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.026 ( 106.641s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:46:36.026 ( 106.641s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 72165-72165 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.026 ( 106.641s) [    7584C084B780]      vtkPolyhedron.cxx:1677  WARN| The polyhedron is not watertight or non-manifold because the number of faces of edge 72166-72166 is not 2 but 1[0m
+[0m[33m2026-09-13 13:46:36.026 ( 106.641s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:46:36.026 ( 106.642s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:46:36.026 ( 106.642s) [    7584C084B780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+
+# -- cell 22 (0.7s, exit 0)
+os.remove("constant/triSurface/swirl.stl")
+print(sorted(os.listdir("constant/triSurface")))
+print(subprocess.run(["bash","-lc","checkMesh 2>&1 | tail -3"],capture_output=True,text=True).stdout)
+# -- output
+['cylinderWall.stl', 'ductWall1.stl', 'ductWall2.stl', 'ductWall3.stl', 'ductWall4.stl', 'floor.stl', 'inlet1.stl', 'inlet2.stl', 'inlet3.stl', 'inlet4.stl', 'outlet.stl', 'top.stl']
+
+End
+

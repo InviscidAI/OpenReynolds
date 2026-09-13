@@ -1,0 +1,655 @@
+# -- cell 1 (0.2s, exit 0)
+import os, subprocess
+import numpy as np, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# ---- Turbofan flow-path profile, metres, axis = +X ----
+NAC = [(0.00,1.05),(0.30,1.02),(0.60,1.00),(1.60,1.00),(2.20,0.94),(2.60,0.85)]
+SPL_OUT = [(2.60,0.62),(2.20,0.72),(1.60,0.78),(1.20,0.70),(1.00,0.60)]
+CORE_OUT = [(1.20,0.55),(1.80,0.50),(2.20,0.50),(2.60,0.50),(3.00,0.45)]
+HUB = [(3.00,0.25),(2.60,0.40),(2.20,0.42),(1.80,0.38),(1.40,0.40),(1.00,0.40),
+       (0.60,0.30),(0.15,0.00),(0.00,0.00)]
+PROFILE = NAC + SPL_OUT + CORE_OUT + HUB
+
+p = np.array(PROFILE)
+plt.figure(figsize=(11,4))
+plt.plot(p[:,0], p[:,1], 'o-')
+plt.plot([0,3.0],[0,0],'k--',lw=0.7)
+plt.gca().set_aspect('equal'); plt.grid(True); plt.title("fluid half-plane profile (x,r)")
+plt.savefig("profile.png", dpi=110)
+print(len(PROFILE), os.getcwd())
+# -- output
+25 /home/qiuzi/.openreynolds-buildup/work/T25-20260913-134704-eec3/t25
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 2 (0.2s, exit 0)
+from IPython.display import Image, display
+fig, ax = plt.subplots(figsize=(11,4))
+ax.plot(p[:,0], p[:,1], 'o-'); ax.plot([0,3.0],[0,0],'k--',lw=0.7)
+ax.set_aspect('equal'); ax.grid(True); ax.set_title("fluid half-plane profile (x,r)")
+fig
+# -- output
+
+
+# -- cell 3 (2.3s, exit 0)
+from build123d import *
+pts = [Vector(x, 0.0, r) for (x, r) in PROFILE]
+face = make_face(Polyline(*pts, close=True))
+fluid0 = revolve(face, axis=Axis.X, revolution_arc=360)
+print(fluid0.volume, fluid0.bounding_box(), len(fluid0.faces()))
+# -- output
+5.816166615272441 bbox: 0.0 <= x <= 3.0, -1.05 <= y <= 1.05, -1.05 <= z <= 1.05 23
+
+# -- cell 4 (0.5s, exit 0)
+def blade_row(xc, r0, r1, chord, thick, ang0, ang1, n):
+    """One annular blade row: n twisted plates, spans beyond both walls so the cut is clean."""
+    p0 = Plane(origin=(xc, 0, r0), z_dir=(0, 0, 1)).rotated((0, 0, ang0))
+    p1 = Plane(origin=(xc, 0, r1), z_dir=(0, 0, 1)).rotated((0, 0, ang1))
+    b = loft([p0 * Rectangle(chord, thick), p1 * Rectangle(chord, thick)])
+    row = b
+    for k in range(1, n):
+        row = row + Rot(X=360.0 * k / n) * b
+    return row
+
+FAN = blade_row(0.60, 0.24, 1.06, 0.30, 0.050, -35, -58, 12)
+print(FAN.volume, len(FAN.solids()), FAN.bounding_box())
+# -- output
+0.14368883878986005 12 bbox: 0.46278768244787516 <= x <= 0.7372123175521249, -1.0600001000000001 <= y <= 1.0600001000000001, -1.0600001000000001 <= z <= 1.0600001000000001
+
+# -- cell 5 (1.5s, exit 0)
+OGV   = blade_row(1.50, 0.72, 1.05, 0.22, 0.040,  12,   4, 10)   # outlet guide vanes, bypass duct
+COMP1 = blade_row(1.35, 0.34, 0.60, 0.14, 0.035, -30, -45, 12)   # compressor stage 1
+COMP2 = blade_row(1.62, 0.33, 0.59, 0.13, 0.035, -28, -42, 12)   # compressor stage 2
+TURB1 = blade_row(2.18, 0.36, 0.56, 0.17, 0.045,  35,  25, 10)   # turbine stage 1
+TURB2 = blade_row(2.45, 0.36, 0.56, 0.17, 0.045, -35, -25, 10)   # turbine stage 2
+blades = FAN + OGV + COMP1 + COMP2 + TURB1 + TURB2
+print(len(blades.solids()), blades.volume)
+# -- output
+66 0.23224947016351025
+
+# -- cell 6 (2.0s, exit 0)
+fluid = fluid0 - blades
+print("fluid volume", fluid.volume, "solids", len(fluid.solids()), "faces", len(fluid.faces()))
+print(fluid.bounding_box())
+# -- output
+fluid volume 5.6423434703312845 solids 1 faces 300
+bbox: 0.0 <= x <= 3.0, -1.05 <= y <= 1.05, -1.05 <= z <= 1.05
+
+# -- cell 7 (0.3s, exit 0)
+import math
+def planar_x_faces(shp, x0, tol=1e-6):
+    out = []
+    for f in shp.faces():
+        c = f.center()
+        n = f.normal_at(c)
+        if abs(abs(n.X) - 1) < 1e-6 and abs(c.X - x0) < tol and abs(f.center().X - x0) < tol:
+            # confirm every vertex lies on the plane
+            if all(abs(v.X - x0) < 1e-6 for v in f.vertices()):
+                out.append(f)
+    return out
+
+inlet_f = planar_x_faces(fluid, 0.0)
+byp_f   = planar_x_faces(fluid, 2.6)
+core_f  = planar_x_faces(fluid, 3.0)
+for nm, fs, want in [("inlet", inlet_f, math.pi*1.05**2),
+                     ("bypass_outlet", byp_f, math.pi*(0.85**2-0.62**2)),
+                     ("core_outlet", core_f, math.pi*(0.45**2-0.25**2))]:
+    print(nm, len(fs), "area", sum(f.area for f in fs), "analytic", want)
+wall_f = [f for f in fluid.faces() if f not in inlet_f + byp_f + core_f]
+print("wall faces", len(wall_f), "total", len(fluid.faces()))
+# -- output
+inlet 1 area 3.463605900582747 analytic 3.463605900582747
+bypass_outlet 1 area 1.0621724761787086 analytic 1.0621724761787088
+core_outlet 1 area 0.43982297150257116 analytic 0.4398229715025711
+wall faces 297 total 300
+
+# -- cell 8 (0.2s, exit 0)
+os.makedirs("constant/triSurface", exist_ok=True)
+def export_group(faces, name):
+    c = Compound(children=[Face(f.wrapped) for f in faces]) if len(faces) > 1 else faces[0]
+    path = f"constant/triSurface/{name}.stl"
+    export_stl(c, path, tolerance=0.002, angular_tolerance=0.25, ascii_format=True)
+    return path
+
+for nm, fs in [("inlet", inlet_f), ("bypass_outlet", byp_f), ("core_outlet", core_f), ("walls", wall_f)]:
+    pth = export_group(fs, nm)
+    print(nm, os.path.getsize(pth)//1024, "kB")
+# -- output
+inlet 17 kB
+bypass_outlet 32 kB
+core_outlet 30 kB
+walls 4160 kB
+
+# -- cell 9 (0.6s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pl = pv.Plotter(off_screen=True, window_size=(1400, 700))
+cols = {"walls":"lightsteelblue","inlet":"red","bypass_outlet":"green","core_outlet":"orange"}
+meshes = {n: pv.read(f"constant/triSurface/{n}.stl") for n in cols}
+for n,m in meshes.items():
+    pl.add_mesh(m.clip(normal=(0,1,0), origin=(0,0,0)), color=cols[n], show_edges=False, opacity=1.0)
+pl.camera_position = [(4.5,-5.0,2.5),(1.5,0,0.3),(0,0,1)]
+img = pl.screenshot("view1.png")
+display(Image("view1.png"))
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 13:49:19.056 (   0.260s) [    7A64BBDFD780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 13:49:19.057 (   0.260s) [    7A64BBDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:49:19.069 (   0.272s) [    7A64BBDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 10 (0.3s, exit 0)
+pl = pv.Plotter(off_screen=True, window_size=(1500, 700))
+for n,m in meshes.items():
+    pl.add_mesh(m.clip(normal=(0,1,0), origin=(0,0,0)), color=cols[n], show_edges=True, line_width=0.3)
+pl.camera_position = [(2.0, 6.0, 2.0), (1.5, 0, 0.25), (0,0,1)]
+pl.screenshot("view2.png"); display(Image("view2.png"))
+# -- output
+[0m[33m2026-09-13 13:49:26.768 (   7.972s) [    7A64BBDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:49:26.769 (   7.972s) [    7A64BBDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 11 (0.3s, exit 0)
+names = ["inlet","bypass_outlet","core_outlet","walls"]
+with open("constant/triSurface/all.stl","w") as out:
+    for n in names:
+        out.write(open(f"constant/triSurface/{n}.stl").read())
+r = subprocess.run(["surfaceCheck","constant/triSurface/all.stl"], capture_output=True, text=True)
+print("\n".join([l for l in r.stdout.splitlines() if any(k in l for k in
+      ["Surface","open edge","closed","illegal","Number of","triangles","region"])][-25:]))
+# -- output
+Exec   : surfaceCheck constant/triSurface/all.stl
+Reading surface from "constant/triSurface/all.stl" ...
+Triangles    : 17162 in 1 region(s)
+Surface has 1 illegal triangles.
+    From static bool Foam::triSurfaceTools::validTri(const Foam::triSurface&, Foam::label, bool)
+    in file triSurface/triSurfaceTools/triSurfaceTools.C at line 2703
+Dumping conflicting face labels to "illegalFaces"
+Surface is not closed since not all edges (26038) connected to two faces:
+Number of unconnected parts : 4
+Wrote zoning to "constant/triSurface/all.vtp"
+writing part 0 size 69 to "constant/triSurface/all_0.obj"
+writing part 1 size 131 to "constant/triSurface/all_1.obj"
+writing part 2 size 124 to "constant/triSurface/all_2.obj"
+writing part 3 size 16838 to "constant/triSurface/all_3.obj"
+Number of zones (connected area with consistent normal) : 5
+Wrote zoning to "constant/triSurface/all.vtp"
+writing part 0 size 69 to "constant/triSurface/all_normal_0.obj"
+writing part 1 size 131 to "constant/triSurface/all_normal_1.obj"
+writing part 2 size 124 to "constant/triSurface/all_normal_2.obj"
+writing part 3 size 16837 to "constant/triSurface/all_normal_3.obj"
+writing part 4 size 1 to "constant/triSurface/all_normal_4.obj"
+
+# -- cell 12 (0.8s, exit 0)
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.BRep import BRep_Tool
+from OCP.TopLoc import TopLoc_Location
+from OCP.TopAbs import TopAbs_REVERSED
+
+BRepMesh_IncrementalMesh(fluid.wrapped, 0.004, False, 0.25, True)
+
+def write_group(faces, name):
+    path = f"constant/triSurface/{name}.stl"
+    nt = 0
+    with open(path, "w") as fh:
+        fh.write(f"solid {name}\n")
+        for f in faces:
+            loc = TopLoc_Location()
+            tri = BRep_Tool.Triangulation_s(f.wrapped, loc)
+            if tri is None: continue
+            trsf = loc.Transformation()
+            P = [tri.Node(i+1).Transformed(trsf) for i in range(tri.NbNodes())]
+            rev = f.wrapped.Orientation() == TopAbs_REVERSED
+            for i in range(tri.NbTriangles()):
+                a, b, c = tri.Triangle(i+1).Get()
+                if rev: b, c = c, b
+                p1, p2, p3 = P[a-1], P[b-1], P[c-1]
+                u = np.array([p2.X()-p1.X(), p2.Y()-p1.Y(), p2.Z()-p1.Z()])
+                v = np.array([p3.X()-p1.X(), p3.Y()-p1.Y(), p3.Z()-p1.Z()])
+                n = np.cross(u, v); L = np.linalg.norm(n)
+                if L < 1e-14: continue
+                n /= L
+                fh.write(f"facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\n outer loop\n")
+                for p in (p1, p2, p3):
+                    fh.write(f"  vertex {p.X():.8e} {p.Y():.8e} {p.Z():.8e}\n")
+                fh.write(" endloop\nendfacet\n")
+                nt += 1
+        fh.write(f"endsolid {name}\n")
+    return nt
+
+groups = [("inlet", inlet_f), ("bypass_outlet", byp_f), ("core_outlet", core_f), ("walls", wall_f)]
+for nm, fs in groups:
+    print(nm, write_group(fs, nm), "tris")
+# -- output
+inlet 69 tris
+bypass_outlet 131 tris
+core_outlet 124 tris
+walls 16837 tris
+
+# -- cell 13 (0.3s, exit 0)
+with open("constant/triSurface/all.stl","w") as out:
+    for n in names: out.write(open(f"constant/triSurface/{n}.stl").read())
+r = subprocess.run(["surfaceCheck","constant/triSurface/all.stl"], capture_output=True, text=True)
+print("\n".join([l for l in r.stdout.splitlines() if any(k in l for k in
+      ["Triangles","illegal","closed","unconnected"])]))
+# -- output
+Triangles    : 17161 in 4 region(s)
+Surface has no illegal triangles.
+Surface is not closed since not all edges (26037) connected to two faces:
+Number of unconnected parts : 4
+
+# -- cell 14 (0.3s, exit 0)
+import collections
+def load_tris(path):
+    v=[]
+    for line in open(path):
+        if line.lstrip().startswith("vertex"):
+            v.append([float(t) for t in line.split()[1:]])
+    return np.array(v).reshape(-1,3,3)
+T = np.vstack([load_tris(f"constant/triSurface/{n}.stl") for n in names])
+key = np.round(T.reshape(-1,3), 7)
+uniq, inv = np.unique(key, axis=0, return_inverse=True)
+tri = inv.reshape(-1,3)
+ec = collections.Counter()
+for a,b,c in tri:
+    for e in ((a,b),(b,c),(c,a)): ec[tuple(sorted(e))]+=1
+free=[e for e,k in ec.items() if k!=2]
+print("tris",len(tri),"pts",len(uniq),"free/odd edges",len(free))
+if free:
+    pts=uniq[np.array([e[0] for e in free])]
+    print("free edge point bbox x", pts[:,0].min(), pts[:,0].max(), "r", np.hypot(pts[:,1],pts[:,2]).min(), np.hypot(pts[:,1],pts[:,2]).max())
+# -- output
+tris 17161 pts 8739 free/odd edges 591
+free edge point bbox x 0.0 3.0 r 0.2499999476291145 1.0500000511291891
+
+# -- cell 15 (0.2s, exit 0)
+missing = 0
+for f in fluid.faces():
+    loc = TopLoc_Location()
+    if BRep_Tool.Triangulation_s(f.wrapped, loc) is None: missing += 1
+print("faces w/o triangulation:", missing)
+# free edges of walls alone
+Tw = load_tris("constant/triSurface/walls.stl")
+k = np.round(Tw.reshape(-1,3),7); u,iv = np.unique(k,axis=0,return_inverse=True); tw=iv.reshape(-1,3)
+ecw=collections.Counter()
+for a,b,c in tw:
+    for e in ((a,b),(b,c),(c,a)): ecw[tuple(sorted(e))]+=1
+print("walls free edges", sum(1 for v in ecw.values() if v!=2))
+# -- output
+faces w/o triangulation: 0
+walls free edges 265
+
+# -- cell 16 (0.7s, exit 0)
+export_step(fluid, "fluid.step")
+import gmsh
+gmsh.initialize()
+gmsh.option.setNumber("General.Terminal", 0)
+gmsh.model.add("tf")
+gmsh.model.occ.importShapes("fluid.step")
+gmsh.model.occ.synchronize()
+surfs = gmsh.model.getEntities(2)
+print("surfaces", len(surfs))
+def tag_group(t):
+    x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(2,t)
+    if abs(x1-x0) < 1e-7:
+        if abs(x0) < 1e-7: return "inlet"
+        if abs(x0-2.6) < 1e-7: return "bypass_outlet"
+        if abs(x0-3.0) < 1e-7: return "core_outlet"
+    return "walls"
+from collections import defaultdict
+grp = defaultdict(list)
+for _,t in surfs: grp[tag_group(t)].append(t)
+print({k:len(v) for k,v in grp.items()})
+# -- output
+surfaces 300
+{'walls': 300}
+
+# -- cell 17 (0.1s, exit 0)
+print(gmsh.model.getBoundingBox(-1,-1))
+# -- output
+(-1e-07, -1.0600001000000001, -1.0600001000000001, 3.0000001000000123, 1.0600001000000001, 1.0600001000000001)
+
+# -- cell 18 (0.1s, exit 0)
+def tag_group(t):
+    x0,_,_,x1,_,_ = gmsh.model.getBoundingBox(2,t)
+    if (x1-x0) < 1e-5:
+        xm = 0.5*(x0+x1)
+        for x,nm in [(0.0,"inlet"),(2.6,"bypass_outlet"),(3.0,"core_outlet")]:
+            if abs(xm-x) < 1e-5: return nm
+    return "walls"
+grp = defaultdict(list)
+for _,t in surfs: grp[tag_group(t)].append(t)
+print({k:len(v) for k,v in grp.items()})
+# -- output
+{'walls': 297, 'inlet': 1, 'bypass_outlet': 1, 'core_outlet': 1}
+
+# -- cell 19 (4.0s, exit 0)
+gmsh.option.setNumber("Mesh.MeshSizeMin", 0.02)
+gmsh.option.setNumber("Mesh.MeshSizeMax", 0.09)
+gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 12)
+gmsh.option.setNumber("Mesh.Algorithm", 6)
+gmsh.model.mesh.generate(2)
+for nm, tags in grp.items():
+    pg = gmsh.model.addPhysicalGroup(2, tags); gmsh.model.setPhysicalName(2, pg, nm)
+gmsh.option.setNumber("Mesh.StlOneSolidPerSurface", 2)   # one solid per physical group
+gmsh.option.setNumber("Mesh.Binary", 0)
+for nm, tags in grp.items():
+    gmsh.model.removePhysicalGroups()
+    pg = gmsh.model.addPhysicalGroup(2, tags); gmsh.model.setPhysicalName(2, pg, nm)
+    gmsh.write(f"constant/triSurface/{nm}.stl")
+    print(nm, os.path.getsize(f"constant/triSurface/{nm}.stl")//1024,"kB")
+# -- output
+walls 8887 kB
+inlet 211 kB
+bypass_outlet 71 kB
+core_outlet 31 kB
+
+# -- cell 20 (0.4s, exit 0)
+T = np.vstack([load_tris(f"constant/triSurface/{n}.stl") for n in names])
+key = np.round(T.reshape(-1,3), 7)
+uniq, inv = np.unique(key, axis=0, return_inverse=True); tri = inv.reshape(-1,3)
+ec = collections.Counter()
+for a,b,c in tri:
+    for e in ((a,b),(b,c),(c,a)): ec[tuple(sorted(e))]+=1
+print("tris",len(tri),"free edges",sum(1 for v in ec.values() if v!=2))
+# -- output
+tris 34770 free edges 0
+
+# -- cell 21 (0.4s, exit 0)
+for d in ["system","constant"]: os.makedirs(d, exist_ok=True)
+def w(p,s): open(p,"w").write(s)
+HDR = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+w("system/controlDict", HDR%"controlDict"+"""
+application snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime;
+endTime 1; deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii;
+writePrecision 8; runTimeModifiable true;
+""")
+w("system/fvSchemes", HDR%"fvSchemes"+"gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;}\n")
+w("system/fvSolution", HDR%"fvSolution"+"solvers{} \n")
+NX,NY,NZ = 40,29,29
+w("system/blockMeshDict", HDR%"blockMeshDict"+f"""
+scale 1;
+vertices ((-0.1 -1.15 -1.15)(3.1 -1.15 -1.15)(3.1 1.15 -1.15)(-0.1 1.15 -1.15)
+          (-0.1 -1.15 1.15)(3.1 -1.15 1.15)(3.1 1.15 1.15)(-0.1 1.15 1.15));
+blocks (hex (0 1 2 3 4 5 6 7) ({NX} {NY} {NZ}) simpleGrading (1 1 1));
+edges ();
+boundary (background {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); }});
+""")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-400:])
+# -- output
+0 079310345 .. 0.079310345
+        k : 0.079310345 .. 0.079310345
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.1 -1.15 -1.15) (3.1 1.15 1.15)
+  nPoints: 36900
+  nCells: 33640
+  nFaces: 104081
+  nInternalFaces: 97759
+----------------
+Patches
+----------------
+  patch 0 (start: 97759 size: 6322) name: background
+
+End
+
+# -- cell 22 (0.3s, exit 0)
+w("system/surfaceFeatureExtractDict", HDR%"surfaceFeatureExtractDict"+ "".join(
+ f'{n}.stl {{ extractionMethod extractFromSurface; includedAngle 150; subsetFeatures{{nonManifoldEdges no; openEdges yes;}} writeObj no; }}\n' for n in names))
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-300:], sorted(os.listdir("constant/extendedFeatureEdgeMesh"))[:6] if os.path.isdir("constant/extendedFeatureEdgeMesh") else os.listdir("constant/triSurface"))
+# -- output
+0 uzi/.openreynolds-buildup/work/T25-20260913-134704-eec3/t25/constant/extendedFeatureEdgeMesh/walls.extendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T25-20260913-134704-eec3/t25/constant/triSurface/walls.eMesh"
+ExecutionTime = 0.13 s  ClockTime = 0 s
+
+End
+
+ ['bypass_outlet.extendedFeatureEdgeMesh', 'core_outlet.extendedFeatureEdgeMesh', 'inlet.extendedFeatureEdgeMesh', 'walls.extendedFeatureEdgeMesh']
+
+# -- cell 23 (26.7s, exit 0)
+def snappy_dict(wall_lvl=(1,2), feat_lvl=2, layers=False):
+    geo = "".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}\n' for n in names)
+    ref = "".join(f'    {n} {{ level ({wall_lvl[0]} {wall_lvl[1] if n=="walls" else wall_lvl[0]}); patchInfo {{ type {"patch" if n!="walls" else "wall"}; }} }}\n' for n in names)
+    feats = "".join(f'      {{ file "{n}.eMesh"; level {feat_lvl}; }}\n' for n in names)
+    return HDR%"snappyHexMeshDict"+f"""
+castellatedMesh true; snap true; addLayers {str(layers).lower()};
+geometry {{
+{geo}}}
+castellatedMeshControls {{
+  maxLocalCells 4000000; maxGlobalCells 8000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2; resolveFeatureAngle 40; allowFreeStandingZoneFaces true;
+  features (
+{feats}  );
+  refinementSurfaces {{
+{ref}  }}
+  refinementRegions {{}}
+  locationInMesh (1.0 0.0 0.88);
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 6;
+  nFeatureSnapIter 12; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.2; finalLayerThickness 0.4;
+  minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 5; nSmoothSurfaceNormals 1;
+  nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3;
+  minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ #includeEtc "caseDicts/meshQualityDict" }}
+writeFlags (scalarLevels layerSets layerFields); mergeTolerance 1e-6;
+"""
+w("system/snappyHexMeshDict", snappy_dict())
+import time
+t0=time.time()
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, time.time()-t0)
+print(r.stdout[-1500:])
+# -- output
+1 26.666868686676025
+ells per refinement level:
+    0	1994
+    1	56992
+    2	124763
+Writing mesh to time constant
+Wrote mesh in = 0.58 s.
+Mesh refined in = 25.2 s.
+
+Morphing phase
+--------------
+
+Duplicating 0 points on faceZones of type boundary
+Snapping to features in 12 iterations ...
+Constructing mesh displacer ...
+Using mesh parameters 
+{
+    maxNonOrtho     65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave      80;
+    minVol          1e-13;
+    minTetQuality   1e-15;
+    minArea         -1;
+    minTwist        0.02;
+    minDeterminant  0.001;
+    minFaceWeight   0.05;
+    minVolRatio     0.01;
+    minTriangleTwist -1;
+    minEdgeLength   -1;
+}
+
+
+Checking initial mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Detected 0 illegal faces (concave, zero area or negative cell pyramid volume)
+Checked initial mesh in = 4.08 s
+
+
+Smoothing patch points ...
+Smoothing iteration 0
+Found 2401 non-manifold point(s).
+
+Scaling iteration 0
+
+# -- cell 24 (0.1s, exit 0)
+print(r.stderr[-2000:])
+# -- output
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'errorReduction' not found in dictionary "/home/qiuzi/.openreynolds-buildup/work/T25-20260913-134704-eec3/t25/system/snappyHexMeshDict/meshQualityControls"
+
+
+file: system/snappyHexMeshDict/meshQualityControls at line 18 to 77.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 25 (5.0s, exit 0)
+d = open("system/snappyHexMeshDict").read().replace(
+ 'meshQualityControls { #includeEtc "caseDicts/meshQualityDict" }',
+ 'meshQualityControls { #includeEtc "caseDicts/meshQualityDict" nSmoothScale 4; errorReduction 0.75; }')
+w("system/snappyHexMeshDict", d)
+t0=time.time(); r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, round(time.time()-t0), r.stdout[-700:], r.stderr[-500:])
+# -- output
+-6 5 ()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+ entParameters const&, Foam::snapParameters const&, bool, Foam::meshRefinement::FaceMergeType, Foam::dictionary const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#8  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+#9  ? in /lib/x86_64-linux-gnu/libc.so.6
+#10  __libc_start_main in /lib/x86_64-linux-gnu/libc.so.6
+#11  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+=============
+
+# -- cell 26 (90.9s, exit 0)
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+t0=time.time(); r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, round(time.time()-t0))
+print(r.stdout[-900:]); print("ERR:", r.stderr[-800:])
+# -- output
+0 91
+ : 64215
+Snapped mesh : cells:183749  faces:597566  points:240669
+Cells per refinement level:
+    0	1994
+    1	56992
+    2	124763
+Writing mesh to time constant
+Wrote mesh in = 0.53 s.
+Mesh snapped in = 64.02 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 90.23 s.
+End
+
+
+ERR:
+
+# -- cell 27 (1.6s, exit 0)
+r = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True)
+print("\n".join(r.stdout.splitlines()[-40:]))
+# -- output
+Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet     3181     3418  ok (non-closed singly connected)
+           bypass_outlet     2069     2433  ok (non-closed singly connected)
+             core_outlet     1028     1128  ok (non-closed singly connected)
+                   walls    58084    69650  ok (non-closed singly connected)
+                    ".*"    64362    75701      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (0 -1.0490539 -1.0499964) (3 1.0490539 1.049997)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (8.6822179e-16 -4.3882913e-16 4.1561442e-16) OK.
+    Max cell openness = 3.2006046e-16 OK.
+    Max aspect ratio = 6.548954 OK.
+    Minimum face area = 7.2099365e-06. Maximum face area = 0.0073670639.  Face area magnitudes OK.
+    Min volume = 7.561252e-07. Max volume = 0.00058875952.  Total volume = 5.6391492.  Cell volumes OK.
+    Mesh non-orthogonality Max: 64.551534 average: 13.110646
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.9234009 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 28 (2.6s, exit 0)
+r=subprocess.run(["foamToVTK","-constant","-ascii"],capture_output=True,text=True); print(r.returncode)
+import glob; print(glob.glob("VTK/**/*.vt*", recursive=True)[:8])
+# -- output
+0
+['VTK/t25.vtm.series', 'VTK/t25_1.vtm', 'VTK/t25_0.vtm', 'VTK/t25_0/boundary.vtm', 'VTK/t25_0/internal.vtu', 'VTK/t25_0/boundary/bypass_outlet.vtp', 'VTK/t25_0/boundary/inlet.vtp', 'VTK/t25_0/boundary/walls.vtp']
+
+# -- cell 29 (0.7s, exit 0)
+grid = pv.read("VTK/t25_1/internal.vtu")
+sl = grid.slice(normal=(0,1,0), origin=(0,0,0))
+pl = pv.Plotter(off_screen=True, window_size=(1600,700))
+pl.add_mesh(sl, color="white", show_edges=True, line_width=0.4)
+pl.camera_position=[(1.5,-8,0.0),(1.5,0,0.0),(0,0,1)]
+pl.screenshot("slice.png"); display(Image("slice.png"))
+# -- output
+[0m[33m2026-09-13 13:54:11.999 ( 293.202s) [    7A64BBDFD780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:54:12.017 ( 293.220s) [    7A64BBDFD780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:54:12.017 ( 293.220s) [    7A64BBDFD780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:54:12.038 ( 293.242s) [    7A64BBDFD780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:54:12.039 ( 293.242s) [    7A64BBDFD780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:54:12.039 ( 293.243s) [    7A64BBDFD780]      vtkPolyhedron.cxx:2025  WARN| A cell with a non-manifold triangulation has been encountered. This cell cannot be contoured.[0m
+[0m[33m2026-09-13 13:54:12.059 ( 293.263s) [    7A64BBDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:54:12.059 ( 293.263s) [    7A64BBDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

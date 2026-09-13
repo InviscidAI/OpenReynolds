@@ -1,0 +1,615 @@
+# -- cell 1 (0.2s, exit 0)
+import numpy as np, matplotlib.pyplot as plt, math, os
+os.makedirs("constant/triSurface", exist_ok=True)
+
+MODULE = 3.0; ALPHA = math.radians(20.0); Z_P = 20; Z_W = 30
+BACKLASH = 0.3
+SIGMA = math.radians(90)
+GAM_P = math.atan2(Z_P, Z_W); GAM_W = SIGMA - GAM_P
+R_P = MODULE*Z_P/2; R_W = MODULE*Z_W/2
+CONE = math.hypot(R_P, R_W)
+FACEW = 18.0
+
+def inv(a): return math.tan(a)-a
+
+def gear_profile(z, gam, r_pitch, npf=10):
+    cg = math.cos(gam); r_pv = r_pitch/cg
+    r_b = r_pv*math.cos(ALPHA); r_a = r_pv+MODULE; r_f = r_pv-1.25*MODULE
+    t_p = math.pi*MODULE/2 - BACKLASH/2
+    psi = t_p/(2*r_pv)
+    rho_lo = max(r_b, r_f)
+    def d(rho):
+        ar = math.acos(min(1.0, r_b/rho)); return (psi + inv(ALPHA) - inv(ar))/cg
+    def R(rho): return r_pitch + (rho-r_pv)*cg
+    rhos = np.linspace(rho_lo, r_a, npf)
+    half = []
+    if r_f < r_b-1e-9: half.append((R(r_f), d(rho_lo)))
+    half += [(R(r), d(r)) for r in rhos]
+    tip = [(R(r_a), t) for t in np.linspace(d(r_a), -d(r_a), 5)[1:-1]]
+    tooth = half + tip + [(rr,-dd) for rr,dd in reversed(half)]
+    P=[]
+    for i in range(z):
+        phi = 2*math.pi*i/z
+        for rr,dd in tooth: P.append((rr, phi+dd))
+        # root arc to next tooth start
+        a0 = phi + tooth[-1][1]; a1 = phi + 2*math.pi/z + tooth[0][1]
+        for aa in np.linspace(a0,a1,4)[1:-1]: P.append((R(r_f), aa))
+    return [(rr*math.cos(t), rr*math.sin(t)) for rr,t in P], dict(r_pv=r_pv,r_b=r_b,r_a=r_a,r_f=r_f,psi=psi,tip=R(r_a),root=R(r_f))
+
+pp, ip = gear_profile(Z_P, GAM_P, R_P)
+pw, iw = gear_profile(Z_W, GAM_W, R_W)
+print("gamma_p %.3f deg  gamma_w %.3f  A=%.3f  r_p=%.1f r_w=%.1f"%(math.degrees(GAM_P),math.degrees(GAM_W),CONE,R_P,R_W))
+print("pinion",{k:round(v,3) for k,v in ip.items()}); print("wheel ",{k:round(v,3) for k,v in iw.items()})
+fig,ax=plt.subplots(figsize=(6,6)); a=np.array(pp); b=np.array(pw)
+ax.plot(a[:,0],a[:,1],'-',lw=.7); ax.plot(b[:,0],b[:,1],'-',lw=.7); ax.set_aspect(1); plt.savefig("prof.png",dpi=90)
+print(len(pp),len(pw))
+# -- output
+gamma_p 33.690 deg  gamma_w 56.310  A=54.083  r_p=30.0 r_w=45.0
+pinion {'r_pv': 36.056, 'r_b': 33.881, 'r_a': 39.056, 'r_f': 32.306, 'psi': 0.063, 'tip': 32.496, 'root': 26.88}
+wheel  {'r_pv': 81.125, 'r_b': 76.232, 'r_a': 84.125, 'r_f': 77.375, 'psi': 0.028, 'tip': 46.664, 'root': 42.92}
+540 750
+
+# -- cell 2 (3.4s, exit 1)
+import time
+from build123d import *
+import build123d as bd
+
+K_IN = (CONE-FACEW)/CONE          # scale factor of inner section toward apex
+ZO_P = CONE*math.cos(GAM_P); ZO_W = CONE*math.cos(GAM_W)
+print("K=%.4f  z_outer pinion=%.2f wheel=%.2f"%(K_IN,ZO_P,ZO_W))
+
+def gear_solid(pts, z_out):
+    w_o = Polyline(*[(x,y,z_out) for x,y in pts], close=True)
+    w_i = Polyline(*[(K_IN*x,K_IN*y,K_IN*z_out) for x,y in pts], close=True)
+    return loft([make_face(w_o), make_face(w_i)], ruled=True)
+
+t=time.time(); pinion_body = gear_solid(pp, ZO_P); print("pinion loft %.1fs vol=%.1f mm3"%(time.time()-t, pinion_body.volume))
+# -- output
+K=0.6672  z_outer pinion=45.00 wheel=30.00
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:335[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    334[39m     [38;5;28;01mif[39;00m [38;5;129;01mnot[39;00m new_solid.is_valid:
+[32m--> [39m[32m335[39m         [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mRecovery failed[39m[33m"[39m)
+[32m    336[39m [38;5;28;01mexcept[39;00m [38;5;167;01mException[39;00m [38;5;28;01mas[39;00m e:
+
+[31mValueError[39m: Recovery failed
+
+The above exception was the direct cause of the following exception:
+
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 14[39m
+[32m     10[39m     w_o = Polyline(*[(x,y,z_out) [38;5;28;01mfor[39;00m x,y [38;5;28;01min[39;00m pts], close=[38;5;28;01mTrue[39;00m)
+[32m     11[39m     w_i = Polyline(*[(K_IN*x,K_IN*y,K_IN*z_out) [38;5;28;01mfor[39;00m x,y [38;5;28;01min[39;00m pts], close=[38;5;28;01mTrue[39;00m)
+[32m     12[39m     [38;5;28;01mreturn[39;00m loft([make_face(w_o), make_face(w_i)], ruled=[38;5;28;01mTrue[39;00m)
+[32m     13[39m 
+[32m---> [39m[32m14[39m t=time.time(); pinion_body = gear_solid(pp, ZO_P); print([33m"pinion loft %.1fs vol=%.1f mm3"[39m%(time.time()-t, pinion_body.volume))
+
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 12[39m, in [36mgear_solid[39m[34m(pts, z_out)[39m
+[32m      9[39m [38;5;28;01mdef[39;00m gear_solid(pts, z_out):
+[32m     10[39m     w_o = Polyline(*[(x,y,z_out) [38;5;28;01mfor[39;00m x,y [38;5;28;01min[39;00m pts], close=[38;5;28;01mTrue[39;00m)
+[32m     11[39m     w_i = Polyline(*[(K_IN*x,K_IN*y,K_IN*z_out) [38;5;28;01mfor[39;00m x,y [38;5;28;01min[39;00m pts], close=[38;5;28;01mTrue[39;00m)
+[32m---> [39m[32m12[39m     [38;5;28;01mreturn[39;00m loft([make_face(w_o), make_face(w_i)], ruled=[38;5;28;01mTrue[39;00m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:337[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    335[39m             [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mRecovery failed[39m[33m"[39m)
+[32m    336[39m     [38;5;28;01mexcept[39;00m [38;5;167;01mException[39;00m [38;5;28;01mas[39;00m e:
+[32m--> [39m[32m337[39m         [38;5;28;01mraise[39;00m [38;5;167;01mRuntimeError[39;00m([33m"[39m[33mFailed to create valid loft[39m[33m"[39m) [38;5;28;01mfrom[39;00m[38;5;250m [39m[34;01me[39;00m
+[32m    339[39m [38;5;28;01mif[39;00m context [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m:
+[32m    340[39m     context._add_to_context(new_solid, clean=clean, mode=mode)
+
+[31mRuntimeError[39m: Failed to create valid loft
+
+# -- cell 3 (0.1s, exit 0)
+def tooth_pts(z, gam, r_pitch, npf=10):
+    """one tooth polygon in polar (R,delta), centred at delta=0, closed down to r_close"""
+    cg=math.cos(gam); r_pv=r_pitch/cg
+    r_b=r_pv*math.cos(ALPHA); r_a=r_pv+MODULE; r_f=r_pv-1.25*MODULE
+    psi=(math.pi*MODULE/2-BACKLASH/2)/(2*r_pv)
+    rho_lo=max(r_b,r_f)
+    d=lambda rho:(psi+inv(ALPHA)-inv(math.acos(min(1.0,r_b/rho))))/cg
+    R=lambda rho:r_pitch+(rho-r_pv)*cg
+    half=[]
+    if r_f<r_b-1e-9: half.append((R(r_f),d(rho_lo)))
+    half+=[(R(r),d(r)) for r in np.linspace(rho_lo,r_a,npf)]
+    tip=[(R(r_a),t) for t in np.linspace(d(r_a),-d(r_a),5)[1:-1]]
+    poly=half+tip+[(rr,-dd) for rr,dd in reversed(half)]
+    rc=0.90*R(r_f)
+    poly=[(rc,poly[0][1])]+poly+[(rc,poly[-1][1])]
+    return poly, R(r_f), R(r_a)
+
+tp_p, RF_P, RA_P = tooth_pts(Z_P, GAM_P, R_P)
+tp_w, RF_W, RA_W = tooth_pts(Z_W, GAM_W, R_W)
+print("pinion root/tip radius %.3f/%.3f  wheel %.3f/%.3f  npts=%d"%(RF_P,RA_P,RF_W,RA_W,len(tp_p)))
+
+def tooth_solid(poly, z_out, phase):
+    def ring(s):
+        return [( s*rr*math.cos(dd+phase), s*rr*math.sin(dd+phase), s*z_out) for rr,dd in poly]
+    wo=Polyline(*ring(1.0), close=True); wi=Polyline(*ring(K_IN), close=True)
+    return loft([make_face(wo), make_face(wi)], ruled=True)
+
+t=time.time(); t0=tooth_solid(tp_p, ZO_P, 0.0); print("one tooth %.2fs vol=%.2f"%(time.time()-t, t0.volume))
+# -- output
+pinion root/tip radius 26.880/32.496  wheel 42.920/46.664  npts=27
+one tooth 0.03s vol=396.22
+
+# -- cell 4 (0.1s, exit 0)
+import time
+from build123d import *
+import build123d as bd
+
+K_IN = (CONE-FACEW)/CONE               # inner section scale toward the common apex
+ZO_P = CONE*math.cos(GAM_P); ZO_W = CONE*math.cos(GAM_W)
+print("K=%.4f  z_outer pinion=%.2f wheel=%.2f"%(K_IN,ZO_P,ZO_W))
+
+def tooth_pts(z, gam, r_pitch, npf=10):
+    cg=math.cos(gam); r_pv=r_pitch/cg
+    r_b=r_pv*math.cos(ALPHA); r_a=r_pv+MODULE; r_f=r_pv-1.25*MODULE
+    psi=(math.pi*MODULE/2-BACKLASH/2)/(2*r_pv)     # half tooth angle, thinned by j/2
+    rho_lo=max(r_b,r_f)
+    d=lambda rho:(psi+inv(ALPHA)-inv(math.acos(min(1.0,r_b/rho))))/cg
+    R=lambda rho:r_pitch+(rho-r_pv)*cg
+    half=[]
+    if r_f<r_b-1e-9: half.append((R(r_f),d(rho_lo)))
+    half+=[(R(r),d(r)) for r in np.linspace(rho_lo,r_a,npf)]
+    tip=[(R(r_a),t) for t in np.linspace(d(r_a),-d(r_a),5)[1:-1]]
+    poly=half+tip+[(rr,-dd) for rr,dd in reversed(half)]
+    rc=0.90*R(r_f)
+    return [(rc,poly[0][1])]+poly+[(rc,poly[-1][1])], R(r_f), R(r_a)
+
+tp_p, RF_P, RA_P = tooth_pts(Z_P, GAM_P, R_P)
+tp_w, RF_W, RA_W = tooth_pts(Z_W, GAM_W, R_W)
+print("pinion root/tip radius %.3f/%.3f  wheel %.3f/%.3f  npts=%d"%(RF_P,RA_P,RF_W,RA_W,len(tp_p)))
+
+def tooth_solid(poly, z_out, phase):
+    ring=lambda s:[(s*rr*math.cos(dd+phase), s*rr*math.sin(dd+phase), s*z_out) for rr,dd in poly]
+    return loft([make_face(Polyline(*ring(1.0),close=True)), make_face(Polyline(*ring(K_IN),close=True))], ruled=True)
+
+t=time.time(); t0=tooth_solid(tp_p, ZO_P, 0.0); print("one tooth %.2fs vol=%.2f mm3"%(time.time()-t, t0.volume))
+# -- output
+K=0.6672  z_outer pinion=45.00 wheel=30.00
+pinion root/tip radius 26.880/32.496  wheel 42.920/46.664  npts=27
+one tooth 0.03s vol=396.22 mm3
+
+# -- cell 5 (26.2s, exit 0)
+# cavity (mm): apex of both pitch cones at origin, pinion axis +z, wheel axis +x
+XL,XH = -50.0,110.0; YL,YH = -70.0,70.0; ZL,ZH = -50.0,70.0
+RS_P, RS_W = 10.0, 14.0            # shaft radii
+SLEEVE, CLR = 12.0, 3.0            # bore sleeve length, shaft-to-bore clearance
+
+def gear_assembly(poly, z_out, rf, z_teeth, phase0, r_shaft, shaft_to):
+    blank = loft([make_face(Polyline(*[(rf*math.cos(a),rf*math.sin(a),z_out) for a in np.linspace(0,2*math.pi,181)[:-1]],close=True)),
+                  make_face(Polyline(*[(K_IN*rf*math.cos(a),K_IN*rf*math.sin(a),K_IN*z_out) for a in np.linspace(0,2*math.pi,181)[:-1]],close=True))], ruled=True)
+    g = blank
+    for i in range(z_teeth):
+        g = g + tooth_solid(poly, z_out, phase0 + 2*math.pi*i/z_teeth)
+    shaft = Pos(0,0,(z_out-5+shaft_to)/2) * Cylinder(r_shaft, shaft_to-(z_out-5))
+    return g + shaft
+
+t=time.time()
+pinion = gear_assembly(tp_p, ZO_P, RF_P, Z_P, 0.0, RS_P, ZH+SLEEVE+5)
+print("pinion %.1fs vol=%.0f mm3 bbox=%s"%(time.time()-t, pinion.volume, pinion.bounding_box()))
+t=time.time()
+wheel_loc = gear_assembly(tp_w, ZO_W, RF_W, Z_W, math.pi/Z_W, RS_W, (XH+SLEEVE+5))
+wheel = Rot(0,90,0) * wheel_loc
+print("wheel  %.1fs vol=%.0f mm3 bbox=%s"%(time.time()-t, wheel.volume, wheel.bounding_box()))
+# -- output
+pinion 8.3s vol=42265 mm3 bbox=bbox: -32.496150983013536 <= x <= 32.496150983013536, -32.496150983013536 <= y <= 32.496150983013536, 30.0230946019188 <= z <= 87.0
+wheel  17.7s vol=104068 mm3 bbox=bbox: 20.015396367945865 <= x <= 127.0, -46.66410068867569 <= y <= 46.66410068867569, -46.509919351655526 <= z <= 46.50991935165555
+
+# -- cell 6 (46.3s, exit 0)
+from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+t=time.time()
+inter = pinion.intersect(wheel)
+vi = sum(s.volume for s in inter.solids()) if inter is not None else 0.0
+print("intersection volume = %.4f mm3  (%.1fs)"%(vi, time.time()-t))
+t=time.time()
+d = BRepExtrema_DistShapeShape(pinion.wrapped, wheel.wrapped); d.Perform()
+print("min distance pinion-wheel = %.4f mm  (%.1fs)"%(d.Value(), time.time()-t))
+# -- output
+intersection volume = 24.3379 mm3  (1.8s)
+min distance pinion-wheel = 0.0000 mm  (44.4s)
+
+# -- cell 7 (0.1s, exit 0)
+for s in inter.solids():
+    bb=s.bounding_box(); c=s.center()
+    print("vol %.3f  centre (%.2f,%.2f,%.2f)  r_from_zaxis %.2f  r_from_xaxis %.2f"%(
+        s.volume, c.X,c.Y,c.Z, math.hypot(c.X,c.Y), math.hypot(c.Y,c.Z)))
+# -- output
+vol 24.338  centre (26.11,0.00,36.94)  r_from_zaxis 26.11  r_from_xaxis 36.94
+
+# -- cell 8 (16.7s, exit 0)
+for dd in [-0.4,-0.3,-0.2,-0.1,0.0,0.1,0.2,0.3,0.4]:
+    w = Rot(dd,0,0)*wheel
+    it = pinion.intersect(w)
+    v = sum(s.volume for s in it.solids()) if it is not None else 0.0
+    print(" delta=%+.2f deg  overlap=%.3f mm3"%(dd,v))
+# -- output
+delta=-0.40 deg  overlap=26.873 mm3
+ delta=-0.30 deg  overlap=25.694 mm3
+ delta=-0.20 deg  overlap=24.890 mm3
+ delta=-0.10 deg  overlap=24.471 mm3
+ delta=+0.00 deg  overlap=24.338 mm3
+ delta=+0.10 deg  overlap=24.471 mm3
+ delta=+0.20 deg  overlap=24.890 mm3
+ delta=+0.30 deg  overlap=25.694 mm3
+ delta=+0.40 deg  overlap=26.873 mm3
+
+# -- cell 9 (26.8s, exit 0)
+def tooth_pts_cone(z, gam, r_pitch, npf=10):
+    """one tooth polygon (R,delta) at the outer section plane z_out, with the back-cone
+       axial offset folded into R so tip/root cones pass through the common apex."""
+    cg=math.cos(gam); sg=math.sin(gam); r_pv=r_pitch/cg; z_out=CONE*cg
+    r_b=r_pv*math.cos(ALPHA); r_a=r_pv+MODULE; r_f=r_pv-1.25*MODULE
+    psi=(math.pi*MODULE/2-BACKLASH/2)/(2*r_pv)
+    rho_lo=max(r_b,r_f)
+    d=lambda rho:(psi+inv(ALPHA)-inv(math.acos(min(1.0,r_b/rho))))/cg
+    R=lambda rho:(r_pitch+(rho-r_pv)*cg)/(1.0-(rho-r_pv)*sg/z_out)
+    half=[]
+    if r_f<r_b-1e-9: half.append((R(r_f),d(rho_lo)))
+    half+=[(R(r),d(r)) for r in np.linspace(rho_lo,r_a,npf)]
+    tip=[(R(r_a),t) for t in np.linspace(d(r_a),-d(r_a),5)[1:-1]]
+    poly=half+tip+[(rr,-dd) for rr,dd in reversed(half)]
+    return [(0.90*R(r_f),poly[0][1])]+poly+[(0.90*R(r_f),poly[-1][1])], R(r_f), R(r_a)
+
+tp_p, RF_P, RA_P = tooth_pts_cone(Z_P, GAM_P, R_P)
+tp_w, RF_W, RA_W = tooth_pts_cone(Z_W, GAM_W, R_W)
+print("outer-section root/tip: pinion %.3f/%.3f  wheel %.3f/%.3f"%(RF_P,RA_P,RF_W,RA_W))
+t=time.time()
+pinion = gear_assembly(tp_p, ZO_P, RF_P, Z_P, 0.0, RS_P, ZH+SLEEVE+5)
+wheel  = Rot(0,90,0) * gear_assembly(tp_w, ZO_W, RF_W, Z_W, math.pi/Z_W, RS_W, XH+SLEEVE+5)
+it = pinion.intersect(wheel); v = sum(s.volume for s in it.solids()) if it is not None else 0.0
+print("rebuild %.1fs  overlap = %.4f mm3"%(time.time()-t, v))
+# -- output
+outer-section root/tip: pinion 25.692/33.744  wheel 38.876/50.899
+rebuild 26.8s  overlap = 0.0000 mm3
+
+# -- cell 10 (56.4s, exit 0)
+t=time.time(); dss=BRepExtrema_DistShapeShape(pinion.wrapped, wheel.wrapped); dss.Perform()
+p1=dss.PointOnShape1(1); p2=dss.PointOnShape2(1)
+print("min gap pinion-wheel = %.4f mm  at (%.2f,%.2f,%.2f)  [%.0fs]"%(dss.Value(),p1.X(),p1.Y(),p1.Z(),time.time()-t))
+print("target: backlash/2 per flank = %.3f mm ; tip clearance 0.25*m = %.3f mm"%(BACKLASH/2, 0.25*MODULE))
+# -- output
+min gap pinion-wheel = 0.0960 mm  at (20.54,-1.38,30.02)  [56s]
+target: backlash/2 per flank = 0.150 mm ; tip clearance 0.25*m = 0.750 mm
+
+# -- cell 11 (0.1s, exit 0)
+RB_P, RB_W = RS_P+CLR, RS_W+CLR       # bore radii
+box = Pos((XL+XH)/2,(YL+YH)/2,(ZL+ZH)/2) * Box(XH-XL, YH-YL, ZH-ZL)
+sleeve_p = Pos(0,0,ZH+SLEEVE/2) * Cylinder(RB_P, SLEEVE)
+sleeve_w = Pos(XH+SLEEVE/2,0,0) * Rot(0,90,0) * Cylinder(RB_W, SLEEVE)
+casing = box + sleeve_p + sleeve_w
+print("casing vol %.0f mm3, faces %d"%(casing.volume, len(casing.faces())))
+
+planes = [("x",XL),("x",XH),("y",YL),("y",YH),("z",ZL),("z",ZH)]
+groups = {"cavityWalls":[], "shaftBorePinion":[], "shaftBoreWheel":[]}
+for f in casing.faces():
+    c = f.center(); ax = f.normal_at(c) if f.geom_type==GeomType.PLANE else None
+    onbox = any(abs(getattr(c, a.upper())-v)<1e-6 for a,v in planes) and f.geom_type==GeomType.PLANE
+    if onbox: groups["cavityWalls"].append(f)
+    elif c.Z > ZH-1e-6 or (f.geom_type==GeomType.CYLINDER and abs(c.X)<RB_P+1e-6): groups["shaftBorePinion"].append(f)
+    else: groups["shaftBoreWheel"].append(f)
+for k,v in groups.items():
+    print(k, len(v), ["%s@(%.1f,%.1f,%.1f) A=%.0f"%(f.geom_type.name,f.center().X,f.center().Y,f.center().Z,f.area) for f in v])
+# -- output
+casing vol 2705266 mm3, faces 10
+cavityWalls 6 ['PLANE@(-50.0,0.0,10.0) A=16800', 'PLANE@(30.0,-70.0,10.0) A=19200', 'PLANE@(30.7,0.0,70.0) A=21869', 'PLANE@(30.0,70.0,10.0) A=19200', 'PLANE@(30.0,0.0,-50.0) A=22400', 'PLANE@(110.0,-0.0,10.6) A=15892']
+shaftBorePinion 2 ['CYLINDER@(-13.0,0.0,76.0) A=980', 'PLANE@(-0.0,0.0,82.0) A=531']
+shaftBoreWheel 2 ['CYLINDER@(116.0,0.0,17.0) A=1282', 'PLANE@(122.0,-0.0,-0.0) A=908']
+
+# -- cell 12 (4.5s, exit 1)
+MM = 1e-3
+groups["pinion"] = pinion.faces(); groups["wheel"] = wheel.faces()
+import os
+for name, fs in groups.items():
+    shp = bd.scale(Compound(children=[Face(f.wrapped) for f in fs]), MM)
+    bd.export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=2e-5, angular_tolerance=0.25, ascii_format=False)
+    print(name, os.path.getsize(f"constant/triSurface/{name}.stl")//1024, "kB")
+import trimesh_check  # noqa  (placeholder guard)
+# -- output
+cavityWalls 35 kB
+shaftBorePinion 102 kB
+shaftBoreWheel 102 kB
+pinion 11331 kB
+wheel 22378 kB
+[31m---------------------------------------------------------------------------[39m
+[31mModuleNotFoundError[39m                       Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[12][39m[32m, line 8[39m
+[32m      4[39m [38;5;28;01mfor[39;00m name, fs [38;5;28;01min[39;00m groups.items():
+[32m      5[39m     shp = bd.scale(Compound(children=[Face(f.wrapped) [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m fs]), MM)
+[32m      6[39m     bd.export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=[32m2e-5[39m, angular_tolerance=[32m0.25[39m, ascii_format=[38;5;28;01mFalse[39;00m)
+[32m      7[39m     print(name, os.path.getsize(f"constant/triSurface/{name}.stl")//[32m1024[39m, [33m"kB"[39m)
+[32m----> [39m[32m8[39m [38;5;28;01mimport[39;00m trimesh_check  [38;5;66;03m# noqa  (placeholder guard)[39;00m
+
+[31mModuleNotFoundError[39m: No module named 'trimesh_check'
+
+# -- cell 13 (4.5s, exit 0)
+MM = 1e-3
+groups["pinion"] = pinion.faces(); groups["wheel"] = wheel.faces()
+for name, fs in groups.items():
+    shp = bd.scale(Compound(children=[Face(f.wrapped) for f in fs]), MM)
+    bd.export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=2e-5, angular_tolerance=0.25, ascii_format=False)
+    print(name, os.path.getsize(f"constant/triSurface/{name}.stl")//1024, "kB")
+# -- output
+cavityWalls 35 kB
+shaftBorePinion 102 kB
+shaftBoreWheel 102 kB
+pinion 11331 kB
+wheel 22378 kB
+
+# -- cell 14 (0.4s, exit 0)
+import subprocess, textwrap, pathlib
+for d in ["system","constant"]: os.makedirs(d, exist_ok=True)
+head = lambda cls,obj: f"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"
+pathlib.Path("system/controlDict").write_text(head("dictionary","controlDict")+
+  "application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n")
+pathlib.Path("system/fvSchemes").write_text(head("dictionary","fvSchemes")+"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+pathlib.Path("system/fvSolution").write_text(head("dictionary","fvSolution")+"solvers{} \n")
+
+BX=(-0.052,0.126); BY=(-0.072,0.072); BZ=(-0.052,0.086)
+n=(36,29,28)
+v=[(BX[i],BY[j],BZ[k]) for i,j,k in [(0,0,0),(1,0,0),(1,1,0),(0,1,0),(0,0,1),(1,0,1),(1,1,1),(0,1,1)]]
+pathlib.Path("system/blockMeshDict").write_text(head("dictionary","blockMeshDict")+"scale 1;\nvertices (\n"+
+  "".join("(%g %g %g)\n"%p for p in v)+f");\nblocks (hex (0 1 2 3 4 5 6 7) ({n[0]} {n[1]} {n[2]}) simpleGrading (1 1 1));\nedges();\n"+
+  "boundary (background {type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3));});\nmergePatchPairs();\n")
+print(subprocess.run(["blockMesh"],capture_output=True,text=True).stdout[-500:])
+# -- output
+ts with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.00494444 .. 0.00494444
+        j : 0.00496552 .. 0.00496552
+        k : 0.00492857 .. 0.00492857
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.052 -0.072 -0.052) (0.126 0.072 0.086)
+  nPoints: 32190
+  nCells: 29232
+  nFaces: 90560
+  nInternalFaces: 84832
+----------------
+Patches
+----------------
+  patch 0 (start: 84832 size: 5728) name: background
+
+End
+
+# -- cell 15 (4.2s, exit 0)
+PATCHES = {"pinion":(2,2), "wheel":(2,2), "cavityWalls":(0,0), "shaftBorePinion":(2,2), "shaftBoreWheel":(2,2)}
+def snappy(levels, nlayer=0):
+    geo = "".join(f'  {p}.stl {{type triSurfaceMesh; name {p};}}\n' for p in levels)
+    rs  = "".join(f'    {p} {{level ({l[0]} {l[1]});}}\n' for p,l in levels.items())
+    txt = head("dictionary","snappyHexMeshDict")+f"""
+castellatedMesh true; snap true; addLayers {"true" if nlayer else "false"};
+geometry {{\n{geo}}}
+castellatedMeshControls {{
+  maxLocalCells 4000000; maxGlobalCells 12000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2; features(); refinementSurfaces {{\n{rs}  }}
+  resolveFeatureAngle 30; refinementRegions {{}}
+  locationInMesh (-0.030 0.050 0.030); allowFreeStandingZoneFaces false;
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 40; nRelaxIter 5;
+  nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.2; finalLayerThickness 0.4; minThickness 0.1;
+  nGrow 0; featureAngle 60; nRelaxIter 5; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;
+  maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;
+  minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6; debug 0;
+"""
+    pathlib.Path("system/snappyHexMeshDict").write_text(txt)
+snappy(PATCHES)
+t=time.time(); r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print("rc",r.returncode,"%.0fs"%(time.time()-t)); print(r.stdout[-1200:])
+# -- output
+rc 1 4s
+: 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.09 s
+
+Overall mesh bounding box  : (-0.052 -0.072 -0.052) (0.126 0.072 0.086)
+Relative tolerance         : 1e-06
+Absolute matching distance : 2.67328e-07
+
+Reading refinement surfaces.
+Read refinement surfaces in = 0.33 s
+
+Reading refinement shells.
+Read refinement shells in = 0 s
+
+Setting refinement level of surface to be consistent with shells.
+For geometry pinion.stl detected 0 uncached triangles out of 232066
+For geometry wheel.stl detected 0 uncached triangles out of 458308
+For geometry cavityWalls.stl detected 0 uncached triangles out of 720
+For geometry shaftBorePinion.stl detected 0 uncached triangles out of 2107
+For geometry shaftBoreWheel.stl detected 0 uncached triangles out of 2107
+Checked shell refinement in = 3.5 s
+
+Reading features.
+
+# -- cell 16 (0.1s, exit 0)
+print(r.stderr[-2000:])
+# -- output
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'features' not found in dictionary "system/snappyHexMeshDict/castellatedMeshControls"
+
+
+file: system/snappyHexMeshDict/castellatedMeshControls at line 12 to 21.
+
+    From static Foam::ITstream& Foam::meshRefinement::lookup(const Foam::dictionary&, const Foam::word&, bool, Foam::keyType::option)
+    in file meshRefinement/meshRefinement.C at line 3896.
+
+FOAM exiting
+
+# -- cell 17 (36.2s, exit 0)
+def snappy(levels, nlayer=0, loc="(-0.030 0.050 0.030)"):
+    geo = "".join(f'  {p}.stl {{type triSurfaceMesh; name {p};}}\n' for p in levels)
+    rs  = "".join(f'    {p} {{level ({l[0]} {l[1]});}}\n' for p,l in levels.items())
+    lay = "".join(f'    {p} {{nSurfaceLayers {nlayer};}}\n' for p in levels) if nlayer else ""
+    txt = head("dictionary","snappyHexMeshDict")+f"""
+castellatedMesh true; snap true; addLayers {"true" if nlayer else "false"};
+geometry {{\n{geo}}}
+castellatedMeshControls {{
+  maxLocalCells 4000000; maxGlobalCells 12000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2;
+  features ( );
+  refinementSurfaces {{\n{rs}  }}
+  resolveFeatureAngle 30;
+  refinementRegions {{ }}
+  locationInMesh {loc};
+  allowFreeStandingZoneFaces false;
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 40; nRelaxIter 5;
+  nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{\n{lay}  }} expansionRatio 1.2; finalLayerThickness 0.4; minThickness 0.1;
+  nGrow 0; featureAngle 60; nRelaxIter 5; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;
+  maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;
+  minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6; debug 0;
+"""
+    pathlib.Path("system/snappyHexMeshDict").write_text(txt)
+snappy(PATCHES)
+t=time.time(); r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print("rc",r.returncode,"%.0fs"%(time.time()-t)); print(r.stdout[-700:]); print(r.stderr[-600:])
+# -- output
+rc 0 36s
+= 22.38 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 35.87 s.
+End
+
+# -- cell 18 (0.8s, exit 1)
+cm=subprocess.run(["checkMesh"],capture_output=True,text=True).stdout
+print("\n".join(l for l in cm.splitlines() if any(k in l for k in ["cells","patch","Patch","points:","Mesh OK","***","faces "])[:0] or True and any(k in l for k in ["cells:","points:","Mesh OK","***","pinion","wheel","cavityWalls","shaftBore","Overall number"])))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[18][39m[32m, line 2[39m
+[32m      1[39m cm=subprocess.run([[33m"checkMesh"[39m],capture_output=[38;5;28;01mTrue[39;00m,text=[38;5;28;01mTrue[39;00m).stdout
+[32m----> [39m[32m2[39m print([33m"\n"[39m.join(l [38;5;28;01mfor[39;00m l [38;5;28;01min[39;00m cm.splitlines() [38;5;28;01mif[39;00m any(k [38;5;28;01min[39;00m l [38;5;28;01mfor[39;00m k [38;5;28;01min[39;00m [[33m"cells"[39m,[33m"patch"[39m,[33m"Patch"[39m,[33m"points:"[39m,[33m"Mesh OK"[39m,[33m"***"[39m,[33m"faces "[39m])[:[32m0[39m] [38;5;28;01mor[39;00m [38;5;28;01mTrue[39;00m [38;5;28;01mand[39;00m any(k [38;5;28;01min[39;00m l [38;5;28;01mfor[39;00m k [38;5;28;01min[39;00m [[33m"cells:"[39m,[33m"points:"[39m,[33m"Mesh OK"[39m,[33m"***"[39m,[33m"pinion"[39m,[33m"wheel"[39m,[33m"cavityWalls"[39m,[33m"shaftBore"[39m,[33m"Overall number"[39m])))
+
+[36mCell[39m[36m [39m[32mIn[18][39m[32m, line 2[39m, in [36m<genexpr>[39m[34m(.0)[39m
+[32m----> [39m[32m2[39m print([33m"\n"[39m.join(l [38;5;28;01mfor[39;00m l [38;5;28;01min[39;00m cm.splitlines() [38;5;28;01mif[39;00m any(k [38;5;28;01min[39;00m l [38;5;28;01mfor[39;00m k [38;5;28;01min[39;00m [[33m"cells"[39m,[33m"patch"[39m,[33m"Patch"[39m,[33m"points:"[39m,[33m"Mesh OK"[39m,[33m"***"[39m,[33m"faces "[39m])[:[32m0[39m] [38;5;28;01mor[39;00m [38;5;28;01mTrue[39;00m [38;5;28;01mand[39;00m any(k [38;5;28;01min[39;00m l [38;5;28;01mfor[39;00m k [38;5;28;01min[39;00m [[33m"cells:"[39m,[33m"points:"[39m,[33m"Mesh OK"[39m,[33m"***"[39m,[33m"pinion"[39m,[33m"wheel"[39m,[33m"cavityWalls"[39m,[33m"shaftBore"[39m,[33m"Overall number"[39m])))
+
+[31mTypeError[39m: 'bool' object is not subscriptable
+
+# -- cell 19 (0.1s, exit 0)
+keys=["cells:","points:","Mesh OK","***","pinion","wheel","cavityWalls","shaftBore","Overall number"]
+print("\n".join(l for l in cm.splitlines() if any(k in l for k in keys)))
+# -- output
+points:           123711
+    cells:            95743
+Overall number of cells of each type:
+                  pinion     6903     7587  ok (non-closed singly connected)
+                   wheel    15172    16297  ok (non-closed singly connected)
+             cavityWalls     6115     6420  ok (non-closed singly connected)
+         shaftBorePinion      676      740  ok (non-closed singly connected)
+          shaftBoreWheel      958     1035  ok (non-closed singly connected)
+ ***Max skewness = 5.64719, 20 highly skew faces detected which may impair the quality of the results
+
+# -- cell 20 (0.8s, exit 0)
+cm=subprocess.run(["checkMesh"],capture_output=True,text=True).stdout
+keys=["cells:","points:","Mesh OK","***","pinion ","wheel ","cavityWalls","shaftBore"]
+print("\n".join(l for l in cm.splitlines() if any(k in l for k in keys)))
+# -- output
+points:           123711
+    cells:            95743
+                  pinion     6903     7587  ok (non-closed singly connected)
+                   wheel    15172    16297  ok (non-closed singly connected)
+             cavityWalls     6115     6420  ok (non-closed singly connected)
+         shaftBorePinion      676      740  ok (non-closed singly connected)
+          shaftBoreWheel      958     1035  ok (non-closed singly connected)
+ ***Max skewness = 5.64719, 20 highly skew faces detected which may impair the quality of the results
+
+# -- cell 21 (1.2s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+pathlib.Path("case.foam").write_text("")
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0)
+m = rd.read(); bnd = m["boundary"]
+pl = pv.Plotter(off_screen=True, window_size=(1100,500), shape=(1,2))
+cols={"pinion":"orange","wheel":"steelblue","cavityWalls":"lightgrey","shaftBorePinion":"red","shaftBoreWheel":"green"}
+pl.subplot(0,0)
+for k,c in cols.items():
+    if k!="cavityWalls": pl.add_mesh(bnd[k], color=c, show_edges=True, line_width=0.3)
+pl.camera_position=[(0.25,-0.25,0.20),(0.03,0,0.01),(0,0,1)]
+pl.subplot(0,1)
+clip = m.combine().clip(normal=(0,1,0), origin=(0,0.0005,0))
+pl.add_mesh(clip, color="wheat", show_edges=True, line_width=0.2)
+pl.camera_position=[(0.03,-0.35,0.03),(0.03,0,0.01),(0,0,1)]
+pl.screenshot("look1.png"); print("ok")
+# -- output
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 13:13:49.460 (   0.547s) [    7EA075279780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 13:13:49.461 (   0.548s) [    7EA075279780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:13:49.475 (   0.561s) [    7EA075279780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:13:49.703 (   0.789s) [    7EA075279780]vtkTableBasedClipDataSe:1410  WARN| vtkTableBasedClipDataSet (0x61ab143a08d0): Output points used by cells not supported by vtkTableBasedClipDataSet will appear twice. To avoid this, consider using vtkClipDataSet directly[0m
+
+# -- cell 22 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("look1.png"))
+# -- output
+
+
+# -- cell 23 (120.3s, exit 0)
+snappy({"pinion":(3,3),"wheel":(3,3),"cavityWalls":(0,0),"shaftBorePinion":(2,3),"shaftBoreWheel":(2,3)})
+subprocess.run(["blockMesh"],capture_output=True,text=True)
+log=open("log.snappy","w")
+proc=subprocess.Popen(["snappyHexMesh","-overwrite"],stdout=log,stderr=subprocess.STDOUT)
+time.sleep(120); print("running" if proc.poll() is None else "done rc=%s"%proc.returncode)
+print(subprocess.run(["tail","-5","log.snappy"],capture_output=True,text=True).stdout)
+# -- output
+running
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 33
+    faces on cells with determinant < 0.001                : 0
+
+# -- cell 24 (150.1s, exit 0)
+time.sleep(150); print("running" if proc.poll() is None else "done rc=%s"%proc.returncode)
+print(subprocess.run(["tail","-12","log.snappy"],capture_output=True,text=True).stdout)
+# -- output
+done rc=0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 135.78 s.
+End
+

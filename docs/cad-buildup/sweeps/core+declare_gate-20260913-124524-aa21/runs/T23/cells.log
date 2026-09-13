@@ -1,0 +1,849 @@
+# -- cell 1 (2.5s, exit 0)
+import os, subprocess, math
+from build123d import *
+os.makedirs("constant/triSurface", exist_ok=True)
+
+MM = 1e-3
+L      = 40*MM
+R_HOLL = 16*MM
+R_BALL = 15*MM
+R_HOLE = 12*MM
+
+cube   = Box(L, L, L)
+hollow = Sphere(R_HOLL)
+ball   = Sphere(R_BALL)
+cylz   = Cylinder(R_HOLE, L*1.2)
+holes  = cylz + Rot(0, 90, 0)*cylz + Rot(90, 0, 0)*cylz
+
+water = ((hollow + holes) & cube) - ball
+print("solids:", len(water.solids()), " faces:", len(water.faces()))
+print("volume m^3:", water.volume)
+print("shell-only volume:", 4/3*math.pi*(R_HOLL**3 - R_BALL**3))
+print("bbox:", water.bounding_box())
+# -- output
+solids: 1  faces: 21
+volume m^3: 2.065850809173661e-05
+shell-only volume: 3.020117737650991e-06
+bbox: bbox: -0.020000100000000003 <= x <= 0.0200001, -0.0200001 <= y <= 0.020000100000000003, -0.02 <= z <= 0.019999999999999997
+
+# -- cell 2 (0.2s, exit 1)
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.GeomAbs import GeomAbs_SurfaceType
+def info(f):
+    a = BRepAdaptor_Surface(f.wrapped)
+    t = a.GetType()
+    if t == GeomAbs_SurfaceType.GeomAbs_Sphere:
+        s = a.Sphere(); c = s.Location()
+        return ("sphere", round(s.Radius(),6), (round(c.X(),6),round(c.Y(),6),round(c.Z(),6)))
+    if t == GeomAbs_SurfaceType.GeomAbs_Cylinder:
+        cy = a.Cylinder(); d = cy.Axis().Direction()
+        return ("cyl", round(cy.Radius(),6), (round(d.X(),3),round(d.Y(),3),round(d.Z(),3)))
+    if t == GeomAbs_SurfaceType.GeomAbs_Plane:
+        p = a.Plane(); n = p.Axis().Direction(); c = f.center()
+        return ("plane", (round(n.X(),3),round(n.Y(),3),round(n.Z(),3)), (round(c.X(),4),round(c.Y(),4),round(c.Z(),4)))
+    return (str(t),)
+for i,f in enumerate(water.faces()):
+    print(i, f"{f.area:.3e}", info(f))
+# -- output
+0 1.696e-05 ('sphere', 0.016, (0.0, 0.0, 0.0))
+1 6.657e-04 ('cyl', 0.012, (1.0, 0.0, 0.0))
+2 6.657e-04 ('cyl', 0.012, (0.0, -1.0, 0.0))
+3 6.657e-04 ('cyl', 0.012, (0.0, 0.0, 1.0))
+4 6.657e-04 ('cyl', 0.012, (0.0, -1.0, 0.0))
+5 1.696e-05 ('sphere', 0.016, (0.0, 0.0, 0.0))
+6 6.657e-04 ('cyl', 0.012, (0.0, 0.0, 1.0))
+7 1.696e-05 ('sphere', 0.016, (0.0, 0.0, 0.0))
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 17[39m
+[32m     13[39m         p = a.Plane(); n = p.Axis().Direction(); c = f.center()
+[32m     14[39m         [38;5;28;01mreturn[39;00m ([33m"plane"[39m, (round(n.X(),[32m3[39m),round(n.Y(),[32m3[39m),round(n.Z(),[32m3[39m)), (round(c.X(),[32m4[39m),round(c.Y(),[32m4[39m),round(c.Z(),[32m4[39m)))
+[32m     15[39m     [38;5;28;01mreturn[39;00m (str(t),)
+[32m     16[39m [38;5;28;01mfor[39;00m i,f [38;5;28;01min[39;00m enumerate(water.faces()):
+[32m---> [39m[32m17[39m     print(i, f"{f.area:.3e}", info(f))
+
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 14[39m, in [36minfo[39m[34m(f)[39m
+[32m     10[39m         cy = a.Cylinder(); d = cy.Axis().Direction()
+[32m     11[39m         [38;5;28;01mreturn[39;00m ([33m"cyl"[39m, round(cy.Radius(),[32m6[39m), (round(d.X(),[32m3[39m),round(d.Y(),[32m3[39m),round(d.Z(),[32m3[39m)))
+[32m     12[39m     [38;5;28;01mif[39;00m t == GeomAbs_SurfaceType.GeomAbs_Plane:
+[32m     13[39m         p = a.Plane(); n = p.Axis().Direction(); c = f.center()
+[32m---> [39m[32m14[39m         [38;5;28;01mreturn[39;00m ([33m"plane"[39m, (round(n.X(),[32m3[39m),round(n.Y(),[32m3[39m),round(n.Z(),[32m3[39m)), (round(c.X(),[32m4[39m),round(c.Y(),[32m4[39m),round(c.Z(),[32m4[39m)))
+[32m     15[39m     [38;5;28;01mreturn[39;00m (str(t),)
+
+[31mTypeError[39m: 'float' object is not callable
+
+# -- cell 3 (0.1s, exit 1)
+def info(f):
+    a = BRepAdaptor_Surface(f.wrapped)
+    t = a.GetType()
+    if t == GeomAbs_SurfaceType.GeomAbs_Sphere:
+        s = a.Sphere(); return ("sphere", round(s.Radius(),6))
+    if t == GeomAbs_SurfaceType.GeomAbs_Cylinder:
+        cy = a.Cylinder(); d = cy.Axis().Direction()
+        return ("cyl", round(cy.Radius(),6), (round(d.X(),3),round(d.Y(),3),round(d.Z(),3)))
+    if t == GeomAbs_SurfaceType.GeomAbs_Plane:
+        p = a.Plane(); n = p.Axis().Direction(); c = f.center()
+        return ("plane", (round(n.X,3),round(n.Y,3),round(n.Z,3)), (round(c.X,4),round(c.Y,4),round(c.Z,4)))
+    return (str(t),)
+for i,f in enumerate(water.faces()):
+    print(i, f"{f.area:.3e}", info(f))
+# -- output
+0 1.696e-05 ('sphere', 0.016)
+1 6.657e-04 ('cyl', 0.012, (1.0, 0.0, 0.0))
+2 6.657e-04 ('cyl', 0.012, (0.0, -1.0, 0.0))
+3 6.657e-04 ('cyl', 0.012, (0.0, 0.0, 1.0))
+4 6.657e-04 ('cyl', 0.012, (0.0, -1.0, 0.0))
+5 1.696e-05 ('sphere', 0.016)
+6 6.657e-04 ('cyl', 0.012, (0.0, 0.0, 1.0))
+7 1.696e-05 ('sphere', 0.016)
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 14[39m
+[32m     10[39m         p = a.Plane(); n = p.Axis().Direction(); c = f.center()
+[32m     11[39m         [38;5;28;01mreturn[39;00m ([33m"plane"[39m, (round(n.X,[32m3[39m),round(n.Y,[32m3[39m),round(n.Z,[32m3[39m)), (round(c.X,[32m4[39m),round(c.Y,[32m4[39m),round(c.Z,[32m4[39m)))
+[32m     12[39m     [38;5;28;01mreturn[39;00m (str(t),)
+[32m     13[39m [38;5;28;01mfor[39;00m i,f [38;5;28;01min[39;00m enumerate(water.faces()):
+[32m---> [39m[32m14[39m     print(i, f"{f.area:.3e}", info(f))
+
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 11[39m, in [36minfo[39m[34m(f)[39m
+[32m      7[39m         cy = a.Cylinder(); d = cy.Axis().Direction()
+[32m      8[39m         [38;5;28;01mreturn[39;00m ([33m"cyl"[39m, round(cy.Radius(),[32m6[39m), (round(d.X(),[32m3[39m),round(d.Y(),[32m3[39m),round(d.Z(),[32m3[39m)))
+[32m      9[39m     [38;5;28;01mif[39;00m t == GeomAbs_SurfaceType.GeomAbs_Plane:
+[32m     10[39m         p = a.Plane(); n = p.Axis().Direction(); c = f.center()
+[32m---> [39m[32m11[39m         [38;5;28;01mreturn[39;00m ([33m"plane"[39m, (round(n.X,[32m3[39m),round(n.Y,[32m3[39m),round(n.Z,[32m3[39m)), (round(c.X,[32m4[39m),round(c.Y,[32m4[39m),round(c.Z,[32m4[39m)))
+[32m     12[39m     [38;5;28;01mreturn[39;00m (str(t),)
+
+[31mTypeError[39m: type method doesn't define __round__ method
+
+# -- cell 4 (0.1s, exit 0)
+def info(f):
+    a = BRepAdaptor_Surface(f.wrapped)
+    t = a.GetType()
+    if t == GeomAbs_SurfaceType.GeomAbs_Sphere:
+        return ("sphere", round(a.Sphere().Radius(),6))
+    if t == GeomAbs_SurfaceType.GeomAbs_Cylinder:
+        cy = a.Cylinder(); d = cy.Axis().Direction()
+        return ("cyl", round(cy.Radius(),6), (round(d.X(),3),round(d.Y(),3),round(d.Z(),3)))
+    if t == GeomAbs_SurfaceType.GeomAbs_Plane:
+        n = a.Plane().Axis().Direction(); c = f.center()
+        return ("plane", (round(n.X(),3),round(n.Y(),3),round(n.Z(),3)), (round(c.X,4),round(c.Y,4),round(c.Z,4)))
+    return (str(t),)
+for i,f in enumerate(water.faces()):
+    print(i, f"{f.area:.4e}", info(f))
+# -- output
+0 1.6960e-05 ('sphere', 0.016)
+1 6.6568e-04 ('cyl', 0.012, (1.0, 0.0, 0.0))
+2 6.6569e-04 ('cyl', 0.012, (0.0, -1.0, 0.0))
+3 6.6569e-04 ('cyl', 0.012, (0.0, 0.0, 1.0))
+4 6.6569e-04 ('cyl', 0.012, (0.0, -1.0, 0.0))
+5 1.6960e-05 ('sphere', 0.016)
+6 6.6568e-04 ('cyl', 0.012, (0.0, 0.0, 1.0))
+7 1.6960e-05 ('sphere', 0.016)
+8 4.5239e-04 ('plane', (1.0, 0.0, -0.0), (0.02, 0.0, 0.0))
+9 1.6960e-05 ('sphere', 0.016)
+10 4.5239e-04 ('plane', (-0.0, 1.0, 0.0), (0.0, 0.02, -0.0))
+11 1.6960e-05 ('sphere', 0.016)
+12 6.6569e-04 ('cyl', 0.012, (1.0, 0.0, 0.0))
+13 1.6960e-05 ('sphere', 0.016)
+14 4.5239e-04 ('plane', (0.0, 0.0, 1.0), (-0.0, -0.0, -0.02))
+15 1.6960e-05 ('sphere', 0.016)
+16 4.5239e-04 ('plane', (-0.0, 1.0, 0.0), (0.0, -0.02, 0.0))
+17 1.6960e-05 ('sphere', 0.016)
+18 4.5239e-04 ('plane', (0.0, 0.0, 1.0), (-0.0, -0.0, 0.02))
+19 4.5239e-04 ('plane', (1.0, 0.0, -0.0), (-0.02, 0.0, -0.0))
+20 2.8274e-03 ('sphere', 0.015)
+
+# -- cell 5 (0.1s, exit 0)
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.GeomAbs import GeomAbs_SurfaceType as GST
+
+AXN = {0:"x", 1:"y", 2:"z"}
+def classify(f):
+    """Analytic patch name from the face's own surface (radius/axis), not bbox position."""
+    a = BRepAdaptor_Surface(f.wrapped); t = a.GetType(); c = f.center()
+    if t == GST.GeomAbs_Sphere:
+        r = a.Sphere().Radius()
+        return "ball" if abs(r - R_BALL) < 1e-9 else "hollowWall"
+    if t == GST.GeomAbs_Cylinder:
+        d = a.Cylinder().Axis().Direction(); v = [d.X(), d.Y(), d.Z()]
+        i = max(range(3), key=lambda k: abs(v[k]))
+        s = "max" if [c.X, c.Y, c.Z][i] > 0 else "min"
+        return f"holeWall_{AXN[i]}{s}"
+    if t == GST.GeomAbs_Plane:
+        n = a.Plane().Axis().Direction(); v = [n.X(), n.Y(), n.Z()]
+        i = max(range(3), key=lambda k: abs(v[k]))
+        s = "max" if [c.X, c.Y, c.Z][i] > 0 else "min"
+        return f"opening_{AXN[i]}{s}"
+    raise RuntimeError("unexpected surface")
+
+patches = {}
+for f in water.faces():
+    patches.setdefault(classify(f), []).append(f)
+for k in sorted(patches):
+    print(k, len(patches[k]), f"area={sum(f.area for f in patches[k]):.4e}")
+print("n patches:", len(patches))
+# -- output
+ball 1 area=2.8274e-03
+holeWall_xmax 1 area=6.6568e-04
+holeWall_xmin 1 area=6.6569e-04
+holeWall_ymax 1 area=6.6569e-04
+holeWall_ymin 1 area=6.6569e-04
+holeWall_zmax 1 area=6.6568e-04
+holeWall_zmin 1 area=6.6569e-04
+hollowWall 8 area=1.3568e-04
+opening_xmax 1 area=4.5239e-04
+opening_xmin 1 area=4.5239e-04
+opening_ymax 1 area=4.5239e-04
+opening_ymin 1 area=4.5239e-04
+opening_zmax 1 area=4.5239e-04
+opening_zmin 1 area=4.5239e-04
+n patches: 14
+
+# -- cell 6 (0.1s, exit 0)
+import numpy as np
+rng = np.random.default_rng(0)
+p = rng.normal(size=(400000,3)); p /= np.linalg.norm(p,axis=1)[:,None]
+frac = (np.abs(p*R_HOLL).max(axis=1) < math.sqrt(R_HOLL**2-R_HOLE**2)).mean()
+print("MC hollow-wall area:", frac*4*math.pi*R_HOLL**2, " measured:", sum(f.area for f in patches["hollowWall"]))
+print("water volume (m^3):", water.volume, " -> mm^3:", water.volume/MM**3)
+# -- output
+MC hollow-wall area: 0.00013627173356140916  measured: 0.0001356818031210881
+water volume (m^3): 2.065850809173661e-05  -> mm^3: 20658.508091736607
+
+# -- cell 7 (65.7s, exit 0)
+from build123d import export_stl
+TOL, ATOL = 2e-5, 0.15
+for name, fs in sorted(patches.items()):
+    shp = fs[0] if len(fs) == 1 else Compound(children=[Face(f.wrapped) for f in fs])
+    ok = export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=TOL, angular_tolerance=ATOL, ascii_format=True)
+    n = sum(1 for l in open(f"constant/triSurface/{name}.stl") if l.startswith("  facet") or l.startswith("facet"))
+    print(name, ok, "tris", n)
+# -- output
+ball True tris 0
+holeWall_xmax True tris 0
+holeWall_xmin True tris 0
+holeWall_ymax True tris 0
+holeWall_ymin True tris 0
+holeWall_zmax True tris 0
+holeWall_zmin True tris 0
+hollowWall True tris 0
+opening_xmax True tris 0
+opening_xmin True tris 0
+opening_ymax True tris 0
+opening_ymin True tris 0
+opening_zmax True tris 0
+opening_zmin True tris 0
+
+# -- cell 8 (0.3s, exit 0)
+print(open("constant/triSurface/ball.stl").read()[:300])
+print(subprocess.run("ls -la constant/triSurface | head -20", shell=True, capture_output=True, text=True).stdout)
+print(subprocess.run("grep -c facet constant/triSurface/*.stl", shell=True, capture_output=True, text=True).stdout)
+# -- output
+solid 
+ facet normal -4.462313e-03  8.512657e-03  9.999538e-01
+   outer loop
+     vertex  1.327403e-04  5.873503e-07 -1.499941e-02
+     vertex  9.184851e-19 -2.249640e-34 -1.500000e-02
+     vertex  1.338729e-04 -3.278941e-20 -1.499940e-02
+   endloop
+ endfacet
+ facet normal -1.338656e-02 -8.697402e-0
+total 129992
+drwxrwxr-x 2 qiuzi qiuzi      4096 Sep 13 13:38 .
+drwxrwxr-x 3 qiuzi qiuzi      4096 Sep 13 13:36 ..
+-rw-rw-r-- 1 qiuzi qiuzi 127196272 Sep 13 13:38 ball.stl
+-rw-rw-r-- 1 qiuzi qiuzi    400515 Sep 13 13:38 holeWall_xmax.stl
+-rw-rw-r-- 1 qiuzi qiuzi    400515 Sep 13 13:38 holeWall_xmin.stl
+-rw-rw-r-- 1 qiuzi qiuzi    400515 Sep 13 13:38 holeWall_ymax.stl
+-rw-rw-r-- 1 qiuzi qiuzi    400515 Sep 13 13:38 holeWall_ymin.stl
+-rw-rw-r-- 1 qiuzi qiuzi    393431 Sep 13 13:38 holeWall_zmax.stl
+-rw-rw-r-- 1 qiuzi qiuzi    393431 Sep 13 13:38 holeWall_zmin.stl
+-rw-rw-r-- 1 qiuzi qiuzi   2423756 Sep 13 13:38 hollowWall.stl
+-rw-rw-r-- 1 qiuzi qiuzi    177369 Sep 13 13:38 opening_xmax.stl
+-rw-rw-r-- 1 qiuzi qiuzi    177369 Sep 13 13:38 opening_xmin.stl
+-rw-rw-r-- 1 qiuzi qiuzi    177369 Sep 13 13:38 opening_ymax.stl
+-rw-rw-r-- 1 qiuzi qiuzi    177369 Sep 13 13:38 opening_ymin.stl
+-rw-rw-r-- 1 qiuzi qiuzi    177369 Sep 13 13:38 opening_zmax.stl
+-rw-rw-r-- 1 qiuzi qiuzi    177369 Sep 13 13:38 opening_zmin.stl
+
+constant/triSurface/ball.stl:1005504
+constant/triSurface/holeWall_xmax.stl:3166
+constant/triSurface/holeWall_xmin.stl:3166
+constant/triSurface/holeWall_ymax.stl:3166
+constant/triSurface/holeWall_ymin.stl:3166
+constant/triSurface/holeWall_zmax.stl:3110
+constant/triSurface/holeWall_zmin.stl:3110
+constant/triSurface/hollowWall.stl:19160
+constant/triSurface/opening_xmax.stl:1402
+constant/triSurface/opening_xmin.stl:1402
+constant/triSurface/opening_ymax.stl:1402
+constant/triSurface/opening_ymin.stl:1402
+constant/triSurface/opening_zmax.stl:1402
+constant/triSurface/opening_zmin.stl:1402
+
+# -- cell 9 (21.8s, exit 0)
+import time
+for tol in (5e-5, 1e-4):
+    t0=time.time(); export_stl(patches["ball"][0], "/tmp/b.stl", tolerance=tol, angular_tolerance=0.3, ascii_format=True)
+    n=sum(1 for l in open("/tmp/b.stl") if " facet" in l[:7])
+    print(tol, n, f"{time.time()-t0:.1f}s")
+# -- output
+5e-05 201632 15.1s
+0.0001 101034 6.7s
+
+# -- cell 10 (24.8s, exit 0)
+import re, time
+TOL2, ATOL2 = 5e-5, 0.3   # 0.05 mm chord deflection, small vs the 1 mm water gap
+t0 = time.time()
+for name, fs in sorted(patches.items()):
+    shp = fs[0] if len(fs) == 1 else Compound(children=[Face(f.wrapped) for f in fs])
+    path = f"constant/triSurface/{name}.stl"
+    export_stl(shp, path, tolerance=TOL2, angular_tolerance=ATOL2, ascii_format=True)
+    txt = open(path).read()
+    txt = re.sub(r"^solid.*$", f"solid {name}", txt, count=1, flags=re.M)
+    txt = re.sub(r"^endsolid.*$", f"endsolid {name}", txt, count=1, flags=re.M)
+    open(path, "w").write(txt)
+print("export done", f"{time.time()-t0:.0f}s")
+print(subprocess.run("grep -c facet constant/triSurface/*.stl; du -sh constant/triSurface", shell=True, capture_output=True, text=True).stdout)
+# -- output
+export done 25s
+constant/triSurface/ball.stl:403264
+constant/triSurface/holeWall_xmax.stl:3166
+constant/triSurface/holeWall_xmin.stl:3166
+constant/triSurface/holeWall_ymax.stl:3166
+constant/triSurface/holeWall_ymin.stl:3166
+constant/triSurface/holeWall_zmax.stl:3110
+constant/triSurface/holeWall_zmin.stl:3110
+constant/triSurface/hollowWall.stl:19160
+constant/triSurface/opening_xmax.stl:1402
+constant/triSurface/opening_xmin.stl:1402
+constant/triSurface/opening_ymax.stl:1402
+constant/triSurface/opening_ymin.stl:1402
+constant/triSurface/opening_zmax.stl:1402
+constant/triSurface/opening_zmin.stl:1402
+55M	constant/triSurface
+
+# -- cell 11 (0.3s, exit 0)
+import os
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+HEAD = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+open("system/controlDict","w").write(HEAD % "controlDict" + """
+application snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime;
+endTime 1; deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii;
+writePrecision 8; runTimeModifiable true;
+""")
+open("system/fvSchemes","w").write(HEAD % "fvSchemes" + "gradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write(HEAD % "fvSolution" + "solvers{}\n")
+
+BOX = 0.022   # background box half-size, just outside the 20 mm cube faces
+NB  = 22      # 2 mm base cells
+open("system/blockMeshDict","w").write(HEAD % "blockMeshDict" + f"""
+scale 1;
+vertices ((-{BOX} -{BOX} -{BOX}) ({BOX} -{BOX} -{BOX}) ({BOX} {BOX} -{BOX}) (-{BOX} {BOX} -{BOX})
+          (-{BOX} -{BOX} {BOX}) ({BOX} -{BOX} {BOX}) ({BOX} {BOX} {BOX}) (-{BOX} {BOX} {BOX}));
+blocks (hex (0 1 2 3 4 5 6 7) ({NB} {NB} {NB}) simpleGrading (1 1 1));
+edges ();
+boundary (bg {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); }});
+""")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stdout[-500:], r.returncode)
+# -- output
+g patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.002 .. 0.002
+        j : 0.002 .. 0.002
+        k : 0.002 .. 0.002
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.022 -0.022 -0.022) (0.022 0.022 0.022)
+  nPoints: 12167
+  nCells: 10648
+  nFaces: 33396
+  nInternalFaces: 30492
+----------------
+Patches
+----------------
+  patch 0 (start: 30492 size: 2904) name: bg
+
+End
+
+ 0
+
+# -- cell 12 (9.9s, exit 0)
+NAMES = sorted(patches)
+LOC = (0.00895, 0.00895, 0.00895)   # in the 1 mm shell, on the (1,1,1) diagonal, clear of every hole
+
+def snappy_dict(level, nlayers=0):
+    geom = "\n".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in NAMES)
+    refs = "\n".join(f'    {n} {{ level ({level} {level}); patchInfo {{ type wall; }} }}' for n in NAMES)
+    return HEAD % "snappyHexMeshDict" + f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geom}
+}}
+castellatedMeshControls {{
+  maxLocalCells 4000000; maxGlobalCells 12000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+  features ();
+  refinementSurfaces {{
+{refs}
+  }}
+  refinementRegions {{}}
+  locationInMesh ({LOC[0]} {LOC[1]} {LOC[2]});
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+  nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.2; finalLayerThickness 0.4;
+  minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1;
+  nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3;
+  minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-14; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001;
+  minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+writeFlags (); mergeTolerance 1e-6;
+"""
+open("system/snappyHexMeshDict","w").write(snappy_dict(2))
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode); print(r.stdout[-1500:])
+# -- output
+0
+ls < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Successfully moved mesh
+Moved mesh in = 0.01 s
+
+
+Repatching faces according to nearest surface ...
+Repatched 0 faces in = 0 s
+
+
+Edge intersection testing:
+    Number of edges             : 6
+    Number of edges to retest   : 6
+    Number of intersected edges : 0
+Merging 0 sets of faces.
+
+No faces merged ...
+
+Merging all points on surface that
+- are used by only two boundary faces and
+- make an angle with a cosine of more than 0.8660254.
+
+No straight edges simplified and no points removed ...
+Snapped mesh : cells:1  faces:6  points:8
+Cells per refinement level:
+    0	0
+    1	0
+    2	1
+Writing mesh to time constant
+Wrote mesh in = 0 s.
+Mesh snapped in = 0.03 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-14                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 9.7 s.
+End
+
+# -- cell 13 (147.8s, exit 0)
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+open("system/snappyHexMeshDict","w").write(snappy_dict(3))
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode)
+import re as _re
+print("\n".join(l for l in r.stdout.splitlines() if "cells:" in l or "Cells per" in l or _re.match(r"^\s+\d\s+\d+$", l)))
+# -- output
+0
+Initial mesh : cells:10648  faces:33396  points:12167
+Cells per refinement level:
+    0	10648
+After refinement surface refinement iteration 0 : cells:38424  faces:124068  points:47191
+Cells per refinement level:
+    0	6680
+    1	31744
+After refinement surface refinement iteration 1 : cells:160336  faces:523644  points:202469
+Cells per refinement level:
+    0	5816
+    1	22104
+    2	132416
+After refinement surface refinement iteration 2 : cells:668312  faces:2193228  points:854997
+Cells per refinement level:
+    0	5312
+    1	21696
+    2	100312
+    3	540992
+After refinement surface refinement iteration 3 : cells:679904  faces:2227716  points:866037
+Cells per refinement level:
+    0	5264
+    1	21936
+    2	100000
+    3	552704
+After refinement shell refinement iteration 0 : cells:660800  faces:2172264  points:848632
+Cells per refinement level:
+    0	0
+    1	6048
+    2	74040
+    3	580712
+After refinement shell refinement iteration 1 : cells:666176  faces:2187528  points:853240
+Cells per refinement level:
+    0	0
+    1	5280
+    2	80184
+    3	580712
+After refinement coarse cell refinement iteration 0 : cells:668024  faces:2191488  points:853768
+Cells per refinement level:
+    0	0
+    1	5232
+    2	80352
+    3	582440
+After refinement coarse cell refinement iteration 1 : cells:668192  faces:2191848  points:853816
+Cells per refinement level:
+    0	0
+    1	5232
+    2	80328
+    3	582632
+After introducing baffles : cells:668192  faces:2388696  points:853816
+Cells per refinement level:
+    0	0
+    1	5232
+    2	80328
+    3	582632
+After introducing baffles : cells:668192  faces:2711220  points:853816
+Cells per refinement level:
+    0	0
+    1	5232
+    2	80328
+    3	582632
+After subsetting : cells:433216  faces:1475292  points:608280
+Cells per refinement level:
+    0	0
+    1	5232
+    2	79656
+    3	348328
+After introducing baffles : cells:433216  faces:1475292  points:608280
+Cells per refinement level:
+    0	0
+    1	5232
+    2	79656
+    3	348328
+After introducing baffles : cells:433216  faces:1475292  points:608280
+Cells per refinement level:
+    0	0
+    1	5232
+    2	79656
+    3	348328
+After subsetting : cells:433216  faces:1475292  points:608280
+Cells per refinement level:
+    0	0
+    1	5232
+    2	79656
+    3	348328
+Refined mesh : cells:433216  faces:1475292  points:608280
+Cells per refinement level:
+    0	0
+    1	5232
+    2	79656
+    3	348328
+Snapped mesh : cells:433216  faces:1417908  points:561468
+Cells per refinement level:
+    0	0
+    1	5232
+    2	79656
+    3	348328
+
+# -- cell 14 (3.3s, exit 0)
+r = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True)
+print(r.stdout[-3000:])
+# -- output
+zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     341104
+    prisms:        30744
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     61368
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   10152
+            5   6336
+            6   9576
+            9   22344
+           12   9864
+           15   2976
+           18   120
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                    ball    37992    47582      ok (closed singly connected)
+           holeWall_xmax     9470     9878  ok (non-closed singly connected)
+           holeWall_xmin     9457     9865  ok (non-closed singly connected)
+           holeWall_ymax     9466     9874  ok (non-closed singly connected)
+           holeWall_ymin     9460     9868  ok (non-closed singly connected)
+           holeWall_zmax     9460     9868  ok (non-closed singly connected)
+           holeWall_zmin     9471     9879  ok (non-closed singly connected)
+              hollowWall     1296     2720  ok (non-closed singly connected)
+            opening_xmax     7232     7309  ok (non-closed singly connected)
+            opening_xmin     7232     7309  ok (non-closed singly connected)
+            opening_ymax     7232     7309  ok (non-closed singly connected)
+            opening_ymin     7232     7309  ok (non-closed singly connected)
+            opening_zmax     7232     7309  ok (non-closed singly connected)
+            opening_zmin     7232     7309  ok (non-closed singly connected)
+                    ".*"   139464   150040      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.02 -0.02 -0.02) (0.02 0.02 0.02)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (3.6251122e-16 4.3967752e-16 4.5522984e-16) OK.
+    Max cell openness = 4.2977781e-16 OK.
+    Max aspect ratio = 3.817994 OK.
+    Minimum face area = 1.089694e-08. Maximum face area = 1.0501114e-06.  Face area magnitudes OK.
+    Min volume = 3.3161465e-12. Max volume = 1.0527072e-09.  Total volume = 2.0658999e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 43.623445 average: 11.231923
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.7916401 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 15 (1.2s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+open("case.foam","w").write("")
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0)
+m = rd.read()["internalMesh"]
+sl = m.slice(normal=(0,0,1), origin=(0,0,0.0005))
+p = pv.Plotter(off_screen=True, window_size=(900,900))
+p.add_mesh(sl, show_edges=True, line_width=0.4, color="lightsteelblue")
+p.view_xy(); p.add_text("z=0.5mm slice", font_size=10)
+p.screenshot("slice_z.png")
+print(m.n_cells, sl.bounds)
+# -- output
+433216 BoundsTuple(x_min = -0.019999999552965164,
+            x_max =  0.019999999552965164,
+            y_min = -0.019999999552965164,
+            y_max =  0.019999999552965164,
+            z_min =  0.0005000000237487257,
+            z_max =  0.0005000000237487257)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 13:43:23.277 (   0.921s) [    7ED838AFD780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 13:43:23.277 (   0.922s) [    7ED838AFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:43:23.290 (   0.935s) [    7ED838AFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 16 (0.3s, exit 0)
+import matplotlib.pyplot as plt, numpy as np
+sl = sl.compute_cell_sizes()
+c = np.array(sl.cell_centers().points)
+fig, ax = plt.subplots(figsize=(7,7))
+ax.scatter(c[:,0]*1000, c[:,1]*1000, s=0.6, c=np.sqrt(sl.cell_data["Area"]) * 1000)
+ax.set_aspect("equal"); ax.set_title("water cells, z=0.5 mm slice (colour = cell size, mm)")
+ax.set_xlabel("x [mm]"); ax.set_ylabel("y [mm]")
+plt.colorbar(ax.collections[0], ax=ax, shrink=0.8); plt.show()
+# -- output
+
+
+# -- cell 17 (0.7s, exit 0)
+d = np.array([1,1,1])/np.sqrt(3)
+rs = np.linspace(0.01500, 0.01600, 400)
+pts = pv.PolyData(np.outer(rs, d))
+ids = pts.sample(m, locator="cell")["vtkOriginalCellIds"] if False else None
+res = pts.select_enclosed_points(m.extract_surface(), tolerance=0.0, check_surface=False)
+ins = np.array(res["SelectedPoints"])
+print("fraction of the 15->16 mm diagonal ray inside the mesh:", ins.mean())
+fc = m.find_containing_cell(np.outer(rs, d))
+print("unique cells across the 1 mm gap:", len(set(fc[fc >= 0])), " misses:", int((fc < 0).sum()))
+# -- output
+fraction of the 15->16 mm diagonal ray inside the mesh: 0.42
+unique cells across the 1 mm gap: 3  misses: 0
+
+/tmp/ipykernel_117304/1090673847.py:5: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  res = pts.select_enclosed_points(m.extract_surface(), tolerance=0.0, check_surface=False)
+/tmp/ipykernel_117304/1090673847.py:5: PyVistaDeprecationWarning: This filter is deprecated. Use `select_interior_points` instead.
+  res = pts.select_enclosed_points(m.extract_surface(), tolerance=0.0, check_surface=False)
+
+# -- cell 18 (0.8s, exit 0)
+rd2 = pv.OpenFOAMReader("case.foam"); rd2.set_active_time_value(0.0)
+rd2.enable_all_patch_arrays(); blk = rd2.read()
+bnd = blk["boundary"]
+analytic = {"ball": 4*math.pi*R_BALL**2, "opening_zmax": math.pi*R_HOLE**2,
+            "hollowWall": sum(f.area for f in patches["hollowWall"]),
+            "holeWall_zmax": patches["holeWall_zmax"][0].area}
+for k in bnd.keys():
+    a = bnd[k].compute_cell_sizes()["Area"].sum()
+    ref = analytic.get(k)
+    print(f"{k:15s} mesh {a:.4e}" + (f"   CAD {ref:.4e}  err {100*(a-ref)/ref:+.2f}%" if ref else ""))
+# -- output
+ball            mesh 2.8271e-03   CAD 2.8274e-03  err -0.01%
+holeWall_xmax   mesh 6.6571e-04
+holeWall_xmin   mesh 6.6570e-04
+holeWall_ymax   mesh 6.6571e-04
+holeWall_ymin   mesh 6.6570e-04
+holeWall_zmax   mesh 6.6571e-04   CAD 6.6568e-04  err +0.00%
+holeWall_zmin   mesh 6.6572e-04
+hollowWall      mesh 1.3531e-04   CAD 1.3568e-04  err -0.27%
+opening_xmax    mesh 4.5236e-04
+opening_xmin    mesh 4.5236e-04
+opening_ymax    mesh 4.5236e-04
+opening_ymin    mesh 4.5236e-04
+opening_zmax    mesh 4.5236e-04   CAD 4.5239e-04  err -0.01%
+opening_zmin    mesh 4.5236e-04
+
+# -- cell 19 (2.3s, exit 0)
+import glob
+tris = []
+for fn in glob.glob("constant/triSurface/*.stl"):
+    v = [tuple(map(float, l.split()[1:4])) for l in open(fn) if l.strip().startswith("vertex")]
+    tris += [v[i:i+3] for i in range(0, len(v), 3)]
+V = np.round(np.array(tris).reshape(-1,3), 9)
+uniq, inv = np.unique(V, axis=0, return_inverse=True)
+T = inv.reshape(-1,3)
+from collections import Counter
+E = Counter(tuple(sorted((T[i,a], T[i,(a+1)%3]))) for i in range(len(T)) for a in range(3))
+print("triangles:", len(T), " free edges (used once):", sum(1 for k,c in E.items() if c == 1))
+# -- output
+triangles: 224860  free edges (used once): 2
+
+# -- cell 20 (0.1s, exit 0)
+bad = [k for k,c in E.items() if c == 1]
+for k in bad:
+    print(uniq[k[0]]*1000, uniq[k[1]]*1000, "mm")
+print([ (k,c) for k,c in E.items() if c > 2 ][:5], "edges used >2:", sum(1 for c in E.values() if c>2))
+# -- output
+[  0.  -0. -15.] [  0.  -0. -15.] mm
+[ 0. -0. 15.] [ 0. -0. 15.] mm
+[((np.int64(54326), np.int64(56103)), 4), ((np.int64(54327), np.int64(56104)), 4)] edges used >2: 2
+
+# -- cell 21 (1.3s, exit 0)
+V2 = np.round(np.array(tris).reshape(-1,3), 9) + 0.0
+V2[V2 == 0] = 0.0
+uniq2, inv2 = np.unique(V2, axis=0, return_inverse=True)
+T2 = inv2.reshape(-1,3)
+E2 = Counter(tuple(sorted((T2[i,a], T2[i,(a+1)%3]))) for i in range(len(T2)) for a in range(3))
+print("free edges:", sum(1 for c in E2.values() if c == 1), " non-manifold(>2):", sum(1 for c in E2.values() if c > 2))
+# -- output
+free edges: 2  non-manifold(>2): 2
+
+# -- cell 22 (0.1s, exit 0)
+bad2 = [k for k,c in E2.items() if c == 1]
+for k in bad2:
+    print(repr(uniq2[k[0]]), repr(uniq2[k[1]]), np.linalg.norm(uniq2[k[0]]-uniq2[k[1]]))
+# -- output
+array([ 0.   ,  0.   , -0.015]) array([ 0.   ,  0.   , -0.015]) 0.0
+array([0.   , 0.   , 0.015]) array([0.   , 0.   , 0.015]) 0.0
+
+# -- cell 23 (6.3s, exit 0)
+def strip_degenerate(path):
+    L = open(path).read().split("\n")
+    out, i, dropped = [], 0, 0
+    while i < len(L):
+        if L[i].strip().startswith("facet"):
+            blk = L[i:i+7]
+            vs = np.array([[float(x) for x in b.split()[1:4]] for b in blk if b.strip().startswith("vertex")])
+            a = 0.5*np.linalg.norm(np.cross(vs[1]-vs[0], vs[2]-vs[0]))
+            if a > 1e-16: out += blk
+            else: dropped += 1
+            i += 7
+        else:
+            out.append(L[i]); i += 1
+    open(path, "w").write("\n".join(out))
+    return dropped
+for fn in sorted(glob.glob("constant/triSurface/*.stl")):
+    d = strip_degenerate(fn)
+    if d: print(fn, "dropped", d)
+print("done")
+# -- output
+constant/triSurface/ball.stl dropped 2
+done
+
+# -- cell 24 (2.2s, exit 0)
+tris3 = []
+for fn in glob.glob("constant/triSurface/*.stl"):
+    v = [tuple(map(float, l.split()[1:4])) for l in open(fn) if l.strip().startswith("vertex")]
+    tris3 += [v[i:i+3] for i in range(0, len(v), 3)]
+V3 = np.round(np.array(tris3).reshape(-1,3), 9) + 0.0
+u3, i3 = np.unique(V3, axis=0, return_inverse=True); T3 = i3.reshape(-1,3)
+E3 = Counter(tuple(sorted((T3[i,a], T3[i,(a+1)%3]))) for i in range(len(T3)) for a in range(3))
+print("tris:", len(T3), "free edges:", sum(1 for c in E3.values() if c==1), "non-manifold:", sum(1 for c in E3.values() if c>2))
+# -- output
+tris: 224858 free edges: 0 non-manifold: 0
+
+# -- cell 25 (2.7s, exit 0)
+def normal_sense(fn):
+    ns, cs = [], []
+    L = open(fn).read().split("\n")
+    for i,l in enumerate(L):
+        if l.strip().startswith("facet"):
+            ns.append([float(x) for x in l.split()[2:5]])
+            cs.append(np.mean([[float(x) for x in L[i+k].split()[1:4]] for k in (2,3,4)], axis=0))
+    ns, cs = np.array(ns), np.array(cs)
+    return (np.einsum("ij,ij->i", ns, cs/np.linalg.norm(cs,axis=1)[:,None])).mean()
+for fn in ["ball", "opening_zmax", "hollowWall", "holeWall_zmax"]:
+    print(fn, "mean n.r_hat =", round(normal_sense(f"constant/triSurface/{fn}.stl"), 3))
+# -- output
+ball mean n.r_hat = -1.0
+opening_zmax mean n.r_hat = 0.915
+hollowWall mean n.r_hat = 1.0
+holeWall_zmax mean n.r_hat = 0.615
+
+# -- cell 26 (158.7s, exit 0)
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+open("system/snappyHexMeshDict","w").write(snappy_dict(3))
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, [l for l in r.stdout.splitlines() if "Finished meshing" in l])
+c = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True).stdout
+print("\n".join(l for l in c.splitlines() if any(k in l for k in ("cells:","Total volume","non-orthogonality","Max skewness","Mesh OK","***","Number of regions"))))
+# -- output
+0 ['Finished meshing without any errors', 'Finished meshing in = 152.78 s.']
+    cells:            433216
+    Number of regions: 1 (OK).
+    Min volume = 3.3161465e-12. Max volume = 1.0527072e-09.  Total volume = 2.0658999e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 43.623445 average: 11.231923
+    Max skewness = 1.7916401 OK.
+Mesh OK.
+

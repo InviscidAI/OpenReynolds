@@ -1,0 +1,565 @@
+# -- cell 1 (0.1s, exit 0)
+import os, subprocess, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+
+# --- geometry parameters (metres) ---
+H  = 0.030   # duct height  (30 mm square)
+W  = 0.030   # duct width
+L  = 0.200   # duct length
+BL = 0.040   # copper block length
+BT = 0.010   # copper block thickness (recessed into the floor, z<0)
+x0, x3 = 0.0, L
+x1 = 0.5*(L - BL)        # 0.080
+x2 = 0.5*(L + BL)        # 0.120
+print(x1, x2, "block length =", x2-x1, "width =", W, "thickness =", BT)
+# -- output
+0.08 0.12000000000000001 block length = 0.04000000000000001 width = 0.03 thickness = 0.01
+
+# -- cell 2 (0.1s, exit 0)
+xs=[x0,x1,x2,x3]; ys=[0.0,W]; zs=[-BT,0.0,H]
+vid={}; verts=[]
+for k,z in enumerate(zs):
+    for j,y in enumerate(ys):
+        for i,x in enumerate(xs):
+            vid[(i,j,k)]=len(verts); verts.append((x,y,z))
+def hexv(i,k):  # block spanning xs[i]..xs[i+1], full y, zs[k]..zs[k+1]
+    return [vid[(i,0,k)],vid[(i+1,0,k)],vid[(i+1,1,k)],vid[(i,1,k)],
+            vid[(i,0,k+1)],vid[(i+1,0,k+1)],vid[(i+1,1,k+1)],vid[(i,1,k+1)]]
+DX=0.005
+nx=[int(round((xs[i+1]-xs[i])/DX)) for i in range(3)]; ny=int(round(W/DX))
+nzF=int(round(H/DX)); nzS=int(round(BT/DX))
+blocks=[]
+for i in range(3):
+    blocks.append(f"    hex ({' '.join(map(str,hexv(i,1)))}) fluid ({nx[i]} {ny} {nzF}) simpleGrading (1 1 1)")
+blocks.append(f"    hex ({' '.join(map(str,hexv(1,0)))}) solid ({nx[1]} {ny} {nzS}) simpleGrading (1 1 1)")
+print(nx,ny,nzF,nzS); print("\n".join(blocks))
+# -- output
+[16, 8, 16] 6 6 2
+    hex (8 9 13 12 16 17 21 20) fluid (16 6 6) simpleGrading (1 1 1)
+    hex (9 10 14 13 17 18 22 21) fluid (8 6 6) simpleGrading (1 1 1)
+    hex (10 11 15 14 18 19 23 22) fluid (16 6 6) simpleGrading (1 1 1)
+    hex (1 2 6 5 9 10 14 13) solid (8 6 2) simpleGrading (1 1 1)
+
+# -- cell 3 (0.1s, exit 0)
+def fx(i,k,side):  # constant-x face of block (i,k); side 'min'->-x, 'max'->+x
+    ii = i if side=='min' else i+1
+    a=[(ii,0,k),(ii,0,k+1),(ii,1,k+1),(ii,1,k)]
+    return a if side=='min' else [(ii,0,k),(ii,1,k),(ii,1,k+1),(ii,0,k+1)]
+def fy(i,k,j):     # constant-y face, j=0 -> -y, j=1 -> +y
+    a=[(i,j,k),(i+1,j,k),(i+1,j,k+1),(i,j,k+1)]
+    return a if j==0 else [(i,j,k),(i,j,k+1),(i+1,j,k+1),(i+1,j,k)]
+def fz(i,k,side):  # constant-z face
+    kk = k if side=='min' else k+1
+    a=[(i,0,kk),(i+1,0,kk),(i+1,1,kk),(i,1,kk)]
+    return a if side=='max' else [(i,0,kk),(i,1,kk),(i+1,1,kk),(i+1,0,kk)]
+def s(f): return "        ("+" ".join(str(vid[v]) for v in f)+")"
+
+inlet  = [fx(0,1,'min')]
+outlet = [fx(2,1,'max')]
+fluidWall = [fz(i,1,'max') for i in range(3)] + [fy(i,1,j) for i in range(3) for j in (0,1)] \
+          + [fz(0,1,'min'), fz(2,1,'min')]          # floor either side of the block
+solidWall = [fz(1,0,'min')] + [fy(1,0,j) for j in (0,1)] + [fx(1,0,'min'), fx(1,0,'max')]
+print(len(inlet),len(outlet),len(fluidWall),len(solidWall))
+# -- output
+1 1 11 5
+
+# -- cell 4 (0.2s, exit 0)
+def patch(name, typ, faces):
+    return f"    {name}\n    {{\n        type {typ};\n        faces\n        (\n" + "\n".join(s(f) for f in faces) + "\n        );\n    }}\n"
+dic = """FoamFile{ version 2.0; format ascii; class dictionary; object blockMeshDict; }
+scale 1;
+
+vertices
+(
+""" + "\n".join(f"    ({x} {y} {z})" for x,y,z in verts) + """
+);
+
+blocks
+(
+""" + "\n".join(blocks) + """
+);
+
+edges ();
+
+boundary
+(
+""" + patch("inlet","patch",inlet) + patch("outlet","patch",outlet) \
+    + patch("fluidWall","wall",fluidWall) + patch("solidWall","wall",solidWall) + """);
+
+mergePatchPairs ();
+"""
+open("system/blockMeshDict","w").write(dic)
+open("system/controlDict","w").write("""FoamFile{ version 2.0; format ascii; class dictionary; object controlDict; }
+application chtMultiRegionFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1;
+""")
+for f,obj in [("fvSchemes","fvSchemes"),("fvSolution","fvSolution")]:
+    open(f"system/{f}","w").write(f"FoamFile{{ version 2.0; format ascii; class dictionary; object {obj}; }}\n")
+r=subprocess.run(["blockMesh"],capture_output=True,text=True); print(r.stdout[-1500:], r.stderr[-800:])
+# -- output
+|                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 13 2026
+Time   : 14:08:17
+Host   : yc-demo
+PID    : 150165
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T8-20260913-140715-f116/t8
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+ --> FOAM Warning :
+    Reading "system/blockMeshDict" at line 51
+    Imbalanced '(' with '}'
+--> FOAM Warning :
+    Reading "system/blockMeshDict" at line 59
+    Too many closing '}' ... was a ';' forgotten?
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Unexpected '}' while reading dictionary entry
+
+file: system/blockMeshDict at line 77.
+
+    From static bool Foam::entry::New(Foam::dictionary&, Foam::Istream&, inputMode, int)
+    in file db/dictionary/entry/entryIO.C at line 156.
+
+FOAM exiting
+
+# -- cell 5 (0.1s, exit 0)
+print("\n".join(f"{i+1}: {l}" for i,l in enumerate(dic.split("\n")[40:62], start=40)))
+# -- output
+41: 
+42: boundary
+43: (
+44:     inlet
+45:     {
+46:         type patch;
+47:         faces
+48:         (
+49:         (8 16 20 12)
+50:         );
+51:     }}
+52:     outlet
+53:     {
+54:         type patch;
+55:         faces
+56:         (
+57:         (11 15 23 19)
+58:         );
+59:     }}
+60:     fluidWall
+61:     {
+62:         type wall;
+
+# -- cell 6 (0.2s, exit 0)
+def patch(name, typ, faces):
+    return (f"    {name}\n    {{\n        type {typ};\n        faces\n        (\n"
+            + "\n".join(s(f) for f in faces) + "\n        );\n    }\n")
+dic = """FoamFile{ version 2.0; format ascii; class dictionary; object blockMeshDict; }
+scale 1;
+
+vertices
+(
+""" + "\n".join(f"    ({x} {y} {z})" for x,y,z in verts) + """
+);
+
+blocks
+(
+""" + "\n".join(blocks) + """
+);
+
+edges ();
+
+boundary
+(
+""" + patch("inlet","patch",inlet) + patch("outlet","patch",outlet) \
+    + patch("fluidWall","wall",fluidWall) + patch("solidWall","wall",solidWall) + """);
+
+mergePatchPairs ();
+"""
+open("system/blockMeshDict","w").write(dic)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True); print(r.stdout[-1200:], r.stderr[-500:])
+# -- output
+ng block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+    Block 1 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+    Block 2 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+    Block 3 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+Adding cell zones
+    0	fluid
+    1	solid
+No patch pairs to merge
+
+Writing polyMesh with 2 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 -0.01) (0.2 0.03 0.03)
+  nPoints: 2135
+  nCells: 1536
+  nFaces: 5152
+  nInternalFaces: 4064
+----------------
+Cell Zones
+----------------
+  zone 0 (size: 1440) name: fluid
+  zone 1 (size: 96) name: solid
+----------------
+Patches
+----------------
+  patch 0 (start: 4064 size: 36) name: inlet
+  patch 1 (start: 4100 size: 36) name: outlet
+  patch 2 (start: 4136 size: 912) name: fluidWall
+  patch 3 (start: 5048 size: 104) name: solidWall
+
+End
+
+# -- cell 7 (0.2s, exit 0)
+r=subprocess.run(["splitMeshRegions","-cellZones","-overwrite"],capture_output=True,text=True)
+print(r.stdout[-2000:], r.stderr[-500:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : splitMeshRegions -cellZones -overwrite
+Date   : Sep 13 2026
+Time   : 14:08:31
+Host   : yc-demo
+PID    : 150212
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T8-20260913-140715-f116/t8
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+ 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+# -- cell 8 (0.2s, exit 0)
+open("system/fvSchemes","w").write("""FoamFile{ version 2.0; format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+""")
+open("system/fvSolution","w").write("""FoamFile{ version 2.0; format ascii; class dictionary; object fvSolution; }
+solvers {}
+""")
+r=subprocess.run(["splitMeshRegions","-cellZones","-overwrite"],capture_output=True,text=True)
+print(r.stdout[-2500:], r.stderr[-500:])
+# -- output
+ated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T8-20260913-140715-f116/t8
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Creating single patch per inter-region interface.
+
+Trying to match regions to existing cell zones.
+
+
+Number of regions:2
+
+Writing region per cell file (for manual decomposition) to "/home/qiuzi/.openreynolds-buildup/work/T8-20260913-140715-f116/t8/constant/cellToRegion"
+
+Writing region per cell as volScalarField to "/home/qiuzi/.openreynolds-buildup/work/T8-20260913-140715-f116/t8/0/cellToRegion"
+
+Region	Cells
+------	-----
+0	1440
+1	96
+
+Region	Zone	Name
+------	----	----
+0	(0)	fluid
+1	(1)	solid
+
+Sizes of interfaces between regions:
+
+Interface	Region	Region	Faces
+---------	------	------	-----
+0		0	1	48
+
+Reading volScalarField: cellToRegion
+
+
+Adding patches
+
+
+Adding patches
+
+For interface between region fluid and solid added patches
+    4	fluid_to_solid
+    5	solid_to_fluid
+
+Region 0
+-------- 
+Creating mesh for region 0 fluid
+Writing dummy "fluid/fvSchemes"
+Writing dummy "fluid/fvSolution"
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region0 points back to base mesh.
+Writing map faceRegionAddressing from region0 faces back to base mesh.
+Writing map cellRegionAddressing from region0 cells back to base mesh.
+Writing map boundaryRegionAddressing from region0 boundary back to base mesh.
+
+Region 1
+-------- 
+Creating mesh for region 1 solid
+Writing dummy "solid/fvSchemes"
+Writing dummy "solid/fvSolution"
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region1 points back to base mesh.
+Writing map faceRegionAddressing from region1 faces back to base mesh.
+Writing map cellRegionAddressing from region1 cells back to base mesh.
+Writing map boundaryRegionAddressing from region1 boundary back to base mesh.
+End
+
+# -- cell 9 (0.4s, exit 0)
+for reg in ("fluid","solid"):
+    r=subprocess.run(["checkMesh","-region",reg],capture_output=True,text=True)
+    tail=[l for l in r.stdout.split("\n") if any(k in l for k in ("Mesh OK","***","<<","cells:","faces:","boundingBox","Max aspect","Max skewness","non-orthogonality"))]
+    print(reg, "\n ", "\n  ".join(tail), "\n")
+# -- output
+fluid 
+      faces:            4836
+      internal faces:   3804
+      cells:            1440
+      Max aspect ratio = 1 OK.
+      Mesh non-orthogonality Max: 0 average: 0
+      Max skewness = 3.33067e-14 OK.
+  Mesh OK. 
+
+solid 
+      faces:            364
+      internal faces:   212
+      cells:            96
+      Max aspect ratio = 1 OK.
+      Mesh non-orthogonality Max: 0 average: 0
+      Max skewness = 2.00457e-14 OK.
+  Mesh OK.
+
+# -- cell 10 (0.3s, exit 0)
+import pyvista as pv, numpy as np
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+open("case.foam","w").write("")
+rd=pv.OpenFOAMReader("case.foam")
+print(rd.patch_array_names[:20])
+# -- output
+['internalMesh', 'group/wall', 'patch/inlet', 'patch/outlet', 'patch/fluidWall', 'patch/solidWall', '/fluid/internalMesh', '/fluid/group/wall', '/fluid/patch/inlet', '/fluid/patch/outlet', '/fluid/patch/fluidWall', '/fluid/patch/fluid_to_solid', '/solid/internalMesh', '/solid/group/wall', '/solid/patch/solidWall', '/solid/patch/solid_to_fluid']
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+
+# -- cell 11 (0.2s, exit 0)
+rd.set_active_time_value(0.0)
+rd.enable_all_patch_arrays(); rd.disable_patch_array('internalMesh')
+m=rd.read()
+def blk(path):
+    o=m
+    for p in path: o=o[p]
+    return o
+def rep(name, mesh):
+    a=mesh.extract_surface().compute_cell_sizes(length=False, volume=False)["Area"].sum()
+    b=np.array(mesh.bounds).reshape(3,2)
+    print(f"{name:16s} area={a*1e6:9.1f} mm^2  x[{b[0,0]*1e3:6.1f},{b[0,1]*1e3:6.1f}] y[{b[1,0]*1e3:5.1f},{b[1,1]*1e3:5.1f}] z[{b[2,0]*1e3:6.1f},{b[2,1]*1e3:6.1f}] mm")
+for nm in ['inlet','outlet','fluid_to_solid']: rep(nm, blk(['fluid','boundary',nm]))
+for nm in ['solid_to_fluid','solidWall']: rep(nm, blk(['solid','boundary',nm]))
+fv=blk(['fluid','internalMesh']).compute_cell_sizes(); sv=blk(['solid','internalMesh']).compute_cell_sizes()
+print("fluid vol mm^3",fv['Volume'].sum()*1e9, " expected", (0.03*0.03*0.2)*1e9)
+print("solid vol mm^3",sv['Volume'].sum()*1e9, " expected", (0.04*0.03*0.01)*1e9)
+# -- output
+inlet            area=    900.0 mm^2  x[   0.0,   0.0] y[  0.0, 30.0] z[   0.0,  30.0] mm
+outlet           area=    900.0 mm^2  x[ 200.0, 200.0] y[  0.0, 30.0] z[   0.0,  30.0] mm
+fluid_to_solid   area=   1200.0 mm^2  x[  80.0, 120.0] y[  0.0, 30.0] z[   0.0,   0.0] mm
+solid_to_fluid   area=   1200.0 mm^2  x[  80.0, 120.0] y[  0.0, 30.0] z[   0.0,   0.0] mm
+solidWall        area=   2600.0 mm^2  x[  80.0, 120.0] y[  0.0, 30.0] z[ -10.0,   0.0] mm
+fluid vol mm^3 179999.99463558194  expected 180000.0
+solid vol mm^3 11999.999195337312  expected 11999.999999999998
+
+/tmp/ipykernel_149939/1540858817.py:9: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  a=mesh.extract_surface().compute_cell_sizes(length=False, volume=False)["Area"].sum()
+
+# -- cell 12 (0.3s, exit 0)
+p=pv.Plotter(off_screen=True,window_size=(1100,600))
+p.add_mesh(blk(['fluid','internalMesh']),color='lightblue',opacity=0.35,show_edges=True,line_width=1)
+p.add_mesh(blk(['solid','internalMesh']),color='darkorange',show_edges=True)
+p.add_mesh(blk(['fluid','boundary','inlet']),color='green')
+p.add_mesh(blk(['fluid','boundary','outlet']),color='red')
+p.camera_position=[(0.30,-0.30,0.22),(0.10,0.015,0.005),(0,0,1)]
+p.add_axes(); p.screenshot("view.png"); print("ok")
+# -- output
+ok
+
+[0m[33m2026-09-13 14:08:59.702 (  13.891s) [    75685A7D2780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 14:08:59.702 (  13.891s) [    75685A7D2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 14:08:59.716 (  13.904s) [    75685A7D2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 13 (0.2s, exit 0)
+import matplotlib.pyplot as plt, matplotlib.image as mpimg
+img=mpimg.imread("view.png"); fig,ax=plt.subplots(figsize=(11,6)); ax.imshow(img); ax.axis('off'); plt.show()
+# -- output
+
+
+# -- cell 14 (0.7s, exit 0)
+DX=0.002
+nx=[int(round((xs[i+1]-xs[i])/DX)) for i in range(3)]; ny=int(round(W/DX))
+nzF=int(round(H/DX)); nzS=int(round(BT/DX))
+assert all(abs((xs[i+1]-xs[i])/DX-nx[i])<1e-9 for i in range(3))
+blocks=[f"    hex ({' '.join(map(str,hexv(i,1)))}) fluid ({nx[i]} {ny} {nzF}) simpleGrading (1 1 1)" for i in range(3)]
+blocks.append(f"    hex ({' '.join(map(str,hexv(1,0)))}) solid ({nx[1]} {ny} {nzS}) simpleGrading (1 1 1)")
+dic = dic.split("blocks\n(\n")[0] + "blocks\n(\n" + "\n".join(blocks) + "\n);\n\nedges ();\n\nboundary\n(\n" \
+    + patch("inlet","patch",inlet) + patch("outlet","patch",outlet) \
+    + patch("fluidWall","wall",fluidWall) + patch("solidWall","wall",solidWall) + ");\n\nmergePatchPairs ();\n"
+open("system/blockMeshDict","w").write(dic)
+print(nx,ny,nzF,nzS)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True); print(r.returncode, r.stdout[-350:])
+r=subprocess.run(["splitMeshRegions","-cellZones","-overwrite"],capture_output=True,text=True); print(r.returncode, r.stdout[-300:])
+# -- output
+[40, 20, 40] 15 15 5
+0 ------
+Cell Zones
+----------------
+  zone 0 (size: 22500) name: fluid
+  zone 1 (size: 1500) name: solid
+----------------
+Patches
+----------------
+  patch 0 (start: 68600 size: 225) name: inlet
+  patch 1 (start: 68825 size: 225) name: outlet
+  patch 2 (start: 69050 size: 5700) name: fluidWall
+  patch 3 (start: 74750 size: 650) name: solidWall
+
+End
+
+
+0 h
+Writing map pointRegionAddressing from region1 points back to base mesh.
+Writing map faceRegionAddressing from region1 faces back to base mesh.
+Writing map cellRegionAddressing from region1 cells back to base mesh.
+Writing map boundaryRegionAddressing from region1 boundary back to base mesh.
+End
+
+# -- cell 15 (0.7s, exit 0)
+for reg in ("fluid","solid"):
+    r=subprocess.run(["checkMesh","-region",reg],capture_output=True,text=True)
+    print(reg, [l.strip() for l in r.stdout.split("\n") if any(k in l for k in ("Mesh OK","***","cells:","Max skewness","non-orthogonality Max"))])
+rd2=pv.OpenFOAMReader("case.foam"); rd2.set_active_time_value(0.0)
+rd2.enable_all_patch_arrays(); rd2.disable_patch_array('internalMesh'); m=rd2.read()
+for reg,nm in [('fluid','fluid_to_solid'),('solid','solid_to_fluid')]: rep(nm, m[reg]['boundary'][nm])
+print("fluid vol mm^3", m['fluid']['internalMesh'].compute_cell_sizes()['Volume'].sum()*1e9)
+print("solid vol mm^3", m['solid']['internalMesh'].compute_cell_sizes()['Volume'].sum()*1e9)
+# -- output
+fluid ['cells:            22500', 'Mesh non-orthogonality Max: 0 average: 0', 'Max skewness = 1.07763e-13 OK.', 'Mesh OK.']
+solid ['cells:            1500', 'Mesh non-orthogonality Max: 0 average: 0', 'Max skewness = 4.16334e-14 OK.', 'Mesh OK.']
+fluid_to_solid   area=   1200.0 mm^2  x[  80.0, 120.0] y[  0.0, 30.0] z[   0.0,   0.0] mm
+solid_to_fluid   area=   1200.0 mm^2  x[  80.0, 120.0] y[  0.0, 30.0] z[   0.0,   0.0] mm
+fluid vol mm^3 179999.9946355819
+solid vol mm^3 11999.999195337312
+
+/tmp/ipykernel_149939/1540858817.py:9: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  a=mesh.extract_surface().compute_cell_sizes(length=False, volume=False)["Area"].sum()
+

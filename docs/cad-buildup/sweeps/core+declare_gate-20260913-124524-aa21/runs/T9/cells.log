@@ -1,0 +1,536 @@
+# -- cell 1 (2.2s, exit 0)
+from build123d import *
+import math
+
+OR_RING, IR_RING, H_RING = 30.0, 23.0, 10.0   # mm
+OR_SPIN, IR_SPIN, H_SPIN = 22.0, 15.0, 8.0    # mm
+
+ring     = Cylinder(OR_RING, H_RING) - Cylinder(IR_RING, H_RING)
+spinner  = Cylinder(OR_SPIN, H_SPIN) - Cylinder(IR_SPIN, H_SPIN)
+oil_mm   = Cylinder(IR_RING, H_RING) - spinner
+
+print("ring bbox", ring.bounding_box())
+print("spinner bbox", spinner.bounding_box())
+print("oil bbox", oil_mm.bounding_box())
+print("radial clearance mm", IR_RING - OR_SPIN, " axial gap each end mm", (H_RING-H_SPIN)/2)
+print("oil vol mm3", oil_mm.volume, "expected", math.pi*IR_RING**2*H_RING - math.pi*(OR_SPIN**2-IR_SPIN**2)*H_SPIN)
+print("n faces", len(oil_mm.faces()))
+# -- output
+ring bbox bbox: -30.0 <= x <= 30.0, -30.0 <= y <= 30.0, -5.0 <= z <= 5.0
+spinner bbox bbox: -22.0 <= x <= 22.0, -22.0 <= y <= 22.0, -4.0 <= z <= 4.0
+oil bbox bbox: -23.0 <= x <= 23.0, -23.0 <= y <= 23.0, -5.0 <= z <= 5.0
+radial clearance mm 1.0  axial gap each end mm 1.0
+oil vol mm3 10109.645159251952 expected 10109.645159251952
+n faces 7
+
+# -- cell 2 (0.1s, exit 0)
+oil = oil_mm.scale(0.001)   # mm -> m, once
+for i, f in enumerate(oil.faces()):
+    c = f.center()
+    print(i, f.geom_type, "area=%.6e" % f.area, "c=(%.4f,%.4f,%.4f)" % (c.X, c.Y, c.Z),
+          "bbox r=%.4f zmin=%.4f zmax=%.4f" % (max(abs(f.bounding_box().max.X), abs(f.bounding_box().min.X)),
+                                               f.bounding_box().min.Z, f.bounding_box().max.Z))
+print("oil vol m3", oil.volume)
+# -- output
+0 GeomType.CYLINDER area=1.445133e-03 c=(-0.0230,0.0000,0.0000) bbox r=0.0230 zmin=-0.0050 zmax=0.0050
+1 GeomType.PLANE area=1.661903e-03 c=(0.0000,-0.0000,0.0050) bbox r=0.0230 zmin=0.0050 zmax=0.0050
+2 GeomType.PLANE area=1.661903e-03 c=(0.0000,-0.0000,-0.0050) bbox r=0.0230 zmin=-0.0050 zmax=-0.0050
+3 GeomType.CYLINDER area=1.105841e-03 c=(-0.0220,0.0000,0.0000) bbox r=0.0220 zmin=-0.0040 zmax=0.0040
+4 GeomType.PLANE area=8.136725e-04 c=(0.0000,-0.0000,0.0040) bbox r=0.0220 zmin=0.0040 zmax=0.0040
+5 GeomType.PLANE area=8.136725e-04 c=(0.0000,-0.0000,-0.0040) bbox r=0.0220 zmin=-0.0040 zmax=-0.0040
+6 GeomType.CYLINDER area=7.539822e-04 c=(-0.0150,0.0000,0.0000) bbox r=0.0150 zmin=-0.0040 zmax=0.0040
+oil vol m3 1.0109645159251957e-05
+
+# -- cell 3 (7.8s, exit 0)
+import os, subprocess
+os.makedirs("constant/triSurface", exist_ok=True)
+
+fs = oil.faces()
+def pick(pred): return [f for f in fs if pred(f)]
+R = lambda f: max(abs(f.bounding_box().max.X), abs(f.bounding_box().min.X))
+
+ring_wet      = pick(lambda f: f.geom_type == GeomType.CYLINDER and abs(R(f)-0.023) < 1e-6)
+ring_end_top  = pick(lambda f: f.geom_type == GeomType.PLANE and abs(f.center().Z-0.005) < 1e-6)
+ring_end_bot  = pick(lambda f: f.geom_type == GeomType.PLANE and abs(f.center().Z+0.005) < 1e-6)
+spinner_wet   = pick(lambda f: (f.geom_type == GeomType.CYLINDER and abs(R(f)-0.023) > 1e-6)
+                            or (f.geom_type == GeomType.PLANE and abs(abs(f.center().Z)-0.004) < 1e-6))
+
+patches = {"ring_wet": ring_wet, "ring_end_top": ring_end_top,
+           "ring_end_bottom": ring_end_bot, "spinner_wet": spinner_wet}
+for name, faces in patches.items():
+    comp = Compound(children=[Face(f.wrapped) for f in faces]) if len(faces) > 1 else faces[0]
+    export_stl(comp, f"constant/triSurface/{name}.stl", tolerance=1e-5, angular_tolerance=0.1)
+    print(name, len(faces), "area=%.6e" % sum(f.area for f in faces),
+          os.path.getsize(f"constant/triSurface/{name}.stl"))
+print("total patch area", sum(sum(f.area for f in v) for v in patches.values()), "shape area", oil.area)
+# -- output
+ring_wet 1 area=1.445133e-03 99484
+ring_end_top 1 area=1.661903e-03 49684
+ring_end_bottom 1 area=1.661903e-03 49684
+spinner_wet 4 area=3.487168e-03 363084
+total patch area 0.008256105493633975 shape area 0.008256105493633975
+
+# -- cell 4 (0.1s, exit 0)
+import gmsh
+export_step(oil, "oil.step")
+
+gmsh.initialize()
+gmsh.open("oil.step")
+surfs = gmsh.model.getEntities(2)
+info = []
+for (d, t) in surfs:
+    com = gmsh.model.occ.getCenterOfMass(d, t)
+    bb = gmsh.model.getBoundingBox(d, t)
+    info.append((t, com, bb, gmsh.model.occ.getMass(d, t)))
+    print(t, ["%.4f" % v for v in com], ["%.4f" % v for v in bb], "%.3e" % gmsh.model.occ.getMass(d, t))
+print("volumes", gmsh.model.getEntities(3), "mass", gmsh.model.occ.getMass(3, 1))
+# -- output
+Info    : Reading 'oil.step'...
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+Info    : Done reading 'oil.step'
+1 ['0.0000', '0.0000', '-0.0000'] ['-0.0230', '-0.0230', '-0.0050', '0.0230', '0.0230', '0.0050'] 1.445e-03
+2 ['0.0000', '-0.0000', '0.0050'] ['-0.0230', '-0.0230', '0.0050', '0.0230', '0.0230', '0.0050'] 1.662e-03
+3 ['0.0000', '-0.0000', '-0.0050'] ['-0.0230', '-0.0230', '-0.0050', '0.0230', '0.0230', '-0.0050'] 1.662e-03
+4 ['0.0000', '0.0000', '0.0000'] ['-0.0220', '-0.0220', '-0.0040', '0.0220', '0.0220', '0.0040'] 1.106e-03
+5 ['0.0000', '-0.0000', '0.0040'] ['-0.0220', '-0.0220', '0.0040', '0.0220', '0.0220', '0.0040'] 8.137e-04
+6 ['0.0000', '-0.0000', '-0.0040'] ['-0.0220', '-0.0220', '-0.0040', '0.0220', '0.0220', '-0.0040'] 8.137e-04
+7 ['0.0000', '0.0000', '-0.0000'] ['-0.0150', '-0.0150', '-0.0040', '0.0150', '0.0150', '0.0040'] 7.540e-04
+volumes [(3, 1)] mass 1.0109645159251918e-05
+
+# -- cell 5 (0.9s, exit 0)
+import numpy as np
+groups = {"ring_wet": [], "ring_end_top": [], "ring_end_bottom": [], "spinner_wet": []}
+for (d, t) in gmsh.model.getEntities(2):
+    xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(d, t)
+    rmax = max(abs(xmin), abs(xmax))
+    if abs(zmax - zmin) < 1e-9 and abs(zmax - 0.005) < 1e-9:   groups["ring_end_top"].append(t)
+    elif abs(zmax - zmin) < 1e-9 and abs(zmin + 0.005) < 1e-9: groups["ring_end_bottom"].append(t)
+    elif abs(rmax - 0.023) < 1e-9:                             groups["ring_wet"].append(t)
+    else:                                                      groups["spinner_wet"].append(t)
+print(groups)
+
+for name, tags in groups.items():
+    g = gmsh.model.addPhysicalGroup(2, tags); gmsh.model.setPhysicalName(2, g, name)
+gv = gmsh.model.addPhysicalGroup(3, [1]); gmsh.model.setPhysicalName(3, gv, "oil")
+
+gmsh.option.setNumber("Mesh.MeshSizeMin", 8e-4)
+gmsh.option.setNumber("Mesh.MeshSizeMax", 1.2e-3)
+gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 12)
+gmsh.model.mesh.generate(3)
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.write("oil_coarse.msh")
+print("tets", len(gmsh.model.mesh.getElementsByType(4)[0]))
+# -- output
+{'ring_wet': [], 'ring_end_top': [], 'ring_end_bottom': [], 'spinner_wet': [1, 2, 3, 4, 5, 6, 7]}
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Circle)
+Info    : [ 20%] Meshing curve 2 (Line)
+Info    : [ 30%] Meshing curve 3 (Circle)
+Info    : [ 40%] Meshing curve 4 (Circle)
+Info    : [ 50%] Meshing curve 5 (Line)
+Info    : [ 60%] Meshing curve 6 (Circle)
+Info    : [ 70%] Meshing curve 7 (Circle)
+Info    : [ 80%] Meshing curve 8 (Circle)
+Info    : [ 90%] Meshing curve 9 (Line)
+Info    : Done meshing 1D (Wall 0.00508074s, CPU 0.00564s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Cylinder, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 2 (Plane, Frontal-Delaunay)
+Info    : [ 30%] Meshing surface 3 (Plane, Frontal-Delaunay)
+Info    : [ 50%] Meshing surface 4 (Cylinder, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 5 (Plane, Frontal-Delaunay)
+Info    : [ 80%] Meshing surface 6 (Plane, Frontal-Delaunay)
+Info    : [ 90%] Meshing surface 7 (Cylinder, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 0.279408s, CPU 0.280112s)
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 6951 nodes...
+Info    : Done tetrahedrizing 6959 nodes (Wall 0.0967406s, CPU 0.095737s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    : Done reconstructing mesh (Wall 0.18135s, CPU 0.179895s)
+Info    : Found volume 1
+Info    : Found void region
+Info    : It. 0 - 0 nodes created - worst tet radius 4.24488 (nodes removed 0 0)
+Info    : It. 500 - 500 nodes created - worst tet radius 1.54514 (nodes removed 0 0)
+Info    : It. 1000 - 1000 nodes created - worst tet radius 1.26246 (nodes removed 0 0)
+Info    : It. 1500 - 1500 nodes created - worst tet radius 1.12384 (nodes removed 0 0)
+Info    : It. 2000 - 2000 nodes created - worst tet radius 1.03467 (nodes removed 0 0)
+Info    : 3D refinement terminated (9189 nodes total):
+Info    :  - 0 Delaunay cavities modified for star shapeness
+Info    :  - 0 nodes could not be inserted
+Info    :  - 36096 tetrahedra created in 0.0932347 sec. (387151 tets/s)
+Info    : 0 node relocations
+Info    : Done meshing 3D (Wall 0.428216s, CPU 0.426527s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 1.01039e-05) with worst = 0.00149479 / average = 0.811884:
+Info    : 0.00 < quality < 0.10 :        79 elements
+Info    : 0.10 < quality < 0.20 :       213 elements
+Info    : 0.20 < quality < 0.30 :       424 elements
+Info    : 0.30 < quality < 0.40 :       491 elements
+Info    : 0.40 < quality < 0.50 :       733 elements
+Info    : 0.50 < quality < 0.60 :      1062 elements
+Info    : 0.60 < quality < 0.70 :      2375 elements
+Info    : 0.70 < quality < 0.80 :      6289 elements
+Info    : 0.80 < quality < 0.90 :     14193 elements
+Info    : 0.90 < quality < 1.00 :     10237 elements
+Info    : 704 edge swaps, 9 node relocations (volume = 1.01039e-05): worst = 0.127723 / average = 0.824339 (Wall 0.0108092s, CPU 0.010021s)
+Info    : 724 edge swaps, 9 node relocations (volume = 1.01039e-05): worst = 0.127723 / average = 0.824476 (Wall 0.0136881s, CPU 0.012936s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         3 elements
+Info    : 0.20 < quality < 0.30 :        10 elements
+Info    : 0.30 < quality < 0.40 :       508 elements
+Info    : 0.40 < quality < 0.50 :       711 elements
+Info    : 0.50 < quality < 0.60 :      1019 elements
+Info    : 0.60 < quality < 0.70 :      2256 elements
+Info    : 0.70 < quality < 0.80 :      6371 elements
+Info    : 0.80 < quality < 0.90 :     14365 elements
+Info    : 0.90 < quality < 1.00 :     10214 elements
+Info    : Done optimizing mesh (Wall 0.0399989s, CPU 0.039259s)
+Info    : 9189 nodes 50027 elements
+Info    : Writing 'oil_coarse.msh'...
+Info    : Done writing 'oil_coarse.msh'
+tets 35468
+
+# -- cell 6 (0.1s, exit 0)
+gmsh.clear(); gmsh.finalize()
+gmsh.initialize(); gmsh.option.setNumber("General.Terminal", 0)
+gmsh.open("oil.step")
+TOL = 1e-5
+groups = {"ring_wet": [], "ring_end_top": [], "ring_end_bottom": [], "spinner_wet": []}
+for (d, t) in gmsh.model.getEntities(2):
+    xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(d, t)
+    rmax = max(abs(xmin), abs(xmax))
+    if abs(zmax - zmin) < TOL and abs(0.5*(zmax+zmin) - 0.005) < TOL:   groups["ring_end_top"].append(t)
+    elif abs(zmax - zmin) < TOL and abs(0.5*(zmax+zmin) + 0.005) < TOL: groups["ring_end_bottom"].append(t)
+    elif abs(rmax - 0.023) < TOL:                                       groups["ring_wet"].append(t)
+    else:                                                               groups["spinner_wet"].append(t)
+for n, tags in groups.items():
+    print(n, tags, "area=%.6e" % sum(gmsh.model.occ.getMass(2, t) for t in tags))
+# -- output
+Info    : Clearing all models and views...
+Info    : Done clearing all models and views
+ring_wet [1] area=1.445133e-03
+ring_end_top [2] area=1.661903e-03
+ring_end_bottom [3] area=1.661903e-03
+spinner_wet [4, 5, 6, 7] area=3.487168e-03
+
+# -- cell 7 (48.3s, exit 0)
+for n, tags in groups.items():
+    g = gmsh.model.addPhysicalGroup(2, tags); gmsh.model.setPhysicalName(2, g, n)
+gv = gmsh.model.addPhysicalGroup(3, [1]); gmsh.model.setPhysicalName(3, gv, "oil")
+
+f1 = gmsh.model.mesh.field.add("Distance")
+gmsh.model.mesh.field.setNumbers(f1, "SurfacesList", groups["spinner_wet"])
+gmsh.model.mesh.field.setNumber(f1, "Sampling", 200)
+f2 = gmsh.model.mesh.field.add("Threshold")
+gmsh.model.mesh.field.setNumber(f2, "InField", f1)
+gmsh.model.mesh.field.setNumber(f2, "SizeMin", 3.0e-4)
+gmsh.model.mesh.field.setNumber(f2, "SizeMax", 1.2e-3)
+gmsh.model.mesh.field.setNumber(f2, "DistMin", 3.0e-4)
+gmsh.model.mesh.field.setNumber(f2, "DistMax", 2.5e-3)
+gmsh.model.mesh.field.setAsBackgroundMesh(f2)
+gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+gmsh.model.mesh.generate(3)
+gmsh.model.mesh.optimize("Netgen")
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.write("oil.msh")
+print("tets", len(gmsh.model.mesh.getElementsByType(4)[0]), "nodes", len(gmsh.model.mesh.getNodes()[0]))
+# -- output
+tets 425504 nodes 100603
+
+# -- cell 8 (2.8s, exit 0)
+import os, subprocess, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+def foam(cls, obj, body):
+    return ("FoamFile\n{\n version 2.0;\n format ascii;\n class %s;\n object %s;\n}\n" % (cls, obj)) + body
+open("system/controlDict","w").write(foam("dictionary","controlDict",
+ "application icoFoam;\nstartFrom startTime;\nstartTime 0;\nstopAt endTime;\nendTime 1;\ndeltaT 1;\nwriteControl timeStep;\nwriteInterval 1;\n"))
+open("system/fvSchemes","w").write(foam("dictionary","fvSchemes",
+ "ddtSchemes{default steadyState;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\ninterpolationSchemes{default linear;}\nsnGradSchemes{default corrected;}\n"))
+open("system/fvSolution","w").write(foam("dictionary","fvSolution","solvers{}\n"))
+r = subprocess.run(["gmshToFoam","oil.msh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-800:])
+# -- output
+0 m call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:5
+    Surface 1	ring_wet
+    Surface 2	ring_end_top
+    Surface 3	ring_end_bottom
+    Surface 4	spinner_wet
+    Volume 5	oil
+
+Starting to read points at line 13
+Vertices to be read: 100603
+Vertices read:100603
+
+Starting to read cells at line 100619
+Cells to be read: 541502
+
+Mapping region 1 to Foam patch 0
+Mapping region 2 to Foam patch 1
+Mapping region 3 to Foam patch 2
+Mapping region 4 to Foam patch 3
+Mapping region 5 to Foam cellZone 0
+Cells:
+    total:425504
+    hex  :0
+    prism:0
+    pyr  :0
+    tet  :425504
+
+CellZones:
+Zone	Size
+    0	425504
+
+Patch 0 gets name ring_wet
+Patch 1 gets name ring_end_top
+Patch 2 gets name ring_end_bottom
+Patch 3 gets name spinner_wet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 115998 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone oil and cellSet
+End
+
+# -- cell 9 (2.1s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-3000:])
+# -- output
+buildup/work/T9-20260913-140941-6b42/t9
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           100603
+    faces:            909007
+    internal faces:   793009
+    cells:            425504
+    faces per cell:   4
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    425504
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    ring_wet            9392     4887     ok (non-closed singly connected)  
+    ring_end_top        8053     4123     ok (non-closed singly connected)  
+    ring_end_bottom     8071     4132     ok (non-closed singly connected)  
+    spinner_wet         90482    45241    ok (closed singly connected)      
+    ".*"                115998   58001    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    oil                 425504       100603       1.01082e-05  (-0.023 -0.023 -0.005) (0.023 0.023 0.005)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.023 -0.023 -0.005) (0.023 0.023 0.005)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (1.10066e-17 9.92802e-18 -1.1074e-16) OK.
+    Max cell openness = 2.63832e-16 OK.
+    Max aspect ratio = 5.25768 OK.
+    Minimum face area = 2.04421e-08. Maximum face area = 2.28347e-06.  Face area magnitudes OK.
+    Min volume = 1.41457e-12. Max volume = 1.21274e-09.  Total volume = 1.01082e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 57.6103 average: 17.8124
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.649202 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 10 (1.5s, exit 0)
+for p in ["ring_wet","ring_end_top","ring_end_bottom","spinner_wet"]:
+    subprocess.run(["foamDictionary","constant/polyMesh/boundary","-entry",f"entry0/{p}/type","-set","wall"],
+                   capture_output=True, text=True)
+    subprocess.run(["foamDictionary","constant/polyMesh/boundary","-entry",f"entry0/{p}/physicalType","-remove"],
+                   capture_output=True, text=True)
+print(subprocess.run(["foamDictionary","constant/polyMesh/boundary","-keywords"],capture_output=True,text=True).stdout)
+print(open("constant/polyMesh/boundary").read()[-800:])
+# -- output
+FoamFile
+entry0
+
+oamFile
+{
+    version         2;
+    format          ascii;
+    arch            "LSB;label=32;scalar=64";
+    class           polyBoundaryMesh;
+    location        "constant/polyMesh";
+    object          boundary;
+}
+
+
+4 // entry0
+(
+    ring_wet
+    {
+        type            wall;
+        nFaces          9392;
+        startFace       793009;
+    }
+    ring_end_top
+    {
+        type            wall;
+        nFaces          8053;
+        startFace       802401;
+    }
+    ring_end_bottom
+    {
+        type            wall;
+        nFaces          8071;
+        startFace       810454;
+    }
+    spinner_wet
+    {
+        type            wall;
+        nFaces          90482;
+        startFace       818525;
+    }
+)
+
+
+// ************************************************************************* //
+
+# -- cell 11 (0.9s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pv.set_plot_theme("document")
+import numpy as np
+mesh = pv.read("oil.msh") if False else None
+
+cols = {"ring_wet":"red","ring_end_top":"blue","ring_end_bottom":"green","spinner_wet":"orange"}
+p = pv.Plotter(off_screen=True, window_size=(1400,600), shape=(1,2))
+p.subplot(0,0)
+for n,c in cols.items():
+    s = pv.read(f"constant/triSurface/{n}.stl")
+    p.add_mesh(s.clip(normal="y", origin=(0,0,0)), color=c, show_edges=False, label=n)
+p.add_legend(); p.camera_position = "iso"
+p.subplot(0,1)
+foam = pv.OpenFOAMReader("case.foam") if os.path.exists("case.foam") else None
+open("case.foam","w").close()
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0) if rd.number_time_points else None
+grid = rd.read()["internalMesh"]
+p.add_mesh(grid.clip(normal="y", origin=(0,0,0)), show_edges=True, line_width=0.2, color="lightgray")
+p.camera_position = "xz"; p.camera.zoom(1.3)
+p.screenshot("view.png"); print("ok")
+# -- output
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 14:13:18.895 (   0.258s) [    7A486F288780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 14:13:18.896 (   0.259s) [    7A486F288780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 14:13:18.907 (   0.270s) [    7A486F288780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 12 (0.3s, exit 0)
+import matplotlib.pyplot as plt
+img = plt.imread("view.png")
+fig, ax = plt.subplots(figsize=(14,6)); ax.imshow(img); ax.axis("off"); plt.show()
+# -- output
+
+
+# -- cell 13 (0.3s, exit 0)
+sl = grid.slice(normal="y", origin=(0,0,0))
+p2 = pv.Plotter(off_screen=True, window_size=(1400,500))
+p2.add_mesh(sl, show_edges=True, line_width=0.5, color="white")
+p2.view_xz(); p2.camera.zoom(1.0); p2.screenshot("slice.png")
+fig, ax = plt.subplots(figsize=(14,5)); ax.imshow(plt.imread("slice.png")); ax.axis("off"); plt.show()
+# -- output
+[0m[33m2026-09-13 14:13:32.397 (  13.760s) [    7A486F288780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 14:13:32.398 (  13.761s) [    7A486F288780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 14 (0.2s, exit 0)
+import numpy as np
+cc = grid.cell_centers().points
+vol = grid.compute_cell_sizes(length=False, area=False).cell_data["Volume"]
+r = np.hypot(cc[:,0], cc[:,1]); z = cc[:,2]
+rad = (r>0.0220)&(r<0.0230)
+endg = (r>0.0150)&(r<0.0220)&(np.abs(z)>0.0040)
+for nm, m in [("radial clearance", rad), ("end gaps", endg)]:
+    h = (vol[m].mean())**(1/3)
+    print(f"{nm}: {m.sum()} cells, mean h = {h*1e3:.3f} mm -> ~{1.0/(h*1e3):.1f} cells across 1.0 mm gap")
+
+for n in ["ring_wet","ring_end_top","ring_end_bottom","spinner_wet"]:
+    s = pv.read(f"constant/triSurface/{n}.stl"); b = s.bounds
+    rr = np.hypot(s.points[:,0], s.points[:,1])
+    print(f"{n}: r in [{rr.min()*1e3:.2f},{rr.max()*1e3:.2f}] mm, z in [{b[4]*1e3:.2f},{b[5]*1e3:.2f}] mm, tris={s.n_cells}")
+print("mesh volume %.6e m3 vs exact %.6e m3" % (vol.sum(), oil.volume))
+# -- output
+radial clearance: 136958 cells, mean h = 0.218 mm -> ~4.6 cells across 1.0 mm gap
+end gaps: 176490 cells, mean h = 0.209 mm -> ~4.8 cells across 1.0 mm gap
+ring_wet: r in [23.00,23.00] mm, z in [-5.00,5.00] mm, tris=1988
+ring_end_top: r in [23.00,23.00] mm, z in [5.00,5.00] mm, tris=992
+ring_end_bottom: r in [23.00,23.00] mm, z in [-5.00,-5.00] mm, tris=992
+spinner_wet: r in [15.00,22.00] mm, z in [-4.00,4.00] mm, tris=7260
+mesh volume 1.010819e-05 m3 vs exact 1.010965e-05 m3
+

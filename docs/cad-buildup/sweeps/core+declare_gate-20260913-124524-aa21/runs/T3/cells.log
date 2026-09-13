@@ -1,0 +1,647 @@
+# -- cell 1 (0.2s, exit 0)
+import numpy as np, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# --- all dimensions in mm here; converted to metres before meshing ---
+W      = 6.0      # channel width
+L      = 120.0    # overall length
+HW     = W/2.0
+R_LOOP = 10.0     # loop centreline radius
+SPAN   = 26.0     # x-distance between the two junctions of one loop
+CY     = 14.0     # loop circle centre height above axis
+X0S    = [10.0, 37.0, 64.0, 91.0]   # upstream junction x of each loop
+
+def tangent_dir(P, C, R, sign):
+    v = np.array(C) - np.array(P); d = np.linalg.norm(v)
+    th = np.arctan2(v[1], v[0]); al = np.arcsin(R/d)
+    return th + sign*al, np.sqrt(d*d - R*R)
+
+def loop_centerline(x0, n=200):
+    A = np.array([x0, 0.0]); B = np.array([x0+SPAN, 0.0]); C = np.array([x0+SPAN/2, CY])
+    thA, LA = tangent_dir(A, C, R_LOOP, -1)
+    thB, LB = tangent_dir(B, C, R_LOOP, -1)
+    T1 = A + LA*np.array([np.cos(thA), np.sin(thA)])
+    T2 = B + LB*np.array([np.cos(thB), np.sin(thB)])
+    a1 = np.arctan2(*(T1-C)[::-1]); a2 = np.arctan2(*(T2-C)[::-1])
+    while a2 < a1: a2 += 2*np.pi          # counter-clockwise over the top
+    arc = np.stack([C + R_LOOP*np.array([np.cos(t), np.sin(t)]) for t in np.linspace(a1, a2, n)])
+    return np.vstack([A, arc, B]), np.degrees(thA), np.degrees(thB), np.degrees(a2-a1)
+
+cl, thA, thB, sweep = loop_centerline(X0S[0])
+print(f"entry leg angle {thA:.1f} deg, exit leg angle {thB:.1f} deg, arc sweep {sweep:.1f} deg")
+fig, ax = plt.subplots(figsize=(12,3.5))
+ax.add_patch(plt.Rectangle((0,-HW), L, W, fc='lightblue', ec='k'))
+for x0 in X0S:
+    c,_,_,_ = loop_centerline(x0); ax.plot(c[:,0], c[:,1], 'r-')
+ax.set_aspect('equal'); ax.set_xlim(-5,125); ax.set_ylim(-8,30); plt.savefig("cl.png", dpi=90)
+print("loop extent x:", X0S[-1], X0S[-1]+SPAN, " max y:", cl[:,1].max())
+# -- output
+entry leg angle 15.6 deg, exit leg angle 101.3 deg, arc sweep 85.8 deg
+loop extent x: 91.0 117.0  max y: 15.962319664364276
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 2 (0.2s, exit 0)
+import numpy as np
+import matplotlib.pyplot as plt
+
+def loop_mirrored(x0, n=200):
+    c,a,b,s = loop_centerline(x0, n)
+    xm = x0 + SPAN/2
+    c2 = c.copy(); c2[:,0] = 2*xm - c2[:,0]
+    return c2[::-1]   # traced from upstream junction A to downstream junction B
+
+fig, ax = plt.subplots(figsize=(13,4))
+ax.add_patch(plt.Rectangle((0,-HW), L, W, fc='lightblue', ec='k'))
+for x0 in X0S:
+    c = loop_mirrored(x0); ax.plot(c[:,0], c[:,1], 'r-')
+    ax.plot(*c[0], 'go'); ax.plot(*c[-1], 'ks')
+d0 = loop_mirrored(X0S[0])
+print("upstream-junction leg angle:", np.degrees(np.arctan2(*(d0[1]-d0[0])[::-1])))
+print("downstream-junction leg angle (into loop):", np.degrees(np.arctan2(*(d0[-2]-d0[-1])[::-1])))
+ax.set_aspect('equal'); ax.set_xlim(-5,125); ax.set_ylim(-8,22); fig
+# -- output
+upstream-junction leg angle: 78.68329937002667
+downstream-junction leg angle (into loop): 164.44110657670376
+
+# -- cell 3 (0.2s, exit 0)
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.path import Path
+from matplotlib.patches import PathPatch
+
+def thicken(cl, hw=HW):
+    d = np.gradient(cl, axis=0); d /= np.linalg.norm(d, axis=1)[:,None]
+    n = np.stack([-d[:,1], d[:,0]], axis=1)
+    return np.vstack([cl + hw*n, (cl - hw*n)[::-1]])
+
+def show(cy, r, span, n=300):
+    global CY, R_LOOP, SPAN
+    CY, R_LOOP, SPAN = cy, r, span
+    fig, ax = plt.subplots(figsize=(13,4.5))
+    ax.add_patch(plt.Rectangle((0,-HW), L, W, fc='0.8', ec='none'))
+    for x0 in X0S:
+        c = loop_mirrored(x0, n)
+        ax.add_patch(plt.Polygon(thicken(c), fc='0.8', ec='none'))
+        ax.plot(*thicken(c).T, 'k-', lw=0.6)
+    ax.set_aspect('equal'); ax.set_xlim(-5,125); ax.set_ylim(-8,30)
+    ax.set_title(f"CY={cy} R={r} SPAN={span}")
+    return fig
+
+show(13.0, 8.0, 26.0)
+# -- output
+
+
+# -- cell 4 (2.3s, exit 0)
+from build123d import *
+import numpy as np
+
+# ---- geometry parameters, millimetres (scaled to metres before meshing) ----
+W     = 6.0                  # channel width
+L     = 120.0                # overall length
+HW    = W/2
+RI    = 4.0                  # island nose radius
+LTIP  = 7.0                  # island tip offset from nose centre (x)
+PITCH = 30.0
+XS    = [8.0, 38.0, 68.0, 98.0]   # left end of each island (nose tangency zone)
+
+def hull_face(cx, cy, r, tx, ty):
+    """convex hull of circle(r)@(cx,cy) and point (tx,ty): a teardrop."""
+    C = np.array([cx, cy]); T = np.array([tx, ty])
+    v = T - C; d = np.linalg.norm(v); al = np.arccos(r/d)
+    th = np.arctan2(v[1], v[0])
+    P1 = C + r*np.array([np.cos(th+al), np.sin(th+al)])
+    P2 = C + r*np.array([np.cos(th-al), np.sin(th-al)])
+    tri = Polygon(tuple(T), tuple(P1), tuple(P2), align=None)
+    return Circle(r).locate(Location((cx, cy))) + tri
+
+def loop_ring(xs):
+    cx, cy = xs + RI, HW + RI          # nose circle tangent to channel top wall
+    tx, ty = cx + LTIP, HW
+    island = hull_face(cx, cy, RI, tx, ty)
+    k = (RI + W)/RI                    # homothety = exact 6 mm outward offset
+    outer = hull_face(cx, cy, RI + W, cx + k*(tx-cx), cy + k*(ty-cy))
+    return outer - island, island
+
+channel = Rectangle(L, W, align=None).locate(Location((0, -HW)))
+rings   = [loop_ring(xs)[0] for xs in XS]
+fluid2d = channel + rings[0] + rings[1] + rings[2] + rings[3]
+print("faces:", len(fluid2d.faces()), " area mm^2:", round(fluid2d.area,1))
+print("bbox mm:", fluid2d.bounding_box())
+# -- output
+faces: 3  area mm^2: 1881.0
+bbox mm: bbox: -60.0 <= x <= 119.5, -6.0 <= y <= 17.0, 0.0 <= z <= 0.0
+
+# -- cell 5 (0.1s, exit 0)
+channel = Pos(L/2, 0) * Rectangle(L, W)
+rings   = [loop_ring(xs)[0] for xs in XS]
+fluid2d = channel + rings[0] + rings[1] + rings[2] + rings[3]
+print("faces:", len(fluid2d.faces()), " area mm^2:", round(fluid2d.area,1))
+print("bbox mm:", fluid2d.bounding_box())
+f = fluid2d.faces()[0] if len(fluid2d.faces())==1 else None
+print("inner wires (islands) in face 0:", len(fluid2d.faces()[0].inner_wires()))
+# -- output
+faces: 1  area mm^2: 1474.1
+bbox mm: bbox: 0.0 <= x <= 120.0, -3.0 <= y <= 17.0, 0.0 <= z <= 0.0
+inner wires (islands) in face 0: 4
+
+# -- cell 6 (0.4s, exit 0)
+import matplotlib.pyplot as plt
+face = fluid2d.faces()[0]
+def wire_xy(w, n=400):
+    return np.array([[p.X, p.Y] for p in [w.position_at(t) for t in np.linspace(0,1,n)]])
+fig, ax = plt.subplots(figsize=(13,3.2))
+ax.fill(*wire_xy(face.outer_wire()).T, fc='lightblue', ec='k', lw=0.8)
+for w in face.inner_wires():
+    ax.fill(*wire_xy(w).T, fc='white', ec='r', lw=0.8)
+ax.set_aspect('equal'); ax.set_xlim(-3,123); ax.set_ylim(-6,20); fig
+# -- output
+
+
+# -- cell 7 (0.1s, exit 0)
+THICK = 1.0    # mm, single-cell depth for the 2D (empty) direction
+solid = extrude(fluid2d, amount=THICK)
+print(type(solid), "volume mm^3:", round(solid.volume,1), " expected:", round(1474.1*THICK,1))
+print("bbox:", solid.bounding_box())
+print("faces:", len(solid.faces()), " solids:", len(solid.solids()))
+export_step(solid, "tesla_mm.step")
+import os; print("step bytes:", os.path.getsize("tesla_mm.step"))
+# -- output
+<class 'build123d.topology.composite.Part'> volume mm^3: 1474.1  expected: 1474.1
+bbox: bbox: 0.0 <= x <= 120.0, -3.0 <= y <= 17.0, 0.0 <= z <= 1.0
+faces: 30  solids: 1
+step bytes: 102385
+
+# -- cell 8 (0.1s, exit 1)
+from scipy.spatial import cKDTree if False else None
+outer = wire_xy(face.outer_wire(), 6000)
+tree_pts = outer
+for k, w in enumerate(face.inner_wires()):
+    ip = wire_xy(w, 1500)
+    d = np.sqrt(((ip[:,None,:]-tree_pts[None,:,:])**2).sum(-1)).min(axis=1)
+    print(f"island {k}: gap island->outer wall  min {d.min():.3f}  median {np.median(d):.3f} mm")
+# straight main channel width between lobes, at x=30 and x=90
+for xq in (30.0, 60.0, 90.0, 118.0):
+    ys = outer[np.abs(outer[:,0]-xq) < 0.05][:,1]
+    print(f"x={xq}: wall ys {np.unique(np.round(ys,3))}")
+# -- output
+[36mCell[39m[36m [39m[32mIn[8][39m[32m, line 1[39m
+[31m    [39m[31mfrom scipy.spatial import cKDTree if False else None[39m
+                                      ^
+[31mSyntaxError[39m[31m:[39m invalid syntax
+
+# -- cell 9 (2.9s, exit 0)
+outer = wire_xy(face.outer_wire(), 8000)
+for k, w in enumerate(face.inner_wires()):
+    ip = wire_xy(w, 1200)
+    d = np.sqrt(((ip[:,None,:]-outer[None,:,:])**2).sum(-1)).min(axis=1)
+    print(f"island {k}: gap to outer wall  min {d.min():.3f}  median {np.median(d):.3f} mm")
+for xq in (30.0, 60.0, 90.0, 118.0):
+    ys = outer[np.abs(outer[:,0]-xq) < 0.06][:,1]
+    print(f"x={xq}: outer-wall y values {np.unique(np.round(ys,2))}")
+# -- output
+island 0: gap to outer wall  min 6.000  median 6.000 mm
+island 1: gap to outer wall  min 6.000  median 6.000 mm
+island 2: gap to outer wall  min 6.000  median 6.000 mm
+island 3: gap to outer wall  min 6.000  median 6.000 mm
+x=30.0: outer-wall y values [-3.  3.]
+x=60.0: outer-wall y values [-3.  3.]
+x=90.0: outer-wall y values [-3.  3.]
+x=118.0: outer-wall y values [-3.  3.]
+
+# -- cell 10 (0.1s, exit 0)
+export_step(fluid2d, "tesla_face_mm.step")
+import gmsh
+CELL = 2.0   # mm, coarse first
+gmsh.initialize()
+gmsh.option.setNumber("General.Terminal", 0)
+gmsh.model.add("tesla")
+ents = gmsh.model.occ.importShapes("tesla_face_mm.step")
+gmsh.model.occ.synchronize()
+print("imported:", ents)
+surf = [t for d,t in ents if d==2]
+out = gmsh.model.occ.extrude([(2,s) for s in surf], 0, 0, THICK, [1], [1], True)
+gmsh.model.occ.synchronize()
+print("extrude result dims:", [(d,t) for d,t in out][:4], "... n=", len(out))
+# -- output
+imported: [(2, 1)]
+extrude result dims: [(2, 30), (3, 1), (2, 2), (2, 3)] ... n= 30
+
+# -- cell 11 (0.1s, exit 0)
+top  = out[0][1]; vol = out[1][1]; lats = [t for d,t in out[2:]]
+back = surf[0]
+inlet, outlet, walls = [], [], []
+for t in lats:
+    cx, cy, cz = gmsh.model.occ.getCenterOfMass(2, t)
+    if abs(cx - 0.0)   < 1e-6: inlet.append(t)
+    elif abs(cx - L)   < 1e-6: outlet.append(t)
+    else: walls.append(t)
+print("inlet", inlet, "outlet", outlet, "n walls", len(walls))
+for t in inlet+outlet:
+    print(t, gmsh.model.occ.getCenterOfMass(2,t), gmsh.model.occ.getMass(2,t), "mm^2 (expect 6x1=6)")
+# -- output
+inlet [2] outlet [4] n walls 26
+2 (0.0, 7.806255641895632e-17, 0.5) 6.0 mm^2 (expect 6x1=6)
+4 (120.0, 7.806255641895632e-17, 0.5) 6.0 mm^2 (expect 6x1=6)
+
+# -- cell 12 (0.1s, exit 0)
+gmsh.model.addPhysicalGroup(3, [vol], name="internal")
+gmsh.model.addPhysicalGroup(2, inlet,  name="inlet")
+gmsh.model.addPhysicalGroup(2, outlet, name="outlet")
+gmsh.model.addPhysicalGroup(2, walls,  name="walls")
+gmsh.model.addPhysicalGroup(2, [back, top], name="frontAndBack")
+gmsh.option.setNumber("Mesh.MeshSizeMin", CELL)
+gmsh.option.setNumber("Mesh.MeshSizeMax", CELL)
+gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+gmsh.option.setNumber("Mesh.Algorithm", 8)       # frontal-delaunay for quads
+gmsh.option.setNumber("Mesh.RecombineAll", 1)
+gmsh.option.setNumber("Mesh.RecombinationAlgorithm", 2)
+gmsh.model.mesh.generate(3)
+import numpy as np
+et, en, _ = gmsh.model.mesh.getElements(3)
+print("3D element types/counts:", [(int(a), len(b)) for a,b in zip(et,en)])
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.write("tesla.msh")
+# -- output
+3D element types/counts: [(5, 573)]
+
+# -- cell 13 (0.2s, exit 0)
+import subprocess, os, shutil
+for d in ("system","constant","0"):
+    os.makedirs(d, exist_ok=True)
+open("system/controlDict","w").write("""FoamFile{version 2.0;format ascii;class dictionary;object controlDict;}
+application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1;
+""")
+open("system/fvSchemes","w").write("""FoamFile{version 2.0;format ascii;class dictionary;object fvSchemes;}
+ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;}
+divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;}
+interpolationSchemes{default linear;} snGradSchemes{default corrected;}
+""")
+open("system/fvSolution","w").write("""FoamFile{version 2.0;format ascii;class dictionary;object fvSolution;}
+solvers{} 
+""")
+r = subprocess.run(["gmshToFoam","tesla.msh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-600:], r.stderr[-400:])
+# -- output
+0 gets name outlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 1392 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+# -- cell 14 (0.1s, exit 0)
+print(open("constant/polyMesh/boundary").read())
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+4
+(
+    frontAndBack
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1146;
+        startFace       1023;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4;
+        startFace       2169;
+    }
+    walls
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          238;
+        startFace       2173;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4;
+        startFace       2411;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 15 (0.5s, exit 0)
+r = subprocess.run(["transformPoints","scale=(0.001 0.001 0.001)"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-200:])
+b = open("constant/polyMesh/boundary").read()
+b = b.replace("""    frontAndBack
+    {
+        type            patch;
+        physicalType    patch;""", """    frontAndBack
+    {
+        type            empty;
+        physicalType    empty;""")
+b = b.replace("""    walls
+    {
+        type            patch;
+        physicalType    patch;""", """    walls
+    {
+        type            wall;
+        physicalType    wall;""")
+open("constant/polyMesh/boundary","w").write(b)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-1800:])
+# -- output
+1 : OpenFOAM-2512 (2512) - visit www.openfoam.com
+Build: _87ed40d2-20251219
+
+Expected 0 arguments but found 1
+
+See 'transformPoints -help' for usage
+ or 'transformPoints -help-full' for extended usage
+
+
+ition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    frontAndBack        1146     1386     ok (non-closed singly connected)  
+    inlet               4        10       ok (non-closed singly connected)  
+    walls               238      480      ok (non-closed singly connected)  
+    outlet              4        10       ok (non-closed singly connected)  
+    ".*"                1392     1386     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            573          1386         1474.39      (0 -3 0) (120 16.9555 1)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -3 0) (120 16.9555 1)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (2.61733e-18 2.09387e-18 2.1547e-18) OK.
+    Max cell openness = 1.84493e-16 OK.
+    Max aspect ratio = 1.58641 OK.
+    Minimum face area = 0.918759. Maximum face area = 4.37581.  Face area magnitudes OK.
+    Min volume = 1.24109. Max volume = 4.37581.  Total volume = 1474.39.  Cell volumes OK.
+    Mesh non-orthogonality Max: 28.912 average: 7.91971
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.560719 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 16 (0.4s, exit 0)
+r = subprocess.run(["transformPoints","-scale","(0.001 0.001 0.001)"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-300:], r.stderr[-200:])
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print([l for l in r.stdout.splitlines() if "bounding box" in l or "Total volume" in l])
+# -- output
+0 ficationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Scaling points uniformly by 0.001
+Writing points into directory "constant/polyMesh"
+
+
+End
+
+ 
+['    Overall domain bounding box (0 -0.003 0) (0.12 0.0169555 0.001)', '    Min volume = 1.24109e-09. Max volume = 4.37581e-09.  Total volume = 1.47439e-06.  Cell volumes OK.']
+
+# -- cell 17 (0.6s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pv.OFF_SCREEN = True
+rd = pv.OpenFOAMReader("case.foam") if os.path.exists("case.foam") else None
+open("case.foam","w").write("")
+m = pv.OpenFOAMReader("case.foam").read()["internalMesh"]
+p = pv.Plotter(off_screen=True, window_size=(1500,400))
+p.add_mesh(m, show_edges=True, color="lightblue", line_width=1)
+p.view_xy(); p.camera.zoom(1.3)
+p.screenshot("mesh_coarse.png")
+from IPython.display import Image
+Image("mesh_coarse.png")
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 14:03:35.286 (   0.417s) [    72CF9B21C780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 14:03:35.287 (   0.418s) [    72CF9B21C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 14:03:35.299 (   0.430s) [    72CF9B21C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 18 (0.3s, exit 0)
+import gmsh
+CELL_FINE = 0.5   # mm
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize(); gmsh.option.setNumber("General.Terminal", 0)
+gmsh.model.add("tesla_fine")
+ents = gmsh.model.occ.importShapes("tesla_face_mm.step")
+gmsh.model.occ.synchronize()
+surf = [t for d,t in ents if d==2]
+out = gmsh.model.occ.extrude([(2,s) for s in surf], 0, 0, THICK, [1], [1], True)
+gmsh.model.occ.synchronize()
+top = out[0][1]; vol = out[1][1]; lats = [t for d,t in out[2:]]; back = surf[0]
+inlet, outlet, walls = [], [], []
+for t in lats:
+    cx, cy, cz = gmsh.model.occ.getCenterOfMass(2, t)
+    if abs(cx) < 1e-6: inlet.append(t)
+    elif abs(cx - L) < 1e-6: outlet.append(t)
+    else: walls.append(t)
+gmsh.model.addPhysicalGroup(3, [vol], name="internal")
+gmsh.model.addPhysicalGroup(2, inlet, name="inlet")
+gmsh.model.addPhysicalGroup(2, outlet, name="outlet")
+gmsh.model.addPhysicalGroup(2, walls, name="walls")
+gmsh.model.addPhysicalGroup(2, [back, top], name="frontAndBack")
+for o,v in [("Mesh.MeshSizeMin",CELL_FINE),("Mesh.MeshSizeMax",CELL_FINE),
+            ("Mesh.MeshSizeFromCurvature",0),("Mesh.Algorithm",8),
+            ("Mesh.RecombineAll",1),("Mesh.RecombinationAlgorithm",2),("Mesh.MshFileVersion",2.2)]:
+    gmsh.option.setNumber(o,v)
+gmsh.model.mesh.generate(3)
+et, en, _ = gmsh.model.mesh.getElements(3)
+print("3D elements:", [(int(a), len(b)) for a,b in zip(et,en)], " (type 5 = hex, 6 = prism)")
+gmsh.write("tesla.msh")
+print("inlet",inlet,"outlet",outlet,"walls",len(walls))
+# -- output
+3D elements: [(5, 6481)]  (type 5 = hex, 6 = prism)
+inlet [2] outlet [4] walls 26
+
+# -- cell 19 (0.8s, exit 0)
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+r = subprocess.run(["gmshToFoam","tesla.msh"], capture_output=True, text=True); print("gmshToFoam", r.returncode)
+b = open("constant/polyMesh/boundary").read()
+b = b.replace("""    frontAndBack
+    {
+        type            patch;
+        physicalType    patch;""", """    frontAndBack
+    {
+        type            empty;
+        physicalType    empty;""")
+b = b.replace("""    walls
+    {
+        type            patch;
+        physicalType    patch;""", """    walls
+    {
+        type            wall;
+        physicalType    wall;""")
+open("constant/polyMesh/boundary","w").write(b)
+subprocess.run(["transformPoints","-scale","(0.001 0.001 0.001)"], capture_output=True, text=True)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-1500:])
+# -- output
+gmshToFoam 0
+ 
+    inlet               12       26       ok (non-closed singly connected)  
+    walls               882      1768     ok (non-closed singly connected)  
+    outlet              12       26       ok (non-closed singly connected)  
+    ".*"                13868    13862    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            6481         13862        1.47421e-06  (0 -0.003 0) (0.12 0.0169988 0.001)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.003 0) (0.12 0.0169988 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (-3.55666e-18 2.57078e-17 -7.05476e-20) OK.
+    Max cell openness = 2.29538e-16 OK.
+    Max aspect ratio = 1.79189 OK.
+    Minimum face area = 5.09398e-08. Maximum face area = 7.23218e-07.  Face area magnitudes OK.
+    Min volume = 5.09398e-11. Max volume = 3.81273e-10.  Total volume = 1.47421e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 24.8187 average: 4.56921
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.593993 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 20 (0.1s, exit 0)
+import pyvista as pv
+rdr = pv.OpenFOAMReader("case.foam"); rdr.enable_all_patch_arrays()
+blocks = rdr.read()
+bnd = blocks["boundary"]
+print(bnd.keys())
+for name in bnd.keys():
+    s = bnd[name].extract_surface().triangulate()
+    s.save(f"{name}.stl")
+    print(name, s.n_cells, "tris  bbox", np.round(s.bounds,4))
+# -- output
+['frontAndBack', 'inlet', 'walls', 'outlet']
+frontAndBack 25924 tris  bbox [ 0.     0.12  -0.003  0.017  0.     0.001]
+inlet 24 tris  bbox [ 0.     0.    -0.003  0.003  0.     0.001]
+walls 1764 tris  bbox [ 0.     0.12  -0.003  0.017  0.     0.001]
+outlet 24 tris  bbox [ 0.12   0.12  -0.003  0.003  0.     0.001]
+
+/tmp/ipykernel_139970/4065745520.py:7: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  s = bnd[name].extract_surface().triangulate()
+
+# -- cell 21 (0.3s, exit 0)
+m = pv.OpenFOAMReader("case.foam").read()["internalMesh"]
+p = pv.Plotter(off_screen=True, window_size=(1600,500))
+p.add_mesh(m, show_edges=True, color="lightsteelblue", line_width=1)
+p.view_xy(); p.camera.tight(padding=0.02)
+p.screenshot("mesh_fine.png")
+p2 = pv.Plotter(off_screen=True, window_size=(900,700))
+p2.add_mesh(m.clip_box([0.0,0.036,-0.004,0.02,-1,1], invert=True), show_edges=True, color="lightsteelblue")
+p2.view_xy(); p2.camera.tight(padding=0.05)
+p2.screenshot("loop_zoom.png")
+from IPython.display import Image, display
+display(Image("mesh_fine.png")); display(Image("loop_zoom.png"))
+# -- output
+[0m[33m2026-09-13 14:04:11.108 (  36.239s) [    72CF9B21C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 14:04:11.108 (  36.239s) [    72CF9B21C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 14:04:11.238 (  36.368s) [    72CF9B21C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 14:04:11.238 (  36.369s) [    72CF9B21C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 22 (0.1s, exit 0)
+inl = bnd["inlet"]; outl = bnd["outlet"]
+print("inlet area  m^2:", inl.extract_surface().area, "-> width", inl.extract_surface().area/0.001*1000, "mm")
+print("outlet area m^2:", outl.extract_surface().area, "-> width", outl.extract_surface().area/0.001*1000, "mm")
+print("domain length m:", m.bounds[1]-m.bounds[0], " depth (2D dir) m:", m.bounds[5]-m.bounds[4])
+print("cells:", m.n_cells, " all hex:", set(m.celltypes))
+# main-channel width from the wall patch in a straight stretch (x = 30,60,90 mm)
+wp = bnd["walls"].points
+for xq in (0.030, 0.060, 0.090):
+    ys = wp[np.abs(wp[:,0]-xq) < 2e-4][:,1]
+    print(f"x={xq*1000:.0f} mm: wall y = {np.unique(np.round(ys,5))*1000} mm -> width {1000*(ys.max()-ys.min()):.3f} mm")
+print("islands (holes) in fluid face:", len(face.inner_wires()))
+# -- output
+inlet area  m^2: 6.0000003371387745e-06 -> width 6.000000337138775 mm
+outlet area m^2: 6.0000003371387745e-06 -> width 6.000000337138775 mm
+domain length m: 0.11999999731779099  depth (2D dir) m: 0.0010000000474974513
+cells: 6481  all hex: {np.uint8(12)}
+x=30 mm: wall y = [-3.  3.] mm -> width 6.000 mm
+x=60 mm: wall y = [-3.  3.] mm -> width 6.000 mm
+x=90 mm: wall y = [-3.  3.] mm -> width 6.000 mm
+islands (holes) in fluid face: 4
+
+/tmp/ipykernel_139970/2335987776.py:2: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  print("inlet area  m^2:", inl.extract_surface().area, "-> width", inl.extract_surface().area/0.001*1000, "mm")
+/tmp/ipykernel_139970/2335987776.py:3: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  print("outlet area m^2:", outl.extract_surface().area, "-> width", outl.extract_surface().area/0.001*1000, "mm")
+

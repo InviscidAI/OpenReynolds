@@ -1,0 +1,665 @@
+# -- cell 1 (2.4s, exit 1)
+from build123d import *
+import numpy as np, os, subprocess
+
+L, W, H = 0.300, 0.120, 0.080          # plenum length, width, height
+D_IN = 0.070                            # throttle inlet diameter
+D_R, R_BEND = 0.038, 0.060              # runner diameter, centreline bend radius
+REACH = 0.090                           # port face distance from plenum wall
+Z_AX = H/2                              # runner axis height on plenum wall
+STRAIGHT = REACH - R_BEND               # straight lead before the bend
+XS = [L*(2*i+1)/8 for i in range(4)]    # 4 evenly spaced stations
+print("stations", XS, "straight", STRAIGHT)
+
+plenum = Pos(L/2, 0, H/2) * Box(L, W, H)
+
+def runner(x):
+    p0 = Vector(x, W/2 - 0.012, Z_AX)          # start 12 mm inside the plenum wall
+    p1 = Vector(x, W/2 + STRAIGHT, Z_AX)
+    ln = Line(p0, p1)
+    arc = JernArc(start=p1, tangent=(0, 1, 0), radius=R_BEND, arc_size=90, plane=Plane.YZ)
+    path = Wire([ln.edge(), arc.edge()])
+    prof = Plane(origin=p0, z_dir=(0, 1, 0)) * Circle(D_R/2)
+    return sweep(prof, path)
+
+runners = [runner(x) for x in XS]
+runners += [mirror(r, Plane.XZ) for r in runners]
+fluid = plenum + runners
+print("volume m^3", fluid.volume, "bbox", fluid.bounding_box())
+# -- output
+stations [0.0375, 0.11249999999999999, 0.1875, 0.2625] straight 0.03
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 24[39m
+[32m     20[39m     path = Wire([ln.edge(), arc.edge()])
+[32m     21[39m     prof = Plane(origin=p0, z_dir=([32m0[39m, [32m1[39m, [32m0[39m)) * Circle(D_R/[32m2[39m)
+[32m     22[39m     [38;5;28;01mreturn[39;00m sweep(prof, path)
+[32m     23[39m 
+[32m---> [39m[32m24[39m runners = [runner(x) [38;5;28;01mfor[39;00m x [38;5;28;01min[39;00m XS]
+[32m     25[39m runners += [mirror(r, Plane.XZ) [38;5;28;01mfor[39;00m r [38;5;28;01min[39;00m runners]
+[32m     26[39m fluid = plenum + runners
+[32m     27[39m print([33m"volume m^3"[39m, fluid.volume, [33m"bbox"[39m, fluid.bounding_box())
+
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 19[39m, in [36mrunner[39m[34m(x)[39m
+[32m     15[39m [38;5;28;01mdef[39;00m runner(x):
+[32m     16[39m     p0 = Vector(x, W/[32m2[39m - [32m0.012[39m, Z_AX)          [38;5;66;03m# start 12 mm inside the plenum wall[39;00m
+[32m     17[39m     p1 = Vector(x, W/[32m2[39m + STRAIGHT, Z_AX)
+[32m     18[39m     ln = Line(p0, p1)
+[32m---> [39m[32m19[39m     arc = JernArc(start=p1, tangent=([32m0[39m, [32m1[39m, [32m0[39m), radius=R_BEND, arc_size=[32m90[39m, plane=Plane.YZ)
+[32m     20[39m     path = Wire([ln.edge(), arc.edge()])
+[32m     21[39m     prof = Plane(origin=p0, z_dir=([32m0[39m, [32m1[39m, [32m0[39m)) * Circle(D_R/[32m2[39m)
+[32m     22[39m     [38;5;28;01mreturn[39;00m sweep(prof, path)
+
+[31mTypeError[39m: JernArc.__init__() got an unexpected keyword argument 'plane'
+
+# -- cell 2 (0.1s, exit 0)
+import inspect
+print(inspect.signature(JernArc.__init__))
+# -- output
+(self, start: 'VectorLike', tangent: 'VectorLike', radius: 'float', arc_size: 'float | Shape | Axis | Location | Plane | VectorLike', mode: 'Mode' = <Mode.ADD>)
+
+# -- cell 3 (0.3s, exit 0)
+from build123d import *
+import numpy as np, math, os, subprocess
+
+L, W, H = 0.300, 0.120, 0.080          # plenum length, width, height (m)
+D_IN = 0.070                            # throttle inlet diameter
+D_R, R_BEND = 0.038, 0.060              # runner diameter, centreline bend radius
+REACH = 0.090                           # port face distance from plenum wall
+Z_AX = H/2                              # runner axis height on the plenum wall
+STRAIGHT = REACH - R_BEND               # straight lead before the bend
+XS = [L*(2*i+1)/8 for i in range(4)]    # four evenly spaced stations along the plenum
+
+plenum = Pos(L/2, 0, H/2) * Box(L, W, H)
+
+def runner_path(x):
+    y0 = W/2 - 0.012                       # start 12 mm inside the wall so the union is clean
+    y1 = W/2 + STRAIGHT
+    p0, p1 = Vector(x, y0, Z_AX), Vector(x, y1, Z_AX)
+    c = Vector(x, y1, Z_AX + R_BEND)       # bend centre, above the start of the arc
+    s = math.sin(math.radians(45))
+    pm = Vector(x, y1 + R_BEND*s, Z_AX + R_BEND - R_BEND*s)
+    p2 = Vector(x, y1 + R_BEND, Z_AX + R_BEND)
+    return Wire([Line(p0, p1).edge(), ThreePointArc(p1, pm, p2).edge()]), p0, p2
+
+def runner(x):
+    path, p0, p2 = runner_path(x)
+    prof = Plane(origin=p0, z_dir=(0, 1, 0)) * Circle(D_R/2)
+    return sweep(prof, path)
+
+runners = [runner(x) for x in XS]
+runners = runners + [mirror(r, Plane.XZ) for r in runners]
+fluid = plenum + runners
+print("volume m^3", fluid.volume, "bbox", fluid.bounding_box())
+# -- output
+volume m^3 0.004007290112817398 bbox bbox: 0.0 <= x <= 0.3, -0.1690001 <= y <= 0.1690001, 0.0 <= z <= 0.10000010000000008
+
+# -- cell 4 (0.1s, exit 0)
+fs = fluid.faces()
+from collections import Counter
+print(len(fs), Counter(f.geom_type for f in fs))
+for f in fs:
+    print(f.geom_type, np.round(np.array(f.center().to_tuple()),4), round(f.area,5))
+# -- output
+30 Counter({<GeomType.PLANE>: 14, <GeomType.CYLINDER>: 8, <GeomType.TORUS>: 8})
+GeomType.PLANE [0.   0.   0.04] 0.0096
+GeomType.PLANE [ 0.15 -0.06  0.04] 0.01946
+GeomType.PLANE [ 0.15 -0.    0.08] 0.036
+GeomType.PLANE [0.15 0.06 0.04] 0.01946
+GeomType.PLANE [ 0.15 -0.    0.  ] 0.036
+GeomType.PLANE [0.3  0.   0.04] 0.0096
+GeomType.CYLINDER [ 0.0375 -0.075   0.021 ] 0.00358
+GeomType.CYLINDER [ 0.1125 -0.075   0.021 ] 0.00358
+GeomType.CYLINDER [ 0.1875 -0.075   0.021 ] 0.00358
+GeomType.CYLINDER [ 0.2625 -0.075   0.021 ] 0.00358
+GeomType.CYLINDER [0.0375 0.075  0.021 ] 0.00358
+GeomType.CYLINDER [0.1125 0.075  0.021 ] 0.00358
+GeomType.CYLINDER [0.1875 0.075  0.021 ] 0.00358
+GeomType.CYLINDER [0.2625 0.075  0.021 ] 0.00358
+GeomType.TORUS [ 0.0375 -0.1459  0.0441] 0.01125
+GeomType.TORUS [ 0.1125 -0.1459  0.0441] 0.01125
+GeomType.TORUS [ 0.1875 -0.1459  0.0441] 0.01125
+GeomType.TORUS [ 0.2625 -0.1459  0.0441] 0.01125
+GeomType.TORUS [0.0375 0.1459 0.0441] 0.01125
+GeomType.TORUS [0.1125 0.1459 0.0441] 0.01125
+GeomType.TORUS [0.1875 0.1459 0.0441] 0.01125
+GeomType.TORUS [0.2625 0.1459 0.0441] 0.01125
+GeomType.PLANE [ 0.0375 -0.15    0.1   ] 0.00113
+GeomType.PLANE [ 0.1125 -0.15    0.1   ] 0.00113
+GeomType.PLANE [ 0.1875 -0.15    0.1   ] 0.00113
+GeomType.PLANE [ 0.2625 -0.15    0.1   ] 0.00113
+GeomType.PLANE [0.0375 0.15   0.1   ] 0.00113
+GeomType.PLANE [0.1125 0.15   0.1   ] 0.00113
+GeomType.PLANE [0.1875 0.15   0.1   ] 0.00113
+GeomType.PLANE [0.2625 0.15   0.1   ] 0.00113
+
+/tmp/ipykernel_99919/3449043171.py:5: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  print(f.geom_type, np.round(np.array(f.center().to_tuple()),4), round(f.area,5))
+
+# -- cell 5 (0.1s, exit 0)
+ports = [f for f in fluid.faces() if f.geom_type == GeomType.PLANE and abs(f.center().Z - 0.10) < 1e-9]
+tori  = [f for f in fluid.faces() if f.geom_type == GeomType.TORUS]
+cyls  = [f for f in fluid.faces() if f.geom_type == GeomType.CYLINDER]
+print("ports:", len(ports), "port dia m:", 2*math.sqrt(ports[0].area/math.pi), "(asked 0.038)")
+print("port normal:", tuple(np.round(np.array(tuple(ports[0].normal_at(ports[0].center()))),4)))
+print("port y:", sorted(set(round(abs(f.center().Y),4) for f in ports)), "-> reach from wall", 0.15-W/2)
+# torus area = 2*pi*r * (quarter of 2*pi*R) -> recover R
+R_meas = tori[0].area/(2*math.pi*(D_R/2))/(math.pi/2)
+print("bend centreline radius m:", round(R_meas,5), "(asked 0.060)")
+print("straight lead length m:", cyls[0].area/(math.pi*D_R), "(= 0.012 inside + 0.030 outside)")
+print("stations mm:", [round(x*1000,2) for x in XS], " spacing", 1000*(XS[1]-XS[0]))
+inlet_face = (Plane(origin=(0,0,H/2), z_dir=(-1,0,0)) * Circle(D_IN/2)).faces()[0]
+endwall    = (Plane(origin=(0,0,H/2), z_dir=(-1,0,0)) * (Rectangle(W,H) - Circle(D_IN/2))).faces()[0]
+print("inlet dia m:", 2*math.sqrt(inlet_face.area/math.pi), "endwall bbox:", endwall.bounding_box())
+# -- output
+ports: 8 port dia m: 0.037999999999999985 (asked 0.038)
+port normal: (np.float64(0.0), np.float64(-0.0), np.float64(1.0))
+port y: [0.15] -> reach from wall 0.09
+bend centreline radius m: 0.06 (asked 0.060)
+straight lead length m: 0.030000000000000002 (= 0.012 inside + 0.030 outside)
+stations mm: [37.5, 112.5, 187.5, 262.5]  spacing 74.99999999999999
+inlet dia m: 0.06999999999999999 endwall bbox: bbox: 0.0 <= x <= 0.0, -0.04 <= y <= 0.04, -0.019999999999999997 <= z <= 0.1
+
+# -- cell 6 (0.1s, exit 0)
+PL_END = Plane(origin=(0,0,H/2), z_dir=(-1,0,0), x_dir=(0,1,0))
+inlet_face = (PL_END * Circle(D_IN/2)).faces()[0]
+endwall    = (PL_END * (Rectangle(W,H) - Circle(D_IN/2))).faces()[0]
+print("endwall bbox:", endwall.bounding_box(), "area", round(endwall.area,6), "expect", round(W*H-math.pi*0.035**2,6))
+
+allf = fluid.faces()
+port_targets = [(("L" if s<0 else "R")+str(i+1), Vector(x, s*(W/2+REACH), Z_AX+R_BEND))
+                for s in (-1,1) for i,x in enumerate(XS)]
+port_faces = {}
+for nm, pt in port_targets:
+    m = [f for f in allf if f.geom_type==GeomType.PLANE and (f.center()-pt).length < 1e-6]
+    assert len(m)==1, (nm, len(m)); port_faces[nm]=m[0]
+runner_wall_faces = [f for f in allf if f.geom_type in (GeomType.CYLINDER, GeomType.TORUS)]
+port_ids = {id(f) for f in port_faces.values()}
+plenum_wall_faces = [f for f in allf if f.geom_type==GeomType.PLANE and id(f) not in port_ids
+                     and not (abs(f.center().X) < 1e-9)] + [endwall]
+print("ports", sorted(port_faces), "runner walls", len(runner_wall_faces), "plenum walls", len(plenum_wall_faces))
+print("area check: sum all =", round(sum(f.area for f in allf)+inlet_face.area+endwall.area-0.0096,6),
+      " solid area =", round(fluid.area,6))
+# -- output
+endwall bbox: bbox: 0.0 <= x <= 0.0, -0.06 <= y <= 0.06, 0.0 <= z <= 0.08 area 0.005752 expect 0.005752
+ports ['L1', 'L2', 'L3', 'L4', 'R1', 'R2', 'R3', 'R4'] runner walls 16 plenum walls 6
+area check: sum all = 0.257862  solid area = 0.257862
+
+# -- cell 7 (3.6s, exit 0)
+import struct
+os.makedirs("constant/triSurface", exist_ok=True)
+TOL = 0.0008
+
+def tris_of(faces):
+    V=[]; T=[]
+    for f in faces:
+        v,t = f.tessellate(TOL)
+        off=len(V); V += [np.array(tuple(p)) for p in v]
+        T += [(a+off,b+off,c+off) for a,b,c in t]
+    return np.array(V), np.array(T)
+
+def write_stl(name, faces):
+    V,T = tris_of(faces)
+    with open(f"constant/triSurface/{name}.stl","w") as fh:
+        fh.write(f"solid {name}\n")
+        for a,b,c in T:
+            p,q,r = V[a],V[b],V[c]; n = np.cross(q-p,r-p); L=np.linalg.norm(n)
+            n = n/L if L>0 else np.array([0,0,1.])
+            fh.write(f" facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\n  outer loop\n")
+            for w in (p,q,r): fh.write(f"   vertex {w[0]:.6e} {w[1]:.6e} {w[2]:.6e}\n")
+            fh.write("  endloop\n endfacet\n")
+        fh.write(f"endsolid {name}\n")
+    return len(T)
+
+groups = {"inlet":[inlet_face], "plenumWalls":plenum_wall_faces, "runnerWalls":runner_wall_faces}
+for nm,f in port_faces.items(): groups[f"port{nm}"] = [f]
+for nm,fl in groups.items(): print(nm, write_stl(nm,fl))
+# -- output
+inlet 124
+plenumWalls 1164
+runnerWalls 66528
+portL1 124
+portL2 124
+portL3 124
+portL4 124
+portR1 124
+portR2 124
+portR3 124
+portR4 124
+
+# -- cell 8 (0.8s, exit 0)
+import glob
+from collections import defaultdict
+V=[]; T=[]
+for p in sorted(glob.glob("constant/triSurface/*.stl")):
+    v,t = tris_of([])  # placeholder
+    break
+def read_stl(p):
+    pts=[]
+    for line in open(p):
+        if line.strip().startswith("vertex"):
+            pts.append([float(x) for x in line.split()[1:]])
+    a=np.array(pts); return a.reshape(-1,3,3)
+tri = np.vstack([read_stl(p) for p in sorted(glob.glob("constant/triSurface/*.stl"))])
+key = np.round(tri.reshape(-1,3), 7)
+uniq, inv = np.unique(key, axis=0, return_inverse=True)
+f = inv.reshape(-1,3)
+ec = defaultdict(int)
+for a,b,c in f:
+    for e in ((a,b),(b,c),(c,a)): ec[tuple(sorted(e))]+=1
+free = sum(1 for k,v in ec.items() if v!=2)
+print("triangles", len(f), "verts", len(uniq), "free/non-manifold edges:", free)
+# -- output
+triangles 68808 verts 34406 free/non-manifold edges: 0
+
+# -- cell 9 (0.7s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+pl = pv.Plotter(off_screen=True, window_size=(1000,700))
+cols = {"inlet":"red","plenumWalls":"lightgray","runnerWalls":"steelblue"}
+for p in sorted(glob.glob("constant/triSurface/*.stl")):
+    nm = os.path.basename(p)[:-4]
+    pl.add_mesh(pv.read(p), color=cols.get(nm,"orange"), opacity=0.55 if nm=="plenumWalls" else 1.0, show_edges=False)
+pl.camera_position='iso'; pl.add_axes(); pl.screenshot("geom.png")
+print("ok")
+# -- output
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 13:16:13.455 (   0.244s) [    7B70FE03E780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 13:16:13.456 (   0.245s) [    7B70FE03E780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:16:13.469 (   0.257s) [    7B70FE03E780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 10 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("geom.png"))
+# -- output
+
+
+# -- cell 11 (3.9s, exit 0)
+for d in ("system","constant/polyMesh"): os.makedirs(d, exist_ok=True)
+HDR = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+open("system/controlDict","w").write(HDR%"controlDict"+"""
+application snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;
+writePrecision 6; runTimeModifiable true;
+""")
+open("system/fvSchemes","w").write(HDR%"fvSchemes"+"\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write(HDR%"fvSolution"+"\nsolvers{}\n")
+
+BASE = 0.010
+x0,x1 = -0.02, 0.32; y0,y1 = -0.19, 0.19; z0,z1 = -0.02, 0.12
+nx,ny,nz = [int(round((b-a)/BASE)) for a,b in ((x0,x1),(y0,y1),(z0,z1))]
+open("system/blockMeshDict","w").write(HDR%"blockMeshDict"+f"""
+scale 1;
+vertices ((%g %g %g)(%g %g %g)(%g %g %g)(%g %g %g)(%g %g %g)(%g %g %g)(%g %g %g)(%g %g %g));
+blocks (hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1));
+edges (); boundary (( background {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); }} )); mergePatchPairs ();
+"""%(x0,y0,z0, x1,y0,z0, x1,y1,z0, x0,y1,z0, x0,y0,z1, x1,y0,z1, x1,y1,z1, x0,y1,z1))
+print(nx,ny,nz, nx*ny*nz)
+print(subprocess.run(["blockMesh"],capture_output=True,text=True).stdout[-400:])
+# -- output
+34 38 14 18088
+_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+
+# -- cell 12 (0.4s, exit 0)
+names = [os.path.basename(p)[:-4] for p in sorted(glob.glob("constant/triSurface/*.stl"))]
+geom = "\n".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in names)
+refs = "\n".join(f'      {{ file "{n}.eMesh"; level 1; }}' for n in names)
+surfs = "\n".join(f'      {n} {{ level (1 1); patchInfo {{ type {"patch" if (n=="inlet" or n.startswith("port")) else "wall"}; }} }}' for n in names)
+open("system/snappyHexMeshDict","w").write(HDR%"snappyHexMeshDict"+f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geom}
+}};
+castellatedMeshControls
+{{
+  maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; nCellsBetweenLevels 2;
+  maxLoadUnbalance 0.1; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+  features (
+{refs}
+  );
+  refinementSurfaces
+  {{
+{surfs}
+  }}
+  refinementRegions {{}};
+  locationInMesh (0.15 0.0 0.04);
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+  nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}}; expansionRatio 1.2; finalLayerThickness 0.3;
+  minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1;
+  nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3;
+  minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001;
+  minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6; debug 0;
+""")
+open("system/surfaceFeatureExtractDict","w").write(HDR%"surfaceFeatureExtractDict"+"\n".join(
+ f'{n}.stl {{ extractionMethod extractFromSurface; extractFromSurfaceCoeffs {{ includedAngle 150; }} writeObj no; }}' for n in names))
+r=subprocess.run(["surfaceFeatureExtract"],capture_output=True,text=True); print(r.returncode, r.stdout[-300:])
+# -- output
+0 nolds-buildup/work/T17-20260913-131323-a739/t17/constant/extendedFeatureEdgeMesh/runnerWalls.extendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T17-20260913-131323-a739/t17/constant/triSurface/runnerWalls.eMesh"
+ExecutionTime = 0.19 s  ClockTime = 0 s
+
+End
+
+# -- cell 13 (0.3s, exit 0)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode); print(r.stdout[-1500:])
+# -- output
+1
+=====                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 13 2026
+Time   : 13:16:56
+Host   : yc-demo
+PID    : 101368
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T17-20260913-131323-a739/t17
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+# -- cell 14 (0.1s, exit 0)
+print(r.stderr[-2000:])
+# -- output
+--> FOAM FATAL ERROR: (openfoam-2512)
+Cannot find file "points" in directory "polyMesh" in times "0" down to constant
+
+    From virtual Foam::IOobject Foam::fileOperation::findInstance(const Foam::IOobject&, Foam::scalar, const Foam::word&, bool) const
+    in file global/fileOperations/fileOperation/fileOperation.C at line 1221.
+
+FOAM exiting
+
+# -- cell 15 (0.3s, exit 0)
+print(os.listdir("constant/polyMesh") if os.path.isdir("constant/polyMesh") else "none")
+r2=subprocess.run(["blockMesh"],capture_output=True,text=True); print(r2.returncode); print(r2.stderr[-1500:])
+# -- output
+[]
+-6
+--> FOAM Warning :
+    From function static bool Foam::entry::getKeyword(Foam::keyType&, Foam::Istream&)
+    in file db/dictionary/entry/entryIO.C at line 94
+    Reading system/blockMeshDict/boundary
+    found on line 6: punctuation '('
+    expected either } or EOF
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+Cannot dereference nullptr at index 0 in range [0,2)
+
+
+    From const T& Foam::UPtrList<T>::at(Foam::label) const [with T = Foam::entry; Foam::label = int]
+    in file ./src/OpenFOAM/lnInclude/UPtrListI.H at line 161.
+
+FOAM aborting
+
+[stack trace]
+=============
+#1  Foam::error::simpleExit(int, bool) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libOpenFOAM.so
+#2  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libblockMesh.so
+#3  Foam::blockMesh::createTopology(Foam::IOdictionary const&, Foam::word const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libblockMesh.so
+#4  Foam::blockMesh::blockMesh(Foam::IOdictionary const&, Foam::word const&, Foam::blockMesh::mergeStrategy, int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libblockMesh.so
+#5  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/blockMesh
+#6  ? in /lib/x86_64-linux-gnu/libc.so.6
+#7  __libc_start_main in /lib/x86_64-linux-gnu/libc.so.6
+#8  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/blockMesh
+=============
+
+# -- cell 16 (0.3s, exit 0)
+open("system/blockMeshDict","w").write(HDR%"blockMeshDict"+f"""
+scale 1;
+vertices
+(
+ ({x0} {y0} {z0}) ({x1} {y0} {z0}) ({x1} {y1} {z0}) ({x0} {y1} {z0})
+ ({x0} {y0} {z1}) ({x1} {y0} {z1}) ({x1} {y1} {z1}) ({x0} {y1} {z1})
+);
+blocks ( hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1) );
+edges ();
+boundary
+(
+ background
+ {{
+  type patch;
+  faces ((0 3 2 1) (4 5 6 7) (0 1 5 4) (2 3 7 6) (1 2 6 5) (0 4 7 3));
+ }}
+);
+mergePatchPairs ();
+""")
+r=subprocess.run(["blockMesh"],capture_output=True,text=True); print(r.returncode, os.listdir("constant/polyMesh"))
+# -- output
+0 ['neighbour', 'faces', 'points', 'boundary', 'owner']
+
+# -- cell 17 (5.7s, exit 0)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode); print(r.stderr[-800:]); print(r.stdout[-900:])
+# -- output
+0
+
+< 0.001                : 0
+Snapped mesh : cells:18936  faces:62324  points:25173
+Cells per refinement level:
+    0	1840
+    1	17096
+Writing mesh to time constant
+Wrote mesh in = 0.04 s.
+Mesh snapped in = 2.39 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 5.46 s.
+End
+
+# -- cell 18 (0.4s, exit 0)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True); out=r.stdout
+print([l for l in out.splitlines() if "patch" in l.lower() or "cells:" in l][:5])
+print("\n".join(out.splitlines()[-25:]))
+# -- output
+['    cells:            18936', '    boundary patches: 11', 'Checking patch topology for multiply connected surfaces...', '                   Patch    Faces   Points  Surface topology']
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (0 -0.168884 0) (0.3 0.168884 0.1)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.97546e-16 5.40793e-17 3.29156e-16) OK.
+    Max cell openness = 3.91181e-16 OK.
+    Max aspect ratio = 4.40819 OK.
+    Minimum face area = 7.82028e-06. Maximum face area = 0.000136539.  Face area magnitudes OK.
+    Min volume = 2.27486e-08. Max volume = 1.37776e-06.  Total volume = 0.00398564.  Cell volumes OK.
+    Mesh non-orthogonality Max: 39.936 average: 10.684
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.700361 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 19 (22.2s, exit 0)
+surfs2 = "\n".join(f'      {n} {{ level (2 2); patchInfo {{ type {"patch" if (n=="inlet" or n.startswith("port")) else "wall"}; }} }}' for n in names)
+d = open("system/snappyHexMeshDict").read().replace(surfs, surfs2)
+assert surfs2 in d
+open("system/snappyHexMeshDict","w").write(d)
+subprocess.run(["blockMesh"],capture_output=True,text=True)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode); print(r.stdout[-500:])
+# -- output
+0
+h face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 21.66 s.
+End
+
+# -- cell 20 (0.9s, exit 0)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True); out=r.stdout
+i=out.find("Checking patch topology"); print(out[i:i+1400])
+print("\n".join([l for l in out.splitlines() if "Total volume" in l or "skewness" in l or "non-orthogonality" in l.lower() or l.strip()=="Mesh OK." or "cells:" in l]))
+# -- output
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      612      669  ok (non-closed singly connected)
+             plenumWalls    20220    20525  ok (non-closed singly connected)
+                  portL1      178      188  ok (non-closed singly connected)
+                  portL2      178      188  ok (non-closed singly connected)
+                  portL3      178      188  ok (non-closed singly connected)
+                  portL4      178      188  ok (non-closed singly connected)
+                  portR1      178      188  ok (non-closed singly connected)
+                  portR2      178      188  ok (non-closed singly connected)
+                  portR3      178      188  ok (non-closed singly connected)
+                  portR4      178      188  ok (non-closed singly connected)
+             runnerWalls    15616    18912  ok (non-closed singly connected)
+                    ".*"    37872    40666      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain
+    cells:            95312
+    Min volume = 2.34816e-09. Max volume = 1.02455e-06.  Total volume = 0.00400193.  Cell volumes OK.
+    Mesh non-orthogonality Max: 40.1668 average: 11.0712
+    Non-orthogonality check OK.
+    Max skewness = 0.621028 OK.
+Mesh OK.
+
+# -- cell 21 (0.1s, exit 1)
+open("case.foam","w").write("")
+rd = pv.OpenFOAMReader("case.foam"); rd.set_all_patch_arrays_status(True); m = rd.read()
+bnd = m["boundary"]
+for k in bnd.keys():
+    a = bnd[k].extract_surface().compute_cell_sizes(length=False, volume=False)["Area"].sum()
+    print(f"{k:14s} area {a:.6f}")
+print("expect inlet", round(math.pi*0.035**2,6), " port", round(math.pi*0.019**2,6))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[21][39m[32m, line 2[39m
+[32m      1[39m open([33m"case.foam"[39m,[33m"w"[39m).write([33m""[39m)
+[32m----> [39m[32m2[39m rd = pv.OpenFOAMReader([33m"case.foam"[39m); rd.set_all_patch_arrays_status([38;5;28;01mTrue[39;00m); m = rd.read()
+[32m      3[39m bnd = m[[33m"boundary"[39m]
+[32m      4[39m [38;5;28;01mfor[39;00m k [38;5;28;01min[39;00m bnd.keys():
+[32m      5[39m     a = bnd[k].extract_surface().compute_cell_sizes(length=[38;5;28;01mFalse[39;00m, volume=[38;5;28;01mFalse[39;00m)[[33m"Area"[39m].sum()
+
+[31mAttributeError[39m: 'OpenFOAMReader' object has no attribute 'set_all_patch_arrays_status'
+
+# -- cell 22 (0.2s, exit 0)
+rd = pv.OpenFOAMReader("case.foam")
+rd.enable_all_patch_arrays(); rd.cell_to_point_creation = False
+m = rd.read(); print(m.keys())
+bnd = m["boundary"]
+for k in bnd.keys():
+    a = bnd[k].extract_surface().compute_cell_sizes(length=False, volume=False)["Area"].sum()
+    print(f"{k:14s} area {a:.6f}")
+print("expect inlet", round(math.pi*0.035**2,6), " port", round(math.pi*0.019**2,6))
+# -- output
+['internalMesh', 'boundary']
+inlet          area 0.003836
+plenumWalls    area 0.126304
+portL1         area 0.001129
+portL2         area 0.001129
+portL3         area 0.001129
+portL4         area 0.001129
+portR1         area 0.001129
+portR2         area 0.001129
+portR3         area 0.001129
+portR4         area 0.001129
+runnerWalls    area 0.118500
+expect inlet 0.003848  port 0.001134
+
+/tmp/ipykernel_99919/657254684.py:6: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  a = bnd[k].extract_surface().compute_cell_sizes(length=False, volume=False)["Area"].sum()
+
+# -- cell 23 (0.3s, exit 0)
+pl = pv.Plotter(off_screen=True, window_size=(1100,750))
+cmap = {"inlet":"red","plenumWalls":"lightgray","runnerWalls":"steelblue"}
+for k in bnd.keys():
+    pl.add_mesh(bnd[k].extract_surface(), color=cmap.get(k,"orange"), show_edges=True, edge_color="k", line_width=0.3,
+                opacity=0.35 if k=="plenumWalls" else 1.0)
+pl.camera_position='iso'; pl.add_axes(); pl.screenshot("mesh.png")
+display(Image("mesh.png"))
+# -- output
+[0m[33m2026-09-13 13:18:14.465 ( 121.253s) [    7B70FE03E780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_99919/26827934.py:4: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  pl.add_mesh(bnd[k].extract_surface(), color=cmap.get(k,"orange"), show_edges=True, edge_color="k", line_width=0.3,
+[0m[33m2026-09-13 13:18:14.465 ( 121.254s) [    7B70FE03E780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 24 (0.1s, exit 0)
+p = tri[:,0]; q = tri[:,1]; s = tri[:,2]
+vol = np.einsum('ij,ij->i', p, np.cross(q-p, s-p)).sum()/6.0
+print("signed volume from STL winding:", vol, " CAD volume:", fluid.volume)
+# -- output
+signed volume from STL winding: 0.0040064797697224016  CAD volume: 0.004007290112817398
+

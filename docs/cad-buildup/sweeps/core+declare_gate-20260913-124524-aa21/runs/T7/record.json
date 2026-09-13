@@ -1,0 +1,286 @@
+{
+  "run_id": "20260913-140548-cf3f",
+  "case": "T7",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f/t7",
+  "started_at": "2026-09-13T14:05:49",
+  "ended_at": "2026-09-13T14:07:15",
+  "seconds": 81.7,
+  "n_turns": 8,
+  "n_steps": 6,
+  "first_mesh_step": 0,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.2553,
+  "tokens": {
+    "input": 16,
+    "cache_read": 62622,
+    "cache_write": 10310,
+    "output": 6378
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import os, subprocess\nfor d in [\"system\",\"constant/triSurface\",\"0\"]:\n    os.makedirs(d, exist_ok=True)\n\n# --- parameters (metres) ---\nLX, LY, LZ = 0.100, 0.060, 0.040        # cavity 100 x 60 x 40 mm\nCUBE = 0.020                            # 20 mm cube zones\nGAP  = 0.004                            # standoff from floor / ceiling\nHEAT_ORIGIN = (0.010, (LY-CUBE)/2, GAP)                   # near floor, x-low end\nCOOL_ORIGIN = (LX-0.010-CUBE, (LY-CUBE)/2, LZ-GAP-CUBE)   # near ceiling, x-high end\nCELL = 0.004                            # coarse: 4 mm cells\nnx, ny, nz = int(round(LX/CELL)), int(round(LY/CELL)), int(round(LZ/CELL))\nprint(nx, ny, nz, nx*ny*nz, HEAT_ORIGIN, COOL_ORIGIN)\n\nhead = \"FoamFile\\n{ version 2.0; format ascii; class dictionary; object %s; }\\n\"\nbm = head % \"blockMeshDict\" + f\"\"\"\nscale 1;\nvertices\n(\n (0 0 0) ({LX} 0 0) ({LX} {LY} 0) (0 {LY} 0)\n (0 0 {LZ}) ({LX} 0 {LZ}) ({LX} {LY} {LZ}) (0 {LY} {LZ})\n);\nblocks ( hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1) );\nedges ();\nboundary\n(\n    walls\n    {{\n        type wall;\n        faces\n        (\n            (0 4 7 3) (1 2 6 5) (0 1 5 4) (3 7 6 2) (0 3 2 1) (4 5 6 7)\n        );\n    }}\n);\nmergePatchPairs ();\n\"\"\"\nopen(\"system/blockMeshDict\",\"w\").write(bm)\n\nctrl = head % \"controlDict\" + \"\"\"\napplication icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\ndeltaT 1; writeControl timeStep; writeInterval 1;\n\"\"\"\nopen(\"system/controlDict\",\"w\").write(ctrl)\nopen(\"system/fvSchemes\",\"w\").write(head % \"fvSchemes\" + \"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\\n\")\nopen(\"system/fvSolution\",\"w\").write(head % \"fvSolution\" + \"solvers{}\\n\")\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.stdout[-800:], r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.251273269000194,
+      "output": "25 15 10 3750 (0.01, 0.019999999999999997, 0.004) (0.07, 0.019999999999999997, 0.016000000000000004)\nk topology\n\n\tBasic statistics\n\t\tNumber of internal faces : 0\n\t\tNumber of boundary faces : 6\n\t\tNumber of defined boundary faces : 6\n\t\tNumber of undefined boundary faces : 0\n\tChecking patch -> block consistency\n\nCreating block offsets\nCreating merge list (topological search)...\n\nCreating polyMesh from blockMesh\nCreating patches\nCreating cells\nCreating points with scale (1 1 1)\n    Block 0 cell size :\n        i : 0.004 .. 0.004\n        j : 0.004 .. 0.004\n        k : 0.004 .. 0.004\n\nNo patch pairs to merge\n\nWriting polyMesh with 0 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (0 0 0) (0.1 0.06 0.04)\n  nPoints: 4576\n  nCells: 3750\n  nFaces: 12025\n  nInternalFaces: 10475\n----------------\nPatches\n----------------\n  patch 0 (start: 10475 size: 1550) name: walls\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "END_GAP = 0.012   # standoff from the end wall, multiple of the cell size\nHEAT_ORIGIN = (END_GAP, (LY-CUBE)/2, GAP)                  # near floor, x-low end\nCOOL_ORIGIN = (LX-END_GAP-CUBE, (LY-CUBE)/2, LZ-GAP-CUBE)  # near ceiling, x-high end\n\ndef zone(name, o):\n    mx, my, mz = o[0]+CUBE, o[1]+CUBE, o[2]+CUBE\n    return f\"\"\"\n    {{ name {name}Cells; type cellSet; action new; source boxToCell;\n       box ({o[0]} {o[1]} {o[2]}) ({mx} {my} {mz}); }}\n    {{ name {name};      type cellZoneSet; action new; source setToCellZone; set {name}Cells; }}\n\"\"\"\nts = \"FoamFile\\n{ version 2.0; format ascii; class dictionary; object topoSetDict; }\\nactions (\" \\\n     + zone(\"heater\", HEAT_ORIGIN) + zone(\"cooler\", COOL_ORIGIN) + \");\\n\"\nopen(\"system/topoSetDict\",\"w\").write(ts)\nprint(HEAT_ORIGIN, COOL_ORIGIN)\nr = subprocess.run([\"topoSet\"], capture_output=True, text=True)\nprint(r.stdout[-900:], r.stderr[-300:])",
+      "exit_code": 0,
+      "seconds": 0.20103551099964534,
+      "output": "(0.012, 0.019999999999999997, 0.004) (0.068, 0.019999999999999997, 0.016000000000000004)\nystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate polyMesh for time = 0\n\nReading topoSetDict\n\nTime = 0\n    mesh not changed.\nCreated cellSet heaterCells\n    Applying source boxToCell\n    Adding cells with centre within boxes 1((0.012 0.02 0.004) (0.032 0.04 0.024))\n    cellSet heaterCells now size 125\nCreated cellZoneSet heater\n    Applying source setToCellZone\n    Adding all cells from cell set: heaterCells ...\n    cellZoneSet heater now size 125\nCreated cellSet coolerCells\n    Applying source boxToCell\n    Adding cells with centre within boxes 1((0.068 0.02 0.016) (0.088 0.04 0.036))\n    cellSet coolerCells now size 125\nCreated cellZoneSet cooler\n    Applying source setToCellZone\n    Adding all cells from cell set: coolerCells ...\n    cellZoneSet cooler now size 125\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv, numpy as np\npv.start_xvfb() if hasattr(pv,'start_xvfb') else None\nopen(\"t7.foam\",\"w\").write(\"\")\nm = pv.OpenFOAMReader(\"t7.foam\"); m.set_active_time_value(0)\nmesh = m.read()[\"internalMesh\"]\ncz = {}\nfor nm, o in [(\"heater\",HEAT_ORIGIN),(\"cooler\",COOL_ORIGIN)]:\n    c = mesh.cell_centers().points\n    sel = np.all((c>=np.array(o)-1e-9)&(c<=np.array(o)+CUBE+1e-9),axis=1)\n    cz[nm] = mesh.extract_cells(sel)\n    b = cz[nm].bounds\n    print(nm, \"ncells\", cz[nm].n_cells, \"bounds mm\", [round(v*1000,3) for v in b])\np = pv.Plotter(off_screen=True)\np.add_mesh(mesh, style=\"wireframe\", color=\"lightgray\", opacity=0.3)\np.add_mesh(cz[\"heater\"], color=\"red\"); p.add_mesh(cz[\"cooler\"], color=\"blue\")\np.show_bounds(); p.camera_position=\"iso\"; p.screenshot(\"zones.png\")",
+      "exit_code": 0,
+      "seconds": 0.6023194830004286,
+      "output": "heater ncells 125 bounds mm [12.0, 32.0, 20.0, 40.0, 4.0, 24.0]\ncooler ncells 125 bounds mm [68.0, 88.0, 20.0, 40.0, 16.0, 36.0]\narray([[[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]],\n\n       [[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]],\n\n       [[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]],\n\n       ...,\n\n       [[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]],\n\n       [[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]],\n\n       [[255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255],\n        ...,\n        [255, 255, 255],\n        [255, 255, 255],\n        [255, 255, 255]]], shape=(768, 1024, 3), dtype=uint8)\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-13 14:06:40.927 (   0.279s) [    7714CAC7A780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 14:06:40.927 (   0.280s) [    7714CAC7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 14:06:40.940 (   0.292s) [    7714CAC7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": ""
+    },
+    {
+      "cmd": "import matplotlib; matplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\nfig = plt.figure(figsize=(11,4))\ndef box(ax,o,s,**kw):\n    import itertools\n    o=np.array(o); s=np.array(s)\n    for i in range(3):\n        for a,b in itertools.product([0,1],[0,1]):\n            p=[o.copy(),o.copy()]; p[1][i]+=s[i]\n            j,k=[d for d in range(3) if d!=i]\n            for q in p: q[j]+=a*s[j]; q[k]+=b*s[k]\n            ax.plot(*zip(*[q*1000 for q in p]),**kw)\nax=fig.add_subplot(121,projection=\"3d\")\nbox(ax,(0,0,0),(LX,LY,LZ),color=\"k\",lw=0.6)\nbox(ax,HEAT_ORIGIN,(CUBE,)*3,color=\"r\",lw=1.5); box(ax,COOL_ORIGIN,(CUBE,)*3,color=\"b\",lw=1.5)\nax.set_box_aspect((LX,LY,LZ)); ax.set_xlabel(\"x mm\"); ax.set_ylabel(\"y mm\"); ax.set_zlabel(\"z mm\")\nax2=fig.add_subplot(122)\nc=mesh.cell_centers().points*1000\nax2.plot([0,100,100,0,0],[0,0,40,40,0],\"k\")\nfor nm,col in [(\"heater\",\"r\"),(\"cooler\",\"b\")]:\n    pts=cz[nm].cell_centers().points*1000; ax2.scatter(pts[:,0],pts[:,2],c=col,s=6)\nax2.set_aspect(\"equal\"); ax2.set_xlabel(\"x mm\"); ax2.set_ylabel(\"z mm\"); ax2.set_title(\"side view: heater(red)/cooler(blue)\")\nplt.tight_layout(); plt.show()",
+      "exit_code": 0,
+      "seconds": 0.200964300999658,
+      "output": "[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use(\"Agg\")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]",
+      "image": ""
+    },
+    {
+      "cmd": "from IPython.display import display\ndisplay(fig)",
+      "exit_code": 0,
+      "seconds": 0.25135539900020376,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "CELL_FINE = 0.002\nnx, ny, nz = int(round(LX/CELL_FINE)), int(round(LY/CELL_FINE)), int(round(LZ/CELL_FINE))\nbm_f = bm.replace(f\"({25} {15} {10})\", f\"({nx} {ny} {nz})\")\nassert f\"({nx} {ny} {nz})\" in bm_f\nopen(\"system/blockMeshDict\",\"w\").write(bm_f)\nfor cmd in ([\"blockMesh\"],[\"topoSet\"],[\"checkMesh\"]):\n    r = subprocess.run(cmd, capture_output=True, text=True)\n    print(\"====\",cmd[0], r.returncode); print(r.stdout[-1200:])",
+      "exit_code": 0,
+      "seconds": 0.9028013890001603,
+      "output": "==== blockMesh 0\nwing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreating block mesh from \"system/blockMeshDict\"\nCreating block edges\nNo non-planar block faces defined\nCreating topology blocks\n\nCreating topology patches - from boundary section\n\nCreating block mesh topology\n\nCheck topology\n\n\tBasic statistics\n\t\tNumber of internal faces : 0\n\t\tNumber of boundary faces : 6\n\t\tNumber of defined boundary faces : 6\n\t\tNumber of undefined boundary faces : 0\n\tChecking patch -> block consistency\n\nCreating block offsets\nCreating merge list (topological search)...\nDeleting polyMesh directory \"constant/polyMesh\"\n\nCreating polyMesh from blockMesh\nCreating patches\nCreating cells\nCreating points with scale (1 1 1)\n    Block 0 cell size :\n        i : 0.002 .. 0.002\n        j : 0.002 .. 0.002\n        k : 0.002 .. 0.002\n\nNo patch pairs to merge\n\nWriting polyMesh with 0 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (0 0 0) (0.1 0.06 0.04)\n  nPoints: 33201\n  nCells: 30000\n  nFaces: 93100\n  nInternalFaces: 86900\n----------------\nPatches\n----------------\n  patch 0 (start: 86900 size: 6200) name: walls\n\nEnd\n\n\n==== topoSet 0\nynolds-buildup/work/T7-20260913-140548-cf3f/t7\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate polyMesh for time = 0\n\nReading topoSetDict\n\nTime = 0\n    mesh not changed.\nCreated cellSet heaterCells\n    Applying source boxToCell\n    Adding cells with centre within boxes 1((0.012 0.02 0.004) (0.032 0.04 0.024))\n    cellSet heaterCells now size 1000\nCreated cellZoneSet heater\n    Applying source setToCellZone\n    Adding all cells from cell set: heaterCells ...\n    cellZoneSet heater now size 1000\nCreated cellSet coolerCells\n    Applying source boxToCell\n    Adding cells with centre within boxes 1((0.068 0.02 0.016) (0.088 0.04 0.036))\n    cellSet coolerCells now size 1000\nCreated cellZoneSet cooler\n    Applying source setToCellZone\n    Adding all cells from cell set: coolerCells ...\n    cellZoneSet cooler now size 1000\n\nEnd\n\n\n==== checkMesh 0\nclosed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    heater              1000         1331         8e-06        (0.012 0.02 0.004) (0.032 0.04 0.024)\n    cooler              1000         1331         8e-06        (0.068 0.02 0.016) (0.088 0.04 0.036)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (0 0 0) (0.1 0.06 0.04)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (9.01339e-17 -9.94581e-17 -8.37811e-17) OK.\n    Max cell openness = 1.05879e-16 OK.\n    Max aspect ratio = 1 OK.\n    Minimum face area = 4e-06. Maximum face area = 4e-06.  Face area magnitudes OK.\n    Min volume = 8e-09. Max volume = 8e-09.  Total volume = 0.00024.  Cell volumes OK.\n    Mesh non-orthogonality Max: 0 average: 0\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 4.83904e-14 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 1671,
+      "fenced": false,
+      "text_chars": 2142,
+      "thinking_chars": 652,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789308370.507183
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 1085,
+      "fenced": true,
+      "text_chars": 33,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789308379.4134872
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 1027,
+      "fenced": true,
+      "text_chars": 138,
+      "thinking_chars": 258,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789308393.1083505
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 575,
+      "fenced": true,
+      "text_chars": 79,
+      "thinking_chars": 194,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789308400.6199963
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 893,
+      "fenced": true,
+      "text_chars": 93,
+      "thinking_chars": 241,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789308412.347539
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 62,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789308413.8185906
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 430,
+      "fenced": true,
+      "text_chars": 91,
+      "thinking_chars": 190,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789308419.5788848
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 635,
+      "fenced": false,
+      "text_chars": 696,
+      "thinking_chars": 240,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789308429.9593515
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f/t7/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f/t7/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f/t7/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f/t7/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f/t7/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f/t7/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "cavity dimensions, 100 x 60 x 40 mm",
+      "measured": null
+    },
+    {
+      "property": "both cell zones present by name, with their cell counts and their centroids",
+      "measured": null
+    },
+    {
+      "property": "zone size, 20 mm cube each, and their positions relative to floor and ceiling",
+      "measured": null
+    },
+    {
+      "property": "the boundary is a single named patch covering the whole cavity",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "n/a",
+          "concern": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f/t7/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-c",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f/t7/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-c",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-cf3f/t7/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T7-20260913-140548-c",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 8,
+    "steps": 6,
+    "seconds": 85.0,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 2
+  }
+}

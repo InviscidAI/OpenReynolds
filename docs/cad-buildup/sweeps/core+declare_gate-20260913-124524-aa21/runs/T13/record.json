@@ -1,0 +1,516 @@
+{
+  "run_id": "20260913-125520-fb35",
+  "case": "T13",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T13-20260913-125520-fb35",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T13-20260913-125520-fb35/t13",
+  "started_at": "2026-09-13T12:55:21",
+  "ended_at": "2026-09-13T13:01:46",
+  "seconds": 379.1,
+  "n_turns": 19,
+  "n_steps": 17,
+  "first_mesh_step": 9,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 1.1226,
+  "tokens": {
+    "input": 38,
+    "cache_read": 468234,
+    "cache_write": 36174,
+    "output": 26488
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import numpy as np, matplotlib.pyplot as plt, os\nmm = 1e-3\nOD, DEPTH, PITCH, TURNS, GAP, ALPHA = 40.0, 1.0, 2.0, 6, 0.2, np.deg2rad(15.0)\nRc, Rr = OD/2, OD/2 - DEPTH\nflat = (PITCH - 2*DEPTH*np.tan(ALPHA))/2          # crest flat = root flat\nzB = DEPTH*np.tan(ALPHA)\n# jar (neck) groove wall, azimuth 0, local z ; interior of groove is to the RIGHT of A->B->C->D\nA = np.array([Rc, 0.0]); B = np.array([Rr, zB]); C = np.array([Rr, zB+flat]); D = np.array([Rc, 2*zB+flat])\ndef right_n(p,q):\n    u = (q-p)/np.linalg.norm(q-p); return np.array([u[1], -u[0]])\ndef inter(p1,d1,p2,d2):\n    t = np.linalg.solve(np.column_stack([d1,-d2]), p2-p1); return p1+t[0]*d1\nsegs = [(A,B),(B,C),(C,D)]\noff = [(p+GAP*right_n(p,q), q+GAP*right_n(p,q)) for p,q in segs]\nBp = inter(off[0][0], off[0][1]-off[0][0], off[1][0], off[1][1]-off[1][0])\nCp = inter(off[1][0], off[1][1]-off[1][0], off[2][0], off[2][1]-off[2][0])\nAp = inter(off[0][0], off[0][1]-off[0][0], np.array([Rc,0.]), np.array([0.,1.]))   # clip at crest cyl\nDp = inter(off[2][0], off[2][1]-off[2][0], np.array([Rc,0.]), np.array([0.,1.]))\nprof = [A,B,C,D,Dp,Cp,Bp,Ap]\nfor n,p in zip(\"A B C D D' C' B' A'\".split(), prof): print(f\"{n:3s} r={p[0]:.4f} z={p[1]:.4f}\")\nprint(\"crest flat =\", flat, \" land width =\", Ap[1]-A[1], \" gap at root =\", Bp[0]-B[0])\nP = np.array(prof+[A])\nplt.figure(figsize=(5,4)); plt.plot(P[:,0],P[:,1],'-o'); plt.axis('equal'); plt.xlabel('r [mm]'); plt.ylabel('z [mm]'); plt.grid(1); plt.show()",
+      "exit_code": 0,
+      "seconds": 0.15100678199996764,
+      "output": "A   r=20.0000 z=0.0000\nB   r=19.0000 z=0.2679\nC   r=19.0000 z=1.0000\nD   r=20.0000 z=1.2679\nD'  r=20.0000 z=1.0609\nC'  r=19.2000 z=0.8465\nB'  r=19.2000 z=0.4214\nA'  r=20.0000 z=0.2071\ncrest flat = 0.7320508075688773  land width = 0.20705523608201643  gap at root = 0.1999999999999993",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import gmsh\nNQ, NEL_Q = 4*TURNS, 10          # quarter-turn steps, layers per quarter (coarse)\nNT, NF, NR = 2, 3, 3             # elems across gap, along flank, along root flat\ngmsh.initialize(); gmsh.option.setNumber(\"General.Terminal\",1)\ngmsh.model.add(\"helix_gap\")\ng = gmsh.model.geo\npts = [g.addPoint(p[0]*mm, 0.0, p[1]*mm) for p in prof]\nlines = [g.addLine(pts[i], pts[(i+1)%8]) for i in range(8)]   # AB BC CD DD' D'C' C'B' B'A' A'A\nloop = g.addCurveLoop(lines); base = g.addPlaneSurface([loop])\nfor l,n in zip(lines, [NF,NR,NF,NT,NF,NR,NF,NT]): g.mesh.setTransfiniteCurve(l, n+1)\ng.mesh.setTransfiniteSurface(base, \"Left\", [pts[0], pts[3], pts[4], pts[7]])\ng.mesh.setRecombine(2, base)\nlat = {i: [] for i in range(8)}\ntop = base\nfor k in range(NQ):\n    out = g.twist([(2,top)], 0,0,0, 0,0,PITCH*mm/4, 0,0,1, np.pi/2, [NEL_Q], [], True)\n    top = out[0][1]\n    for i in range(8): lat[i].append(out[2+i][1])\ng.synchronize()\nprint(\"top surface:\", top, \" n lateral per line:\", len(lat[0]))\nprint(\"bbox:\", np.round(np.array(gmsh.model.getBoundingBox(-1,-1))/mm,3))",
+      "exit_code": 0,
+      "seconds": 0.1509674219998942,
+      "output": "top surface: 1016  n lateral per line: 24\nbbox: [-20.    -20.      0.     20.     20.     13.268]",
+      "image": ""
+    },
+    {
+      "cmd": "names = [\"AB\",\"BC\",\"CD\",\"DD'\",\"D'C'\",\"C'B'\",\"B'A'\",\"A'A\"]\nfor i in range(8):\n    bb = np.array(gmsh.model.getBoundingBox(2, lat[i][0]))/mm\n    rmin = min(np.hypot(bb[0],bb[1]), np.hypot(bb[3],bb[4]))\n    print(f\"{names[i]:5s} surf {lat[i][0]:4d}  x[{bb[0]:7.3f},{bb[3]:7.3f}] y[{bb[1]:7.3f},{bb[4]:7.3f}] z[{bb[2]:6.3f},{bb[5]:6.3f}]\")",
+      "exit_code": 0,
+      "seconds": 0.05064095099987753,
+      "output": "AB    surf   21  x[  0.000, 20.000] y[  0.000, 20.000] z[ 0.000, 0.768]\nBC    surf   25  x[  0.000, 19.000] y[  0.000, 19.000] z[ 0.268, 1.500]\nCD    surf   29  x[  0.000, 20.000] y[  0.000, 20.000] z[ 1.000, 1.768]\nDD'   surf   33  x[  0.000, 20.000] y[  0.000, 20.000] z[ 1.061, 1.768]\nD'C'  surf   37  x[  0.000, 20.000] y[  0.000, 20.000] z[ 0.847, 1.561]\nC'B'  surf   41  x[  0.000, 19.200] y[  0.000, 19.200] z[ 0.421, 1.347]\nB'A'  surf   45  x[  0.000, 20.000] y[  0.000, 20.000] z[ 0.207, 0.921]\nA'A   surf   49  x[  0.000, 20.000] y[  0.000, 20.000] z[ 0.000, 0.707]",
+      "image": ""
+    },
+    {
+      "cmd": "def rmax(s):\n    bb=np.array(gmsh.model.getBoundingBox(2,s))/mm; return max(np.hypot(bb[0],bb[1]),np.hypot(bb[3],bb[4]),np.hypot(bb[0],bb[4]),np.hypot(bb[3],bb[1]))\nprint(\"neck root chain rmax:\", np.round([rmax(s) for s in lat[1]],3).max(), np.round([rmax(s) for s in lat[1]],3).min())\nprint(\"lid  root chain rmax:\", np.round([rmax(s) for s in lat[5]],3).max(), np.round([rmax(s) for s in lat[5]],3).min())\nprint(\"land A'A chain rmax :\", np.round([rmax(s) for s in lat[7]],3).min())",
+      "exit_code": 0,
+      "seconds": 0.05060529699994731,
+      "output": "neck root chain rmax: 26.87 26.87\nlid  root chain rmax: 27.153 27.153\nland A'A chain rmax : 28.284",
+      "image": ""
+    },
+    {
+      "cmd": "pg = {}\npg[\"neck_flank\"] = gmsh.model.addPhysicalGroup(2, [s for i in (0,1,2) for s in lat[i]]); gmsh.model.setPhysicalName(2, pg[\"neck_flank\"], \"neck_flank\")\npg[\"lid_flank\"]  = gmsh.model.addPhysicalGroup(2, [s for i in (4,5,6) for s in lat[i]]); gmsh.model.setPhysicalName(2, pg[\"lid_flank\"], \"lid_flank\")\npg[\"crest_land\"] = gmsh.model.addPhysicalGroup(2, [s for i in (3,7) for s in lat[i]]); gmsh.model.setPhysicalName(2, pg[\"crest_land\"], \"crest_land\")\npg[\"helix_inner\"]= gmsh.model.addPhysicalGroup(2, [base]); gmsh.model.setPhysicalName(2, pg[\"helix_inner\"], \"helix_inner\")\npg[\"helix_outer\"]= gmsh.model.addPhysicalGroup(2, [top]);  gmsh.model.setPhysicalName(2, pg[\"helix_outer\"], \"helix_outer\")\nvols = [v for (d,v) in gmsh.model.getEntities(3)]\npgv = gmsh.model.addPhysicalGroup(3, vols); gmsh.model.setPhysicalName(3, pgv, \"gap\")\ngmsh.model.mesh.generate(3)\nprint(\"nodes\", len(gmsh.model.mesh.getNodes()[0]))\nfor et,tags in zip(*gmsh.model.mesh.getElementTypes() and (gmsh.model.mesh.getElementTypes(), [gmsh.model.mesh.getElementsByType(t)[0] for t in gmsh.model.mesh.getElementTypes()])):\n    print(\"elem type\", et, \"count\", len(tags))",
+      "exit_code": 1,
+      "seconds": 0.1509974619998502,
+      "output": "Info    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Line)\nInfo    : [ 10%] Meshing curve 2 (Line)\nInfo    : [ 10%] Meshing curve 3 (Line)\nInfo    : [ 10%] Meshing curve 4 (Line)\nInfo    : [ 10%] Meshing curve 5 (Line)\nInfo    : [ 10%] Meshing curve 6 (Line)\nInfo    : [ 10%] Meshing curve 7 (Line)\nInfo    : [ 10%] Meshing curve 8 (Line)\nInfo    : [ 10%] Meshing curve 10 (Extruded)\nInfo    : [ 10%] Meshing curve 11 (Extruded)\nInfo    : [ 10%] Meshing curve 12 (Extruded)\nInfo    : [ 10%] Meshing curve 13 (Extruded)\nInfo    : [ 10%] Meshing curve 14 (Extruded)\nInfo    : [ 10%] Meshing curve 15 (Extruded)\nInfo    : [ 10%] Meshing curve 16 (Extruded)\nInfo    : [ 10%] Meshing curve 17 (Extruded)\nInfo    : [ 10%] Meshing curve 19 (Extruded)\nInfo    : [ 10%] Meshing curve 20 (Extruded)\nInfo    : [ 10%] Meshing curve 24 (Extruded)\nInfo    : [ 10%] Meshing curve 28 (Extruded)\nInfo    : [ 10%] Meshing curve 32 (Extruded)\nInfo    : [ 10%] Meshing curve 36 (Extruded)\nInfo    : [ 10%] Meshing curve 40 (Extruded)\nInfo    : [ 10%] Meshing curve 44 (Extruded)\nInfo    : [ 10%] Meshing curve 52 (Extruded)\nInfo    : [ 10%] Meshing curve 53 (Extruded)\nInfo    : [ 10%] Meshing curve 54 (Extruded)\nInfo    : [ 10%] Meshing curve 55 (Extruded)\nInfo    : [ 10%] Meshing curve 56 (Extruded)\nInfo    : [ 10%] Meshing curve 57 (Extruded)\nInfo    : [ 10%] Meshing curve 58 (Extruded)\nInfo    : [ 10%] Meshing curve 59 (Extruded)\nInfo    : [ 10%] Meshing curve 61 (Extruded)\nInfo    : [ 10%] Meshing curve 62 (Extruded)\nInfo    : [ 10%] Meshing curve 66 (Extruded)\nInfo    : [ 10%] Meshing curve 70 (Extruded)\nInfo    : [ 10%] Meshing curve 74 (Extruded)\nInfo    : [ 10%] Meshing curve 78 (Extruded)\nInfo    : [ 10%] Meshing curve 82 (Extruded)\nInfo    : [ 10%] Meshing curve 86 (Extruded)\nInfo    : [ 20%] Meshing curve 94 (Extruded)\nInfo    : [ 20%] Meshing curve 95 (Extruded)\nInfo    : [ 20%] Meshing curve 96 (Extruded)\nInfo    : [ 20%] Meshing curve 97 (Extruded)\nInfo    : [ 20%] Meshing curve 98 (E\n... 24824 characters cut ...\nInfo    : [ 90%] Meshing surface 869 (Extruded)\nInfo    : [ 90%] Meshing surface 873 (Extruded)\nInfo    : [ 90%] Meshing surface 877 (Extruded)\nInfo    : [ 90%] Meshing surface 881 (Extruded)\nInfo    : [ 90%] Meshing surface 885 (Extruded)\nInfo    : [ 90%] Meshing surface 889 (Extruded)\nInfo    : [ 90%] Meshing surface 890 (Extruded)\nInfo    : [ 90%] Meshing surface 903 (Extruded)\nInfo    : [ 90%] Meshing surface 907 (Extruded)\nInfo    : [ 90%] Meshing surface 911 (Extruded)\nInfo    : [ 90%] Meshing surface 915 (Extruded)\nInfo    : [ 90%] Meshing surface 919 (Extruded)\nInfo    : [ 90%] Meshing surface 923 (Extruded)\nInfo    : [100%] Meshing surface 927 (Extruded)\nInfo    : [100%] Meshing surface 931 (Extruded)\nInfo    : [100%] Meshing surface 932 (Extruded)\nInfo    : [100%] Meshing surface 945 (Extruded)\nInfo    : [100%] Meshing surface 949 (Extruded)\nInfo    : [100%] Meshing surface 953 (Extruded)\nInfo    : [100%] Meshing surface 957 (Extruded)\nInfo    : [100%] Meshing surface 961 (Extruded)\nInfo    : [100%] Meshing surface 965 (Extruded)\nInfo    : [100%] Meshing surface 969 (Extruded)\nInfo    : [100%] Meshing surface 973 (Extruded)\nInfo    : [100%] Meshing surface 974 (Extruded)\nInfo    : [100%] Meshing surface 987 (Extruded)\nInfo    : [100%] Meshing surface 991 (Extruded)\nInfo    : [100%] Meshing surface 995 (Extruded)\nInfo    : [100%] Meshing surface 999 (Extruded)\nInfo    : [100%] Meshing surface 1003 (Extruded)\nInfo    : [100%] Meshing surface 1007 (Extruded)\nInfo    : [100%] Meshing surface 1011 (Extruded)\nInfo    : [100%] Meshing surface 1015 (Extruded)\nInfo    : [100%] Meshing surface 1016 (Extruded)\nInfo    : Done meshing 2D (Wall 0.0371343s, CPU 0.039004s)\nInfo    : Meshing 3D...\nInfo    : Meshing volume 1 (Extruded)\nInfo    : Meshing volume 2 (Extruded)\nInfo    : Meshing volume 3 (Extruded)\nInfo    : Meshing volume 4 (Extruded)\nInfo    : Meshing volume 5 (Extruded)\nInfo    : Meshing volume 6 (Extruded)\nInfo    : Meshing volume 7 (Extruded)\nInfo    : Meshing volume 8 (Extruded)\nInfo    : Meshing volume 9 (Extruded)\nInfo    : Meshing volume 10 (Extruded)\nInfo    : Meshing volume 11 (Extruded)\nInfo    : Meshing volume 12 (Extruded)\nInfo    : Meshing volume 13 (Extruded)\nInfo    : Meshing volume 14 (Extruded)\nInfo    : Meshing volume 15 (Extruded)\nInfo    : Meshing volume 16 (Extruded)\nInfo    : Meshing volume 17 (Extruded)\nInfo    : Meshing volume 18 (Extruded)\nInfo    : Meshing volume 19 (Extruded)\nInfo    : Meshing volume 20 (Extruded)\nInfo    : Meshing volume 21 (Extruded)\nInfo    : Meshing volume 22 (Extruded)\nInfo    : Meshing volume 23 (Extruded)\nInfo    : Meshing volume 24 (Extruded)\nInfo    : Done meshing 3D (Wall 0.0147614s, CPU 0.015392s)\nInfo    : Optimizing mesh...\nInfo    : Done optimizing mesh (Wall 8.76e-05s, CPU 0.000105s)\nInfo    : 7998 nodes 13488 elements\nnodes 7998\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[5]\u001b[39m\u001b[32m, line 11\u001b[39m\n\u001b[32m      7\u001b[39m vols = [v \u001b[38;5;28;01mfor\u001b[39;00m (d,v) \u001b[38;5;28;01min\u001b[39;00m gmsh.model.getEntities(\u001b[32m3\u001b[39m)]\n\u001b[32m      8\u001b[39m pgv = gmsh.model.addPhysicalGroup(\u001b[32m3\u001b[39m, vols); gmsh.model.setPhysicalName(\u001b[32m3\u001b[39m, pgv, \u001b[33m\"gap\"\u001b[39m)\n\u001b[32m      9\u001b[39m gmsh.model.mesh.generate(\u001b[32m3\u001b[39m)\n\u001b[32m     10\u001b[39m print(\u001b[33m\"nodes\"\u001b[39m, len(gmsh.model.mesh.getNodes()[\u001b[32m0\u001b[39m]))\n\u001b[32m---> \u001b[39m\u001b[32m11\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m et,tags \u001b[38;5;28;01min\u001b[39;00m zip(*gmsh.model.mesh.getElementTypes() \u001b[38;5;28;01mand\u001b[39;00m (gmsh.model.mesh.getElementTypes(), [gmsh.model.mesh.getElementsByType(t)[\u001b[32m0\u001b[39m] \u001b[38;5;28;01mfor\u001b[39;00m t \u001b[38;5;28;01min\u001b[39;00m gmsh.model.mesh.getElementTypes()])):\n\u001b[32m     12\u001b[39m     print(\u001b[33m\"elem type\"\u001b[39m, et, \u001b[33m\"count\"\u001b[39m, len(tags))\n\n\u001b[31mValueError\u001b[39m: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.model.removePhysicalGroups()\ndef addpg(name, surfs, dim=2):\n    t = gmsh.model.addPhysicalGroup(dim, surfs); gmsh.model.setPhysicalName(dim, t, name); return t\npg = {}\npg[\"neck_flank\"]  = addpg(\"neck_flank\",  [s for i in (0,1,2) for s in lat[i]])\npg[\"lid_flank\"]   = addpg(\"lid_flank\",   [s for i in (4,5,6) for s in lat[i]])\npg[\"crest_land\"]  = addpg(\"crest_land\",  [s for i in (3,7) for s in lat[i]])\npg[\"helix_inner\"] = addpg(\"helix_inner\", [base])\npg[\"helix_outer\"] = addpg(\"helix_outer\", [top])\naddpg(\"gap\", [v for (d,v) in gmsh.model.getEntities(3)], dim=3)\ngmsh.model.mesh.generate(3)\net = gmsh.model.mesh.getElementTypes()\nprint({int(t): len(gmsh.model.mesh.getElementsByType(t)[0]) for t in et})   # 5=hex, 3=quad\n# radius range of the nodes of each 2D group -> identity check\nfor n,t in pg.items():\n    nt,_ = gmsh.model.mesh.getNodesForPhysicalGroup(2, t)\n    c = gmsh.model.mesh.getNodes()[1].reshape(-1,3)\n    idx = {tag:i for i,tag in enumerate(gmsh.model.mesh.getNodes()[0])}\n    P3 = c[[idx[x] for x in nt]]\n    r = np.hypot(P3[:,0],P3[:,1])/mm\n    print(f\"{n:12s} nodes={len(nt):5d} r=[{r.min():.3f},{r.max():.3f}] z=[{P3[:,2].min()/mm:.3f},{P3[:,2].max()/mm:.3f}]\")",
+      "exit_code": 0,
+      "seconds": 0.10074811499998759,
+      "output": "Info    : Meshing 3D...\nInfo    : Meshing volume 1 (Extruded)\nInfo    : Meshing volume 2 (Extruded)\nInfo    : Meshing volume 3 (Extruded)\nInfo    : Meshing volume 4 (Extruded)\nInfo    : Meshing volume 5 (Extruded)\nInfo    : Meshing volume 6 (Extruded)\nInfo    : Meshing volume 7 (Extruded)\nInfo    : Meshing volume 8 (Extruded)\nInfo    : Meshing volume 9 (Extruded)\nInfo    : Meshing volume 10 (Extruded)\nInfo    : Meshing volume 11 (Extruded)\nInfo    : Meshing volume 12 (Extruded)\nInfo    : Meshing volume 13 (Extruded)\nInfo    : Meshing volume 14 (Extruded)\nInfo    : Meshing volume 15 (Extruded)\nInfo    : Meshing volume 16 (Extruded)\nInfo    : Meshing volume 17 (Extruded)\nInfo    : Meshing volume 18 (Extruded)\nInfo    : Meshing volume 19 (Extruded)\nInfo    : Meshing volume 20 (Extruded)\nInfo    : Meshing volume 21 (Extruded)\nInfo    : Meshing volume 22 (Extruded)\nInfo    : Meshing volume 23 (Extruded)\nInfo    : Meshing volume 24 (Extruded)\nInfo    : Done meshing 3D (Wall 0.0146347s, CPU 0.015497s)\nInfo    : Optimizing mesh...\nInfo    : Done optimizing mesh (Wall 0.000102s, CPU 9.2e-05s)\nInfo    : 7998 nodes 13488 elements\n{1: 2470, 3: 5730, 5: 4320, 15: 968}\nneck_flank   nodes= 2410 r=[19.000,20.000] z=[0.000,13.268]\nlid_flank    nodes= 2410 r=[19.200,20.000] z=[0.207,13.061]\ncrest_land   nodes= 1446 r=[20.000,20.000] z=[0.000,13.268]\nhelix_inner  nodes=   30 r=[19.000,20.000] z=[0.000,1.268]\nhelix_outer  nodes=   30 r=[19.000,20.000] z=[12.000,13.268]",
+      "image": ""
+    },
+    {
+      "cmd": "os.makedirs(\"constant/triSurface\", exist_ok=True)\nntag, ncoord, _ = gmsh.model.mesh.getNodes()\nidx = {t:i for i,t in enumerate(ntag)}; XYZ = ncoord.reshape(-1,3)\ndef write_stl(name, surfs):\n    tris = []\n    for s in surfs:\n        ets, etags, enodes = gmsh.model.mesh.getElements(2, s)\n        for et, en in zip(ets, enodes):\n            k = {2:3, 3:4}[et]; conn = en.reshape(-1, k)\n            for c in conn:\n                p = XYZ[[idx[t] for t in c]]\n                tris.append(p[[0,1,2]])\n                if k == 4: tris.append(p[[0,2,3]])\n    with open(f\"constant/triSurface/{name}.stl\",\"w\") as f:\n        f.write(f\"solid {name}\\n\")\n        for t in tris:\n            n = np.cross(t[1]-t[0], t[2]-t[0]); n = n/max(np.linalg.norm(n),1e-30)\n            f.write(f\" facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\\n  outer loop\\n\")\n            for v in t: f.write(f\"   vertex {v[0]:.8e} {v[1]:.8e} {v[2]:.8e}\\n\")\n            f.write(\"  endloop\\n endfacet\\n\")\n        f.write(f\"endsolid {name}\\n\")\n    return len(tris)\ngroups = {\"neck_flank\":[s for i in (0,1,2) for s in lat[i]], \"lid_flank\":[s for i in (4,5,6) for s in lat[i]],\n          \"crest_land\":[s for i in (3,7) for s in lat[i]], \"helix_inner\":[base], \"helix_outer\":[top]}\nfor n,s in groups.items(): print(n, write_stl(n,s), \"tris\")",
+      "exit_code": 0,
+      "seconds": 0.4516579260000526,
+      "output": "neck_flank 4320 tris\nlid_flank 4320 tris\ncrest_land 1920 tris\nhelix_inner 36 tris\nhelix_outer 36 tris",
+      "image": ""
+    },
+    {
+      "cmd": "hex_tags, hex_nodes = gmsh.model.mesh.getElementsByType(5)\nH = hex_nodes.reshape(-1,8)\ncent = np.array([XYZ[[idx[t] for t in h]].mean(axis=0) for h in H])\nface_owner = {}\nfor ci,h in enumerate(H):\n    for f in [(0,1,2,3),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]:\n        face_owner[frozenset(h[list(f)])] = ci\ndef write_stl(name, surfs):\n    tris, flipped = [], 0\n    for s in surfs:\n        ets, etags, enodes = gmsh.model.mesh.getElements(2, s)\n        for et, en in zip(ets, enodes):\n            k = {2:3, 3:4}[et]; conn = en.reshape(-1, k)\n            for c in conn:\n                p = XYZ[[idx[t] for t in c]]\n                n = np.cross(p[1]-p[0], p[2]-p[0])\n                if np.dot(n, p.mean(axis=0) - cent[face_owner[frozenset(c)]]) < 0:\n                    p = p[::-1]; flipped += 1\n                tris.append(p[[0,1,2]])\n                if k == 4: tris.append(p[[0,2,3]])\n    with open(f\"constant/triSurface/{name}.stl\",\"w\") as f:\n        f.write(f\"solid {name}\\n\")\n        for t in tris:\n            n = np.cross(t[1]-t[0], t[2]-t[0]); n = n/max(np.linalg.norm(n),1e-30)\n            f.write(f\" facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\\n  outer loop\\n\")\n            for v in t: f.write(f\"   vertex {v[0]:.8e} {v[1]:.8e} {v[2]:.8e}\\n\")\n            f.write(\"  endloop\\n endfacet\\n\")\n        f.write(f\"endsolid {name}\\n\")\n    return len(tris), flipped\nfor n,s in groups.items(): print(n, write_stl(n,s))",
+      "exit_code": 0,
+      "seconds": 0.7022297630001049,
+      "output": "neck_flank (4320, 0)\nlid_flank (4320, 0)\ncrest_land (1920, 0)\nhelix_inner (36, 18)\nhelix_outer (36, 0)",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\nmesh = pv.PolyData()\nfor n in groups: mesh = mesh + pv.read(f\"constant/triSurface/{n}.stl\")\nm = mesh.clean(tolerance=1e-9)\nprint(\"open edges:\", m.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False).n_cells)\nV = m.volume\nprint(f\"STL volume  = {V*1e9:.2f} mm^3\")\n# analytic: cross-section area x mean helix length\nAx = 0.5*abs(sum(prof[i][0]*prof[(i+1)%8][1]-prof[(i+1)%8][0]*prof[i][1] for i in range(8)))\nprint(f\"section area = {Ax:.4f} mm^2 ; rough sweep vol = {Ax*2*np.pi*19.6*TURNS:.2f} mm^3\")\np = pv.Plotter(off_screen=True, window_size=(900,700))\nfor n,c in zip(groups, [\"lightsteelblue\",\"lightcoral\",\"lightgray\",\"green\",\"red\"]):\n    p.add_mesh(pv.read(f\"constant/triSurface/{n}.stl\"), color=c, show_edges=(n in(\"helix_inner\",\"helix_outer\")))\np.camera_position=\"iso\"; p.show(screenshot=\"gap.png\")",
+      "exit_code": 0,
+      "seconds": 0.6523383410001315,
+      "output": "open edges: 0\nSTL volume  = 356.30 mm^3\nsection area = 0.4884 mm^2 ; rough sweep vol = 360.89 mm^3\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-13 12:59:43.579 (   0.370s) [    779EA71FD780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 12:59:43.580 (   0.371s) [    779EA71FD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 12:59:43.591 (   0.382s) [    779EA71FD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_88442/2898663823.py:14: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  p.camera_position=\"iso\"; p.show(screenshot=\"gap.png\")",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import subprocess\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\ngmsh.option.setNumber(\"Mesh.SaveAll\", 0)\ngmsh.write(\"gap.msh\")\nos.makedirs(\"system\", exist_ok=True); os.makedirs(\"constant\", exist_ok=True)\nopen(\"system/controlDict\",\"w\").write(\"\"\"FoamFile{version 2.0;format ascii;class dictionary;object controlDict;}\napplication blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\ndeltaT 1; writeControl timeStep; writeInterval 1;\\n\"\"\")\nopen(\"system/fvSchemes\",\"w\").write(\"FoamFile{version 2.0;format ascii;class dictionary;object fvSchemes;}\\nddtSchemes{default steadyState;}\\ngradSchemes{default Gauss linear;}\\ndivSchemes{default none;}\\nlaplacianSchemes{default Gauss linear corrected;}\\n\")\nopen(\"system/fvSolution\",\"w\").write(\"FoamFile{version 2.0;format ascii;class dictionary;object fvSolution;}\\nsolvers{}\\n\")\nr = subprocess.run([\"gmshToFoam\",\"gap.msh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[-800:], r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.3012688110002273,
+      "output": "Info    : Writing 'gap.msh'...\nInfo    : Done writing 'gap.msh'\n0 rism:0\n    pyr  :0\n    tet  :0\n\nCellZones:\nZone\tSize\n    0\t4320\n\nPatch 0 gets name patch0\nPatch 1 gets name patch1\nPatch 2 gets name patch2\nPatch 3 gets name patch3\nPatch 4 gets name patch4\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 5316 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\nFinding faces of patch 4\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone cellZone_0 and cellSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "txt = open(\"gap.msh\").read().splitlines()\nprint(txt[:14])\ni = txt.index(\"$Elements\"); print(txt[i:i+3]); print(txt[i+2].split()[:8]); \nimport collections\nc = collections.Counter(l.split()[1] for l in txt[i+2:txt.index(\"$EndElements\")])\nprint(\"elem types:\", c)",
+      "exit_code": 0,
+      "seconds": 0.0506229079996956,
+      "output": "['$MeshFormat', '2.2 0 8', '$EndMeshFormat', '$PhysicalNames', '6', '2 1 \"neck_flank\"', '2 2 \"lid_flank\"', '2 3 \"crest_land\"', '2 4 \"helix_inner\"', '2 5 \"helix_outer\"', '3 6 \"gap\"', '$EndPhysicalNames', '$Nodes', '7230']\n['$Elements', '9636', '1 3 2 10 1 1 201 2279 214']\n['1', '3', '2', '10', '1', '1', '201', '2279']\nelem types: Counter({'3': 5316, '5': 4320})",
+      "image": ""
+    },
+    {
+      "cmd": "print(gmsh.model.getPhysicalGroups())\nprint([(d,t,gmsh.model.getPhysicalName(d,t)) for d,t in gmsh.model.getPhysicalGroups()])",
+      "exit_code": 0,
+      "seconds": 0.0505992690000312,
+      "output": "[(2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (3, 12)]\n[(2, 7, ''), (2, 8, ''), (2, 9, ''), (2, 10, ''), (2, 11, ''), (3, 12, '')]",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.finalize(); gmsh.initialize(); gmsh.option.setNumber(\"General.Terminal\",0)\nNQ, NEL_Q = 4*TURNS, 30          # quarter-turn steps ; layers per quarter -> ~1.0 mm along helix\nNT, NF, NR = 3, 3, 3             # across gap ; along each flank ; along root flat\ngmsh.model.add(\"helix_gap\"); g = gmsh.model.geo\npts = [g.addPoint(p[0]*mm, 0.0, p[1]*mm) for p in prof]\nlines = [g.addLine(pts[i], pts[(i+1)%8]) for i in range(8)]   # AB BC CD DD' D'C' C'B' B'A' A'A\nbase = g.addPlaneSurface([g.addCurveLoop(lines)])\nfor l,n in zip(lines, [NF,NR,NF,NT,NF,NR,NF,NT]): g.mesh.setTransfiniteCurve(l, n+1)\ng.mesh.setTransfiniteSurface(base, \"Left\", [pts[0], pts[3], pts[4], pts[7]]); g.mesh.setRecombine(2, base)\nlat = {i: [] for i in range(8)}; top = base\nfor k in range(NQ):\n    out = g.twist([(2,top)], 0,0,0, 0,0,PITCH*mm/4, 0,0,1, np.pi/2, [NEL_Q], [], True)\n    top = out[0][1]\n    for i in range(8): lat[i].append(out[2+i][1])\ng.synchronize()\ngroups = {\"neck_flank\":[s for i in (0,1,2) for s in lat[i]], \"lid_flank\":[s for i in (4,5,6) for s in lat[i]],\n          \"crest_land\":[s for i in (3,7) for s in lat[i]], \"helix_inner\":[base], \"helix_outer\":[top]}\nfor j,(n,s) in enumerate(groups.items()): gmsh.model.addPhysicalGroup(2, s, j+1, n)\ngmsh.model.addPhysicalGroup(3, [v for d,v in gmsh.model.getEntities(3)], 99, \"gap\")\ngmsh.model.mesh.generate(3)\nprint([(d,t,gmsh.model.getPhysicalName(d,t)) for d,t in gmsh.model.getPhysicalGroups()])\nprint({int(t): len(gmsh.model.mesh.getElementsByType(t)[0]) for t in gmsh.model.mesh.getElementTypes()})",
+      "exit_code": 0,
+      "seconds": 0.3013340419997803,
+      "output": "[(2, 1, 'neck_flank'), (2, 2, 'lid_flank'), (2, 3, 'crest_land'), (2, 4, 'helix_inner'), (2, 5, 'helix_outer'), (3, 99, 'gap')]\n{1: 6360, 3: 17955, 5: 19440, 15: 968}",
+      "image": ""
+    },
+    {
+      "cmd": "ntag, ncoord, _ = gmsh.model.mesh.getNodes()\nidx = {t:i for i,t in enumerate(ntag)}; XYZ = ncoord.reshape(-1,3)\nH = gmsh.model.mesh.getElementsByType(5)[1].reshape(-1,8)\ncent = np.array([XYZ[[idx[t] for t in h]].mean(axis=0) for h in H])\nface_owner = {}\nfor ci,h in enumerate(H):\n    for f in [(0,1,2,3),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]:\n        face_owner[frozenset(h[list(f)])] = ci\nfor n,s in groups.items(): print(n, write_stl(n,s))\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2); gmsh.option.setNumber(\"Mesh.SaveAll\", 0)\ngmsh.write(\"gap.msh\")\nsubprocess.run([\"rm\",\"-rf\",\"constant/polyMesh\"]); \nr = subprocess.run([\"gmshToFoam\",\"gap.msh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[-600:])",
+      "exit_code": 0,
+      "seconds": 2.7574156050000056,
+      "output": "neck_flank (12960, 0)\nlid_flank (12960, 0)\ncrest_land (8640, 0)\nhelix_inner (54, 27)\nhelix_outer (54, 0)\n0  FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 17334 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\nFinding faces of patch 4\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone gap and cellSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "print(open(\"constant/polyMesh/boundary\").read()[-1600:])",
+      "exit_code": 0,
+      "seconds": 0.050642437000078644,
+      "output": "------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n5\n(\n    helix_inner\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          27;\n        startFace       49653;\n    }\n    neck_flank\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          6480;\n        startFace       49680;\n    }\n    crest_land\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          4320;\n        startFace       56160;\n    }\n    lid_flank\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          6480;\n        startFace       60480;\n    }\n    helix_outer\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          27;\n        startFace       66960;\n    }\n)\n\n// ************************************************************************* //",
+      "image": ""
+    },
+    {
+      "cmd": "for p in [\"neck_flank\",\"lid_flank\",\"crest_land\"]:\n    subprocess.run([\"foamDictionary\",\"constant/polyMesh/boundary\",\"-entry\",f\"entry0/{p}/type\",\"-set\",\"wall\"],capture_output=True)\n    subprocess.run([\"foamDictionary\",\"constant/polyMesh/boundary\",\"-entry\",f\"entry0/{p}/physicalType\",\"-set\",\"wall\"],capture_output=True)\nr = subprocess.run([\"checkMesh\",\"-constant\"], capture_output=True, text=True)\nprint(r.stdout[-2600:])",
+      "exit_code": 0,
+      "seconds": 1.3040314619997844,
+      "output": "dificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           28840\n    faces:            66987\n    internal faces:   49653\n    cells:            19440\n    faces per cell:   6\n    boundary patches: 5\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     19440\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    helix_inner         27       40       ok (non-closed singly connected)  \n    neck_flank          6480     7210     ok (non-closed singly connected)  \n    crest_land          4320     5768     ok (non-closed singly connected)  \n    lid_flank           6480     7210     ok (non-closed singly connected)  \n    helix_outer         27       40       ok (non-closed singly connected)  \n    \".*\"                17334    17336    ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    gap                 19440        28840        3.5778e-07   (-0.02 -0.02 0) (0.02 0.02 0.0132679)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.02 -0.02 0) (0.02 0.02 0.0132679)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (1.00502e-17 1.49269e-17 3.47e-18) OK.\n    Max cell openness = 2.82086e-16 OK.\n    Max aspect ratio = 13.9279 OK.\n    Minimum face area = 1.05839e-08. Maximum face area = 3.58256e-07.  Face area magnitudes OK.\n    Min volume = 1.06161e-11. Max volume = 2.30907e-11.  Total volume = 3.5778e-07.  Cell volumes OK.\n    Mesh non-orthogonality Max: 30.7037 average: 13.5625\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 1.72528 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "neck = pv.read(\"constant/triSurface/neck_flank.stl\"); lid = pv.read(\"constant/triSurface/lid_flank.stl\")\nu = pv.PolyData()\nfor n in groups: u = u + pv.read(f\"constant/triSurface/{n}.stl\")\nu = u.clean(tolerance=1e-9)\nd = np.abs(lid.cell_centers().compute_implicit_distance(neck)[\"implicit_distance\"])/mm\nzi = pv.read(\"constant/triSurface/helix_inner.stl\").points[:,2]/mm; zo = pv.read(\"constant/triSurface/helix_outer.stl\").points[:,2]/mm\nrn = np.hypot(neck.points[:,0],neck.points[:,1])/mm\nprint(f\"{'neck OD':22s} asked 40      built {2*rn.max():.3f} mm\")\nprint(f\"{'thread depth':22s} asked 1       built {rn.max()-rn.min():.3f} mm\")\nprint(f\"{'gap (lid->neck)':22s} asked 0.2     built {np.median(d):.3f} mm  (range {d.min():.3f}-{d.max():.3f})\")\nprint(f\"{'pitch':22s} asked 2       built {(zo.min()-zi.min())/TURNS:.3f} mm\")\nprint(f\"{'threaded height':22s} asked 12      built {zo.min()-zi.min():.3f} mm  ({TURNS} turns)\")\nprint(f\"{'flank half-angle':22s} 15 deg (trapezoidal, 30 deg included)\")\nprint(f\"union free edges = {u.extract_feature_edges(boundary_edges=True,feature_edges=False,manifold_edges=False).n_cells}, STL volume = {u.volume*1e9:.2f} mm^3, mesh volume = 357.78 mm^3\")",
+      "exit_code": 0,
+      "seconds": 0.2510927339999398,
+      "output": "neck OD                asked 40      built 40.000 mm\nthread depth           asked 1       built 1.000 mm\ngap (lid->neck)        asked 0.2     built 0.200 mm  (range 0.200-0.200)\npitch                  asked 2       built 2.000 mm\nthreaded height        asked 12      built 12.000 mm  (6 turns)\nflank half-angle       15 deg (trapezoidal, 30 deg included)\nunion free edges = 0, STL volume = 357.72 mm^3, mesh volume = 357.78 mm^3",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 10265,
+      "fenced": false,
+      "text_chars": 1774,
+      "thinking_chars": 8769,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304266.6482592
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 970,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 51,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304276.0975597
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 1163,
+      "fenced": true,
+      "text_chars": 207,
+      "thinking_chars": 783,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304292.6281466
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 809,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 759,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304305.1008024
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 626,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 709,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304313.5393038
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 872,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 241,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304324.1993623
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 1000,
+      "fenced": true,
+      "text_chars": 152,
+      "thinking_chars": 601,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304336.9218125
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 1052,
+      "fenced": true,
+      "text_chars": 203,
+      "thinking_chars": 465,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304349.900231
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 1785,
+      "fenced": true,
+      "text_chars": 132,
+      "thinking_chars": 1166,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304373.2811537
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 638,
+      "fenced": true,
+      "text_chars": 89,
+      "thinking_chars": 279,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304383.1707487
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 1089,
+      "fenced": true,
+      "text_chars": 155,
+      "thinking_chars": 787,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304400.0417747
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 1031,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 952,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304416.1860824
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 506,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 230,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304424.5385497
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 1953,
+      "fenced": true,
+      "text_chars": 330,
+      "thinking_chars": 1210,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304448.4852047
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 526,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 182,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304455.1469111
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 146,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 234,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304461.4610221
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 383,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 241,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304467.1447322
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 1180,
+      "fenced": true,
+      "text_chars": 71,
+      "thinking_chars": 708,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304487.189956
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 494,
+      "fenced": false,
+      "text_chars": 67,
+      "thinking_chars": 246,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304495.8149917
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 34,668 triangles across 5 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "crest_land.stl",
+          "helix_inner.stl",
+          "helix_outer.stl",
+          "lid_flank.stl",
+          "neck_flank.stl"
+        ],
+        "triangles": 34668
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the triSurface directory",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 34668
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 1,448 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 1448
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the flank gap, measured between the two meshed flank patches, at three positions a third of a turn apart",
+      "measured": null
+    },
+    {
+      "property": "the number of turns the channel makes, and its developed centreline length",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "the channel's cross-sectional area at the inner end and at the outer end, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "n/a",
+          "concern": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 19,
+    "steps": 17,
+    "seconds": 380.0,
+    "killed": false,
+    "first_mesh_step": 9,
+    "first_mesh_turn": 11
+  }
+}

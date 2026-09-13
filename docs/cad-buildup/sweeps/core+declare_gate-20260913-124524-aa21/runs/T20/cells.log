@@ -1,0 +1,452 @@
+# -- cell 1 (2.2s, exit 0)
+import os, subprocess, numpy as np
+from build123d import *
+
+D_BORE = 0.060; T_FL = 0.020; T_GK = 0.002
+L = 2*T_FL + T_GK
+R = D_BORE/2
+
+flangeA = Pos(0,0,T_FL/2) * Cylinder(R, T_FL)
+gasket  = Pos(0,0,T_FL+T_GK/2) * Cylinder(R, T_GK)
+flangeB = Pos(0,0,T_FL+T_GK+T_FL/2) * Cylinder(R, T_FL)
+water = flangeA + gasket + flangeB
+print(water.volume, np.pi*R**2*L, water.bounding_box())
+# -- output
+0.00011875220230569416 0.00011875220230569419 bbox: -0.03 <= x <= 0.03, -0.03 <= y <= 0.03, 0.0 <= z <= 0.041999999999999996
+
+# -- cell 2 (0.1s, exit 0)
+for i,f in enumerate(water.faces()):
+    c = f.center()
+    print(i, type(f.geom_type), f.geom_type, round(f.area,6), [round(v,4) for v in (c.X,c.Y,c.Z)])
+# -- output
+0 <enum 'GeomType'> GeomType.CYLINDER 0.007917 [-0.03, 0.0, 0.021]
+1 <enum 'GeomType'> GeomType.PLANE 0.002827 [0.0, -0.0, 0.042]
+2 <enum 'GeomType'> GeomType.PLANE 0.002827 [0.0, -0.0, 0.0]
+
+# -- cell 3 (0.4s, exit 0)
+os.makedirs("constant/triSurface", exist_ok=True)
+def lateral(s): return [f for f in s.faces() if f.geom_type == GeomType.CYLINDER][0]
+def flat(s, z): return [f for f in s.faces() if f.geom_type == GeomType.PLANE and abs(f.center().Z - z) < 1e-9][0]
+
+patches = {
+ "inlet":        flat(flangeA, 0.0),
+ "outlet":       flat(flangeB, L),
+ "wall_flangeA": lateral(flangeA),
+ "gasket_inner": lateral(gasket),
+ "wall_flangeB": lateral(flangeB),
+}
+for n,f in patches.items():
+    export_stl(Compound(children=[Solid.make_solid(Shell(faces=[f]))]) if False else f,
+               f"constant/triSurface/{n}.stl", tolerance=1e-4, angular_tolerance=0.1)
+    print(n, round(f.area,6), os.path.getsize(f"constant/triSurface/{n}.stl"))
+# -- output
+inlet 0.002827 15734
+outlet 0.002827 15734
+wall_flangeA 0.00377 31584
+gasket_inner 0.000377 31584
+wall_flangeB 0.00377 31584
+
+# -- cell 4 (0.2s, exit 1)
+import numpy as np
+def read_stl(p):
+    tris=[]; 
+    for line in open(p):
+        if line.strip().startswith("vertex"):
+            tris.append([float(x) for x in line.split()[1:]])
+    return np.array(tris).reshape(-1,3,3)
+allt = np.vstack([read_stl(f"constant/triSurface/{n}.stl") for n in patches])
+V = np.round(allt.reshape(-1,3), 9)
+uniq, inv = np.unique(V, axis=0, return_inverse=True)
+tri = inv.reshape(-1,3)
+from collections import Counter
+c = Counter(tuple(sorted(e)) for t in tri for e in ((t[0],t[1]),(t[1],t[2]),(t[2],t[0])))
+print(len(tri), len(uniq), "free edges:", sum(1 for k,v in c.items() if v!=2))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mUnicodeDecodeError[39m                        Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 8[39m
+[32m      4[39m     [38;5;28;01mfor[39;00m line [38;5;28;01min[39;00m open(p):
+[32m      5[39m         [38;5;28;01mif[39;00m line.strip().startswith([33m"vertex"[39m):
+[32m      6[39m             tris.append([float(x) [38;5;28;01mfor[39;00m x [38;5;28;01min[39;00m line.split()[[32m1[39m:]])
+[32m      7[39m     [38;5;28;01mreturn[39;00m np.array(tris).reshape(-[32m1[39m,[32m3[39m,[32m3[39m)
+[32m----> [39m[32m8[39m allt = np.vstack([read_stl(f"constant/triSurface/{n}.stl") [38;5;28;01mfor[39;00m n [38;5;28;01min[39;00m patches])
+[32m      9[39m V = np.round(allt.reshape(-[32m1[39m,[32m3[39m), [32m9[39m)
+[32m     10[39m uniq, inv = np.unique(V, axis=[32m0[39m, return_inverse=[38;5;28;01mTrue[39;00m)
+[32m     11[39m tri = inv.reshape(-[32m1[39m,[32m3[39m)
+
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 4[39m, in [36mread_stl[39m[34m(p)[39m
+[32m      2[39m [38;5;28;01mdef[39;00m read_stl(p):
+[32m      3[39m     tris=[];
+[32m----> [39m[32m4[39m     [38;5;28;01mfor[39;00m line [38;5;28;01min[39;00m open(p):
+[32m      5[39m         [38;5;28;01mif[39;00m line.strip().startswith([33m"vertex"[39m):
+[32m      6[39m             tris.append([float(x) [38;5;28;01mfor[39;00m x [38;5;28;01min[39;00m line.split()[[32m1[39m:]])
+[32m      7[39m     [38;5;28;01mreturn[39;00m np.array(tris).reshape(-[32m1[39m,[32m3[39m,[32m3[39m)
+
+[36mFile [39m[32m<frozen codecs>:325[39m, in [36mBufferedIncrementalDecoder.decode[39m[34m(self, input, final)[39m
+[32m    322[39m [33m'Could not get source, probably due dynamically evaluated source code.'[39m
+
+[31mUnicodeDecodeError[39m: 'utf-8' codec can't decode byte 0x80 in position 94: invalid start byte
+
+# -- cell 5 (0.4s, exit 0)
+import re
+for n,f in patches.items():
+    p=f"constant/triSurface/{n}.stl"
+    export_stl(f, p, tolerance=1e-4, angular_tolerance=0.1, ascii_format=True)
+    txt = open(p).read()
+    txt = re.sub(r"solid\s*\S*", f"solid {n}", txt, count=1).replace("endsolid", f"endsolid {n}")
+    open(p,"w").write(txt)
+    print(n, open(p).readline().strip(), txt.count("facet normal"))
+# -- output
+inlet solid inlet normal  0.000000e+00  0.000000e+00 -1.000000e+00 312
+outlet solid outlet normal  0.000000e+00  0.000000e+00  1.000000e+00 312
+wall_flangeA solid wall_flangeA normal  9.999503e-01  9.973145e-03  0.000000e+00 629
+gasket_inner solid gasket_inner normal  9.999503e-01  9.973145e-03  0.000000e+00 629
+wall_flangeB solid wall_flangeB normal  9.999503e-01  9.973145e-03  0.000000e+00 629
+
+# -- cell 6 (0.4s, exit 0)
+for n,f in patches.items():
+    p=f"constant/triSurface/{n}.stl"
+    export_stl(f, p, tolerance=1e-4, angular_tolerance=0.1, ascii_format=True)
+    lines = open(p).read().splitlines()
+    lines[0] = f"solid {n}"
+    lines[-1] = f"endsolid {n}"
+    open(p,"w").write("\n".join(lines)+"\n")
+    print(n, lines[0], lines[1].strip()[:20], lines[-1], sum(1 for l in lines if "facet normal" in l))
+# -- output
+inlet solid inlet facet normal  0.0000 endsolid inlet 313
+outlet solid outlet facet normal  0.0000 endsolid outlet 313
+wall_flangeA solid wall_flangeA facet normal  9.9995 endsolid wall_flangeA 630
+gasket_inner solid gasket_inner facet normal  9.9995 endsolid gasket_inner 630
+wall_flangeB solid wall_flangeB facet normal  9.9995 endsolid wall_flangeB 630
+
+# -- cell 7 (0.1s, exit 0)
+from collections import Counter
+def read_stl(p):
+    v=[float(x) for l in open(p) if l.strip().startswith("vertex") for x in l.split()[1:]]
+    return np.array(v).reshape(-1,3,3)
+allt = np.vstack([read_stl(f"constant/triSurface/{n}.stl") for n in patches])
+V = np.round(allt.reshape(-1,3), 9)
+uniq, inv = np.unique(V, axis=0, return_inverse=True)
+tri = inv.reshape(-1,3)
+c = Counter(tuple(sorted(e)) for t in tri for e in ((t[0],t[1]),(t[1],t[2]),(t[2],t[0])))
+print(len(tri), len(uniq), "free edges:", sum(1 for k,v in c.items() if v!=2))
+# -- output
+2516 1260 free edges: 0
+
+# -- cell 8 (0.1s, exit 0)
+import math, os
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+ZL = [0.0, T_FL, T_FL+T_GK, L]          # 0, 20, 22, 42 mm
+RI = 0.5*R                               # inner O-grid radius
+NA, NR, NZ = 8, 5, [10, 2, 10]           # coarse
+th = [math.radians(45+90*i) for i in range(4)]
+verts=[]
+for z in ZL:
+    for r in (RI, R):
+        for t in th: verts.append((r*math.cos(t), r*math.sin(t), z))
+def vi(k, ring, i): return k*8 + ring*4 + (i % 4)   # ring 0=inner,1=outer
+blocks=[]; edges=[]; faces={"inlet":[], "outlet":[], "wall_flangeA":[], "gasket_inner":[], "wall_flangeB":[]}
+wallname = ["wall_flangeA", "gasket_inner", "wall_flangeB"]
+for k in range(3):
+    b = [vi(k,0,i) for i in range(4)]; t_ = [vi(k+1,0,i) for i in range(4)]
+    blocks.append((b+t_, (NA,NA,NZ[k])))
+    if k==0: faces["inlet"].append(b[::-1])
+    if k==2: faces["outlet"].append(t_)
+    for i in range(4):
+        bf = [vi(k,0,i), vi(k,1,i), vi(k,1,i+1), vi(k,0,i+1)]
+        tf = [vi(k+1,0,i), vi(k+1,1,i), vi(k+1,1,i+1), vi(k+1,0,i+1)]
+        blocks.append((bf+tf, (NR,NA,NZ[k])))
+        if k==0: faces["inlet"].append(bf[::-1])
+        if k==2: faces["outlet"].append(tf)
+        faces[wallname[k]].append([vi(k,1,i), vi(k,1,i+1), vi(k+1,1,i+1), vi(k+1,1,i)])
+for k in range(4):
+    for i in range(4):
+        tm = math.radians(45+90*i+45)
+        edges.append((vi(k,1,i), vi(k,1,i+1), (R*math.cos(tm), R*math.sin(tm), ZL[k])))
+print(len(verts), len(blocks), len(edges), {k:len(v) for k,v in faces.items()})
+# -- output
+32 15 16 {'inlet': 5, 'outlet': 5, 'wall_flangeA': 4, 'gasket_inner': 4, 'wall_flangeB': 4}
+
+# -- cell 9 (0.3s, exit 0)
+hdr = "FoamFile{version 2.0; format ascii; class dictionary; object blockMeshDict;}\n"
+s = [hdr, "scale 1;\n\nvertices\n(\n"]
+s += [f"    ({v[0]:.9g} {v[1]:.9g} {v[2]:.9g})\n" for v in verts]
+s.append(");\n\nblocks\n(\n")
+for vs,n in blocks:
+    s.append("    hex (" + " ".join(map(str,vs)) + f") ({n[0]} {n[1]} {n[2]}) simpleGrading (1 1 1)\n")
+s.append(");\n\nedges\n(\n")
+for a,b,m in edges:
+    s.append(f"    arc {a} {b} ({m[0]:.9g} {m[1]:.9g} {m[2]:.9g})\n")
+s.append(");\n\nboundary\n(\n")
+for name, fl in faces.items():
+    typ = "patch" if name in ("inlet","outlet") else "wall"
+    s.append(f"    {name}\n    {{\n        type {typ};\n        faces\n        (\n")
+    s += ["            (" + " ".join(map(str,f)) + ")\n" for f in fl]
+    s.append("        );\n    }\n")
+s.append(");\n\nmergePatchPairs ();\n")
+open("system/blockMeshDict","w").writelines(s)
+
+open("system/controlDict","w").write(hdr.replace("blockMeshDict","controlDict")+
+ "application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n")
+open("system/fvSchemes","w").write(hdr.replace("blockMeshDict","fvSchemes")+"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(hdr.replace("blockMeshDict","fvSolution")+"solvers{}\n")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-800:])
+# -- output
+0    k : 0.001 .. 0.001
+
+    Block 7 cell size :
+        i : 0.003 .. 0.003
+        j : 0.00265165 .. 0.00265165
+        k : 0.001 .. 0.001
+
+    Block 8 cell size :
+        i : 0.003 .. 0.003
+        j : 0.00265165 .. 0.00265165
+        k : 0.001 .. 0.001
+
+    Block 9 cell size :
+        i : 0.003 .. 0.003
+        j : 0.00265165 .. 0.00265165
+        k : 0.001 .. 0.001
+
+    Block 10 cell size :
+        i : 0.00265165 .. 0.00265165
+        j : 0.00265165 .. 0.00265165
+        k : 0.002 .. 0.002
+
+    Block 11 cell size :
+        i : 0.003 .. 0.003
+        j : 0.00265165 .. 0.00265165
+        k : 0.002 .. 0.002
+
+    Block 12 cell size :
+        i : 0.003 .. 0.003
+        j : 0.00265165 .. 0.00265165
+        k : 0.002 .. 0.002
+
+    Block 13 cell size :
+        i : 0.003 .. 0.003
+        j : 0.00265165 .. 0.00265165
+        k : 0.002 .. 0.002
+
+    Block 14 cell size :
+        i : 0.003 .. 0.003
+        j : 0.00265165 .. 0.00265165
+        k : 0.002 .. 0.002
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.03 -0.03 0) (0.03 0.03 0.042)
+  nPoints: 5543
+  nCells: 4928
+  nFaces: 15360
+  nInternalFaces: 14208
+----------------
+Patches
+----------------
+  patch 0 (start: 14208 size: 224) name: inlet
+  patch 1 (start: 14432 size: 224) name: outlet
+  patch 2 (start: 14656 size: 320) name: wall_flangeA
+  patch 3 (start: 14976 size: 64) name: gasket_inner
+  patch 4 (start: 15040 size: 320) name: wall_flangeB
+
+End
+
+# -- cell 10 (0.3s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-2200:])
+# -- output
+stant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           5543
+    faces:            15360
+    internal faces:   14208
+    cells:            4928
+    faces per cell:   6
+    boundary patches: 5
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     4928
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    inlet               224      241      ok (non-closed singly connected)  
+    outlet              224      241      ok (non-closed singly connected)  
+    wall_flangeA        320      352      ok (non-closed singly connected)  
+    gasket_inner        64       96       ok (non-closed singly connected)  
+    wall_flangeB        320      352      ok (non-closed singly connected)  
+    ".*"                1152     1154     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.03 -0.03 0) (0.03 0.03 0.042)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.25276e-19 0 4.05893e-17) OK.
+    Max cell openness = 1.76565e-16 OK.
+    Max aspect ratio = 4.90949 OK.
+    Minimum face area = 2.65165e-06. Maximum face area = 2.13063e-05.  Face area magnitudes OK.
+    Min volume = 7.03125e-09. Max volume = 4.26127e-08.  Total volume = 0.000117991.  Cell volumes OK.
+    Mesh non-orthogonality Max: 24.8456 average: 6.32798
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.553133 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 11 (0.4s, exit 0)
+NA, NR, NZ = 16, 8, [16, 4, 16]
+blocks=[]; edges=[]; faces={k:[] for k in faces}
+for k in range(3):
+    b = [vi(k,0,i) for i in range(4)]; t_ = [vi(k+1,0,i) for i in range(4)]
+    blocks.append((b+t_, (NA,NA,NZ[k])))
+    if k==0: faces["inlet"].append(b[::-1])
+    if k==2: faces["outlet"].append(t_)
+    for i in range(4):
+        bf = [vi(k,0,i), vi(k,1,i), vi(k,1,i+1), vi(k,0,i+1)]
+        tf = [vi(k+1,0,i), vi(k+1,1,i), vi(k+1,1,i+1), vi(k+1,0,i+1)]
+        blocks.append((bf+tf, (NR,NA,NZ[k])))
+        if k==0: faces["inlet"].append(bf[::-1])
+        if k==2: faces["outlet"].append(tf)
+        faces[wallname[k]].append([vi(k,1,i), vi(k,1,i+1), vi(k+1,1,i+1), vi(k+1,1,i)][:2]+[vi(k+1,1,i+1), vi(k+1,1,i)])
+for k in range(4):
+    for i in range(4):
+        tm = math.radians(45+90*i+45)
+        edges.append((vi(k,1,i), vi(k,1,i+1), (R*math.cos(tm), R*math.sin(tm), ZL[k])))
+s = [hdr, "scale 1;\n\nvertices\n(\n"] + [f"    ({v[0]:.9g} {v[1]:.9g} {v[2]:.9g})\n" for v in verts]
+s.append(");\n\nblocks\n(\n")
+for vs,n in blocks: s.append("    hex (" + " ".join(map(str,vs)) + f") ({n[0]} {n[1]} {n[2]}) simpleGrading (1 1 1)\n")
+s.append(");\n\nedges\n(\n")
+for a,b,m in edges: s.append(f"    arc {a} {b} ({m[0]:.9g} {m[1]:.9g} {m[2]:.9g})\n")
+s.append(");\n\nboundary\n(\n")
+for name, fl in faces.items():
+    typ = "patch" if name in ("inlet","outlet") else "wall"
+    s.append(f"    {name}\n    {{\n        type {typ};\n        faces\n        (\n")
+    s += ["            (" + " ".join(map(str,f)) + ")\n" for f in fl]
+    s.append("        );\n    }\n")
+s.append(");\n\nmergePatchPairs ();\n")
+open("system/blockMeshDict","w").writelines(s)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True); print(r.returncode, r.stdout[-600:])
+# -- output
+0 j : 0.00132583 .. 0.00132583
+        k : 0.00125 .. 0.00125
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.03 -0.03 0) (0.03 0.03 0.042)
+  nPoints: 29637
+  nCells: 27648
+  nFaces: 84864
+  nInternalFaces: 81024
+----------------
+Patches
+----------------
+  patch 0 (start: 81024 size: 768) name: inlet
+  patch 1 (start: 81792 size: 768) name: outlet
+  patch 2 (start: 82560 size: 1024) name: wall_flangeA
+  patch 3 (start: 83584 size: 256) name: gasket_inner
+  patch 4 (start: 83840 size: 1024) name: wall_flangeB
+
+End
+
+# -- cell 12 (0.4s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print([l for l in r.stdout.splitlines() if any(x in l for x in ("Max skew","non-orth","Total volume","Max aspect","Mesh OK","***","Failed"))])
+# -- output
+['    Max aspect ratio = 5.38836 OK.', '    Min volume = 8.78906e-10. Max volume = 8.58963e-09.  Total volume = 0.000118562.  Cell volumes OK.', '    Mesh non-orthogonality Max: 32.9624 average: 6.67349', '    Max skewness = 0.453414 OK.', 'Mesh OK.']
+
+# -- cell 13 (0.3s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+open("case.foam","w").write("")
+rd = pv.OpenFOAMReader("case.foam"); rd.enable_all_patch_arrays(); m = rd.read()
+bnd = m["boundary"]
+for name in bnd.keys():
+    p = bnd[name].extract_surface(); b = p.bounds
+    rad = np.hypot(p.points[:,0], p.points[:,1])
+    print(f"{name:14s} area={p.area:.6f}  z=[{b[4]:.4f},{b[5]:.4f}]  r=[{rad.min():.4f},{rad.max():.4f}]")
+print("exact: disk 0.0028274, flange wall 0.0037699, gasket 0.00037699")
+# -- output
+inlet          area=0.002823  z=[0.0000,0.0000]  r=[0.0000,0.0300]
+outlet         area=0.002823  z=[0.0420,0.0420]  r=[0.0000,0.0300]
+wall_flangeA   area=0.003768  z=[0.0000,0.0200]  r=[0.0300,0.0300]
+gasket_inner   area=0.000377  z=[0.0200,0.0220]  r=[0.0300,0.0300]
+wall_flangeB   area=0.003768  z=[0.0220,0.0420]  r=[0.0300,0.0300]
+exact: disk 0.0028274, flange wall 0.0037699, gasket 0.00037699
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+/tmp/ipykernel_110529/2268236371.py:7: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  p = bnd[name].extract_surface(); b = p.bounds
+
+# -- cell 14 (0.4s, exit 0)
+pl = pv.Plotter(off_screen=True, window_size=(900,700))
+cols = {"inlet":"blue","outlet":"red","wall_flangeA":"lightgray","gasket_inner":"orange","wall_flangeB":"tan"}
+for n,c in cols.items():
+    pl.add_mesh(bnd[n].extract_surface(), color=c, show_edges=True, line_width=1, label=n)
+pl.add_legend(); pl.camera_position = [(0.12,-0.12,0.10),(0,0,0.021),(0,0,1)]
+pl.screenshot("mesh_view.png"); print("ok")
+# -- output
+ok
+
+[0m[33m2026-09-13 13:31:01.165 (   5.313s) [    705B52CA9780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 13:31:01.165 (   5.314s) [    705B52CA9780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 13:31:01.178 (   5.326s) [    705B52CA9780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_110529/2379527712.py:4: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  pl.add_mesh(bnd[n].extract_surface(), color=c, show_edges=True, line_width=1, label=n)
+
+# -- cell 15 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("mesh_view.png"))
+# -- output
+
+

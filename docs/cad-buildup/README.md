@@ -175,3 +175,28 @@ that `gate.render` on those same recorded probes produces the sentence nobody sa
 more pin the labelling, the enum, and the path scrubbing — which is the one thing here
 that voids a sweep if it is wrong, because gate text reaching the desk puts a house path
 into the conversation that `scan_run` greps the whole thread for.
+
+### What the sweep said — `core+declare_gate-20260913-124524-aa21`
+
+**20/26 passed, 518 cells, $24.29, contamination 0/26.** Paired against `core+bench26` on
+the 15 cases that pair: **13/15 → 11/15**, and cells rose — 8 up, 1 down, **p = 0.039**.
+
+**It works.** T18 was told its surface had 9,364 free edges, closed it, declared again and
+passed; in `core+bench26` the same case shipped 13,204 open edges as a pass with the number
+never delivered. T2 pre-waived correctly and finished in one declare. `xfail` appeared twice
+against zero in the version that dropped its advisory.
+
+**And the sweep cannot attribute its own headline.** Six of the eight cell increases are on
+cases the gate never spoke to, because the addition bundled four changes — the tool, the
+gates, the rewritten `# Finishing` section, and the `union_closure` explanation. One at a
+time is the rule and this broke it. The prediction on record beforehand was that cells would
+not move; they moved, significantly.
+
+The cost is real too: T12 and T22 were each shown an open-surface warning, went after it
+rather than waiving it, and spent the rest of a 30-turn budget doing so. That is the rule
+working — a warning nobody fixes or explains is no longer a finish — and it says the budget
+was set for a desk that finishes at its first declare.
+
+Full report and findings in the sweep directory. Next, one at a time: the `normals`
+explanation (an `xpass` in T21 is behind it, and the `union_closure` precedent took that
+probe's xpass from 2 to 0), then a clean re-measure, then the step budget.

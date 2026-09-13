@@ -1,0 +1,599 @@
+{
+  "run_id": "20260913-130146-f069",
+  "case": "T15",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T15-20260913-130146-f069",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T15-20260913-130146-f069/t15",
+  "started_at": "2026-09-13T13:01:46",
+  "ended_at": "2026-09-13T13:19:04",
+  "seconds": 1018.3,
+  "n_turns": 25,
+  "n_steps": 23,
+  "first_mesh_step": 13,
+  "mesh_exists": true,
+  "checkmesh_ok": false,
+  "usd": 1.6089,
+  "tokens": {
+    "input": 50,
+    "cache_read": 813586,
+    "cache_write": 45851,
+    "output": 36612
+  },
+  "stopped": "time",
+  "expects": "done",
+  "passed": false,
+  "why": "Failed 1 mesh checks.",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import numpy as np, matplotlib.pyplot as plt, math, os\nos.makedirs(\"constant/triSurface\", exist_ok=True)\n\nMODULE = 3.0; ALPHA = math.radians(20.0); Z_P = 20; Z_W = 30\nBACKLASH = 0.3\nSIGMA = math.radians(90)\nGAM_P = math.atan2(Z_P, Z_W); GAM_W = SIGMA - GAM_P\nR_P = MODULE*Z_P/2; R_W = MODULE*Z_W/2\nCONE = math.hypot(R_P, R_W)\nFACEW = 18.0\n\ndef inv(a): return math.tan(a)-a\n\ndef gear_profile(z, gam, r_pitch, npf=10):\n    cg = math.cos(gam); r_pv = r_pitch/cg\n    r_b = r_pv*math.cos(ALPHA); r_a = r_pv+MODULE; r_f = r_pv-1.25*MODULE\n    t_p = math.pi*MODULE/2 - BACKLASH/2\n    psi = t_p/(2*r_pv)\n    rho_lo = max(r_b, r_f)\n    def d(rho):\n        ar = math.acos(min(1.0, r_b/rho)); return (psi + inv(ALPHA) - inv(ar))/cg\n    def R(rho): return r_pitch + (rho-r_pv)*cg\n    rhos = np.linspace(rho_lo, r_a, npf)\n    half = []\n    if r_f < r_b-1e-9: half.append((R(r_f), d(rho_lo)))\n    half += [(R(r), d(r)) for r in rhos]\n    tip = [(R(r_a), t) for t in np.linspace(d(r_a), -d(r_a), 5)[1:-1]]\n    tooth = half + tip + [(rr,-dd) for rr,dd in reversed(half)]\n    P=[]\n    for i in range(z):\n        phi = 2*math.pi*i/z\n        for rr,dd in tooth: P.append((rr, phi+dd))\n        # root arc to next tooth start\n        a0 = phi + tooth[-1][1]; a1 = phi + 2*math.pi/z + tooth[0][1]\n        for aa in np.linspace(a0,a1,4)[1:-1]: P.append((R(r_f), aa))\n    return [(rr*math.cos(t), rr*math.sin(t)) for rr,t in P], dict(r_pv=r_pv,r_b=r_b,r_a=r_a,r_f=r_f,psi=psi,tip=R(r_a),root=R(r_f))\n\npp, ip = gear_profile(Z_P, GAM_P, R_P)\npw, iw = gear_profile(Z_W, GAM_W, R_W)\nprint(\"gamma_p %.3f deg  gamma_w %.3f  A=%.3f  r_p=%.1f r_w=%.1f\"%(math.degrees(GAM_P),math.degrees(GAM_W),CONE,R_P,R_W))\nprint(\"pinion\",{k:round(v,3) for k,v in ip.items()}); print(\"wheel \",{k:round(v,3) for k,v in iw.items()})\nfig,ax=plt.subplots(figsize=(6,6)); a=np.array(pp); b=np.array(pw)\nax.plot(a[:,0],a[:,1],'-',lw=.7); ax.plot(b[:,0],b[:,1],'-',lw=.7); ax.set_aspect(1); plt.savefig(\"prof.png\",dpi=90)\nprint(len(pp),len(pw))",
+      "exit_code": 0,
+      "seconds": 0.15105192400005762,
+      "output": "gamma_p 33.690 deg  gamma_w 56.310  A=54.083  r_p=30.0 r_w=45.0\npinion {'r_pv': 36.056, 'r_b': 33.881, 'r_a': 39.056, 'r_f': 32.306, 'psi': 0.063, 'tip': 32.496, 'root': 26.88}\nwheel  {'r_pv': 81.125, 'r_b': 76.232, 'r_a': 84.125, 'r_f': 77.375, 'psi': 0.028, 'tip': 46.664, 'root': 42.92}\n540 750",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import time\nfrom build123d import *\nimport build123d as bd\n\nK_IN = (CONE-FACEW)/CONE          # scale factor of inner section toward apex\nZO_P = CONE*math.cos(GAM_P); ZO_W = CONE*math.cos(GAM_W)\nprint(\"K=%.4f  z_outer pinion=%.2f wheel=%.2f\"%(K_IN,ZO_P,ZO_W))\n\ndef gear_solid(pts, z_out):\n    w_o = Polyline(*[(x,y,z_out) for x,y in pts], close=True)\n    w_i = Polyline(*[(K_IN*x,K_IN*y,K_IN*z_out) for x,y in pts], close=True)\n    return loft([make_face(w_o), make_face(w_i)], ruled=True)\n\nt=time.time(); pinion_body = gear_solid(pp, ZO_P); print(\"pinion loft %.1fs vol=%.1f mm3\"%(time.time()-t, pinion_body.volume))",
+      "exit_code": 1,
+      "seconds": 3.410182590000204,
+      "output": "K=0.6672  z_outer pinion=45.00 wheel=30.00\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:335\u001b[39m, in \u001b[36mloft\u001b[39m\u001b[34m(sections, ruled, clean, mode)\u001b[39m\n\u001b[32m    334\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m new_solid.is_valid:\n\u001b[32m--> \u001b[39m\u001b[32m335\u001b[39m         \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mRecovery failed\u001b[39m\u001b[33m\"\u001b[39m)\n\u001b[32m    336\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mException\u001b[39;00m \u001b[38;5;28;01mas\u001b[39;00m e:\n\n\u001b[31mValueError\u001b[39m: Recovery failed\n\nThe above exception was the direct cause of the following exception:\n\n\u001b[31mRuntimeError\u001b[39m                              Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[2]\u001b[39m\u001b[32m, line 14\u001b[39m\n\u001b[32m     10\u001b[39m     w_o = Polyline(*[(x,y,z_out) \u001b[38;5;28;01mfor\u001b[39;00m x,y \u001b[38;5;28;01min\u001b[39;00m pts], close=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m     11\u001b[39m     w_i = Polyline(*[(K_IN*x,K_IN*y,K_IN*z_out) \u001b[38;5;28;01mfor\u001b[39;00m x,y \u001b[38;5;28;01min\u001b[39;00m pts], close=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m     12\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m loft([make_face(w_o), make_face(w_i)], ruled=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m     13\u001b[39m \n\u001b[32m---> \u001b[39m\u001b[32m14\u001b[39m t=time.time(); pinion_body = gear_solid(pp, ZO_P); print(\u001b[33m\"pinion loft %.1fs vol=%.1f mm3\"\u001b[39m%(time.time()-t, pinion_body.volume))\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[2]\u001b[39m\u001b[32m, line 12\u001b[39m, in \u001b[36mgear_solid\u001b[39m\u001b[34m(pts, z_out)\u001b[39m\n\u001b[32m      9\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m gear_solid(pts, z_out):\n\u001b[32m     10\u001b[39m     w_o = Polyline(*[(x,y,z_out) \u001b[38;5;28;01mfor\u001b[39;00m x,y \u001b[38;5;28;01min\u001b[39;00m pts], close=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m     11\u001b[39m     w_i = Polyline(*[(K_IN*x,K_IN*y,K_IN*z_out) \u001b[38;5;28;01mfor\u001b[39;00m x,y \u001b[38;5;28;01min\u001b[39;00m pts], close=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m---> \u001b[39m\u001b[32m12\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m loft([make_face(w_o), make_face(w_i)], ruled=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:337\u001b[39m, in \u001b[36mloft\u001b[39m\u001b[34m(sections, ruled, clean, mode)\u001b[39m\n\u001b[32m    335\u001b[39m             \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mRecovery failed\u001b[39m\u001b[33m\"\u001b[39m)\n\u001b[32m    336\u001b[39m     \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mException\u001b[39;00m \u001b[38;5;28;01mas\u001b[39;00m e:\n\u001b[32m--> \u001b[39m\u001b[32m337\u001b[39m         \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mRuntimeError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mFailed to create valid loft\u001b[39m\u001b[33m\"\u001b[39m) \u001b[38;5;28;01mfrom\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34;01me\u001b[39;00m\n\u001b[32m    339\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m context \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m:\n\u001b[32m    340\u001b[39m     context._add_to_context(new_solid, clean=clean, mode=mode)\n\n\u001b[31mRuntimeError\u001b[39m: Failed to create valid loft",
+      "image": ""
+    },
+    {
+      "cmd": "def tooth_pts(z, gam, r_pitch, npf=10):\n    \"\"\"one tooth polygon in polar (R,delta), centred at delta=0, closed down to r_close\"\"\"\n    cg=math.cos(gam); r_pv=r_pitch/cg\n    r_b=r_pv*math.cos(ALPHA); r_a=r_pv+MODULE; r_f=r_pv-1.25*MODULE\n    psi=(math.pi*MODULE/2-BACKLASH/2)/(2*r_pv)\n    rho_lo=max(r_b,r_f)\n    d=lambda rho:(psi+inv(ALPHA)-inv(math.acos(min(1.0,r_b/rho))))/cg\n    R=lambda rho:r_pitch+(rho-r_pv)*cg\n    half=[]\n    if r_f<r_b-1e-9: half.append((R(r_f),d(rho_lo)))\n    half+=[(R(r),d(r)) for r in np.linspace(rho_lo,r_a,npf)]\n    tip=[(R(r_a),t) for t in np.linspace(d(r_a),-d(r_a),5)[1:-1]]\n    poly=half+tip+[(rr,-dd) for rr,dd in reversed(half)]\n    rc=0.90*R(r_f)\n    poly=[(rc,poly[0][1])]+poly+[(rc,poly[-1][1])]\n    return poly, R(r_f), R(r_a)\n\ntp_p, RF_P, RA_P = tooth_pts(Z_P, GAM_P, R_P)\ntp_w, RF_W, RA_W = tooth_pts(Z_W, GAM_W, R_W)\nprint(\"pinion root/tip radius %.3f/%.3f  wheel %.3f/%.3f  npts=%d\"%(RF_P,RA_P,RF_W,RA_W,len(tp_p)))\n\ndef tooth_solid(poly, z_out, phase):\n    def ring(s):\n        return [( s*rr*math.cos(dd+phase), s*rr*math.sin(dd+phase), s*z_out) for rr,dd in poly]\n    wo=Polyline(*ring(1.0), close=True); wi=Polyline(*ring(K_IN), close=True)\n    return loft([make_face(wo), make_face(wi)], ruled=True)\n\nt=time.time(); t0=tooth_solid(tp_p, ZO_P, 0.0); print(\"one tooth %.2fs vol=%.2f\"%(time.time()-t, t0.volume))",
+      "exit_code": 0,
+      "seconds": 0.10074667600019893,
+      "output": "pinion root/tip radius 26.880/32.496  wheel 42.920/46.664  npts=27\none tooth 0.03s vol=396.22",
+      "image": ""
+    },
+    {
+      "cmd": "import time\nfrom build123d import *\nimport build123d as bd\n\nK_IN = (CONE-FACEW)/CONE               # inner section scale toward the common apex\nZO_P = CONE*math.cos(GAM_P); ZO_W = CONE*math.cos(GAM_W)\nprint(\"K=%.4f  z_outer pinion=%.2f wheel=%.2f\"%(K_IN,ZO_P,ZO_W))\n\ndef tooth_pts(z, gam, r_pitch, npf=10):\n    cg=math.cos(gam); r_pv=r_pitch/cg\n    r_b=r_pv*math.cos(ALPHA); r_a=r_pv+MODULE; r_f=r_pv-1.25*MODULE\n    psi=(math.pi*MODULE/2-BACKLASH/2)/(2*r_pv)     # half tooth angle, thinned by j/2\n    rho_lo=max(r_b,r_f)\n    d=lambda rho:(psi+inv(ALPHA)-inv(math.acos(min(1.0,r_b/rho))))/cg\n    R=lambda rho:r_pitch+(rho-r_pv)*cg\n    half=[]\n    if r_f<r_b-1e-9: half.append((R(r_f),d(rho_lo)))\n    half+=[(R(r),d(r)) for r in np.linspace(rho_lo,r_a,npf)]\n    tip=[(R(r_a),t) for t in np.linspace(d(r_a),-d(r_a),5)[1:-1]]\n    poly=half+tip+[(rr,-dd) for rr,dd in reversed(half)]\n    rc=0.90*R(r_f)\n    return [(rc,poly[0][1])]+poly+[(rc,poly[-1][1])], R(r_f), R(r_a)\n\ntp_p, RF_P, RA_P = tooth_pts(Z_P, GAM_P, R_P)\ntp_w, RF_W, RA_W = tooth_pts(Z_W, GAM_W, R_W)\nprint(\"pinion root/tip radius %.3f/%.3f  wheel %.3f/%.3f  npts=%d\"%(RF_P,RA_P,RF_W,RA_W,len(tp_p)))\n\ndef tooth_solid(poly, z_out, phase):\n    ring=lambda s:[(s*rr*math.cos(dd+phase), s*rr*math.sin(dd+phase), s*z_out) for rr,dd in poly]\n    return loft([make_face(Polyline(*ring(1.0),close=True)), make_face(Polyline(*ring(K_IN),close=True))], ruled=True)\n\nt=time.time(); t0=tooth_solid(tp_p, ZO_P, 0.0); print(\"one tooth %.2fs vol=%.2f mm3\"%(time.time()-t, t0.volume))",
+      "exit_code": 0,
+      "seconds": 0.05065884699979506,
+      "output": "K=0.6672  z_outer pinion=45.00 wheel=30.00\npinion root/tip radius 26.880/32.496  wheel 42.920/46.664  npts=27\none tooth 0.03s vol=396.22 mm3",
+      "image": ""
+    },
+    {
+      "cmd": "# cavity (mm): apex of both pitch cones at origin, pinion axis +z, wheel axis +x\nXL,XH = -50.0,110.0; YL,YH = -70.0,70.0; ZL,ZH = -50.0,70.0\nRS_P, RS_W = 10.0, 14.0            # shaft radii\nSLEEVE, CLR = 12.0, 3.0            # bore sleeve length, shaft-to-bore clearance\n\ndef gear_assembly(poly, z_out, rf, z_teeth, phase0, r_shaft, shaft_to):\n    blank = loft([make_face(Polyline(*[(rf*math.cos(a),rf*math.sin(a),z_out) for a in np.linspace(0,2*math.pi,181)[:-1]],close=True)),\n                  make_face(Polyline(*[(K_IN*rf*math.cos(a),K_IN*rf*math.sin(a),K_IN*z_out) for a in np.linspace(0,2*math.pi,181)[:-1]],close=True))], ruled=True)\n    g = blank\n    for i in range(z_teeth):\n        g = g + tooth_solid(poly, z_out, phase0 + 2*math.pi*i/z_teeth)\n    shaft = Pos(0,0,(z_out-5+shaft_to)/2) * Cylinder(r_shaft, shaft_to-(z_out-5))\n    return g + shaft\n\nt=time.time()\npinion = gear_assembly(tp_p, ZO_P, RF_P, Z_P, 0.0, RS_P, ZH+SLEEVE+5)\nprint(\"pinion %.1fs vol=%.0f mm3 bbox=%s\"%(time.time()-t, pinion.volume, pinion.bounding_box()))\nt=time.time()\nwheel_loc = gear_assembly(tp_w, ZO_W, RF_W, Z_W, math.pi/Z_W, RS_W, (XH+SLEEVE+5))\nwheel = Rot(0,90,0) * wheel_loc\nprint(\"wheel  %.1fs vol=%.0f mm3 bbox=%s\"%(time.time()-t, wheel.volume, wheel.bounding_box()))",
+      "exit_code": 0,
+      "seconds": 26.232853888000136,
+      "output": "pinion 8.3s vol=42265 mm3 bbox=bbox: -32.496150983013536 <= x <= 32.496150983013536, -32.496150983013536 <= y <= 32.496150983013536, 30.0230946019188 <= z <= 87.0\nwheel  17.7s vol=104068 mm3 bbox=bbox: 20.015396367945865 <= x <= 127.0, -46.66410068867569 <= y <= 46.66410068867569, -46.509919351655526 <= z <= 46.50991935165555",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.BRepExtrema import BRepExtrema_DistShapeShape\nt=time.time()\ninter = pinion.intersect(wheel)\nvi = sum(s.volume for s in inter.solids()) if inter is not None else 0.0\nprint(\"intersection volume = %.4f mm3  (%.1fs)\"%(vi, time.time()-t))\nt=time.time()\nd = BRepExtrema_DistShapeShape(pinion.wrapped, wheel.wrapped); d.Perform()\nprint(\"min distance pinion-wheel = %.4f mm  (%.1fs)\"%(d.Value(), time.time()-t))",
+      "exit_code": 0,
+      "seconds": 46.32223416399984,
+      "output": "intersection volume = 24.3379 mm3  (1.8s)\nmin distance pinion-wheel = 0.0000 mm  (44.4s)",
+      "image": ""
+    },
+    {
+      "cmd": "for s in inter.solids():\n    bb=s.bounding_box(); c=s.center()\n    print(\"vol %.3f  centre (%.2f,%.2f,%.2f)  r_from_zaxis %.2f  r_from_xaxis %.2f\"%(\n        s.volume, c.X,c.Y,c.Z, math.hypot(c.X,c.Y), math.hypot(c.Y,c.Z)))",
+      "exit_code": 0,
+      "seconds": 0.050674106999849755,
+      "output": "vol 24.338  centre (26.11,0.00,36.94)  r_from_zaxis 26.11  r_from_xaxis 36.94",
+      "image": ""
+    },
+    {
+      "cmd": "for dd in [-0.4,-0.3,-0.2,-0.1,0.0,0.1,0.2,0.3,0.4]:\n    w = Rot(dd,0,0)*wheel\n    it = pinion.intersect(w)\n    v = sum(s.volume for s in it.solids()) if it is not None else 0.0\n    print(\" delta=%+.2f deg  overlap=%.3f mm3\"%(dd,v))",
+      "exit_code": 0,
+      "seconds": 16.73251098100036,
+      "output": "delta=-0.40 deg  overlap=26.873 mm3\n delta=-0.30 deg  overlap=25.694 mm3\n delta=-0.20 deg  overlap=24.890 mm3\n delta=-0.10 deg  overlap=24.471 mm3\n delta=+0.00 deg  overlap=24.338 mm3\n delta=+0.10 deg  overlap=24.471 mm3\n delta=+0.20 deg  overlap=24.890 mm3\n delta=+0.30 deg  overlap=25.694 mm3\n delta=+0.40 deg  overlap=26.873 mm3",
+      "image": ""
+    },
+    {
+      "cmd": "def tooth_pts_cone(z, gam, r_pitch, npf=10):\n    \"\"\"one tooth polygon (R,delta) at the outer section plane z_out, with the back-cone\n       axial offset folded into R so tip/root cones pass through the common apex.\"\"\"\n    cg=math.cos(gam); sg=math.sin(gam); r_pv=r_pitch/cg; z_out=CONE*cg\n    r_b=r_pv*math.cos(ALPHA); r_a=r_pv+MODULE; r_f=r_pv-1.25*MODULE\n    psi=(math.pi*MODULE/2-BACKLASH/2)/(2*r_pv)\n    rho_lo=max(r_b,r_f)\n    d=lambda rho:(psi+inv(ALPHA)-inv(math.acos(min(1.0,r_b/rho))))/cg\n    R=lambda rho:(r_pitch+(rho-r_pv)*cg)/(1.0-(rho-r_pv)*sg/z_out)\n    half=[]\n    if r_f<r_b-1e-9: half.append((R(r_f),d(rho_lo)))\n    half+=[(R(r),d(r)) for r in np.linspace(rho_lo,r_a,npf)]\n    tip=[(R(r_a),t) for t in np.linspace(d(r_a),-d(r_a),5)[1:-1]]\n    poly=half+tip+[(rr,-dd) for rr,dd in reversed(half)]\n    return [(0.90*R(r_f),poly[0][1])]+poly+[(0.90*R(r_f),poly[-1][1])], R(r_f), R(r_a)\n\ntp_p, RF_P, RA_P = tooth_pts_cone(Z_P, GAM_P, R_P)\ntp_w, RF_W, RA_W = tooth_pts_cone(Z_W, GAM_W, R_W)\nprint(\"outer-section root/tip: pinion %.3f/%.3f  wheel %.3f/%.3f\"%(RF_P,RA_P,RF_W,RA_W))\nt=time.time()\npinion = gear_assembly(tp_p, ZO_P, RF_P, Z_P, 0.0, RS_P, ZH+SLEEVE+5)\nwheel  = Rot(0,90,0) * gear_assembly(tp_w, ZO_W, RF_W, Z_W, math.pi/Z_W, RS_W, XH+SLEEVE+5)\nit = pinion.intersect(wheel); v = sum(s.volume for s in it.solids()) if it is not None else 0.0\nprint(\"rebuild %.1fs  overlap = %.4f mm3\"%(time.time()-t, v))",
+      "exit_code": 0,
+      "seconds": 26.812022545999753,
+      "output": "outer-section root/tip: pinion 25.692/33.744  wheel 38.876/50.899\nrebuild 26.8s  overlap = 0.0000 mm3",
+      "image": ""
+    },
+    {
+      "cmd": "t=time.time(); dss=BRepExtrema_DistShapeShape(pinion.wrapped, wheel.wrapped); dss.Perform()\np1=dss.PointOnShape1(1); p2=dss.PointOnShape2(1)\nprint(\"min gap pinion-wheel = %.4f mm  at (%.2f,%.2f,%.2f)  [%.0fs]\"%(dss.Value(),p1.X(),p1.Y(),p1.Z(),time.time()-t))\nprint(\"target: backlash/2 per flank = %.3f mm ; tip clearance 0.25*m = %.3f mm\"%(BACKLASH/2, 0.25*MODULE))",
+      "exit_code": 0,
+      "seconds": 56.44865622399993,
+      "output": "min gap pinion-wheel = 0.0960 mm  at (20.54,-1.38,30.02)  [56s]\ntarget: backlash/2 per flank = 0.150 mm ; tip clearance 0.25*m = 0.750 mm",
+      "image": ""
+    },
+    {
+      "cmd": "RB_P, RB_W = RS_P+CLR, RS_W+CLR       # bore radii\nbox = Pos((XL+XH)/2,(YL+YH)/2,(ZL+ZH)/2) * Box(XH-XL, YH-YL, ZH-ZL)\nsleeve_p = Pos(0,0,ZH+SLEEVE/2) * Cylinder(RB_P, SLEEVE)\nsleeve_w = Pos(XH+SLEEVE/2,0,0) * Rot(0,90,0) * Cylinder(RB_W, SLEEVE)\ncasing = box + sleeve_p + sleeve_w\nprint(\"casing vol %.0f mm3, faces %d\"%(casing.volume, len(casing.faces())))\n\nplanes = [(\"x\",XL),(\"x\",XH),(\"y\",YL),(\"y\",YH),(\"z\",ZL),(\"z\",ZH)]\ngroups = {\"cavityWalls\":[], \"shaftBorePinion\":[], \"shaftBoreWheel\":[]}\nfor f in casing.faces():\n    c = f.center(); ax = f.normal_at(c) if f.geom_type==GeomType.PLANE else None\n    onbox = any(abs(getattr(c, a.upper())-v)<1e-6 for a,v in planes) and f.geom_type==GeomType.PLANE\n    if onbox: groups[\"cavityWalls\"].append(f)\n    elif c.Z > ZH-1e-6 or (f.geom_type==GeomType.CYLINDER and abs(c.X)<RB_P+1e-6): groups[\"shaftBorePinion\"].append(f)\n    else: groups[\"shaftBoreWheel\"].append(f)\nfor k,v in groups.items():\n    print(k, len(v), [\"%s@(%.1f,%.1f,%.1f) A=%.0f\"%(f.geom_type.name,f.center().X,f.center().Y,f.center().Z,f.area) for f in v])",
+      "exit_code": 0,
+      "seconds": 0.05060195299984116,
+      "output": "casing vol 2705266 mm3, faces 10\ncavityWalls 6 ['PLANE@(-50.0,0.0,10.0) A=16800', 'PLANE@(30.0,-70.0,10.0) A=19200', 'PLANE@(30.7,0.0,70.0) A=21869', 'PLANE@(30.0,70.0,10.0) A=19200', 'PLANE@(30.0,0.0,-50.0) A=22400', 'PLANE@(110.0,-0.0,10.6) A=15892']\nshaftBorePinion 2 ['CYLINDER@(-13.0,0.0,76.0) A=980', 'PLANE@(-0.0,0.0,82.0) A=531']\nshaftBoreWheel 2 ['CYLINDER@(116.0,0.0,17.0) A=1282', 'PLANE@(122.0,-0.0,-0.0) A=908']",
+      "image": ""
+    },
+    {
+      "cmd": "MM = 1e-3\ngroups[\"pinion\"] = pinion.faces(); groups[\"wheel\"] = wheel.faces()\nimport os\nfor name, fs in groups.items():\n    shp = bd.scale(Compound(children=[Face(f.wrapped) for f in fs]), MM)\n    bd.export_stl(shp, f\"constant/triSurface/{name}.stl\", tolerance=2e-5, angular_tolerance=0.25, ascii_format=False)\n    print(name, os.path.getsize(f\"constant/triSurface/{name}.stl\")//1024, \"kB\")\nimport trimesh_check  # noqa  (placeholder guard)",
+      "exit_code": 1,
+      "seconds": 4.52035888599994,
+      "output": "cavityWalls 35 kB\nshaftBorePinion 102 kB\nshaftBoreWheel 102 kB\npinion 11331 kB\nwheel 22378 kB\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mModuleNotFoundError\u001b[39m                       Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[12]\u001b[39m\u001b[32m, line 8\u001b[39m\n\u001b[32m      4\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m name, fs \u001b[38;5;28;01min\u001b[39;00m groups.items():\n\u001b[32m      5\u001b[39m     shp = bd.scale(Compound(children=[Face(f.wrapped) \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m fs]), MM)\n\u001b[32m      6\u001b[39m     bd.export_stl(shp, f\"constant/triSurface/{name}.stl\", tolerance=\u001b[32m2e-5\u001b[39m, angular_tolerance=\u001b[32m0.25\u001b[39m, ascii_format=\u001b[38;5;28;01mFalse\u001b[39;00m)\n\u001b[32m      7\u001b[39m     print(name, os.path.getsize(f\"constant/triSurface/{name}.stl\")//\u001b[32m1024\u001b[39m, \u001b[33m\"kB\"\u001b[39m)\n\u001b[32m----> \u001b[39m\u001b[32m8\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m trimesh_check  \u001b[38;5;66;03m# noqa  (placeholder guard)\u001b[39;00m\n\n\u001b[31mModuleNotFoundError\u001b[39m: No module named 'trimesh_check'",
+      "image": ""
+    },
+    {
+      "cmd": "MM = 1e-3\ngroups[\"pinion\"] = pinion.faces(); groups[\"wheel\"] = wheel.faces()\nfor name, fs in groups.items():\n    shp = bd.scale(Compound(children=[Face(f.wrapped) for f in fs]), MM)\n    bd.export_stl(shp, f\"constant/triSurface/{name}.stl\", tolerance=2e-5, angular_tolerance=0.25, ascii_format=False)\n    print(name, os.path.getsize(f\"constant/triSurface/{name}.stl\")//1024, \"kB\")",
+      "exit_code": 0,
+      "seconds": 4.516417107000052,
+      "output": "cavityWalls 35 kB\nshaftBorePinion 102 kB\nshaftBoreWheel 102 kB\npinion 11331 kB\nwheel 22378 kB",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, textwrap, pathlib\nfor d in [\"system\",\"constant\"]: os.makedirs(d, exist_ok=True)\nhead = lambda cls,obj: f\"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\\n\"\npathlib.Path(\"system/controlDict\").write_text(head(\"dictionary\",\"controlDict\")+\n  \"application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\\n\")\npathlib.Path(\"system/fvSchemes\").write_text(head(\"dictionary\",\"fvSchemes\")+\"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\\n\")\npathlib.Path(\"system/fvSolution\").write_text(head(\"dictionary\",\"fvSolution\")+\"solvers{} \\n\")\n\nBX=(-0.052,0.126); BY=(-0.072,0.072); BZ=(-0.052,0.086)\nn=(36,29,28)\nv=[(BX[i],BY[j],BZ[k]) for i,j,k in [(0,0,0),(1,0,0),(1,1,0),(0,1,0),(0,0,1),(1,0,1),(1,1,1),(0,1,1)]]\npathlib.Path(\"system/blockMeshDict\").write_text(head(\"dictionary\",\"blockMeshDict\")+\"scale 1;\\nvertices (\\n\"+\n  \"\".join(\"(%g %g %g)\\n\"%p for p in v)+f\");\\nblocks (hex (0 1 2 3 4 5 6 7) ({n[0]} {n[1]} {n[2]}) simpleGrading (1 1 1));\\nedges();\\n\"+\n  \"boundary (background {type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3));});\\nmergePatchPairs();\\n\")\nprint(subprocess.run([\"blockMesh\"],capture_output=True,text=True).stdout[-500:])",
+      "exit_code": 0,
+      "seconds": 0.3522663050002848,
+      "output": "ts with scale (1 1 1)\n    Block 0 cell size :\n        i : 0.00494444 .. 0.00494444\n        j : 0.00496552 .. 0.00496552\n        k : 0.00492857 .. 0.00492857\n\nNo patch pairs to merge\n\nWriting polyMesh with 0 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (-0.052 -0.072 -0.052) (0.126 0.072 0.086)\n  nPoints: 32190\n  nCells: 29232\n  nFaces: 90560\n  nInternalFaces: 84832\n----------------\nPatches\n----------------\n  patch 0 (start: 84832 size: 5728) name: background\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "PATCHES = {\"pinion\":(2,2), \"wheel\":(2,2), \"cavityWalls\":(0,0), \"shaftBorePinion\":(2,2), \"shaftBoreWheel\":(2,2)}\ndef snappy(levels, nlayer=0):\n    geo = \"\".join(f'  {p}.stl {{type triSurfaceMesh; name {p};}}\\n' for p in levels)\n    rs  = \"\".join(f'    {p} {{level ({l[0]} {l[1]});}}\\n' for p,l in levels.items())\n    txt = head(\"dictionary\",\"snappyHexMeshDict\")+f\"\"\"\ncastellatedMesh true; snap true; addLayers {\"true\" if nlayer else \"false\"};\ngeometry {{\\n{geo}}}\ncastellatedMeshControls {{\n  maxLocalCells 4000000; maxGlobalCells 12000000; minRefinementCells 10; maxLoadUnbalance 0.1;\n  nCellsBetweenLevels 2; features(); refinementSurfaces {{\\n{rs}  }}\n  resolveFeatureAngle 30; refinementRegions {{}}\n  locationInMesh (-0.030 0.050 0.030); allowFreeStandingZoneFaces false;\n}}\nsnapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 40; nRelaxIter 5;\n  nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}\naddLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.2; finalLayerThickness 0.4; minThickness 0.1;\n  nGrow 0; featureAngle 60; nRelaxIter 5; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;\n  maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}\nmeshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;\n  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;\n  minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}\nmergeTolerance 1e-6; debug 0;\n\"\"\"\n    pathlib.Path(\"system/snappyHexMeshDict\").write_text(txt)\nsnappy(PATCHES)\nt=time.time(); r=subprocess.run([\"snappyHexMesh\",\"-overwrite\"],capture_output=True,text=True)\nprint(\"rc\",r.returncode,\"%.0fs\"%(time.time()-t)); print(r.stdout[-1200:])",
+      "exit_code": 0,
+      "seconds": 4.160810330000004,
+      "output": "rc 1 4s\n: 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nRead mesh in = 0.09 s\n\nOverall mesh bounding box  : (-0.052 -0.072 -0.052) (0.126 0.072 0.086)\nRelative tolerance         : 1e-06\nAbsolute matching distance : 2.67328e-07\n\nReading refinement surfaces.\nRead refinement surfaces in = 0.33 s\n\nReading refinement shells.\nRead refinement shells in = 0 s\n\nSetting refinement level of surface to be consistent with shells.\nFor geometry pinion.stl detected 0 uncached triangles out of 232066\nFor geometry wheel.stl detected 0 uncached triangles out of 458308\nFor geometry cavityWalls.stl detected 0 uncached triangles out of 720\nFor geometry shaftBorePinion.stl detected 0 uncached triangles out of 2107\nFor geometry shaftBoreWheel.stl detected 0 uncached triangles out of 2107\nChecked shell refinement in = 3.5 s\n\nReading features.",
+      "image": ""
+    },
+    {
+      "cmd": "print(r.stderr[-2000:])",
+      "exit_code": 0,
+      "seconds": 0.05057981700019809,
+      "output": "--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'features' not found in dictionary \"system/snappyHexMeshDict/castellatedMeshControls\"\n\n\nfile: system/snappyHexMeshDict/castellatedMeshControls at line 12 to 21.\n\n    From static Foam::ITstream& Foam::meshRefinement::lookup(const Foam::dictionary&, const Foam::word&, bool, Foam::keyType::option)\n    in file meshRefinement/meshRefinement.C at line 3896.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "def snappy(levels, nlayer=0, loc=\"(-0.030 0.050 0.030)\"):\n    geo = \"\".join(f'  {p}.stl {{type triSurfaceMesh; name {p};}}\\n' for p in levels)\n    rs  = \"\".join(f'    {p} {{level ({l[0]} {l[1]});}}\\n' for p,l in levels.items())\n    lay = \"\".join(f'    {p} {{nSurfaceLayers {nlayer};}}\\n' for p in levels) if nlayer else \"\"\n    txt = head(\"dictionary\",\"snappyHexMeshDict\")+f\"\"\"\ncastellatedMesh true; snap true; addLayers {\"true\" if nlayer else \"false\"};\ngeometry {{\\n{geo}}}\ncastellatedMeshControls {{\n  maxLocalCells 4000000; maxGlobalCells 12000000; minRefinementCells 10; maxLoadUnbalance 0.1;\n  nCellsBetweenLevels 2;\n  features ( );\n  refinementSurfaces {{\\n{rs}  }}\n  resolveFeatureAngle 30;\n  refinementRegions {{ }}\n  locationInMesh {loc};\n  allowFreeStandingZoneFaces false;\n}}\nsnapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 40; nRelaxIter 5;\n  nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}\naddLayersControls {{ relativeSizes true; layers {{\\n{lay}  }} expansionRatio 1.2; finalLayerThickness 0.4; minThickness 0.1;\n  nGrow 0; featureAngle 60; nRelaxIter 5; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;\n  maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}\nmeshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;\n  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;\n  minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}\nmergeTolerance 1e-6; debug 0;\n\"\"\"\n    pathlib.Path(\"system/snappyHexMeshDict\").write_text(txt)\nsnappy(PATCHES)\nt=time.time(); r=subprocess.run([\"snappyHexMesh\",\"-overwrite\"],capture_output=True,text=True)\nprint(\"rc\",r.returncode,\"%.0fs\"%(time.time()-t)); print(r.stdout[-700:]); print(r.stderr[-600:])",
+      "exit_code": 0,
+      "seconds": 36.19554844200002,
+      "output": "rc 0 36s\n= 22.38 s.\nChecking final mesh ...\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.02        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nFinished meshing without any errors\nFinished meshing in = 35.87 s.\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "cm=subprocess.run([\"checkMesh\"],capture_output=True,text=True).stdout\nprint(\"\\n\".join(l for l in cm.splitlines() if any(k in l for k in [\"cells\",\"patch\",\"Patch\",\"points:\",\"Mesh OK\",\"***\",\"faces \"])[:0] or True and any(k in l for k in [\"cells:\",\"points:\",\"Mesh OK\",\"***\",\"pinion\",\"wheel\",\"cavityWalls\",\"shaftBore\",\"Overall number\"])))",
+      "exit_code": 1,
+      "seconds": 0.8024610329998723,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[18]\u001b[39m\u001b[32m, line 2\u001b[39m\n\u001b[32m      1\u001b[39m cm=subprocess.run([\u001b[33m\"checkMesh\"\u001b[39m],capture_output=\u001b[38;5;28;01mTrue\u001b[39;00m,text=\u001b[38;5;28;01mTrue\u001b[39;00m).stdout\n\u001b[32m----> \u001b[39m\u001b[32m2\u001b[39m print(\u001b[33m\"\\n\"\u001b[39m.join(l \u001b[38;5;28;01mfor\u001b[39;00m l \u001b[38;5;28;01min\u001b[39;00m cm.splitlines() \u001b[38;5;28;01mif\u001b[39;00m any(k \u001b[38;5;28;01min\u001b[39;00m l \u001b[38;5;28;01mfor\u001b[39;00m k \u001b[38;5;28;01min\u001b[39;00m [\u001b[33m\"cells\"\u001b[39m,\u001b[33m\"patch\"\u001b[39m,\u001b[33m\"Patch\"\u001b[39m,\u001b[33m\"points:\"\u001b[39m,\u001b[33m\"Mesh OK\"\u001b[39m,\u001b[33m\"***\"\u001b[39m,\u001b[33m\"faces \"\u001b[39m])[:\u001b[32m0\u001b[39m] \u001b[38;5;28;01mor\u001b[39;00m \u001b[38;5;28;01mTrue\u001b[39;00m \u001b[38;5;28;01mand\u001b[39;00m any(k \u001b[38;5;28;01min\u001b[39;00m l \u001b[38;5;28;01mfor\u001b[39;00m k \u001b[38;5;28;01min\u001b[39;00m [\u001b[33m\"cells:\"\u001b[39m,\u001b[33m\"points:\"\u001b[39m,\u001b[33m\"Mesh OK\"\u001b[39m,\u001b[33m\"***\"\u001b[39m,\u001b[33m\"pinion\"\u001b[39m,\u001b[33m\"wheel\"\u001b[39m,\u001b[33m\"cavityWalls\"\u001b[39m,\u001b[33m\"shaftBore\"\u001b[39m,\u001b[33m\"Overall number\"\u001b[39m])))\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[18]\u001b[39m\u001b[32m, line 2\u001b[39m, in \u001b[36m<genexpr>\u001b[39m\u001b[34m(.0)\u001b[39m\n\u001b[32m----> \u001b[39m\u001b[32m2\u001b[39m print(\u001b[33m\"\\n\"\u001b[39m.join(l \u001b[38;5;28;01mfor\u001b[39;00m l \u001b[38;5;28;01min\u001b[39;00m cm.splitlines() \u001b[38;5;28;01mif\u001b[39;00m any(k \u001b[38;5;28;01min\u001b[39;00m l \u001b[38;5;28;01mfor\u001b[39;00m k \u001b[38;5;28;01min\u001b[39;00m [\u001b[33m\"cells\"\u001b[39m,\u001b[33m\"patch\"\u001b[39m,\u001b[33m\"Patch\"\u001b[39m,\u001b[33m\"points:\"\u001b[39m,\u001b[33m\"Mesh OK\"\u001b[39m,\u001b[33m\"***\"\u001b[39m,\u001b[33m\"faces \"\u001b[39m])[:\u001b[32m0\u001b[39m] \u001b[38;5;28;01mor\u001b[39;00m \u001b[38;5;28;01mTrue\u001b[39;00m \u001b[38;5;28;01mand\u001b[39;00m any(k \u001b[38;5;28;01min\u001b[39;00m l \u001b[38;5;28;01mfor\u001b[39;00m k \u001b[38;5;28;01min\u001b[39;00m [\u001b[33m\"cells:\"\u001b[39m,\u001b[33m\"points:\"\u001b[39m,\u001b[33m\"Mesh OK\"\u001b[39m,\u001b[33m\"***\"\u001b[39m,\u001b[33m\"pinion\"\u001b[39m,\u001b[33m\"wheel\"\u001b[39m,\u001b[33m\"cavityWalls\"\u001b[39m,\u001b[33m\"shaftBore\"\u001b[39m,\u001b[33m\"Overall number\"\u001b[39m])))\n\n\u001b[31mTypeError\u001b[39m: 'bool' object is not subscriptable",
+      "image": ""
+    },
+    {
+      "cmd": "keys=[\"cells:\",\"points:\",\"Mesh OK\",\"***\",\"pinion\",\"wheel\",\"cavityWalls\",\"shaftBore\",\"Overall number\"]\nprint(\"\\n\".join(l for l in cm.splitlines() if any(k in l for k in keys)))",
+      "exit_code": 0,
+      "seconds": 0.05062185499991756,
+      "output": "points:           123711\n    cells:            95743\nOverall number of cells of each type:\n                  pinion     6903     7587  ok (non-closed singly connected)\n                   wheel    15172    16297  ok (non-closed singly connected)\n             cavityWalls     6115     6420  ok (non-closed singly connected)\n         shaftBorePinion      676      740  ok (non-closed singly connected)\n          shaftBoreWheel      958     1035  ok (non-closed singly connected)\n ***Max skewness = 5.64719, 20 highly skew faces detected which may impair the quality of the results",
+      "image": ""
+    },
+    {
+      "cmd": "cm=subprocess.run([\"checkMesh\"],capture_output=True,text=True).stdout\nkeys=[\"cells:\",\"points:\",\"Mesh OK\",\"***\",\"pinion \",\"wheel \",\"cavityWalls\",\"shaftBore\"]\nprint(\"\\n\".join(l for l in cm.splitlines() if any(k in l for k in keys)))",
+      "exit_code": 0,
+      "seconds": 0.802596782999899,
+      "output": "points:           123711\n    cells:            95743\n                  pinion     6903     7587  ok (non-closed singly connected)\n                   wheel    15172    16297  ok (non-closed singly connected)\n             cavityWalls     6115     6420  ok (non-closed singly connected)\n         shaftBorePinion      676      740  ok (non-closed singly connected)\n          shaftBoreWheel      958     1035  ok (non-closed singly connected)\n ***Max skewness = 5.64719, 20 highly skew faces detected which may impair the quality of the results",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.start_xvfb() if hasattr(pv,'start_xvfb') else None\npathlib.Path(\"case.foam\").write_text(\"\")\nrd = pv.OpenFOAMReader(\"case.foam\"); rd.set_active_time_value(0.0)\nm = rd.read(); bnd = m[\"boundary\"]\npl = pv.Plotter(off_screen=True, window_size=(1100,500), shape=(1,2))\ncols={\"pinion\":\"orange\",\"wheel\":\"steelblue\",\"cavityWalls\":\"lightgrey\",\"shaftBorePinion\":\"red\",\"shaftBoreWheel\":\"green\"}\npl.subplot(0,0)\nfor k,c in cols.items():\n    if k!=\"cavityWalls\": pl.add_mesh(bnd[k], color=c, show_edges=True, line_width=0.3)\npl.camera_position=[(0.25,-0.25,0.20),(0.03,0,0.01),(0,0,1)]\npl.subplot(0,1)\nclip = m.combine().clip(normal=(0,1,0), origin=(0,0.0005,0))\npl.add_mesh(clip, color=\"wheat\", show_edges=True, line_width=0.2)\npl.camera_position=[(0.03,-0.35,0.03),(0.03,0,0.01),(0,0,1)]\npl.screenshot(\"look1.png\"); print(\"ok\")",
+      "exit_code": 0,
+      "seconds": 1.203569735000201,
+      "output": "ok\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-13 13:13:49.460 (   0.547s) [    7EA075279780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 13:13:49.461 (   0.548s) [    7EA075279780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 13:13:49.475 (   0.561s) [    7EA075279780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-13 13:13:49.703 (   0.789s) [    7EA075279780]vtkTableBasedClipDataSe:1410  WARN| vtkTableBasedClipDataSet (0x61ab143a08d0): Output points used by cells not supported by vtkTableBasedClipDataSet will appear twice. To avoid this, consider using vtkClipDataSet directly\u001b[0m",
+      "image": ""
+    },
+    {
+      "cmd": "from IPython.display import Image, display\ndisplay(Image(\"look1.png\"))",
+      "exit_code": 0,
+      "seconds": 0.12547765900035301,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "snappy({\"pinion\":(3,3),\"wheel\":(3,3),\"cavityWalls\":(0,0),\"shaftBorePinion\":(2,3),\"shaftBoreWheel\":(2,3)})\nsubprocess.run([\"blockMesh\"],capture_output=True,text=True)\nlog=open(\"log.snappy\",\"w\")\nproc=subprocess.Popen([\"snappyHexMesh\",\"-overwrite\"],stdout=log,stderr=subprocess.STDOUT)\ntime.sleep(120); print(\"running\" if proc.poll() is None else \"done rc=%s\"%proc.returncode)\nprint(subprocess.run([\"tail\",\"-5\",\"log.snappy\"],capture_output=True,text=True).stdout)",
+      "exit_code": 0,
+      "seconds": 120.34960245000002,
+      "output": "running\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.02        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 33\n    faces on cells with determinant < 0.001                : 0",
+      "image": ""
+    },
+    {
+      "cmd": "time.sleep(150); print(\"running\" if proc.poll() is None else \"done rc=%s\"%proc.returncode)\nprint(subprocess.run([\"tail\",\"-12\",\"log.snappy\"],capture_output=True,text=True).stdout)",
+      "exit_code": 0,
+      "seconds": 150.07409840499986,
+      "output": "done rc=0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.02        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nFinished meshing without any errors\nFinished meshing in = 135.78 s.\nEnd",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 13071,
+      "fenced": false,
+      "text_chars": 2776,
+      "thinking_chars": 12503,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304692.7581413
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 1290,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 53,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304704.3694289
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 1096,
+      "fenced": true,
+      "text_chars": 170,
+      "thinking_chars": 659,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304720.6028445
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 2106,
+      "fenced": true,
+      "text_chars": 160,
+      "thinking_chars": 1100,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304756.7602594
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 1106,
+      "fenced": true,
+      "text_chars": 133,
+      "thinking_chars": 174,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304768.4098113
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 1784,
+      "fenced": true,
+      "text_chars": 154,
+      "thinking_chars": 1279,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304791.3783562
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 384,
+      "fenced": true,
+      "text_chars": 104,
+      "thinking_chars": 205,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304823.3951252
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 714,
+      "fenced": true,
+      "text_chars": 83,
+      "thinking_chars": 1046,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304881.5135868
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 1051,
+      "fenced": true,
+      "text_chars": 144,
+      "thinking_chars": 1345,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304896.660104
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 3860,
+      "fenced": true,
+      "text_chars": 238,
+      "thinking_chars": 3103,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304964.93595
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 476,
+      "fenced": true,
+      "text_chars": 100,
+      "thinking_chars": 368,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789304999.2223551
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 1695,
+      "fenced": true,
+      "text_chars": 129,
+      "thinking_chars": 890,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305078.1083906
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 1174,
+      "fenced": true,
+      "text_chars": 106,
+      "thinking_chars": 903,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305096.830239
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 364,
+      "fenced": true,
+      "text_chars": 104,
+      "thinking_chars": 234,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305106.5677292
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 1472,
+      "fenced": true,
+      "text_chars": 71,
+      "thinking_chars": 902,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305131.391147
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 1125,
+      "fenced": true,
+      "text_chars": 58,
+      "thinking_chars": 69,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305147.9231977
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 92,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 179,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305155.0333369
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 1181,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 224,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305168.8560457
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 249,
+      "fenced": true,
+      "text_chars": 75,
+      "thinking_chars": 106,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305209.2527628
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 127,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305212.413886
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 378,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 540,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305219.5268862
+    },
+    {
+      "turn": 22,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 616,
+      "fenced": true,
+      "text_chars": 85,
+      "thinking_chars": 235,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305228.8573363
+    },
+    {
+      "turn": 23,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 127,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 130,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305233.9524312
+    },
+    {
+      "turn": 24,
+      "steps": 22,
+      "stop_reason": "tool_use",
+      "output_tokens": 950,
+      "fenced": true,
+      "text_chars": 194,
+      "thinking_chars": 928,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305248.275116
+    },
+    {
+      "turn": 25,
+      "steps": 23,
+      "stop_reason": "tool_use",
+      "output_tokens": 124,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789305371.987496
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "measured",
+      "why": "the meshing point from system/snappyHexMeshDict is inside the exported surface, 0.02 m clear",
+      "measured": {
+        "point": [
+          -0.03,
+          0.05,
+          0.03
+        ],
+        "source": "system/snappyHexMeshDict",
+        "classification": "inside",
+        "clearance_m": 0.02000000029802322
+      }
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "over 400,000 triangles, edges not counted here",
+      "measured": {
+        "triangles": 695308,
+        "computed": false,
+        "note": "over 400,000 triangles, edges not counted here"
+      }
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "over 400,000 triangles, edges not counted here",
+      "measured": {
+        "triangles": 695308,
+        "computed": false,
+        "note": "over 400,000 triangles, edges not counted here"
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "the case states no dimension, and this probe is measured against the request -- which means the request must state one",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "695,308 triangles is over the sweep's limit of 200,000",
+      "measured": {
+        "triangles": 695308
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the backlash at the pitch line, measured between the two meshed gear patches, at the engaged tooth pair",
+      "measured": null
+    },
+    {
+      "property": "the tip-to-root clearance on both gears, measured the same way",
+      "measured": null
+    },
+    {
+      "property": "the tooth count on each gear, counted on the meshed patch rather than taken from the input",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "the oil volume, against the cavity volume minus both gear volumes",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 25,
+    "steps": 23,
+    "seconds": 1020.1,
+    "killed": false,
+    "first_mesh_step": 13,
+    "first_mesh_turn": 15
+  }
+}

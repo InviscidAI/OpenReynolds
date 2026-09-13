@@ -1,0 +1,386 @@
+# -- cell 1 (0.3s, exit 0)
+import os, subprocess
+for d in ["system","constant/triSurface","0"]:
+    os.makedirs(d, exist_ok=True)
+
+# --- parameters (metres) ---
+LX, LY, LZ = 0.100, 0.060, 0.040        # cavity 100 x 60 x 40 mm
+CUBE = 0.020                            # 20 mm cube zones
+GAP  = 0.004                            # standoff from floor / ceiling
+HEAT_ORIGIN = (0.010, (LY-CUBE)/2, GAP)                   # near floor, x-low end
+COOL_ORIGIN = (LX-0.010-CUBE, (LY-CUBE)/2, LZ-GAP-CUBE)   # near ceiling, x-high end
+CELL = 0.004                            # coarse: 4 mm cells
+nx, ny, nz = int(round(LX/CELL)), int(round(LY/CELL)), int(round(LZ/CELL))
+print(nx, ny, nz, nx*ny*nz, HEAT_ORIGIN, COOL_ORIGIN)
+
+head = "FoamFile\n{ version 2.0; format ascii; class dictionary; object %s; }\n"
+bm = head % "blockMeshDict" + f"""
+scale 1;
+vertices
+(
+ (0 0 0) ({LX} 0 0) ({LX} {LY} 0) (0 {LY} 0)
+ (0 0 {LZ}) ({LX} 0 {LZ}) ({LX} {LY} {LZ}) (0 {LY} {LZ})
+);
+blocks ( hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1) );
+edges ();
+boundary
+(
+    walls
+    {{
+        type wall;
+        faces
+        (
+            (0 4 7 3) (1 2 6 5) (0 1 5 4) (3 7 6 2) (0 3 2 1) (4 5 6 7)
+        );
+    }}
+);
+mergePatchPairs ();
+"""
+open("system/blockMeshDict","w").write(bm)
+
+ctrl = head % "controlDict" + """
+application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1;
+"""
+open("system/controlDict","w").write(ctrl)
+open("system/fvSchemes","w").write(head % "fvSchemes" + "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(head % "fvSolution" + "solvers{}\n")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stdout[-800:], r.stderr[-500:])
+# -- output
+25 15 10 3750 (0.01, 0.019999999999999997, 0.004) (0.07, 0.019999999999999997, 0.016000000000000004)
+k topology
+
+	Basic statistics
+		Number of internal faces : 0
+		Number of boundary faces : 6
+		Number of defined boundary faces : 6
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.004 .. 0.004
+        j : 0.004 .. 0.004
+        k : 0.004 .. 0.004
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 0) (0.1 0.06 0.04)
+  nPoints: 4576
+  nCells: 3750
+  nFaces: 12025
+  nInternalFaces: 10475
+----------------
+Patches
+----------------
+  patch 0 (start: 10475 size: 1550) name: walls
+
+End
+
+# -- cell 2 (0.2s, exit 0)
+END_GAP = 0.012   # standoff from the end wall, multiple of the cell size
+HEAT_ORIGIN = (END_GAP, (LY-CUBE)/2, GAP)                  # near floor, x-low end
+COOL_ORIGIN = (LX-END_GAP-CUBE, (LY-CUBE)/2, LZ-GAP-CUBE)  # near ceiling, x-high end
+
+def zone(name, o):
+    mx, my, mz = o[0]+CUBE, o[1]+CUBE, o[2]+CUBE
+    return f"""
+    {{ name {name}Cells; type cellSet; action new; source boxToCell;
+       box ({o[0]} {o[1]} {o[2]}) ({mx} {my} {mz}); }}
+    {{ name {name};      type cellZoneSet; action new; source setToCellZone; set {name}Cells; }}
+"""
+ts = "FoamFile\n{ version 2.0; format ascii; class dictionary; object topoSetDict; }\nactions (" \
+     + zone("heater", HEAT_ORIGIN) + zone("cooler", COOL_ORIGIN) + ");\n"
+open("system/topoSetDict","w").write(ts)
+print(HEAT_ORIGIN, COOL_ORIGIN)
+r = subprocess.run(["topoSet"], capture_output=True, text=True)
+print(r.stdout[-900:], r.stderr[-300:])
+# -- output
+(0.012, 0.019999999999999997, 0.004) (0.068, 0.019999999999999997, 0.016000000000000004)
+ystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet heaterCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.012 0.02 0.004) (0.032 0.04 0.024))
+    cellSet heaterCells now size 125
+Created cellZoneSet heater
+    Applying source setToCellZone
+    Adding all cells from cell set: heaterCells ...
+    cellZoneSet heater now size 125
+Created cellSet coolerCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.068 0.02 0.016) (0.088 0.04 0.036))
+    cellSet coolerCells now size 125
+Created cellZoneSet cooler
+    Applying source setToCellZone
+    Adding all cells from cell set: coolerCells ...
+    cellZoneSet cooler now size 125
+
+End
+
+# -- cell 3 (0.6s, exit 0)
+import pyvista as pv, numpy as np
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+open("t7.foam","w").write("")
+m = pv.OpenFOAMReader("t7.foam"); m.set_active_time_value(0)
+mesh = m.read()["internalMesh"]
+cz = {}
+for nm, o in [("heater",HEAT_ORIGIN),("cooler",COOL_ORIGIN)]:
+    c = mesh.cell_centers().points
+    sel = np.all((c>=np.array(o)-1e-9)&(c<=np.array(o)+CUBE+1e-9),axis=1)
+    cz[nm] = mesh.extract_cells(sel)
+    b = cz[nm].bounds
+    print(nm, "ncells", cz[nm].n_cells, "bounds mm", [round(v*1000,3) for v in b])
+p = pv.Plotter(off_screen=True)
+p.add_mesh(mesh, style="wireframe", color="lightgray", opacity=0.3)
+p.add_mesh(cz["heater"], color="red"); p.add_mesh(cz["cooler"], color="blue")
+p.show_bounds(); p.camera_position="iso"; p.screenshot("zones.png")
+# -- output
+heater ncells 125 bounds mm [12.0, 32.0, 20.0, 40.0, 4.0, 24.0]
+cooler ncells 125 bounds mm [68.0, 88.0, 20.0, 40.0, 16.0, 36.0]
+array([[[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       ...,
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]]], shape=(768, 1024, 3), dtype=uint8)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 14:06:40.927 (   0.279s) [    7714CAC7A780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 14:06:40.927 (   0.280s) [    7714CAC7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 14:06:40.940 (   0.292s) [    7714CAC7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 4 (0.2s, exit 0)
+import matplotlib; matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig = plt.figure(figsize=(11,4))
+def box(ax,o,s,**kw):
+    import itertools
+    o=np.array(o); s=np.array(s)
+    for i in range(3):
+        for a,b in itertools.product([0,1],[0,1]):
+            p=[o.copy(),o.copy()]; p[1][i]+=s[i]
+            j,k=[d for d in range(3) if d!=i]
+            for q in p: q[j]+=a*s[j]; q[k]+=b*s[k]
+            ax.plot(*zip(*[q*1000 for q in p]),**kw)
+ax=fig.add_subplot(121,projection="3d")
+box(ax,(0,0,0),(LX,LY,LZ),color="k",lw=0.6)
+box(ax,HEAT_ORIGIN,(CUBE,)*3,color="r",lw=1.5); box(ax,COOL_ORIGIN,(CUBE,)*3,color="b",lw=1.5)
+ax.set_box_aspect((LX,LY,LZ)); ax.set_xlabel("x mm"); ax.set_ylabel("y mm"); ax.set_zlabel("z mm")
+ax2=fig.add_subplot(122)
+c=mesh.cell_centers().points*1000
+ax2.plot([0,100,100,0,0],[0,0,40,40,0],"k")
+for nm,col in [("heater","r"),("cooler","b")]:
+    pts=cz[nm].cell_centers().points*1000; ax2.scatter(pts[:,0],pts[:,2],c=col,s=6)
+ax2.set_aspect("equal"); ax2.set_xlabel("x mm"); ax2.set_ylabel("z mm"); ax2.set_title("side view: heater(red)/cooler(blue)")
+plt.tight_layout(); plt.show()
+# -- output
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 5 (0.3s, exit 0)
+from IPython.display import display
+display(fig)
+# -- output
+
+
+# -- cell 6 (0.9s, exit 0)
+CELL_FINE = 0.002
+nx, ny, nz = int(round(LX/CELL_FINE)), int(round(LY/CELL_FINE)), int(round(LZ/CELL_FINE))
+bm_f = bm.replace(f"({25} {15} {10})", f"({nx} {ny} {nz})")
+assert f"({nx} {ny} {nz})" in bm_f
+open("system/blockMeshDict","w").write(bm_f)
+for cmd in (["blockMesh"],["topoSet"],["checkMesh"]):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    print("====",cmd[0], r.returncode); print(r.stdout[-1200:])
+# -- output
+==== blockMesh 0
+wing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 0
+		Number of boundary faces : 6
+		Number of defined boundary faces : 6
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+Deleting polyMesh directory "constant/polyMesh"
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.002 .. 0.002
+        j : 0.002 .. 0.002
+        k : 0.002 .. 0.002
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 0) (0.1 0.06 0.04)
+  nPoints: 33201
+  nCells: 30000
+  nFaces: 93100
+  nInternalFaces: 86900
+----------------
+Patches
+----------------
+  patch 0 (start: 86900 size: 6200) name: walls
+
+End
+
+
+==== topoSet 0
+ynolds-buildup/work/T7-20260913-140548-cf3f/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet heaterCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.012 0.02 0.004) (0.032 0.04 0.024))
+    cellSet heaterCells now size 1000
+Created cellZoneSet heater
+    Applying source setToCellZone
+    Adding all cells from cell set: heaterCells ...
+    cellZoneSet heater now size 1000
+Created cellSet coolerCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.068 0.02 0.016) (0.088 0.04 0.036))
+    cellSet coolerCells now size 1000
+Created cellZoneSet cooler
+    Applying source setToCellZone
+    Adding all cells from cell set: coolerCells ...
+    cellZoneSet cooler now size 1000
+
+End
+
+
+==== checkMesh 0
+closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    heater              1000         1331         8e-06        (0.012 0.02 0.004) (0.032 0.04 0.024)
+    cooler              1000         1331         8e-06        (0.068 0.02 0.016) (0.088 0.04 0.036)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.1 0.06 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (9.01339e-17 -9.94581e-17 -8.37811e-17) OK.
+    Max cell openness = 1.05879e-16 OK.
+    Max aspect ratio = 1 OK.
+    Minimum face area = 4e-06. Maximum face area = 4e-06.  Face area magnitudes OK.
+    Min volume = 8e-09. Max volume = 8e-09.  Total volume = 0.00024.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 4.83904e-14 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+

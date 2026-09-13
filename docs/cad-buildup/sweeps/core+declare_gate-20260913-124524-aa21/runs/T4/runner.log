@@ -1,0 +1,5 @@
+T4: run 20260913-135626-2068
+  workspace /home/qiuzi/.openreynolds-buildup/work/T4-20260913-135626-2068 clean (0 entries, 39 house names, no toolbox)
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+declare_gate-20260913-124524-aa21/runs/T4
+  done in 178.4s, 15 cells, $0.57, checkMesh ok, passed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+declare_gate-20260913-124524-aa21/runs/T4 --case /home/qiuzi/.openreynolds-buildup/work/T4-20260913-135626-2068/t4
