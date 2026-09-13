@@ -345,3 +345,123 @@ def test_a_declare_does_not_advance_the_step_count(backend, store):
     result = made.run("a duct")
     assert result.steps == [], "a declare runs no cell, so it advances no step"
     assert len(made._declares) >= 2, "and it was asked again rather than ended"
+
+
+# -- the advisory has to actually reach the desk ---------------------------------
+
+
+def test_a_passing_checkmesh_does_not_swallow_the_advisory(backend, store, monkeypatch):
+    """The bug this addition shipped with, and the reason it is pinned here.
+
+    The first `core+declare_gate` sweep drew real warnings on four cases -- 63, 1,096,
+    2,177 and **4,257** free edges -- recorded every one of them, and delivered none,
+    because the loop broke on `check.ok` before the advisory was handed back. That is the
+    same failure the addition exists to close (`union_closure` measured T26's 259 free
+    edges and nothing told the desk), rebuilt one layer up.
+
+    So: a clean `checkMesh` with an unaddressed warning must not end the run.
+    """
+    from openreynolds.buildup import core
+
+    warned = [{"id": "union_closure", "state": "measured",
+               "measured": {"open_edges": 4257, "triangles": 148365}}]
+    monkeypatch.setattr(core.probes, "run_all", lambda case, spec: [
+        core.probes.ProbeResult(w["id"], w["state"], "", w["measured"]) for w in warned])
+
+    made = _desk(backend, store, [Declare({"outcome": "complete"})])
+    result = made.run("a manifold")
+
+    from test_cad_agent import said
+    everything = "\n".join(said(made.provider, i) for i in range(len(made.provider.calls)))
+    assert "4,257 free edges" in everything, "the desk was never shown the warning"
+    assert "does not close" in everything
+    assert len(made._declares) > 1, "the first declare did not end the run"
+    assert not result.ok, "and a warning nobody fixed or waived is not a finish"
+    assert result.stopped == "steps", (
+        "bounded by the ordinary turn budget, with no special case for declares")
+
+
+def test_an_unresolved_warning_is_returned_exactly_as_a_failing_checkmesh_is(
+        backend, store, monkeypatch):
+    """One rule: a declare is accepted or it comes back. No once-only allowance.
+
+    The earlier version of this held the finish for one turn per check and then let the
+    run through, which meant a desk could ship past a warning by declaring twice and
+    saying nothing. That made the waiver decorative. Now the only ways past are to fix it
+    or to say why it is correct, and **declaring again unchanged is not one of them**.
+
+    Nothing new bounds the loop, because nothing needs to: `turns >= max_steps` counts
+    every model turn including declares, and the `no-progress` alarm fires at `K = 3`
+    before that -- which is exactly what already bounds a desk that keeps declaring over
+    a `checkMesh` it will not fix."""
+    from openreynolds.buildup import core
+
+    monkeypatch.setattr(core.probes, "run_all", lambda case, spec: [
+        core.probes.ProbeResult("union_closure", "measured", "",
+                                {"open_edges": 9, "triangles": 100})])
+    made = _desk(backend, store, [Declare({"outcome": "complete"})])
+    result = made.run("a duct")
+
+    assert not result.ok, "an unresolved warning is not a finish, however many declares"
+    assert len(made._declares) >= 3, "it kept coming back rather than letting one through"
+    assert {d["states"][0]["state"] for d in made._declares} == {"warned"}
+
+
+def test_waiving_a_returned_warning_is_what_gets_past_it(backend, store, monkeypatch):
+    """And the waiver is load-bearing, which is the point of the rule above."""
+    from openreynolds.buildup import core
+
+    monkeypatch.setattr(core.probes, "run_all", lambda case, spec: [
+        core.probes.ProbeResult("union_closure", "measured", "",
+                                {"open_edges": 9, "triangles": 100})])
+    made = _desk(backend, store, [
+        Declare({"outcome": "complete"}),
+        Declare({"outcome": "complete",
+                 "waive": [{"check": "union_closure", "because": "baffle, open by design"}]})])
+    result = made.run("a duct")
+
+    assert result.ok
+    assert [d["states"][0]["state"] for d in made._declares] == ["warned", "waived"], (
+        "named after it fired, so it is a reaction and recorded as one")
+
+
+def test_the_desk_is_told_what_union_closure_actually_measures(backend, store, monkeypatch):
+    """Three of three predictions in the first sweep failed on one misconception.
+
+    T13 and T14 both predicted `union_closure` would flag because each patch STL is
+    individually an open surface -- true of the geometry, and not what the probe measures,
+    since it welds the union first. The probe's own docstring says so and nothing said it
+    to the desk."""
+    from openreynolds.buildup import core
+
+    monkeypatch.setattr(core.probes, "run_all", lambda case, spec: [
+        core.probes.ProbeResult("union_closure", "measured", "",
+                                {"open_edges": 9, "triangles": 100})])
+    made = _desk(backend, store, [Declare({"outcome": "complete"})])
+    made.run("a duct")
+
+    from test_cad_agent import said
+    everything = "\n".join(said(made.provider, i)
+                           for i in range(len(made.provider.calls)))
+    assert "welds every STL" in everything
+    assert "open by construction" in everything
+
+    assert "welds every STL" in core.CORE_SYSTEM
+    from openreynolds.cad.agent import DECLARE_TOOL
+    assert "welds every STL" in DECLARE_TOOL["description"]
+
+
+def test_a_predicted_warning_does_not_hold_the_finish(backend, store, monkeypatch):
+    """An `xfail` is the desk saying it already knows. It should cost nothing."""
+    from openreynolds.buildup import core
+
+    monkeypatch.setattr(core.probes, "run_all", lambda case, spec: [
+        core.probes.ProbeResult("union_closure", "measured", "",
+                                {"open_edges": 9, "triangles": 100})])
+    made = _desk(backend, store, [Declare({
+        "outcome": "complete",
+        "waive": [{"check": "union_closure", "because": "zero-thickness baffle"}]})])
+    result = made.run("a duct")
+    assert result.ok
+    assert len(made._declares) == 1, "a prediction finishes in one declare"
+    assert made._declares[0]["states"][0]["state"] == gate.XFAIL

@@ -1,0 +1,650 @@
+# -- cell 1 (2.3s, exit 1)
+import os, math
+from build123d import *
+
+mm = 1e-3
+W   = 10*mm      # passage width
+L   = 120*mm     # leg length
+Rc  = 15*mm      # centreline bend radius
+Ri, Ro = Rc-W/2, Rc+W/2
+TH  = 1*mm       # 2D extrusion thickness
+
+p_outer = Polyline((0,-W/2),(L,-W/2))
+arc_o   = CenterArc((L,Rc), Ro, -90, 180)
+p_top   = Polyline((L, Rc+Ro),(0, Rc+Ro))
+p_in    = Polyline((0, Rc+Ri),(L, Rc+Ri))
+arc_i   = CenterArc((L,Rc), Ri, 90, -180)
+p_bot   = Polyline((L, W/2),(0, W/2))
+outlet  = Polyline((0, Rc+Ro),(0, Rc+Ri))
+inlet   = Polyline((0, W/2),(0,-W/2))
+wire = Wire([*p_outer.edges(),*arc_o.edges(),*p_top.edges(),outlet.edges()[0],
+             *p_in.edges(),*arc_i.edges(),*p_bot.edges(),inlet.edges()[0]])
+face = Face(wire)
+bb = face.bounding_box()
+print("closed:", wire.is_closed(), "area mm^2:", face.area/mm**2)
+print("bbox mm:", [round(v/mm,3) for v in (bb.min.X,bb.max.X,bb.min.Y,bb.max.Y)])
+print("expected area mm^2:", 2*120*10 + math.pi*15*10)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 23[39m
+[32m     19[39m wire = Wire([*p_outer.edges(),*arc_o.edges(),*p_top.edges(),outlet.edges()[0],
+[32m     20[39m              *p_in.edges(),*arc_i.edges(),*p_bot.edges(),inlet.edges()[[32m0[39m]])
+[32m     21[39m face = Face(wire)
+[32m     22[39m bb = face.bounding_box()
+[32m---> [39m[32m23[39m print([33m"closed:"[39m, wire.is_closed(), [33m"area mm^2:"[39m, face.area/mm**[32m2[39m)
+[32m     24[39m print([33m"bbox mm:"[39m, [round(v/mm,[32m3[39m) [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m (bb.min.X,bb.max.X,bb.min.Y,bb.max.Y)])
+[32m     25[39m print([33m"expected area mm^2:"[39m, [32m2[39m*[32m120[39m*[32m10[39m + math.pi*[32m15[39m*[32m10[39m)
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 2 (0.1s, exit 0)
+print("closed:", wire.is_closed, "area mm^2:", face.area/mm**2)
+print("bbox mm:", [round(v/mm,3) for v in (bb.min.X,bb.max.X,bb.min.Y,bb.max.Y)])
+print("expected area mm^2:", 2*120*10 + math.pi*15*10)
+# -- output
+closed: True area mm^2: 2871.238898038463
+bbox mm: [0.0, 140.0, -5.0, 35.0]
+expected area mm^2: 2871.238898038469
+
+# -- cell 3 (0.1s, exit 0)
+import os, math
+from build123d import *
+
+mm = 1e-3
+W   = 10*mm      # passage width
+L   = 120*mm     # leg length
+Rc  = 15*mm      # centreline bend radius
+Ri, Ro = Rc-W/2, Rc+W/2
+TH  = 1*mm       # 2D extrusion thickness
+
+p_outer = Polyline((0,-W/2),(L,-W/2))
+arc_o   = CenterArc((L,Rc), Ro, -90, 180)
+p_top   = Polyline((L, Rc+Ro),(0, Rc+Ro))
+p_in    = Polyline((0, Rc+Ri),(L, Rc+Ri))
+arc_i   = CenterArc((L,Rc), Ri, 90, -180)
+p_bot   = Polyline((L, W/2),(0, W/2))
+outlet  = Polyline((0, Rc+Ro),(0, Rc+Ri))
+inlet   = Polyline((0, W/2),(0,-W/2))
+wire = Wire([*p_outer.edges(),*arc_o.edges(),*p_top.edges(),outlet.edges()[0],
+             *p_in.edges(),*arc_i.edges(),*p_bot.edges(),inlet.edges()[0]])
+face = Face(wire)
+bb = face.bounding_box()
+print("closed:", wire.is_closed, "area mm^2:", face.area/mm**2,
+      " expected:", 2*120*10 + math.pi*15*10)
+print("bbox mm:", [round(v/mm,3) for v in (bb.min.X,bb.max.X,bb.min.Y,bb.max.Y)])
+print("inlet len mm:", inlet.edges()[0].length/mm, " outlet len mm:", outlet.edges()[0].length/mm)
+print("arc radii mm:", arc_i.edges()[0].radius/mm, arc_o.edges()[0].radius/mm)
+# -- output
+closed: True area mm^2: 2871.238898038463  expected: 2871.238898038469
+bbox mm: [0.0, 140.0, -5.0, 35.0]
+inlet len mm: 10.0  outlet len mm: 10.000000000000005
+arc radii mm: 9.999999999999998 20.0
+
+# -- cell 4 (0.2s, exit 1)
+import gmsh, numpy as np
+gmsh.initialize()
+gmsh.model.add("ubend")
+g = gmsh.model.geo
+Nw, Nl, Na = 4, 48, 12          # coarse: across width, along leg, per 90deg arc
+XC, YC = L, Rc                   # bend centre
+
+P = lambda x,y: g.addPoint(x,y,0)
+a0,a1,a2,a3 = P(0,-W/2), P(L,-W/2), P(L,W/2), P(0,W/2)          # lower leg
+c0,c1,c2,c3 = P(L,Rc+Ri), P(0,Rc+Ri), P(0,Rc+Ro), P(L,Rc+Ro)    # upper leg
+bi,bo = P(XC+Ri,YC), P(XC+Ro,YC)                                 # bend mid radial
+ctr = P(XC,YC)
+
+wall_bot  = g.addLine(a0,a1)
+iface_in  = g.addLine(a1,a2)
+wall_lowi = g.addLine(a2,a3)
+inlet_l   = g.addLine(a3,a0)
+arc_o1 = g.addCircleArc(a1,ctr,bo); arc_i1 = g.addCircleArc(bi,ctr,a2)
+rad    = g.addLine(bo,bi)
+arc_o2 = g.addCircleArc(bo,ctr,c3); arc_i2 = g.addCircleArc(c0,ctr,bi)
+iface_out = g.addLine(c3,c0)
+wall_upi  = g.addLine(c0,c1)
+outlet_l  = g.addLine(c1,c2)
+wall_top  = g.addLine(c2,c3)
+
+sA = g.addPlaneSurface([g.addCurveLoop([wall_bot,iface_in,wall_lowi,inlet_l])])
+sB1= g.addPlaneSurface([g.addCurveLoop([arc_o1,rad,arc_i1,-iface_in])])
+sB2= g.addPlaneSurface([g.addCurveLoop([arc_o2,iface_out,arc_i2,-rad])])
+sC = g.addPlaneSurface([g.addCurveLoop([wall_upi,outlet_l,wall_top,-iface_out])])
+
+for c in (wall_bot,wall_lowi,wall_upi,wall_top): g.mesh.setTransfiniteCurve(c,Nl+1)
+for c in (iface_in,inlet_l,rad,iface_out,outlet_l): g.mesh.setTransfiniteCurve(c,Nw+1)
+for c in (arc_o1,arc_i1,arc_o2,arc_i2): g.mesh.setTransfiniteCurve(c,Na+1)
+for s in (sA,sB1,sB2,sC):
+    g.mesh.setTransfiniteSurface(s); g.mesh.setRecombine(2,s)
+g.synchronize()
+print("surfaces", sA,sB1,sB2,sC)
+# -- output
+Error   : Curve loop 4 is wrong
+[31m---------------------------------------------------------------------------[39m
+[31mException[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 29[39m
+[32m     25[39m 
+[32m     26[39m sA = g.addPlaneSurface([g.addCurveLoop([wall_bot,iface_in,wall_lowi,inlet_l])])
+[32m     27[39m sB1= g.addPlaneSurface([g.addCurveLoop([arc_o1,rad,arc_i1,-iface_in])])
+[32m     28[39m sB2= g.addPlaneSurface([g.addCurveLoop([arc_o2,iface_out,arc_i2,-rad])])
+[32m---> [39m[32m29[39m sC = g.addPlaneSurface([g.addCurveLoop([wall_upi,outlet_l,wall_top,-iface_out])])
+[32m     30[39m 
+[32m     31[39m [38;5;28;01mfor[39;00m c [38;5;28;01min[39;00m (wall_bot,wall_lowi,wall_upi,wall_top): g.mesh.setTransfiniteCurve(c,Nl+[32m1[39m)
+[32m     32[39m [38;5;28;01mfor[39;00m c [38;5;28;01min[39;00m (iface_in,inlet_l,rad,iface_out,outlet_l): g.mesh.setTransfiniteCurve(c,Nw+[32m1[39m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/gmsh.py:5841[39m, in [36mmodel.geo.addCurveLoop[39m[34m(curveTags, tag, reorient)[39m
+[32m   5837[39m                 c_int(tag),
+[32m   5838[39m                 c_int(bool(reorient)),
+[32m   5839[39m                 byref(ierr))
+[32m   5840[39m             [38;5;28;01mif[39;00m ierr.value != [32m0[39m:
+[32m-> [39m[32m5841[39m                 [38;5;28;01mraise[39;00m Exception(logger.getLastError())
+[32m   5842[39m             [38;5;28;01mreturn[39;00m api_result_
+
+[31mException[39m: Curve loop 4 is wrong
+
+# -- cell 5 (0.1s, exit 0)
+import gmsh, numpy as np
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize()
+gmsh.model.add("ubend")
+g = gmsh.model.geo
+Nw, Nl, Na = 4, 48, 12          # coarse: across width, along leg, per 90deg arc
+XC, YC = L, Rc                   # bend centre
+
+P = lambda x,y: g.addPoint(x,y,0)
+a0,a1,a2,a3 = P(0,-W/2), P(L,-W/2), P(L,W/2), P(0,W/2)          # lower leg
+c0,c1,c2,c3 = P(L,Rc+Ri), P(0,Rc+Ri), P(0,Rc+Ro), P(L,Rc+Ro)    # upper leg
+bi,bo = P(XC+Ri,YC), P(XC+Ro,YC)                                 # bend mid radial
+ctr = P(XC,YC)
+
+wall_bot  = g.addLine(a0,a1)
+iface_in  = g.addLine(a1,a2)
+wall_lowi = g.addLine(a2,a3)
+inlet_l   = g.addLine(a3,a0)
+arc_o1 = g.addCircleArc(a1,ctr,bo); arc_i1 = g.addCircleArc(bi,ctr,a2)
+rad    = g.addLine(bo,bi)
+arc_o2 = g.addCircleArc(bo,ctr,c3); arc_i2 = g.addCircleArc(c0,ctr,bi)
+iface_out = g.addLine(c3,c0)
+wall_upi  = g.addLine(c0,c1)
+outlet_l  = g.addLine(c1,c2)
+wall_top  = g.addLine(c2,c3)
+
+sA = g.addPlaneSurface([g.addCurveLoop([wall_bot,iface_in,wall_lowi,inlet_l])])
+sB1= g.addPlaneSurface([g.addCurveLoop([arc_o1,rad,arc_i1,-iface_in])])
+sB2= g.addPlaneSurface([g.addCurveLoop([arc_o2,iface_out,arc_i2,-rad])])
+sC = g.addPlaneSurface([g.addCurveLoop([wall_upi,outlet_l,wall_top,iface_out])])
+
+for c in (wall_bot,wall_lowi,wall_upi,wall_top): g.mesh.setTransfiniteCurve(c,Nl+1)
+for c in (iface_in,inlet_l,rad,iface_out,outlet_l): g.mesh.setTransfiniteCurve(c,Nw+1)
+for c in (arc_o1,arc_i1,arc_o2,arc_i2): g.mesh.setTransfiniteCurve(c,Na+1)
+for s in (sA,sB1,sB2,sC):
+    g.mesh.setTransfiniteSurface(s); g.mesh.setRecombine(2,s)
+g.synchronize()
+print("surfaces", sA,sB1,sB2,sC)
+# -- output
+surfaces 1 2 3 4
+
+# -- cell 6 (0.1s, exit 0)
+loops = {sA:[wall_bot,iface_in,wall_lowi,inlet_l],
+         sB1:[arc_o1,rad,arc_i1,-iface_in],
+         sB2:[arc_o2,iface_out,arc_i2,-rad],
+         sC :[wall_upi,outlet_l,wall_top,iface_out]}
+side = {}   # curve tag (abs) -> list of side surfaces
+tops, bots, vols = [], [], []
+for s, curves in loops.items():
+    out = g.extrude([(2,s)],0,0,TH,numElements=[1],recombine=True)
+    tops.append(out[0][1]); vols.append(out[1][1]); bots.append(s)
+    for c, ent in zip(curves, out[2:]):
+        side.setdefault(abs(c),[]).append(ent[1])
+g.synchronize()
+
+def grp(dim, tags, name):
+    t = gmsh.model.addPhysicalGroup(dim, tags); gmsh.model.setPhysicalName(dim, t, name)
+walls = [x for c in (wall_bot,wall_lowi,wall_upi,wall_top,arc_o1,arc_i1,arc_o2,arc_i2) for x in side[c]]
+grp(2, walls, "walls")
+grp(2, side[inlet_l],  "inlet")
+grp(2, side[outlet_l], "outlet")
+grp(2, tops+bots, "frontAndBack")
+grp(3, vols, "internal")
+gmsh.model.mesh.generate(3)
+print("nodes", len(gmsh.model.mesh.getNodes()[0]))
+gmsh.write("ubend.msh")
+print(sorted(os.listdir(".")))
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Line)
+Info    : [ 20%] Meshing curve 5 (Circle)
+Info    : [ 20%] Meshing curve 6 (Circle)
+Info    : [ 20%] Meshing curve 7 (Line)
+Info    : [ 20%] Meshing curve 8 (Circle)
+Info    : [ 30%] Meshing curve 9 (Circle)
+Info    : [ 30%] Meshing curve 10 (Line)
+Info    : [ 30%] Meshing curve 11 (Line)
+Info    : [ 40%] Meshing curve 12 (Line)
+Info    : [ 40%] Meshing curve 13 (Line)
+Info    : [ 40%] Meshing curve 15 (Extruded)
+Info    : [ 40%] Meshing curve 16 (Extruded)
+Info    : [ 50%] Meshing curve 17 (Extruded)
+Info    : [ 50%] Meshing curve 18 (Extruded)
+Info    : [ 50%] Meshing curve 20 (Extruded)
+Info    : [ 60%] Meshing curve 21 (Extruded)
+Info    : [ 60%] Meshing curve 25 (Extruded)
+Info    : [ 60%] Meshing curve 29 (Extruded)
+Info    : [ 60%] Meshing curve 37 (Extruded)
+Info    : [ 70%] Meshing curve 38 (Extruded)
+Info    : [ 70%] Meshing curve 39 (Extruded)
+Info    : [ 70%] Meshing curve 43 (Extruded)
+Info    : [ 70%] Meshing curve 47 (Extruded)
+Info    : [ 80%] Meshing curve 59 (Extruded)
+Info    : [ 80%] Meshing curve 60 (Extruded)
+Info    : [ 80%] Meshing curve 61 (Extruded)
+Info    : [ 90%] Meshing curve 65 (Extruded)
+Info    : [ 90%] Meshing curve 69 (Extruded)
+Info    : [ 90%] Meshing curve 81 (Extruded)
+Info    : [ 90%] Meshing curve 82 (Extruded)
+Info    : [100%] Meshing curve 83 (Extruded)
+Info    : [100%] Meshing curve 87 (Extruded)
+Info    : [100%] Meshing curve 91 (Extruded)
+Info    : Done meshing 1D (Wall 0.00059254s, CPU 0.000739s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Transfinite)
+Info    : [ 10%] Meshing surface 2 (Transfinite)
+Info    : [ 10%] Meshing surface 3 (Transfinite)
+Info    : [ 20%] Meshing surface 4 (Transfinite)
+Info    : [ 20%] Meshing surface 22 (Extruded)
+Info    : [ 30%] Meshing surface 26 (Extruded)
+Info    : [ 30%] Meshing surface 30 (Extruded)
+Info    : [ 40%] Meshing surface 34 (Extruded)
+Info    : [ 40%] Meshing surface 35 (Extruded)
+Info    : [ 50%] Meshing surface 44 (Extruded)
+Info    : [ 50%] Meshing surface 48 (Extruded)
+Info    : [ 60%] Meshing surface 52 (Extruded)
+Info    : [ 60%] Meshing surface 57 (Extruded)
+Info    : [ 70%] Meshing surface 66 (Extruded)
+Info    : [ 70%] Meshing surface 70 (Extruded)
+Info    : [ 80%] Meshing surface 74 (Extruded)
+Info    : [ 80%] Meshing surface 79 (Extruded)
+Info    : [ 90%] Meshing surface 88 (Extruded)
+Info    : [ 90%] Meshing surface 92 (Extruded)
+Info    : [100%] Meshing surface 96 (Extruded)
+Info    : [100%] Meshing surface 101 (Extruded)
+Info    : Done meshing 2D (Wall 0.00129019s, CPU 0.000881s)
+Info    : Meshing 3D...
+Info    : Meshing volume 1 (Extruded)
+Info    : Meshing volume 2 (Extruded)
+Info    : Meshing volume 3 (Extruded)
+Info    : Meshing volume 4 (Extruded)
+Info    : Done meshing 3D (Wall 0.00127628s, CPU 0.001336s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 1.58306e-05s, CPU 1.2e-05s)
+Info    : 1212 nodes 2252 elements
+nodes 1212
+Info    : Writing 'ubend.msh'...
+Info    : Done writing 'ubend.msh'
+['ubend.msh']
+
+# -- cell 7 (0.2s, exit 0)
+import subprocess, textwrap, os
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.write("ubend.msh")
+for d in ("system","constant"): os.makedirs(d, exist_ok=True)
+head = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+open("system/controlDict","w").write(head%"controlDict"+textwrap.dedent("""
+ application     icoFoam; startFrom startTime; startTime 0; stopAt endTime;
+ endTime 1; deltaT 1e-3; writeControl timeStep; writeInterval 100;
+ purgeWrite 0; writeFormat ascii; writePrecision 6; writeCompression off;
+ timeFormat general; timePrecision 6; runTimeModifiable true;
+"""))
+open("system/fvSchemes","w").write(head%"fvSchemes"+textwrap.dedent("""
+ ddtSchemes{default Euler;} gradSchemes{default Gauss linear;}
+ divSchemes{default none; div(phi,U) Gauss linear;}
+ laplacianSchemes{default Gauss linear orthogonal;}
+ interpolationSchemes{default linear;} snGradSchemes{default orthogonal;}
+"""))
+open("system/fvSolution","w").write(head%"fvSolution"+textwrap.dedent("""
+ solvers{p{solver PCG; preconditioner DIC; tolerance 1e-6; relTol 0;}
+         U{solver smoothSolver; smoother symGaussSeidel; tolerance 1e-8; relTol 0;}}
+ PISO{nCorrectors 2; nNonOrthogonalCorrectors 0;}
+"""))
+r = subprocess.run(["gmshToFoam","ubend.msh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-800:])
+# -- output
+Info    : Writing 'ubend.msh'...
+Info    : Done writing 'ubend.msh'
+0 stemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:5
+    Surface 1	walls
+    Surface 2	inlet
+    Surface 3	outlet
+    Surface 4	frontAndBack
+    Volume 5	internal
+
+Starting to read points at line 13
+Vertices to be read: 1210
+Vertices read:1210
+
+Starting to read cells at line 1226
+Cells to be read: 1688
+
+Mapping region 4 to Foam patch 0
+Mapping region 1 to Foam patch 1
+Mapping region 2 to Foam patch 2
+Mapping region 3 to Foam patch 3
+Mapping region 5 to Foam cellZone 0
+Cells:
+    total:480
+    hex  :480
+    prism:0
+    pyr  :0
+    tet  :0
+
+CellZones:
+Zone	Size
+    0	480
+
+Patch 0 gets name frontAndBack
+Patch 1 gets name walls
+Patch 2 gets name inlet
+Patch 3 gets name outlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 1208 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+# -- cell 8 (0.1s, exit 0)
+import re
+bf = "constant/polyMesh/boundary"
+txt = open(bf).read()
+for name, typ in [("frontAndBack","empty"),("walls","wall"),("inlet","patch"),("outlet","patch")]:
+    txt = re.sub(r"(\b%s\s*\{\s*type\s+)\w+;"%name, r"\g<1>%s;"%typ, txt)
+    if typ=="wall": txt = re.sub(r"(\bwalls\s*\{\s*type\s+wall;)", r"\1\n        inGroups        1(wall);", txt)
+open(bf,"w").write(txt)
+print(txt[txt.index("("):])
+# -- output
+(
+    frontAndBack
+    {
+        type            empty;
+        physicalType    patch;
+        nFaces          960;
+        startFace       836;
+    }
+    walls
+    {
+        type            wall;
+        inGroups        1(wall);
+        physicalType    patch;
+        nFaces          240;
+        startFace       1796;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4;
+        startFace       2036;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4;
+        startFace       2040;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 9 (0.2s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-2200:])
+# -- output
+ls:            480
+    faces per cell:   6
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     480
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    frontAndBack        960      1210     ok (non-closed singly connected)  
+    walls               240      484      ok (non-closed singly connected)  
+    inlet               4        10       ok (non-closed singly connected)  
+    outlet              4        10       ok (non-closed singly connected)  
+    ".*"                1208     1210     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            480          1210         2.86989e-06  (0 -0.005 0) (0.14 0.035 0.001)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.005 0) (0.14 0.035 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (2.67457e-19 -4.6805e-19 -2.43689e-18) OK.
+    Max cell openness = 1.74283e-16 OK.
+    Max aspect ratio = 1.58469 OK.
+    Minimum face area = 1.30806e-06. Maximum face area = 6.25e-06.  Face area magnitudes OK.
+    Min volume = 3.67105e-09. Max volume = 6.25e-09.  Total volume = 2.86989e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 1.21599 average: 0.0798568
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.0420364 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 10 (0.3s, exit 0)
+import matplotlib; matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+nt, nc, _ = gmsh.model.mesh.getNodes()
+xyz = {int(t): nc[3*i:3*i+3] for i,t in enumerate(nt)}
+fig, ax = plt.subplots(figsize=(9,4))
+for s in (sA,sB1,sB2,sC):
+    et, ets, enodes = gmsh.model.mesh.getElements(2, s)
+    for typ, conn in zip(et, enodes):
+        if typ==3:
+            q = np.array(conn).reshape(-1,4)
+            for e in q:
+                p = np.array([xyz[n][:2] for n in e]+[xyz[e[0]][:2]])*1000
+                ax.plot(p[:,0], p[:,1], 'k-', lw=0.4)
+ax.set_aspect("equal"); ax.set_xlabel("x [mm]"); ax.set_ylabel("y [mm]")
+ax.set_title("U-bend section, coarse (480 cells)")
+plt.tight_layout(); plt.show()
+# -- output
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 11 (0.2s, exit 0)
+fig
+# -- output
+
+
+# -- cell 12 (0.2s, exit 0)
+def build(Nw, Nl, Na, fn="ubend.msh"):
+    if gmsh.isInitialized(): gmsh.finalize()
+    gmsh.initialize(); gmsh.option.setNumber("General.Terminal",0)
+    gmsh.model.add("ubend"); G = gmsh.model.geo
+    XC, YC = L, Rc
+    P = lambda x,y: G.addPoint(x,y,0)
+    a0,a1,a2,a3 = P(0,-W/2), P(L,-W/2), P(L,W/2), P(0,W/2)
+    c0,c1,c2,c3 = P(L,Rc+Ri), P(0,Rc+Ri), P(0,Rc+Ro), P(L,Rc+Ro)
+    bi,bo,ctr = P(XC+Ri,YC), P(XC+Ro,YC), P(XC,YC)
+    wb=G.addLine(a0,a1); ii=G.addLine(a1,a2); wli=G.addLine(a2,a3); inl=G.addLine(a3,a0)
+    ao1=G.addCircleArc(a1,ctr,bo); ai1=G.addCircleArc(bi,ctr,a2); rd=G.addLine(bo,bi)
+    ao2=G.addCircleArc(bo,ctr,c3); ai2=G.addCircleArc(c0,ctr,bi); io=G.addLine(c3,c0)
+    wui=G.addLine(c0,c1); out=G.addLine(c1,c2); wt=G.addLine(c2,c3)
+    lps = {}
+    for cs in ([wb,ii,wli,inl],[ao1,rd,ai1,-ii],[ao2,io,ai2,-rd],[wui,out,wt,io]):
+        lps[G.addPlaneSurface([G.addCurveLoop(cs)])] = cs
+    for c in (wb,wli,wui,wt): G.mesh.setTransfiniteCurve(c,Nl+1)
+    for c in (ii,inl,rd,io,out): G.mesh.setTransfiniteCurve(c,Nw+1)
+    for c in (ao1,ai1,ao2,ai2): G.mesh.setTransfiniteCurve(c,Na+1)
+    for s in lps: G.mesh.setTransfiniteSurface(s); G.mesh.setRecombine(2,s)
+    G.synchronize()
+    sides, tops, vols, bots = {}, [], [], list(lps)
+    for s, cs in lps.items():
+        o = G.extrude([(2,s)],0,0,TH,numElements=[1],recombine=True)
+        tops.append(o[0][1]); vols.append(o[1][1])
+        for c,e in zip(cs,o[2:]): sides.setdefault(abs(c),[]).append(e[1])
+    G.synchronize()
+    def grp(d,t,n):
+        gmsh.model.setPhysicalName(d, gmsh.model.addPhysicalGroup(d,t), n)
+    grp(2,[x for c in (wb,wli,wui,wt,ao1,ai1,ao2,ai2) for x in sides[c]],"walls")
+    grp(2,sides[inl],"inlet"); grp(2,sides[out],"outlet")
+    grp(2,tops+bots,"frontAndBack"); grp(3,vols,"internal")
+    gmsh.model.mesh.generate(3)
+    gmsh.option.setNumber("Mesh.MshFileVersion",2.2); gmsh.write(fn)
+    return sum(len(gmsh.model.mesh.getElements(3,v)[1][0]) for v in vols)
+
+ncells = build(20, 240, 48)
+print("cells:", ncells)
+# -- output
+cells: 11520
+
+# -- cell 13 (0.7s, exit 0)
+r = subprocess.run(["gmshToFoam","ubend.msh"], capture_output=True, text=True); print(r.returncode)
+txt = open(bf).read()
+for name, typ in [("frontAndBack","empty"),("walls","wall"),("inlet","patch"),("outlet","patch")]:
+    txt = re.sub(r"(\b%s\s*\{\s*type\s+)\w+;"%name, r"\g<1>%s;"%typ, txt)
+txt = re.sub(r"(\bwalls\s*\{\s*type\s+wall;)", r"\1\n        inGroups        1(wall);", txt)
+open(bf,"w").write(txt)
+c = subprocess.run(["checkMesh"], capture_output=True, text=True).stdout
+print("\n".join(l for l in c.splitlines() if any(k in l for k in
+      ("cells:","hexahedra","nFaces","Mesh OK","non-orthogonality","skewness","aspect","Total volume","non-empty) directions"))))
+print(txt[txt.index("("):txt.index("//")])
+# -- output
+0
+    cells:            11520
+    hexahedra:     11520
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    Max aspect ratio = 1.47098 OK.
+    Min volume = 1.67685e-10. Max volume = 3.23101e-10.  Total volume = 2.87115e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0.423136 average: 0.0128442
+    Max skewness = 0.0169306 OK.
+Mesh OK.
+
+# -- cell 14 (0.1s, exit 0)
+print(open(bf).read().split("boundaryField")[0][-900:])
+# -- output
+=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+4
+(
+    frontAndBack
+    {
+        type            empty;
+        physicalType    patch;
+        nFaces          23040;
+        startFace       22444;
+    }
+    walls
+    {
+        type            wall;
+        inGroups        1(wall);
+        physicalType    patch;
+        nFaces          1152;
+        startFace       45484;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          20;
+        startFace       46636;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          20;
+        startFace       46656;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 15 (0.1s, exit 0)
+for dim,tag in gmsh.model.getPhysicalGroups(2):
+    name = gmsh.model.getPhysicalName(dim,tag)
+    nd, co = gmsh.model.mesh.getNodesForPhysicalGroup(dim,tag)[:2]
+    c = np.array(co).reshape(-1,3)*1000
+    print(f"{name:13s} n={len(nd):5d} x[{c[:,0].min():7.2f},{c[:,0].max():7.2f}] "
+          f"y[{c[:,1].min():7.2f},{c[:,1].max():7.2f}] z[{c[:,2].min():.2f},{c[:,2].max():.2f}]  (mm)")
+# -- output
+walls         n= 2308 x[   0.00, 140.00] y[  -5.00,  35.00] z[0.00,1.00]  (mm)
+inlet         n=   42 x[   0.00,   0.00] y[  -5.00,   5.00] z[0.00,1.00]  (mm)
+outlet        n=   42 x[   0.00,   0.00] y[  25.00,  35.00] z[0.00,1.00]  (mm)
+frontAndBack  n=24234 x[   0.00, 140.00] y[  -5.00,  35.00] z[0.00,1.00]  (mm)
+
+# -- cell 16 (2.0s, exit 0)
+fig2, ax2 = plt.subplots(figsize=(9,4))
+nt2, nc2, _ = gmsh.model.mesh.getNodes()
+xyz2 = {int(t): nc2[3*i:3*i+3] for i,t in enumerate(nt2)}
+for s in [t for d,t in gmsh.model.getEntities(2) if t<=4]:
+    et, _, en = gmsh.model.mesh.getElements(2, s)
+    for typ, conn in zip(et, en):
+        if typ==3:
+            for e in np.array(conn).reshape(-1,4)[::3]:
+                p = np.array([xyz2[n][:2] for n in e]+[xyz2[e[0]][:2]])*1000
+                ax2.plot(p[:,0],p[:,1],'k-',lw=0.25)
+ax2.set_aspect("equal"); ax2.set_title("final 2D mesh, 11520 cells (every 3rd face drawn)")
+ax2.set_xlabel("x [mm]"); ax2.set_ylabel("y [mm]"); plt.tight_layout(); fig2
+# -- output
+
+

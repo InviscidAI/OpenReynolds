@@ -1,0 +1,191 @@
+# -- cell 1 (7.6s, exit 0)
+import math, time, numpy as np
+from build123d import *
+
+# ---- gear pair parameters (mm) ----
+MOD   = 3.0
+ALPHA = math.radians(20.0)
+Z_P, Z_W = 20, 30
+BACKLASH = 0.3            # total, along pitch line -> 0.15 mm off each tooth thickness
+GAM_P = math.atan2(Z_P, Z_W)          # pinion pitch cone half angle
+GAM_W = math.atan2(Z_W, Z_P)
+AO    = MOD*Z_W/2/math.sin(GAM_W)     # outer cone distance
+FW    = 18.0                          # face width (~Ao/3)
+AI    = AO - FW
+
+def inv(a): return math.tan(a)-a
+
+def tooth_face(zt, gam, s):
+    """Planar tooth cross-section at cone distance s*AO, Tredgold equivalent involute."""
+    Rv   = MOD*zt/(2*math.cos(gam));  Rvb = Rv*math.cos(ALPHA)
+    Rtip = Rv+MOD;                    Rroot = Rv-1.25*MOD
+    t    = math.pi*MOD/2 - BACKLASH/2
+    psi0 = t/(2*Rv) + inv(ALPHA)
+    def th_dev(rho):
+        r = max(rho, Rvb); phi = math.acos(Rvb/r); return psi0 - inv(phi)
+    radii = [Rroot-0.8] + list(np.linspace(max(Rroot,Rvb), Rtip, 14))
+    Rp, zo = AO*math.sin(gam), AO*math.cos(gam)
+    def pt(rho, sgn):
+        d  = rho-Rv; th = sgn*th_dev(rho)/math.cos(gam)
+        r  = Rp + d*math.cos(gam); zz = zo - d*math.sin(gam)
+        a  = (r*math.cos(th)-Rp)*math.cos(gam) - (zz-zo)*math.sin(gam)
+        b  = r*math.sin(th)
+        return (a*s, b*s)
+    pts = [pt(r, +1) for r in radii] + [pt(r, -1) for r in reversed(radii)]
+    e1  = Vector(math.cos(gam), 0, -math.sin(gam))
+    nrm = Vector(math.sin(gam), 0,  math.cos(gam))
+    pl  = Plane(origin=(Rp*s, 0, zo*s), x_dir=e1, z_dir=nrm)
+    return pl * Polygon(*pts, align=None)
+
+def make_gear(zt, gam):
+    rr = lambda A: A*math.sin(gam) - 1.25*MOD*math.cos(gam)
+    zr = lambda A: A*math.cos(gam) + 1.25*MOD*math.sin(gam)
+    prof = Polygon((0,zr(AI)), (rr(AI),zr(AI)), (rr(AO),zr(AO)), (0,zr(AO)), align=None)
+    blank = revolve(Plane.XZ*prof, Axis.Z, 360)
+    tooth = loft((tooth_face(zt,gam,1.0), tooth_face(zt,gam,AI/AO)))
+    g = blank
+    for k in range(zt):
+        g = g + Rot(0,0,k*360.0/zt)*tooth
+    return g
+
+t0=time.time(); pinion_raw = make_gear(Z_P, GAM_P); print("build s", round(time.time()-t0,1))
+print("bbox mm", pinion_raw.bounding_box())
+print("volume mm^3", round(pinion_raw.volume,1), "solids", len(pinion_raw.solids()))
+print("Ao", round(AO,3), "gam_p deg", round(math.degrees(GAM_P),3), "d_p", MOD*Z_P)
+# -- output
+build s 5.3
+bbox mm bbox: -32.48566241719507 <= x <= 32.48566241719507, -32.48566241719507 <= y <= 32.48566241719507, 28.917505340494536 <= z <= 47.57724560617787
+volume mm^3 31057.0 solids 1
+Ao 54.083 gam_p deg 33.69 d_p 60.0
+
+# -- cell 2 (14.2s, exit 0)
+t0=time.time()
+wheel_raw = make_gear(Z_W, GAM_W)
+print("wheel build s", round(time.time()-t0,1), "solids", len(wheel_raw.solids()))
+print("wheel bbox", wheel_raw.bounding_box())
+# wheel axis -> +x, and rotate about own axis so a tooth SPACE faces the contact line
+PHASE_W = 180.0 + 180.0/Z_W          # contact line lies at local theta=180 deg
+wheel_g = Rot(0,90,0) * (Rot(0,0,PHASE_W) * wheel_raw)
+pinion_g = pinion_raw                # tooth centred on theta=0 -> on the contact line
+inter = pinion_g & wheel_g
+print("interference volume mm^3", 0.0 if len(inter.solids())==0 else inter.volume)
+# -- output
+wheel build s 12.4 solids 1
+wheel bbox bbox: -46.660167559001316 <= x <= 46.660167559001316, -46.518720414707126 <= y <= 46.51872041470713, 18.353950873191195 <= z <= 33.843995505690366
+interference volume mm^3 0.0
+
+# -- cell 3 (79.7s, exit 0)
+from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+d = BRepExtrema_DistShapeShape(pinion_g.wrapped, wheel_g.wrapped)
+d.Perform()
+print("min gap pinion-wheel  mm =", round(d.Value(),4),
+      " | expected normal backlash = 0.3*cos20 =", round(0.3*math.cos(ALPHA),4))
+p1,p2 = d.PointOnShape1(1), d.PointOnShape2(1)
+print("closest pts", (round(p1.X(),2),round(p1.Y(),2),round(p1.Z(),2)),
+                     (round(p2.X(),2),round(p2.Y(),2),round(p2.Z(),2)))
+# -- output
+min gap pinion-wheel  mm = 0.0978  | expected normal backlash = 0.3*cos20 = 0.2819
+closest pts (20.36, 1.37, 29.81) (20.39, 1.46, 29.78)
+
+# -- cell 4 (18.2s, exit 0)
+from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+from OCP.gp import gp_Pnt
+from OCP.TopAbs import TopAbs_OUT
+
+def inside(solid, x,y,z, tol=1e-7):
+    c = BRepClass3d_SolidClassifier(solid.wrapped, gp_Pnt(x,y,z), tol)
+    return c.State() != TopAbs_OUT
+
+def arc_thickness(solid, gam, A):
+    """circular tooth thickness on the pitch cone at cone distance A, gear on +z axis, tooth at th=0"""
+    r, z = A*math.sin(gam), A*math.cos(gam)
+    assert inside(solid, r,0,z), "pitch point not in material"
+    hi = math.radians(360/ (Z_P if gam<math.pi/4 else Z_W) / 2)
+    lo = 0.0
+    for _ in range(60):
+        mid = 0.5*(lo+hi)
+        if inside(solid, r*math.cos(mid), r*math.sin(mid), z): lo = mid
+        else: hi = mid
+    return 2*lo*r
+
+A_meas = AO - 0.5
+s = A_meas/AO
+t_p = arc_thickness(pinion_raw, GAM_P, A_meas)
+t_w = arc_thickness(wheel_raw,  GAM_W, A_meas)
+t_th = math.pi*MOD/2*s
+print(f"section at cone distance {A_meas:.2f} mm (s={s:.4f})")
+print(f"pinion thickness {t_p:.4f}  wheel {t_w:.4f}  full-thickness ref {t_th:.4f}")
+print(f"backlash along pitch line at this section = {2*t_th-t_p-t_w:.4f} mm ; scaled to outer = {(2*t_th-t_p-t_w)/s:.4f} mm (target 0.3)")
+# -- output
+section at cone distance 53.58 mm (s=0.9908)
+pinion thickness 4.5123  wheel 4.5142  full-thickness ref 4.6688
+backlash along pitch line at this section = 0.3111 mm ; scaled to outer = 0.3140 mm (target 0.3)
+
+# -- cell 5 (36.9s, exit 0)
+BACKLASH = 0.2888          # calibrated so the MEASURED pitch-line backlash is 0.300 mm
+t0=time.time()
+pinion_raw = make_gear(Z_P, GAM_P)
+wheel_raw  = make_gear(Z_W, GAM_W)
+PHASE_W = 180.0 + 180.0/Z_W
+pinion_g = pinion_raw
+wheel_g  = Rot(0,90,0) * (Rot(0,0,PHASE_W) * wheel_raw)
+t_p = arc_thickness(pinion_raw, GAM_P, A_meas); t_w = arc_thickness(wheel_raw, GAM_W, A_meas)
+print("rebuild s", round(time.time()-t0,1))
+print(f"measured backlash along pitch line (at outer) = {(2*t_th-t_p-t_w)/s:.4f} mm   target 0.300")
+print("interference volume =", (pinion_g & wheel_g).volume if len((pinion_g & wheel_g).solids()) else 0.0)
+# -- output
+rebuild s 35.4
+measured backlash along pitch line (at outer) = 0.3028 mm   target 0.300
+interference volume = 0.0
+
+# -- cell 6 (4.1s, exit 0)
+LX,LY,LZ = 160.0,140.0,120.0          # cavity, mm
+TW  = 8.0                              # wall thickness the bore passes through
+RSH_P, RSH_W = 10.0, 12.0              # shaft radii
+CLR = 4.0                              # radial oil clearance in each bore
+RB_P, RB_W = RSH_P+CLR, RSH_W+CLR
+
+def cyl_along(axis, a0, a1, r):
+    c = Pos(0,0,(a0+a1)/2) * Cylinder(radius=r, height=a1-a0)
+    return c if axis=="z" else Rot(0,90,0)*c
+
+box      = Box(LX,LY,LZ)
+bore_p   = cyl_along("z", LZ/2, LZ/2+TW, RB_P)
+bore_w   = cyl_along("x", LX/2, LX/2+TW, RB_W)
+shaft_p  = cyl_along("z", 32.0, LZ/2+TW, RSH_P)
+shaft_w  = cyl_along("x", 20.0, LX/2+TW, RSH_W)
+pin_asm  = pinion_g + shaft_p
+whl_asm  = wheel_g  + shaft_w
+t0=time.time()
+fluid = (box + bore_p + bore_w) - pin_asm - whl_asm
+print("cut s", round(time.time()-t0,1), "solids", len(fluid.solids()), "faces", len(fluid.faces()))
+print("fluid volume mm^3", round(fluid.volume,1), " box alone", LX*LY*LZ)
+print("bbox", fluid.bounding_box())
+# -- output
+cut s 2.6 solids 1 faces 1672
+fluid volume mm^3 2582166.5  box alone 2688000.0
+bbox bbox: -80.0 <= x <= 88.0, -70.0 <= y <= 70.0, -60.0 <= z <= 68.0
+
+# -- cell 7 (240.0s, exit 0)
+from OCP.TopAbs import TopAbs_ON
+
+def on_solid(solid, p, tol=1e-6):
+    c = BRepClass3d_SolidClassifier(solid.wrapped, gp_Pnt(*p), tol)
+    return c.State() == TopAbs_ON
+
+patches = {k: [] for k in ("pinion","wheel","walls","bore_pinion","bore_wheel")}
+t0=time.time()
+for f in fluid.faces():
+    p = f.position_at(0.5,0.5)
+    p = (p.X,p.Y,p.Z)
+    if   on_solid(pin_asm, p):        patches["pinion"].append(f)
+    elif on_solid(whl_asm, p):        patches["wheel"].append(f)
+    elif p[2] > LZ/2 + 1e-6:          patches["bore_pinion"].append(f)
+    elif p[0] > LX/2 + 1e-6:          patches["bore_wheel"].append(f)
+    else:                             patches["walls"].append(f)
+print("classify s", round(time.time()-t0,1))
+for k,v in patches.items(): print(f"{k:12s} {len(v):5d} faces  area {sum(x.area for x in v)/100:9.2f} cm^2")
+print("total faces", sum(len(v) for v in patches.values()), "of", len(fluid.faces()))
+# -- output
+
+

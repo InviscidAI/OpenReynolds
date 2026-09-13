@@ -1,0 +1,473 @@
+# -- cell 1 (0.1s, exit 1)
+import os, numpy as np, subprocess
+from build123d import *
+
+os.makedirs("constant/triSurface", exist_ok=True)
+
+def naca2412(n=80):
+    m, p, t = 0.02, 0.4, 0.12
+    beta = np.linspace(0, np.pi, n)
+    x = (1 - np.cos(beta)) / 2
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1036*x**4)
+    yc = np.where(x < p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p) + 2*p*x - x**2))
+    dyc = np.where(x < p, 2*m/p**2*(p - x), 2*m/(1-p)**2*(p - x))
+    th = np.arctan(dyc)
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    X = np.concatenate([xu[::-1], xl[1:]])
+    Y = np.concatenate([yu[::-1], yl[1:]])
+    return X, Y
+
+X, Y = naca2412()
+print(X[:3], Y[:3], X[-3:], Y[-3:], len(X), "thickness span =", (Y.max()-Y.min()))
+</parameter>
+</invoke>
+# -- output
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 22[39m
+[31m    [39m[31m</parameter>[39m
+    ^
+[31mSyntaxError[39m[31m:[39m invalid syntax
+
+# -- cell 2 (0.1s, exit 1)
+import os, numpy as np, subprocess
+from build123d import *
+
+os.makedirs("constant/triSurface", exist_ok=True)
+
+def naca2412(n=80):
+    m, p, t = 0.02, 0.4, 0.12
+    beta = np.linspace(0, np.pi, n)
+    x = (1 - np.cos(beta)) / 2
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1036*x**4)
+    yc = np.where(x < p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p) + 2*p*x - x**2))
+    dyc = np.where(x < p, 2*m/p**2*(p - x), 2*m/(1-p)**2*(p - x))
+    th = np.arctan(dyc)
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    X = np.concatenate([xu[::-1], xl[1:]])
+    Y = np.concatenate([yu[::-1], yl[1:]])
+    return X, Y
+
+X, Y = naca2412()
+print(X[:3], Y[:3], X[-3:], Y[-3:], len(X), "thickness span =", (Y.max()-Y.min()))
+</parameter>
+</invoke>
+# -- output
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 22[39m
+[31m    [39m[31m</parameter>[39m
+    ^
+[31mSyntaxError[39m[31m:[39m invalid syntax
+
+# -- cell 3 (2.2s, exit 0)
+import os, numpy as np, subprocess
+from build123d import *
+
+os.makedirs("constant/triSurface", exist_ok=True)
+
+def naca2412(n=80):
+    m, p, t = 0.02, 0.4, 0.12
+    beta = np.linspace(0, np.pi, n)
+    x = (1 - np.cos(beta)) / 2
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1036*x**4)
+    yc = np.where(x < p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p) + 2*p*x - x**2))
+    dyc = np.where(x < p, 2*m/p**2*(p - x), 2*m/(1-p)**2*(p - x))
+    th = np.arctan(dyc)
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    X = np.concatenate([xu[::-1], xl[1:]])
+    Y = np.concatenate([yu[::-1], yl[1:]])
+    return X, Y
+
+X, Y = naca2412()
+print(X[:3], Y[:3], X[-3:], Y[-3:], len(X), "thickness span =", (Y.max()-Y.min()))
+# -- output
+[1.         0.99960852 0.99843465] [-1.66164608e-17  8.36599878e-05  3.34229284e-04] [0.99840419 0.99960088 1.        ] [-1.23762800e-04 -3.09704989e-05  1.66164608e-17] 159 thickness span = 0.12156166925900525
+
+# -- cell 4 (0.3s, exit 0)
+C_ROOT, C_TIP, SPAN = 0.120, 0.080, 0.200
+X0_ROOT, X0_TIP = 0.0, 0.25*C_ROOT - 0.25*C_TIP   # quarter-chord line unswept
+
+def section(c, x0, y):
+    pts = [(X[i]*c + x0, y, Y[i]*c) for i in range(len(X)-1)]
+    return Face(Wire(Polyline(*pts, close=True)))
+
+root_face = section(C_ROOT, X0_ROOT, 0.0)
+tip_face  = section(C_TIP,  X0_TIP,  SPAN)
+wing = loft([root_face, tip_face], ruled=True)
+bb = wing.bounding_box()
+print("wing bbox", bb.min, bb.max, "vol", wing.volume)
+# -- output
+wing bbox Vector: (X=0, Y=0, Z=-0.005084) Vector: (X=0.12, Y=0.2, Z=0.009504) vol 0.00016569166084849182
+
+# -- cell 5 (0.1s, exit 0)
+print("root section bbox", root_face.bounding_box().min, root_face.bounding_box().max)
+print("tip  section bbox", tip_face.bounding_box().min, tip_face.bounding_box().max)
+print("root chord", root_face.bounding_box().size.X, "tip chord", tip_face.bounding_box().size.X,
+      "span", wing.bounding_box().size.Y)
+print("root t/c", root_face.bounding_box().size.Z/C_ROOT, "tip t/c", tip_face.bounding_box().size.Z/C_TIP)
+qc_root = X0_ROOT + 0.25*C_ROOT; qc_tip = X0_TIP + 0.25*C_TIP
+print("quarter-chord x root/tip", qc_root, qc_tip, "-> sweep deg",
+      np.degrees(np.arctan2(qc_tip-qc_root, SPAN)))
+# -- output
+root section bbox Vector: (X=0, Y=0, Z=-0.005084) Vector: (X=0.12, Y=0, Z=0.009504)
+tip  section bbox Vector: (X=0.01, Y=0.2, Z=-0.003389) Vector: (X=0.09, Y=0.2, Z=0.006336)
+root chord 0.12 tip chord 0.08 span 0.20000020000000002
+root t/c 0.12156166925900525 tip t/c 0.12156166925900525
+quarter-chord x root/tip 0.03 0.03 -> sweep deg 0.0
+
+# -- cell 6 (0.1s, exit 0)
+XMIN, XMAX = -4*C_ROOT, C_ROOT + 8*C_ROOT
+YMIN, YMAX = 0.0, SPAN + 3*C_ROOT
+ZMIN, ZMAX = -3*C_ROOT, 3*C_ROOT
+print("domain", (XMIN,XMAX),(YMIN,YMAX),(ZMIN,ZMAX))
+
+def rect(origin, zdir, xdir, w, h):
+    pl = Plane(origin=origin, z_dir=zdir, x_dir=xdir)
+    return pl * Rectangle(w, h)
+
+cx, cy, cz = (XMIN+XMAX)/2, (YMIN+YMAX)/2, (ZMIN+ZMAX)/2
+LX, LY, LZ = XMAX-XMIN, YMAX-YMIN, ZMAX-ZMIN
+
+inlet  = rect((XMIN, cy, cz), (-1,0,0), (0,1,0), LY, LZ)
+outlet = rect((XMAX, cy, cz), ( 1,0,0), (0,1,0), LY, LZ)
+root_plane = rect((cx, YMIN, cz), (0,-1,0), (1,0,0), LX, LZ)
+rootWall = root_plane - root_face          # wall plane with the wing root section removed
+farfield = Compound(children=[
+    rect((cx, YMAX, cz), (0,1,0), (1,0,0), LX, LZ),
+    rect((cx, cy, ZMIN), (0,0,-1), (1,0,0), LX, LY),
+    rect((cx, cy, ZMAX), (0,0, 1), (1,0,0), LX, LY)])
+print("areas", inlet.area, outlet.area, rootWall.area, LX*LZ - root_face.area, farfield.area)
+# -- output
+domain (-0.48, 1.08) (0.0, 0.56) (-0.36, 0.36)
+areas 0.4032 0.4032 1.122022717146602 1.1220227171466028 2.8704
+
+# -- cell 7 (0.1s, exit 0)
+for name, shp in [("wing", wing), ("inlet", inlet), ("outlet", outlet),
+                  ("rootWall", rootWall), ("farfield", farfield)]:
+    export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=2e-5, angular_tolerance=0.1)
+    print(name, os.path.getsize(f"constant/triSurface/{name}.stl"))
+# -- output
+wing 1520284
+inlet 184
+outlet 184
+rootWall 8184
+farfield 384
+
+# -- cell 8 (0.3s, exit 0)
+os.makedirs("system", exist_ok=True)
+BASE = 0.03
+nx, ny, nz = [max(1,int(round(L/BASE))) for L in (LX, LY, LZ)]
+head = """FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"""
+blockdict = head % "blockMeshDict" + f"""
+scale 1;
+vertices
+(
+ ({XMIN} {YMIN} {ZMIN}) ({XMAX} {YMIN} {ZMIN}) ({XMAX} {YMAX} {ZMIN}) ({XMIN} {YMAX} {ZMIN})
+ ({XMIN} {YMIN} {ZMAX}) ({XMAX} {YMIN} {ZMAX}) ({XMAX} {YMAX} {ZMAX}) ({XMIN} {YMAX} {ZMAX})
+);
+blocks ( hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1) );
+edges ();
+boundary
+(
+ inlet    {{ type patch; faces ((0 4 7 3)); }}
+ outlet   {{ type patch; faces ((1 2 6 5)); }}
+ rootWall {{ type wall; faces ((0 1 5 4)); }}
+ farfield {{ type patch; faces ((3 7 6 2) (0 3 2 1) (4 5 6 7)); }}
+);
+mergePatchPairs ();
+"""
+open("system/blockMeshDict","w").write(blockdict)
+ctrl = head % "controlDict" + """
+application snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; writePrecision 8;
+runTimeModifiable true;
+"""
+open("system/controlDict","w").write(ctrl)
+open("system/fvSchemes","w").write(head % "fvSchemes" + "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(head % "fvSolution" + "solvers{} \n")
+print(nx,ny,nz, nx*ny*nz)
+print(subprocess.run(["blockMesh"], capture_output=True, text=True).stdout[-600:])
+# -- output
+52 19 24 23712
+e (1 1 1)
+    Block 0 cell size :
+        i : 0.03 .. 0.03
+        j : 0.029473684 .. 0.029473684
+        k : 0.03 .. 0.03
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.48 0 -0.36) (1.08 0.56 0.36)
+  nPoints: 26500
+  nCells: 23712
+  nFaces: 73828
+  nInternalFaces: 68444
+----------------
+Patches
+----------------
+  patch 0 (start: 68444 size: 456) name: inlet
+  patch 1 (start: 68900 size: 456) name: outlet
+  patch 2 (start: 69356 size: 1248) name: rootWall
+  patch 3 (start: 70604 size: 3224) name: farfield
+
+End
+
+# -- cell 9 (0.3s, exit 0)
+open("system/surfaceFeatureExtractDict","w").write(head % "surfaceFeatureExtractDict" + """
+wing.stl { extractionMethod extractFromSurface; extractFromSurfaceCoeffs { includedAngle 150; } writeObj no; }
+""")
+snappy = head % "snappyHexMeshDict" + """
+castellatedMesh true; snap true; addLayers false;
+geometry { wing.stl { type triSurfaceMesh; name wing; } }
+castellatedMeshControls
+{
+    maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; nCellsBetweenLevels 2;
+    maxLoadUnbalance 0.1; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+    features ( { file "wing.eMesh"; level 4; } );
+    refinementSurfaces { wing { level (3 4); patchInfo { type wall; } } }
+    refinementRegions {}
+    locationInMesh (-0.30 0.30 0.20);
+}
+snapControls { nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5;
+    nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }
+addLayersControls { relativeSizes true; layers {} expansionRatio 1.2; finalLayerThickness 0.5;
+    minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 5; nSmoothSurfaceNormals 1;
+    nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }
+meshQualityControls { maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+    minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001;
+    minFaceWeight 0.05; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }
+writeFlags (scalarLevels layerSets layerFields);
+mergeTolerance 1e-6;
+"""
+open("system/snappyHexMeshDict","w").write(snappy)
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-800:])
+# -- output
+0   of which
+        region edges   : 0
+        external edges : 317
+        internal edges : 0
+
+Final Feature set:
+    points : 316
+    of which
+        convex             : 2
+        concave            : 0
+        mixed              : 0
+        non-feature        : 314
+    edges  : 317
+    of which
+        external edges     : 317
+        internal edges     : 0
+        flat edges         : 0
+        open edges         : 0
+        multiply connected : 0
+
+Writing extendedFeatureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T14-20260913-092412-9d97/t14/constant/extendedFeatureEdgeMesh/wing.extendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T14-20260913-092412-9d97/t14/constant/triSurface/wing.eMesh"
+ExecutionTime = 0.04 s  ClockTime = 0 s
+
+End
+
+# -- cell 10 (11.1s, exit 0)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1500:])
+# -- output
+0 ecking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:53482  faces:174260  points:67774
+Cells per refinement level:
+    0	23483
+    1	1209
+    2	3138
+    3	9575
+    4	16077
+Writing mesh to time constant
+Wrote mesh in = 0.15 s.
+Mesh snapped in = 5.86 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 10.82 s.
+End
+
+# -- cell 11 (0.6s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+open("case.foam","w").close()
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0)
+m = rd.read()
+bnd = m["boundary"]
+print(list(bnd.keys()))
+p = pv.Plotter(off_screen=True, window_size=(1100,750))
+for k, c in [("wing","red"),("rootWall","lightgray")]:
+    p.add_mesh(bnd[k], color=c, show_edges=True, line_width=0.4)
+p.camera_position = [(0.5,-0.6,0.5),(0.15,0.12,0.0),(0,0,1)]
+p.screenshot("view_wing.png")
+print("ok")
+# -- output
+['inlet', 'outlet', 'rootWall', 'farfield', 'wing']
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 09:26:26.124 (   0.337s) [    794FAD51C780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 09:26:26.125 (   0.338s) [    794FAD51C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:26:26.138 (   0.351s) [    794FAD51C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 12 (0.2s, exit 0)
+from IPython.display import Image, display
+display(Image("view_wing.png"))
+# -- output
+
+
+# -- cell 13 (0.2s, exit 0)
+p = pv.Plotter(off_screen=True, window_size=(1100,750))
+p.add_mesh(bnd["wing"], color="salmon", show_edges=True, line_width=0.3)
+p.camera_position = [(0.35,-0.25,0.28),(0.05,0.1,0.0),(0,0,1)]
+p.screenshot("view_wing2.png")
+display(Image("view_wing2.png"))
+w = bnd["wing"].extract_surface()
+print("wing patch bbox", np.round(w.bounds,4), "area", w.area, "STL area", wing.area)
+# -- output
+wing patch bbox [ 0.      0.12    0.      0.2    -0.0051  0.0095] area 0.041334769260552275 STL area 0.04253896926581881
+
+[0m[33m2026-09-13 09:26:37.964 (  12.177s) [    794FAD51C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:26:37.965 (  12.178s) [    794FAD51C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_869547/2284271872.py:6: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  w = bnd["wing"].extract_surface()
+
+# -- cell 14 (28.2s, exit 0)
+snappy_fine = snappy.replace("level (3 4)", "level (4 5)").replace('"wing.eMesh"; level 4', '"wing.eMesh"; level 5').replace("nCellsBetweenLevels 2", "nCellsBetweenLevels 3")
+open("system/snappyHexMeshDict","w").write(snappy_fine)
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-700:])
+# -- output
+0  = 15.37 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 27.6 s.
+End
+
+# -- cell 15 (1.1s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-2200:])
+# -- output
+15368
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   336
+            5   468
+            6   3815
+            7   25
+            8   43
+            9   8506
+           10   1
+           11   41
+           12   1770
+           14   8
+           15   347
+           17   2
+           18   6
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      456      500  ok (non-closed singly connected)
+                  outlet      456      500  ok (non-closed singly connected)
+                rootWall     2996     3373  ok (non-closed singly connected)
+                farfield     3224     3339  ok (non-closed singly connected)
+                    wing    21796    22692  ok (non-closed singly connected)
+                    ".*"    28928    29863      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.48 0 -0.36) (1.08 0.56 0.36)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.5502974e-16 6.8707399e-16 6.1282154e-16) OK.
+    Max cell openness = 2.8209555e-16 OK.
+    Max aspect ratio = 4.8132708 OK.
+    Minimum face area = 1.7131804e-07. Maximum face area = 0.00090123093.  Face area magnitudes OK.
+    Min volume = 1.1640457e-10. Max volume = 2.6562685e-05.  Total volume = 0.62882641.  Cell volumes OK.
+    Mesh non-orthogonality Max: 48.144268 average: 9.5968706
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.3175368 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 16 (0.4s, exit 0)
+print("box - wing volume =", LX*LY*LZ - wing.volume, " mesh total = 0.62882641")
+rd2 = pv.OpenFOAMReader("case.foam"); rd2.set_active_time_value(0.0)
+m2 = rd2.read(); b2 = m2["boundary"]
+p = pv.Plotter(off_screen=True, window_size=(1100,750))
+p.add_mesh(b2["wing"], color="salmon", show_edges=True, line_width=0.2)
+p.add_mesh(b2["rootWall"].extract_surface(algorithm="dataset_surface"), color="lightblue", opacity=0.4)
+p.camera_position = [(0.35,-0.25,0.25),(0.05,0.1,0.0),(0,0,1)]
+p.screenshot("view_fine.png"); display(Image("view_fine.png"))
+print("cells:", m2["internalMesh"].n_cells)
+# -- output
+box - wing volume = 0.6288263083391517  mesh total = 0.62882641
+cells: 135672
+
+[0m[33m2026-09-13 09:27:25.990 (  60.203s) [    794FAD51C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:27:25.991 (  60.204s) [    794FAD51C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

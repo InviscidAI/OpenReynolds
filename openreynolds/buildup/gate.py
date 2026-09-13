@@ -188,8 +188,7 @@ def render(states: Iterable[GateState], case_dir: str = "") -> str:
     rows = [s for s in states if s.state in (WARNED, XFAIL, WAIVED, XPASS)]
     if not rows:
         return ""
-    lines = ["The advisory gates ran. None of this blocks the finish -- checkMesh is the "
-             "only binding check -- but it is recorded either way:"]
+    lines = ["The gates ran. checkMesh is the binding one; these are the others:"]
     for s in sorted(rows, key=lambda r: (r.state != WARNED, r.check)):
         if s.state == WARNED:
             lines.append(f"  [warned] {s.check}: {scrub(s.concern, case_dir)}")
@@ -203,7 +202,16 @@ def render(states: Iterable[GateState], case_dir: str = "") -> str:
     warned = [s.check for s in rows if s.state == WARNED]
     if warned:
         lines.append("")
-        lines.append("You can fix any of these and declare again, or declare again naming "
-                     "them in `waive` with a reason. Either is recorded; neither is "
-                     "blocked.")
+        lines.append("Fix these and declare again, or declare again naming them in "
+                     "`waive` with the reason each one is correct here. Until every "
+                     "warning is fixed or waived the declare is not accepted -- the same "
+                     "way a failing checkMesh is not accepted. A reason is what gets you "
+                     "past one; declaring again unchanged does not.")
+        if "union_closure" in warned:
+            lines.append("")
+            lines.append("On union_closure: it welds every STL in the directory into one "
+                         "surface and counts the free edges of that union. Individual "
+                         "patch files are open by construction and that is not what it "
+                         "measures, so 'each patch is a separate sheet' does not explain "
+                         "a non-zero count.")
     return "\n".join(lines)

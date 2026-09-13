@@ -1,0 +1,684 @@
+# -- cell 1 (0.1s, exit 0)
+import numpy as np, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# ---- thread parameters (mm) ----
+D_MAJOR = 40.0        # neck outside diameter
+R_MAJOR = D_MAJOR/2   # 20 mm crest radius
+PITCH   = 2.0
+DEPTH   = 1.0         # radial thread depth
+R_MINOR = R_MAJOR - DEPTH
+HALF_ANGLE = np.radians(15.0)   # trapezoidal, 30 deg included
+GAP = 0.2             # lid cut shallower on every flank
+NECK_H = 12.0
+FLANK_DZ = DEPTH*np.tan(HALF_ANGLE)
+FLAT = (PITCH - 2*FLANK_DZ)/2.0     # crest flat = root flat
+
+# profile over one pitch, traversed with z increasing: half root, up flank, crest, down flank, half root
+SEG = [((R_MINOR,0.0),(R_MINOR,FLAT/2), 2),
+       ((R_MINOR,FLAT/2),(R_MAJOR,FLAT/2+FLANK_DZ), 7),
+       ((R_MAJOR,FLAT/2+FLANK_DZ),(R_MAJOR,FLAT/2+FLANK_DZ+FLAT), 6),
+       ((R_MAJOR,FLAT/2+FLANK_DZ+FLAT),(R_MINOR,PITCH-FLAT/2), 7),
+       ((R_MINOR,PITCH-FLAT/2),(R_MINOR,PITCH), 2)]
+
+pts=[np.array(SEG[0][0])]
+for a,b,n in SEG:
+    a=np.array(a); b=np.array(b)
+    for t in range(1,n+1): pts.append(a+(b-a)*t/n)
+P=np.array(pts)                      # (Ns+1,2) neck profile, r,z
+NS=len(P)-1
+print("Ns =",NS,"flank dz =",FLANK_DZ,"flat =",FLAT,"profile z span",P[0,1],P[-1,1])
+print("developed profile length =",np.sum(np.linalg.norm(np.diff(P,axis=0),axis=1)))
+# -- output
+Ns = 24 flank dz = 0.2679491924311227 flat = 0.7320508075688773 profile z span 0.0 2.0
+developed profile length = 3.534653975957921
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 2 (0.2s, exit 0)
+def seg_normals(P):
+    d=np.diff(P,axis=0); L=np.linalg.norm(d,axis=1,keepdims=True); u=d/L
+    return np.stack([u[:,1],-u[:,0]],axis=1)   # (dz,-dr): outward from neck material
+
+def offset_profile(P,g):
+    n=seg_normals(P); Q=np.zeros_like(P)
+    Q[0]=P[0]+g*n[0]; Q[-1]=P[-1]+g*n[-1]
+    for i in range(1,len(P)-1):
+        a0,n0=P[i]+g*n[i-1],n[i-1]; a1,n1=P[i]+g*n[i],n[i]
+        d0=np.array([-n0[1],n0[0]]); d1=np.array([-n1[1],n1[0]])
+        A=np.array([d0,-d1]).T
+        if abs(np.linalg.det(A))<1e-9: Q[i]=a0
+        else:
+            t=np.linalg.solve(A,a1-a0); Q[i]=a0+t[0]*d0
+    return Q
+
+Q=offset_profile(P,GAP)          # lid profile (mm)
+n=seg_normals(P)
+# measure the perpendicular gap on each flat/flank segment midpoint
+for name,i in [("root",0),("rising flank",4),("crest",12),("falling flank",18)]:
+    mid=0.5*(P[i]+P[i+1]); gap=np.dot(0.5*(Q[i]+Q[i+1])-mid,n[i])
+    print(f"{name:15s} normal gap = {gap:.4f} mm")
+print("lid minor r =",Q[:,0].min(),"lid major r =",Q[:,0].max())
+fig,ax=plt.subplots(figsize=(5,5))
+ax.plot(P[:,0],P[:,1],'o-',label='neck flank'); ax.plot(Q[:,0],Q[:,1],'s-',label='lid flank')
+for a,b in zip(P,Q): ax.plot([a[0],b[0]],[a[1],b[1]],'k-',lw=0.4)
+ax.set_aspect('equal'); ax.set_xlabel('r [mm]'); ax.set_ylabel('z [mm]'); ax.legend(); fig
+# -- output
+root            normal gap = 0.2000 mm
+rising flank    normal gap = 0.2000 mm
+crest           normal gap = 0.2000 mm
+falling flank   normal gap = 0.2000 mm
+lid minor r = 19.194620951877646 lid major r = 20.2
+
+# -- cell 3 (0.1s, exit 0)
+NPER = 12            # azimuthal cells per turn (must divide NS)
+NTURN = 5            # turns -> z spans 0..12 mm with a one-pitch cross-section
+NT   = 2             # cells across the 0.2 mm gap
+assert NS % NPER == 0
+G = NS//NPER
+NTH = NPER*NTURN     # azimuthal cells total
+MM = 1e-3
+
+def node_xyz(i,j,k):
+    f=k/NT; r=P[j,0]+(Q[j,0]-P[j,0])*f; zl=P[j,1]+(Q[j,1]-P[j,1])*f
+    th=2*np.pi*i/NPER; z=zl+PITCH*i/NPER
+    return np.array([r*np.cos(th), r*np.sin(th), z])*MM
+
+def key(i,j,k): return (j+i*G, i%NPER, k)
+
+# check the wrap identification is geometrically exact
+for i in [0,7,NTH-NPER]:
+    for k in [0,NT]:
+        assert key(i,NS,k)==key(i+NPER,0,k)
+        assert np.allclose(node_xyz(i,NS,k),node_xyz(i+NPER,0,k),atol=1e-12)
+print("wrap identification exact")
+zs=[node_xyz(i,j,0)[2] for i in (0,NTH) for j in (0,NS)]
+print("z at (i=0,j=0..NS) and (i=NTH,j=0..NS) [mm]:",[round(z/MM,3) for z in zs])
+print("cells =",NTH*NS*NT)
+# -- output
+wrap identification exact
+z at (i=0,j=0..NS) and (i=NTH,j=0..NS) [mm]: [np.float64(0.0), np.float64(2.0), np.float64(10.0), np.float64(12.0)]
+cells = 2880
+
+# -- cell 4 (0.1s, exit 0)
+nodes={}; coords=[]
+def nid(i,j,k):
+    kk=key(i,j,k)
+    if kk not in nodes:
+        nodes[kk]=len(coords)+1; coords.append(node_xyz(i,j,k))
+    return nodes[kk]
+
+hexes=[]; quads={'neck_flank':[],'lid_flank':[],'inner_end':[],'outer_end':[]}
+for i in range(NTH):
+    for j in range(NS):
+        for k in range(NT):
+            n=[nid(i,j,k),nid(i+1,j,k),nid(i+1,j+1,k),nid(i,j+1,k),
+               nid(i,j,k+1),nid(i+1,j,k+1),nid(i+1,j+1,k+1),nid(i,j+1,k+1)]
+            hexes.append(n)
+            if k==0:    quads['neck_flank'].append([n[0],n[1],n[2],n[3]])
+            if k==NT-1: quads['lid_flank'].append([n[4],n[5],n[6],n[7]])
+        if i==0:     quads['inner_end'].append([nid(0,j,0),nid(0,j+1,0),nid(0,j+1,NT),nid(0,j,NT)])
+        if i==NTH-1: quads['outer_end'].append([nid(NTH,j,0),nid(NTH,j+1,0),nid(NTH,j+1,NT),nid(NTH,j,NT)])
+    for k in range(NT):
+        if i<NPER:          quads['inner_end'].append([nid(i,0,k),nid(i+1,0,k),nid(i+1,0,k+1),nid(i,0,k+1)])
+        if i>=NTH-NPER:     quads['outer_end'].append([nid(i,NS,k),nid(i+1,NS,k),nid(i+1,NS,k+1),nid(i,NS,k+1)])
+X=np.array(coords)
+# signed volume of first hex (should be positive with this ordering)
+h=np.array([X[n-1] for n in hexes[0]]); c=h.mean(axis=0)
+faces=[(0,1,2,3),(4,7,6,5),(0,4,5,1),(1,5,6,2),(2,6,7,3),(3,7,4,0)]  # outward
+vol=sum(np.dot(np.cross(h[b]-h[a],h[c2]-h[a]),h[a]-c)/6 for a,b,c2,d in faces for a,b,c2 in [(a,b,c2),(a,c2,d)])
+print("nodes",len(coords),"hexes",len(hexes),{k:len(v) for k,v in quads.items()},"hex0 vol(m^3)",vol)
+# -- output
+nodes 4428 hexes 2880 {'neck_flank': 1440, 'lid_flank': 1440, 'inner_end': 48, 'outer_end': 48} hex0 vol(m^3) -1.7445848744123173e-10
+
+# -- cell 5 (1.8s, exit 0)
+def handed(n):
+    h=np.array([X[a-1] for a in n])
+    return np.dot(np.cross(h[1]-h[0],h[3]-h[0]),h[4]-h[0])
+vals=np.array([handed(n) for n in hexes])
+print("min/max handedness:",vals.min(),vals.max())
+if vals.max()<0:
+    hexes=[[n[3],n[2],n[1],n[0],n[7],n[6],n[5],n[4]] for n in hexes]
+    vals=np.array([handed(n) for n in hexes]); print("after flip:",vals.min(),vals.max())
+# analytic volume of the shell vs sum of cell volumes (rough, via 6-tet split)
+def hvol(n):
+    h=np.array([X[a-1] for a in n]); c=h.mean(axis=0)
+    F=[(0,3,2,1),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]
+    V=0
+    for f in F:
+        q=h[list(f)]; fc=q.mean(axis=0)
+        for t in range(4):
+            a,b=q[t],q[(t+1)%4]
+            V+=np.dot(np.cross(a-c,b-c),fc-c)/6
+    return V
+V=sum(hvol(n) for n in hexes)
+print("mesh volume mm^3:",V/MM**3, " approx analytic:",3.5347*GAP*2*np.pi*19.5*NTURN)
+# -- output
+min/max handedness: 6.796152297538016e-11 2.25752442479335e-10
+mesh volume mm^3: 416.5960999582226  approx analytic: 433.0789145531098
+
+# -- cell 6 (0.4s, exit 0)
+import os
+os.makedirs("constant/triSurface",exist_ok=True)
+
+def cell_nodes(i,j,k):
+    return [nid(i,j,k),nid(i+1,j,k),nid(i+1,j+1,k),nid(i,j+1,k),
+            nid(i,j,k+1),nid(i+1,j,k+1),nid(i+1,j+1,k+1),nid(i,j+1,k+1)]
+
+def patch_faces():
+    F={p:[] for p in ('neck_flank','lid_flank','inner_end','outer_end')}
+    for i in range(NTH):
+        for j in range(NS):
+            for k in range(NT):
+                own=(i,j,k)
+                if k==0:    F['neck_flank'].append((own,[nid(i,j,0),nid(i+1,j,0),nid(i+1,j+1,0),nid(i,j+1,0)]))
+                if k==NT-1: F['lid_flank'].append((own,[nid(i,j,NT),nid(i+1,j,NT),nid(i+1,j+1,NT),nid(i,j+1,NT)]))
+                if i==0:      F['inner_end'].append((own,[nid(0,j,k),nid(0,j+1,k),nid(0,j+1,k+1),nid(0,j,k+1)]))
+                if i==NTH-1:  F['outer_end'].append((own,[nid(NTH,j,k),nid(NTH,j+1,k),nid(NTH,j+1,k+1),nid(NTH,j,k+1)]))
+                if j==0 and i<NPER:        F['inner_end'].append((own,[nid(i,0,k),nid(i+1,0,k),nid(i+1,0,k+1),nid(i,0,k+1)]))
+                if j==NS-1 and i>=NTH-NPER:F['outer_end'].append((own,[nid(i,NS,k),nid(i+1,NS,k),nid(i+1,NS,k+1),nid(i,NS,k+1)]))
+    return F
+
+PF=patch_faces()
+def oriented(own,q):
+    v=np.array([X[a-1] for a in q]); cc=np.mean([X[a-1] for a in cell_nodes(*own)],axis=0)
+    n=np.cross(v[1]-v[0],v[2]-v[0])
+    return q if np.dot(n,v.mean(axis=0)-cc)>0 else q[::-1]
+
+for p,fl in PF.items():
+    tris=[]
+    for own,q in fl:
+        qq=oriented(own,q); v=[X[a-1] for a in qq]
+        tris += [(v[0],v[1],v[2]),(v[0],v[2],v[3])]
+    with open(f"constant/triSurface/{p}.stl","w") as f:
+        f.write(f"solid {p}\n")
+        for t in tris:
+            n=np.cross(t[1]-t[0],t[2]-t[0]); n=n/np.linalg.norm(n)
+            f.write(f" facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\n  outer loop\n")
+            for v in t: f.write(f"   vertex {v[0]:.8e} {v[1]:.8e} {v[2]:.8e}\n")
+            f.write("  endloop\n endfacet\n")
+        f.write(f"endsolid {p}\n")
+    print(p, len(fl),"quads ->",len(tris),"tris")
+print(sorted(os.listdir("constant/triSurface")))
+# -- output
+neck_flank 1440 quads -> 2880 tris
+lid_flank 1440 quads -> 2880 tris
+inner_end 72 quads -> 144 tris
+outer_end 72 quads -> 144 tris
+['inner_end.stl', 'lid_flank.stl', 'neck_flank.stl', 'outer_end.stl']
+
+# -- cell 7 (0.4s, exit 0)
+pnames=['neck_flank','lid_flank','inner_end','outer_end']
+with open("helix.msh","w") as f:
+    f.write("$MeshFormat\n2.2 0 8\n$EndMeshFormat\n$PhysicalNames\n5\n")
+    for t,p in enumerate(pnames,1): f.write(f'2 {t} "{p}"\n')
+    f.write('3 5 "fluid"\n$EndPhysicalNames\n')
+    f.write(f"$Nodes\n{len(X)}\n")
+    for a,v in enumerate(X,1): f.write(f"{a} {v[0]:.9e} {v[1]:.9e} {v[2]:.9e}\n")
+    f.write("$EndNodes\n$Elements\n")
+    nel=len(hexes)+sum(len(PF[p]) for p in pnames); f.write(f"{nel}\n")
+    e=0
+    for t,p in enumerate(pnames,1):
+        for own,q in PF[p]:
+            e+=1; qq=oriented(own,q); f.write(f"{e} 3 2 {t} {t} "+" ".join(map(str,qq))+"\n")
+    for n in hexes:
+        e+=1; f.write(f"{e} 5 2 5 5 "+" ".join(map(str,n))+"\n")
+    f.write("$EndElements\n")
+print("elements",e)
+import subprocess
+os.makedirs("system",exist_ok=True)
+open("system/controlDict","w").write("""FoamFile{version 2.0;format ascii;class dictionary;object controlDict;}
+application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1;\n""")
+r=subprocess.run(["gmshToFoam","helix.msh"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-800:])
+# -- output
+elements 5904
+0 le meshes/meshShapes/cellModel/cellModel.C at line 90
+    zero or negative pyramid volume: -8.90883e-13 for face 5
+Inverting hex 2827
+--> FOAM Warning : 
+    From Foam::vector Foam::cellModel::centre(const Foam::labelUList&, const Foam::UList<Foam::Vector<double> >&) const
+    in file meshes/meshShapes/cellModel/cellModel.C at line 90
+    zero or negative pyramid volume: -8.90884e-13 for face 5
+Inverting hex 2837
+--> FOAM Warning : 
+    From Foam::vector Foam::cellModel::centre(const Foam::labelUList&, const Foam::UList<Foam::Vector<double> >&) const
+    in file meshes/meshShapes/cellModel/cellModel.C at line 90
+    zero or negative pyramid volume: -8.90884e-13 for face 5
+Inverting hex 2875
+Cells:
+    total:2880
+    hex  :2880
+    prism:0
+    pyr  :0
+    tet  :0
+
+CellZones:
+Zone	Size
+    0	2880
+
+Patch 0 gets name neck_flank
+Patch 1 gets name lid_flank
+Patch 2 gets name inner_end
+Patch 3 gets name outer_end
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 3024 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone fluid and cellSet
+End
+
+# -- cell 8 (0.1s, exit 0)
+print(open("constant/polyMesh/boundary").read())
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+4
+(
+    neck_flank
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1440;
+        startFace       7128;
+    }
+    lid_flank
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1440;
+        startFace       8568;
+    }
+    inner_end
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          72;
+        startFace       10008;
+    }
+    outer_end
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          72;
+        startFace       10080;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 9 (0.2s, exit 0)
+r=subprocess.run(["checkMesh","-constant"],capture_output=True,text=True)
+print(r.stdout[-3000:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant
+Date   : Sep 13 2026
+Time   : 09:24:10
+Host   : yc-demo
+PID    : 868961
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260913-091826-b6de/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+# -- cell 10 (0.1s, exit 0)
+print(r.returncode); print(r.stderr[-3000:]); print(len(r.stdout))
+# -- output
+1
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T13-20260913-091826-b6de/t13/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+1588
+
+# -- cell 11 (0.3s, exit 0)
+open("system/fvSchemes","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSchemes;}\nddtSchemes{default steadyState;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSolution;}\nsolvers{}\n")
+r=subprocess.run(["checkMesh","-constant"],capture_output=True,text=True)
+print(r.returncode); print(r.stdout[-2600:])
+# -- output
+0
+ 7128
+    cells:            2880
+    faces per cell:   6
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     2880
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    neck_flank          1440     1476     ok (non-closed singly connected)  
+    lid_flank           1440     1476     ok (non-closed singly connected)  
+    inner_end           72       108      ok (non-closed singly connected)  
+    outer_end           72       108      ok (non-closed singly connected)  
+    ".*"                3024     3024     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               2880         4428         4.08726e-07  (-0.0202 -0.0202 0) (0.0202 0.0202 0.012)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.0202 -0.0202 0) (0.0202 0.0202 0.012)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.07732e-13 -2.75256e-12 -2.95938e-18) OK.
+ ***Open cells found, max cell openness: 1, number of open cells 240
+  <<Writing 240 non closed cells to set nonClosedCells
+    Minimum face area = 3.27975e-09. Maximum face area = 3.02945e-06.  Face area magnitudes OK.
+    Min volume = 6.88306e-13. Max volume = 2.63318e-10.  Total volume = 4.08726e-07.  Cell volumes OK.
+    Mesh non-orthogonality Max: 178.999 average: 27.6867
+   *Number of severely non-orthogonal (> 70 degrees) faces: 60.
+ ***Number of non-orthogonality errors: 418.
+  <<Writing 478 non-orthogonal faces to set nonOrthoFaces
+ ***Error in face pyramids: 720 faces are incorrectly oriented.
+  <<Writing 482 faces with incorrect orientation to set wrongOrientedFaces
+ ***Max skewness = 6.63367, 120 highly skew faces detected which may impair the quality of the results
+  <<Writing 120 skew faces to set skewFaces
+    Coupled point location match (average 0) OK.
+
+Failed 4 mesh checks.
+
+End
+
+# -- cell 12 (0.1s, exit 0)
+CORN=np.array([[R_MINOR,0.0],[R_MINOR,FLAT/2],[R_MAJOR,FLAT/2+FLANK_DZ],
+               [R_MAJOR,FLAT/2+FLANK_DZ+FLAT],[R_MINOR,PITCH-FLAT/2],[R_MINOR,PITCH]])
+DIVS=[2,7,6,7,2]
+CORNQ=offset_profile(CORN,GAP)          # mitered lid corners
+def subdiv(C,divs):
+    out=[C[0]]
+    for i,n in enumerate(divs):
+        for t in range(1,n+1): out.append(C[i]+(C[i+1]-C[i])*t/n)
+    return np.array(out)
+P=subdiv(CORN,DIVS); Q=subdiv(CORNQ,DIVS)
+assert len(P)-1==NS
+# no crossing: consecutive t-lines must not intersect -> check quad (P_j,P_j+1,Q_j+1,Q_j) area & convexity
+bad=0; gaps=[]
+for j in range(NS):
+    q=np.array([P[j],P[j+1],Q[j+1],Q[j]])
+    a=0.5*sum(q[i,0]*q[(i+1)%4,1]-q[(i+1)%4,0]*q[i,1] for i in range(4))
+    if a>=0: bad+=1
+    gaps.append(np.linalg.norm(Q[j]-P[j]))
+print("negative-area profile quads:",bad,"  min/max node offset distance:",min(gaps),max(gaps))
+nq=seg_normals(P)
+for nm,i in [("root",0),("rising flank",4),("crest",12),("falling flank",18)]:
+    print(nm,"perp gap =",round(float(np.dot(0.5*(Q[i]+Q[i+1])-0.5*(P[i]+P[i+1]),nq[i])),4))
+# -- output
+negative-area profile quads: 0   min/max node offset distance: 0.1999999999999993 0.25209448280205243
+root perp gap = 0.2
+rising flank perp gap = 0.2
+crest perp gap = 0.2
+falling flank perp gap = 0.2
+
+# -- cell 13 (1.1s, exit 0)
+def build_all():
+    global nodes,coords,X,hexes,PF
+    nodes={}; coords=[]
+    hexes=[]
+    for i in range(NTH):
+        for j in range(NS):
+            for k in range(NT): hexes.append(cell_nodes(i,j,k))
+    X=np.array(coords)
+    PF=patch_faces()
+    for p,fl in PF.items():
+        tris=[]
+        for own,q in fl:
+            qq=oriented(own,q); v=[X[a-1] for a in qq]
+            tris += [(v[0],v[1],v[2]),(v[0],v[2],v[3])]
+        with open(f"constant/triSurface/{p}.stl","w") as f:
+            f.write(f"solid {p}\n")
+            for t in tris:
+                nn=np.cross(t[1]-t[0],t[2]-t[0]); nn=nn/np.linalg.norm(nn)
+                f.write(f" facet normal {nn[0]:.6e} {nn[1]:.6e} {nn[2]:.6e}\n  outer loop\n")
+                for v in t: f.write(f"   vertex {v[0]:.8e} {v[1]:.8e} {v[2]:.8e}\n")
+                f.write("  endloop\n endfacet\n")
+            f.write(f"endsolid {p}\n")
+    with open("helix.msh","w") as f:
+        f.write("$MeshFormat\n2.2 0 8\n$EndMeshFormat\n$PhysicalNames\n5\n")
+        for t,p in enumerate(pnames,1): f.write(f'2 {t} "{p}"\n')
+        f.write('3 5 "fluid"\n$EndPhysicalNames\n')
+        f.write(f"$Nodes\n{len(X)}\n")
+        for a,v in enumerate(X,1): f.write(f"{a} {v[0]:.9e} {v[1]:.9e} {v[2]:.9e}\n")
+        f.write("$EndNodes\n$Elements\n")
+        f.write(f"{len(hexes)+sum(len(PF[p]) for p in pnames)}\n"); e=0
+        for t,p in enumerate(pnames,1):
+            for own,q in PF[p]:
+                e+=1; f.write(f"{e} 3 2 {t} {t} "+" ".join(map(str,oriented(own,q)))+"\n")
+        for n in hexes:
+            e+=1; f.write(f"{e} 5 2 5 5 "+" ".join(map(str,n))+"\n")
+        f.write("$EndElements\n")
+    return min(handed(n) for n in hexes)
+
+print("min handedness:",build_all(),"nodes",len(X),"hexes",len(hexes))
+import shutil; shutil.rmtree("constant/polyMesh",ignore_errors=True)
+r=subprocess.run(["gmshToFoam","helix.msh"],capture_output=True,text=True); print("gmshToFoam",r.returncode,"Inverting" in r.stdout)
+r=subprocess.run(["checkMesh","-constant"],capture_output=True,text=True); print(r.stdout[r.stdout.find("Checking geometry"):][:1800])
+# -- output
+min handedness: 1.2200846792814008e-10 nodes 4428 hexes 2880
+gmshToFoam 0 False
+Checking geometry...
+    Overall domain bounding box (-0.0202 -0.0202 0) (0.0202 0.0202 0.012)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.29461e-18 1.23523e-18 6.53019e-18) OK.
+    Max cell openness = 2.66782e-15 OK.
+    Max aspect ratio = 7.70295 OK.
+    Minimum face area = 1.25463e-08. Maximum face area = 1.81065e-06.  Face area magnitudes OK.
+    Min volume = 1.20115e-10. Max volume = 1.61588e-10.  Total volume = 4.16596e-07.  Cell volumes OK.
+    Mesh non-orthogonality Max: 36.0426 average: 22.4244
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.671278 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 14 (0.5s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+pl=pv.Plotter(off_screen=True,window_size=(900,800))
+cols={'neck_flank':'steelblue','lid_flank':'indianred','inner_end':'lime','outer_end':'yellow'}
+for p,c in cols.items(): pl.add_mesh(pv.read(f"constant/triSurface/{p}.stl"),color=c,label=p)
+pl.add_legend(); pl.camera_position=[(0.06,-0.06,0.05),(0,0,0.006),(0,0,1)]
+pl.screenshot("view.png"); from IPython.display import Image; Image("view.png")
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 09:25:59.127 (   0.264s) [    77D0EC0C1780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 09:25:59.128 (   0.264s) [    77D0EC0C1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:25:59.141 (   0.278s) [    77D0EC0C1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 15 (6.3s, exit 0)
+from math import lcm
+NPER = 120      # azimuthal cells per turn
+NT   = 3        # cells across the gap
+NTH  = NPER*NTURN
+L    = lcm(NS,NPER)
+def key(i,j,k): return (j*(L//NS)+i*(L//NPER), i%NPER, k)
+for i in [0,37,NTH-NPER]:
+    for k in [0,NT]:
+        assert key(i,NS,k)==key(i+NPER,0,k) and np.allclose(node_xyz(i,NS,k),node_xyz(i+NPER,0,k),atol=1e-12)
+print("chord error per azimuthal step (mm):",R_MAJOR*(1-np.cos(np.pi/NPER)))
+print("min handedness:",build_all(),"nodes",len(X),"hexes",len(hexes),
+      {p:len(v) for p,v in PF.items()})
+# -- output
+chord error per azimuthal step (mm): 0.006853500488854802
+min handedness: 8.513906451673365e-12 nodes 58176 hexes 43200 {'neck_flank': 14400, 'lid_flank': 14400, 'inner_end': 432, 'outer_end': 432}
+
+# -- cell 16 (1.1s, exit 0)
+shutil.rmtree("constant/polyMesh",ignore_errors=True)
+r=subprocess.run(["gmshToFoam","helix.msh"],capture_output=True,text=True)
+print("gmshToFoam rc",r.returncode,"| inverted hexes:","Inverting" in r.stdout)
+r=subprocess.run(["checkMesh","-constant"],capture_output=True,text=True)
+print(r.stdout[r.stdout.find("Checking patch topology"):][:2600])
+# -- output
+gmshToFoam rc 0 | inverted hexes: False
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    neck_flank          14400    14544    ok (non-closed singly connected)  
+    lid_flank           14400    14544    ok (non-closed singly connected)  
+    inner_end           432      576      ok (non-closed singly connected)  
+    outer_end           432      576      ok (non-closed singly connected)  
+    ".*"                29664    29664    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               43200        58176        4.36059e-07  (-0.0202 -0.0202 0) (0.0202 0.0202 0.012)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.0202 -0.0202 0) (0.0202 0.0202 0.012)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.40721e-17 -8.52596e-17 -1.92328e-18) OK.
+    Max cell openness = 3.9859e-16 OK.
+    Max aspect ratio = 16.2206 OK.
+    Minimum face area = 7.93792e-09. Maximum face area = 1.83129e-07.  Face area magnitudes OK.
+    Min volume = 7.96208e-12. Max volume = 1.15847e-11.  Total volume = 4.36059e-07.  Cell volumes OK.
+    Mesh non-orthogonality Max: 37.4951 average: 23.6219
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.00716 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 17 (0.2s, exit 0)
+def patch_pts(p):
+    m=pv.read(f"constant/triSurface/{p}.stl"); return np.array(m.points)/MM
+neck=patch_pts('neck_flank'); lid=patch_pts('lid_flank')
+rn=np.hypot(neck[:,0],neck[:,1]); rl=np.hypot(lid[:,0],lid[:,1])
+print(f"neck outside diameter   : {2*rn.max():.4f} mm   (asked 40)")
+print(f"neck thread depth       : {rn.max()-rn.min():.4f} mm   (asked 1)")
+print(f"threaded height (z span): {neck[:,2].max()-neck[:,2].min():.4f} mm   (asked 12)")
+# pitch from the helix: same profile index, one turn apart
+dz=[node_xyz(i+NPER,j,0)[2]-node_xyz(i,j,0)[2] for i in (0,53) for j in (0,NS//2)]
+print(f"pitch (z rise per turn) : {np.unique(np.round(np.array(dz)/MM,6))} mm   (asked 2)")
+print(f"starts                  : {(neck[:,2].max()-neck[:,2].min())/2.0/NTURN:.3f} pitches per turn -> single start")
+# flank half-angle from the built profile
+d=P[8]-P[4]; print(f"flank half angle        : {np.degrees(np.arctan2(abs(d[1]),abs(d[0]))):.3f} deg (trapezoid, 30 deg included)")
+# gap, measured normal to the neck flank on flats and as node-to-node spacing
+g_node=np.array([np.linalg.norm(node_xyz(0,j,NT)-node_xyz(0,j,0))/MM for j in range(NS+1)])
+print(f"gap, flank-normal       : 0.2000 mm on every flat/flank; node spacing {g_node.min():.4f}-{g_node.max():.4f} mm (miter at crest corners)")
+for p in ['inner_end','outer_end']:
+    z=patch_pts(p)[:,2]; print(f"{p}: z {z.min():.3f} .. {z.max():.3f} mm, area-> {len(PF[p])} faces")
+print(f"fluid volume            : {4.36059e-07/MM**3:.2f} mm^3, cells 43200")
+# -- output
+neck outside diameter   : 40.0000 mm   (asked 40)
+neck thread depth       : 1.0000 mm   (asked 1)
+threaded height (z span): 12.0000 mm   (asked 12)
+pitch (z rise per turn) : [2.] mm   (asked 2)
+starts                  : 1.200 pitches per turn -> single start
+flank half angle        : 15.000 deg (trapezoid, 30 deg included)
+gap, flank-normal       : 0.2000 mm on every flat/flank; node spacing 0.2000-0.2521 mm (miter at crest corners)
+inner_end: z 0.000 .. 2.000 mm, area-> 432 faces
+outer_end: z 10.000 .. 12.000 mm, area-> 432 faces
+fluid volume            : 436.06 mm^3, cells 43200
+
+# -- cell 18 (0.5s, exit 0)
+pl=pv.Plotter(off_screen=True,window_size=(1000,450),shape=(1,2))
+for p,c in cols.items(): pl.subplot(0,0); pl.add_mesh(pv.read(f"constant/triSurface/{p}.stl"),color=c)
+pl.camera_position=[(0.05,-0.05,0.045),(0,0,0.006),(0,0,1)]
+pl.subplot(0,1)
+fm=pv.read("constant/triSurface/neck_flank.stl")+pv.read("constant/triSurface/lid_flank.stl")
+cl=(fm+pv.read("constant/triSurface/inner_end.stl")+pv.read("constant/triSurface/outer_end.stl")).clip('y',origin=(0,0,0))
+pl.add_mesh(cl,color='lightsteelblue',show_edges=True,line_width=0.3)
+pl.camera_position=[(0.07,0.0,0.012),(0.019,0,0.006),(0,0,1)]
+pl.screenshot("view2.png"); Image("view2.png")
+# -- output
+[0m[33m2026-09-13 09:26:49.876 (  51.013s) [    77D0EC0C1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:26:49.877 (  51.014s) [    77D0EC0C1780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

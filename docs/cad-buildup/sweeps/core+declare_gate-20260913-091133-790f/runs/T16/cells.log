@@ -1,0 +1,454 @@
+# -- cell 1 (2.2s, exit 0)
+import os, numpy as np
+from build123d import *
+
+L = 0.900
+OUT_R = [0.450, 0.430, 0.410]
+CORE_R = [0.280, 0.310, 0.250]
+ZS = [0.0, L/2, L]
+
+outer_pts = [(OUT_R[i], 0, ZS[i]) for i in range(3)]
+core_pts  = [(CORE_R[i], 0, ZS[i]) for i in range(3)]
+
+e_out = Spline(*outer_pts)
+e_core = Spline(*core_pts)
+e_in  = Line(core_pts[0], outer_pts[0])   # fan-exit inlet
+e_nzl = Line(core_pts[2], outer_pts[2])   # nozzle outlet
+face = make_face([e_out, e_core, e_in, e_nzl])
+solid = revolve(face, Axis.Z, 360)
+print(solid.volume, solid.bounding_box())
+# -- output
+0.27639383923326905 bbox: -0.4500001 <= x <= 0.4500001, -0.4500001 <= y <= 0.4500001, -1e-07 <= z <= 0.9000001000000004
+
+# -- cell 2 (0.1s, exit 0)
+for i,f in enumerate(solid.faces()):
+    c = f.center()
+    print(i, type(f.geometry) if hasattr(f,'geometry') else '', f.geom_type, round(f.area,4), [round(v,4) for v in c], f.bounding_box())
+# -- output
+0 <class 'NoneType'> GeomType.REVOLUTION 2.434 [-0.43, 0.0, 0.45] bbox: -0.4500001 <= x <= 0.4500001, -0.4500001 <= y <= 0.4500001, -1e-07 <= z <= 0.9000000999999995
+1 <class 'NoneType'> GeomType.PLANE 0.3318 [-0.0, -0.0, 0.9] bbox: -0.41 <= x <= 0.41, -0.41 <= y <= 0.41, 0.9 <= z <= 0.9
+2 <class 'NoneType'> GeomType.REVOLUTION 1.6795 [-0.31, 0.0, 0.4515] bbox: -0.311202499014866 <= x <= 0.311202499014866, -0.311202499014866 <= y <= 0.311202499014866, -1e-07 <= z <= 0.9000001000000004
+3 <class 'NoneType'> GeomType.PLANE 0.3899 [0.0, -0.0, 0.0] bbox: -0.45 <= x <= 0.45, -0.45 <= y <= 0.45, 0.0 <= z <= 0.0
+
+# -- cell 3 (3.8s, exit 0)
+import os
+from build123d import Mesher, export_stl, Compound
+faces = solid.faces()
+patch_faces = {"outerCowl": faces[0], "coreCowl": faces[2], "nozzleOutlet": faces[1], "fanInlet": faces[3]}
+os.makedirs("constant/triSurface", exist_ok=True)
+for name, f in patch_faces.items():
+    export_stl(Compound(children=[f]), f"constant/triSurface/{name}.stl", tolerance=1e-4, angular_tolerance=0.1, ascii_format=True)
+    # rename solid label inside ascii stl to patch name
+    p = f"constant/triSurface/{name}.stl"
+    txt = open(p).read().replace("solid ", f"solid {name} ",1) if False else open(p).read()
+    lines = txt.splitlines()
+    lines[0] = f"solid {name}"; lines[-1] = f"endsolid {name}"
+    open(p,"w").write("\n".join(lines)+"\n")
+    print(name, f.area, os.path.getsize(p))
+# -- output
+outerCowl 2.43399310213712 8093758
+coreCowl 1.6795145326312602 13549448
+nozzleOutlet 0.3317521842190819 141974
+fanInlet 0.3898716483104933 142472
+
+# -- cell 4 (0.4s, exit 0)
+import numpy as np
+def r_at(edge, z):
+    ts = np.linspace(0,1,2001)
+    pts = np.array([tuple(edge@t) for t in ts])
+    i = np.argmin(abs(pts[:,2]-z))
+    return np.hypot(pts[i,0],pts[i,1]), pts[i,2]
+for nm,e,targ in [("outer",e_out,OUT_R),("core",e_core,CORE_R)]:
+    for z,t in zip(ZS,targ):
+        r,zz = r_at(e,z); print(f"{nm} z={z:.3f} r={r*1000:.2f} mm (asked {t*1000:.0f})")
+    pts = np.array([tuple(e@t) for t in np.linspace(0,1,2001)])
+    print(nm,"r range mm", 1000*np.hypot(pts[:,0],pts[:,1]).min(), 1000*np.hypot(pts[:,0],pts[:,1]).max())
+# -- output
+outer z=0.000 r=450.00 mm (asked 450)
+outer z=0.450 r=430.00 mm (asked 430)
+outer z=0.900 r=410.00 mm (asked 410)
+outer r range mm 410.0 450.0
+core z=0.000 r=280.00 mm (asked 280)
+core z=0.450 r=310.00 mm (asked 310)
+core z=0.900 r=250.00 mm (asked 250)
+core r range mm 250.0 311.20239744534797
+
+# -- cell 5 (0.3s, exit 0)
+import os, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+head = lambda cls,obj: f"""FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"""
+open("system/controlDict","w").write(head("dictionary","controlDict")+
+"application simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n")
+open("system/fvSchemes","w").write(head("dictionary","fvSchemes")+"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(head("dictionary","fvSolution")+"solvers{} SIMPLE{}\n")
+N=(24,24,26)
+open("system/blockMeshDict","w").write(head("dictionary","blockMeshDict")+f"""
+scale 1;
+vertices ((-0.47 -0.47 -0.06)(0.47 -0.47 -0.06)(0.47 0.47 -0.06)(-0.47 0.47 -0.06)(-0.47 -0.47 0.96)(0.47 -0.47 0.96)(0.47 0.47 0.96)(-0.47 0.47 0.96));
+blocks (hex (0 1 2 3 4 5 6 7) ({N[0]} {N[1]} {N[2]}) simpleGrading (1 1 1));
+edges (); boundary (); mergePatchPairs ();
+""")
+import subprocess
+print(subprocess.run(["blockMesh"],capture_output=True,text=True).stdout[-400:])
+# -- output
+: 0.0391667 .. 0.0391667
+        k : 0.0392308 .. 0.0392308
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.47 -0.47 -0.06) (0.47 0.47 0.96)
+  nPoints: 16875
+  nCells: 14976
+  nFaces: 46752
+  nInternalFaces: 43104
+----------------
+Patches
+----------------
+  patch 0 (start: 43104 size: 3648) name: defaultFaces
+
+End
+
+# -- cell 6 (0.4s, exit 0)
+import subprocess
+names=["outerCowl","coreCowl","fanInlet","nozzleOutlet"]
+sfe = "".join(f"{n}.stl {{ extractionMethod extractFromSurface; extractFromSurfaceCoeffs {{ includedAngle 150; }} writeObj no; }}\n" for n in names)
+open("system/surfaceFeatureExtractDict","w").write(head("dictionary","surfaceFeatureExtractDict")+sfe)
+geom = "".join(f"    {n}.stl {{ type triSurfaceMesh; name {n}; }}\n" for n in names)
+feats = "".join(f"            {{ file \"{n}.eMesh\"; level 1; }}\n" for n in names)
+refs = "".join(f"            {n} {{ level (1 1); patchInfo {{ type {'patch' if n in ('fanInlet','nozzleOutlet') else 'wall'}; }} }}\n" for n in names)
+open("system/snappyHexMeshDict","w").write(head("dictionary","snappyHexMeshDict")+f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geom}}}
+castellatedMeshControls {{
+    maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+    nCellsBetweenLevels 2; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+    features (
+{feats}    );
+    refinementSurfaces {{
+{refs}    }}
+    refinementRegions {{}}
+    locationInMesh (0.37 0.0 0.45);
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5; nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.2; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80; minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6;
+""")
+r=subprocess.run(["surfaceFeatureExtract"],capture_output=True,text=True); print(r.returncode, r.stdout[-800:])
+# -- output
+0    region edges   : 561
+        external edges : 0
+        internal edges : 0
+
+Final Feature set:
+    points : 561
+    of which
+        convex             : 0
+        concave            : 0
+        mixed              : 0
+        non-feature        : 561
+    edges  : 561
+    of which
+        external edges     : 0
+        internal edges     : 0
+        flat edges         : 0
+        open edges         : 561
+        multiply connected : 0
+
+Writing extendedFeatureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T16-20260913-092759-c21b/t16/constant/extendedFeatureEdgeMesh/nozzleOutlet.extendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T16-20260913-092759-c21b/t16/constant/triSurface/nozzleOutlet.eMesh"
+ExecutionTime = 0.22 s  ClockTime = 1 s
+
+End
+
+# -- cell 7 (6.7s, exit 0)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True); print(r.returncode, r.stdout[-1500:], r.stderr[-500:])
+# -- output
+0 Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:29592  faces:96610  points:37686
+Cells per refinement level:
+    0	1035
+    1	28557
+Writing mesh to time constant
+Wrote mesh in = 0.06 s.
+Mesh snapped in = 3.47 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 6.48 s.
+End
+
+# -- cell 8 (0.4s, exit 0)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True); print(r.stdout[-2500:])
+# -- output
+ified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           37686
+    faces:            96610
+    internal faces:   85126
+    cells:            29592
+    faces per cell:   6.14139
+    boundary patches: 4
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     24497
+    prisms:        2882
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     2213
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   618
+            5   560
+           12   342
+           15   502
+           18   191
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+               outerCowl     5620     6000  ok (non-closed singly connected)
+                coreCowl     4016     4466  ok (non-closed singly connected)
+                fanInlet     1000     1060  ok (non-closed singly connected)
+            nozzleOutlet      848      904  ok (non-closed singly connected)
+                    ".*"    11484    12026      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.449978 -0.449982 0) (0.45 0.449982 0.9)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (2.03309e-16 -6.98089e-17 6.34728e-17) OK.
+    Max cell openness = 2.92826e-16 OK.
+    Max aspect ratio = 4.56827 OK.
+    Minimum face area = 0.000116128. Maximum face area = 0.00195393.  Face area magnitudes OK.
+    Min volume = 1.27329e-06. Max volume = 7.63514e-05.  Total volume = 0.276347.  Cell volumes OK.
+    Mesh non-orthogonality Max: 38.8704 average: 10.6195
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.824505 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 9 (0.7s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+subprocess.run(["foamToVTK","-latestTime","-ascii"],capture_output=True,text=True)
+import glob; print(glob.glob("VTK/*"))
+# -- output
+['VTK/t16.vtm.series', 'VTK/t16_0.vtm', 'VTK/t16_0']
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+
+# -- cell 10 (0.7s, exit 0)
+m = pv.read("VTK/t16_0.vtm")
+internal = m[0]
+clip = internal.clip(normal='y', origin=(0,0,0))
+p = pv.Plotter(off_screen=True, window_size=(1100,700))
+p.add_mesh(clip, show_edges=True, color='lightblue')
+p.camera_position='xz'; p.show(screenshot="cut.png")
+# -- output
+[0m[33m2026-09-13 09:29:38.144 (   3.997s) [    75417FDFD780]vtkTableBasedClipDataSe:1410  WARN| vtkTableBasedClipDataSet (0x5b401b52f6c0): Output points used by cells not supported by vtkTableBasedClipDataSet will appear twice. To avoid this, consider using vtkClipDataSet directly[0m
+[0m[33m2026-09-13 09:29:38.277 (   4.130s) [    75417FDFD780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 09:29:38.278 (   4.131s) [    75417FDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:29:38.291 (   4.144s) [    75417FDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_873028/2498966390.py:6: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.camera_position='xz'; p.show(screenshot="cut.png")
+
+# -- cell 11 (0.2s, exit 0)
+sl = internal.slice(normal='y', origin=(0,0,0.45))
+p = pv.Plotter(off_screen=True, window_size=(1100,600))
+p.add_mesh(sl, show_edges=True, color='lightblue')
+p.view_xz(); p.camera.up=(0,0,1); p.show(screenshot="slice.png")
+# -- output
+[0m[33m2026-09-13 09:29:42.718 (   8.571s) [    75417FDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:29:42.719 (   8.572s) [    75417FDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_873028/2208549601.py:4: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.view_xz(); p.camera.up=(0,0,1); p.show(screenshot="slice.png")
+
+# -- cell 12 (28.7s, exit 0)
+N=(48,48,52)
+open("system/blockMeshDict","w").write(head("dictionary","blockMeshDict")+f"""
+scale 1;
+vertices ((-0.47 -0.47 -0.06)(0.47 -0.47 -0.06)(0.47 0.47 -0.06)(-0.47 0.47 -0.06)(-0.47 -0.47 0.96)(0.47 -0.47 0.96)(0.47 0.47 0.96)(-0.47 0.47 0.96));
+blocks (hex (0 1 2 3 4 5 6 7) ({N[0]} {N[1]} {N[2]}) simpleGrading (1 1 1));
+edges (); boundary (); mergePatchPairs ();
+""")
+subprocess.run(["blockMesh"],capture_output=True,text=True)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True); print(r.returncode, r.stdout[-600:])
+# -- output
+0                      : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 27.6 s.
+End
+
+# -- cell 13 (1.1s, exit 0)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True); print(r.stdout[-1400:])
+# -- output
+d singly connected)
+                coreCowl    15828    17520  ok (non-closed singly connected)
+                fanInlet     4008     4128  ok (non-closed singly connected)
+            nozzleOutlet     3432     3544  ok (non-closed singly connected)
+                    ".*"    45936    48344      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.449978 -0.449983 0) (0.45 0.449983 0.9)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (6.49763e-16 1.17782e-16 -4.00015e-18) OK.
+    Max cell openness = 3.07116e-16 OK.
+    Max aspect ratio = 4.64062 OK.
+    Minimum face area = 2.87412e-05. Maximum face area = 0.0004255.  Face area magnitudes OK.
+    Min volume = 1.57034e-07. Max volume = 8.32632e-06.  Total volume = 0.27635.  Cell volumes OK.
+    Mesh non-orthogonality Max: 42.2016 average: 10.8428
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.865273 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 14 (1.9s, exit 0)
+subprocess.run(["foamToVTK","-latestTime","-ascii"],capture_output=True,text=True)
+m = pv.read("VTK/t16_0.vtm"); 
+def walk(b,acc):
+    for i in range(b.n_blocks):
+        x=b[i]
+        if isinstance(x,pv.MultiBlock): walk(x,acc)
+        elif x is not None: acc.append((b.get_block_name(i),x))
+    return acc
+blocks = walk(m,[])
+cad_area = {"outerCowl":2.4340,"coreCowl":1.6795,"fanInlet":0.38987,"nozzleOutlet":0.33175}
+for nm,x in blocks:
+    a = x.extract_surface().compute_cell_sizes(length=False,volume=False)["Area"].sum() if nm!="internalMesh" else None
+    print(nm, x.n_cells, round(a,5) if a else "", "CAD", cad_area.get(nm,""))
+# -- output
+internal 138544 4.8347 CAD 
+outerCowl 22668 2.43382 CAD 2.434
+coreCowl 15828 1.6793 CAD 1.6795
+fanInlet 4008 0.38985 CAD 0.38987
+nozzleOutlet 3432 0.33173 CAD 0.33175
+
+/tmp/ipykernel_873028/3186903206.py:12: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  a = x.extract_surface().compute_cell_sizes(length=False,volume=False)["Area"].sum() if nm!="internalMesh" else None
+/tmp/ipykernel_873028/3186903206.py:12: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  a = x.extract_surface().compute_cell_sizes(length=False,volume=False)["Area"].sum() if nm!="internalMesh" else None
+
+# -- cell 15 (0.1s, exit 0)
+import numpy as np
+bd = dict(blocks)
+for nm,targ in [("outerCowl",OUT_R),("coreCowl",CORE_R)]:
+    P = bd[nm].points; r = np.hypot(P[:,0],P[:,1])
+    for z,t in zip(ZS,targ):
+        sel = abs(P[:,2]-z)<0.004
+        print(f"{nm} z={z:.2f} mesh r={1000*r[sel].mean():.2f} mm (asked {1000*t:.0f})")
+for nm in ["fanInlet","nozzleOutlet"]:
+    P=bd[nm].points; r=np.hypot(P[:,0],P[:,1]); print(nm,"z",P[:,2].min(),P[:,2].max(),"r mm",round(1000*r.min(),1),round(1000*r.max(),1))
+# -- output
+outerCowl z=0.00 mesh r=449.99 mm (asked 450)
+outerCowl z=0.45 mesh r=429.99 mm (asked 430)
+outerCowl z=0.90 mesh r=409.99 mm (asked 410)
+coreCowl z=0.00 mesh r=279.99 mm (asked 280)
+coreCowl z=0.45 mesh r=309.99 mm (asked 310)
+coreCowl z=0.90 mesh r=249.99 mm (asked 250)
+fanInlet z 0.0 0.0 r mm 280.0 450.0
+nozzleOutlet z 0.9 0.9 r mm 250.0 410.0
+
+# -- cell 16 (0.2s, exit 0)
+sl = bd["internal"].slice(normal='y', origin=(0,0,0.45))
+p = pv.Plotter(off_screen=True, window_size=(1000,600)); p.add_mesh(sl, show_edges=True, color='lightblue')
+p.view_xz(); p.camera.up=(0,0,1); p.show(screenshot="slice_final.png")
+# -- output
+[0m[33m2026-09-13 09:30:45.773 (  71.626s) [    75417FDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:30:45.774 (  71.627s) [    75417FDFD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_873028/476002227.py:3: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.view_xz(); p.camera.up=(0,0,1); p.show(screenshot="slice_final.png")
+

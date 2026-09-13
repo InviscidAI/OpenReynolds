@@ -1,0 +1,929 @@
+# -- cell 1 (0.1s, exit 0)
+import numpy as np, os
+os.chdir("/home/qiuzi/.openreynolds-buildup/work/T10-20260913-091133-36bd/t10")
+
+# ---- parameters (metres, machine axis = x) ----
+R_HUB   = 0.045
+SPAN    = 0.045
+R_TIP   = R_HUB + SPAN
+NBLADE  = 28
+PITCH   = 2*np.pi/NBLADE
+CHORD   = 0.022
+TMAX    = 0.06
+STAG_R  = np.radians(30.0)
+TWIST   = np.radians(35.0)
+CAMBER  = np.radians(45.0)   # total camber (turning) angle: design choice, not specified
+
+def section_2d(n=81):
+    b = 0.5*(1-np.cos(np.linspace(0, np.pi, n)))
+    x = b*CHORD
+    R = CHORD/(2*np.sin(CAMBER/2))
+    yc = np.sqrt(R**2-(x-CHORD/2)**2) - R*np.cos(CAMBER/2)
+    dyc = -(x-CHORD/2)/np.sqrt(R**2-(x-CHORD/2)**2)
+    th = np.arctan(dyc)
+    t = b
+    yt = 5*TMAX*CHORD*(0.2969*np.sqrt(np.maximum(t,0))-0.1260*t-0.3516*t**2+0.2843*t**3-0.1036*t**4)
+    xu, yu = x-yt*np.sin(th), yc+yt*np.cos(th)
+    xl, yl = x+yt*np.sin(th), yc-yt*np.cos(th)
+    return (xu, yu), (xl, yl)
+
+(xu,yu),(xl,yl) = section_2d()
+print("chord (LE->TE along camber chord line):", xu[-1]-xu[0])
+print("max thickness / chord:", np.max(np.hypot(xu-xl, yu-yl))/CHORD)
+print("pitch deg:", np.degrees(PITCH), "stagger tip deg:", np.degrees(STAG_R+TWIST))
+print("pitch arc at hub (m):", PITCH*R_HUB, " at tip:", PITCH*R_TIP)
+# -- output
+chord (LE->TE along camber chord line): 0.022
+max thickness / chord: 0.059989072343041405
+pitch deg: 12.857142857142858 stagger tip deg: 65.0
+pitch arc at hub (m): 0.01009797638653862  at tip: 0.02019595277307724
+
+# -- cell 2 (0.2s, exit 0)
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+NSEC = 9
+R_LO, R_HI = R_HUB-0.002, R_TIP+0.002      # slight overhang for clean trims
+
+def stagger_at(r):
+    f = (r-R_HUB)/SPAN                      # linear twist, 0 at hub, 1 at tip
+    return STAG_R + TWIST*f
+
+def section_planar(r):
+    """(axial a, tangential arc s) closed loop of the section at radius r, centroid at origin."""
+    (xu,yu),(xl,yl) = section_2d()
+    x = np.concatenate([xu, xl[::-1][1:-1]])
+    y = np.concatenate([yu, yl[::-1][1:-1]])
+    xi = stagger_at(r)
+    a =  x*np.cos(xi) - y*np.sin(xi)
+    s =  x*np.sin(xi) + y*np.cos(xi)
+    return a-a.mean(), s-s.mean()
+
+def section_3d(r, theta0=0.0):
+    a, s = section_planar(r)
+    th = theta0 + s/r
+    return np.column_stack([a, r*np.cos(th), r*np.sin(th)])
+
+radii = np.linspace(R_LO, R_HI, NSEC)
+secs  = [section_3d(r) for r in radii]
+amin = min(p[:,0].min() for p in secs); amax = max(p[:,0].max() for p in secs)
+X_IN, X_OUT = amin - CHORD, amax + CHORD
+print("blade axial extent: %.4f .. %.4f m" % (amin, amax))
+print("inlet plane x=%.4f  outlet plane x=%.4f" % (X_IN, X_OUT))
+
+fig, ax = plt.subplots(figsize=(5,5))
+for r,p in zip(radii, secs):
+    a,s = section_planar(r); ax.plot(a, s+0*r, label="r=%.3f"%r)
+ax.set_aspect("equal"); ax.set_xlabel("axial"); ax.set_ylabel("tangential"); ax.legend(fontsize=6)
+fig.savefig("sections.png", dpi=110)
+print("stagger root/tip deg:", np.degrees(stagger_at(R_HUB)), np.degrees(stagger_at(R_TIP)))
+# -- output
+blade axial extent: -0.0092 .. 0.0102 m
+inlet plane x=-0.0312  outlet plane x=0.0322
+stagger root/tip deg: 29.999999999999996 65.0
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 3 (0.2s, exit 0)
+from IPython.display import display
+fig, ax = plt.subplots(figsize=(5,5))
+for r in radii:
+    a,s = section_planar(r); ax.plot(a, s, lw=1, label="r=%.3f"%r)
+ax.set_aspect("equal"); ax.set_xlabel("axial x"); ax.set_ylabel("tangential arc s"); ax.legend(fontsize=6)
+display(fig); plt.close(fig)
+# -- output
+
+
+# -- cell 4 (2.6s, exit 1)
+from build123d import *
+
+def section_wire(r, theta0=0.0):
+    """Closed 3D wire of the section at radius r, starting and ending at the sharp TE."""
+    (xu,yu),(xl,yl) = section_2d()
+    # TE -> lower surface -> LE -> upper surface -> TE
+    x = np.concatenate([xl[::-1], xu[1:]])
+    y = np.concatenate([yl[::-1], yu[1:]])
+    xi = stagger_at(r)
+    a = x*np.cos(xi) - y*np.sin(xi); s = x*np.sin(xi) + y*np.cos(xi)
+    a0, s0 = section_planar(r)          # same centroid shift
+    a = a - (a.mean() if False else (np.concatenate([xl[::-1],xu[1:]])*np.cos(xi)-np.concatenate([yl[::-1],yu[1:]])*np.sin(xi)).mean())
+    s = s - (np.concatenate([xl[::-1],xu[1:]])*np.sin(xi)+np.concatenate([yl[::-1],yu[1:]])*np.cos(xi)).mean()
+    th = theta0 + s/r
+    pts = [Vector(float(ai), float(r*np.cos(t)), float(r*np.sin(t))) for ai,t in zip(a, th)]
+    return Wire(Spline(*pts, *[pts[0]]).edge())
+
+w0 = section_wire(radii[0])
+print("wire closed:", w0.is_closed, " length:", w0.length)
+blade0 = loft([section_wire(r) for r in radii], ruled=False)
+print(type(blade0), "volume m^3:", blade0.volume, " bbox:", blade0.bounding_box())
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mStandard_ConstructionError[39m                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 18[39m
+[32m     14[39m     th = theta0 + s/r
+[32m     15[39m     pts = [Vector(float(ai), float(r*np.cos(t)), float(r*np.sin(t))) [38;5;28;01mfor[39;00m ai,t [38;5;28;01min[39;00m zip(a, th)]
+[32m     16[39m     [38;5;28;01mreturn[39;00m Wire(Spline(*pts, *[pts[[32m0[39m]]).edge())
+[32m     17[39m 
+[32m---> [39m[32m18[39m w0 = section_wire(radii[[32m0[39m])
+[32m     19[39m print([33m"wire closed:"[39m, w0.is_closed, [33m" length:"[39m, w0.length)
+[32m     20[39m blade0 = loft([section_wire(r) [38;5;28;01mfor[39;00m r [38;5;28;01min[39;00m radii], ruled=[38;5;28;01mFalse[39;00m)
+[32m     21[39m print(type(blade0), [33m"volume m^3:"[39m, blade0.volume, [33m" bbox:"[39m, blade0.bounding_box())
+
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 16[39m, in [36msection_wire[39m[34m(r, theta0)[39m
+[32m     12[39m     a = a - (a.mean() [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m (np.concatenate([xl[::-[32m1[39m],xu[[32m1[39m:]])*np.cos(xi)-np.concatenate([yl[::-[32m1[39m],yu[[32m1[39m:]])*np.sin(xi)).mean())
+[32m     13[39m     s = s - (np.concatenate([xl[::-[32m1[39m],xu[[32m1[39m:]])*np.sin(xi)+np.concatenate([yl[::-[32m1[39m],yu[[32m1[39m:]])*np.cos(xi)).mean()
+[32m     14[39m     th = theta0 + s/r
+[32m     15[39m     pts = [Vector(float(ai), float(r*np.cos(t)), float(r*np.sin(t))) [38;5;28;01mfor[39;00m ai,t [38;5;28;01min[39;00m zip(a, th)]
+[32m---> [39m[32m16[39m     [38;5;28;01mreturn[39;00m Wire(Spline(*pts, *[pts[[32m0[39m]]).edge())
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/objects_curve.py:2313[39m, in [36mSpline.__init__[39m[34m(self, tangents, tangent_scalars, periodic, mode, *pts)[39m
+[32m   2310[39m [38;5;28;01melse[39;00m:
+[32m   2311[39m     scalars = [38;5;28mlist[39m(tangent_scalars) [38;5;28;01mif[39;00m tangent_scalars [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m []
+[32m-> [39m[32m2313[39m spline = [30;43mEdge[39;49m[30;43m.[39;49m[30;43mmake_spline[39;49m[30;43m([39;49m
+[32m   2314[39m [30;43m    [39;49m[30;43m[[39;49m[30;43mp[39;49m[30;43m [39;49m[30;43;01mif[39;49;00m[30;43m [39;49m[30;43misinstance[39;49m[30;43m([39;49m[30;43mp[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mVector[39;49m[30;43m)[39;49m[30;43m [39;49m[30;43;01melse[39;49;00m[30;43m [39;49m[30;43mVector[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43mp[39;49m[30;43m)[39;49m[30;43m [39;49m[30;43;01mfor[39;49;00m[30;43m [39;49m[30;43mp[39;49m[30;43m [39;49m[30;43;01min[39;49;00m[30;43m [39;49m[30;43mspline_pts[39;49m[30;43m][39;49m[30;43m,[39;49m
+[32m   2315[39m [30;43m    [39;49m[30;43mtangents[39;49m[30;43m=[39;49m[30;43m([39;49m
+[32m   2316[39m [30;43m        [39;49m[30;43m[[39;49m
+[32m   2317[39m [30;43m            [39;49m[30;43mt[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m [39;49m[30;43ms[39;49m[30;43m [39;49m[30;43;01mif[39;49;00m[30;43m [39;49m[30;43misinstance[39;49m[30;43m([39;49m[30;43mt[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mVector[39;49m[30;43m)[39;49m[30;43m [39;49m[30;43;01melse[39;49;00m[30;43m [39;49m[30;43mVector[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43mt[39;49m[30;43m)[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m [39;49m[30;43ms[39;49m
+[32m   2318[39m [30;43m            [39;49m[30;43;01mfor[39;49;00m[30;43m [39;49m[30;43mt[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43ms[39;49m[30;43m [39;49m[30;43;01min[39;49;00m[30;43m [39;49m[30;43mzip[39;49m[30;43m([39;49m[30;43mspline_tangents[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mscalars[39;49m[30;43m)[39;49m
+[32m   2319[39m [30;43m        [39;49m[30;43m][39;49m
+[32m   2320[39m [30;43m        [39;49m[30;43;01mif[39;49;00m[30;43m [39;49m[30;43mspline_tangents[39;49m
+[32m   2321[39m [30;43m        [39;49m[30;43;01melse[39;49;00m[30;43m [39;49m[30;43;01mNone[39;49;00m
+[32m   2322[39m [30;43m    [39;49m[30;43m)[39;49m[30;43m,[39;49m
+[32m   2323[39m [30;43m    [39;49m[30;43mperiodic[39;49m[30;43m=[39;49m[30;43mperiodic[39;49m[30;43m,[39;49m
+[32m   2324[39m [30;43m    [39;49m[30;43mscale[39;49m[30;43m=[39;49m[30;43mtangent_scalars[39;49m[30;43m [39;49m[30;43;01mis[39;49;00m[30;43m [39;49m[30;43;01mNone[39;49;00m[30;43m,[39;49m
+[32m   2325[39m [30;43m[39;49m[30;43m)[39;49m
+[32m   2326[39m [38;5;28msuper[39m().[34m__init__[39m(spline, mode=mode)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/one_d.py:2426[39m, in [36mEdge.make_spline[39m[34m(cls, points, tangents, periodic, parameters, scale, tol)[39m
+[32m   2423[39m     pnts.SetValue(i + [32m1[39m, point.to_pnt())
+[32m   2425[39m [38;5;28;01mif[39;00m parameters [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m:
+[32m-> [39m[32m2426[39m     spline_builder = [30;43mGeomAPI_Interpolate[39;49m[30;43m([39;49m[30;43mpnts[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mperiodic[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mtol[39;49m[30;43m)[39;49m
+[32m   2427[39m [38;5;28;01melse[39;00m:
+[32m   2428[39m     [38;5;28;01mif[39;00m [38;5;28mlen[39m(parameters) != ([38;5;28mlen[39m(point_vectors) + periodic):
+
+[31mStandard_ConstructionError[39m:
+
+# -- cell 5 (0.2s, exit 1)
+def _staggered(r, x, y):
+    xi = stagger_at(r)
+    a = x*np.cos(xi) - y*np.sin(xi)
+    s = x*np.sin(xi) + y*np.cos(xi)
+    (xu,yu),(xl,yl) = section_2d()
+    xa = np.concatenate([xl[::-1], xu[1:]]); ya = np.concatenate([yl[::-1], yu[1:]])
+    ca = (xa*np.cos(xi) - ya*np.sin(xi)).mean(); cs = (xa*np.sin(xi) + ya*np.cos(xi)).mean()
+    return a-ca, s-cs
+
+def _to3d(r, a, s, theta0):
+    th = theta0 + s/r
+    return [Vector(float(ai), float(r*np.cos(t)), float(r*np.sin(t))) for ai, t in zip(a, th)]
+
+def section_wire(r, theta0=0.0):
+    (xu,yu),(xl,yl) = section_2d()
+    al, sl = _staggered(r, xl[::-1], yl[::-1])      # TE -> LE  (lower/pressure-ish)
+    au, su = _staggered(r, xu,       yu)            # LE -> TE  (upper)
+    pl = _to3d(r, al, sl, theta0); pu = _to3d(r, au, su, theta0)
+    pu[0] = pl[-1]; pu[-1] = pl[0]                  # exact shared LE / TE
+    return Wire([Spline(*pl).edge(), Spline(*pu).edge()])
+
+w0 = section_wire(radii[0])
+print("closed:", w0.is_closed, "length %.5f (perimeter ~2*chord=%.4f)" % (w0.length, 2*CHORD))
+blade0 = loft([section_wire(r) for r in radii], ruled=False)
+print(type(blade0).__name__, "volume:", blade0.volume, "valid:", blade0.is_valid())
+print("bbox:", blade0.bounding_box())
+# -- output
+closed: True length 0.04541 (perimeter ~2*chord=0.0440)
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 24[39m
+[32m     20[39m     [38;5;28;01mreturn[39;00m Wire([Spline(*pl).edge(), Spline(*pu).edge()])
+[32m     21[39m 
+[32m     22[39m w0 = section_wire(radii[[32m0[39m])
+[32m     23[39m print([33m"closed:"[39m, w0.is_closed, [33m"length %.5f (perimeter ~2*chord=%.4f)"[39m % (w0.length, [32m2[39m*CHORD))
+[32m---> [39m[32m24[39m blade0 = loft([section_wire(r) [38;5;28;01mfor[39;00m r [38;5;28;01min[39;00m radii], ruled=[38;5;28;01mFalse[39;00m)
+[32m     25[39m print(type(blade0).__name__, [33m"volume:"[39m, blade0.volume, [33m"valid:"[39m, blade0.is_valid())
+[32m     26[39m print([33m"bbox:"[39m, blade0.bounding_box())
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    157[39m objs = [38;5;28mlist[39m(objs)  [38;5;66;03m# To determine its length[39;00m
+[32m    158[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(objs) < [32m2[39m:
+[32m--> [39m[32m159[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mMore than one wire is required[39m[33m"[39m)
+[32m    160[39m vertices = [obj [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m objs [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj.wrapped, TopoDS_Vertex)]
+[32m    161[39m vertex_count = [38;5;28mlen[39m(vertices)
+
+[31mValueError[39m: More than one wire is required
+
+# -- cell 6 (0.1s, exit 1)
+wires = [section_wire(r) for r in radii]
+blade0 = Solid.make_loft(wires, ruled=False)
+print("volume m^3: %.3e  valid: %s" % (blade0.volume, blade0.is_valid()))
+bb = blade0.bounding_box(); print("bbox min", bb.min, "max", bb.max)
+# sanity: mean radius of surface points should span R_LO..R_HI
+v = np.array([(p.X,p.Y,p.Z) for p in blade0.vertices()])
+print("radii of vertices:", np.hypot(v[:,1],v[:,2]).min(), np.hypot(v[:,1],v[:,2]).max())
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 3[39m
+[32m      1[39m wires = [section_wire(r) [38;5;28;01mfor[39;00m r [38;5;28;01min[39;00m radii]
+[32m      2[39m blade0 = Solid.make_loft(wires, ruled=[38;5;28;01mFalse[39;00m)
+[32m----> [39m[32m3[39m print([33m"volume m^3: %.3e  valid: %s"[39m % (blade0.volume, blade0.is_valid()))
+[32m      4[39m bb = blade0.bounding_box(); print([33m"bbox min"[39m, bb.min, [33m"max"[39m, bb.max)
+[32m      5[39m [38;5;66;03m# sanity: mean radius of surface points should span R_LO..R_HI[39;00m
+[32m      6[39m v = np.array([(p.X,p.Y,p.Z) [38;5;28;01mfor[39;00m p [38;5;28;01min[39;00m blade0.vertices()])
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 7 (0.1s, exit 0)
+print("volume m^3: %.3e  valid: %s" % (blade0.volume, blade0.is_valid))
+bb = blade0.bounding_box(); print("bbox min", bb.min, "max", bb.max)
+v = np.array([(p.X,p.Y,p.Z) for p in blade0.vertices()])
+print("vertex radii:", np.hypot(v[:,1],v[:,2]).min(), np.hypot(v[:,1],v[:,2]).max())
+print("estimate vol ~ chord*span*0.06*chord*~0.7 =", CHORD*SPAN*TMAX*CHORD*0.7)
+# -- output
+volume m^3: 6.466e-07  valid: False
+bbox min Vector: (X=-0.009246, Y=0.042545, Z=-0.010568) max Vector: (X=0.010135, Y=0.092, Z=0.009575)
+vertex radii: 0.043 0.09200000000000001
+estimate vol ~ chord*span*0.06*chord*~0.7 = 9.147599999999999e-07
+
+# -- cell 8 (0.1s, exit 1)
+wires = [section_wire(r) for r in radii]
+blade0 = Solid.make_loft(wires, ruled=False)
+print("volume m^3: %.3e  valid: %s" % (blade0.volume, blade0.is_valid))
+bb = blade0.bounding_box(); print("bbox min", bb.min, "max", bb.max)
+print("faces:", len(blade0.faces()), " shells:", len(blade0.shells()), " closed:", blade0.is_closed)
+from OCP.BRepCheck import BRepCheck_Analyzer
+print("BRepCheck:", BRepCheck_Analyzer(blade0.wrapped).IsValid())
+# -- output
+volume m^3: 6.466e-07  valid: False
+bbox min Vector: (X=-0.009246, Y=0.042545, Z=-0.010568) max Vector: (X=0.010135, Y=0.092, Z=0.009575)
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[8][39m[32m, line 5[39m
+[32m      1[39m wires = [section_wire(r) [38;5;28;01mfor[39;00m r [38;5;28;01min[39;00m radii]
+[32m      2[39m blade0 = Solid.make_loft(wires, ruled=[38;5;28;01mFalse[39;00m)
+[32m      3[39m print([33m"volume m^3: %.3e  valid: %s"[39m % (blade0.volume, blade0.is_valid))
+[32m      4[39m bb = blade0.bounding_box(); print([33m"bbox min"[39m, bb.min, [33m"max"[39m, bb.max)
+[32m----> [39m[32m5[39m print([33m"faces:"[39m, len(blade0.faces()), [33m" shells:"[39m, len(blade0.shells()), [33m" closed:"[39m, blade0.is_closed)
+[32m      6[39m [38;5;28;01mfrom[39;00m OCP.BRepCheck [38;5;28;01mimport[39;00m BRepCheck_Analyzer
+[32m      7[39m print([33m"BRepCheck:"[39m, BRepCheck_Analyzer(blade0.wrapped).IsValid())
+
+[31mAttributeError[39m: 'Solid' object has no attribute 'is_closed'
+
+# -- cell 9 (0.1s, exit 0)
+wires = [section_wire(r) for r in radii]
+blade0 = Solid.make_loft(wires, ruled=False)
+from OCP.BRepCheck import BRepCheck_Analyzer
+print("volume %.3e  faces %d shells %d  BRepCheck %s" %
+      (blade0.volume, len(blade0.faces()), len(blade0.shells()), BRepCheck_Analyzer(blade0.wrapped).IsValid()))
+for f in blade0.faces():
+    print("  face area %.3e type %s valid %s" % (f.area, f.geom_type, BRepCheck_Analyzer(f.wrapped).IsValid()))
+# -- output
+volume 6.466e-07  faces 2 shells 1  BRepCheck False
+  face area 1.096e-03 type GeomType.BSPLINE valid True
+  face area 1.131e-03 type GeomType.BSPLINE valid True
+
+# -- cell 10 (0.2s, exit 0)
+from build123d import *
+from OCP.BRepCheck import BRepCheck_Analyzer
+
+def _staggered(r, x, y):
+    xi = stagger_at(r)
+    a = x*np.cos(xi) - y*np.sin(xi); s = x*np.sin(xi) + y*np.cos(xi)
+    (xu,yu),(xl,yl) = section_2d()
+    xa = np.concatenate([xl[::-1], xu[1:]]); ya = np.concatenate([yl[::-1], yu[1:]])
+    ca = (xa*np.cos(xi) - ya*np.sin(xi)).mean(); cs = (xa*np.sin(xi) + ya*np.cos(xi)).mean()
+    return a-ca, s-cs
+
+def _to3d(r, a, s, theta0):
+    th = theta0 + s/r
+    return [Vector(float(ai), float(r*np.cos(t)), float(r*np.sin(t))) for ai, t in zip(a, th)]
+
+def section_wire(r, theta0=0.0):
+    """Closed section wire on the cylinder of radius r: sharp TE, two splines."""
+    (xu,yu),(xl,yl) = section_2d()
+    al, sl = _staggered(r, xl[::-1], yl[::-1])     # TE -> LE (pressure-ish side)
+    au, su = _staggered(r, xu, yu)                 # LE -> TE (suction-ish side)
+    pl = _to3d(r, al, sl, theta0); pu = _to3d(r, au, su, theta0)
+    pu[0] = pl[-1]; pu[-1] = pl[0]
+    return Wire([Spline(*pl).edge(), Spline(*pu).edge()])
+
+def blade_solid(theta0=0.0):
+    ws = [section_wire(r, theta0) for r in radii]
+    shell_faces = Solid.make_loft(ws, ruled=False).faces()
+    caps = [Face.make_surface(ws[0]), Face.make_surface(ws[-1])]
+    return Solid(Shell(shell_faces + caps))
+
+blade0 = blade_solid(0.0)
+print("volume %.3e m^3  faces %d  valid %s" % (blade0.volume, len(blade0.faces()), BRepCheck_Analyzer(blade0.wrapped).IsValid()))
+# -- output
+volume 9.771e-07 m^3  faces 4  valid True
+
+# -- cell 11 (0.7s, exit 0)
+prof = Plane.XY * Rectangle(X_OUT-X_IN, R_TIP-R_HUB, align=(Align.MIN, Align.MIN))
+prof = Pos(X_IN, R_HUB, 0) * prof
+sector = Rot(X=-np.degrees(PITCH)/2) * revolve(prof, axis=Axis.X, revolution_arc=np.degrees(PITCH))
+print("sector volume %.4e  expected %.4e" %
+      (sector.volume, 0.5*PITCH*(R_TIP**2-R_HUB**2)*(X_OUT-X_IN)))
+
+bladeA = blade_solid(-PITCH/2)      # blade on the -theta side plane
+bladeB = blade_solid(+PITCH/2)      # its neighbour, exact rotational copy
+passage = sector - bladeA - bladeB
+print("passage volume %.4e  (sector - ~1 blade = %.4e)" % (passage.volume, sector.volume - blade0.volume*(SPAN/(R_HI-R_LO))))
+print("solids %d, faces %d, valid %s" % (len(passage.solids()), len(passage.faces()), BRepCheck_Analyzer(passage.wrapped).IsValid()))
+# -- output
+sector volume 4.3200e-05  expected 4.3200e-05
+passage volume 4.2296e-05  (sector - ~1 blade = 4.2303e-05)
+solids 1, faces 12, valid True
+
+# -- cell 12 (0.3s, exit 0)
+from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+
+def dist(shape, pnt):
+    d = BRepExtrema_DistShapeShape(shape.wrapped, Vertex(pnt).wrapped); d.Perform(); return d.Value()
+
+groups = {k: [] for k in ["inlet","outlet","hub","shroud","periodic_1","periodic_2","blade_suction","blade_pressure"]}
+for f in passage.faces():
+    c = f.center(); r = np.hypot(c.Y, c.Z); n = f.normal_at(c)
+    if f.geom_type == GeomType.PLANE and abs(abs(n.X)-1) < 1e-6:
+        groups["inlet" if c.X < 0.5*(X_IN+X_OUT) else "outlet"].append(f)
+    elif f.geom_type == GeomType.CYLINDER and abs(r-R_HUB) < 1e-6:
+        groups["hub"].append(f)
+    elif f.geom_type == GeomType.CYLINDER and abs(r-R_TIP) < 1e-6:
+        groups["shroud"].append(f)
+    elif f.geom_type == GeomType.PLANE and abs(n.X) < 1e-6:
+        groups["periodic_1" if np.arctan2(c.Z, c.Y) < 0 else "periodic_2"].append(f)
+    else:
+        dA, dB = dist(bladeA, c), dist(bladeB, c)
+        groups["blade_suction" if dA < dB else "blade_pressure"].append(f)
+
+for k, v in groups.items():
+    print("%-14s n=%d  area=%.4e  thetas=%s" % (k, len(v), sum(f.area for f in v),
+          ["%.1f" % np.degrees(np.arctan2(f.center().Z, f.center().Y)) for f in v]))
+# -- output
+inlet          n=1  area=6.8161e-04  thetas=['-0.0']
+outlet         n=1  area=6.8161e-04  thetas=['-0.0']
+hub            n=1  area=6.1983e-04  thetas=['-0.0']
+shroud         n=1  area=1.2599e-03  thetas=['-0.0']
+periodic_1     n=2  area=2.7773e-03  thetas=['-6.4', '-6.4']
+periodic_2     n=2  area=2.7773e-03  thetas=['6.4', '6.4']
+blade_suction  n=2  area=1.1057e-03  thetas=['-3.1', '-3.1']
+blade_pressure n=2  area=9.3976e-04  thetas=['2.8', '3.2']
+
+# -- cell 13 (0.5s, exit 0)
+import gmsh, subprocess, os
+export_step(passage, "passage.step")
+cen = {k: [tuple(f.center(CenterOf.MASS)) for f in v] for k, v in groups.items()}
+
+gmsh.initialize()
+gmsh.open("passage.step")
+gmsh.model.occ.synchronize()
+surf = gmsh.model.getEntities(2)
+tags = {k: [] for k in cen}
+for (d, t) in surf:
+    com = np.array(gmsh.model.occ.getCenterOfMass(d, t))
+    best = min(((np.linalg.norm(com-np.array(c)), k) for k, cs in cen.items() for c in cs))
+    tags[best[1]].append(t); print("surf %d -> %-14s (mismatch %.2e)" % (t, best[1], best[0]))
+for k, ts in tags.items():
+    gmsh.model.addPhysicalGroup(2, ts, name=k)
+gmsh.model.addPhysicalGroup(3, [v[1] for v in gmsh.model.getEntities(3)], name="internal")
+gmsh.option.setNumber("Mesh.MeshSizeMin", 0.0015)
+gmsh.option.setNumber("Mesh.MeshSizeMax", 0.0025)
+gmsh.model.mesh.generate(3)
+gmsh.write("passage.msh")
+gmsh.finalize()
+print("cells:", os.path.getsize("passage.msh"))
+# -- output
+Info    : Reading 'passage.step'...
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+Info    : Done reading 'passage.step'
+surf 1 -> inlet          (mismatch 1.70e-14)
+surf 2 -> hub            (mismatch 3.36e-15)
+surf 3 -> shroud         (mismatch 6.73e-15)
+surf 4 -> periodic_1     (mismatch 1.28e-15)
+surf 5 -> periodic_2     (mismatch 1.27e-15)
+surf 6 -> blade_suction  (mismatch 1.20e-14)
+surf 7 -> blade_suction  (mismatch 4.03e-15)
+surf 8 -> periodic_1     (mismatch 1.49e-15)
+surf 9 -> outlet         (mismatch 1.71e-14)
+surf 10 -> periodic_2     (mismatch 1.49e-15)
+surf 11 -> blade_pressure (mismatch 1.08e-14)
+surf 12 -> blade_pressure (mismatch 3.36e-15)
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Circle)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Circle)
+Info    : [ 20%] Meshing curve 4 (Line)
+Info    : [ 20%] Meshing curve 5 (Line)
+Info    : [ 20%] Meshing curve 6 (Line)
+Info    : [ 30%] Meshing curve 7 (BSpline)
+Info    : [ 30%] Meshing curve 8 (BSpline)
+Info    : [ 30%] Meshing curve 9 (Line)
+Info    : [ 40%] Meshing curve 10 (Circle)
+Info    : [ 40%] Meshing curve 11 (Line)
+Info    : [ 40%] Meshing curve 12 (BSpline)
+Info    : [ 50%] Meshing curve 13 (BSpline)
+Info    : [ 50%] Meshing curve 14 (Line)
+Info    : [ 50%] Meshing curve 15 (Line)
+Info    : [ 60%] Meshing curve 16 (BSpline)
+Info    : [ 60%] Meshing curve 17 (BSpline)
+Info    : [ 60%] Meshing curve 18 (Line)
+Info    : [ 70%] Meshing curve 19 (Circle)
+Info    : [ 70%] Meshing curve 20 (Line)
+Info    : [ 70%] Meshing curve 21 (BSpline)
+Info    : [ 80%] Meshing curve 22 (BSpline)
+Info    : [ 80%] Meshing curve 23 (BSpline)
+Info    : [ 80%] Meshing curve 24 (BSpline)
+Info    : [ 90%] Meshing curve 25 (BSpline)
+Info    : [ 90%] Meshing curve 26 (BSpline)
+Info    : [ 90%] Meshing curve 27 (Line)
+Info    : [100%] Meshing curve 28 (Line)
+Info    : [100%] Meshing curve 29 (BSpline)
+Info    : [100%] Meshing curve 30 (BSpline)
+Info    : Done meshing 1D (Wall 0.0162899s, CPU 0.016818s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Plane, Frontal-Delaunay)
+Info    : [ 10%] Meshing surface 2 (Cylinder, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 3 (Cylinder, Frontal-Delaunay)
+Info    : [ 30%] Meshing surface 4 (Plane, Frontal-Delaunay)
+Info    : [ 40%] Meshing surface 5 (Plane, Frontal-Delaunay)
+Info    : [ 50%] Meshing surface 6 (BSpline surface, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 7 (BSpline surface, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 8 (Plane, Frontal-Delaunay)
+Info    : [ 70%] Meshing surface 9 (Plane, Frontal-Delaunay)
+Info    : [ 80%] Meshing surface 10 (Plane, Frontal-Delaunay)
+Info    : [ 90%] Meshing surface 11 (BSpline surface, Frontal-Delaunay)
+Info    : [100%] Meshing surface 12 (BSpline surface, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 0.0965348s, CPU 0.096887s)
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 2281 nodes...
+Info    : Done tetrahedrizing 2289 nodes (Wall 0.024786s, CPU 0.022983s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    : Done reconstructing mesh (Wall 0.0514702s, CPU 0.048178s)
+Info    : Found volume 1
+Info    : It. 0 - 0 nodes created - worst tet radius 3.81326 (nodes removed 0 0)
+Info    : It. 500 - 500 nodes created - worst tet radius 1.27968 (nodes removed 0 0)
+Info    : It. 1000 - 1000 nodes created - worst tet radius 1.0604 (nodes removed 0 0)
+Info    : 3D refinement terminated (3536 nodes total):
+Info    :  - 1 Delaunay cavities modified for star shapeness
+Info    :  - 0 nodes could not be inserted
+Info    :  - 14801 tetrahedra created in 0.0519975 sec. (284648 tets/s)
+Info    : 0 node relocations
+Info    : Done meshing 3D (Wall 0.139409s, CPU 0.135208s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 4.23144e-05) with worst = 0.0139208 / average = 0.762079:
+Info    : 0.00 < quality < 0.10 :        63 elements
+Info    : 0.10 < quality < 0.20 :        97 elements
+Info    : 0.20 < quality < 0.30 :       170 elements
+Info    : 0.30 < quality < 0.40 :       270 elements
+Info    : 0.40 < quality < 0.50 :       392 elements
+Info    : 0.50 < quality < 0.60 :       764 elements
+Info    : 0.60 < quality < 0.70 :      2023 elements
+Info    : 0.70 < quality < 0.80 :      3840 elements
+Info    : 0.80 < quality < 0.90 :      4977 elements
+Info    : 0.90 < quality < 1.00 :      2205 elements
+Info    : 327 edge swaps, 8 node relocations (volume = 4.23144e-05): worst = 0.181988 / average = 0.775311 (Wall 0.00446407s, CPU 0.004524s)
+Info    : 329 edge swaps, 8 node relocations (volume = 4.23144e-05): worst = 0.284625 / average = 0.775347 (Wall 0.00550319s, CPU 0.005589s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :         1 elements
+Info    : 0.30 < quality < 0.40 :       274 elements
+Info    : 0.40 < quality < 0.50 :       384 elements
+Info    : 0.50 < quality < 0.60 :       760 elements
+Info    : 0.60 < quality < 0.70 :      2040 elements
+Info    : 0.70 < quality < 0.80 :      3825 elements
+Info    : 0.80 < quality < 0.90 :      5032 elements
+Info    : 0.90 < quality < 1.00 :      2198 elements
+Info    : Done optimizing mesh (Wall 0.0163785s, CPU 0.016539s)
+Info    : 3536 nodes 19448 elements
+Info    : Writing 'passage.msh'...
+Info    : Done writing 'passage.msh'
+cells: 706731
+
+# -- cell 14 (0.3s, exit 0)
+import subprocess, os, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+hdr = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+open("system/controlDict","w").write(hdr % "controlDict" + textwrap.dedent("""
+    application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+    deltaT 1; writeControl timeStep; writeInterval 1;
+"""))
+open("system/fvSchemes","w").write(hdr % "fvSchemes" + "ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write(hdr % "fvSolution" + "solvers{} \n")
+r = subprocess.run(["gmshToFoam","passage.msh"], capture_output=True, text=True)
+print(r.stdout[-900:], r.stderr[-500:])
+# -- output
+tch 0 gets name inlet
+Patch 1 gets name hub
+Patch 2 gets name shroud
+Patch 3 gets name periodic_1
+Patch 4 gets name periodic_2
+Patch 5 gets name blade_suction
+Patch 6 gets name outlet
+Patch 7 gets name blade_pressure
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 4558 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+Finding faces of patch 5
+Finding faces of patch 6
+Finding faces of patch 7
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+# -- cell 15 (0.3s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-2500:])
+# -- output
+14514
+    faces per cell:   4
+    boundary patches: 8
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    14514
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    inlet               282      167      ok (non-closed singly connected)  
+    hub                 298      191      ok (non-closed singly connected)  
+    shroud              562      327      ok (non-closed singly connected)  
+    periodic_1          1133     631      ok (non-closed singly connected)  
+    periodic_2          1133     631      ok (non-closed singly connected)  
+    blade_suction       468      264      ok (non-closed singly connected)  
+    outlet              282      167      ok (non-closed singly connected)  
+    blade_pressure      400      229      ok (non-closed singly connected)  
+    ".*"                4558     2281     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            14514        3536         4.23144e-05  (-0.0311814 0.044717 -0.0100768) (0.0321983 0.09 0.0100768)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.0311814 0.044717 -0.0100768) (0.0321983 0.09 0.0100768)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-5.2653e-16 -7.67579e-17 -2.43406e-16) OK.
+    Max cell openness = 2.80179e-16 OK.
+    Max aspect ratio = 8.19047 OK.
+    Minimum face area = 8.63959e-07. Maximum face area = 8.74568e-06.  Face area magnitudes OK.
+    Min volume = 3.83173e-10. Max volume = 7.53657e-09.  Total volume = 4.23144e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 65.4214 average: 22.0788
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.743404 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 16 (0.1s, exit 0)
+import re
+b = open("constant/polyMesh/boundary").read()
+for w in ["hub","shroud","blade_suction","blade_pressure"]:
+    b = re.sub(r"(\b%s\b\s*\{\s*type\s+)patch;" % w, r"\1wall;", b)
+open("constant/polyMesh/boundary","w").write(b)
+print(re.findall(r"^\s{4}(\w+)\n\s{4}\{\n\s+type\s+(\w+);", b, re.M))
+# -- output
+[('inlet', 'patch'), ('hub', 'wall'), ('shroud', 'wall'), ('periodic_1', 'patch'), ('periodic_2', 'patch'), ('blade_suction', 'wall'), ('outlet', 'patch'), ('blade_pressure', 'wall')]
+
+# -- cell 17 (0.8s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+open("case.foam","w").close()
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0)
+m = rd.read()
+bnd = m["boundary"]
+print(bnd.keys())
+p = pv.Plotter(off_screen=True, window_size=(900,700))
+cols = dict(inlet="lightblue", outlet="pink", hub="grey", shroud="wheat",
+            periodic_1="palegreen", periodic_2="palegreen",
+            blade_suction="red", blade_pressure="blue")
+for k, c in cols.items():
+    p.add_mesh(bnd[k], color=c, show_edges=True, edge_color="k", line_width=0.3, opacity=1.0 if k not in ("periodic_2","shroud") else 0.25, label=k)
+p.add_legend(); p.camera_position = "iso"; p.show_axes()
+img = p.screenshot("passage.png"); p.close()
+from IPython.display import Image, display
+display(Image("passage.png"))
+# -- output
+['inlet', 'hub', 'shroud', 'periodic_1', 'periodic_2', 'blade_suction', 'outlet', 'blade_pressure']
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-13 09:15:59.378 (   0.457s) [    7FDFDBB73780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-13 09:15:59.378 (   0.458s) [    7FDFDBB73780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:15:59.391 (   0.471s) [    7FDFDBB73780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 18 (0.6s, exit 0)
+def measure_section(r):
+    w = section_wire(r, 0.0)
+    P = np.array([tuple(w.edges()[0] @ t) for t in np.linspace(0,1,400)] +
+                 [tuple(w.edges()[1] @ t) for t in np.linspace(0,1,400)])
+    a = P[:,0]; th = np.arctan2(P[:,2], P[:,1]); s = th*r          # unwrap
+    d2 = ((a[:,None]-a[None,:])**2 + (s[:,None]-s[None,:])**2)
+    i, j = np.unravel_index(d2.argmax(), d2.shape)                 # LE/TE = farthest pair
+    if a[i] > a[j]: i, j = j, i                                    # i=LE(upstream), j=TE
+    chord = np.hypot(a[j]-a[i], s[j]-s[i]); stag = np.degrees(np.arctan2(s[j]-s[i], a[j]-a[i]))
+    # thickness: max distance between the two splines normal to chord
+    u = np.array([a[j]-a[i], s[j]-s[i]])/chord; nvec = np.array([-u[1], u[0]])
+    q = np.column_stack([a-a[i], s-s[i]])
+    off = q @ nvec; par = q @ u
+    bins = np.linspace(0, chord, 60); tmax = 0
+    for k in range(59):
+        m = (par >= bins[k]) & (par < bins[k+1])
+        if m.sum() > 1: tmax = max(tmax, off[m].max()-off[m].min())
+    return chord, stag, tmax/chord
+
+for r, lbl in [(R_HUB,"root r=45mm"), (R_TIP,"tip  r=90mm")]:
+    c, st, tc = measure_section(r)
+    print("%s: chord %.4f m (req 0.0220) | stagger %.2f deg | t/c %.3f (req 0.060)" % (lbl, c, st, tc))
+# -- output
+root r=45mm: chord 0.0220 m (req 0.0220) | stagger 29.85 deg | t/c 0.064 (req 0.060)
+tip  r=90mm: chord 0.0220 m (req 0.0220) | stagger 64.85 deg | t/c 0.064 (req 0.060)
+
+# -- cell 19 (0.1s, exit 0)
+pts = {k: np.asarray(bnd[k].points) for k in bnd.keys()}
+rad = lambda P: np.hypot(P[:,1], P[:,2])
+print("hub patch radius  : %.5f .. %.5f m (req 0.045)" % (rad(pts['hub']).min(), rad(pts['hub']).max()))
+print("shroud patch radius: %.5f .. %.5f m (req 0.090)" % (rad(pts['shroud']).min(), rad(pts['shroud']).max()))
+print("span = %.5f m (req 0.045)" % (rad(pts['shroud']).mean()-rad(pts['hub']).mean()))
+t1 = np.degrees(np.arctan2(pts['periodic_1'][:,2], pts['periodic_1'][:,1])).mean()
+t2 = np.degrees(np.arctan2(pts['periodic_2'][:,2], pts['periodic_2'][:,1])).mean()
+print("periodic planes at theta = %.4f / %.4f deg -> pitch %.4f deg = 360/%.2f blades" % (t1, t2, t2-t1, 360/(t2-t1)))
+bl = np.vstack([pts['blade_suction'], pts['blade_pressure']])
+print("blade axial extent %.4f..%.4f ; inlet x=%.4f (gap %.4f), outlet x=%.4f (gap %.4f), chord 0.0220"
+      % (bl[:,0].min(), bl[:,0].max(), pts['inlet'][:,0].mean(), bl[:,0].min()-pts['inlet'][:,0].mean(),
+         pts['outlet'][:,0].mean(), pts['outlet'][:,0].mean()-bl[:,0].max()))
+print("areas periodic_1/2: %.6e %.6e (must match for periodicity)" % (bnd['periodic_1'].area, bnd['periodic_2'].area))
+# -- output
+hub patch radius  : 0.04500 .. 0.04500 m (req 0.045)
+shroud patch radius: 0.09000 .. 0.09000 m (req 0.090)
+span = 0.04500 m (req 0.045)
+periodic planes at theta = -6.4286 / 6.4286 deg -> pitch 12.8571 deg = 360/28.00 blades
+blade axial extent -0.0090..0.0100 ; inlet x=-0.0312 (gap 0.0221), outlet x=0.0322 (gap 0.0222), chord 0.0220
+areas periodic_1/2: 2.777303e-03 2.777303e-03 (must match for periodicity)
+
+# -- cell 20 (5.4s, exit 0)
+gmsh.initialize()
+gmsh.open("passage.step"); gmsh.model.occ.synchronize()
+tags = {k: [] for k in cen}
+for (d, t) in gmsh.model.getEntities(2):
+    com = np.array(gmsh.model.occ.getCenterOfMass(d, t))
+    k = min(((np.linalg.norm(com-np.array(c)), kk) for kk, cs in cen.items() for c in cs))[1]
+    tags[k].append(t)
+for k, ts in tags.items(): gmsh.model.addPhysicalGroup(2, ts, name=k)
+gmsh.model.addPhysicalGroup(3, [v[1] for v in gmsh.model.getEntities(3)], name="internal")
+
+blade_surfs = tags["blade_suction"] + tags["blade_pressure"]
+gmsh.model.mesh.field.add("Distance", 1)
+gmsh.model.mesh.field.setNumbers(1, "SurfacesList", blade_surfs)
+gmsh.model.mesh.field.setNumber(1, "Sampling", 200)
+gmsh.model.mesh.field.add("Threshold", 2)
+gmsh.model.mesh.field.setNumber(2, "InField", 1)
+gmsh.model.mesh.field.setNumber(2, "SizeMin", 0.00045)
+gmsh.model.mesh.field.setNumber(2, "SizeMax", 0.0016)
+gmsh.model.mesh.field.setNumber(2, "DistMin", 0.0008)
+gmsh.model.mesh.field.setNumber(2, "DistMax", 0.005)
+gmsh.model.mesh.field.setAsBackgroundMesh(2)
+gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+gmsh.option.setNumber("Mesh.Optimize", 1)
+gmsh.model.mesh.generate(3)
+gmsh.write("passage.msh")
+print(gmsh.model.mesh.getElementsByType(4)[0].size, "tets")
+gmsh.finalize()
+# -- output
+Info    : Reading 'passage.step'...
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+Info    : Done reading 'passage.step'
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Circle)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Circle)
+Info    : [ 20%] Meshing curve 4 (Line)
+Info    : [ 20%] Meshing curve 5 (Line)
+Info    : [ 20%] Meshing curve 6 (Line)
+Info    : [ 30%] Meshing curve 7 (BSpline)
+Info    : [ 30%] Meshing curve 8 (BSpline)
+Info    : [ 30%] Meshing curve 9 (Line)
+Info    : [ 40%] Meshing curve 10 (Circle)
+Info    : [ 40%] Meshing curve 11 (Line)
+Info    : [ 40%] Meshing curve 12 (BSpline)
+Info    : [ 50%] Meshing curve 13 (BSpline)
+Info    : [ 50%] Meshing curve 14 (Line)
+Info    : [ 50%] Meshing curve 15 (Line)
+Info    : [ 60%] Meshing curve 16 (BSpline)
+Info    : [ 60%] Meshing curve 17 (BSpline)
+Info    : [ 60%] Meshing curve 18 (Line)
+Info    : [ 70%] Meshing curve 19 (Circle)
+Info    : [ 70%] Meshing curve 20 (Line)
+Info    : [ 70%] Meshing curve 21 (BSpline)
+Info    : [ 80%] Meshing curve 22 (BSpline)
+Info    : [ 80%] Meshing curve 23 (BSpline)
+Info    : [ 80%] Meshing curve 24 (BSpline)
+Info    : [ 90%] Meshing curve 25 (BSpline)
+Info    : [ 90%] Meshing curve 26 (BSpline)
+Info    : [ 90%] Meshing curve 27 (Line)
+Info    : [100%] Meshing curve 28 (Line)
+Info    : [100%] Meshing curve 29 (BSpline)
+Info    : [100%] Meshing curve 30 (BSpline)
+Info    : Done meshing 1D (Wall 0.0531492s, CPU 0.054095s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Plane, Frontal-Delaunay)
+Info    : [ 10%] Meshing surface 2 (Cylinder, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 3 (Cylinder, Frontal-Delaunay)
+Info    : [ 30%] Meshing surface 4 (Plane, Frontal-Delaunay)
+Info    : [ 40%] Meshing surface 5 (Plane, Frontal-Delaunay)
+Info    : [ 50%] Meshing surface 6 (BSpline surface, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 7 (BSpline surface, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 8 (Plane, Frontal-De
+... 3964 characters cut ...
+ radius 1.14893 (nodes removed 0 0)
+Info    : It. 18500 - 18500 nodes created - worst tet radius 1.13941 (nodes removed 0 0)
+Info    : It. 19000 - 19000 nodes created - worst tet radius 1.1296 (nodes removed 0 0)
+Info    : It. 19500 - 19500 nodes created - worst tet radius 1.12067 (nodes removed 0 0)
+Info    : It. 20000 - 20000 nodes created - worst tet radius 1.11141 (nodes removed 0 0)
+Info    : It. 20500 - 20500 nodes created - worst tet radius 1.10299 (nodes removed 0 0)
+Info    : It. 21000 - 21000 nodes created - worst tet radius 1.09438 (nodes removed 0 0)
+Info    : It. 21500 - 21500 nodes created - worst tet radius 1.08671 (nodes removed 0 0)
+Info    : It. 22000 - 22000 nodes created - worst tet radius 1.07865 (nodes removed 0 0)
+Info    : It. 22500 - 22500 nodes created - worst tet radius 1.0713 (nodes removed 0 0)
+Info    : It. 23000 - 23000 nodes created - worst tet radius 1.06378 (nodes removed 0 0)
+Info    : It. 23500 - 23500 nodes created - worst tet radius 1.05702 (nodes removed 0 0)
+Info    : It. 24000 - 24000 nodes created - worst tet radius 1.04982 (nodes removed 0 0)
+Info    : It. 24500 - 24500 nodes created - worst tet radius 1.04328 (nodes removed 0 0)
+Info    : It. 25000 - 25000 nodes created - worst tet radius 1.03693 (nodes removed 0 0)
+Info    : It. 25500 - 25500 nodes created - worst tet radius 1.03055 (nodes removed 0 0)
+Info    : It. 26000 - 26000 nodes created - worst tet radius 1.02395 (nodes removed 0 0)
+Info    : It. 26500 - 26500 nodes created - worst tet radius 1.01782 (nodes removed 0 0)
+Info    : It. 27000 - 27000 nodes created - worst tet radius 1.01185 (nodes removed 0 0)
+Info    : It. 27500 - 27500 nodes created - worst tet radius 1.00581 (nodes removed 0 0)
+Info    : It. 28000 - 28000 nodes created - worst tet radius 1.00048 (nodes removed 0 0)
+Info    : 3D refinement terminated (47142 nodes total):
+Info    :  - 2 Delaunay cavities modified for star shapeness
+Info    :  - 0 nodes could not be inserted
+Info    :  - 237437 tetrahedra created in 1.95805 sec. (121261 tets/s)
+Info    : 0 node relocations
+Info    : Done meshing 3D (Wall 3.26401s, CPU 3.25139s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 4.22949e-05) with worst = 0.00171897 / average = 0.769169:
+Info    : 0.00 < quality < 0.10 :       542 elements
+Info    : 0.10 < quality < 0.20 :      1563 elements
+Info    : 0.20 < quality < 0.30 :      2754 elements
+Info    : 0.30 < quality < 0.40 :      4348 elements
+Info    : 0.40 < quality < 0.50 :      6796 elements
+Info    : 0.50 < quality < 0.60 :     11899 elements
+Info    : 0.60 < quality < 0.70 :     27296 elements
+Info    : 0.70 < quality < 0.80 :     60272 elements
+Info    : 0.80 < quality < 0.90 :     83018 elements
+Info    : 0.90 < quality < 1.00 :     38949 elements
+Info    : 4807 edge swaps, 93 node relocations (volume = 4.22949e-05): worst = 0.107556 / average = 0.781601 (Wall 0.136743s, CPU 0.136096s)
+Info    : 4843 edge swaps, 95 node relocations (volume = 4.22949e-05): worst = 0.185049 / average = 0.781652 (Wall 0.175751s, CPU 0.175154s)
+Info    : 4850 edge swaps, 96 node relocations (volume = 4.22949e-05): worst = 0.234721 / average = 0.781658 (Wall 0.214107s, CPU 0.213513s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :         7 elements
+Info    : 0.30 < quality < 0.40 :      4338 elements
+Info    : 0.40 < quality < 0.50 :      6530 elements
+Info    : 0.50 < quality < 0.60 :     11653 elements
+Info    : 0.60 < quality < 0.70 :     27275 elements
+Info    : 0.70 < quality < 0.80 :     60790 elements
+Info    : 0.80 < quality < 0.90 :     83783 elements
+Info    : 0.90 < quality < 1.00 :     38743 elements
+Info    : Done optimizing mesh (Wall 0.549987s, CPU 0.525214s)
+Info    : 47142 nodes 272481 elements
+Info    : Writing 'passage.msh'...
+Info    : Done writing 'passage.msh'
+233119 tets
+
+# -- cell 21 (2.4s, exit 0)
+r = subprocess.run(["gmshToFoam","passage.msh"], capture_output=True, text=True); print(r.stdout[-300:])
+b = open("constant/polyMesh/boundary").read()
+for w in ["hub","shroud","blade_suction","blade_pressure"]:
+    b = re.sub(r"(\b%s\b\s*\{\s*type\s+)patch;" % w, r"\1wall;", b)
+open("constant/polyMesh/boundary","w").write(b)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print("\n".join(l for l in r.stdout.splitlines() if any(s in l for s in
+      ["cells:","patches","Max aspect","non-orthogonality","skewness","Total volume","Mesh OK","***","faces "])))
+# -- output
+ault patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+Finding faces of patch 5
+Finding faces of patch 6
+Finding faces of patch 7
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+
+    cells:            233119
+    faces per cell:   4
+    boundary patches: 8
+    Max aspect ratio = 8.611 OK.
+    Min volume = 1.63025e-12. Max volume = 2.19325e-09.  Total volume = 4.22949e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 70.0026 average: 21.395
+  <<Writing 1 non-orthogonal faces to set nonOrthoFaces
+    Max skewness = 0.913906 OK.
+Mesh OK.
+
+# -- cell 22 (0.4s, exit 0)
+rd2 = pv.OpenFOAMReader("case.foam"); rd2.set_active_time_value(0)
+bnd2 = rd2.read()["boundary"]
+for k in bnd2.keys(): print("%-14s faces %6d  area %.6e" % (k, bnd2[k].n_cells, bnd2[k].area))
+p = pv.Plotter(off_screen=True, window_size=(950,700))
+for k, c in cols.items():
+    p.add_mesh(bnd2[k], color=c, show_edges=True, edge_color="k", line_width=0.2,
+               opacity=0.18 if k in ("periodic_2","shroud") else 1.0, label=k)
+p.add_legend(); p.camera.position = (0.09, 0.10, 0.10); p.camera.focal_point = (0.0, 0.067, 0.0)
+p.screenshot("passage_fine.png"); p.close()
+display(Image("passage_fine.png"))
+# -- output
+inlet          faces    654  area 6.816072e-04
+hub            faces   1608  area 6.198825e-04
+shroud         faces   2222  area 1.259895e-03
+periodic_1     faces   4720  area 2.777318e-03
+periodic_2     faces   4584  area 2.777318e-03
+blade_suction  faces  12831  area 1.105739e-03
+outlet         faces    662  area 6.816072e-04
+blade_pressure faces  10905  area 9.381027e-04
+
+[0m[33m2026-09-13 09:17:06.819 (  67.898s) [    7FDFDBB73780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-13 09:17:06.819 (  67.898s) [    7FDFDBB73780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 23 (0.2s, exit 0)
+os.makedirs("constant/triSurface", exist_ok=True)
+for k, fs in groups.items():
+    export_stl(Compound(children=[Solid(Shell(fs))]) if False else Compound(fs), f"constant/triSurface/{k}.stl")
+print(sorted(os.listdir("constant/triSurface")))
+print("passage volume (OCC) %.6e  vs mesh %.6e" % (passage.volume, 4.22949e-05))
+# -- output
+['blade_pressure.stl', 'blade_suction.stl', 'hub.stl', 'inlet.stl', 'outlet.stl', 'periodic_1.stl', 'periodic_2.stl', 'shroud.stl']
+passage volume (OCC) 4.229574e-05  vs mesh 4.229490e-05
+
