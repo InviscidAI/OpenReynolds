@@ -64,7 +64,7 @@ T26 survives because its question does not depend on what the geometry is *for*:
 meets the column along a tangent line, so the spec does not close, and any system must either
 notice or not.
 
-### The one comparison, and we lose it
+### The one comparison that discriminates, and we lose it
 
 | | on P9 / T26 |
 |---|---|
@@ -109,8 +109,10 @@ non-closed surfaces and all four passed.
 - **On the half we own — solid → fluid domain → mesh — there is no comparison to make.** Neither
   repo does it; `OpenFOAM`, `snappyHexMesh`, `blockMesh` and `checkMesh` appear in neither
   repository. That is not a win, it is an absence of a competitor.
-- **On the half we share, we have one valid observation and we lost it.** We cannot currently
-  claim to be better or worse at CAD authoring than either system.
+- **On the half we share, the measurement exists and is thin.** Reusing the geometry the runs
+  already produced gives 25/26 against MAC's 26/26 and the `cad` skill's 25/26, on a 26-feature
+  slice — one judgement call behind MAC, level with the skill. One run each side, different
+  models, and 18% of their checklist. It is a result, not a verdict.
 - **On architecture we are measurably on the wrong side**, by the metric its authors chose.
 - **The one actionable difference is the post-condition discipline**, and it is now supported by
   two independent instances (T26's tangency, the closure gap) rather than the one that was
@@ -152,22 +154,61 @@ On those same 26 features, from their published per-item results:
 | **`cad` skill** | **25/26** — failed item 8, shipped the disconnected staircase |
 | **this desk** | **23/26** |
 
-**This is the first like-for-like number in this document, and the ranking is MAC > skill > us.**
-The denominator is 26 of their 141, or 18% of their checklist, and it is one run each side at
-different models. It is small and it is real.
+**This is the first like-for-like number in this document, and on the raw count the ranking is
+MAC > skill > us.** The denominator is 26 of their 141, or 18% of their checklist, at one run
+each side on different models. Small, and real — but two of our three failures do not survive
+inspection, and the next subsection is why.
 
-#### What our three failures are, and they are not all equal
+#### Our three failures split three ways, not two
 
-- **T26, the tangency.** A real failure and the one that discriminates: their own feature list
-  states it as *"tread inner ends approach the column (this feature is physically infeasible and
-  would cause the model to collapse and fracture)"* — the infeasibility **is** the graded item.
-  MAC caught it, the skill did not, we did not.
-- **T19, the two missing shaft steps.** Our brief named a 50 mm and a 30 mm step; the desk built
-  only the 40 mm sealed length. Those steps lie outside the seal and have **no wetted surface in
-  the domain we asked for**, so the desk was right to skip them and the brief was over-specified.
-  Counting them against the desk is the same error as T9's unpassable brief. Ruling them brief
-  noise gives **25/26 — level with the skill, one behind MAC, on the single feature that
-  separates the three systems.**
+- **T26, the tangency — a true failure, and the only one.** Their own feature list states it as
+  *"tread inner ends approach the column (this feature is physically infeasible and would cause
+  the model to collapse and fracture)"* — **the infeasibility is the graded item.** MAC caught it
+  unprompted, the skill did not, we did not. This is a judgement failure: the desk missed
+  something that makes the model wrong.
+- **T19, the two missing shaft steps — not a failure.** Our brief named a 50 mm and a 30 mm
+  step and the desk built only the 40 mm sealed length. Those steps lie outside the seal with no
+  wetted surface, and a 50 mm section **cannot pass through a 40.1 mm bore** at all — the
+  shoulder sits outside the housing. The desk was right, and it did not merely skip them, it
+  *used* them:
+
+  ```python
+  # ends: HP = 50 mm-step end at z=0, LP = 30 mm-step end at z=L
+  gmsh.model.addPhysicalGroup(2, allsurf, name="highPressure")   # z=0, 50 mm-step end
+  ```
+
+  It worked out what the steps are for in this case — they identify which end is high pressure —
+  oriented the patches by them, and omitted the geometry. The reasoning is in the record.
+- **T12, the fillets — a reporting failure, which is neither of the above.** The same shape of
+  call as T19, a defensible or correct simplification of named geometry, and the difference is
+  exactly one line of evidence: `fillet` appears **nowhere** in `build.py` or `cells.log`. For
+  T19 you can see the desk decided; for T12 you cannot tell an engineering judgement from an
+  oversight. That is the finding, and a correct simplification and a forgotten feature are the
+  same geometry.
+
+#### And this cuts against the comparison, in our favour
+
+**Their checklist marked T19 down 2/6 for doing the right thing.** "Stepped shaft" and "three
+coaxial sections" scored as failures on a desk that correctly built only the wetted length. **A
+binary feature list scores absence without asking why**, so it systematically penalises exactly
+the simplifications a CFD preprocessor should make. The truncation noted above cuts one way; this
+cuts the other.
+
+On the features where absence is genuinely a defect:
+
+| | on the 26 shared features, absence-with-reason excluded |
+|---|---|
+| **MAC** | **26/26** |
+| **`cad` skill** | **25/26** |
+| **this desk** | **25/26** |
+
+**One feature separates all three systems: P9 item 8.** Everything else in the shared slice is
+either passed by all three or an artefact of grading a fluid-domain desk with a solid-model
+checklist.
+
+So the honest claim is much smaller than the raw count suggested: **one judgement call behind
+MAC, level with the baseline MAC was built to beat**, on a 26-feature slice, at n=1, on different
+models.
 
 #### The finding that makes this worth repeating
 
