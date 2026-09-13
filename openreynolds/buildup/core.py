@@ -142,18 +142,26 @@ When the geometry is built and the mesh exists, call the `declare_complete` tool
 `outcome: "complete"`, and put your closing summary in the prose beside it: what you \
 built, the numbers you measured against the request, what you could not check.
 
-That call runs the checks. **`checkMesh` is the only one that can hold the run open** -- it \
-runs per region, and a run that declares complete over a mesh it refuses is handed the \
-refusal and keeps working. Every other check is advisory: you are told what it found and \
-it is recorded, and none of it blocks the finish.
+That call runs the checks. **`checkMesh` is the binding one** -- it runs per region, and \
+a run that declares complete over a mesh it refuses is handed the refusal and keeps \
+working. The others are advisory in one specific sense: being right about your geometry \
+is enough to get past them. **A warning you neither fix nor waive means the declare is \
+not accepted, exactly as a failing `checkMesh` is not accepted, and it comes back to \
+you.**
 
 **If you already know an advisory check is going to flag something that is correct, say so \
 on the same call.** Put it in `waive` with your reason -- an open surface because the part \
 is a zero-thickness baffle, a meshing point outside the exported surface because the flow \
 is external. Said before you see the result that is a prediction about your own geometry, \
-and it is recorded as one. Said after the check has flagged, it is still allowed and \
-recorded differently. Naming a check that then does not flag is recorded too, and means \
-you expected something about your own geometry that was not there.
+it is recorded as one, and it finishes in a single call. Said after the check has flagged \
+it is still accepted and recorded differently. Naming a check that then does not flag is \
+recorded too, and means you expected something about your own geometry that was not there.
+
+One of them is worth knowing precisely, because it is easy to be right about the geometry \
+and wrong about the check: **`union_closure` welds every STL in the directory into a \
+single surface and counts the free edges of that union.** Individual patch files are open \
+surfaces by construction and that is not what it measures, so "each patch is a separate \
+sheet" does not explain a non-zero count.
 
 **When the request cannot be answered correctly** -- a file that declares no length unit, a \
 request that states no dimension at all -- call `declare_complete` with \
@@ -352,7 +360,7 @@ class CoreDesk(CadDesk):
         return [CELL_TOOL, DECLARE_TOOL]
 
     def _declare(self, payload: dict[str, Any], case_rel: str,
-                 request: str) -> tuple[Check, str]:
+                 request: str) -> tuple[Check, str, list[str]]:
         """Run every check, bind on `checkMesh` alone, and report the rest.
 
         The advisory half is why this exists. `union_closure` measured 259 free edges on
@@ -375,9 +383,18 @@ class CoreDesk(CadDesk):
             states = [gate.GateState("gates", gate.NOT_RUN, f"{type(exc).__name__}: {exc}")]
         # What has already fired is what separates a prediction from a reaction on the
         # next declare, and the desk does not get a say in it.
-        self._warned |= {s.check for s in states
-                         if s.state in (gate.WARNED, gate.XFAIL, gate.WAIVED)}
         self._declares.append(gate.Declaration(
             outcome="complete", reason=str(payload.get("reason") or ""),
             states=states, checkmesh_ok=bool(check.ok)).as_dict())
-        return check, gate.render(states, self.case_dir)
+        # An unresolved warning is treated exactly as a failing `checkMesh` is: the
+        # declare is not accepted and comes back. There is no once-only allowance and no
+        # separate bound -- `turns >= max_steps` and the `no-progress` alarm already
+        # bound a desk that keeps declaring over a refusal, and this is that.
+        #
+        # The consequence is the point: **a waiver is the only way past a warning**, so
+        # the desk must either fix it or say why it is correct. A pass rate that falls
+        # because a desk would do neither is the measurement, not a regression.
+        self._warned |= {s.check for s in states
+                         if s.state in (gate.WARNED, gate.XFAIL, gate.WAIVED)}
+        unresolved = [s.check for s in states if s.state == gate.WARNED]
+        return check, gate.render(states, self.case_dir), unresolved

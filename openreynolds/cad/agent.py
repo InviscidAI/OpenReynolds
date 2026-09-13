@@ -177,16 +177,15 @@ DECLARE_TOOL: dict[str, Any] = {
     "name": DECLARE_NAME,
     "description": (
         "Declare this case finished, or declare that it cannot be answered correctly. "
-        "Calling this runs the checks. checkMesh is the only binding one: if it fails "
-        "you are told why and the run carries on. Every other check is advisory -- it is "
-        "reported to you and recorded, and none of them can block a finish.\n\n"
+        "Calling this runs the checks. checkMesh is the binding one. The others are "
+        "advisory in that being right about your geometry is enough to get past them -- "
+        "but a warning you neither fix nor waive means the declare is not accepted, the same as a failing checkMesh, and it comes back to you.\n\n"
         "If you already know a check is going to flag something that is correct -- an "
         "open surface because you built a zero-thickness baffle, a meshing point outside "
         "the exported surface because the flow is external -- name it in `waive` with "
-        "your reason on this call, before you see the result. That is a prediction and "
-        "it is recorded as one. Naming it after it has flagged is also allowed and is "
-        "recorded differently. Naming a check that then does not flag is recorded too: "
-        "it means you expected something about your own geometry that was not there."
+        "your reason on this call, before you see the result. That is a prediction, it is "
+        "recorded as one, and it finishes in a single call. Naming it after it has flagged is also allowed and recorded differently. Naming a check that then does not flag is recorded too.\n\n"
+        "union_closure welds every STL in the directory into one surface and counts that union's free edges. Individual patch files are open by construction and that is not what it measures."
     ),
     "input_schema": {
         "type": "object",
@@ -441,16 +440,25 @@ class CadDesk:
                             "Held: there is a newer instruction above. Read it and carry "
                             "on.", note=self._drain())
                     continue
-                check, advisory = self._declare(declare, case_rel, request)
+                check, advisory, unresolved = self._declare(declare, case_rel, request)
                 result.check = check
                 result.summary = _summary(turn.text) or result.summary
-                if check.ok:
+                if check.ok and not unresolved:
                     result.ok = True
                     break
-                # checkMesh is the only thing that can say "not yet". The advisory text
-                # rides along with it so one answer carries both.
+                # One path, because a declare is either accepted or it is not. A failing
+                # `checkMesh` and an unresolved advisory warning come back the same way
+                # and are bounded the same way -- `turns >= max_steps`, and `no-progress`
+                # before that. The desk gets past a warning by fixing it or by waiving it
+                # with a reason, which is what makes the waiver load-bearing rather than
+                # decorative.
+                #
+                # It shipped once without this: the loop broke on `check.ok` and dropped
+                # the advisory, so four cases of the first `core+declare_gate` sweep drew
+                # real warnings -- up to 4,257 free edges -- and none was ever delivered.
                 _answer(messages, ids,
-                        "\n\n".join(x for x in (check.as_refusal(), advisory) if x),
+                        "\n\n".join(x for x in (
+                            check.as_refusal() if not check.ok else "", advisory) if x),
                         is_error=True, note=self._drain())
                 continue
 
@@ -671,8 +679,8 @@ class CadDesk:
         return [CELL_TOOL]
 
     def _declare(self, payload: dict[str, Any], case_rel: str,
-                 request: str) -> tuple[Any, str]:
-        """Handle a `declare_complete` call, returning `(check, advisory_text)`.
+                 request: str) -> tuple[Any, str, list[str]]:
+        """Handle a `declare_complete` call: `(check, advisory, fresh_warnings)`.
 
         Only a desk that offers the tool can receive the call, so the base desk's version
         exists to be overridden and to keep the contract readable in one place."""
