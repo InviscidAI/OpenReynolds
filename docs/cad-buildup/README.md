@@ -200,3 +200,27 @@ was set for a desk that finishes at its first declare.
 Full report and findings in the sweep directory. Next, one at a time: the `normals`
 explanation (an `xpass` in T21 is behind it, and the `union_closure` precedent took that
 probe's xpass from 2 to 0), then a clean re-measure, then the step budget.
+
+## `core+reference-20260914-093903-3472` — the tool works and the corpus got worse
+
+`b123d_api.md` handed to the core desk, with the repaired probes, the `normals`
+explanation and the assumption-recording line riding along — four changes in one sweep,
+deliberately, and it can attribute none of them at the corpus level.
+
+16/26 passed against 20/26, 524 cells against 518, $26.36, contamination 0/26 with the
+reference in every workspace and greped by 11 desks. Sign test `p = 0.125`.
+
+The tool did its specific job: api-surface failures 27 → 13, `AttributeError` 11 → 2,
+`NameError` 4 → 0, `ModuleNotFoundError` 1 → 0. The one line aimed at `'bool' object is
+not callable` failed — 6 cases → 8 — and is a candidate for removal rather than rewording.
+
+All six pass → fail flips ended `stopped=steps`, five at exactly 28 cells, and the gate
+spoke to only one of them. Seven of 26 runs now die at the ceiling against four before,
+on an unchanged median of 21 cells. **The step budget is the binding constraint and is the
+next change with a measured failure count behind it.** T19 and T22 flipped back and are
+consistent with the probe repair — T22 declared clean at 11 cells where it had been bounced
+at turn 30 on 62,208 phantom flipped edges.
+
+Preceded by the void `core+reference-20260914-025525-6a2b`, which found that the reference
+was copied where no desk could reach it. Run with a kernel janitor, disclosed in §8 of the
+report: kernels outlive their runs and exhausted the machine during the void sweep.

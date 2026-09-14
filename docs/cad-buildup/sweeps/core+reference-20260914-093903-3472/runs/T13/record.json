@@ -1,0 +1,690 @@
+{
+  "run_id": "20260914-094824-3f00",
+  "case": "T13",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T13-20260914-094824-3f00",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T13-20260914-094824-3f00/t13",
+  "started_at": "2026-09-14T09:48:24",
+  "ended_at": "2026-09-14T10:00:08",
+  "seconds": 694.6,
+  "n_turns": 30,
+  "n_steps": 28,
+  "first_mesh_step": 13,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 2.2727,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 60,
+    "cache_read": 1072531,
+    "cache_write": 97778,
+    "output": 45001
+  },
+  "stopped": "steps",
+  "expects": "done",
+  "passed": false,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import numpy as np, matplotlib.pyplot as plt, os\n\n# --- given by the request ---\nOD      = 0.040      # m, neck outside diameter\nPITCH   = 0.002      # m\nDEPTH   = 0.001      # m, thread depth\nHTHREAD = 0.012      # m, threaded neck height\nGAP     = 0.0002     # m, clearance on every flank\n\n# --- chosen by me (not stated in the request) ---\nCREST_FLAT = 0.0005  # m, axial width of the crest flat (contact land)\nROOT_FLAT  = 0.0005  # m, axial width of the root flat\n\nr_c, r_r = OD/2, OD/2 - DEPTH\nrun = (PITCH - CREST_FLAT - ROOT_FLAT)/2\nzA  = CREST_FLAT/2\nA  = np.array([r_c, zA])\nP1 = np.array([r_r, zA + run])\nP2 = np.array([r_r, zA + run + ROOT_FLAT])\nB  = np.array([r_c, zA + 2*run + ROOT_FLAT])\n\ndef outward_normal(p, q):\n    d = (q - p)/np.linalg.norm(q - p)\n    return np.array([d[1], -d[0]])\nn1, n2, n3 = outward_normal(A,P1), outward_normal(P1,P2), outward_normal(P2,B)\n\ndef inter(p, dp, q, dq):\n    t = np.linalg.solve(np.column_stack([dp, -dq]), q - p)[0]\n    return p + t*dp\nA1 = A + GAP*n1\nQ1 = inter(A1, P1-A, P1+GAP*n2, P2-P1)\nQ2 = inter(P1+GAP*n2, P2-P1, P2+GAP*n3, B-P2)\nB3 = B + GAP*n3\n\nprint(\"flank angle from radial: %.2f deg\" % np.degrees(np.arctan2(run, DEPTH)))\nprint(\"A \",A,\" P1\",P1,\" P2\",P2,\" B \",B)\nprint(\"A1\",A1,\" Q1\",Q1,\" Q2\",Q2,\" B3\",B3)\nprint(\"section axial span %.4f mm (pitch %.1f mm)\" % (1e3*(B[1]-A[1]), 1e3*PITCH))\nprint(\"perp gap: flank1 %.4f mm, root %.4f mm, flank2 %.4f mm\" % (\n    1e3*np.dot(A1-A,n1), 1e3*np.dot(Q1-P1,n2), 1e3*np.dot(B3-B,n3)))\n\npoly = np.array([A,P1,P2,B,B3,Q2,Q1,A1,A])\nplt.figure(figsize=(5,5)); plt.plot(1e3*poly[:,0],1e3*poly[:,1],'o-')\nplt.gca().set_aspect('equal'); plt.xlabel('r [mm]'); plt.ylabel('z [mm]'); plt.grid(True)\nplt.title('leak-channel section'); plt.show()",
+      "exit_code": 0,
+      "seconds": 0.15108869899995625,
+      "output": "flank angle from radial: 26.57 deg\nA  [0.02    0.00025]  P1 [0.019   0.00075]  P2 [0.019   0.00125]  B  [0.02    0.00175]\nA1 [0.02008944 0.00042889]  Q1 [0.0192     0.00087361]  Q2 [0.0192     0.00112639]  B3 [0.02008944 0.00157111]\nsection axial span 1.5000 mm (pitch 2.0 mm)\nperp gap: flank1 0.2000 mm, root 0.2000 mm, flank2 0.2000 mm",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import gmsh, math, numpy as np\ngmsh.initialize(); gmsh.option.setNumber(\"General.Terminal\",0)\ngmsh.model.add(\"leak\")\ng = gmsh.model.geo\n\nTURNS = (HTHREAD - (B[1]-A[1]))/PITCH   # 5.25 -> total axial extent exactly 12 mm\nprint(\"turns\", TURNS, \"advance mm\", 1e3*TURNS*PITCH, \"total extent mm\", 1e3*(TURNS*PITCH + (B[1]-A[1])))\n\npts = {}\ndef P(rz):\n    k = (round(rz[0],9), round(rz[1],9))\n    if k not in pts: pts[k] = g.addPoint(rz[0], 0.0, rz[1])\n    return pts[k]\ndef L(a,b): return g.addLine(P(a),P(b))\n\n# quad1 flank1 band, quad2 root band, quad3 flank2 band\nl_neck1, l_t1, l_lid1, l_sealA = L(A,P1), L(P1,Q1), L(Q1,A1), L(A1,A)\nl_neckR, l_t2, l_lidR          = L(P1,P2), L(P2,Q2), L(Q2,Q1)\nl_neck2, l_sealB, l_lid2       = L(P2,B), L(B,B3), L(B3,Q2)\n\ns1 = g.addPlaneSurface([g.addCurveLoop([l_neck1, l_t1, l_lid1, l_sealA])])\ns2 = g.addPlaneSurface([g.addCurveLoop([l_neckR, l_t2, l_lidR, -l_t1])])\ns3 = g.addPlaneSurface([g.addCurveLoop([l_neck2, l_sealB, l_lid2, -l_t2])])\n\nNT, N1, N2 = 3, 5, 3          # nodes across gap / along flank / along root  (coarse)\nfor c in (l_t1, l_t2, l_sealA, l_sealB): g.mesh.setTransfiniteCurve(c, NT)\nfor c in (l_neck1, l_lid1, l_neck2, l_lid2): g.mesh.setTransfiniteCurve(c, N1)\nfor c in (l_neckR, l_lidR): g.mesh.setTransfiniteCurve(c, N2)\nfor s in (s1,s2,s3):\n    g.mesh.setTransfiniteSurface(s); g.mesh.setRecombine(2, s)\ng.synchronize()\n\n# edge -> patch, in the loop order used above (needed to label swept lateral faces)\nedge_patch = {s1:[('neck_flank',(A,P1)),(None,(P1,Q1)),('lid_flank',(Q1,A1)),('lid_flank',(A1,A))],\n              s2:[('neck_flank',(P1,P2)),(None,(P2,Q2)),('lid_flank',(Q2,Q1)),(None,(Q1,P1))],\n              s3:[('neck_flank',(P2,B)),('lid_flank',(B,B3)),('lid_flank',(B3,Q2)),(None,(Q2,P2))]}\nprint(\"surfaces\", s1,s2,s3)",
+      "exit_code": 0,
+      "seconds": 0.45162277800000084,
+      "output": "turns 5.25 advance mm 10.5 total extent mm 12.0\nsurfaces 1 2 3",
+      "image": ""
+    },
+    {
+      "cmd": "ANG = math.pi/2\nNLAY = 8            # layers per quarter turn (coarse first look)\ndz   = PITCH*ANG/(2*math.pi)\nout = g.twist([(2,s1),(2,s2),(2,s3)], 0,0,dz, 0,0,0, 0,0,1, ANG, [NLAY], [], True)\ng.synchronize()\nfor i,o in enumerate(out): print(i, o)",
+      "exit_code": 0,
+      "seconds": 0.05069032599999446,
+      "output": "0 (2, 32)\n1 (3, 1)\n2 (2, 19)\n3 (2, 23)\n4 (2, 27)\n5 (2, 31)\n6 (2, 54)\n7 (3, 2)\n8 (2, 41)\n9 (2, 45)\n10 (2, 49)\n11 (2, 23)\n12 (2, 76)\n13 (3, 3)\n14 (2, 63)\n15 (2, 67)\n16 (2, 71)\n17 (2, 45)",
+      "image": ""
+    },
+    {
+      "cmd": "def swept_mid(e, ang, dzc, th0, z0):\n    \"\"\"centre of the surface swept from edge e=(p,q) over [th0,th0+ang], lifted from z0\"\"\"\n    m = 0.5*(e[0]+e[1]); th = th0+ang/2\n    return np.array([m[0]*math.cos(th), m[0]*math.sin(th), m[1]+z0+dzc/2])\n\ndef check_block(blk, s, ang, dzc, th0, z0):\n    ok = True\n    for i,(pname,e) in enumerate(edge_patch[s]):\n        tag = blk[2+i][1]\n        c = np.array(gmsh.model.occ.getCenterOfMass(2, tag)) if False else None\n        c = np.array(gmsh.model.getValue(2, tag, [0.5,0.5]))  # param mid (extruded surf: u,v in [0,1])\n        d = np.linalg.norm(c - swept_mid(e, ang, dzc, th0, z0))\n        ok &= d < 1e-5\n        print(\"  s%d lat%d tag%3d %-11s dist %.2e\" % (s, i, tag, pname, d))\n    return ok\n\nblocks = {s1:out[0:6], s2:out[6:12], s3:out[12:18]}\nprint(all(check_block(blocks[s], s, ANG, dz, 0.0, 0.0) for s in (s1,s2,s3)))",
+      "exit_code": 0,
+      "seconds": 0.050636366999924576,
+      "output": "s1 lat0 tag 19 neck_flank  dist 2.50e-04\n  s1 lat1 tag 23 None        dist 2.50e-04\n  s1 lat2 tag 27 lid_flank   dist 2.50e-04\n  s1 lat3 tag 31 lid_flank   dist 2.50e-04\nFalse",
+      "image": ""
+    },
+    {
+      "cmd": "for i,(pname,e) in enumerate(edge_patch[s1]):\n    tag = out[2+i][1]\n    print(tag, pname, np.array(gmsh.model.getValue(2, tag, [0.5,0.5])), swept_mid(e, ANG, dz, 0.0, 0.0))",
+      "exit_code": 0,
+      "seconds": 0.05057740699999158,
+      "output": "19 neck_flank [0.01378858 0.01378858 0.0005    ] [0.01378858 0.01378858 0.00075   ]\n23 None [0.01350574 0.01350574 0.0008118 ] [0.01350574 0.01350574 0.0010618 ]\n27 lid_flank [0.01389092 0.01389092 0.00065125] [0.01389092 0.01389092 0.00090125]\n31 lid_flank [0.01417376 0.01417376 0.00033944] [0.01417376 0.01417376 0.00058944]",
+      "image": ""
+    },
+    {
+      "cmd": "def check_block(blk, s, ang, th0):\n    ok = True\n    for i,(pname,e) in enumerate(edge_patch[s]):\n        tag = blk[2+i][1]\n        c = np.array(gmsh.model.getValue(2, tag, [0.5,0.5]))\n        exp = swept_mid(e, ang, 0.0, th0, 0.0)\n        ok &= np.linalg.norm(c[:2]-exp[:2]) < 1e-9\n    return ok\nassert all(check_block(blocks[s], s, ANG, 0.0) for s in (s1,s2,s3)), \"lateral ordering unverified\"\n\npatch_surfs = {'neck_flank':[], 'lid_flank':[]}\ndef record(blk, s):\n    for i,(pname,e) in enumerate(edge_patch[s]):\n        if pname: patch_surfs[pname].append(blk[2+i][1])\nfor s in (s1,s2,s3): record(blocks[s], s)\n\nNCHUNK = round(2*math.pi*TURNS/ANG)\ncur = {s1: out[0][1], s2: out[6][1], s3: out[12][1]}   # top surfaces after chunk 1\nfor k in range(1, NCHUNK):\n    o = g.twist([(2,cur[s1]),(2,cur[s2]),(2,cur[s3])], 0,0,dz, 0,0,0, 0,0,1, ANG, [NLAY], [], True)\n    g.synchronize()\n    blk = {s1:o[0:6], s2:o[6:12], s3:o[12:18]}\n    assert all(check_block(blk[s], s, ANG, ANG*k) for s in (s1,s2,s3)), f\"ordering chunk {k}\"\n    for s in (s1,s2,s3): record(blk[s], s)\n    cur = {s: o[j][1] for s,j in ((s1,0),(s2,6),(s3,12))}\nprint(\"chunks\", NCHUNK, \"  lateral surfs:\", {k:len(v) for k,v in patch_surfs.items()})\nprint(\"top surfaces\", cur)\nbb = gmsh.model.getBoundingBox(-1,-1); print(\"bbox mm\", [round(1e3*x,4) for x in bb])",
+      "exit_code": 0,
+      "seconds": 0.1010102730001563,
+      "output": "chunks 21   lateral surfs: {'neck_flank': 63, 'lid_flank': 105}\ntop surfaces {1: 32, 2: 54, 3: 76}\nbbox mm [-20.0894, -20.0894, 0.25, 20.0894, 20.0894, 1.75]",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.clear(); gmsh.model.add(\"leak\"); g = gmsh.model.geo\npts = {}\ndef P(rz):\n    k = (round(rz[0],9), round(rz[1],9))\n    if k not in pts: pts[k] = g.addPoint(rz[0], 0.0, rz[1])\n    return pts[k]\ndef L(a,b): return g.addLine(P(a),P(b))\n\nl_neck1, l_t1, l_lid1, l_sealA = L(A,P1), L(P1,Q1), L(Q1,A1), L(A1,A)\nl_neckR, l_t2, l_lidR          = L(P1,P2), L(P2,Q2), L(Q2,Q1)\nl_neck2, l_sealB, l_lid2       = L(P2,B), L(B,B3), L(B3,Q2)\ns1 = g.addPlaneSurface([g.addCurveLoop([l_neck1, l_t1, l_lid1, l_sealA])])\ns2 = g.addPlaneSurface([g.addCurveLoop([l_neckR, l_t2, l_lidR, -l_t1])])\ns3 = g.addPlaneSurface([g.addCurveLoop([l_neck2, l_sealB, l_lid2, -l_t2])])\nNT, N1, N2 = 3, 5, 3\nfor c in (l_t1, l_t2, l_sealA, l_sealB): g.mesh.setTransfiniteCurve(c, NT)\nfor c in (l_neck1, l_lid1, l_neck2, l_lid2): g.mesh.setTransfiniteCurve(c, N1)\nfor c in (l_neckR, l_lidR): g.mesh.setTransfiniteCurve(c, N2)\nfor s in (s1,s2,s3):\n    g.mesh.setTransfiniteSurface(s); g.mesh.setRecombine(2, s)\ng.synchronize()\nedge_patch = {s1:[('neck_flank',(A,P1)),(None,(P1,Q1)),('lid_flank',(Q1,A1)),('lid_flank',(A1,A))],\n              s2:[('neck_flank',(P1,P2)),(None,(P2,Q2)),('lid_flank',(Q2,Q1)),(None,(Q1,P1))],\n              s3:[('neck_flank',(P2,B)),('lid_flank',(B,B3)),('lid_flank',(B3,Q2)),(None,(Q2,P2))]}\n\nANG, NLAY = math.pi/2, 8\ndz = PITCH*ANG/(2*math.pi)\nNCHUNK = round(2*math.pi*TURNS/ANG)\npatch_surfs = {'neck_flank':[], 'lid_flank':[]}\nbottom = [s1,s2,s3]\ncur, vols = {s1:s1, s2:s2, s3:s3}, []\nfor k in range(NCHUNK):\n    o = g.twist([(2,cur[s1]),(2,cur[s2]),(2,cur[s3])], 0,0,0, 0,0,dz, 0,0,1, ANG, [NLAY], [], True)\n    g.synchronize()\n    blk = {s1:o[0:6], s2:o[6:12], s3:o[12:18]}\n    for s in (s1,s2,s3):\n        assert check_block(blk[s], s, ANG, ANG*k), f\"ordering chunk {k}\"\n        for i,(pname,e) in enumerate(edge_patch[s]):\n            if pname: patch_surfs[pname].append(blk[s][2+i][1])\n        vols.append(blk[s][1][1])\n    cur = {s: o[j][1] for s,j in ((s1,0),(s2,6),(s3,12))}\ntop = [cur[s] for s in (s1,s2,s3)]\nbb = gmsh.model.getBoundingBox(-1,-1)\nprint(\"bbox mm\", [round(1e3*x,4) for x in bb], \" z extent %.4f mm\" % (1e3*(bb[5]-bb[2])))\nprint(\"vols\", len(vols), {k:len(v) for k,v in patch_surfs.items()})",
+      "exit_code": 0,
+      "seconds": 0.15113779099988278,
+      "output": "bbox mm [-20.0894, -20.0894, 0.25, 20.0894, 20.0894, 12.25]  z extent 12.0000 mm\nvols 63 {'neck_flank': 63, 'lid_flank': 105}",
+      "image": ""
+    },
+    {
+      "cmd": "for name, surfs in [('neck_flank', patch_surfs['neck_flank']),\n                    ('lid_flank',  patch_surfs['lid_flank']),\n                    ('inner_end',  top),        # z = 12.25 mm, jar-mouth side\n                    ('outer_end',  bottom)]:    # z = 0.25 mm, open air\n    gmsh.model.addPhysicalGroup(2, surfs, name=name)\ngmsh.model.addPhysicalGroup(3, vols, name=\"internal\")\ngmsh.option.setNumber(\"Mesh.RecombineAll\", 1)\ngmsh.model.mesh.generate(2)\net = {2:'tri', 3:'quad'}\nfor d in (2,):\n    ts, tags, _ = gmsh.model.mesh.getElements(d)\n    print(d, [(et.get(t,t), sum(len(x) for x in tags[i:i+1])) for i,t in enumerate(ts)])\nprint(\"nodes\", len(gmsh.model.mesh.getNodes()[0]))",
+      "exit_code": 0,
+      "seconds": 0.05083764699998028,
+      "output": "2 [('quad', 5144)]\nnodes 5220",
+      "image": ""
+    },
+    {
+      "cmd": "from matplotlib.path import Path as MPath\nsec_path = MPath(np.array([A,P1,P2,B,B3,Q2,Q1,A1]))\nTWOPI = 2*math.pi\ndef in_fluid(p):\n    x,y,z = p\n    r = math.hypot(x,y); th = math.atan2(y,x)\n    for m in range(-1, int(TURNS)+2):\n        thu = th + TWOPI*m\n        if -1e-12 <= thu <= TWOPI*TURNS + 1e-12:\n            if sec_path.contains_point((r, z - PITCH*thu/TWOPI)):\n                return True\n    return False\n\ntests = [((0.0191,0,0.001), True), ((0.0195,0,0.001), False), ((0.0205,0,0.001), False),\n         ((0.0191,0,0.0),   False),                      # below the start cap\n         ((0.0191*math.cos(0.5),0.0191*math.sin(0.5),0.001+PITCH*0.5/TWOPI), True)]\nprint([ (in_fluid(np.array(p)), e) for p,e in tests])",
+      "exit_code": 0,
+      "seconds": 0.05085253699985515,
+      "output": "[(True, True), (False, False), (False, False), (False, False), (True, True)]\n[no picture came back from this cell, and it looks like it drew one. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]",
+      "image": ""
+    },
+    {
+      "cmd": "import os\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nnt, nc, _ = gmsh.model.mesh.getNodes()\nXYZ = {t: np.array(nc[3*i:3*i+3]) for i,t in enumerate(nt)}\n\ndef tris_of_patch(name):\n    dim_tags = gmsh.model.getEntitiesForPhysicalGroup(2, {g_.split('|')[0]:0 for g_ in []} or\n               [pg[1] for pg in gmsh.model.getPhysicalGroups(2)\n                if gmsh.model.getPhysicalName(2, pg[1]) == name][0])\n    tris = []\n    for s in dim_tags:\n        ts, tags, nds = gmsh.model.mesh.getElements(2, s)\n        for t, nl in zip(ts, nds):\n            k = 4 if t == 3 else 3\n            for i in range(0, len(nl), k):\n                q = [XYZ[n] for n in nl[i:i+k]]\n                tris += ([[q[0],q[1],q[2]], [q[0],q[2],q[3]]] if k == 4 else [[q[0],q[1],q[2]]])\n    return tris\n\ndef write_stl(name, tris, eps=1e-5):\n    flipped = 0\n    with open(f\"constant/triSurface/{name}.stl\", \"w\") as f:\n        f.write(f\"solid {name}\\n\")\n        for a,b,c in tris:\n            n = np.cross(b-a, c-a); ln = np.linalg.norm(n); n = n/ln\n            if in_fluid((a+b+c)/3.0 + eps*n): a, c, n, flipped = c, a, -n, flipped+1\n            f.write(\" facet normal %g %g %g\\n  outer loop\\n\" % tuple(n))\n            for v in (a,b,c): f.write(\"   vertex %.9g %.9g %.9g\\n\" % tuple(v))\n            f.write(\"  endloop\\n endfacet\\n\")\n        f.write(f\"endsolid {name}\\n\")\n    return len(tris), flipped\n\nfor name in ('neck_flank','lid_flank','inner_end','outer_end'):\n    print(name, write_stl(name, tris_of_patch(name)))",
+      "exit_code": 0,
+      "seconds": 0.9032674229999884,
+      "output": "neck_flank (3360, 0)\nlid_flank (4704, 4368)\ninner_end (40, 0)\nouter_end (40, 40)",
+      "image": ""
+    },
+    {
+      "cmd": "from collections import Counter\nalltris = sum((tris_of_patch(n) for n in ('neck_flank','lid_flank','inner_end','outer_end')), [])\n# re-apply the same orientation rule used when writing\ned = Counter(); area = 0.0\nfor a,b,c in alltris:\n    n = np.cross(b-a, c-a); area += 0.5*np.linalg.norm(n); n = n/np.linalg.norm(n)\n    if in_fluid((a+b+c)/3.0 + 1e-5*n): a, c = c, a\n    for u,v in ((a,b),(b,c),(c,a)):\n        ed[(tuple(np.round(u,10)), tuple(np.round(v,10)))] += 1\nfree = sum(1 for (u,v),k in ed.items() if (v,u) not in ed)\nsame = sum(k-1 for k in ed.values() if k > 1)\nprint(\"triangles\", len(alltris), \" free edges\", free, \" same-direction dup edges\", same,\n      \" wetted+cap area mm^2 %.2f\" % (1e6*area))",
+      "exit_code": 0,
+      "seconds": 0.7032314049999968,
+      "output": "triangles 8144  free edges 696  same-direction dup edges 696  wetted+cap area mm^2 3450.09",
+      "image": ""
+    },
+    {
+      "cmd": "bad = []\nfor name in ('neck_flank','lid_flank','inner_end','outer_end'):\n    for a,b,c in tris_of_patch(name):\n        n = np.cross(b-a,c-a); n/=np.linalg.norm(n)\n        cen = (a+b+c)/3.0\n        if in_fluid(cen + 1e-5*n): a,c,n = c,a,-n\n        # a correctly oriented facet must have fluid just inside it\n        if not in_fluid(cen - 1e-5*n): bad.append((name, cen, n))\nprint(len(bad), Counter(b[0] for b in bad))\nfor name,cen,n in bad[:5]:\n    print(name, \"r=%.5f th=%.3f z=%.5f\" % (math.hypot(*cen[:2]), math.atan2(cen[1],cen[0]), cen[2]), n)",
+      "exit_code": 0,
+      "seconds": 0.5017892890000439,
+      "output": "3696 Counter({'neck_flank': 3360, 'lid_flank': 336})\nneck_flank r=0.01975 th=0.065 z=0.00035 [-0.44701862 -0.02952533 -0.89403725]\nneck_flank r=0.01983 th=0.131 z=0.00033 [-0.44924393 -0.02994388 -0.89290719]\nneck_flank r=0.01975 th=0.261 z=0.00042 [-0.43266918 -0.11616701 -0.89403725]\nneck_flank r=0.01983 th=0.327 z=0.00040 [-0.43477007 -0.11701166 -0.89290719]\nneck_flank r=0.01975 th=0.458 z=0.00048 [-0.4016925  -0.19834447 -0.89403725]",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\ndef build_model(nlay, nt=3, n1=5, n2=3, ang=math.pi/2):\n    gmsh.clear(); gmsh.model.add(\"leak\"); gg = gmsh.model.geo\n    pp = {}\n    def P(rz):\n        k = (round(rz[0],9), round(rz[1],9))\n        if k not in pp: pp[k] = gg.addPoint(rz[0], 0.0, rz[1])\n        return pp[k]\n    def L(a,b): return gg.addLine(P(a),P(b))\n    e_n1,e_t1,e_l1,e_sA = L(A,P1), L(P1,Q1), L(Q1,A1), L(A1,A)\n    e_nR,e_t2,e_lR      = L(P1,P2), L(P2,Q2), L(Q2,Q1)\n    e_n2,e_sB,e_l2      = L(P2,B), L(B,B3), L(B3,Q2)\n    a1 = gg.addPlaneSurface([gg.addCurveLoop([e_n1,e_t1,e_l1,e_sA])])\n    a2 = gg.addPlaneSurface([gg.addCurveLoop([e_nR,e_t2,e_lR,-e_t1])])\n    a3 = gg.addPlaneSurface([gg.addCurveLoop([e_n2,e_sB,e_l2,-e_t2])])\n    for c in (e_t1,e_t2,e_sA,e_sB): gg.mesh.setTransfiniteCurve(c, nt)\n    for c in (e_n1,e_l1,e_n2,e_l2): gg.mesh.setTransfiniteCurve(c, n1)\n    for c in (e_nR,e_lR):           gg.mesh.setTransfiniteCurve(c, n2)\n    for s in (a1,a2,a3): gg.mesh.setTransfiniteSurface(s); gg.mesh.setRecombine(2, s)\n    gg.synchronize()\n    ep = {a1:[('neck_flank',(A,P1)),(None,(P1,Q1)),('lid_flank',(Q1,A1)),('lid_flank',(A1,A))],\n          a2:[('neck_flank',(P1,P2)),(None,(P2,Q2)),('lid_flank',(Q2,Q1)),(None,(Q1,P1))],\n          a3:[('neck_flank',(P2,B)),('lid_flank',(B,B3)),('lid_flank',(B3,Q2)),(None,(Q2,P2))]}\n    dzc = PITCH*ang/TWOPI; nchunk = round(TWOPI*TURNS/ang)\n    ps = {'neck_flank':[], 'lid_flank':[]}; vs = []; cur = {a1:a1,a2:a2,a3:a3}\n    for k in range(nchunk):\n        o = gg.twist([(2,cur[a1]),(2,cur[a2]),(2,cur[a3])], 0,0,0, 0,0,dzc, 0,0,1, ang, [nlay], [], True)\n        gg.synchronize()\n        blk = {a1:o[0:6], a2:o[6:12], a3:o[12:18]}\n        for s in (a1,a2,a3):\n            for i,(pn,e) in enumerate(ep[s]):\n                m = 0.5*(e[0]+e[1]); th = ang*k+ang/2\n                assert np.linalg.norm(np.array(gmsh.model.getValue(2, blk[s][2+i][1], [0.5,0.5]))[:2]\n                                      - np.array([m[0]*math.cos(th), m[0]*math.sin(th)])) < 1e-9\n                if pn: ps[pn].append(blk[s][2+i][1])\n            vs.append(blk[s][1][1])\n        cur = {s:o[j][1] for s,j in ((a1,0),(a2,6),(a3,12))}\n    for nm, sl in [('neck_flank',ps['neck_flank']), ('lid_flank',ps['lid_flank']),\n                   ('inner_end',[cur[s] for s in (a1,a2,a3)]), ('outer_end',[a1,a2,a3])]:\n        gmsh.model.addPhysicalGroup(2, sl, name=nm)\n    gmsh.model.addPhysicalGroup(3, vs, name=\"internal\")\n\nbuild_model(32)\ngmsh.option.setNumber(\"Mesh.RecombineAll\", 1)\ngmsh.model.mesh.generate(3)\nts, tags, _ = gmsh.model.mesh.getElements(3)\nprint(\"3D elems\", {t:len(tags[i]) for i,t in enumerate(ts)})\ngmsh.write(\"leak.msh\")\nbb = gmsh.model.getBoundingBox(-1,-1); print(\"bbox mm\", [round(1e3*x,4) for x in bb])",
+      "exit_code": 0,
+      "seconds": 0.40154926499985777,
+      "output": "3D elems {np.int32(5): 13440}\nbbox mm [-20.0894, -20.0894, 0.25, 20.0894, 20.0894, 12.25]",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\ngmsh.write(\"leak.msh\")\nos.makedirs(\"system\", exist_ok=True)\nhdr = lambda cls,obj: (\"FoamFile{version 2.0; format ascii; class %s; object %s;}\\n\" % (cls,obj))\nopen(\"system/controlDict\",\"w\").write(hdr(\"dictionary\",\"controlDict\") +\n  \"application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\\n\"\n  \"deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; writePrecision 6;\\n\"\n  \"writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;\\n\")\nopen(\"system/fvSchemes\",\"w\").write(hdr(\"dictionary\",\"fvSchemes\") +\n  \"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;}\\n\"\n  \"divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;}\\n\"\n  \"interpolationSchemes{default linear;} snGradSchemes{default corrected;}\\n\")\nopen(\"system/fvSolution\",\"w\").write(hdr(\"dictionary\",\"fvSolution\") + \"solvers{} \\n\")\nr = subprocess.run([\"gmshToFoam\",\"leak.msh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[-1500:], r.stderr[-800:])",
+      "exit_code": 0,
+      "seconds": 0.4521624719998272,
+      "output": "0 r-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nStarting to read mesh format at line 2\nRead format version 2.2  ascii 0\n\nStarting to read physical names at line 5\nPhysical names:5\n    Surface 1\tneck_flank\n    Surface 2\tlid_flank\n    Surface 3\tinner_end\n    Surface 4\touter_end\n    Volume 5\tinternal\n\nStarting to read points at line 13\nVertices to be read: 22209\nVertices read:22209\n\nStarting to read cells at line 22225\nCells to be read: 29608\n\nMapping region 4 to Foam patch 0\nMapping region 1 to Foam patch 1\nMapping region 2 to Foam patch 2\nMapping region 3 to Foam patch 3\nMapping region 5 to Foam cellZone 0\nCells:\n    total:13440\n    hex  :13440\n    prism:0\n    pyr  :0\n    tet  :0\n\nCellZones:\nZone\tSize\n    0\t13440\n\nPatch 0 gets name outer_end\nPatch 1 gets name neck_flank\nPatch 2 gets name lid_flank\nPatch 3 gets name inner_end\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 16168 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone internal and cellSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "print(open(\"constant/polyMesh/boundary\").read()[-1200:])",
+      "exit_code": 0,
+      "seconds": 0.050914526999804366,
+      "output": "|\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n4\n(\n    outer_end\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          20;\n        startFace       32236;\n    }\n    neck_flank\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          6720;\n        startFace       32256;\n    }\n    lid_flank\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          9408;\n        startFace       38976;\n    }\n    inner_end\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          20;\n        startFace       48384;\n    }\n)\n\n// ************************************************************************* //",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(r.stdout[-2600:])",
+      "exit_code": 0,
+      "seconds": 0.3016901919997963,
+      "output": "/\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           22209\n    faces:            48404\n    internal faces:   32236\n    cells:            13440\n    faces per cell:   6\n    boundary patches: 4\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     13440\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    outer_end           20       33       ok (non-closed singly connected)  \n    neck_flank          6720     7403     ok (non-closed singly connected)  \n    lid_flank           9408     10095    ok (non-closed singly connected)  \n    inner_end           20       33       ok (non-closed singly connected)  \n    \".*\"                16168    16170    ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    internal            13440        22209        3.20026e-07  (-0.0200894 -0.0200894 0.00025) (0.0200894 0.0200894 0.01225)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.0200894 -0.0200894 0.00025) (0.0200894 0.0200894 0.01225)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (-2.49651e-17 2.24849e-17 1.20534e-17) OK.\n    Max cell openness = 2.04796e-16 OK.\n    Max aspect ratio = 10.3253 OK.\n    Minimum face area = 1.57295e-08. Maximum face area = 2.72627e-07.  Face area magnitudes OK.\n    Min volume = 1.47776e-11. Max volume = 2.65389e-11.  Total volume = 3.20026e-07.  Cell volumes OK.\n    Mesh non-orthogonality Max: 28.3856 average: 12.584\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.98668 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "nt, nc, _ = gmsh.model.mesh.getNodes()\nXYZ = {t: np.array(nc[3*i:3*i+3]) for i,t in enumerate(nt)}\nfor name in ('neck_flank','lid_flank','inner_end','outer_end'):\n    print(name, write_stl(name, tris_of_patch(name), eps=2e-5))\n\nalltris = sum((tris_of_patch(n) for n in ('neck_flank','lid_flank','inner_end','outer_end')), [])\ned = Counter()\nfor a,b,c in alltris:\n    n = np.cross(b-a,c-a); n/=np.linalg.norm(n)\n    if in_fluid((a+b+c)/3.0 + 2e-5*n): a,c = c,a\n    for u,v in ((a,b),(b,c),(c,a)): ed[(tuple(np.round(u,10)),tuple(np.round(v,10)))] += 1\nprint(\"free edges\", sum(1 for (u,v) in ed if (v,u) not in ed),\n      \" same-dir dups\", sum(k-1 for k in ed.values() if k>1))",
+      "exit_code": 0,
+      "seconds": 5.97161638700004,
+      "output": "neck_flank (13440, 0)\nlid_flank (18816, 0)\ninner_end (40, 0)\nouter_end (40, 40)\nfree edges 0  same-dir dups 0",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.start_xvfb() if hasattr(pv,'start_xvfb') else None\npl = pv.Plotter(off_screen=True, window_size=(1100,520), shape=(1,2))\ncols = dict(neck_flank='steelblue', lid_flank='indianred', inner_end='lime', outer_end='gold')\nfor j,(cam,zoom) in enumerate([((1,-1.6,0.9), 1.0), ((1,-0.25,0.15), 3.6)]):\n    pl.subplot(0,j)\n    for n,c in cols.items():\n        m = pv.read(f\"constant/triSurface/{n}.stl\")\n        pl.add_mesh(m, color=c, show_edges=(j==1), line_width=0.4, label=n)\n    pl.camera_position = [tuple(20*np.array(cam)*0.001), (0,0,0.006), (0,0,1)]\n    pl.camera.zoom(zoom)\npl.add_legend(); img = pl.screenshot(return_img=True)\nimport matplotlib.pyplot as plt\nf = plt.figure(figsize=(13,6)); plt.imshow(img); plt.axis('off'); f",
+      "exit_code": 0,
+      "seconds": 1.2050475970002026,
+      "output": "/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-14 09:57:16.649 (   0.230s) [    7C5B2AFB2780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 09:57:16.649 (   0.230s) [    7C5B2AFB2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 09:57:16.660 (   0.242s) [    7C5B2AFB2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "2 pictures"
+    },
+    {
+      "cmd": "pl = pv.Plotter(off_screen=True, window_size=(1200,560), shape=(1,2))\nfor j in range(2):\n    pl.subplot(0,j)\n    for n,c in cols.items():\n        pl.add_mesh(pv.read(f\"constant/triSurface/{n}.stl\"), color=c,\n                    label=n, show_edges=False)\n    pl.view_isometric() if j==0 else pl.view_xz()\n    pl.reset_camera(); pl.camera.zoom(1.3 if j==0 else 1.5)\npl.add_legend(size=(0.25,0.22))\nf = plt.figure(figsize=(14,6.5)); plt.imshow(pl.screenshot(return_img=True)); plt.axis('off'); f",
+      "exit_code": 0,
+      "seconds": 0.8471039089999977,
+      "output": "\u001b[0m\u001b[33m2026-09-14 09:57:27.273 (  10.854s) [    7C5B2AFB2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 09:57:27.274 (  10.855s) [    7C5B2AFB2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "2 pictures"
+    },
+    {
+      "cmd": "neck = pv.read(\"constant/triSurface/neck_flank.stl\")\nlid  = pv.read(\"constant/triSurface/lid_flank.stl\")\nrn = np.hypot(neck.points[:,0], neck.points[:,1])\nprint(\"neck OD  %.4f mm  (asked 40)\" % (2e3*rn.max()))\nprint(\"root dia %.4f mm -> thread depth %.4f mm (asked 1.0)\" % (2e3*rn.min(), 1e3*(rn.max()-rn.min())))\nprint(\"z extent %.4f mm (asked 12 of neck height)\" % (1e3*(neck.points[:,2].max()-neck.points[:,2].min())))\n\n# pitch: unwrapped helical rise of the crest edge (points at r = OD/2)\nsel = neck.points[rn > rn.max()-1e-7]\nth = np.unwrap(np.sort(np.arctan2(sel[:,1], sel[:,0])))\ncrest = sel[np.argsort(np.arctan2(sel[:,1], sel[:,0]))]\nthu = np.unwrap(np.arctan2(crest[:,1], crest[:,0]))\n# two crest lines (corners A and B); split by residual\nzres = crest[:,2] - PITCH*thu/TWOPI\nfor lab, m in ((\"A\", zres < np.median(zres)), (\"B\", zres >= np.median(zres))):\n    p = np.polyfit(thu[m], crest[m,2], 1)\n    print(\"crest line %s: pitch %.5f mm\" % (lab, 1e3*p[0]*TWOPI))\n\n# gap: distance from neck facet centres to the lid surface\ncc = neck.cell_centers().points\nd = np.array([np.linalg.norm(cc[i]-lid.points[lid.find_closest_point(cc[i])]) for i in range(0,len(cc),97)])\nprint(\"neck->lid distance  min %.4f  mean %.4f  max %.4f mm (asked 0.2)\" % (1e3*d.min(),1e3*d.mean(),1e3*d.max()))\n\nxy = np.array([A,P1,P2,B,B3,Q2,Q1,A1]); x,y = xy[:,0], xy[:,1]\nAsec = 0.5*abs(np.dot(x,np.roll(y,-1))-np.dot(y,np.roll(x,-1)))\nrbar = np.mean([np.mean(xy[:,0])])  # rough; use polygon centroid\ncx = (np.dot(x+np.roll(x,-1), x*np.roll(y,-1)-np.roll(x,-1)*y))/(6*Asec)\nprint(\"section area %.5f mm^2, centroid r %.4f mm\" % (1e6*Asec, 1e3*abs(cx)))\nprint(\"Pappus volume %.4e m^3 vs mesh 3.20026e-07\" % (Asec*TWOPI*TURNS*abs(cx)))",
+      "exit_code": 0,
+      "seconds": 0.4021152530001473,
+      "output": "neck OD  40.0000 mm  (asked 40)\nroot dia 38.0000 mm -> thread depth 1.0000 mm (asked 1.0)\nz extent 12.0000 mm (asked 12 of neck height)\ncrest line A: pitch 0.57810 mm\ncrest line B: pitch 1.09135 mm\nneck->lid distance  min 0.3416  mean 0.3764  max 0.4025 mm (asked 0.2)\nsection area 0.49777 mm^2, centroid r 19.4981 mm\nPappus volume 3.2016e-07 m^3 vs mesh 3.20026e-07",
+      "image": ""
+    },
+    {
+      "cmd": ">",
+      "exit_code": 1,
+      "seconds": 0.05057802700002867,
+      "output": "\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[21]\u001b[39m\u001b[32m, line 1\u001b[39m\n\u001b[31m    \u001b[39m\u001b[31m>\u001b[39m\n    ^\n\u001b[31mSyntaxError\u001b[39m\u001b[31m:\u001b[39m invalid syntax",
+      "image": ""
+    },
+    {
+      "cmd": "> = None",
+      "exit_code": 1,
+      "seconds": 0.1958081980001225,
+      "output": "\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[22]\u001b[39m\u001b[32m, line 1\u001b[39m\n\u001b[31m    \u001b[39m\u001b[31m> = None\u001b[39m\n    ^\n\u001b[31mSyntaxError\u001b[39m\u001b[31m:\u001b[39m invalid syntax",
+      "image": ""
+    },
+    {
+      "cmd": "from vtkmodules.vtkCommonDataModel import vtkImplicitPolyDataDistance\n# gap: true point-to-surface distance from neck facet centres to the lid surface\nimp = vtkImplicitPolyDataDistance(); imp.SetInput(lid)\ncc = neck.cell_centers().points\nd = np.array([abs(imp.EvaluateFunction(p)) for p in cc])\nprint(\"neck->lid surface distance: min %.4f mean %.4f max %.4f mm (asked 0.2)\"\n      % (1e3*d.min(), 1e3*d.mean(), 1e3*d.max()))\n\n# pitch: crest-corner points on one radial plane (theta ~ 0), consecutive turns\nth_all = np.arctan2(neck.points[:,1], neck.points[:,0])\nm = (np.abs(th_all) < 1e-6) & (rn > rn.max()-1e-9)\nz = np.sort(neck.points[m,2])\nprint(\"crest z at theta=0 [mm]\", np.round(1e3*z,4))\nprint(\"turn-to-turn rise [mm]\", np.round(1e3*np.diff(z),4), \" (asked pitch 2.0)\")",
+      "exit_code": 1,
+      "seconds": 0.10079130299982353,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mImportError\u001b[39m                               Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[23]\u001b[39m\u001b[32m, line 1\u001b[39m\n\u001b[32m----> \u001b[39m\u001b[32m1\u001b[39m \u001b[38;5;28;01mfrom\u001b[39;00m vtkmodules.vtkCommonDataModel \u001b[38;5;28;01mimport\u001b[39;00m vtkImplicitPolyDataDistance\n\u001b[32m      2\u001b[39m \u001b[38;5;66;03m# gap: true point-to-surface distance from neck facet centres to the lid surface\u001b[39;00m\n\u001b[32m      3\u001b[39m imp = vtkImplicitPolyDataDistance(); imp.SetInput(lid)\n\u001b[32m      4\u001b[39m cc = neck.cell_centers().points\n\n\u001b[31mImportError\u001b[39m: cannot import name 'vtkImplicitPolyDataDistance' from 'vtkmodules.vtkCommonDataModel' (/home/qiuzi/miniforge3/lib/python3.13/site-packages/vtkmodules/vtkCommonDataModel.cpython-313-x86_64-linux-gnu.so)",
+      "image": ""
+    },
+    {
+      "cmd": "cc_pd = pv.PolyData(neck.cell_centers().points)\nd = np.abs(cc_pd.compute_implicit_distance(lid)[\"implicit_distance\"])\nprint(\"neck->lid surface distance: min %.4f mean %.4f max %.4f mm (asked 0.2)\"\n      % (1e3*d.min(), 1e3*d.mean(), 1e3*d.max()))\nth_all = np.arctan2(neck.points[:,1], neck.points[:,0])\nm = (np.abs(th_all) < 1e-6) & (rn > rn.max()-1e-9)\nz = np.sort(neck.points[m,2])\nprint(\"crest z at theta=0 [mm]\", np.round(1e3*z,4))\nprint(\"turn-to-turn rise [mm]\", np.round(1e3*np.diff(z),4), \"(asked pitch 2.0)\")",
+      "exit_code": 0,
+      "seconds": 0.5519004140001016,
+      "output": "neck->lid surface distance: min 0.0932 mean 0.1885 max 0.2040 mm (asked 0.2)\ncrest z at theta=0 [mm] []\nturn-to-turn rise [mm] [] (asked pitch 2.0)",
+      "image": ""
+    },
+    {
+      "cmd": "print(\"neck->lid distance percentiles [mm]\",\n      np.round(1e3*np.percentile(d,[5,25,50,75,95,100]),4))\nfar = d[np.linalg.norm(neck.cell_centers().points[:,None,:] -\n        np.array([[0,0,-9]]) , axis=2)[:,0] > 0]  # keep all; filter below instead\n# facets away from the crest-corner seal strips: those whose distance is set by the opposing flank\nprint(\"median of the upper half (flank-to-flank) %.4f mm\" % (1e3*np.median(d[d>0.15])))\n\nm = (np.abs(th_all) < 1e-4) & (rn > rn.max()-1e-9)\nz = np.sort(neck.points[m,2]); print(\"crest z near theta=0 [mm]\", np.round(1e3*z,4))\nprint(\"rise between successive crest lines [mm]\", np.round(1e3*np.diff(z),4))\nres = (neck.points[rn>rn.max()-1e-9,2] - PITCH*np.arctan2(neck.points[rn>rn.max()-1e-9,1],\n        neck.points[rn>rn.max()-1e-9,0])/TWOPI) % PITCH\nprint(\"crest helical residual clusters [mm]\", np.round(1e3*np.unique(np.round(res,7)),4))",
+      "exit_code": 0,
+      "seconds": 0.5018145580002056,
+      "output": "neck->lid distance percentiles [mm] [0.0932 0.1999 0.1999 0.2    0.2039 0.204 ]\nmedian of the upper half (flank-to-flank) nan mm\ncrest z near theta=0 [mm] []\nrise between successive crest lines [mm] []\ncrest helical residual clusters [mm] [0.25 1.75]\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/numpy/_core/fromnumeric.py:3860: RuntimeWarning: Mean of empty slice\n  return mean(axis=axis, dtype=dtype, out=out, **kwargs)\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide\n  ret = ret.dtype.type(ret / rcount)",
+      "image": ""
+    },
+    {
+      "cmd": "build_model(64, nt=5, n1=7, n2=4)      # 4 cells across the 0.2 mm gap, ~0.5 mm along the helix\ngmsh.option.setNumber(\"Mesh.RecombineAll\", 1)\ngmsh.model.mesh.generate(3)\nts, tags, _ = gmsh.model.mesh.getElements(3)\nprint(\"hexes\", {int(t):len(tags[i]) for i,t in enumerate(ts)})\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2); gmsh.write(\"leak.msh\")\nnt_, nc_, _ = gmsh.model.mesh.getNodes()\nXYZ = {t: np.array(nc_[3*i:3*i+3]) for i,t in enumerate(nt_)}\nfor name in ('neck_flank','lid_flank','inner_end','outer_end'):\n    print(name, write_stl(name, tris_of_patch(name), eps=2e-5))",
+      "exit_code": 0,
+      "seconds": 7.427191757000401,
+      "output": "hexes {5: 80640}\nneck_flank (40320, 0)\nlid_flank (61824, 0)\ninner_end (120, 0)\nouter_end (120, 120)",
+      "image": ""
+    },
+    {
+      "cmd": "import shutil\nshutil.rmtree(\"constant/polyMesh\", ignore_errors=True)\nr1 = subprocess.run([\"gmshToFoam\",\"leak.msh\"], capture_output=True, text=True)\nr2 = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint([l for l in r1.stdout.splitlines() if \"Patch\" in l or \"undefined\" in l])\nprint(r2.stdout[r2.stdout.find(\"Mesh stats\"):][:400])\nprint(r2.stdout[r2.stdout.find(\"Checking geometry\"):])",
+      "exit_code": 0,
+      "seconds": 2.207143327000267,
+      "output": "['Patch 0 gets name outer_end', 'Patch 1 gets name neck_flank', 'Patch 2 gets name lid_flank', 'Patch 3 gets name inner_end', '    Found 51192 undefined faces in mesh; adding to default patch defaultFaces']\nMesh stats \n    points:           107600\n    faces:            267516\n    internal faces:   216324\n    cells:            80640\n    faces per cell:   6\n    boundary patches: 4\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     80640\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    t\nChecking geometry...\n    Overall domain bounding box (-0.0200894 -0.0200894 0.00025) (0.0200894 0.0200894 0.01225)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (-9.9193e-17 4.20156e-18 -6.22314e-17) OK.\n    Max cell openness = 3.23044e-16 OK.\n    Max aspect ratio = 9.88595 OK.\n    Minimum face area = 4.72813e-09. Maximum face area = 9.10894e-08.  Face area magnitudes OK.\n    Min volume = 2.22485e-12. Max volume = 4.49377e-12.  Total volume = 3.20123e-07.  Cell volumes OK.\n    Mesh non-orthogonality Max: 29.5341 average: 13.8849\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 1.39941 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "b = open(\"constant/polyMesh/boundary\").read()\nprint([l.strip() for l in b.splitlines() if \"nFaces\" in l or \"}\" not in l and l.strip() and l.strip()[0].isalpha()][:12])\nalltris = sum((tris_of_patch(n) for n in ('neck_flank','lid_flank','inner_end','outer_end')), [])\ned = Counter()\nfor a_,b_,c_ in alltris:\n    n = np.cross(b_-a_,c_-a_); n/=np.linalg.norm(n)\n    if in_fluid((a_+b_+c_)/3.0 + 2e-5*n): a_,c_ = c_,a_\n    for u,v in ((a_,b_),(b_,c_),(c_,a_)): ed[(tuple(np.round(u,10)),tuple(np.round(v,10)))] += 1\nprint(\"tris\", len(alltris), \"free edges\", sum(1 for (u,v) in ed if (v,u) not in ed),\n      \"same-dir dups\", sum(k-1 for k in ed.values() if k>1))",
+      "exit_code": 0,
+      "seconds": 7.981678610000017,
+      "output": "['FoamFile', 'version     2.0;', 'format      ascii;', 'arch        \"LSB;label=32;scalar=64\";', 'class       polyBoundaryMesh;', 'location    \"constant/polyMesh\";', 'object      boundary;', 'outer_end', 'type            patch;', 'physicalType    patch;', 'nFaces          60;', 'startFace       216324;']\ntris 102384 free edges 0 same-dir dups 0",
+      "image": ""
+    },
+    {
+      "cmd": "import re\nprint(re.findall(r\"^\\s{4}(\\w+)$\", b, re.M), [int(x) for x in re.findall(r\"nFaces\\s+(\\d+)\", b)])\nmsh = pv.read(\"leak.msh\") if False else None\npl = pv.Plotter(off_screen=True, window_size=(1000,500))\nfor n,c in cols.items():\n    pl.add_mesh(pv.read(f\"constant/triSurface/{n}.stl\").clip('y'), color=c, show_edges=True, line_width=0.3)\npl.view_vector((0.2,-1,0.25)); pl.reset_camera(); pl.camera.zoom(3.2)\nf = plt.figure(figsize=(12,6)); plt.imshow(pl.screenshot(return_img=True)); plt.axis('off'); f",
+      "exit_code": 0,
+      "seconds": 1.0066648790002546,
+      "output": "['outer_end', 'neck_flank', 'lid_flank', 'inner_end'] [60, 20160, 30912, 60]\n\n\u001b[0m\u001b[33m2026-09-14 09:59:57.081 ( 160.662s) [    7C5B2AFB2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 09:59:57.081 ( 160.662s) [    7C5B2AFB2780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "2 pictures"
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 13997,
+      "fenced": false,
+      "text_chars": 2587,
+      "thinking_chars": 12604,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379497.743016
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 1092,
+      "fenced": true,
+      "text_chars": 42,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379509.5743032
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 2578,
+      "fenced": true,
+      "text_chars": 278,
+      "thinking_chars": 924,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379543.2197762
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 928,
+      "fenced": true,
+      "text_chars": 132,
+      "thinking_chars": 765,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379560.032644
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 927,
+      "fenced": true,
+      "text_chars": 214,
+      "thinking_chars": 656,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379574.355963
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 412,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 254,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379581.9904256
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 1212,
+      "fenced": true,
+      "text_chars": 231,
+      "thinking_chars": 229,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379597.7313302
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 2281,
+      "fenced": true,
+      "text_chars": 203,
+      "thinking_chars": 1019,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379623.966243
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 2748,
+      "fenced": true,
+      "text_chars": 147,
+      "thinking_chars": 2235,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379665.8672493
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 1232,
+      "fenced": true,
+      "text_chars": 213,
+      "thinking_chars": 1026,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379684.169577
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 887,
+      "fenced": true,
+      "text_chars": 147,
+      "thinking_chars": 70,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379696.3981464
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 809,
+      "fenced": true,
+      "text_chars": 151,
+      "thinking_chars": 856,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379709.8505354
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 1167,
+      "fenced": true,
+      "text_chars": 109,
+      "thinking_chars": 984,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379730.0396204
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 3070,
+      "fenced": true,
+      "text_chars": 224,
+      "thinking_chars": 1597,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379768.5286522
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 768,
+      "fenced": true,
+      "text_chars": 86,
+      "thinking_chars": 235,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379780.1886413
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 611,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 254,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379794.069842
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 201,
+      "fenced": true,
+      "text_chars": 100,
+      "thinking_chars": 146,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379804.1582377
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 1054,
+      "fenced": true,
+      "text_chars": 232,
+      "thinking_chars": 855,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379818.7526386
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 573,
+      "fenced": true,
+      "text_chars": 104,
+      "thinking_chars": 211,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379834.9185305
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 491,
+      "fenced": true,
+      "text_chars": 59,
+      "thinking_chars": 330,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379847.2410243
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 1645,
+      "fenced": true,
+      "text_chars": 131,
+      "thinking_chars": 553,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379870.002918
+    },
+    {
+      "turn": 22,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 781,
+      "fenced": true,
+      "text_chars": 206,
+      "thinking_chars": 1058,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379884.618787
+    },
+    {
+      "turn": 23,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 83,
+      "fenced": true,
+      "text_chars": 33,
+      "thinking_chars": 62,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379888.6987367
+    },
+    {
+      "turn": 24,
+      "steps": 22,
+      "stop_reason": "tool_use",
+      "output_tokens": 544,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 295,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379897.7288904
+    },
+    {
+      "turn": 25,
+      "steps": 23,
+      "stop_reason": "tool_use",
+      "output_tokens": 341,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379903.700414
+    },
+    {
+      "turn": 26,
+      "steps": 24,
+      "stop_reason": "tool_use",
+      "output_tokens": 1324,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 1333,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379924.714132
+    },
+    {
+      "turn": 27,
+      "steps": 25,
+      "stop_reason": "tool_use",
+      "output_tokens": 1860,
+      "fenced": true,
+      "text_chars": 377,
+      "thinking_chars": 1892,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379953.0635183
+    },
+    {
+      "turn": 28,
+      "steps": 26,
+      "stop_reason": "tool_use",
+      "output_tokens": 244,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379965.428299
+    },
+    {
+      "turn": 29,
+      "steps": 27,
+      "stop_reason": "tool_use",
+      "output_tokens": 654,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 499,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379978.15266
+    },
+    {
+      "turn": 30,
+      "steps": 28,
+      "stop_reason": "tool_use",
+      "output_tokens": 487,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 318,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789379995.9193463
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 102,384 triangles across 4 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "inner_end.stl",
+          "lid_flank.stl",
+          "neck_flank.stl",
+          "outer_end.stl"
+        ],
+        "triangles": 102384
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the patch set",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 102384
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 5 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 5
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the flank gap, measured between the two meshed flank patches, at three positions a third of a turn apart",
+      "measured": null
+    },
+    {
+      "property": "the number of turns the channel makes, and its developed centreline length",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "the channel's cross-sectional area at the inner end and at the outer end, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 30,
+    "steps": 28,
+    "seconds": 695.3,
+    "killed": false,
+    "first_mesh_step": 13,
+    "first_mesh_turn": 15
+  }
+}

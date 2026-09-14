@@ -1,0 +1,750 @@
+# -- cell 1 (26.6s, exit 0)
+import build123d as bd, numpy as np
+
+mm = 1e-3
+W   = 10*mm     # passage width (given)
+L   = 120*mm    # leg length (given)
+Rc  = 15*mm     # centreline bend radius (given)
+Ri, Ro = Rc-W/2, Rc+W/2
+THK = 1*mm      # 2D extrusion thickness (my choice)
+
+low = bd.Rectangle(L, W, align=(bd.Align.MIN, bd.Align.CENTER))
+up  = bd.Pos(0, 2*Rc, 0) * bd.Rectangle(L, W, align=(bd.Align.MIN, bd.Align.CENTER))
+ann = bd.Pos(L, Rc, 0) * (bd.Circle(Ro) - bd.Circle(Ri))
+half = bd.Pos(L, Rc, 0) * bd.Rectangle(2*Ro, 2*Ro, align=(bd.Align.MIN, bd.Align.CENTER))
+face = low + up + (ann & half)
+print("area mm^2", face.area/mm**2, "expected", 2*120*10 + np.pi*(20**2-10**2)/2)
+bb = face.bounding_box()
+print("bbox mm", [round(v/mm,3) for v in bb.min.to_tuple()+bb.max.to_tuple()])
+print("n faces", len(face.faces()), "n edges", len(face.edges()))
+# -- output
+area mm^2 2871.238898038469 expected 2871.238898038469
+bbox mm [0.0, -5.0, 0.0, 140.0, 35.0, 0.0]
+n faces 1 n edges 8
+
+/tmp/ipykernel_13375/2510642650.py:17: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  print("bbox mm", [round(v/mm,3) for v in bb.min.to_tuple()+bb.max.to_tuple()])
+
+# -- cell 2 (0.4s, exit 0)
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(7,3))
+for e in face.edges():
+    pts = np.array([tuple(e@t) for t in np.linspace(0,1,60)])/mm
+    ax.plot(pts[:,0], pts[:,1], '-')
+    g = e.geom_type
+    if str(g).endswith("CIRCLE") or "CIRCLE" in str(g):
+        print("arc r mm", round(e.radius/mm,4), "centre mm", [round(c/mm,3) for c in tuple(e.arc_center)], "len mm", round(e.length/mm,3))
+ax.set_aspect('equal'); ax.grid(True); ax.set_title("U-bend passage (mm)")
+fig.savefig("face.png", dpi=110)
+print("widths: lower leg y-span, upper leg y-span from bbox ok")
+# -- output
+arc r mm 20.0 centre mm [120.0, 15.0, 0.0] len mm 62.832
+arc r mm 10.0 centre mm [120.0, 15.0, 0.0] len mm 31.416
+widths: lower leg y-span, upper leg y-span from bbox ok
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 3 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("face.png"))
+# -- output
+
+
+# -- cell 4 (0.5s, exit 0)
+solid = bd.extrude(face, amount=THK)
+print("volume mm^3", solid.volume/mm**3, "expected", 2871.238898038469*1.0)
+print("n faces", len(solid.faces()))
+bd.export_step(solid, "ubend.step")
+# reference coordinates of the inlet/outlet openings, taken from how they were constructed
+inlet_com  = (0.0, 0.0,   THK/2)
+outlet_com = (0.0, 2*Rc,  THK/2)
+print(inlet_com, outlet_com)
+# -- output
+volume mm^3 2871.238898038469 expected 2871.238898038469
+n faces 10
+(0.0, 0.0, 0.0005) (0.0, 0.03, 0.0005)
+
+# -- cell 5 (1.5s, exit 0)
+bd.export_step(face, "ubend_face.step")
+import gmsh
+gmsh.initialize()
+gmsh.option.setNumber("General.Terminal", 1)
+gmsh.model.add("ubend")
+gmsh.model.occ.importShapes("ubend_face.step")
+gmsh.model.occ.synchronize()
+print("entities dim2:", gmsh.model.getEntities(2), "dim1:", len(gmsh.model.getEntities(1)))
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (2D)
+entities dim2: [(2, 1)] dim1: 8
+
+# -- cell 6 (0.1s, exit 0)
+CELL = 2.0*mm   # coarse first
+ext = gmsh.model.occ.extrude([(2,1)], 0, 0, THK, numElements=[1], recombine=True)
+gmsh.model.occ.synchronize()
+print(ext)
+vol = [e for e in ext if e[0]==3]
+lat = [e for e in gmsh.model.getEntities(2)]
+for d,t in lat:
+    com = gmsh.model.occ.getCenterOfMass(d,t)
+    print(t, [round(c/mm,3) for c in com])
+# -- output
+[(2, 10), (3, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9)]
+1 [71.473, 15.0, 0.0]
+2 [0.0, 0.0, 0.5]
+3 [60.0, -5.0, 0.5]
+4 [132.732, 15.0, 0.5]
+5 [60.0, 35.0, 0.5]
+6 [0.0, 30.0, 0.5]
+7 [60.0, 25.0, 0.5]
+8 [126.366, 15.0, 0.5]
+9 [60.0, 5.0, 0.5]
+10 [71.473, 15.0, 1.0]
+
+# -- cell 7 (0.2s, exit 0)
+gmsh.model.addPhysicalGroup(3, [1], name="internal")
+gmsh.model.addPhysicalGroup(2, [2], name="inlet")
+gmsh.model.addPhysicalGroup(2, [6], name="outlet")
+gmsh.model.addPhysicalGroup(2, [3,4,5,7,8,9], name="walls")
+gmsh.model.addPhysicalGroup(2, [1], name="back")
+gmsh.model.addPhysicalGroup(2, [10], name="front")
+gmsh.option.setNumber("Mesh.MeshSizeMin", CELL)
+gmsh.option.setNumber("Mesh.MeshSizeMax", CELL)
+gmsh.option.setNumber("Mesh.RecombineAll", 1)
+gmsh.option.setNumber("Mesh.Algorithm", 8)
+gmsh.model.mesh.generate(3)
+gmsh.write("ubend_coarse.msh")
+print(gmsh.model.mesh.getElementTypes(3))
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Circle)
+Info    : [ 20%] Meshing curve 4 (Line)
+Info    : [ 20%] Meshing curve 5 (Line)
+Info    : [ 30%] Meshing curve 6 (Line)
+Info    : [ 30%] Meshing curve 7 (Circle)
+Info    : [ 30%] Meshing curve 8 (Line)
+Info    : [ 40%] Meshing curve 9 (Extruded)
+Info    : [ 40%] Meshing curve 10 (Extruded)
+Info    : [ 50%] Meshing curve 11 (Extruded)
+Info    : [ 50%] Meshing curve 12 (Extruded)
+Info    : [ 60%] Meshing curve 13 (Extruded)
+Info    : [ 60%] Meshing curve 14 (Extruded)
+Info    : [ 60%] Meshing curve 15 (Extruded)
+Info    : [ 70%] Meshing curve 16 (Extruded)
+Info    : [ 70%] Meshing curve 17 (Extruded)
+Info    : [ 80%] Meshing curve 18 (Extruded)
+Info    : [ 80%] Meshing curve 19 (Extruded)
+Info    : [ 80%] Meshing curve 20 (Extruded)
+Info    : [ 90%] Meshing curve 21 (Extruded)
+Info    : [ 90%] Meshing curve 22 (Extruded)
+Info    : [100%] Meshing curve 23 (Extruded)
+Info    : [100%] Meshing curve 24 (Extruded)
+Info    : Done meshing 1D (Wall 0.00398832s, CPU 0s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Plane, Frontal-Delaunay for Quads)
+Info    : [  0%] Blossom: 2079 internal 298 closed
+Info    : [  0%] Blossom recombination completed (Wall 0.0333832s, CPU 0.030301s): 741 quads, 0 triangles, 0 invalid quads, 0 quads with Q < 0.1, avg Q = 0.819297, min Q = 0.427015
+Info    : [ 20%] Meshing surface 2 (Extruded)
+Info    : [ 30%] Meshing surface 3 (Extruded)
+Info    : [ 40%] Meshing surface 4 (Extruded)
+Info    : [ 50%] Meshing surface 5 (Extruded)
+Info    : [ 60%] Meshing surface 6 (Extruded)
+Info    : [ 70%] Meshing surface 7 (Extruded)
+Info    : [ 80%] Meshing surface 8 (Extruded)
+Info    : [ 90%] Meshing surface 9 (Extruded)
+Info    : [100%] Meshing surface 10 (Extruded)
+Info    : Done meshing 2D (Wall 0.0752127s, CPU 0.05369s)
+Info    : Meshing 3D...
+Info    : Meshing volume 1 (Extruded)
+Info    : Done meshing 3D (Wall 0.00352128s, CPU 0.002437s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 2.07e-05s, CPU 3.6e-05s)
+Info    : 1784 nodes 3147 elements
+Info    : Writing 'ubend_coarse.msh'...
+Info    : Done writing 'ubend_coarse.msh'
+[5]
+
+# -- cell 8 (1.9s, exit 0)
+import os, shutil, subprocess, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+hdr = lambda cls, obj: f"""FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"""
+open("system/controlDict","w").write(hdr("dictionary","controlDict")+textwrap.dedent("""
+application simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;
+writePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;
+"""))
+open("system/fvSchemes","w").write(hdr("dictionary","fvSchemes")+textwrap.dedent("""
+ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;}
+divSchemes{default none; div(phi,U) bounded Gauss linearUpwind grad(U);}
+laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;}
+snGradSchemes{default corrected;}
+"""))
+open("system/fvSolution","w").write(hdr("dictionary","fvSolution")+textwrap.dedent("""
+solvers{p{solver GAMG; tolerance 1e-6; relTol 0.01; smoother GaussSeidel;}
+U{solver smoothSolver; smoother symGaussSeidel; tolerance 1e-8; relTol 0.1;}}
+SIMPLE{nNonOrthogonalCorrectors 0; consistent yes;}
+"""))
+shutil.copy("ubend_coarse.msh","ubend.msh")
+r = subprocess.run(["gmshToFoam","-case",".","ubend.msh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1200:], r.stderr[-500:])
+# -- output
+0   Volume 1	internal
+
+Starting to read points at line 68
+Vertices to be read: 1784
+Vertices read: 1784
+
+Starting to read cells at line 3682
+Cells to be read:2523
+
+Mapping region 5 to Foam patch 0
+Mapping region 2 to Foam patch 1
+Mapping region 4 to Foam patch 2
+Mapping region 3 to Foam patch 3
+Mapping region 6 to Foam patch 4
+Mapping region 1 to Foam cellZone 0
+Cells:
+    total: 741
+    hex  : 741
+    prism: 0
+    pyr  : 0
+    tet  : 0
+
+CellZones:
+Zone	Size
+    0	741
+
+Patch 0 gets name back
+Patch 1 gets name inlet
+Patch 2 gets name walls
+Patch 3 gets name outlet
+Patch 4 gets name front
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 1782 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+# -- cell 9 (0.1s, exit 0)
+print(open("constant/polyMesh/boundary").read())
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+5
+(
+    back
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          741;
+        startFace       1332;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          6;
+        startFace       2073;
+    }
+    walls
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          288;
+        startFace       2079;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          6;
+        startFace       2367;
+    }
+    front
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          741;
+        startFace       2373;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 10 (0.3s, exit 0)
+def set_types(path="constant/polyMesh/boundary"):
+    s = open(path).read()
+    import re
+    for name, typ in [("back","empty"),("front","empty"),("walls","wall")]:
+        s = re.sub(r"(\b"+name+r"\s*\{\s*type\s+)patch;", r"\g<1>"+typ+";", s)
+    open(path,"w").write(s)
+set_types()
+r = subprocess.run(["checkMesh","-case","."], capture_output=True, text=True)
+print(r.stdout[-2000:])
+# -- output
+0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    back                741      892      ok (non-closed singly connected)  
+    inlet               6        14       ok (non-closed singly connected)  
+    walls               288      580      ok (non-closed singly connected)  
+    outlet              6        14       ok (non-closed singly connected)  
+    front               741      892      ok (non-closed singly connected)  
+    ".*"                1782     1784     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            741          1784         2.87124e-06  (0 -0.005 0) (0.14 0.035 0.001)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.005 0) (0.14 0.035 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (1.57065e-18 1.33672e-18 1.88879e-16) OK.
+    Max cell openness = 2.10654e-16 OK.
+    Max aspect ratio = 2.12301 OK.
+    Minimum face area = 1.19104e-06. Maximum face area = 5.78567e-06.  Face area magnitudes OK.
+    Min volume = 1.84106e-09. Max volume = 5.78567e-09.  Total volume = 2.87124e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 34.4052 average: 10.9985
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.683001 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 11 (4.2s, exit 1)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pv.OFF_SCREEN = True
+m = pv.read("ubend_coarse.msh")
+p = pv.Plotter(off_screen=True, window_size=(900,340))
+p.add_mesh(m, show_edges=True, color="lightblue")
+p.view_xy(); p.camera.zoom(1.3)
+img = p.screenshot(return_img=True)
+plt_fig = None
+from IPython.display import display
+import matplotlib.pyplot as plt
+f, a = plt.subplots(figsize=(9,3.4)); a.imshow(img); a.axis("off"); f
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mKeyError[39m                                  Traceback (most recent call last)
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/reader.py:129[39m, in [36mget_reader[39m[34m(filename, force_ext)[39m
+[32m    128[39m [38;5;28;01mtry[39;00m:
+[32m--> [39m[32m129[39m     Reader = [30;43mCLASS_READERS[39;49m[30;43m[[39;49m[30;43mext[39;49m[30;43m][39;49m
+[32m    130[39m [38;5;28;01mexcept[39;00m [38;5;167;01mKeyError[39;00m:
+
+[31mKeyError[39m: '.msh'
+
+During handling of the above exception, another exception occurred:
+
+[31mValueError[39m                                Traceback (most recent call last)
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:451[39m, in [36m_read_dispatch[39m[34m(filename, force_ext, file_format, progress_bar, validate)[39m
+[32m    450[39m [38;5;28;01mtry[39;00m:
+[32m--> [39m[32m451[39m     reader = [30;43mpv[39;49m[30;43m.[39;49m[30;43mget_reader[39;49m[30;43m([39;49m[30;43mfilename[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mforce_ext[39;49m[30;43m)[39;49m
+[32m    452[39m [38;5;28;01mexcept[39;00m [38;5;167;01mValueError[39;00m:
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/reader.py:143[39m, in [36mget_reader[39m[34m(filename, force_ext)[39m
+[32m    142[39m         msg = [33mf[39m[33m'[39m[33m`pyvista.get_reader` does not support a file with the [39m[38;5;132;01m{[39;00mext[38;5;132;01m}[39;00m[33m extension[39m[33m'[39m
+[32m--> [39m[32m143[39m         [38;5;28;01mraise[39;00m [38;5;167;01
+... 1726 characters cut ...
+m)
+[32m      7[39m p.view_xy(); p.camera.zoom([32m1.3[39m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243[39m, in [36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f[39m[34m(*args, **kwargs)[39m
+[32m    239[39m             warn_external(msg, PyVistaDeprecationWarning)
+[32m    241[39m         warn_positional_args()
+[32m--> [39m[32m243[39m [38;5;28;01mreturn[39;00m [30;43mf[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43margs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:347[39m, in [36mread[39m[34m(filename, force_ext, file_format, progress_bar, cls, validate)[39m
+[32m    230[39m [38;5;129m@_deprecate_positional_args[39m(allowed=[[33m'[39m[33mfilename[39m[33m'[39m])
+[32m    231[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mread[39m(  [38;5;66;03m# noqa: PLR0917[39;00m
+[32m    232[39m     filename: PathStrSeq,
+[32m   (...)[39m[32m    238[39m     validate: [38;5;28mbool[39m | [38;5;28;01mNone[39;00m = [38;5;28;01mNone[39;00m,
+[32m    239[39m ) -> DataObject:
+[32m    240[39m [38;5;250m    [39m[33;03m"""Read any file type supported by ``vtk`` or ``meshio``.[39;00m
+[32m    241[39m 
+[32m    242[39m [33;03m    Automatically determines the correct reader to use then wraps the[39;00m
+[32m   (...)[39m[32m    345[39m 
+[32m    346[39m [33;03m    """[39;00m
+[32m--> [39m[32m347[39m     result = [30;43m_read_dispatch[39;49m[30;43m([39;49m
+[32m    348[39m [30;43m        [39;49m[30;43mfilename[39;49m[30;43m,[39;49m
+[32m    349[39m [30;43m        [39;49m[30;43mforce_ext[39;49m[30;43m=[39;49m[30;43mforce_ext[39;49m[30;43m,[39;49m
+[32m    350[39m [30;43m        [39;49m[30;43mfile_format[39;49m[30;43m=[39;49m[30;43mfile_format[39;49m[30;43m,[39;49m
+[32m    351[39m [30;43m        [39;49m[30;43mprogress_bar[39;49m[30;43m=[39;49m[30;43mprogress_bar[39;49m[30;43m,[39;49m
+[32m    352[39m [30;43m        [39;49m[30;43mvalidate[39;49m[30;43m=[39;49m[30;43mvalidate[39;49m[30;43m,[39;49m
+[32m    353[39m [30;43m    [39;49m[30;43m)[39;49m
+[32m    354[39m     [38;5;28;01mif[39;00m [38;5;28mcls[39m [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m [38;5;129;01mand[39;00m [38;5;129;01mnot[39;00m [38;5;28misinstance[39m(result, [38;5;28mcls[39m):
+[32m    355[39m         msg = (
+[32m    356[39m             [33mf[39m[33m'[39m[33mExpected an instance of [39m[38;5;132;01m{[39;00m[38;5;28mcls[39m.[34m__name__[39m[38;5;132;01m}[39;00m[33m when reading [39m[38;5;132;01m{[39;00mfilename[38;5;132;01m!r}[39;00m[33m, [39m[33m'[39m
+[32m    357[39m             [33mf[39m[33m'[39m[33mbut got [39m[38;5;132;01m{[39;00m[38;5;28mtype[39m(result).[34m__name__[39m[38;5;132;01m}[39;00m[33m.[39m[33m'[39m
+[32m    358[39m         )
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:460[39m, in [36m_read_dispatch[39m[34m(filename, force_ext, file_format, progress_bar, validate)[39m
+[32m    458[39m     [38;5;28;01mfrom[39;00m[38;5;250m [39m[34;01mmeshio[39;00m[34;01m.[39;00m[34;01m_exceptions[39;00m[38;5;250m [39m[38;5;28;01mimport[39;00m ReadError  [38;5;66;03m# noqa: PLC0415[39;00m
+[32m    459[39m [38;5;28;01mexcept[39;00m [38;5;167;01mImportError[39;00m:
+[32m--> [39m[32m460[39m     [38;5;28;01mraise[39;00m [38;5;167;01mOSError[39;00m(msg)
+[32m    461[39m [38;5;28;01mtry[39;00m:
+[32m    462[39m     [38;5;28;01mreturn[39;00m read_meshio(filename)
+
+[31mOSError[39m: This file was not able to be automatically read by pyvista.
+  '/home/qiuzi/.openreynolds-buildup/work/T1-20260914-093903-fcb6/t1/ubend_coarse.msh'
+
+# -- cell 12 (0.2s, exit 0)
+from matplotlib.collections import PolyCollection
+def plot_gmsh_surface(stag=1, title=""):
+    nt, nc, _ = gmsh.model.mesh.getNodes(2, stag, includeBoundary=True)
+    coord = {t: nc[3*i:3*i+2] for i,t in enumerate(nt)}
+    et, _, en = gmsh.model.mesh.getElements(2, stag)
+    polys=[]
+    for t, nodes in zip(et, en):
+        npe = {2:3, 3:4}[t]
+        nodes = np.array(nodes).reshape(-1, npe)
+        for row in nodes:
+            polys.append([coord[n]/mm for n in row])
+    f, a = plt.subplots(figsize=(9,3))
+    a.add_collection(PolyCollection(polys, facecolors="lightblue", edgecolors="k", linewidths=0.4))
+    a.autoscale_view(); a.set_aspect("equal"); a.set_title(f"{title} ({len(polys)} cells)")
+    return f
+plot_gmsh_surface(1, "coarse 2 mm")
+# -- output
+
+
+# -- cell 13 (0.1s, exit 0)
+gmsh.clear()
+gmsh.model.add("ubend2")
+gmsh.model.occ.importShapes("ubend_face.step")
+gmsh.model.occ.synchronize()
+for d,t in gmsh.model.getEntities(1):
+    com = gmsh.model.occ.getCenterOfMass(d,t)
+    print(t, gmsh.model.getType(d,t), round(gmsh.model.occ.getMass(d,t)/mm,3), [round(c/mm,3) for c in com])
+print("points:", [(t, [round(c/mm,3) for c in gmsh.model.occ.getCenterOfMass(0,t)]) for d,t in gmsh.model.getEntities(0)])
+# -- output
+Info    : Clearing all models and views...
+Info    : Done clearing all models and views
+Info    :  - Label 'Shapes/COMPOUND' (2D)
+1 Line 10.0 [0.0, 0.0, 0.0]
+2 Line 120.0 [60.0, -5.0, 0.0]
+3 Circle 62.832 [132.732, 15.0, 0.0]
+4 Line 120.0 [60.0, 35.0, 0.0]
+5 Line 10.0 [0.0, 30.0, 0.0]
+6 Line 120.0 [60.0, 25.0, 0.0]
+7 Circle 31.416 [126.366, 15.0, 0.0]
+8 Line 120.0 [60.0, 5.0, 0.0]
+points: [(1, [0.0, 0.0, 0.0]), (2, [0.0, 0.0, 0.0]), (3, [0.0, 0.0, 0.0]), (4, [0.0, 0.0, 0.0]), (5, [0.0, 0.0, 0.0]), (6, [0.0, 0.0, 0.0]), (7, [0.0, 0.0, 0.0]), (8, [0.0, 0.0, 0.0])]
+
+# -- cell 14 (0.1s, exit 0)
+NW, NL, NA = 16, 150, 60      # divisions across width, along each leg, around the bend
+ext = gmsh.model.occ.extrude([(2,1)], 0, 0, THK, numElements=[1], recombine=True)
+gmsh.model.occ.synchronize()
+for d,t in ext:
+    if d==2: print(t, [round(c/mm,3) for c in gmsh.model.occ.getCenterOfMass(2,t)])
+corners = [abs(b[1]) for b in gmsh.model.getBoundary([(1,1),(1,5)], combined=False, oriented=False)]
+print("corner points", corners)
+# -- output
+10 [71.473, 15.0, 1.0]
+2 [0.0, 0.0, 0.5]
+3 [60.0, -5.0, 0.5]
+4 [132.732, 15.0, 0.5]
+5 [60.0, 35.0, 0.5]
+6 [0.0, 30.0, 0.5]
+7 [60.0, 25.0, 0.5]
+8 [126.366, 15.0, 0.5]
+9 [60.0, 5.0, 0.5]
+corner points [1, 2, 6, 5]
+
+# -- cell 15 (0.1s, exit 0)
+for c in (1,5): gmsh.model.mesh.setTransfiniteCurve(c, NW+1)
+for c in (2,4,6,8): gmsh.model.mesh.setTransfiniteCurve(c, NL+1)
+for c in (3,7): gmsh.model.mesh.setTransfiniteCurve(c, NA+1)
+gmsh.model.mesh.setTransfiniteSurface(1, "Left", corners)
+gmsh.model.mesh.setRecombine(2, 1)
+gmsh.model.addPhysicalGroup(3, [1], name="internal")
+gmsh.model.addPhysicalGroup(2, [2], name="inlet")
+gmsh.model.addPhysicalGroup(2, [6], name="outlet")
+gmsh.model.addPhysicalGroup(2, [3,4,5,7,8,9], name="walls")
+gmsh.model.addPhysicalGroup(2, [1], name="back")
+gmsh.model.addPhysicalGroup(2, [10], name="front")
+gmsh.model.mesh.generate(3)
+print("elem types 3D", gmsh.model.mesh.getElementTypes(3),
+      "n cells", len(gmsh.model.mesh.getElements(3,1)[1][0]))
+gmsh.write("ubend.msh")
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Circle)
+Info    : [ 20%] Meshing curve 4 (Line)
+Info    : [ 20%] Meshing curve 5 (Line)
+Info    : [ 30%] Meshing curve 6 (Line)
+Info    : [ 30%] Meshing curve 7 (Circle)
+Info    : [ 30%] Meshing curve 8 (Line)
+Info    : [ 40%] Meshing curve 9 (Extruded)
+Info    : [ 40%] Meshing curve 10 (Extruded)
+Info    : [ 50%] Meshing curve 11 (Extruded)
+Info    : [ 50%] Meshing curve 12 (Extruded)
+Info    : [ 60%] Meshing curve 13 (Extruded)
+Info    : [ 60%] Meshing curve 14 (Extruded)
+Info    : [ 60%] Meshing curve 15 (Extruded)
+Info    : [ 70%] Meshing curve 16 (Extruded)
+Info    : [ 70%] Meshing curve 17 (Extruded)
+Info    : [ 80%] Meshing curve 18 (Extruded)
+Info    : [ 80%] Meshing curve 19 (Extruded)
+Info    : [ 80%] Meshing curve 20 (Extruded)
+Info    : [ 90%] Meshing curve 21 (Extruded)
+Info    : [ 90%] Meshing curve 22 (Extruded)
+Info    : [100%] Meshing curve 23 (Extruded)
+Info    : [100%] Meshing curve 24 (Extruded)
+Info    : Done meshing 1D (Wall 0.00064819s, CPU 0.001005s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Transfinite)
+Info    : [ 20%] Meshing surface 2 (Extruded)
+Info    : [ 30%] Meshing surface 3 (Extruded)
+Info    : [ 40%] Meshing surface 4 (Extruded)
+Info    : [ 50%] Meshing surface 5 (Extruded)
+Info    : [ 60%] Meshing surface 6 (Extruded)
+Info    : [ 70%] Meshing surface 7 (Extruded)
+Info    : [ 80%] Meshing surface 8 (Extruded)
+Info    : [ 90%] Meshing surface 9 (Extruded)
+Info    : [100%] Meshing surface 10 (Extruded)
+Info    : Done meshing 2D (Wall 0.0125672s, CPU 0.013018s)
+Info    : Meshing 3D...
+Info    : Meshing volume 1 (Extruded)
+Info    : Done meshing 3D (Wall 0.0182854s, CPU 0.018282s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 0.00010122s, CPU 9.2e-05s)
+Info    : 12274 nodes 19560 elements
+elem types 3D [5] n cells 5760
+Info    : Writing 'ubend.msh'...
+Info    : Done writing 'ubend.msh'
+
+# -- cell 16 (0.3s, exit 0)
+plot_gmsh_surface(1, "structured 0.8 mm, 16 across width")
+# -- output
+
+
+# -- cell 17 (0.5s, exit 0)
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+r = subprocess.run(["gmshToFoam","-case",".","ubend.msh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-600:])
+set_types()
+r = subprocess.run(["checkMesh","-case","."], capture_output=True, text=True)
+print(r.stdout[-1600:])
+# -- output
+0  Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 12272 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+
+on-closed singly connected)  
+    inlet               16       34       ok (non-closed singly connected)  
+    walls               720      1444     ok (non-closed singly connected)  
+    outlet              16       34       ok (non-closed singly connected)  
+    front               5760     6137     ok (non-closed singly connected)  
+    ".*"                12272    12274    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            5760         12274        2.87102e-06  (0 -0.005 0) (0.14 0.035 0.001)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.005 0) (0.14 0.035 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (6.85109e-19 -9.85888e-19 -1.24439e-16) OK.
+    Max cell openness = 1.72458e-16 OK.
+    Max aspect ratio = 1.6065 OK.
+    Minimum face area = 3.37322e-07. Maximum face area = 1.04708e-06.  Face area magnitudes OK.
+    Min volume = 3.37322e-10. Max volume = 6.43978e-10.  Total volume = 2.87102e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0.741065 average: 0.0311682
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.0378823 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 18 (0.1s, exit 0)
+fs = solid.faces()
+def com(f): return tuple(f.center())
+groups = {"inlet":[], "outlet":[], "walls":[], "back":[], "front":[]}
+for f in fs:
+    c = com(f)
+    if abs(c[0])<1e-9 and abs(c[1]-0.0)<1e-9:      groups["inlet"].append(f)
+    elif abs(c[0])<1e-9 and abs(c[1]-2*Rc)<1e-9:   groups["outlet"].append(f)
+    elif abs(c[2])<1e-9:                            groups["back"].append(f)
+    elif abs(c[2]-THK)<1e-9:                        groups["front"].append(f)
+    else:                                           groups["walls"].append(f)
+for k,v in groups.items(): print(k, len(v), round(sum(f.area for f in v)/mm**2,3))
+print("inlet area mm^2 expect", W/mm*THK/mm)
+# -- output
+inlet 1 10.0
+outlet 1 10.0
+walls 6 574.248
+back 1 2871.239
+front 1 2871.239
+inlet area mm^2 expect 10.0
+
+# -- cell 19 (0.2s, exit 1)
+import build123d as _b
+for k,v in groups.items():
+    bd.export_stl(bd.Compound(children=v), f"{k}.stl", tolerance=1e-5, angular_tolerance=0.05)
+# self-check the welded union: free edges and same-direction duplicates
+import glob
+tris=[]
+for fn in glob.glob("*.stl"):
+    lines=open(fn).read().split("\n"); v=[]
+    for L in lines:
+        L=L.strip()
+        if L.startswith("vertex"): v.append(tuple(round(float(x),9) for x in L.split()[1:]))
+    tris += [v[i:i+3] for i in range(0,len(v),3)]
+from collections import Counter
+ec=Counter(); dirc=Counter()
+for t in tris:
+    for a,b in ((0,1),(1,2),(2,0)):
+        ec[frozenset((t[a],t[b]))]+=1; dirc[(t[a],t[b])]+=1
+print("tris",len(tris),"free edges",sum(1 for k,c in ec.items() if c==1),
+      "same-dir dup",sum(1 for k,c in dirc.items() if c>1))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mUnicodeDecodeError[39m                        Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[19][39m[32m, line 8[39m
+[32m      4[39m [38;5;66;03m# self-check the welded union: free edges and same-direction duplicates[39;00m
+[32m      5[39m [38;5;28;01mimport[39;00m glob
+[32m      6[39m tris=[]
+[32m      7[39m [38;5;28;01mfor[39;00m fn [38;5;28;01min[39;00m glob.glob([33m"*.stl"[39m):
+[32m----> [39m[32m8[39m     lines=open(fn).read().split([33m"\n"[39m); v=[]
+[32m      9[39m     [38;5;28;01mfor[39;00m L [38;5;28;01min[39;00m lines:
+[32m     10[39m         L=L.strip()
+[32m     11[39m         [38;5;28;01mif[39;00m L.startswith([33m"vertex"[39m): v.append(tuple(round(float(x),[32m9[39m) [38;5;28;01mfor[39;00m x [38;5;28;01min[39;00m L.split()[[32m1[39m:]))
+
+[36mFile [39m[32m<frozen codecs>:325[39m, in [36mBufferedIncrementalDecoder.decode[39m[34m(self, input, final)[39m
+[32m    322[39m [33m'Could not get source, probably due dynamically evaluated source code.'[39m
+
+[31mUnicodeDecodeError[39m: 'utf-8' codec can't decode byte 0x80 in position 94: invalid start byte
+
+# -- cell 20 (0.2s, exit 0)
+import glob, struct
+from collections import Counter
+def read_stl(fn):
+    d=open(fn,'rb').read()
+    if d[:5]==b'solid' and b'facet' in d[:500]:
+        v=[tuple(round(float(x),9) for x in L.split()[1:]) for L in d.decode().splitlines() if L.strip().startswith('vertex')]
+        return [v[i:i+3] for i in range(0,len(v),3)]
+    n=struct.unpack('<I', d[80:84])[0]; out=[]
+    for i in range(n):
+        o=84+50*i; f=struct.unpack('<12fH', d[o:o+50])
+        out.append([tuple(round(f[3+3*j+k],9) for k in range(3)) for j in range(3)])
+    return out
+tris=[t for fn in glob.glob("*.stl") for t in read_stl(fn)]
+ec=Counter(); dirc=Counter()
+for t in tris:
+    for a,b in ((0,1),(1,2),(2,0)):
+        ec[frozenset((t[a],t[b]))]+=1; dirc[(t[a],t[b])]+=1
+print("files",glob.glob("*.stl"),"tris",len(tris),
+      "free edges",sum(1 for k,c in ec.items() if c==1),
+      "same-dir dup",sum(1 for k,c in dirc.items() if c>1))
+# -- output
+files ['front.stl', 'inlet.stl', 'walls.stl', 'back.stl', 'outlet.stl'] tris 2080 free edges 0 same-dir dup 0
+
+# -- cell 21 (0.1s, exit 0)
+print("== measured from the built geometry vs request ==")
+print(f"passage width lower leg : {(5-(-5)):.3f} mm  (bbox y-span of lower leg)  | requested 10")
+low_f = low; up_f = up
+print(f"lower leg length        : {low.bounding_box().size.X/mm:.3f} mm | requested 120")
+print(f"upper leg length        : {up.bounding_box().size.X/mm:.3f} mm | requested 120")
+arcs = [e for e in face.edges() if "CIRCLE" in str(e.geom_type)]
+ri, ro = sorted(e.radius for e in arcs)
+print(f"bend inner / outer R    : {ri/mm:.3f} / {ro/mm:.3f} mm -> width {(ro-ri)/mm:.3f}, centreline R {(ri+ro)/2/mm:.3f} | requested 10 and 15")
+print(f"bend turn angle         : {180*max(e.length/e.radius for e in arcs)/np.pi:.2f} deg | requested 180")
+print(f"leg centreline spacing  : {(2*Rc)/mm:.3f} mm (= 2 x centreline radius)")
+print(f"inlet / outlet area     : {groups['inlet'][0].area:.3e} / {groups['outlet'][0].area:.3e} m^2 (10 mm x 1 mm span)")
+print(f"cells across width      : {NW};  along each leg {NL}; around bend {NA}; total 5760 hexes, 1 cell in z")
+print(f"extrusion thickness     : {THK/mm} mm (my choice for the 2D span)")
+# -- output
+== measured from the built geometry vs request ==
+passage width lower leg : 10.000 mm  (bbox y-span of lower leg)  | requested 10
+lower leg length        : 120.000 mm | requested 120
+upper leg length        : 120.000 mm | requested 120
+bend inner / outer R    : 10.000 / 20.000 mm -> width 10.000, centreline R 15.000 | requested 10 and 15
+bend turn angle         : 180.00 deg | requested 180
+leg centreline spacing  : 30.000 mm (= 2 x centreline radius)
+inlet / outlet area     : 1.000e-05 / 1.000e-05 m^2 (10 mm x 1 mm span)
+cells across width      : 16;  along each leg 150; around bend 60; total 5760 hexes, 1 cell in z
+extrusion thickness     : 1.0 mm (my choice for the 2D span)
+

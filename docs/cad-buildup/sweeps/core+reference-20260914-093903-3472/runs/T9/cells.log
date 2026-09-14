@@ -1,0 +1,457 @@
+# -- cell 1 (2.2s, exit 0)
+import build123d as bd, numpy as np, os, math
+# --- parameters (all from the request), METRES ---
+R_ring_o, R_ring_i, H_ring = 0.030, 0.023, 0.010      # outer ring
+R_sp_o,  R_sp_i,  H_sp     = 0.022, 0.015, 0.008      # inner spinner
+# oil region = everything inside the ring bore (r<=R_ring_i, |z|<=H_ring/2) minus the spinner solid
+spinner = bd.Cylinder(R_sp_o, H_sp) - bd.Cylinder(R_sp_i, H_sp)
+oil     = bd.Cylinder(R_ring_i, H_ring) - spinner
+print("radial clearance mm :", (R_ring_i-R_sp_o)*1000)
+print("axial gap each end mm:", (H_ring-H_sp)/2*1000)
+print("oil volume mm^3 :", oil.volume*1e9)
+print("analytic mm^3   :", (math.pi*23**2*10 - math.pi*(22**2-15**2)*8))
+print("oil bbox m:", oil.bounding_box())
+print("n solids:", len(oil.solids()))
+# -- output
+radial clearance mm : 1.0000000000000009
+axial gap each end mm: 1.0
+oil volume mm^3 : 10109.645159251955
+analytic mm^3   : 10109.645159251952
+oil bbox m: bbox: -0.023 <= x <= 0.023, -0.023 <= y <= 0.023, -0.005 <= z <= 0.005
+n solids: 1
+
+# -- cell 2 (0.8s, exit 0)
+# patch sheets, each authored directly so the name is decided where the surface is made
+ringWall = bd.Cylinder(R_ring_i, H_ring).faces().filter_by(bd.GeomType.CYLINDER)[0]   # r=23 bore of the ring
+endTop   = bd.Pos(0,0, H_ring/2) * bd.Circle(R_ring_i).face()   # oil cap in the plane of the ring's top end
+endBot   = bd.Pos(0,0,-H_ring/2) * bd.Circle(R_ring_i).face()
+spinWall = bd.Shell(spinner.faces())                                                   # whole spinner surface
+patches = {"ringWall":bd.Shell([ringWall]), "spinnerWall":spinWall,
+           "ringEndTop":bd.Shell([endTop]), "ringEndBottom":bd.Shell([endBot])}
+for n,s in patches.items(): print(n, "area mm^2 %.1f"%(s.area*1e6), "nfaces", len(s.faces()))
+print("sum patch area mm^2 %.1f"%(sum(s.area for s in patches.values())*1e6), " oil solid area mm^2 %.1f"%(oil.area*1e6))
+# -- output
+ringWall area mm^2 1445.1 nfaces 1
+spinnerWall area mm^2 3487.2 nfaces 4
+ringEndTop area mm^2 1661.9 nfaces 1
+ringEndBottom area mm^2 1661.9 nfaces 1
+sum patch area mm^2 8256.1  oil solid area mm^2 8256.1
+
+# -- cell 3 (1.6s, exit 0)
+import subprocess, inspect
+os.makedirs("constant/triSurface", exist_ok=True)
+print(inspect.signature(bd.export_stl))
+for n,s in patches.items():
+    bd.export_stl(s, f"constant/triSurface/{n}.stl", tolerance=5e-5, angular_tolerance=0.1)
+print(subprocess.run(["ls","-l","constant/triSurface"],capture_output=True,text=True).stdout)
+print(subprocess.run(["surfaceCheck","constant/triSurface/spinnerWall.stl"],capture_output=True,text=True).stdout[-700:])
+# -- output
+(to_export: build123d.topology.shape_core.Shape, file_path: os.PathLike | str | bytes, tolerance: float = 0.001, angular_tolerance: float = 0.1, ascii_format: bool = False) -> bool
+total 252
+-rw-rw-r-- 1 qiuzi qiuzi  22234 Sep 14 11:21 ringEndBottom.stl
+-rw-rw-r-- 1 qiuzi qiuzi  22234 Sep 14 11:21 ringEndTop.stl
+-rw-rw-r-- 1 qiuzi qiuzi  44584 Sep 14 11:21 ringWall.stl
+-rw-rw-r-- 1 qiuzi qiuzi 162484 Sep 14 11:21 spinnerWall.stl
+
+5  : 0
+    0.65 .. 0.7  : 0
+    0.7 .. 0.75  : 0
+    0.75 .. 0.8  : 0
+    0.8 .. 0.85  : 0
+    0.85 .. 0.9  : 0
+    0.9 .. 0.95  : 0
+    0.95 .. 1  : 0
+
+    min 0.0493707 for triangle 2626
+    max 0.0682584 for triangle 931
+
+Edges:
+    min 0.000256802 for edge 2433 points (0.00861825 -0.012277 0.004)(0.00840681 -0.0124228 0.004)
+    max 0.00800603 for edge 672 points (-0.016016 0.0150827 -0.004)(-0.0158015 0.0153073 0.004)
+
+Checking for points less than 1e-6 of bounding box ((0.0439995 0.0439997 0.008) metre) apart.
+Found 0 nearby points.
+
+Surface is closed. All edges connected to two faces.
+
+Number of unconnected parts : 1
+
+Number of zones (connected area with consistent normal) : 1
+
+
+End
+
+# -- cell 4 (0.3s, exit 0)
+for d in ["system","constant"]: os.makedirs(d, exist_ok=True)
+def w(p,s): open(p,"w").write(s)
+head = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+w("system/controlDict", head%"controlDict"+"application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n")
+w("system/fvSchemes", head%"fvSchemes"+"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+w("system/fvSolution", head%"fvSolution"+"solvers{} relaxationFactors{}\n")
+# background box: 1 mm cells, offset half a cell so r=22,23 and z=+-4,+-5 fall at cell centres
+w("system/blockMeshDict", head%"blockMeshDict"+"""
+scale 1;
+vertices ( (-0.0235 -0.0235 -0.0055) (0.0235 -0.0235 -0.0055) (0.0235 0.0235 -0.0055) (-0.0235 0.0235 -0.0055)
+           (-0.0235 -0.0235  0.0055) (0.0235 -0.0235  0.0055) (0.0235 0.0235  0.0055) (-0.0235 0.0235  0.0055) );
+blocks ( hex (0 1 2 3 4 5 6 7) (47 47 11) simpleGrading (1 1 1) );
+edges (); boundary ( bg { type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); } );
+""")
+r=subprocess.run(["blockMesh"],capture_output=True,text=True); print(r.returncode, r.stdout[-300:], r.stderr[-500:])
+# -- output
+0 h with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.0235 -0.0235 -0.0055) (0.0235 0.0235 0.0055)
+  nPoints: 27648
+  nCells: 24299
+  nFaces: 76140
+  nInternalFaces: 69654
+----------------
+Patches
+----------------
+  patch 0 (start: 69654 size: 6486) name: bg
+
+End
+
+# -- cell 5 (22.5s, exit 0)
+names = ["ringWall","spinnerWall","ringEndTop","ringEndBottom"]
+LVL = 1   # coarse first: 1 mm base -> 0.5 mm at the walls, 2 cells across each 1 mm gap
+geom = "\n".join(f'    {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in names)
+refs = "\n".join(f'      {n} {{ level ({LVL} {LVL}); patchInfo {{ type wall; }} }}' for n in names)
+w("system/snappyHexMeshDict", head%"snappyHexMeshDict"+f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geom}
+}}
+castellatedMeshControls
+{{
+  maxLocalCells 2000000; maxGlobalCells 4000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+  features ();
+  refinementSurfaces
+  {{
+{refs}
+  }}
+  refinementRegions {{}}
+  locationInMesh (0 0 0);   // inside the spinner bore, which is oil
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5; nFeatureSnapIter 10;
+  implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.0; finalLayerThickness 0.3;
+  minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3;
+  nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedianAxisAngle 90;
+  nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-13; minTetQuality 1e-30; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;
+  minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6; writeFlags (scalarLevels layerSets layerFields);
+""")
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode); print(r.stdout[-1500:]); print(r.stderr[-500:])
+# -- output
+0
+do iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-30      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:51823  faces:172230  points:68824
+Cells per refinement level:
+    0	4151
+    1	47672
+Writing mesh to time constant
+Wrote mesh in = 0.16 s.
+Mesh snapped in = 9.81 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-30      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 16.03 s.
+End
+
+# -- cell 6 (1.6s, exit 0)
+r=subprocess.run(["checkMesh","-allTopology"],capture_output=True,text=True); out=r.stdout
+print(out[out.find("Checking geometry"):][:2500])
+# -- output
+Checking geometry...
+    Overall domain bounding box (-0.0229994 -0.0229996 -0.005) (0.023 0.0229996 0.005)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-5.44307e-19 5.94142e-17 8.63512e-16) OK.
+    Max cell openness = 3.38216e-16 OK.
+    Max aspect ratio = 3.21487 OK.
+    Minimum face area = 1.06839e-07. Maximum face area = 1.07294e-06.  Face area magnitudes OK.
+    Min volume = 4.02712e-11. Max volume = 1.08225e-09.  Total volume = 1.00633e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 29.0273 average: 7.15066
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.0945 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 7 (1.8s, exit 0)
+print(out[out.find("Checking patch topology"):out.find("Checking geometry")])
+r=subprocess.run(["foamToVTK","-latestTime","-no-internal","-no-boundary"],capture_output=True,text=True)
+r2=subprocess.run(["foamToVTK","-latestTime"],capture_output=True,text=True); print(r2.returncode)
+print(subprocess.run(["find","VTK","-name","*.vtp","-o","-name","*.vtm","-o","-name","*.vtu"],capture_output=True,text=True).stdout)
+# -- output
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                ringWall     5456     6092  ok (non-closed singly connected)
+             spinnerWall    13300    13632  ok (non-closed singly connected)
+              ringEndTop     6664     6849  ok (non-closed singly connected)
+           ringEndBottom     6664     6849  ok (non-closed singly connected)
+                    ".*"    32084    32334      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+
+0
+VTK/t9_0.vtm
+VTK/t9_0/boundary.vtm
+VTK/t9_0/internal.vtu
+VTK/t9_0/boundary/spinnerWall.vtp
+VTK/t9_0/boundary/ringEndTop.vtp
+VTK/t9_0/boundary/ringEndBottom.vtp
+VTK/t9_0/boundary/ringWall.vtp
+
+# -- cell 8 (0.6s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+exp = {"ringWall":1445.1,"spinnerWall":3487.2,"ringEndTop":1661.9,"ringEndBottom":1661.9}
+pl = pv.Plotter(off_screen=True, window_size=(900,750))
+cols = {"ringWall":"steelblue","spinnerWall":"orange","ringEndTop":"green","ringEndBottom":"red"}
+for n in exp:
+    m = pv.read(f"VTK/t9_0/boundary/{n}.vtp")
+    a = m.compute_cell_sizes(length=False, volume=False)["Area"].sum()*1e6
+    print(f"{n:14s} mesh area mm^2 {a:8.1f}   CAD {exp[n]:8.1f}")
+    pl.add_mesh(m.clip(normal="y", origin=(0,0,0)), color=cols[n], show_edges=True, line_width=0.4)
+pl.camera_position=[(0.07,-0.07,0.05),(0,0,0),(0,0,1)]
+pl.screenshot("view.png"); print("ok")
+# -- output
+ringWall       mesh area mm^2   1436.6   CAD   1445.1
+spinnerWall    mesh area mm^2   3462.2   CAD   3487.2
+ringEndTop     mesh area mm^2   1657.3   CAD   1661.9
+ringEndBottom  mesh area mm^2   1657.3   CAD   1661.9
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 11:23:29.116 (   0.254s) [    7D269F449780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 11:23:29.116 (   0.255s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 11:23:29.130 (   0.268s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 9 (0.4s, exit 0)
+from IPython.display import Image, display
+print(os.path.getsize("view.png"))
+display(Image("view.png"))
+# -- output
+210694
+
+# -- cell 10 (0.3s, exit 0)
+vol = pv.read("VTK/t9_0/internal.vtu")
+sl  = vol.slice(normal="y", origin=(0,0,0))
+pl = pv.Plotter(off_screen=True, window_size=(1100,420))
+pl.add_mesh(sl, color="lightgrey", show_edges=True, line_width=0.6)
+pl.camera_position=[(0,-0.1,0),(0,0,0),(0,0,1)]; pl.camera.parallel_projection=True; pl.camera.parallel_scale=0.026
+pl.screenshot("slice.png"); display(Image("slice.png"))
+print("min/max cells across: gap cell size m =", (vol.compute_cell_sizes(length=False,area=False)["Volume"].min())**(1/3))
+# -- output
+min/max cells across: gap cell size m = 0.0003427663037398519
+
+[0m[33m2026-09-14 11:23:48.042 (  19.180s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 11:23:48.042 (  19.181s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 11 (99.7s, exit 0)
+LVL = 2   # final: 0.25 mm at the walls -> ~4 cells across each 1 mm gap
+refs = "\n".join(f'      {n} {{ level ({LVL} {LVL}); patchInfo {{ type wall; }} }}' for n in names)
+d = open("system/snappyHexMeshDict").read()
+import re
+d = re.sub(r"(refinementSurfaces\n  \{\n)(.*?)(\n  \}\n  refinementRegions)", lambda m: m.group(1)+refs+m.group(3), d, flags=re.S)
+w("system/snappyHexMeshDict", d)
+subprocess.run(["blockMesh"],capture_output=True,text=True)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-600:])
+# -- output
+0                     : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-30      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 79.78 s.
+End
+
+# -- cell 12 (2.8s, exit 0)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True); o=r.stdout
+print(o[o.find("Mesh stats"):o.find("Checking patch topology")])
+print(o[o.find("Checking geometry"):][:1400])
+# -- output
+Mesh stats 
+    points:           363362
+    faces:            946838
+    internal faces:   819466
+    cells:            291831
+    faces per cell:   6.05249
+    boundary patches: 4
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     261961
+    prisms:        18132
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     11738
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            5   1128
+            6   1248
+            9   7558
+           12   1564
+           15   120
+           18   120
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+
+Checking geometry...
+    Overall domain bounding box (-0.0229994 -0.0229996 -0.005) (0.023 0.0229996 0.005)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (1.94623e-16 -1.77104e-17 -6.15257e-17) OK.
+    Max cell openness = 4.44464e-16 OK.
+    Max aspect ratio = 3.46143 OK.
+    Minimum face area = 2.57192e-08. Maximum face area = 1.02832e-06.  Face area magnitudes OK.
+    Min volume = 4.7187e-12. Max volume = 1.03746e-09.  Total volume = 1.01096e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 41.9935 average: 6.99955
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.11138 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 13 (8.6s, exit 0)
+subprocess.run(["foamToVTK","-latestTime"],capture_output=True,text=True)
+for n in exp:
+    m=pv.read(f"VTK/t9_0/boundary/{n}.vtp"); a=m.compute_cell_sizes(length=False,volume=False)["Area"].sum()*1e6
+    print(f"{n:14s} mesh {a:8.1f}  CAD {exp[n]:8.1f} mm^2")
+vol=pv.read("VTK/t9_0/internal.vtu"); sl=vol.slice(normal="y")
+pl=pv.Plotter(off_screen=True,window_size=(1200,420))
+pl.add_mesh(sl,color="lightgrey",show_edges=True,line_width=0.4)
+pl.camera_position=[(0,-0.1,0),(0,0,0),(0,0,1)];pl.camera.parallel_projection=True;pl.camera.parallel_scale=0.0125
+pl.screenshot("slice2.png"); display(Image("slice2.png"))
+# -- output
+ringWall       mesh   1434.7  CAD   1445.1 mm^2
+spinnerWall    mesh   3463.7  CAD   3487.2 mm^2
+ringEndTop     mesh   1658.6  CAD   1661.9 mm^2
+ringEndBottom  mesh   1658.6  CAD   1661.9 mm^2
+
+[0m[33m2026-09-14 11:26:17.464 ( 168.602s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 11:26:17.465 ( 168.603s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 14 (0.8s, exit 0)
+u = pv.PolyData()
+for n in exp: u = u.merge(pv.read(f"constant/triSurface/{n}.stl"))
+c = u.clean(tolerance=1e-6, absolute=True)
+e = c.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False)
+print("free edges in union:", e.n_cells, " bodies:", c.split_bodies().n_blocks)
+# -- output
+free edges in union: 0  bodies: 2
+
+# -- cell 15 (0.1s, exit 0)
+for n in exp:
+    m = pv.read(f"constant/triSurface/{n}.stl").compute_normals(auto_orient_normals=False, consistent_normals=False, cell_normals=True, point_normals=False)
+    nm = m.cell_normals; cc = m.cell_centers().points
+    if n.startswith("ringEnd"): dot = (nm[:,2]*np.sign(cc[:,2])).mean()          # outward = +-z
+    elif n=="ringWall": dot = (nm[:,0]*cc[:,0]+nm[:,1]*cc[:,1]).mean()/0.023     # outward = +r
+    else: dot = (nm[:,0]*cc[:,0]+nm[:,1]*cc[:,1]).mean()                          # spinner: mixed, just report
+    print(f"{n:14s} mean outward dot = {dot:+.3f}")
+# -- output
+ringWall       mean outward dot = +1.000
+spinnerWall    mean outward dot = +0.003
+ringEndTop     mean outward dot = +1.000
+ringEndBottom  mean outward dot = -1.000
+
+# -- cell 16 (4.7s, exit 0)
+# the bottom cap must be wound outward (-z) like the rest of the envelope; Circle's face normal is +z
+endBot = (bd.Pos(0,0,-H_ring/2) * bd.Circle(R_ring_i).face())
+endBot = bd.Face(endBot.wrapped.Reversed())
+patches = {"ringWall":bd.Shell([ringWall]), "spinnerWall":spinWall,
+           "ringEndTop":bd.Shell([endTop]), "ringEndBottom":bd.Shell([endBot])}
+for n,s in patches.items():
+    bd.export_stl(s, f"constant/triSurface/{n}.stl", tolerance=5e-5, angular_tolerance=0.1)
+u = pv.PolyData()
+for n in patches: u = u.merge(pv.read(f"constant/triSurface/{n}.stl"))
+c = u.clean(tolerance=1e-6, absolute=True)
+print("free edges:", c.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False).n_cells)
+m = pv.read("constant/triSurface/ringEndBottom.stl").compute_normals(auto_orient_normals=False, consistent_normals=False)
+print("ringEndBottom mean nz (want -1):", m.cell_normals[:,2].mean())
+# -- output
+free edges: 0
+ringEndBottom mean nz (want -1): -1.0
+
+# -- cell 17 (0.1s, exit 0)
+f = c.faces.reshape(-1,4)[:,1:]
+from collections import Counter
+cnt = Counter()
+for a,b,d in f:
+    for e in ((a,b),(b,d),(d,a)): cnt[e]+=1
+bad = sum(v for e,v in cnt.items() if v>1)
+print("directed edges traversed more than once:", bad, " triangles:", len(f))
+# -- output
+directed edges traversed more than once: 0  triangles: 5024
+
+# -- cell 18 (102.5s, exit 0)
+subprocess.run(["blockMesh"],capture_output=True,text=True)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True); print(r.returncode)
+o=subprocess.run(["checkMesh"],capture_output=True,text=True).stdout
+print([l for l in o.splitlines() if "cells:" in l or "Total volume" in l or "Number of regions" in l or "Mesh OK" in l or "skewness" in l or "non-orthogonality Max" in l])
+# -- output
+0
+['    cells:            291831', '    Number of regions: 1 (OK).', '    Min volume = 4.7187e-12. Max volume = 1.03746e-09.  Total volume = 1.01096e-05.  Cell volumes OK.', '    Mesh non-orthogonality Max: 41.9935 average: 6.99955', '    Max skewness = 1.11138 OK.', 'Mesh OK.']
+

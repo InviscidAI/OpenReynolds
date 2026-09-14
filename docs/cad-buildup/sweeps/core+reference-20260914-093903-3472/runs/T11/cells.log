@@ -1,0 +1,940 @@
+# -- cell 1 (2.2s, exit 0)
+import math, numpy as np, build123d as bd
+print(bd.__version__)
+# --- parameters (all mm, from the request) ---
+W = 80.0        # duct section 80 x 80
+L_UP, L_CORE, L_DN = 40.0, 20.0, 80.0
+FLAT = 8.0      # cell width across flats
+TW  = 1.0       # wall thickness
+P   = FLAT + TW # lattice pitch across flats = 9
+Rlat = P/math.sqrt(3.0)   # circumradius of lattice hexagon
+Rcell= FLAT/math.sqrt(3.0)# circumradius of open cell hexagon
+print("lattice R", Rlat, "cell R", Rcell)
+a = np.array([0.0, P]); b = np.array([1.5*Rlat, P/2])
+print("lattice vectors", a, b)
+ctrs=[]
+for m in range(-12,13):
+    for n in range(-12,13):
+        c = np.array([W/2,W/2]) + m*a + n*b
+        if -Rlat-1 <= c[0] <= W+Rlat+1 and -Rlat-1 <= c[1] <= W+Rlat+1:
+            ctrs.append(c)
+print(len(ctrs), "candidate cell centres")
+# -- output
+0.11.1
+lattice R 5.196152422706632 cell R 4.618802153517007
+lattice vectors [0. 9.] [7.79422863 4.5       ]
+115 candidate cell centres
+
+# -- cell 2 (0.1s, exit 0)
+import inspect
+print(inspect.signature(bd.RegularPolygon.__init__))
+# -- output
+(self, radius: 'float', side_count: 'int', major_radius: 'bool' = True, rotation: 'float' = 0, align: 'tuple[Align, Align]' = (<Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)
+
+# -- cell 3 (0.5s, exit 0)
+hex0 = bd.RegularPolygon(radius=Rcell, side_count=6, major_radius=True)
+bb = hex0.bounding_box()
+print("hex bbox size", bb.size, " area", hex0.area)
+sq = bd.Rectangle(W, W).moved(bd.Pos(W/2, W/2))
+AMIN = 2.0   # my choice: discard clipped edge cells with < 2 mm^2 open area
+faces=[]
+for c in ctrs:
+    f = (hex0.moved(bd.Pos(*c)) & sq)
+    if f.area > AMIN:
+        faces.append((c, f))
+print(len(faces), "open cells kept; total open area", sum(f.area for _,f in faces),
+      "of", W*W, "->", sum(f.area for _,f in faces)/(W*W))
+full = [c for c,f in faces if abs(f.area-hex0.area)<1e-6]
+print("full cells:", len(full), "partial:", len(faces)-len(full))
+# -- output
+hex bbox size Vector: (X=9.2376, Y=8, Z=0)  area 55.42562584220409
+105 open cells kept; total open area 5089.659349753609 of 6400.0 -> 0.7952592733990014
+full cells: 77 partial: 28
+
+# -- cell 4 (0.5s, exit 0)
+ar = sorted(f.area for _,f in faces)
+print([round(x,2) for x in ar[:20]])
+import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+fig,ax=plt.subplots(figsize=(6,6))
+for c,f in faces:
+    for e in f.edges():
+        p=np.array([[v.X,v.Y] for v in (e @ 0, e @ 1)]); ax.plot(p[:,0],p[:,1],'k-',lw=0.7)
+ax.plot([0,W,W,0,0],[0,0,W,W,0],'r-'); ax.set_aspect(1); fig.savefig("cells.png",dpi=110)
+print("saved")
+# -- output
+[15.22, 15.22, 15.22, 15.22, 23.24, 23.24, 23.24, 23.24, 23.24, 23.24, 23.24, 23.24, 35.94, 35.94, 35.94, 35.94, 35.94, 35.94, 35.94, 35.94]
+saved
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 5 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("cells.png"))
+# -- output
+
+
+# -- cell 6 (1.4s, exit 0)
+L_TOT = L_UP+L_CORE+L_DN
+up = bd.Box(W,W,L_UP,  align=(bd.Align.MIN,)*3)
+dn = bd.Pos(0,0,L_UP+L_CORE)*bd.Box(W,W,L_DN, align=(bd.Align.MIN,)*3)
+chans = [bd.Pos(0,0,L_UP)*bd.extrude(f, L_CORE) for _,f in faces]
+fluid = up + dn + chans
+print(type(fluid), "solids:", len(fluid.solids()))
+print("volume", fluid.volume, "expected", W*W*(L_UP+L_DN)+sum(f.area for _,f in faces)*L_CORE)
+print("bbox", fluid.bounding_box())
+# -- output
+<class 'build123d.topology.composite.Part'> solids: 1
+volume 869793.1869950745 expected 869793.1869950722
+bbox bbox: 0.0 <= x <= 80.0, -2.6645352591003757e-15 <= y <= 80.0, 0.0 <= z <= 140.0
+
+# -- cell 7 (0.2s, exit 0)
+groups={"inlet":[], "outlet":[], "ductWalls":[], "honeycombWalls":[]}
+tol=1e-6
+for f in fluid.faces():
+    c=f.center(); n=f.normal_at(c)
+    if abs(n.Z)>0.999 and abs(c.Z)<tol:            groups["inlet"].append(f)
+    elif abs(n.Z)>0.999 and abs(c.Z-L_TOT)<tol:    groups["outlet"].append(f)
+    elif abs(n.X)>0.999 and (abs(c.X)<tol or abs(c.X-W)<tol): groups["ductWalls"].append(f)
+    elif abs(n.Y)>0.999 and (abs(c.Y)<tol or abs(c.Y-W)<tol): groups["ductWalls"].append(f)
+    else: groups["honeycombWalls"].append(f)
+for k,v in groups.items(): print(k, len(v), round(sum(f.area for f in v),2))
+print("total faces", len(fluid.faces()), "sum areas", sum(f.area for f in fluid.faces()))
+perim_int = sum(sum(e.length for e in f.edges() if not (abs(( e@0).X)<tol and abs((e@1).X)<tol) ) for _,f in faces)
+print("check: 2*plate face solid area =", 2*(W*W-sum(f.area for _,f in faces)))
+# -- output
+inlet 1 6400.0
+outlet 1 6400.0
+ductWalls 4 43978.12
+honeycombWalls 550 52089.82
+total faces 556 sum areas 108867.94072212969
+check: 2*plate face solid area = 2620.6813004927826
+
+# -- cell 8 (0.7s, exit 0)
+bd.export_step(fluid, "fluid_mm.step")
+import subprocess, os
+print(os.listdir("."))
+print(subprocess.run(["ls","-la"],capture_output=True,text=True).stdout[-400:])
+# -- output
+['cells.png', '.reference', 'fluid_mm.step']
+total 2312
+drwxrwxr-x 3 qiuzi qiuzi    4096 Sep 14 09:45 .
+drwxrwxr-x 5 qiuzi qiuzi    4096 Sep 14 09:43 ..
+drwxrwxr-x 2 qiuzi qiuzi    4096 Sep 14 09:43 .reference
+-rw-rw-r-- 1 qiuzi qiuzi   94566 Sep 14 09:44 cells.png
+-rw-rw-r-- 1 qiuzi qiuzi 2256177 Sep 14 09:45 fluid_mm.step
+
+# -- cell 9 (2.4s, exit 0)
+import gmsh
+def build_msh(lc_core, lc_duct, out):
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal",1)
+    gmsh.model.add("hc")
+    gmsh.model.occ.importShapes("fluid_mm.step")
+    gmsh.model.occ.synchronize()
+    surfs = gmsh.model.getEntities(2)
+    g={"inlet":[],"outlet":[],"ductWalls":[],"honeycombWalls":[]}
+    t=1e-6
+    for dim,tag in surfs:
+        x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(dim,tag)
+        if abs(z1-z0)<t and abs(z0)<t:            g["inlet"].append(tag)
+        elif abs(z1-z0)<t and abs(z0-L_TOT)<t:    g["outlet"].append(tag)
+        elif abs(x1-x0)<t and (abs(x0)<t or abs(x0-W)<t): g["ductWalls"].append(tag)
+        elif abs(y1-y0)<t and (abs(y0)<t or abs(y0-W)<t): g["ductWalls"].append(tag)
+        else: g["honeycombWalls"].append(tag)
+    for name,tags in g.items():
+        p=gmsh.model.addPhysicalGroup(2,tags); gmsh.model.setPhysicalName(2,p,name)
+        print(name, len(tags))
+    vols=[v[1] for v in gmsh.model.getEntities(3)]
+    p=gmsh.model.addPhysicalGroup(3,vols); gmsh.model.setPhysicalName(3,p,"internal")
+    # size field: fine inside the honeycomb core, coarser in the plain duct
+    f=gmsh.model.mesh.field.add("Box")
+    gmsh.model.mesh.field.setNumber(f,"VIn",lc_core); gmsh.model.mesh.field.setNumber(f,"VOut",lc_duct)
+    gmsh.model.mesh.field.setNumbers(f,"XMin",[ -1]); # placeholder
+    for k,v in dict(XMin=-1,XMax=W+1,YMin=-1,YMax=W+1,ZMin=L_UP-8,ZMax=L_UP+L_CORE+8).items():
+        gmsh.model.mesh.field.setNumber(f,k,v)
+    gmsh.model.mesh.field.setNumber(f,"Thickness",12)
+    gmsh.model.mesh.field.setAsBackgroundMesh(f)
+    gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary",0)
+    gmsh.option.setNumber("Mesh.MeshSizeFromPoints",0)
+    gmsh.option.setNumber("Mesh.MeshSizeFromCurvature",0)
+    gmsh.model.mesh.generate(3)
+    gmsh.option.setNumber("Mesh.MshFileVersion",2.2)
+    gmsh.write(out)
+    ne=len(gmsh.model.mesh.getElementsByType(4)[0]); nn=gmsh.model.mesh.getNodes()[0].size
+    gmsh.finalize()
+    return ne,nn
+print(build_msh(4.0, 6.0, "coarse.msh"))
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+inlet 1
+outlet 1
+ductWalls 4
+honeycombWalls 550
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Line)
+Info    : [ 10%] Meshing curve 5 (Line)
+Info    : [ 10%] Meshing curve 6 (Line)
+Info    : [ 10%] Meshing curve 7 (Line)
+Info    : [ 10%] Meshing curve 8 (Line)
+Info    : [ 10%] Meshing curve 9 (Line)
+Info    : [ 10%] Meshing curve 10 (Line)
+Info    : [ 10%] Meshing curve 11 (Line)
+Info    : [ 10%] Meshing curve 12 (Line)
+Info    : [ 10%] Meshing curve 13 (Line)
+Info    : [ 10%] Meshing curve 14 (Line)
+Info    : [ 10%] Meshing curve 15 (Line)
+Info    : [ 10%] Meshing curve 16 (Line)
+Info    : [ 10%] Meshing curve 17 (Line)
+Info    : [ 10%] Meshing curve 18 (Line)
+Info    : [ 10%] Meshing curve 19 (Line)
+Info    : [ 10%] Meshing curve 20 (Line)
+Info    : [ 10%] Meshing curve 21 (Line)
+Info    : [ 10%] Meshing curve 22 (Line)
+Info    : [ 10%] Meshing curve 23 (Line)
+Info    : [ 10%] Meshing curve 24 (Line)
+Info    : [ 10%] Meshing curve 25 (Line)
+Info    : [ 10%] Meshing curve 26 (Line)
+Info    : [ 10%] Meshing curve 27 (Line)
+Info    : [ 10%] Meshing curve 28 (Line)
+Info    : [ 10%] Meshing curve 29 (Line)
+Info    : [ 10%] Meshing curve 30 (Line)
+Info    : [ 10%] Meshing curve 31 (Line)
+Info    : [ 10%] Meshing curve 32 (Line)
+Info    : [ 10%] Meshing curve 33 (Line)
+Info    : [ 10%] Meshing curve 34 (Line)
+Info    : [ 10%] Meshing curve 35 (Line)
+Info    : [ 10%] Meshing curve 36 (Line)
+Info    : [ 10%] Meshing curve 37 (Line)
+Info    : [ 10%] Meshing curve 38 (Line)
+Info    : [ 10%] Meshing curve 39 (Line)
+Info    : [ 10%] Meshing curve 40 (Line)
+Info    : [ 10%] Meshing curve 41 (Line)
+Info    : [ 10%] Meshing curve 42 (Line)
+Info    : [ 10%] Meshing curve 43 (Line)
+Info    : [ 10%] Meshing curve 44 (Line)
+Info    : [ 10%] Meshing curve 45 (Line)
+Info    : [ 10%] Meshing curve 46 (Line)
+Info    :
+... 107543 characters cut ...
+Delaunay)
+Info    : [100%] Meshing surface 548 (Plane, Frontal-Delaunay)
+Info    : [100%] Meshing surface 549 (Plane, Frontal-Delaunay)
+Info    : [100%] Meshing surface 550 (Plane, Frontal-Delaunay)
+Info    : [100%] Meshing surface 551 (Plane, Frontal-Delaunay)
+Info    : [100%] Meshing surface 552 (Plane, Frontal-Delaunay)
+Info    : [100%] Meshing surface 553 (Plane, Frontal-Delaunay)
+Info    : [100%] Meshing surface 554 (Plane, Frontal-Delaunay)
+Info    : [100%] Meshing surface 555 (Plane, Frontal-Delaunay)
+Info    : [100%] Meshing surface 556 (Plane, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 0.763852s, CPU 0.771685s)
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 10694 nodes...
+Info    : Done tetrahedrizing 10702 nodes (Wall 0.150924s, CPU 0.14422s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    :  - Added 5 Steiner points
+Info    : Done reconstructing mesh (Wall 0.305723s, CPU 0.289921s)
+Info    : Found volume 1
+Info    : It. 0 - 0 nodes created - worst tet radius 12.3158 (nodes removed 0 0)
+Info    : It. 500 - 495 nodes created - worst tet radius 1.89305 (nodes removed 0 5)
+Info    : It. 1000 - 990 nodes created - worst tet radius 1.59151 (nodes removed 0 10)
+Info    : It. 1500 - 1487 nodes created - worst tet radius 1.35808 (nodes removed 0 13)
+Info    : It. 2000 - 1985 nodes created - worst tet radius 1.21682 (nodes removed 0 15)
+Info    : It. 2500 - 2483 nodes created - worst tet radius 1.11803 (nodes removed 0 17)
+Info    : It. 3000 - 2978 nodes created - worst tet radius 1.06149 (nodes removed 0 22)
+Info    : It. 3500 - 3478 nodes created - worst tet radius 1.01213 (nodes removed 0 22)
+Info    : 3D refinement terminated (14302 nodes total):
+Info    :  - 12 Delaunay cavities modified for star shapeness
+Info    :  - 26 nodes could not be inserted
+Info    :  - 55561 tetrahedra created in 0.20863 sec. (266314 tets/s)
+Info    : 5 node relocations
+Info    : Done meshing 3D (Wall 0.705191s, CPU 0.690534s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 869793) with worst = 0 / average = 0.68884:
+Info    : 0.00 < quality < 0.10 :       217 elements
+Info    : 0.10 < quality < 0.20 :      1091 elements
+Info    : 0.20 < quality < 0.30 :      2022 elements
+Info    : 0.30 < quality < 0.40 :      4420 elements
+Info    : 0.40 < quality < 0.50 :      3186 elements
+Info    : 0.50 < quality < 0.60 :      4381 elements
+Info    : 0.60 < quality < 0.70 :      7611 elements
+Info    : 0.70 < quality < 0.80 :     11617 elements
+Info    : 0.80 < quality < 0.90 :     14872 elements
+Info    : 0.90 < quality < 1.00 :      6144 elements
+Info    : 1832 edge swaps, 441 node relocations (volume = 869793): worst = 0.104799 / average = 0.707313 (Wall 0.0490373s, CPU 0.049084s)
+Info    : 1988 edge swaps, 643 node relocations (volume = 869793): worst = 0.185379 / average = 0.708035 (Wall 0.0814147s, CPU 0.081504s)
+Info    : 2024 edge swaps, 734 node relocations (volume = 869793): worst = 0.185379 / average = 0.708086 (Wall 0.111868s, CPU 0.112004s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         6 elements
+Info    : 0.20 < quality < 0.30 :      1519 elements
+Info    : 0.30 < quality < 0.40 :      4015 elements
+Info    : 0.40 < quality < 0.50 :      2932 elements
+Info    : 0.50 < quality < 0.60 :      4235 elements
+Info    : 0.60 < quality < 0.70 :      7901 elements
+Info    : 0.70 < quality < 0.80 :     12786 elements
+Info    : 0.80 < quality < 0.90 :     14787 elements
+Info    : 0.90 < quality < 1.00 :      5687 elements
+Info    : Done optimizing mesh (Wall 0.154549s, CPU 0.154748s)
+Info    : 14299 nodes 82291 elements
+Info    : Writing 'coarse.msh'...
+Info    : Done writing 'coarse.msh'
+(53961, 14299)
+
+Warning : Field option 'XMin' is not a list
+
+# -- cell 10 (0.1s, exit 0)
+import subprocess, os, shutil, textwrap
+os.makedirs("system_tmp", exist_ok=True)
+os.makedirs("system", exist_ok=True)
+# minimal case skeleton for gmshToFoam/checkMesh
+os.makedirs("constant", exist_ok=True)
+open("system/controlDict","w").write(textwrap.dedent("""\
+FoamFile{version 2.0;format ascii;class dictionary;object controlDict;}
+application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1;
+"""))
+os.makedirs("system",exist_ok=True)
+shutil.rmtree("system_tmp")
+os.rename("system","system2") if False else None
+print(os.listdir("."))
+# -- output
+['constant', 'system', 'cells.png', '.reference', 'fluid_mm.step', 'coarse.msh']
+
+# -- cell 11 (0.5s, exit 0)
+r=subprocess.run(["gmshToFoam","coarse.msh"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-2500:], r.stderr[-1000:])
+# -- output
+0 ion  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : gmshToFoam coarse.msh
+Date   : Sep 14 2026
+Time   : 09:46:08
+Host   : yc-demo
+PID    : 19121
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T11-20260914-094315-4057/t11
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:5
+    Surface 1	inlet
+    Surface 2	outlet
+    Surface 3	ductWalls
+    Surface 4	honeycombWalls
+    Volume 5	internal
+
+Starting to read points at line 13
+Vertices to be read: 14299
+Vertices read:14299
+
+Starting to read cells at line 14315
+Cells to be read: 75761
+
+Mapping region 3 to Foam patch 0
+Mapping region 4 to Foam patch 1
+Mapping region 2 to Foam patch 2
+Mapping region 1 to Foam patch 3
+Mapping region 5 to Foam cellZone 0
+Cells:
+    total:53961
+    hex  :0
+    prism:0
+    pyr  :0
+    tet  :53961
+
+CellZones:
+Zone	Size
+    0	53961
+
+Patch 0 gets name ductWalls
+Patch 1 gets name honeycombWalls
+Patch 2 gets name outlet
+Patch 3 gets name inlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 21800 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+# -- cell 12 (0.5s, exit 0)
+r=subprocess.run(["transformPoints","-scale","(0.001 0.001 0.001)"],capture_output=True,text=True); print(r.returncode)
+print(open("constant/polyMesh/boundary").read()[-1200:])
+# -- output
+0
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+4
+(
+    ductWalls
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4628;
+        startFace       97022;
+    }
+    honeycombWalls
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          16268;
+        startFace       101650;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          452;
+        startFace       117918;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          452;
+        startFace       118370;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 13 (0.3s, exit 0)
+r=subprocess.run(["checkMesh","-constant"],capture_output=True,text=True)
+print("\n".join(r.stdout.splitlines()[-40:]))
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant
+Date   : Sep 14 2026
+Time   : 09:46:19
+Host   : yc-demo
+PID    : 19509
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T11-20260914-094315-4057/t11
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+# -- cell 14 (0.1s, exit 0)
+print(r.stdout[r.stdout.find("Mesh stats"):])
+# -- output
+
+
+# -- cell 15 (0.1s, exit 0)
+print(len(r.stdout)); print(r.stderr[-2000:])
+# -- output
+1587
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T11-20260914-094315-4057/t11/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 16 (0.5s, exit 0)
+open("system/fvSchemes","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSchemes;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSolution;}\nsolvers{}\n")
+r=subprocess.run(["checkMesh","-constant"],capture_output=True,text=True)
+print(r.stdout[r.stdout.find("Mesh stats"):]); print(r.stderr[-500:])
+# -- output
+Mesh stats 
+    points:           14299
+    faces:            118822
+    internal faces:   97022
+    cells:            53961
+    faces per cell:   4
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    53961
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    ductWalls           4628     2560     ok (non-closed singly connected)  
+    honeycombWalls      16268    8192     ok (non-closed singly connected)  
+    outlet              452      255      ok (non-closed singly connected)  
+    inlet               452      255      ok (non-closed singly connected)  
+    ".*"                21800    10694    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            53961        14299        0.000869793  (0 -1.33227e-18 0) (0.08 0.08 0.14)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -1.33227e-18 0) (0.08 0.08 0.14)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (4.87051e-18 4.34534e-18 7.62476e-18) OK.
+    Max cell openness = 2.37783e-16 OK.
+    Max aspect ratio = 10.0363 OK.
+    Minimum face area = 4.33013e-07. Maximum face area = 4.96404e-05.  Face area magnitudes OK.
+    Min volume = 2.87543e-10. Max volume = 1.16099e-07.  Total volume = 0.000869793.  Cell volumes OK.
+    Mesh non-orthogonality Max: 70.9752 average: 23.1438
+   *Number of severely non-orthogonal (> 70 degrees) faces: 1.
+    Non-orthogonality check OK.
+  <<Writing 1 non-orthogonal faces to set nonOrthoFaces
+    Face pyramids OK.
+    Max skewness = 2.18743 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 17 (0.1s, exit 0)
+print([n for n in dir(bd) if "scale" in n.lower()]); print(inspect.signature(bd.scale)); print(inspect.signature(bd.export_stl))
+# -- output
+['scale', 'unit_conversion_scale']
+(objects: build123d.topology.shape_core.Shape | collections.abc.Iterable[build123d.topology.shape_core.Shape] | None = None, by: float | tuple[float, float, float] = 1, about: build123d.geometry.Vector | tuple[float, float] | tuple[float, float, float] | collections.abc.Sequence[float] | None = None, mode: build123d.build_enums.Mode = <Mode.REPLACE>) -> build123d.topology.composite.Curve | build123d.topology.composite.Sketch | build123d.topology.composite.Part | build123d.topology.composite.Compound
+(to_export: build123d.topology.shape_core.Shape, file_path: os.PathLike | str | bytes, tolerance: float = 0.001, angular_tolerance: float = 0.1, ascii_format: bool = False) -> bool
+
+# -- cell 18 (0.4s, exit 0)
+for name, fl in groups.items():
+    comp = bd.Compound(children=[f for f in fl])
+    comp_m = bd.scale(comp, 0.001)
+    bd.export_stl(comp_m, f"{name}.stl", tolerance=1e-5, angular_tolerance=0.1)
+    print(name, comp_m.bounding_box().size, round(comp_m.area,8))
+# -- output
+inlet Vector: (X=0.08, Y=0.08, Z=0) 0.0064
+outlet Vector: (X=0.08, Y=0.08, Z=0) 0.0064
+ductWalls Vector: (X=0.08, Y=0.08, Z=0.14) 0.04397812
+honeycombWalls Vector: (X=0.08, Y=0.08, Z=0.02) 0.05208982
+
+# -- cell 19 (0.7s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pl = pv.Plotter(off_screen=True, window_size=(900,700))
+cols={"inlet":"blue","outlet":"green","ductWalls":"lightgray","honeycombWalls":"red"}
+for n,c in cols.items():
+    m=pv.read(f"{n}.stl"); pl.add_mesh(m, color=c, opacity=0.5 if n=="ductWalls" else 1.0, show_edges=False)
+pl.camera_position=[(0.25,-0.2,0.25),(0.04,0.04,0.07),(0,0,1)]
+img=pl.screenshot("view.png"); display(Image("view.png"))
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 09:46:50.007 (   0.402s) [    7F05587DA780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 09:46:50.007 (   0.403s) [    7F05587DA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 09:46:50.019 (   0.415s) [    7F05587DA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 20 (6.8s, exit 0)
+ne,nn = build_msh(2.0, 3.5, "fluid.msh")
+print("tets", ne, "nodes", nn)
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+inlet 1
+outlet 1
+ductWalls 4
+honeycombWalls 550
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Line)
+Info    : [ 10%] Meshing curve 5 (Line)
+Info    : [ 10%] Meshing curve 6 (Line)
+Info    : [ 10%] Meshing curve 7 (Line)
+Info    : [ 10%] Meshing curve 8 (Line)
+Info    : [ 10%] Meshing curve 9 (Line)
+Info    : [ 10%] Meshing curve 10 (Line)
+Info    : [ 10%] Meshing curve 11 (Line)
+Info    : [ 10%] Meshing curve 12 (Line)
+Info    : [ 10%] Meshing curve 13 (Line)
+Info    : [ 10%] Meshing curve 14 (Line)
+Info    : [ 10%] Meshing curve 15 (Line)
+Info    : [ 10%] Meshing curve 16 (Line)
+Info    : [ 10%] Meshing curve 17 (Line)
+Info    : [ 10%] Meshing curve 18 (Line)
+Info    : [ 10%] Meshing curve 19 (Line)
+Info    : [ 10%] Meshing curve 20 (Line)
+Info    : [ 10%] Meshing curve 21 (Line)
+Info    : [ 10%] Meshing curve 22 (Line)
+Info    : [ 10%] Meshing curve 23 (Line)
+Info    : [ 10%] Meshing curve 24 (Line)
+Info    : [ 10%] Meshing curve 25 (Line)
+Info    : [ 10%] Meshing curve 26 (Line)
+Info    : [ 10%] Meshing curve 27 (Line)
+Info    : [ 10%] Meshing curve 28 (Line)
+Info    : [ 10%] Meshing curve 29 (Line)
+Info    : [ 10%] Meshing curve 30 (Line)
+Info    : [ 10%] Meshing curve 31 (Line)
+Info    : [ 10%] Meshing curve 32 (Line)
+Info    : [ 10%] Meshing curve 33 (Line)
+Info    : [ 10%] Meshing curve 34 (Line)
+Info    : [ 10%] Meshing curve 35 (Line)
+Info    : [ 10%] Meshing curve 36 (Line)
+Info    : [ 10%] Meshing curve 37 (Line)
+Info    : [ 10%] Meshing curve 38 (Line)
+Info    : [ 10%] Meshing curve 39 (Line)
+Info    : [ 10%] Meshing curve 40 (Line)
+Info    : [ 10%] Meshing curve 41 (Line)
+Info    : [ 10%] Meshing curve 42 (Line)
+Info    : [ 10%] Meshing curve 43 (Line)
+Info    : [ 10%] Meshing curve 44 (Line)
+Info    : [ 10%] Meshing curve 45 (Line)
+Info    : [ 10%] Meshing curve 46 (Line)
+Info    :
+... 111254 characters cut ...
+ created - worst tet radius 1.17722 (nodes removed 0 0)
+Info    : It. 15500 - 15500 nodes created - worst tet radius 1.16448 (nodes removed 0 0)
+Info    : It. 16000 - 16000 nodes created - worst tet radius 1.15341 (nodes removed 0 0)
+Info    : It. 16500 - 16500 nodes created - worst tet radius 1.143 (nodes removed 0 0)
+Info    : It. 17000 - 17000 nodes created - worst tet radius 1.13271 (nodes removed 0 0)
+Info    : It. 17500 - 17500 nodes created - worst tet radius 1.12356 (nodes removed 0 0)
+Info    : It. 18000 - 18000 nodes created - worst tet radius 1.11472 (nodes removed 0 0)
+Info    : It. 18500 - 18500 nodes created - worst tet radius 1.10724 (nodes removed 0 0)
+Info    : It. 19000 - 19000 nodes created - worst tet radius 1.0987 (nodes removed 0 0)
+Info    : It. 19500 - 19500 nodes created - worst tet radius 1.09107 (nodes removed 0 0)
+Info    : It. 20000 - 20000 nodes created - worst tet radius 1.08304 (nodes removed 0 0)
+Info    : It. 20500 - 20500 nodes created - worst tet radius 1.07545 (nodes removed 0 0)
+Info    : It. 21000 - 21000 nodes created - worst tet radius 1.06807 (nodes removed 0 0)
+Info    : It. 21500 - 21500 nodes created - worst tet radius 1.0597 (nodes removed 0 0)
+Info    : It. 22000 - 22000 nodes created - worst tet radius 1.052 (nodes removed 0 0)
+Info    : It. 22500 - 22500 nodes created - worst tet radius 1.04483 (nodes removed 0 0)
+Info    : It. 23000 - 23000 nodes created - worst tet radius 1.03723 (nodes removed 0 0)
+Info    : It. 23500 - 23500 nodes created - worst tet radius 1.02925 (nodes removed 0 0)
+Info    : It. 24000 - 24000 nodes created - worst tet radius 1.0217 (nodes removed 0 0)
+Info    : It. 24500 - 24500 nodes created - worst tet radius 1.01482 (nodes removed 0 0)
+Info    : It. 25000 - 25000 nodes created - worst tet radius 1.00767 (nodes removed 0 0)
+Info    : It. 25500 - 25500 nodes created - worst tet radius 1.001 (nodes removed 0 0)
+Info    : 3D refinement terminated (55196 nodes total):
+Info    :  - 3 Delaunay cavities modified for star shapeness
+Info    :  - 0 nodes could not be inserted
+Info    :  - 253297 tetrahedra created in 1.55715 sec. (162667 tets/s)
+Info    : 0 node relocations
+Info    : Done meshing 3D (Wall 3.5159s, CPU 3.45135s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 869793) with worst = 0.00109062 / average = 0.754302:
+Info    : 0.00 < quality < 0.10 :       591 elements
+Info    : 0.10 < quality < 0.20 :      1940 elements
+Info    : 0.20 < quality < 0.30 :      3658 elements
+Info    : 0.30 < quality < 0.40 :      6471 elements
+Info    : 0.40 < quality < 0.50 :     10098 elements
+Info    : 0.50 < quality < 0.60 :     15807 elements
+Info    : 0.60 < quality < 0.70 :     31886 elements
+Info    : 0.70 < quality < 0.80 :     60285 elements
+Info    : 0.80 < quality < 0.90 :     80131 elements
+Info    : 0.90 < quality < 1.00 :     42430 elements
+Info    : 6020 edge swaps, 148 node relocations (volume = 869793): worst = 0.112927 / average = 0.768055 (Wall 0.158727s, CPU 0.159035s)
+Info    : 6086 edge swaps, 157 node relocations (volume = 869793): worst = 0.181623 / average = 0.768141 (Wall 0.199632s, CPU 0.200014s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         1 elements
+Info    : 0.20 < quality < 0.30 :        18 elements
+Info    : 0.30 < quality < 0.40 :      6602 elements
+Info    : 0.40 < quality < 0.50 :      9939 elements
+Info    : 0.50 < quality < 0.60 :     15583 elements
+Info    : 0.60 < quality < 0.70 :     31860 elements
+Info    : 0.70 < quality < 0.80 :     61044 elements
+Info    : 0.80 < quality < 0.90 :     80858 elements
+Info    : 0.90 < quality < 1.00 :     42144 elements
+Info    : Done optimizing mesh (Wall 0.558906s, CPU 0.533479s)
+Info    : 55196 nodes 318401 elements
+Info    : Writing 'fluid.msh'...
+Info    : Done writing 'fluid.msh'
+tets 248049 nodes 55196
+
+Warning : Field option 'XMin' is not a list
+
+# -- cell 21 (1.9s, exit 0)
+import re
+r=subprocess.run(["gmshToFoam","fluid.msh"],capture_output=True,text=True); print(r.returncode, r.stdout[-300:])
+r=subprocess.run(["transformPoints","-scale","(0.001 0.001 0.001)"],capture_output=True,text=True); print(r.returncode)
+b=open("constant/polyMesh/boundary").read()
+for p in ("ductWalls","honeycombWalls"):
+    b=re.sub(r"(%s\s*\{\s*)type\s+patch;"%p, r"\1type            wall;", b)
+open("constant/polyMesh/boundary","w").write(b)
+print(b[b.find("4\n("):])
+# -- output
+0 /polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 59636 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+
+0
+4
+(
+    ductWalls
+    {
+        type            wall;
+        physicalType    patch;
+        nFaces          14702;
+        startFace       466280;
+    }
+    honeycombWalls
+    {
+        type            wall;
+        physicalType    patch;
+        nFaces          42442;
+        startFace       480982;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1246;
+        startFace       523424;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1246;
+        startFace       524670;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 22 (1.2s, exit 0)
+r=subprocess.run(["checkMesh","-constant"],capture_output=True,text=True)
+print(r.stdout[r.stdout.find("Mesh stats"):])
+# -- output
+Mesh stats 
+    points:           55196
+    faces:            525916
+    internal faces:   466280
+    cells:            248049
+    faces per cell:   4
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    248049
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    ductWalls           14702    7823     ok (non-closed singly connected)  
+    honeycombWalls      42442    21469    ok (non-closed singly connected)  
+    outlet              1246     670      ok (non-closed singly connected)  
+    inlet               1246     670      ok (non-closed singly connected)  
+    ".*"                59636    29612    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            248049       55196        0.000869793  (0 -1.33227e-18 0) (0.08 0.08 0.14)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -1.33227e-18 0) (0.08 0.08 0.14)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-7.76092e-18 -3.40002e-18 -9.30805e-17) OK.
+    Max cell openness = 2.44949e-16 OK.
+    Max aspect ratio = 8.32638 OK.
+    Minimum face area = 3.36788e-07. Maximum face area = 1.70733e-05.  Face area magnitudes OK.
+    Min volume = 1.20377e-10. Max volume = 2.38911e-08.  Total volume = 0.000869793.  Cell volumes OK.
+    Mesh non-orthogonality Max: 68.6235 average: 21.6623
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.45482 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 23 (0.2s, exit 1)
+ctr0=np.array([W/2,W/2])
+h_a = hex0.moved(bd.Pos(*(ctr0))); h_b = hex0.moved(bd.Pos(*(ctr0+a))); h_c = hex0.moved(bd.Pos(*(ctr0+b)))
+bb=h_a.bounding_box()
+gap_a = h_b.bounding_box().min.Y - bb.max.Y
+# perpendicular gap to the 30-deg neighbour, measured along b
+nb = b/np.linalg.norm(b)
+proj = lambda f,v: (min(np.dot([p.X,p.Y],v) for p in f.vertices()), max(np.dot([p.X,p.Y],v) for p in f.vertices()))
+gap_b = proj(h_c,nb)[0]-proj(h_a,nb)[1]
+print("across flats  : %.4f mm (asked 8)"%bb.size.Y)
+print("across corners: %.4f mm"%bb.size.X)
+print("wall thickness, y-neighbour  : %.4f mm (asked 1)"%gap_a)
+print("wall thickness, 30deg-neighbour: %.4f mm (asked 1)"%gap_b)
+fb=fluid.bounding_box()
+print("duct section  : %.3f x %.3f mm (asked 80 x 80)"%(fb.size.X,fb.size.Y))
+print("total length  : %.3f mm (40 up + 20 core + 80 down)"%fb.size.Z)
+zs=sorted({round(f.center().Z,6) for f in groups["honeycombWalls"]})
+print("honeycomb extent in z: %.3f .. %.3f mm -> %.3f thick"%(
+    min(v.Z for f in groups["honeycombWalls"] for v in f.vertices()),
+    max(v.Z for f in groups["honeycombWalls"] for v in f.vertices()),
+    max(v.Z for f in groups["honeycombWalls"] for v in f.vertices())-min(v.Z for f in groups["honeycombWalls"] for v in f.vertices())))
+print("open-area ratio at core: %.4f (ideal (8/9)^2 = %.4f)"%(sum(f.area for _,f in faces)/W**2,(FLAT/P)**2))
+print("cells: %d (%d full, %d clipped at the duct wall)"%(len(faces),len(full),len(faces)-len(full)))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mUFuncTypeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[23][39m[32m, line 2[39m
+[32m      1[39m ctr0=np.array([W/[32m2[39m,W/[32m2[39m])
+[32m----> [39m[32m2[39m h_a = hex0.moved(bd.Pos(*(ctr0))); h_b = hex0.moved(bd.Pos(*(ctr0+a))); h_c = hex0.moved(bd.Pos(*(ctr0+b)))
+[32m      3[39m bb=h_a.bounding_box()
+[32m      4[39m gap_a = h_b.bounding_box().min.Y - bb.max.Y
+[32m      5[39m [38;5;66;03m# perpendicular gap to the 30-deg neighbour, measured along b[39;00m
+
+[31mUFuncTypeError[39m: ufunc 'add' did not contain a loop with signature matching types (dtype('float64'), dtype('<U1522')) -> None
+
+# -- cell 24 (0.1s, exit 0)
+vec_a = np.array([0.0,P]); vec_b = np.array([1.5*Rlat,P/2])
+ctr0=np.array([W/2,W/2])
+h_a = hex0.moved(bd.Pos(*ctr0)); h_b = hex0.moved(bd.Pos(*(ctr0+vec_a))); h_c = hex0.moved(bd.Pos(*(ctr0+vec_b)))
+bb=h_a.bounding_box()
+gap_a = h_b.bounding_box().min.Y - bb.max.Y
+nb = vec_b/np.linalg.norm(vec_b)
+proj = lambda f,v: (min(np.dot([p.X,p.Y],v) for p in f.vertices()), max(np.dot([p.X,p.Y],v) for p in f.vertices()))
+gap_b = proj(h_c,nb)[0]-proj(h_a,nb)[1]
+hz=[v.Z for f in groups["honeycombWalls"] for v in f.vertices()]
+fb=fluid.bounding_box()
+print("across flats   : %.4f mm (asked 8)"%bb.size.Y)
+print("wall, y-neighbour     : %.4f mm (asked 1)"%gap_a)
+print("wall, 30deg-neighbour : %.4f mm (asked 1)"%gap_b)
+print("duct section   : %.3f x %.3f mm (asked 80 x 80)"%(fb.size.X,fb.size.Y))
+print("total length   : %.3f mm (40+20+80)"%fb.size.Z)
+print("honeycomb z    : %.3f .. %.3f -> %.3f thick (asked 20)"%(min(hz),max(hz),max(hz)-min(hz)))
+print("open-area ratio: %.4f  (ideal (8/9)^2=%.4f)"%(sum(f.area for _,f in faces)/W**2,(FLAT/P)**2))
+print("cells kept: %d (%d full, %d clipped)"%(len(faces),len(full),len(faces)-len(full)))
+# -- output
+across flats   : 8.0000 mm (asked 8)
+wall, y-neighbour     : 1.0000 mm (asked 1)
+wall, 30deg-neighbour : 1.0000 mm (asked 1)
+duct section   : 80.000 x 80.000 mm (asked 80 x 80)
+total length   : 140.000 mm (40+20+80)
+honeycomb z    : 40.000 .. 60.000 -> 20.000 thick (asked 20)
+open-area ratio: 0.7953  (ideal (8/9)^2=0.7901)
+cells kept: 105 (77 full, 28 clipped)
+
+# -- cell 25 (0.8s, exit 0)
+open("case.foam","w").close()
+rd=pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0) if rd.time_values else None
+m=rd.read()["internalMesh"]
+sl=m.clip(normal="z", origin=(0,0,0.05), invert=False).clip(normal="z", origin=(0,0,0.0501))
+pl=pv.Plotter(off_screen=True, window_size=(800,800))
+pl.add_mesh(sl, show_edges=True, color="lightsteelblue", line_width=0.4)
+pl.camera_position="xy"; pl.screenshot("slice.png"); display(Image("slice.png"))
+# -- output
+[0m[33m2026-09-14 09:47:51.820 (  62.215s) [    7F05587DA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 09:47:51.820 (  62.216s) [    7F05587DA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

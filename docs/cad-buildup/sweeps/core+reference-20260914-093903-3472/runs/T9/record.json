@@ -1,0 +1,593 @@
+{
+  "run_id": "20260914-112002-40bb",
+  "case": "T9",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T9-20260914-112002-40bb",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T9-20260914-112002-40bb/t9",
+  "started_at": "2026-09-14T11:20:03",
+  "ended_at": "2026-09-14T11:30:06",
+  "seconds": 597.2,
+  "n_turns": 20,
+  "n_steps": 18,
+  "first_mesh_step": 3,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.7331,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 40,
+    "cache_read": 328334,
+    "cache_write": 26906,
+    "output": 16024
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd, numpy as np, os, math\n# --- parameters (all from the request), METRES ---\nR_ring_o, R_ring_i, H_ring = 0.030, 0.023, 0.010      # outer ring\nR_sp_o,  R_sp_i,  H_sp     = 0.022, 0.015, 0.008      # inner spinner\n# oil region = everything inside the ring bore (r<=R_ring_i, |z|<=H_ring/2) minus the spinner solid\nspinner = bd.Cylinder(R_sp_o, H_sp) - bd.Cylinder(R_sp_i, H_sp)\noil     = bd.Cylinder(R_ring_i, H_ring) - spinner\nprint(\"radial clearance mm :\", (R_ring_i-R_sp_o)*1000)\nprint(\"axial gap each end mm:\", (H_ring-H_sp)/2*1000)\nprint(\"oil volume mm^3 :\", oil.volume*1e9)\nprint(\"analytic mm^3   :\", (math.pi*23**2*10 - math.pi*(22**2-15**2)*8))\nprint(\"oil bbox m:\", oil.bounding_box())\nprint(\"n solids:\", len(oil.solids()))",
+      "exit_code": 0,
+      "seconds": 2.207038096999895,
+      "output": "radial clearance mm : 1.0000000000000009\naxial gap each end mm: 1.0\noil volume mm^3 : 10109.645159251955\nanalytic mm^3   : 10109.645159251952\noil bbox m: bbox: -0.023 <= x <= 0.023, -0.023 <= y <= 0.023, -0.005 <= z <= 0.005\nn solids: 1",
+      "image": ""
+    },
+    {
+      "cmd": "# patch sheets, each authored directly so the name is decided where the surface is made\nringWall = bd.Cylinder(R_ring_i, H_ring).faces().filter_by(bd.GeomType.CYLINDER)[0]   # r=23 bore of the ring\nendTop   = bd.Pos(0,0, H_ring/2) * bd.Circle(R_ring_i).face()   # oil cap in the plane of the ring's top end\nendBot   = bd.Pos(0,0,-H_ring/2) * bd.Circle(R_ring_i).face()\nspinWall = bd.Shell(spinner.faces())                                                   # whole spinner surface\npatches = {\"ringWall\":bd.Shell([ringWall]), \"spinnerWall\":spinWall,\n           \"ringEndTop\":bd.Shell([endTop]), \"ringEndBottom\":bd.Shell([endBot])}\nfor n,s in patches.items(): print(n, \"area mm^2 %.1f\"%(s.area*1e6), \"nfaces\", len(s.faces()))\nprint(\"sum patch area mm^2 %.1f\"%(sum(s.area for s in patches.values())*1e6), \" oil solid area mm^2 %.1f\"%(oil.area*1e6))",
+      "exit_code": 0,
+      "seconds": 0.7891217149999648,
+      "output": "ringWall area mm^2 1445.1 nfaces 1\nspinnerWall area mm^2 3487.2 nfaces 4\nringEndTop area mm^2 1661.9 nfaces 1\nringEndBottom area mm^2 1661.9 nfaces 1\nsum patch area mm^2 8256.1  oil solid area mm^2 8256.1",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, inspect\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nprint(inspect.signature(bd.export_stl))\nfor n,s in patches.items():\n    bd.export_stl(s, f\"constant/triSurface/{n}.stl\", tolerance=5e-5, angular_tolerance=0.1)\nprint(subprocess.run([\"ls\",\"-l\",\"constant/triSurface\"],capture_output=True,text=True).stdout)\nprint(subprocess.run([\"surfaceCheck\",\"constant/triSurface/spinnerWall.stl\"],capture_output=True,text=True).stdout[-700:])",
+      "exit_code": 0,
+      "seconds": 1.5573537609998311,
+      "output": "(to_export: build123d.topology.shape_core.Shape, file_path: os.PathLike | str | bytes, tolerance: float = 0.001, angular_tolerance: float = 0.1, ascii_format: bool = False) -> bool\ntotal 252\n-rw-rw-r-- 1 qiuzi qiuzi  22234 Sep 14 11:21 ringEndBottom.stl\n-rw-rw-r-- 1 qiuzi qiuzi  22234 Sep 14 11:21 ringEndTop.stl\n-rw-rw-r-- 1 qiuzi qiuzi  44584 Sep 14 11:21 ringWall.stl\n-rw-rw-r-- 1 qiuzi qiuzi 162484 Sep 14 11:21 spinnerWall.stl\n\n5  : 0\n    0.65 .. 0.7  : 0\n    0.7 .. 0.75  : 0\n    0.75 .. 0.8  : 0\n    0.8 .. 0.85  : 0\n    0.85 .. 0.9  : 0\n    0.9 .. 0.95  : 0\n    0.95 .. 1  : 0\n\n    min 0.0493707 for triangle 2626\n    max 0.0682584 for triangle 931\n\nEdges:\n    min 0.000256802 for edge 2433 points (0.00861825 -0.012277 0.004)(0.00840681 -0.0124228 0.004)\n    max 0.00800603 for edge 672 points (-0.016016 0.0150827 -0.004)(-0.0158015 0.0153073 0.004)\n\nChecking for points less than 1e-6 of bounding box ((0.0439995 0.0439997 0.008) metre) apart.\nFound 0 nearby points.\n\nSurface is closed. All edges connected to two faces.\n\nNumber of unconnected parts : 1\n\nNumber of zones (connected area with consistent normal) : 1\n\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "for d in [\"system\",\"constant\"]: os.makedirs(d, exist_ok=True)\ndef w(p,s): open(p,\"w\").write(s)\nhead = \"FoamFile{version 2.0; format ascii; class dictionary; object %s;}\\n\"\nw(\"system/controlDict\", head%\"controlDict\"+\"application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\\n\")\nw(\"system/fvSchemes\", head%\"fvSchemes\"+\"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\\n\")\nw(\"system/fvSolution\", head%\"fvSolution\"+\"solvers{} relaxationFactors{}\\n\")\n# background box: 1 mm cells, offset half a cell so r=22,23 and z=+-4,+-5 fall at cell centres\nw(\"system/blockMeshDict\", head%\"blockMeshDict\"+\"\"\"\nscale 1;\nvertices ( (-0.0235 -0.0235 -0.0055) (0.0235 -0.0235 -0.0055) (0.0235 0.0235 -0.0055) (-0.0235 0.0235 -0.0055)\n           (-0.0235 -0.0235  0.0055) (0.0235 -0.0235  0.0055) (0.0235 0.0235  0.0055) (-0.0235 0.0235  0.0055) );\nblocks ( hex (0 1 2 3 4 5 6 7) (47 47 11) simpleGrading (1 1 1) );\nedges (); boundary ( bg { type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); } );\n\"\"\")\nr=subprocess.run([\"blockMesh\"],capture_output=True,text=True); print(r.returncode, r.stdout[-300:], r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.3013080599994282,
+      "output": "0 h with 0 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (-0.0235 -0.0235 -0.0055) (0.0235 0.0235 0.0055)\n  nPoints: 27648\n  nCells: 24299\n  nFaces: 76140\n  nInternalFaces: 69654\n----------------\nPatches\n----------------\n  patch 0 (start: 69654 size: 6486) name: bg\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "names = [\"ringWall\",\"spinnerWall\",\"ringEndTop\",\"ringEndBottom\"]\nLVL = 1   # coarse first: 1 mm base -> 0.5 mm at the walls, 2 cells across each 1 mm gap\ngeom = \"\\n\".join(f'    {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in names)\nrefs = \"\\n\".join(f'      {n} {{ level ({LVL} {LVL}); patchInfo {{ type wall; }} }}' for n in names)\nw(\"system/snappyHexMeshDict\", head%\"snappyHexMeshDict\"+f\"\"\"\ncastellatedMesh true; snap true; addLayers false;\ngeometry {{\n{geom}\n}}\ncastellatedMeshControls\n{{\n  maxLocalCells 2000000; maxGlobalCells 4000000; minRefinementCells 10; maxLoadUnbalance 0.1;\n  nCellsBetweenLevels 2; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;\n  features ();\n  refinementSurfaces\n  {{\n{refs}\n  }}\n  refinementRegions {{}}\n  locationInMesh (0 0 0);   // inside the spinner bore, which is oil\n}}\nsnapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5; nFeatureSnapIter 10;\n  implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}\naddLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.0; finalLayerThickness 0.3;\n  minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3;\n  nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedianAxisAngle 90;\n  nBufferCellsNoExtrude 0; nLayerIter 50; }}\nmeshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;\n  minVol 1e-13; minTetQuality 1e-30; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;\n  minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}\nmergeTolerance 1e-6; writeFlags (scalarLevels layerSets layerFields);\n\"\"\")\nr=subprocess.run([\"snappyHexMesh\",\"-overwrite\"],capture_output=True,text=True)\nprint(r.returncode); print(r.stdout[-1500:]); print(r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 22.46343976800017,
+      "output": "0\ndo iteration 0\n----------------\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-30      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.02        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nSnapped mesh : cells:51823  faces:172230  points:68824\nCells per refinement level:\n    0\t4151\n    1\t47672\nWriting mesh to time constant\nWrote mesh in = 0.16 s.\nMesh snapped in = 9.81 s.\nChecking final mesh ...\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-30      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.02        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nFinished meshing without any errors\nFinished meshing in = 16.03 s.\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "r=subprocess.run([\"checkMesh\",\"-allTopology\"],capture_output=True,text=True); out=r.stdout\nprint(out[out.find(\"Checking geometry\"):][:2500])",
+      "exit_code": 0,
+      "seconds": 1.5555948820001504,
+      "output": "Checking geometry...\n    Overall domain bounding box (-0.0229994 -0.0229996 -0.005) (0.023 0.0229996 0.005)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (-5.44307e-19 5.94142e-17 8.63512e-16) OK.\n    Max cell openness = 3.38216e-16 OK.\n    Max aspect ratio = 3.21487 OK.\n    Minimum face area = 1.06839e-07. Maximum face area = 1.07294e-06.  Face area magnitudes OK.\n    Min volume = 4.02712e-11. Max volume = 1.08225e-09.  Total volume = 1.00633e-05.  Cell volumes OK.\n    Mesh non-orthogonality Max: 29.0273 average: 7.15066\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 1.0945 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "print(out[out.find(\"Checking patch topology\"):out.find(\"Checking geometry\")])\nr=subprocess.run([\"foamToVTK\",\"-latestTime\",\"-no-internal\",\"-no-boundary\"],capture_output=True,text=True)\nr2=subprocess.run([\"foamToVTK\",\"-latestTime\"],capture_output=True,text=True); print(r2.returncode)\nprint(subprocess.run([\"find\",\"VTK\",\"-name\",\"*.vtp\",\"-o\",\"-name\",\"*.vtm\",\"-o\",\"-name\",\"*.vtu\"],capture_output=True,text=True).stdout)",
+      "exit_code": 0,
+      "seconds": 1.7549093979996542,
+      "output": "Checking patch topology for multiply connected surfaces...\n                   Patch    Faces   Points  Surface topology\n                ringWall     5456     6092  ok (non-closed singly connected)\n             spinnerWall    13300    13632  ok (non-closed singly connected)\n              ringEndTop     6664     6849  ok (non-closed singly connected)\n           ringEndBottom     6664     6849  ok (non-closed singly connected)\n                    \".*\"    32084    32334      ok (closed singly connected)\n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    No cellZones found.\n\nChecking basic pointZone addressing...\n               PointZone  PointsBoundingBox\n            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)\n\n\n0\nVTK/t9_0.vtm\nVTK/t9_0/boundary.vtm\nVTK/t9_0/internal.vtu\nVTK/t9_0/boundary/spinnerWall.vtp\nVTK/t9_0/boundary/ringEndTop.vtp\nVTK/t9_0/boundary/ringEndBottom.vtp\nVTK/t9_0/boundary/ringWall.vtp",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.start_xvfb() if False else None\nexp = {\"ringWall\":1445.1,\"spinnerWall\":3487.2,\"ringEndTop\":1661.9,\"ringEndBottom\":1661.9}\npl = pv.Plotter(off_screen=True, window_size=(900,750))\ncols = {\"ringWall\":\"steelblue\",\"spinnerWall\":\"orange\",\"ringEndTop\":\"green\",\"ringEndBottom\":\"red\"}\nfor n in exp:\n    m = pv.read(f\"VTK/t9_0/boundary/{n}.vtp\")\n    a = m.compute_cell_sizes(length=False, volume=False)[\"Area\"].sum()*1e6\n    print(f\"{n:14s} mesh area mm^2 {a:8.1f}   CAD {exp[n]:8.1f}\")\n    pl.add_mesh(m.clip(normal=\"y\", origin=(0,0,0)), color=cols[n], show_edges=True, line_width=0.4)\npl.camera_position=[(0.07,-0.07,0.05),(0,0,0),(0,0,1)]\npl.screenshot(\"view.png\"); print(\"ok\")",
+      "exit_code": 0,
+      "seconds": 0.5521528219996981,
+      "output": "ringWall       mesh area mm^2   1436.6   CAD   1445.1\nspinnerWall    mesh area mm^2   3462.2   CAD   3487.2\nringEndTop     mesh area mm^2   1657.3   CAD   1661.9\nringEndBottom  mesh area mm^2   1657.3   CAD   1661.9\nok\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-14 11:23:29.116 (   0.254s) [    7D269F449780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 11:23:29.116 (   0.255s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 11:23:29.130 (   0.268s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": ""
+    },
+    {
+      "cmd": "from IPython.display import Image, display\nprint(os.path.getsize(\"view.png\"))\ndisplay(Image(\"view.png\"))",
+      "exit_code": 0,
+      "seconds": 0.36429957399923296,
+      "output": "210694",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "vol = pv.read(\"VTK/t9_0/internal.vtu\")\nsl  = vol.slice(normal=\"y\", origin=(0,0,0))\npl = pv.Plotter(off_screen=True, window_size=(1100,420))\npl.add_mesh(sl, color=\"lightgrey\", show_edges=True, line_width=0.6)\npl.camera_position=[(0,-0.1,0),(0,0,0),(0,0,1)]; pl.camera.parallel_projection=True; pl.camera.parallel_scale=0.026\npl.screenshot(\"slice.png\"); display(Image(\"slice.png\"))\nprint(\"min/max cells across: gap cell size m =\", (vol.compute_cell_sizes(length=False,area=False)[\"Volume\"].min())**(1/3))",
+      "exit_code": 0,
+      "seconds": 0.3407271269998091,
+      "output": "min/max cells across: gap cell size m = 0.0003427663037398519\n\n\u001b[0m\u001b[33m2026-09-14 11:23:48.042 (  19.180s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 11:23:48.042 (  19.181s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "LVL = 2   # final: 0.25 mm at the walls -> ~4 cells across each 1 mm gap\nrefs = \"\\n\".join(f'      {n} {{ level ({LVL} {LVL}); patchInfo {{ type wall; }} }}' for n in names)\nd = open(\"system/snappyHexMeshDict\").read()\nimport re\nd = re.sub(r\"(refinementSurfaces\\n  \\{\\n)(.*?)(\\n  \\}\\n  refinementRegions)\", lambda m: m.group(1)+refs+m.group(3), d, flags=re.S)\nw(\"system/snappyHexMeshDict\", d)\nsubprocess.run([\"blockMesh\"],capture_output=True,text=True)\nr=subprocess.run([\"snappyHexMesh\",\"-overwrite\"],capture_output=True,text=True)\nprint(r.returncode, r.stdout[-600:])",
+      "exit_code": 0,
+      "seconds": 99.71030458899986,
+      "output": "0                     : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-30      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.02        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nFinished meshing without any errors\nFinished meshing in = 79.78 s.\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "r=subprocess.run([\"checkMesh\"],capture_output=True,text=True); o=r.stdout\nprint(o[o.find(\"Mesh stats\"):o.find(\"Checking patch topology\")])\nprint(o[o.find(\"Checking geometry\"):][:1400])",
+      "exit_code": 0,
+      "seconds": 2.75788270799967,
+      "output": "Mesh stats \n    points:           363362\n    faces:            946838\n    internal faces:   819466\n    cells:            291831\n    faces per cell:   6.05249\n    boundary patches: 4\n    point zones:      1\n    face zones:       0\n    cell zones:       0\n\nOverall number of cells of each type:\n    hexahedra:     261961\n    prisms:        18132\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     11738\n    Breakdown of polyhedra by number of faces:\n        faces   number of cells\n            5   1128\n            6   1248\n            9   7558\n           12   1564\n           15   120\n           18   120\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\n\nChecking geometry...\n    Overall domain bounding box (-0.0229994 -0.0229996 -0.005) (0.023 0.0229996 0.005)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (1.94623e-16 -1.77104e-17 -6.15257e-17) OK.\n    Max cell openness = 4.44464e-16 OK.\n    Max aspect ratio = 3.46143 OK.\n    Minimum face area = 2.57192e-08. Maximum face area = 1.02832e-06.  Face area magnitudes OK.\n    Min volume = 4.7187e-12. Max volume = 1.03746e-09.  Total volume = 1.01096e-05.  Cell volumes OK.\n    Mesh non-orthogonality Max: 41.9935 average: 6.99955\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 1.11138 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "subprocess.run([\"foamToVTK\",\"-latestTime\"],capture_output=True,text=True)\nfor n in exp:\n    m=pv.read(f\"VTK/t9_0/boundary/{n}.vtp\"); a=m.compute_cell_sizes(length=False,volume=False)[\"Area\"].sum()*1e6\n    print(f\"{n:14s} mesh {a:8.1f}  CAD {exp[n]:8.1f} mm^2\")\nvol=pv.read(\"VTK/t9_0/internal.vtu\"); sl=vol.slice(normal=\"y\")\npl=pv.Plotter(off_screen=True,window_size=(1200,420))\npl.add_mesh(sl,color=\"lightgrey\",show_edges=True,line_width=0.4)\npl.camera_position=[(0,-0.1,0),(0,0,0),(0,0,1)];pl.camera.parallel_projection=True;pl.camera.parallel_scale=0.0125\npl.screenshot(\"slice2.png\"); display(Image(\"slice2.png\"))",
+      "exit_code": 0,
+      "seconds": 8.606362102000276,
+      "output": "ringWall       mesh   1434.7  CAD   1445.1 mm^2\nspinnerWall    mesh   3463.7  CAD   3487.2 mm^2\nringEndTop     mesh   1658.6  CAD   1661.9 mm^2\nringEndBottom  mesh   1658.6  CAD   1661.9 mm^2\n\n\u001b[0m\u001b[33m2026-09-14 11:26:17.464 ( 168.602s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 11:26:17.465 ( 168.603s) [    7D269F449780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "u = pv.PolyData()\nfor n in exp: u = u.merge(pv.read(f\"constant/triSurface/{n}.stl\"))\nc = u.clean(tolerance=1e-6, absolute=True)\ne = c.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False)\nprint(\"free edges in union:\", e.n_cells, \" bodies:\", c.split_bodies().n_blocks)",
+      "exit_code": 0,
+      "seconds": 0.7533646470001258,
+      "output": "free edges in union: 0  bodies: 2",
+      "image": ""
+    },
+    {
+      "cmd": "for n in exp:\n    m = pv.read(f\"constant/triSurface/{n}.stl\").compute_normals(auto_orient_normals=False, consistent_normals=False, cell_normals=True, point_normals=False)\n    nm = m.cell_normals; cc = m.cell_centers().points\n    if n.startswith(\"ringEnd\"): dot = (nm[:,2]*np.sign(cc[:,2])).mean()          # outward = +-z\n    elif n==\"ringWall\": dot = (nm[:,0]*cc[:,0]+nm[:,1]*cc[:,1]).mean()/0.023     # outward = +r\n    else: dot = (nm[:,0]*cc[:,0]+nm[:,1]*cc[:,1]).mean()                          # spinner: mixed, just report\n    print(f\"{n:14s} mean outward dot = {dot:+.3f}\")",
+      "exit_code": 0,
+      "seconds": 0.050640966999708326,
+      "output": "ringWall       mean outward dot = +1.000\nspinnerWall    mean outward dot = +0.003\nringEndTop     mean outward dot = +1.000\nringEndBottom  mean outward dot = -1.000",
+      "image": ""
+    },
+    {
+      "cmd": "# the bottom cap must be wound outward (-z) like the rest of the envelope; Circle's face normal is +z\nendBot = (bd.Pos(0,0,-H_ring/2) * bd.Circle(R_ring_i).face())\nendBot = bd.Face(endBot.wrapped.Reversed())\npatches = {\"ringWall\":bd.Shell([ringWall]), \"spinnerWall\":spinWall,\n           \"ringEndTop\":bd.Shell([endTop]), \"ringEndBottom\":bd.Shell([endBot])}\nfor n,s in patches.items():\n    bd.export_stl(s, f\"constant/triSurface/{n}.stl\", tolerance=5e-5, angular_tolerance=0.1)\nu = pv.PolyData()\nfor n in patches: u = u.merge(pv.read(f\"constant/triSurface/{n}.stl\"))\nc = u.clean(tolerance=1e-6, absolute=True)\nprint(\"free edges:\", c.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False).n_cells)\nm = pv.read(\"constant/triSurface/ringEndBottom.stl\").compute_normals(auto_orient_normals=False, consistent_normals=False)\nprint(\"ringEndBottom mean nz (want -1):\", m.cell_normals[:,2].mean())",
+      "exit_code": 0,
+      "seconds": 4.663493746000313,
+      "output": "free edges: 0\nringEndBottom mean nz (want -1): -1.0",
+      "image": ""
+    },
+    {
+      "cmd": "f = c.faces.reshape(-1,4)[:,1:]\nfrom collections import Counter\ncnt = Counter()\nfor a,b,d in f:\n    for e in ((a,b),(b,d),(d,a)): cnt[e]+=1\nbad = sum(v for e,v in cnt.items() if v>1)\nprint(\"directed edges traversed more than once:\", bad, \" triangles:\", len(f))",
+      "exit_code": 0,
+      "seconds": 0.05081567700017331,
+      "output": "directed edges traversed more than once: 0  triangles: 5024",
+      "image": ""
+    },
+    {
+      "cmd": "subprocess.run([\"blockMesh\"],capture_output=True,text=True)\nr=subprocess.run([\"snappyHexMesh\",\"-overwrite\"],capture_output=True,text=True); print(r.returncode)\no=subprocess.run([\"checkMesh\"],capture_output=True,text=True).stdout\nprint([l for l in o.splitlines() if \"cells:\" in l or \"Total volume\" in l or \"Number of regions\" in l or \"Mesh OK\" in l or \"skewness\" in l or \"non-orthogonality Max\" in l])",
+      "exit_code": 0,
+      "seconds": 102.50917507399936,
+      "output": "0\n['    cells:            291831', '    Number of regions: 1 (OK).', '    Min volume = 4.7187e-12. Max volume = 1.03746e-09.  Total volume = 1.01096e-05.  Cell volumes OK.', '    Mesh non-orthogonality Max: 41.9935 average: 6.99955', '    Max skewness = 1.11138 OK.', 'Mesh OK.']",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 3893,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 3819,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789384866.6522923
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 562,
+      "fenced": true,
+      "text_chars": 194,
+      "thinking_chars": 106,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789384881.6554573
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 383,
+      "fenced": true,
+      "text_chars": 119,
+      "thinking_chars": 202,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789384893.3911781
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 1671,
+      "fenced": true,
+      "text_chars": 128,
+      "thinking_chars": 1184,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789384921.0996199
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 1148,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 183,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789384943.6420403
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 177,
+      "fenced": true,
+      "text_chars": 87,
+      "thinking_chars": 135,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789384974.959681
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 641,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 528,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789384991.616632
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 474,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 157,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385004.36166
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 153,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 200,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385014.536594
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 491,
+      "fenced": true,
+      "text_chars": 145,
+      "thinking_chars": 321,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385027.963529
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 931,
+      "fenced": true,
+      "text_chars": 140,
+      "thinking_chars": 660,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385042.8608718
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 136,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385148.7196236
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 530,
+      "fenced": true,
+      "text_chars": 135,
+      "thinking_chars": 263,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385164.8499436
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 646,
+      "fenced": true,
+      "text_chars": 137,
+      "thinking_chars": 823,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385191.7816415
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 1000,
+      "fenced": false,
+      "text_chars": 2130,
+      "thinking_chars": 135,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385207.624818
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 767,
+      "fenced": true,
+      "text_chars": 162,
+      "thinking_chars": 604,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385227.9952867
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 1000,
+      "fenced": true,
+      "text_chars": 206,
+      "thinking_chars": 806,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385247.1031694
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 247,
+      "fenced": true,
+      "text_chars": 103,
+      "thinking_chars": 178,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385261.3016078
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 705,
+      "fenced": true,
+      "text_chars": 107,
+      "thinking_chars": 475,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385277.024316
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 469,
+      "fenced": false,
+      "text_chars": 1024,
+      "thinking_chars": 60,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789385392.425009
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "measured",
+      "why": "the meshing point from system/snappyHexMeshDict is inside the exported surface, 0.005 m clear",
+      "measured": {
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "source": "system/snappyHexMeshDict",
+        "classification": "inside",
+        "clearance_m": 0.004999999888241291
+      }
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 5,024 triangles across 4 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "ringEndBottom.stl",
+          "ringEndTop.stl",
+          "ringWall.stl",
+          "spinnerWall.stl"
+        ],
+        "triangles": 5024
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the patch set",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 5024
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 947 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 947
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the radial clearance, measured between the two meshed wall patches, not restated from the input",
+      "measured": null
+    },
+    {
+      "property": "the axial end gap, measured the same way, at both ends",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "the cell size across the clearance, and how many cells span it, counted on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the oil volume, against the ring's bore swept volume minus the spinner's",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "warned",
+          "concern": "445 edges are walked twice the same way, so the winding is inconsistent across the surface",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        }
+      ]
+    },
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 20,
+    "steps": 18,
+    "seconds": 601.2,
+    "killed": false,
+    "first_mesh_step": 3,
+    "first_mesh_turn": 4
+  }
+}

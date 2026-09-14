@@ -1,0 +1,470 @@
+{
+  "run_id": "20260914-102553-bd8f",
+  "case": "T2",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T2-20260914-102553-bd8f",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T2-20260914-102553-bd8f/t2",
+  "started_at": "2026-09-14T10:25:54",
+  "ended_at": "2026-09-14T10:35:05",
+  "seconds": 507.0,
+  "n_turns": 16,
+  "n_steps": 15,
+  "first_mesh_step": 5,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.4367,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 32,
+    "cache_read": 173661,
+    "cache_write": 16313,
+    "output": 9910
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd, numpy as np, os, subprocess\nprint(bd.__version__ if hasattr(bd,'__version__') else 'ok', os.getcwd(), os.listdir('.'))",
+      "exit_code": 0,
+      "seconds": 2.20873232599979,
+      "output": "0.11.1 /home/qiuzi/.openreynolds-buildup/work/T2-20260914-102553-bd8f/t2 ['.reference']",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nfrom build123d import Pos, Vector\nD = 0.040            # sphere diameter, from request\nR = D/2\nXU, XD, YS = 5*D, 15*D, 5*D    # 5D up, 15D down, 5D lateral/vert\nx0, x1 = -XU, XD\ny0, y1, z0, z1 = -YS, YS, -YS, YS\n\nsphere = bd.Sphere(R)\nprint(sphere.bounding_box(), sphere.volume, 4/3*3.141592653589793*R**3)\nbox = bd.Box(x1-x0, y1-y0, z1-z0).moved(bd.Location(Vector((x0+x1)/2,0,0)))\nprint(box.bounding_box())",
+      "exit_code": 0,
+      "seconds": 0.050714776999939204,
+      "output": "bbox: -0.02 <= x <= 0.02, -0.02 <= y <= 0.02, -0.02 <= z <= 0.02 3.351032163829113e-05 3.351032163829113e-05\nbbox: -0.20000000000000004 <= x <= 0.6, -0.2 <= y <= 0.2, -0.2 <= z <= 0.2",
+      "image": ""
+    },
+    {
+      "cmd": "import os\nfrom build123d import Plane, Rectangle, export_stl\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nL = 2*YS\ninlet    = Plane(origin=(x0,0,0), z_dir=(1,0,0)) * Rectangle(L, L)\noutlet   = Plane(origin=(x1,0,0), z_dir=(1,0,0)) * Rectangle(L, L)\nside_ym  = Plane(origin=(0,y0,0), z_dir=(0,1,0)) * Rectangle(x1-x0, L)\nside_yp  = Plane(origin=(0,y1,0), z_dir=(0,1,0)) * Rectangle(x1-x0, L)\nside_zm  = Plane(origin=(0,0,z0), z_dir=(0,0,1)) * Rectangle(x1-x0, L)\nside_zp  = Plane(origin=(0,0,z1), z_dir=(0,0,1)) * Rectangle(x1-x0, L)\nfarfield = side_ym + side_yp + side_zm + side_zp\nfor name, sh in [(\"sphere\", sphere), (\"inlet\", inlet), (\"outlet\", outlet), (\"farfield\", farfield)]:\n    export_stl(sh, f\"constant/triSurface/{name}.stl\", tolerance=1e-5, angular_tolerance=0.1)\n    print(name, sh.bounding_box(), sh.area)",
+      "exit_code": 0,
+      "seconds": 167.89476402900027,
+      "output": "sphere bbox: -0.02 <= x <= 0.02, -0.02 <= y <= 0.02, -0.02 <= z <= 0.02 0.005026548245743669\ninlet bbox: -0.2 <= x <= -0.2, -0.2 <= y <= 0.2, -0.2 <= z <= 0.2 0.16000000000000003\noutlet bbox: 0.6 <= x <= 0.6, -0.2 <= y <= 0.2, -0.2 <= z <= 0.2 0.16000000000000003\nfarfield bbox: -0.4 <= x <= 0.4, -0.2 <= y <= 0.2, -0.4 <= z <= 0.4 1.2800000000000002",
+      "image": ""
+    },
+    {
+      "cmd": "xc = (x0+x1)/2\nside_ym  = Plane(origin=(xc,y0,0), z_dir=(0,1,0)) * Rectangle(x1-x0, L)\nside_yp  = Plane(origin=(xc,y1,0), z_dir=(0,1,0)) * Rectangle(x1-x0, L)\nside_zm  = Plane(origin=(xc,0,z0), z_dir=(0,0,1)) * Rectangle(x1-x0, L)\nside_zp  = Plane(origin=(xc,0,z1), z_dir=(0,0,1)) * Rectangle(x1-x0, L)\nfor n,f in [(\"ym\",side_ym),(\"yp\",side_yp),(\"zm\",side_zm),(\"zp\",side_zp)]:\n    print(n, f.bounding_box(), f.area)",
+      "exit_code": 0,
+      "seconds": 0.8528920200001266,
+      "output": "ym bbox: -2.7755575615628914e-17 <= x <= 0.4, -0.2 <= y <= -0.2, -0.4 <= z <= 0.4 0.32000000000000006\nyp bbox: -2.7755575615628914e-17 <= x <= 0.4, 0.2 <= y <= 0.2, -0.4 <= z <= 0.4 0.32000000000000006\nzm bbox: -0.20000000000000004 <= x <= 0.6, -0.2 <= y <= 0.2, -0.2 <= z <= -0.2 0.32000000000000006\nzp bbox: -0.20000000000000004 <= x <= 0.6, -0.2 <= y <= 0.2, 0.2 <= z <= 0.2 0.32000000000000006",
+      "image": ""
+    },
+    {
+      "cmd": "side_ym  = Plane(origin=(xc,y0,0), z_dir=(0,1,0)) * Rectangle(L, x1-x0)\nside_yp  = Plane(origin=(xc,y1,0), z_dir=(0,1,0)) * Rectangle(L, x1-x0)\nfarfield = side_ym + side_yp + side_zm + side_zp\nprint(farfield.bounding_box(), farfield.area, 4*(x1-x0)*L)\nexport_stl(farfield, \"constant/triSurface/farfield.stl\", tolerance=1e-5, angular_tolerance=0.1)",
+      "exit_code": 0,
+      "seconds": 0.8025242039998375,
+      "output": "bbox: -0.20000000000000004 <= x <= 0.6, -0.2 <= y <= 0.2, -0.2 <= z <= 0.2 1.2800000000000002 1.2800000000000002\nTrue",
+      "image": ""
+    },
+    {
+      "cmd": "import os, textwrap\nos.makedirs(\"system\", exist_ok=True); os.makedirs(\"constant\", exist_ok=True)\nhead = lambda cls, obj: f\"\"\"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\\n\"\"\"\nNX, NY, NZ = 40, 20, 20   # background cell ~0.02 m = D/2 (coarse first)\nverts = [(x0,y0,z0),(x1,y0,z0),(x1,y1,z0),(x0,y1,z0),(x0,y0,z1),(x1,y0,z1),(x1,y1,z1),(x0,y1,z1)]\nvtxt = \"\\n\".join(f\"({a} {b} {c})\" for a,b,c in verts)\nopen(\"system/blockMeshDict\",\"w\").write(head(\"dictionary\",\"blockMeshDict\")+f\"\"\"\nscale 1;\nvertices ({vtxt});\nblocks (hex (0 1 2 3 4 5 6 7) ({NX} {NY} {NZ}) simpleGrading (1 1 1));\nedges ();\nboundary\n(\n    inlet    {{ type patch; faces ((0 4 7 3)); }}\n    outlet   {{ type patch; faces ((1 2 6 5)); }}\n    farfield {{ type patch; faces ((0 1 5 4) (3 7 6 2) (0 3 2 1) (4 5 6 7)); }}\n);\nmergePatchPairs ();\n\"\"\")\nopen(\"system/controlDict\",\"w\").write(head(\"dictionary\",\"controlDict\")+\"\"\"\napplication snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\ndeltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; writePrecision 6;\nrunTimeModifiable true;\n\"\"\")\nopen(\"system/fvSchemes\",\"w\").write(head(\"dictionary\",\"fvSchemes\")+\"\"\"\nddtSchemes{default steadyState;} gradSchemes{default Gauss linear;}\ndivSchemes{default none;} laplacianSchemes{default Gauss linear corrected;}\ninterpolationSchemes{default linear;} snGradSchemes{default corrected;}\n\"\"\")\nopen(\"system/fvSolution\",\"w\").write(head(\"dictionary\",\"fvSolution\")+\"\"\"\nsolvers{} \n\"\"\")\nprint(subprocess.run([\"blockMesh\"],capture_output=True,text=True).stdout[-600:])",
+      "exit_code": 0,
+      "seconds": 0.30131683900026474,
+      "output": "blockMesh\nCreating patches\nCreating cells\nCreating points with scale (1 1 1)\n    Block 0 cell size :\n        i : 0.02 .. 0.02\n        j : 0.02 .. 0.02\n        k : 0.02 .. 0.02\n\nNo patch pairs to merge\n\nWriting polyMesh with 0 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (-0.2 -0.2 -0.2) (0.6 0.2 0.2)\n  nPoints: 18081\n  nCells: 16000\n  nFaces: 50000\n  nInternalFaces: 46000\n----------------\nPatches\n----------------\n  patch 0 (start: 46000 size: 400) name: inlet\n  patch 1 (start: 46400 size: 400) name: outlet\n  patch 2 (start: 46800 size: 3200) name: farfield\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "SNAPPY = lambda layers: head(\"dictionary\",\"snappyHexMeshDict\")+f\"\"\"\ncastellatedMesh true; snap true; addLayers {'true' if layers else 'false'};\ngeometry {{ sphere.stl {{ type triSurfaceMesh; name sphere; }} }};\ncastellatedMeshControls\n{{\n    maxLocalCells 1000000; maxGlobalCells 5000000; minRefinementCells 10; maxLoadUnbalance 0.1;\n    nCellsBetweenLevels 3; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;\n    features ();\n    refinementSurfaces {{ sphere {{ level (3 3); patchInfo {{ type wall; }} }} }}\n    refinementRegions {{ }}\n    locationInMesh (-0.15 0.013 0.017);\n}}\nsnapControls\n{{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;\n   nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}\naddLayersControls\n{{\n    relativeSizes true;\n    layers {{ sphere {{ nSurfaceLayers 4; }} }}\n    expansionRatio 1.2; finalLayerThickness 0.4; minThickness 0.1;\n    nGrow 0; featureAngle 120; nRelaxIter 5; nSmoothSurfaceNormals 1; nSmoothNormals 3;\n    nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3;\n    minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50;\n}}\nmeshQualityControls\n{{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;\n   minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001;\n   minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}\nwriteFlags (); mergeTolerance 1e-6;\n\"\"\"\nopen(\"system/snappyHexMeshDict\",\"w\").write(SNAPPY(False))\nr=subprocess.run([\"snappyHexMesh\",\"-overwrite\"],capture_output=True,text=True); print(r.stdout[-1200:])",
+      "exit_code": 0,
+      "seconds": 16.296133117999943,
+      "output": "with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.02        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nSnapped mesh : cells:23351  faces:74027  points:27653\nCells per refinement level:\n    0\t15816\n    1\t1120\n    2\t1991\n    3\t4424\nWriting mesh to time constant\nWrote mesh in = 0.07 s.\nMesh snapped in = 1.84 s.\nChecking final mesh ...\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.02        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nFinished meshing without any errors\nFinished meshing in = 7.44 s.\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.start_xvfb() if False else None\nopen(\"case.foam\",\"w\").close()\nrd = pv.OpenFOAMReader(\"case.foam\"); rd.set_active_time_value(0.0)\nm = rd.read()\ninternal = m[\"internalMesh\"]; bnd = m[\"boundary\"]\nprint(list(bnd.keys()))\nsph = bnd[\"sphere\"]\nprint(\"sphere patch area\", sph.extract_surface().compute_cell_sizes()[\"Area\"].sum(), \"analytic\", 4*np.pi*R**2)\nprint(\"bbox sphere patch\", sph.bounds)",
+      "exit_code": 0,
+      "seconds": 0.2512493330000325,
+      "output": "['inlet', 'outlet', 'farfield', 'sphere']\nsphere patch area 0.0050073573128089546 analytic 0.005026548245743669\nbbox sphere patch BoundsTuple(x_min = -0.019999900832772255,\n            x_max =  0.019999900832772255,\n            y_min = -0.019999900832772255,\n            y_max =  0.019999900832772255,\n            z_min = -0.019999999552965164,\n            z_max =  0.019999999552965164)\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n/tmp/ipykernel_52519/1228258363.py:9: PyVistaFutureWarning: The default value of `algorithm` for the filter\n`PolyData.extract_surface` will change in the future. It currently defaults to\n`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to\nsilence this warning.\n  print(\"sphere patch area\", sph.extract_surface().compute_cell_sizes()[\"Area\"].sum(), \"analytic\", 4*np.pi*R**2)",
+      "image": ""
+    },
+    {
+      "cmd": "sl = internal.slice(normal=\"z\", origin=(0,0,0))\np = pv.Plotter(off_screen=True, window_size=(1300,650))\np.add_mesh(sl, show_edges=True, color=\"lightgray\", line_width=1)\np.add_mesh(sph, color=\"red\")\np.view_xy(); p.camera.zoom(1.3)\np.screenshot(\"slice_coarse.png\"); print(\"ok\")",
+      "exit_code": 0,
+      "seconds": 0.35150793499997235,
+      "output": "ok\n\n\u001b[0m\u001b[33m2026-09-14 10:31:05.422 (   7.837s) [    7772A017C780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 10:31:05.423 (   7.837s) [    7772A017C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 10:31:05.436 (   7.850s) [    7772A017C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": ""
+    },
+    {
+      "cmd": "from IPython.display import Image, display\ndisplay(Image(\"slice_coarse.png\"))",
+      "exit_code": 0,
+      "seconds": 0.11466565199998513,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "SNAPPY2 = head(\"dictionary\",\"snappyHexMeshDict\")+f\"\"\"\ncastellatedMesh true; snap true; addLayers true;\ngeometry\n{{\n    sphere.stl {{ type triSurfaceMesh; name sphere; }}\n    wake {{ type searchableBox; min (-0.06 -0.06 -0.06); max (0.32 0.06 0.06); }}\n}};\ncastellatedMeshControls\n{{\n    maxLocalCells 2000000; maxGlobalCells 8000000; minRefinementCells 10; maxLoadUnbalance 0.1;\n    nCellsBetweenLevels 3; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;\n    features ();\n    refinementSurfaces {{ sphere {{ level (3 3); patchInfo {{ type wall; }} }} }}\n    refinementRegions {{ wake {{ mode inside; levels ((1e15 2)); }} }}\n    locationInMesh (-0.15 0.013 0.017);\n}}\nsnapControls\n{{ nSmoothPatch 3; tolerance 2.0; nSolveIter 100; nRelaxIter 5;\n   nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}\naddLayersControls\n{{\n    relativeSizes true;\n    layers {{ sphere {{ nSurfaceLayers 5; }} }}\n    expansionRatio 1.2; finalLayerThickness 0.4; minThickness 0.05;\n    nGrow 0; featureAngle 130; nRelaxIter 5; nSmoothSurfaceNormals 1; nSmoothNormals 3;\n    nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3;\n    minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; nRelaxedIter 20;\n}}\nmeshQualityControls\n{{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;\n   minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001;\n   minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75;\n   relaxed {{ maxNonOrtho 75; }} }}\nwriteFlags (); mergeTolerance 1e-6;\n\"\"\"\nopen(\"system/snappyHexMeshDict\",\"w\").write(SNAPPY2)\nsubprocess.run([\"blockMesh\"],capture_output=True,text=True)\nr=subprocess.run([\"snappyHexMesh\",\"-overwrite\"],capture_output=True,text=True)\nprint(r.stdout[-1500:])",
+      "exit_code": 0,
+      "seconds": 29.434055846999854,
+      "output": ": 0\nDetected 0 illegal faces (concave, zero area or negative cell pyramid volume)\nExtruding 744 out of 744 faces (100%). Removed extrusion at 0 faces.\nAdded 3720 out of 3720 cells (100%).\nEdge intersection testing:\n    Number of edges             : 221567\n    Number of edges to retest   : 0\n    Number of intersected edges : 4464\nMesh with layers : cells:71003  faces:221567  points:79956\n\npatch  faces        layers        overall thickness\n                target   mesh     [m]       [%]\n-----  -----    -----    ----     ---       ---\nsphere 744      5        5        0.00359   100     \n\nLayer mesh : cells:71003  faces:221567  points:79956\nCells per refinement level:\n    0\t14660\n    1\t5248\n    2\t42951\n    3\t8144\nWriting mesh to time constant\nWrote mesh in = 0.17 s.\nLayers added in = 1.03 s.\nChecking final mesh ...\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.02        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nFinished meshing without any errors\nFinished meshing in = 13.49 s.\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "open(\"system/snappyHexMeshDict\",\"w\").write(SNAPPY2.replace(\"level (3 3)\",\"level (4 4)\"))\nsubprocess.run([\"blockMesh\"],capture_output=True,text=True)\nr=subprocess.run([\"snappyHexMesh\",\"-overwrite\"],capture_output=True,text=True)\nprint(r.stdout[-900:])",
+      "exit_code": 0,
+      "seconds": 33.48737196399952,
+      "output": "sh : cells:94891  faces:298793  points:109918\nCells per refinement level:\n    0\t14656\n    1\t5280\n    2\t42712\n    3\t4651\n    4\t27592\nWriting mesh to time constant\nWrote mesh in = 0.24 s.\nLayers added in = 1.38 s.\nChecking final mesh ...\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.02        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nFinished meshing without any errors\nFinished meshing in = 16.7 s.\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "r=subprocess.run([\"checkMesh\"],capture_output=True,text=True); print(r.stdout[-2500:])",
+      "exit_code": 0,
+      "seconds": 1.253619792999416,
+      "output": "ant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           109918\n    faces:            298793\n    internal faces:   292001\n    cells:            94891\n    faces per cell:   6.22603\n    boundary patches: 4\n    point zones:      1\n    face zones:       0\n    cell zones:       0\n\nOverall number of cells of each type:\n    hexahedra:     81809\n    prisms:        312\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     12770\n    Breakdown of polyhedra by number of faces:\n        faces   number of cells\n            4   608\n            5   552\n            6   1386\n            7   4440\n            8   1360\n            9   3674\n           12   468\n           15   282\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n                   Patch    Faces   Points  Surface topology\n                   inlet      400      441  ok (non-closed singly connected)\n                  outlet      400      441  ok (non-closed singly connected)\n                farfield     3200     3280  ok (non-closed singly connected)\n                  sphere     2792     3510      ok (closed singly connected)\n                    \".*\"     6792     7512      ok (closed singly connected)\n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    No cellZones found.\n\nChecking basic pointZone addressing...\n               PointZone  PointsBoundingBox\n            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)\n\nChecking geometry...\n    Overall domain bounding box (-0.2 -0.2 -0.200007) (0.6 0.200006 0.200006)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (1.42065e-16 -1.57882e-15 -1.77355e-15) OK.\n    Max cell openness = 2.8165e-16 OK.\n    Max aspect ratio = 4.54054 OK.\n    Minimum face area = 1.70353e-07. Maximum face area = 0.000406611.  Face area magnitudes OK.\n    Min volume = 2.30057e-10. Max volume = 8.12323e-06.  Total volume = 0.127967.  Cell volumes OK.\n    Mesh non-orthogonality Max: 38.1222 average: 7.74491\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.49592 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "rd = pv.OpenFOAMReader(\"case.foam\"); rd.set_active_time_value(0.0); m = rd.read()\nsph = m[\"boundary\"][\"sphere\"].extract_surface(); internal=m[\"internalMesh\"]\npts = sph.points; rr = np.linalg.norm(pts,axis=1)\nprint(\"patch radius min/max/mean\", rr.min(), rr.max(), rr.mean(), \" target\", R)\nprint(\"patch area\", sph.compute_cell_sizes()[\"Area\"].sum(), \"analytic\", 4*np.pi*R**2)\nsl = internal.slice(normal=\"z\", origin=(0,0,0))\np = pv.Plotter(off_screen=True, window_size=(900,900))\np.add_mesh(sl, show_edges=True, color=\"white\", line_width=1)\np.view_xy(); p.camera.focal_point=(0,0,0); p.camera.position=(0,0,0.12); p.camera.parallel_projection=True; p.camera.parallel_scale=0.045\np.screenshot(\"layers.png\"); display(Image(\"layers.png\"))",
+      "exit_code": 0,
+      "seconds": 0.9530370840002433,
+      "output": "patch radius min/max/mean 0.0199998 0.020000033 0.019999899  target 0.02\npatch area 0.005021203829497383 analytic 0.005026548245743669\n\n/tmp/ipykernel_52519/1945801043.py:2: PyVistaFutureWarning: The default value of `algorithm` for the filter\n`PolyData.extract_surface` will change in the future. It currently defaults to\n`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to\nsilence this warning.\n  sph = m[\"boundary\"][\"sphere\"].extract_surface(); internal=m[\"internalMesh\"]\n\u001b[0m\u001b[33m2026-09-14 10:33:01.994 ( 124.409s) [    7772A017C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 10:33:01.995 ( 124.410s) [    7772A017C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "cc = internal.cell_centers().points\nsel = cc[(np.abs(cc[:,1])<0.0008)&(np.abs(cc[:,2])<0.0008)&(cc[:,0]<-R)&(cc[:,0]>-R-0.008)]\nrad = np.sort(-sel[:,0]-R)\nprint(np.round(rad*1000,4), \"mm from wall (upstream stagnation line cell centres)\")",
+      "exit_code": 0,
+      "seconds": 0.4022312619999866,
+      "output": "[0.0816 0.0816 0.0816 0.0816 0.3463 0.3463 0.3463 0.3463 0.664  0.664\n 0.664  0.664  1.0453 1.0453 1.0453 1.0453 1.5027 1.5027 1.5027 1.5027\n 2.2726 2.2727 2.2727 2.2727 3.3995 3.3998 3.3998 3.3999 4.6222 4.6223\n 4.6223 5.8575 5.8579 5.8579] mm from wall (upstream stagnation line cell centres)",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 447,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 328,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381570.3809872
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 372,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 235,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381577.5268643
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 1150,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 633,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381596.582905
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 656,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 505,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381776.8595703
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 519,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 176,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381787.385108
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 1108,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 290,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381805.9529438
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 1161,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 254,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381826.3259792
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 348,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 260,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381853.7209346
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 192,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381861.0870726
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 125,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 147,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381868.3339725
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 1168,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 152,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381886.295233
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 357,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 445,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381925.5489552
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 88,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381965.7215424
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 527,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 261,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381977.9271502
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 481,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 265,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789381990.9250772
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 1211,
+      "fenced": false,
+      "text_chars": 1815,
+      "thinking_chars": 501,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382012.7371736
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "measured",
+      "why": "the meshing point from system/snappyHexMeshDict is outside the exported surface, 0.1315 m clear",
+      "measured": {
+        "point": [
+          -0.15,
+          0.013,
+          0.017
+        ],
+        "source": "system/snappyHexMeshDict",
+        "classification": "outside",
+        "clearance_m": 0.13151902070369134
+      }
+    },
+    {
+      "id": "union_closure",
+      "state": "over-limit",
+      "why": "1,006,106 triangles is over this probe's ceiling of 400,000, so its edges were not counted -- the surface is present and unmeasured, not absent (3 file(s) in the directory that system/snappyHexMeshDict does not name were not welded in: farfield.stl, inlet.stl, outlet.stl)",
+      "measured": {
+        "triangles": 1006106,
+        "limit": 400000
+      }
+    },
+    {
+      "id": "normals",
+      "state": "over-limit",
+      "why": "1,006,106 triangles is over this probe's ceiling of 400,000, so its edges were not counted -- the surface is present and unmeasured, not absent (3 file(s) in the directory that system/snappyHexMeshDict does not name were not welded in: farfield.stl, inlet.stl, outlet.stl)",
+      "measured": {
+        "triangles": 1006106,
+        "limit": 400000
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "over-limit",
+      "why": "1,006,106 triangles is over this probe's ceiling of 200,000, so no pair was tested -- the surface is present and unmeasured, not absent",
+      "measured": {
+        "triangles": 1006106,
+        "limit": 200000
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "sphere diameter, 40 mm",
+      "measured": null
+    },
+    {
+      "property": "domain extent in diameters, upstream / downstream / lateral: 5 / 15 / 5",
+      "measured": null
+    },
+    {
+      "property": "blockage ratio \u2014 sphere frontal area over domain cross-section",
+      "measured": null
+    },
+    {
+      "property": "achieved layer coverage on the sphere, as a percentage, **read off the mesh**",
+      "measured": null
+    },
+    {
+      "property": "the four patches, each with its area and mean normal",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "xfail",
+          "concern": "the meshing point is outside the exported surface by 0.1315 m",
+          "because": "External flow: the meshing point (-0.15 0.013 0.017) is deliberately outside the sphere surface, in the fluid between sphere and outer box."
+        },
+        {
+          "check": "union_closure",
+          "state": "n/a",
+          "concern": "1,006,106 triangles is over this probe's ceiling of 400,000, so its edges were not counted -- the surface is present and unmeasured, not absent (3 file(s) in the directory that system/snappyHexMeshDic",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "n/a",
+          "concern": "1,006,106 triangles is over this probe's ceiling of 400,000, so its edges were not counted -- the surface is present and unmeasured, not absent (3 file(s) in the directory that system/snappyHexMeshDic",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "n/a",
+          "concern": "1,006,106 triangles is over this probe's ceiling of 200,000, so no pair was tested -- the surface is present and unmeasured, not absent",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 16,
+    "steps": 15,
+    "seconds": 506.9,
+    "killed": false,
+    "first_mesh_step": 5,
+    "first_mesh_turn": 6
+  }
+}

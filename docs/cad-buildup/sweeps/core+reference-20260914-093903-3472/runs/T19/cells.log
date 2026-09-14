@@ -1,0 +1,491 @@
+# -- cell 1 (2.3s, exit 0)
+import subprocess, os, math
+import build123d as bd
+
+os.makedirs("constant/triSurface", exist_ok=True)
+
+R_SHAFT = 0.020        # 40 mm dia sealed length
+R_BORE  = 0.020050     # 40.1 mm dia bore -> 0.05 mm radial clearance
+L       = 0.060        # 60 mm bore / sealed length
+KEY_W   = 0.012        # 12 mm keyway width
+KEY_D   = 0.005        # 5 mm keyway depth
+KEY_X0  = R_SHAFT - KEY_D   # keyway floor at x = 15 mm
+
+shaft_solid = bd.Cylinder(R_SHAFT, L)
+keyway  = bd.Pos(KEY_X0 + (KEY_D + 0.004)/2, 0, 0) * bd.Box(KEY_D + 0.004, KEY_W, L)
+shaft_keyed = shaft_solid - keyway
+fluid = bd.Cylinder(R_BORE, L) - shaft_keyed
+
+bb = fluid.bounding_box()
+print("bbox min/max:", bb.min, bb.max)
+print("volume m^3:", fluid.volume)
+print("clearance mm:", (R_BORE-R_SHAFT)*1e3, "length mm:", L*1e3)
+print("n faces:", len(fluid.faces()))
+# -- output
+bbox min/max: Vector: (X=-0.02005, Y=-0.02005, Z=-0.03) Vector: (X=0.02005, Y=0.02005, Z=0.03)
+volume m^3: 3.7584483039000833e-06
+clearance mm: 0.04999999999999796 length mm: 60.0
+n faces: 7
+
+# -- cell 2 (0.1s, exit 0)
+import numpy as np
+fl = fluid.faces()
+for i,f in enumerate(fl):
+    c = f.center()
+    n = f.normal_at(c) if f.geom_type == bd.GeomType.PLANE else None
+    print(i, f.geom_type, "area=%.3e"%f.area, "ctr=(%.5f,%.5f,%.5f)"%(c.X,c.Y,c.Z),
+          "R=%.5f"%getattr(f,'radius',float('nan')) if f.geom_type==bd.GeomType.CYLINDER else ("n=%s"%(tuple(round(v,3) for v in (n.X,n.Y,n.Z)),)))
+# -- output
+0 GeomType.CYLINDER area=7.559e-03 ctr=(-0.02005,0.00000,0.00000) R=0.02005
+1 GeomType.PLANE area=6.264e-05 ctr=(0.01561,0.00000,0.03000) n=(0.0, 0.0, 1.0)
+2 GeomType.PLANE area=6.264e-05 ctr=(0.01561,0.00000,-0.03000) n=(-0.0, -0.0, -1.0)
+3 GeomType.CYLINDER area=6.809e-03 ctr=(-0.02000,-0.00000,0.00000) R=0.02000
+4 GeomType.PLANE area=2.447e-04 ctr=(0.01704,-0.00600,0.00000) n=(0.0, -1.0, -0.0)
+5 GeomType.PLANE area=7.200e-04 ctr=(0.01500,-0.00000,0.00000) n=(-1.0, -0.0, 0.0)
+6 GeomType.PLANE area=2.447e-04 ctr=(0.01704,0.00600,0.00000) n=(-0.0, 1.0, 0.0)
+
+# -- cell 3 (0.1s, exit 0)
+import inspect
+print(inspect.signature(bd.export_stl))
+# -- output
+(to_export: build123d.topology.shape_core.Shape, file_path: os.PathLike | str | bytes, tolerance: float = 0.001, angular_tolerance: float = 0.1, ascii_format: bool = False) -> bool
+
+# -- cell 4 (2.9s, exit 0)
+from build123d import Compound
+
+def isc(f, R): return f.geom_type==bd.GeomType.CYLINDER and abs(f.radius-R)<1e-6
+def isp(f, ax, sign):
+    if f.geom_type!=bd.GeomType.PLANE: return False
+    n = f.normal_at(f.center()); v=(n.X,n.Y,n.Z)[ax]
+    return abs(v-sign)<1e-6
+
+patches = {
+ "bore":        [f for f in fl if isc(f, R_BORE)],
+ "shaft":       [f for f in fl if isc(f, R_SHAFT)],
+ "keywayFloor": [f for f in fl if isp(f,0,-1)],
+ "keywayFlanks":[f for f in fl if isp(f,1,1) or isp(f,1,-1)],
+ "highPressure":[f for f in fl if isp(f,2,-1)],   # z=-L/2 : 50 mm (oil) end
+ "lowPressure": [f for f in fl if isp(f,2, 1)],   # z=+L/2 : 30 mm end
+}
+tot=0
+for k,v in patches.items():
+    a=sum(f.area for f in v); tot+=a
+    bd.export_stl(Compound(v), f"constant/triSurface/{k}.stl", tolerance=2e-6, angular_tolerance=0.05)
+    print(k, len(v), "area=%.4e"%a)
+print("sum areas %.4e vs shape %.4e"%(tot, fluid.area))
+# -- output
+bore 1 area=7.5587e-03
+shaft 1 area=6.8086e-03
+keywayFloor 1 area=7.2000e-04
+keywayFlanks 2 area=4.8945e-04
+highPressure 1 area=6.2641e-05
+lowPressure 1 area=6.2641e-05
+sum areas 1.5702e-02 vs shape 1.5702e-02
+
+# -- cell 5 (0.1s, exit 0)
+import glob, numpy as np, struct
+def read_stl(p):
+    d=open(p,'rb').read()
+    n=struct.unpack('<I', d[80:84])[0]
+    tris=np.frombuffer(d[84:84+50*n], dtype=np.uint8).reshape(n,50)
+    v=tris[:,12:48].copy().view('<f4').reshape(n,3,3)
+    return v.astype(np.float64)
+V=np.vstack([read_stl(p) for p in sorted(glob.glob("constant/triSurface/*.stl"))])
+print("tris:", len(V))
+q=np.round(V.reshape(-1,3)/1e-9).astype(np.int64)
+uq,inv=np.unique(q,axis=0,return_inverse=True); inv=inv.reshape(-1,3)
+from collections import Counter
+ec=Counter(); dc=Counter()
+for a,b,c in inv:
+    for e in ((a,b),(b,c),(c,a)):
+        ec[tuple(sorted(e))]+=1; dc[e]+=1
+print("free edges:", sum(1 for k,v in ec.items() if v!=2))
+print("same-direction dup:", sum(1 for k,v in dc.items() if v>1))
+# -- output
+tris: 7584
+free edges: 0
+same-direction dup: 0
+
+# -- cell 6 (2.3s, exit 0)
+import gmsh, math
+THS = math.asin((KEY_W/2)/R_SHAFT)          # 17.46 deg: where flank meets shaft circle
+gmsh.initialize()
+gmsh.option.setNumber("General.Terminal",0)
+gmsh.model.add("seal")
+o = gmsh.model.occ
+P1 = o.addPoint(R_SHAFT*math.cos(THS),  KEY_W/2, 0)
+P2 = o.addPoint(R_SHAFT*math.cos(THS), -KEY_W/2, 0)
+Q1 = o.addPoint(R_BORE*math.cos(THS),   R_BORE*math.sin(THS), 0)
+Q2 = o.addPoint(R_BORE*math.cos(THS),  -R_BORE*math.sin(THS), 0)
+F1 = o.addPoint(KEY_X0,  KEY_W/2, 0); F2 = o.addPoint(KEY_X0, -KEY_W/2, 0)
+C  = o.addPoint(0,0,0)
+a_shaft = o.addCircleArc(P1, C, P2, center=True)                      # long way? check below
+a_borefilm = o.addCircleArc(Q1, C, Q2, center=True)
+a_boremouth= o.addCircleArc(Q2, C, Q1, center=True)
+l_i1 = o.addLine(P1, Q1); l_i2 = o.addLine(P2, Q2)
+l_f1 = o.addLine(P1, F1); l_floor = o.addLine(F1, F2); l_f2 = o.addLine(F2, P2)
+o.synchronize()
+for t,nm in [(a_shaft,"shaft arc"),(a_borefilm,"bore film arc"),(a_boremouth,"bore mouth arc")]:
+    print(nm, "len=%.5f"%(gmsh.model.occ.getMass(1,t)))
+print("expected shaft arc len %.5f, mouth %.5f"%( (2*math.pi-2*THS)*R_SHAFT, 2*THS*R_BORE))
+# -- output
+shaft arc len=0.01219
+bore film arc len=0.01222
+bore mouth arc len=0.01222
+expected shaft arc len 0.11348, mouth 0.01222
+
+# -- cell 7 (0.1s, exit 0)
+gmsh.clear(); gmsh.model.add("seal")
+o = gmsh.model.occ
+def pt(r,th): return o.addPoint(r*math.cos(th), r*math.sin(th), 0)
+C  = o.addPoint(0,0,0)
+P1, P2 = pt(R_SHAFT,THS), pt(R_SHAFT,-THS); PM = pt(R_SHAFT, math.pi)
+Q1, Q2 = pt(R_BORE,THS),  pt(R_BORE,-THS);  QM = pt(R_BORE, math.pi)
+F1 = o.addPoint(KEY_X0,  KEY_W/2, 0); F2 = o.addPoint(KEY_X0, -KEY_W/2, 0)
+s1 = o.addCircleArc(P1,C,PM,center=True); s2 = o.addCircleArc(PM,C,P2,center=True)
+b1 = o.addCircleArc(Q1,C,QM,center=True); b2 = o.addCircleArc(QM,C,Q2,center=True)
+bm = o.addCircleArc(Q2,C,Q1,center=True)          # mouth arc across the keyway
+i1 = o.addLine(P1,Q1); i2 = o.addLine(P2,Q2)
+f1 = o.addLine(P1,F1); ff = o.addLine(F1,F2); f2 = o.addLine(F2,P2)
+lf = o.addCurveLoop([s1,s2,i2,-b2,-b1,-i1])       # film band
+lp = o.addCurveLoop([i1,-bm,-i2,-f2,-ff,-f1])     # pocket
+Sf = o.addPlaneSurface([lf]); Sp = o.addPlaneSurface([lp])
+o.synchronize()
+print("film area %.4e (exp 5.683e-06), pocket %.4e (exp 5.696e-05)"%(o.getMass(2,Sf), o.getMass(2,Sp)))
+print("sum %.5e vs fluid/L %.5e"%(o.getMass(2,Sf)+o.getMass(2,Sp), fluid.volume/L))
+# -- output
+film area 5.6809e-06 (exp 5.683e-06), pocket 5.6960e-05 (exp 5.696e-05)
+sum 6.26408e-05 vs fluid/L 6.26408e-05
+
+# -- cell 8 (0.1s, exit 0)
+NTH, NR, NZ = 200, 3, 40          # circumferential / across 0.05mm film / axial
+out = o.extrude([(2,Sf),(2,Sp)], 0,0,L, numElements=[NZ], recombine=True)
+o.synchronize()
+vols = [t for d,t in out if d==3]
+# base mesh constraints (film structured, pocket graded triangles)
+for c in (s1,s2,b1,b2): gmsh.model.mesh.setTransfiniteCurve(c, NTH+1)
+for c in (i1,i2):       gmsh.model.mesh.setTransfiniteCurve(c, NR+1)
+gmsh.model.mesh.setTransfiniteSurface(Sf, cornerTags=[P1,P2,Q2,Q1])
+gmsh.model.mesh.setRecombine(2, Sf)
+fd = gmsh.model.mesh.field.add("Distance"); gmsh.model.mesh.field.setNumbers(fd,"CurvesList",[i1,i2])
+ft = gmsh.model.mesh.field.add("Threshold")
+for k,v in [("InField",fd),("SizeMin",3e-5),("SizeMax",5e-4),("DistMin",1e-4),("DistMax",1.5e-3)]:
+    gmsh.model.mesh.field.setNumber(ft,k,v)
+gmsh.model.mesh.field.setAsBackgroundMesh(ft)
+gmsh.option.setNumber("Mesh.MeshSizeFromPoints",0); gmsh.option.setNumber("Mesh.MeshSizeFromCurvature",0)
+gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary",0)
+print("volumes:", vols, "V=%.5e vs %.5e"%(sum(o.getMass(3,v) for v in vols), fluid.volume))
+# -- output
+volumes: [1, 2] V=3.75845e-06 vs 3.75845e-06
+
+# -- cell 9 (0.1s, exit 0)
+import numpy as np
+groups = {k:[] for k in ["shaft","keywayFloor","keywayFlanks","bore","highPressure","lowPressure"]}
+for d,t in gmsh.model.getEntities(2):
+    ups = gmsh.model.getAdjacencies(2,t)[0]
+    if len(ups)!=1: continue                      # internal interface
+    u0,u1,v0,v1 = gmsh.model.getParametrizationBounds(2,t)[0][0],gmsh.model.getParametrizationBounds(2,t)[1][0],gmsh.model.getParametrizationBounds(2,t)[0][1],gmsh.model.getParametrizationBounds(2,t)[1][1]
+    p = gmsh.model.getValue(2,t,[(u0+u1)/2,(v0+v1)/2]); r = math.hypot(p[0],p[1])
+    if   abs(p[2]-0)<1e-9 and abs(gmsh.model.occ.getCenterOfMass(2,t)[2])<1e-9: g="highPressure"
+    elif abs(p[2]-L)<1e-9 and abs(gmsh.model.occ.getCenterOfMass(2,t)[2]-L)<1e-9: g="lowPressure"
+    elif abs(r-R_BORE)<1e-7:  g="bore"
+    elif abs(r-R_SHAFT)<1e-7: g="shaft"
+    elif abs(p[0]-KEY_X0)<1e-7: g="keywayFloor"
+    elif abs(abs(p[1])-KEY_W/2)<1e-7: g="keywayFlanks"
+    else: raise RuntimeError(("unclassified",t,p))
+    groups[g].append(t)
+for k,v in groups.items():
+    gmsh.model.addPhysicalGroup(2, v, name=k)
+    print(k, v, "area=%.4e"%sum(gmsh.model.occ.getMass(2,t) for t in v))
+gmsh.model.addPhysicalGroup(3, vols, name="internal")
+# -- output
+shaft [3, 4] area=6.8086e-03
+keywayFloor [12] area=7.2000e-04
+keywayFlanks [11, 13] area=4.8945e-04
+bore [6, 7, 10] area=7.5587e-03
+highPressure [1, 2] area=6.2641e-05
+lowPressure [9, 14] area=6.2641e-05
+7
+
+# -- cell 10 (5.8s, exit 0)
+fluid_p = bd.Pos(0,0,L/2) * fluid
+flp = fluid_p.faces()
+patches_p = {
+ "bore":        [f for f in flp if isc(f, R_BORE)],
+ "shaft":       [f for f in flp if isc(f, R_SHAFT)],
+ "keywayFloor": [f for f in flp if isp(f,0,-1)],
+ "keywayFlanks":[f for f in flp if isp(f,1,1) or isp(f,1,-1)],
+ "highPressure":[f for f in flp if isp(f,2,-1)],
+ "lowPressure": [f for f in flp if isp(f,2, 1)],
+}
+for k,v in patches_p.items():
+    bd.export_stl(Compound(v), f"constant/triSurface/{k}.stl", tolerance=2e-6, angular_tolerance=0.05)
+bb2 = fluid_p.bounding_box(); print("STL z range:", bb2.min.Z, bb2.max.Z)
+print("hp z:", patches_p["highPressure"][0].center().Z, " lp z:", patches_p["lowPressure"][0].center().Z)
+# -- output
+STL z range: 0.0 0.06
+hp z: 0.0  lp z: 0.06
+
+# -- cell 11 (0.6s, exit 0)
+gmsh.model.mesh.generate(3)
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.write("seal.msh")
+ts, _ = gmsh.model.mesh.getElementsByType(5)[0:2] if False else (None,None)
+for et,nm in [(4,"tet"),(5,"hex"),(6,"prism")]:
+    try: n=len(gmsh.model.mesh.getElementsByType(et)[0])
+    except Exception: n=0
+    print(nm, n)
+# -- output
+tet 0
+hex 48000
+prism 36080
+
+# -- cell 12 (1.7s, exit 0)
+import textwrap, os
+os.makedirs("system", exist_ok=True)
+hdr = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+open("system/controlDict","w").write(hdr%"controlDict"+
+ "application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\n"
+ "deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;\n"
+ "writePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;\n")
+open("system/fvSchemes","w").write(hdr%"fvSchemes"+
+ "ddtSchemes{default Euler;} gradSchemes{default Gauss linear;} divSchemes{default none;}\n"
+ "laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;}\n"
+ "snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(hdr%"fvSolution"+"solvers{} PISO{nCorrectors 1;}\n")
+r = subprocess.run(["gmshToFoam","seal.msh"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-800:], r.stderr[-500:])
+# -- output
+0 ch 0 gets name highPressure
+Patch 1 gets name lowPressure
+Patch 2 gets name shaft
+Patch 3 gets name bore
+Patch 4 gets name keywayFlanks
+Patch 5 gets name keywayFloor
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 40204 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+Finding faces of patch 5
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+# -- cell 13 (0.7s, exit 0)
+r = subprocess.run(["checkMesh"],capture_output=True,text=True)
+print(r.stdout[-3000:])
+# -- output
+onitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           86141
+    faces:            254302
+    internal faces:   214098
+    cells:            84080
+    faces per cell:   5.57088
+    boundary patches: 6
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     48000
+    prisms:        36080
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    highPressure        2102     2101     ok (non-closed singly connected)  
+    lowPressure         2102     2101     ok (non-closed singly connected)  
+    shaft               16000    16441    ok (non-closed singly connected)  
+    bore                17680    18122    ok (non-closed singly connected)  
+    keywayFlanks        1360     1476     ok (non-closed singly connected)  
+    keywayFloor         960      1025     ok (non-closed singly connected)  
+    ".*"                40204    39302    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            84080        86141        3.75781e-06  (-0.02005 -0.0200499 0) (0.02005 0.0200499 0.06)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.02005 -0.0200499 0) (0.02005 0.0200499 0.06)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (2.33648e-15 8.48916e-18 6.32657e-18) OK.
+    Max cell openness = 5.25325e-16 OK.
+    Max aspect ratio = 233.391 OK.
+    Minimum face area = 1.42896e-10. Maximum face area = 9.54942e-07.  Face area magnitudes OK.
+    Min volume = 2.14344e-13. Max volume = 2.07459e-10.  Total volume = 3.75781e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 22.5682 average: 2.96288
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.426715 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 14 (0.2s, exit 0)
+from collections import Counter
+lines=open("seal.msh").read().split("\n")
+i=lines.index("$Elements"); n=int(lines[i+1])
+c=Counter(); phys=Counter()
+for L_ in lines[i+2:i+2+n]:
+    f=L_.split(); c[int(f[1])]+=1; phys[(int(f[1]),int(f[3]))]+=1
+print(n, c)
+print(phys)
+print([ (gmsh.model.getPhysicalName(d,t), gmsh.model.getEntitiesForPhysicalGroup(d,t)) for d,t in gmsh.model.getPhysicalGroups()])
+# -- output
+124284 Counter({5: 48000, 3: 38400, 6: 36080, 2: 1804})
+Counter({(5, 7): 48000, (6, 7): 36080, (3, 4): 17680, (3, 1): 16000, (3, 3): 1360, (3, 5): 1200, (3, 6): 1200, (3, 2): 960, (2, 5): 902, (2, 6): 902})
+[('shaft', array([3, 4], dtype=int32)), ('keywayFloor', array([12], dtype=int32)), ('keywayFlanks', array([11, 13], dtype=int32)), ('bore', array([ 6,  7, 10], dtype=int32)), ('highPressure', array([1, 2], dtype=int32)), ('lowPressure', array([ 9, 14], dtype=int32)), ('internal', array([1, 2], dtype=int32))]
+
+# -- cell 15 (0.1s, exit 0)
+print(subprocess.run(["grep","-n","-E","type|nFaces|^ *[a-zA-Z]+$","constant/polyMesh/boundary"],capture_output=True,text=True).stdout)
+# -- output
+8:FoamFile
+21:    highPressure
+23:        type            patch;
+25:        nFaces          2102;
+28:    lowPressure
+30:        type            patch;
+32:        nFaces          2102;
+35:    shaft
+37:        type            patch;
+39:        nFaces          16000;
+42:    bore
+44:        type            patch;
+46:        nFaces          17680;
+49:    keywayFlanks
+51:        type            patch;
+53:        nFaces          1360;
+56:    keywayFloor
+58:        type            patch;
+60:        nFaces          960;
+
+# -- cell 16 (1.0s, exit 0)
+for p in ["shaft","bore","keywayFlanks","keywayFloor"]:
+    subprocess.run(["foamDictionary","constant/polyMesh/boundary","-entry",f"entry0/{p}/type","-set","wall"],capture_output=True,text=True)
+print(subprocess.run(["grep","-n","type","constant/polyMesh/boundary"],capture_output=True,text=True).stdout)
+# -- output
+24:        type            patch;
+31:        type            patch;
+38:        type            wall;
+45:        type            wall;
+52:        type            wall;
+59:        type            wall;
+
+# -- cell 17 (1.6s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+pv.OFF_SCREEN=True
+m = pv.OpenFOAMReader("case.foam") if os.path.exists("case.foam") else None
+open("case.foam","w").close()
+m = pv.OpenFOAMReader("case.foam"); m.set_active_time_value(0.0); m.disable_all_patch_arrays()
+m.enable_patch_array("internalMesh"); grid = m.read()["internalMesh"]
+sl = grid.slice(normal=(0,0,1), origin=(0,0,0.03))
+pl = pv.Plotter(shape=(1,3), window_size=(1500,520), off_screen=True)
+pl.subplot(0,0); pl.add_mesh(sl, show_edges=True, line_width=0.3, color='lightblue'); pl.view_xy(); pl.camera.zoom(1.3)
+pl.subplot(0,1); pl.add_mesh(sl, show_edges=True, line_width=0.6, color='lightblue')
+pl.view_xy(); pl.camera.focal_point=(0.0191,0.006,0.03); pl.camera.position=(0.0191,0.006,0.04); pl.camera.parallel_projection=True; pl.camera.parallel_scale=0.0012
+pl.subplot(0,2); pl.add_mesh(grid.extract_surface(), show_edges=False, color='tan'); pl.view_isometric()
+pl.screenshot("view.png"); print("ok")
+# -- output
+ok
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 10:25:00.419 (   0.517s) [    746BF4EAC780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 10:25:00.420 (   0.517s) [    746BF4EAC780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 10:25:00.432 (   0.529s) [    746BF4EAC780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_47110/3218205132.py:13: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  pl.subplot(0,2); pl.add_mesh(grid.extract_surface(), show_edges=False, color='tan'); pl.view_isometric()
+
+# -- cell 18 (0.1s, exit 0)
+import matplotlib; matplotlib.use("Agg")
+import matplotlib.pyplot as plt, matplotlib.image as mpimg
+img = mpimg.imread("view.png")
+fig = plt.figure(figsize=(15,5.2)); plt.imshow(img); plt.axis('off'); plt.show()
+# -- output
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 19 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("view.png"))
+# -- output
+
+
+# -- cell 20 (0.2s, exit 0)
+m2 = pv.OpenFOAMReader("case.foam"); m2.set_active_time_value(0.0)
+m2.disable_all_patch_arrays()
+for p in ["shaft","bore","keywayFloor","keywayFlanks","highPressure","lowPressure"]:
+    m2.enable_patch_array("patch/"+p)
+b = m2.read()["boundary"]
+for p in ["shaft","bore","keywayFloor","keywayFlanks","highPressure","lowPressure"]:
+    pts = b[p].points; r = np.hypot(pts[:,0],pts[:,1])
+    print("%-13s n=%5d  r[mm] %.4f..%.4f  x[mm] %.3f..%.3f  y[mm] %.3f..%.3f  z[mm] %.2f..%.2f"%(
+      p,len(pts),r.min()*1e3,r.max()*1e3,pts[:,0].min()*1e3,pts[:,0].max()*1e3,
+      pts[:,1].min()*1e3,pts[:,1].max()*1e3,pts[:,2].min()*1e3,pts[:,2].max()*1e3))
+print("\nkeyway width  = %.3f mm (req 12)"%((b["keywayFlanks"].points[:,1].max()-b["keywayFlanks"].points[:,1].min())*1e3))
+print("keyway depth  = %.3f mm (req 5)"%((R_SHAFT-b["keywayFloor"].points[:,0].max())*1e3))
+print("clearance     = %.4f mm (req 0.05)"%((np.hypot(*b["bore"].points[:,:2].T).min()-np.hypot(*b["shaft"].points[:,:2].T).max())*1e3))
+print("sealed length = %.2f mm (req 60)"%((b["lowPressure"].points[:,2].mean()-b["highPressure"].points[:,2].mean())*1e3))
+# -- output
+shaft         n=16441  r[mm] 20.0000..20.0000  x[mm] -20.000..19.079  y[mm] -20.000..20.000  z[mm] 0.00..60.00
+bore          n=18122  r[mm] 20.0500..20.0500  x[mm] -20.050..20.050  y[mm] -20.050..20.050  z[mm] 0.00..60.00
+keywayFloor   n= 1025  r[mm] 15.0000..16.1555  x[mm] 15.000..15.000  y[mm] -6.000..6.000  z[mm] 0.00..60.00
+keywayFlanks  n= 1476  r[mm] 16.1555..20.0000  x[mm] 15.000..19.079  y[mm] -6.000..6.000  z[mm] 0.00..60.00
+highPressure  n= 2101  r[mm] 15.0000..20.0500  x[mm] -20.050..20.050  y[mm] -20.050..20.050  z[mm] 0.00..0.00
+lowPressure   n= 2101  r[mm] 15.0000..20.0500  x[mm] -20.050..20.050  y[mm] -20.050..20.050  z[mm] 60.00..60.00
+
+keyway width  = 12.000 mm (req 12)
+keyway depth  = 5.000 mm (req 5)
+clearance     = 0.0500 mm (req 0.05)
+sealed length = 60.00 mm (req 60)
+

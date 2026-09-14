@@ -1,0 +1,587 @@
+# -- cell 1 (0.8s, exit 0)
+import subprocess
+for pat in ["trace", "JernArc", "Polygon", "offset", "export_step", "scale"]:
+    r = subprocess.run(["grep","-n",pat,".reference/b123d_api.md"],capture_output=True,text=True)
+    print("###",pat); print(r.stdout[:1000])
+# -- output
+### trace
+201:- `trace(lines=None, line_width=1)`
+339:Mostly so a `repr` or a traceback reads.
+
+### JernArc
+193:- `JernArc(start, tangent, radius, arc_size)`
+
+### Polygon
+154:- `Polygon(*pts, rotation=0, align=(Align.NONE, Align.NONE))`
+156:- `RegularPolygon(radius, side_count, major_radius=True, rotation=0, align=(Align.CENTER, Align.CENTER))`
+
+### offset
+82:- `offset(objects=None, amount=0, openings=None, kind=Kind.ARC, side=Side.BOTH, closed=True, min_edge_length=None)`
+115:  argument to `offset`: ARC, INTERSECTION, TANGENT -- how corners are carried out.
+117:  argument to `offset` on 2D: LEFT, RIGHT, BOTH.
+214:- `Plane.offset(amount)`
+
+### export_step
+326:- `export_step(to_export, file_path, unit=Unit.MM, write_pcurves=True, precision_mode=PrecisionMode.AVERAGE, timestamp=None)`
+
+### scale
+98:- `scale(objects=None, by=1, about=None)`
+99:  a resized copy, uniform or per-axis. Not the unit fix: a millimetre import is scaled by 0.001 here, once, early.
+
+# -- cell 2 (2.2s, exit 0)
+import build123d as bd, numpy as np, inspect
+print(inspect.signature(bd.JernArc.__init__))
+print(inspect.signature(bd.trace))
+# test CW arc: start heading 135 deg, radius 7, want to end heading -60 deg => CW turn of 195
+d135 = bd.Vector(np.cos(np.radians(135)), np.sin(np.radians(135)), 0)
+for sz in (195,-195):
+    a = bd.JernArc(start=(0,0), tangent=d135, radius=7, arc_size=sz)
+    t = a.tangent_at(1.0)
+    print(sz, "end pt", a.end_point(), "end tangent deg", np.degrees(np.arctan2(t.Y,t.X)))
+# -- output
+(self, start: 'VectorLike', tangent: 'VectorLike', radius: 'float', arc_size: 'float | Shape | Axis | Location | Plane | VectorLike', mode: 'Mode' = <Mode.ADD>)
+(lines: 'Curve | Edge | Wire | Iterable[Curve | Edge | Wire] | None' = None, line_width: 'float' = 1, mode: 'Mode' = <Mode.ADD>) -> 'Sketch'
+195 end pt Vector: (X=-8.44975, Y=-11.0119, Z=0) end tangent deg -30.00000000000003
+-195 end pt Vector: (X=11.0119, Y=8.44975, Z=0) end tangent deg -59.999999999999986
+
+# -- cell 3 (0.1s, exit 0)
+import build123d as bd, numpy as np, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# ---- parameters (mm) ----
+W      = 6.0      # channel width  (given)
+L      = 120.0    # overall length (given)
+YC     = W/2      # channel centreline height
+LEG1   = 3.0      # chosen: straight stub out of the main channel
+ANG1   = 135.0    # chosen: branch leaves pointing up/upstream
+R_LOOP = 7.0      # chosen: loop centreline radius
+TURN   = -195.0   # chosen: clockwise turn -> return leg at -60 deg
+ANG2   = ANG1 + TURN          # = -60 deg, return leg heads down/downstream
+XA     = [20.0, 44.0, 68.0, 92.0]   # chosen: 4 loops, period 24 mm
+
+def unit(x0):
+    d1 = bd.Vector(np.cos(np.radians(ANG1)), np.sin(np.radians(ANG1)), 0)
+    A  = bd.Vector(x0, YC, 0)
+    l1 = bd.Line(A, A + d1*LEG1)
+    arc= bd.JernArc(start=l1 @ 1, tangent=d1, radius=R_LOOP, arc_size=TURN)
+    Q2 = arc @ 1
+    d2 = bd.Vector(np.cos(np.radians(ANG2)), np.sin(np.radians(ANG2)), 0)
+    s  = (YC - Q2.Y) / d2.Y            # run the return leg back to the channel axis
+    l2 = bd.Line(Q2, Q2 + d2*s)
+    return bd.Curve() + [l1, arc, l2], (l2 @ 1)
+
+main = bd.trace(bd.Line((0, YC), (L, YC)), W)
+sk = main
+for x0 in XA:
+    c, B = unit(x0)
+    sk = sk + bd.trace(c, W)
+    print(f"loop A=({x0:.1f},{YC}) -> B=({B.X:.2f},{B.Y:.2f})  span {B.X-x0:.2f} mm")
+sk = sk.clean()
+print("faces:", len(sk.faces()), " area mm2:", round(sk.area,1), " bbox:", sk.bounding_box())
+# -- output
+loop A=(20.0,3.0) -> B=(34.99,3.00)  span 14.99 mm
+loop A=(44.0,3.0) -> B=(58.99,3.00)  span 14.99 mm
+loop A=(68.0,3.0) -> B=(82.99,3.00)  span 14.99 mm
+loop A=(92.0,3.0) -> B=(106.99,3.00)  span 14.99 mm
+faces: 1  area mm2: 1475.8  bbox: bbox: 0.0 <= x <= 120.0, 0.0 <= y <= 20.071067811865483, 0.0 <= z <= 0.0
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 4 (1.1s, exit 0)
+import matplotlib.pyplot as plt
+f = sk.faces()[0]
+fig, ax = plt.subplots(figsize=(13,3))
+for w in f.wires():
+    pts = np.array([[p.X,p.Y] for e in w.edges() for p in e.positions(np.linspace(0,1,40))])
+    ax.plot(pts[:,0], pts[:,1], '.', ms=1.5)
+ax.set_aspect('equal'); ax.set_title("Tesla valve fluid region (mm), %d wires"%len(f.wires()))
+print("inner wires (islands):", len(f.wires())-1)
+fig
+# -- output
+inner wires (islands): 4
+
+# -- cell 5 (0.1s, exit 0)
+MM = 0.001                       # mm -> m, applied once, here
+face_m = bd.scale(sk, MM)
+bb = face_m.bounding_box()
+print("bbox (m):", bb, " area (m2):", face_m.area)
+# report what the request named, measured off the geometry
+isl = face_m.faces()[0]
+print("channel width from loop annulus (mm):", round((10.0-4.0),3))
+print("overall length (mm):", round((bb.max.X-bb.min.X)/MM,3), " n islands:", len(isl.wires())-1)
+bd.export_step(face_m, "tesla2d.step", unit=bd.Unit.M)
+import os; print("step bytes:", os.path.getsize("tesla2d.step"))
+# -- output
+bbox (m): bbox: 0.0 <= x <= 0.12, 0.0 <= y <= 0.020071067811865483, 0.0 <= z <= 0.0  area (m2): 0.0014757607830440584
+channel width from loop annulus (mm): 6.0
+overall length (mm): 120.0  n islands: 4
+step bytes: 30755
+
+# -- cell 6 (0.1s, exit 0)
+circ = [e for e in face_m.edges() if e.geom_type == bd.GeomType.CIRCLE]
+rad = sorted(set(round(e.radius/MM,4) for e in circ))
+print("circular edge radii (mm):", rad, "-> loop channel width =", round(rad[-1]-rad[0],4), "mm")
+# probe the plain channel with a thin vertical slab at x = 10 mm (upstream of loop 1)
+slab = bd.Rectangle(0.0005, 0.05).located(bd.Location((0.010, 0.025, 0)))
+sec = face_m & slab
+print("plain-channel span at x=10mm (mm):", round((sec.bounding_box().max.Y-sec.bounding_box().min.Y)/MM,4))
+sec2 = face_m & bd.Rectangle(0.0005,0.05).located(bd.Location((0.0235,0.025,0)))  # through loop crown
+print("at x=23.5mm, y extents (mm):", [round(v/MM,3) for v in (sec2.bounding_box().min.Y, sec2.bounding_box().max.Y)],
+      " n sub-faces:", len(sec2.faces()))
+# -- output
+circular edge radii (mm): [4.0, 10.0] -> loop channel width = 6.0 mm
+plain-channel span at x=10mm (mm): 6.0
+at x=23.5mm, y extents (mm): [0.0, 20.062]  n sub-faces: 2
+
+# -- cell 7 (1.3s, exit 0)
+import gmsh, numpy as np
+LZ, LC = 0.001, 0.001            # chosen: 1 mm thickness (one cell), 1 mm coarse cell -> 6 across width
+gmsh.initialize()
+gmsh.option.setNumber("General.Terminal",0)
+gmsh.model.add("tesla")
+gmsh.model.occ.importShapes("tesla2d.step")
+gmsh.model.occ.synchronize()
+srf = gmsh.model.getEntities(2); print("surfaces imported:", srf, "bbox:", np.round(gmsh.model.getBoundingBox(2,srf[0][1]),5))
+out = gmsh.model.occ.extrude(srf, 0,0,LZ, numElements=[1], recombine=True)
+gmsh.model.occ.synchronize()
+vol = [t for t in out if t[0]==3]; lat = [t for t in out if t[0]==2]
+print("vol:", vol, " n surfaces returned:", len(lat))
+# -- output
+surfaces imported: [(2, 1)] bbox: [ -0.       -0.       -0.      120.       20.07107   0.     ]
+vol: [(3, 1)]  n surfaces returned: 33
+
+# -- cell 8 (0.1s, exit 0)
+gmsh.clear()
+gmsh.option.setString("Geometry.OCCTargetUnit","M")
+gmsh.model.add("tesla")
+gmsh.model.occ.importShapes("tesla2d.step")
+gmsh.model.occ.synchronize()
+srf = gmsh.model.getEntities(2)
+print("bbox (m):", np.round(gmsh.model.getBoundingBox(2,srf[0][1]),6))
+out = gmsh.model.occ.extrude(srf, 0,0,LZ, numElements=[1], recombine=True)
+gmsh.model.occ.synchronize()
+print("bbox solid (m):", np.round(gmsh.model.getBoundingBox(3,1),6))
+# -- output
+bbox (m): [-0.       -0.       -0.        0.12      0.020071  0.      ]
+bbox solid (m): [-0.       -0.       -0.        0.12      0.020071  0.001   ]
+
+# -- cell 9 (0.8s, exit 0)
+tol=1e-9
+groups={"inlet":[],"outlet":[],"walls":[],"back":[],"front":[]}
+for (d,t) in gmsh.model.getBoundary([(3,1)], oriented=False):
+    x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(2,t)
+    if abs(z1-z0)<tol:      groups["back" if abs(z0)<tol else "front"].append(t)
+    elif abs(x1-x0)<tol and abs(x0)<tol:        groups["inlet"].append(t)
+    elif abs(x1-x0)<tol and abs(x0-0.12)<tol:   groups["outlet"].append(t)
+    else:                                        groups["walls"].append(t)
+print({k:len(v) for k,v in groups.items()})
+for k,v in groups.items():
+    gmsh.model.addPhysicalGroup(2, v, name=k)
+gmsh.model.addPhysicalGroup(3,[1],name="fluid")
+gmsh.option.setNumber("Mesh.Algorithm",8); gmsh.option.setNumber("Mesh.RecombineAll",1)
+gmsh.option.setNumber("Mesh.CharacteristicLengthMin",LC); gmsh.option.setNumber("Mesh.CharacteristicLengthMax",LC)
+gmsh.model.mesh.generate(3)
+gmsh.option.setNumber("Mesh.MshFileVersion",2.2); gmsh.write("tesla.msh")
+et,ec,_ = gmsh.model.mesh.getElements(3)
+print("3D elements:", {int(a):len(b) for a,b in zip(et,ec)})
+# -- output
+{'inlet': 0, 'outlet': 0, 'walls': 34, 'back': 0, 'front': 0}
+3D elements: {5: 1835}
+
+# -- cell 10 (0.1s, exit 0)
+bbs = {t: gmsh.model.getBoundingBox(2,t) for (d,t) in gmsh.model.getBoundary([(3,1)],oriented=False)}
+for t in list(bbs)[:4]: print(t, bbs[t])
+print("...")
+import numpy as np
+th = np.array([[b[2],b[5]] for b in bbs.values()])
+print("z-extent min over surfaces:", np.min(th[:,1]-th[:,0]), " max:", np.max(th[:,1]-th[:,0]))
+# -- output
+1 (-1e-07, -1e-07, -1e-07, 0.1200001, 0.020071167811865003, 1e-07)
+2 (-1e-07, 0.0059999, -1e-07, 0.013694721408004, 0.0060001, 0.0010001)
+3 (-1e-07, -1e-07, -1e-07, 1e-07, 0.0060001, 0.0010001)
+4 (-1e-07, -1e-07, -1e-07, 0.1200001, 1e-07, 0.0010001)
+...
+z-extent min over surfaces: 2e-07  max: 0.0010002000000000001
+
+# -- cell 11 (0.1s, exit 0)
+tol=1e-6
+gmsh.model.removePhysicalGroups()
+groups={"inlet":[],"outlet":[],"walls":[],"back":[],"front":[]}
+for (d,t) in gmsh.model.getBoundary([(3,1)], oriented=False):
+    x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(2,t)
+    if   abs(z1-z0)<tol and abs(z0)<tol:            groups["back"].append(t)     # z = 0
+    elif abs(z1-z0)<tol:                            groups["front"].append(t)    # z = LZ
+    elif abs(x1-x0)<tol and abs(x0)<tol:            groups["inlet"].append(t)
+    elif abs(x1-x0)<tol and abs(x0-0.12)<tol:       groups["outlet"].append(t)
+    else:                                           groups["walls"].append(t)
+print({k:len(v) for k,v in groups.items()})
+for k,v in groups.items(): gmsh.model.addPhysicalGroup(2,v,name=k)
+gmsh.model.addPhysicalGroup(3,[1],name="fluid")
+gmsh.write("tesla.msh")
+print("inlet bbox:", np.round(gmsh.model.getBoundingBox(2,groups['inlet'][0]),6))
+print("outlet bbox:", np.round(gmsh.model.getBoundingBox(2,groups['outlet'][0]),6))
+# -- output
+{'inlet': 1, 'outlet': 1, 'walls': 30, 'back': 1, 'front': 1}
+inlet bbox: [-0.    -0.    -0.     0.     0.006  0.001]
+outlet bbox: [ 0.12  -0.    -0.     0.12   0.006  0.001]
+
+# -- cell 12 (1.0s, exit 0)
+import os, subprocess, textwrap
+for d in ("system","constant","0"): os.makedirs(d, exist_ok=True)
+hdr = lambda cls,obj: f'FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n'
+open("system/controlDict","w").write(hdr("dictionary","controlDict")+textwrap.dedent("""
+ application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+ deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;
+ writePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;
+"""))
+open("system/fvSchemes","w").write(hdr("dictionary","fvSchemes")+"ddtSchemes{default Euler;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write(hdr("dictionary","fvSolution")+"solvers{} \n")
+r = subprocess.run(["gmshToFoam","tesla.msh"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-700:], r.stderr[-400:])
+# -- output
+0 ts name patch1
+Patch 2 gets name patch2
+Patch 3 gets name patch3
+Patch 4 gets name patch4
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 4146 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone cellZone_0 and cellSet
+End
+
+# -- cell 13 (0.1s, exit 0)
+print(open("tesla.msh").read()[:400])
+print(subprocess.run(["grep","-c","","tesla.msh"],capture_output=True,text=True).stdout)
+print(open("constant/polyMesh/boundary").read()[:900])
+# -- output
+$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$PhysicalNames
+6
+2 1 "inlet"
+2 2 "outlet"
+2 3 "walls"
+2 4 "back"
+2 5 "front"
+3 6 "fluid"
+$EndPhysicalNames
+$Nodes
+4140
+1 0 0.006 0
+2 0.013694621408004 0.006 0
+3 0 0 0
+4 0.12 0 0
+5 0.12 0.006 0
+6 0.1087258646056 0.006 0
+7 0.10348868116259 0.015071067811865 0
+8 0.085694621408004 0.006 0
+9 0.08472586460560799 0.006 0
+10 0.07948868116259102 0.015071067811865 0
+11 0.0
+10139
+
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+5
+(
+    patch0
+    {
+        type            patch;
+        phy
+
+# -- cell 14 (0.1s, exit 0)
+txt=open("tesla.msh").read().split("$Elements")[1].splitlines()
+print(txt[1], txt[2], txt[3])
+import collections
+c=collections.Counter()
+for ln in txt[2:]:
+    p=ln.split()
+    if len(p)>3: c[(p[1],p[2],p[3])]+=1
+print(c.most_common(8))
+# -- output
+5981 1 3 2 10 1 1942 2007 1637 1330 2 3 2 10 1 2178 1955 1825 1986
+[(('3', '2', '10'), 1835), (('3', '2', '11'), 1835), (('5', '2', '12'), 1835), (('3', '2', '9'), 464), (('3', '2', '7'), 6), (('3', '2', '8'), 6)]
+
+# -- cell 15 (0.2s, exit 0)
+def build_msh(lc, lz, fname):
+    gmsh.clear(); gmsh.option.setString("Geometry.OCCTargetUnit","M")
+    gmsh.model.add("tesla")
+    gmsh.model.occ.importShapes("tesla2d.step"); gmsh.model.occ.synchronize()
+    srf = gmsh.model.getEntities(2)
+    gmsh.model.occ.extrude(srf,0,0,lz,numElements=[1],recombine=True)
+    gmsh.model.occ.synchronize()
+    tol, g = 1e-6, {"inlet":[],"outlet":[],"walls":[],"back":[],"front":[]}
+    for (d,t) in gmsh.model.getBoundary([(3,1)],oriented=False):
+        x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(2,t)
+        if   abs(z1-z0)<tol and abs(z0)<tol:      g["back"].append(t)
+        elif abs(z1-z0)<tol:                      g["front"].append(t)
+        elif abs(x1-x0)<tol and abs(x0)<tol:      g["inlet"].append(t)
+        elif abs(x1-x0)<tol and abs(x0-0.12)<tol: g["outlet"].append(t)
+        else:                                     g["walls"].append(t)
+    for i,(k,v) in enumerate(g.items(), start=1): gmsh.model.addPhysicalGroup(2,v,i,name=k)
+    gmsh.model.addPhysicalGroup(3,[1],6,name="fluid")
+    gmsh.option.setNumber("Mesh.Algorithm",8); gmsh.option.setNumber("Mesh.RecombineAll",1)
+    gmsh.option.setNumber("Mesh.CharacteristicLengthMin",lc)
+    gmsh.option.setNumber("Mesh.CharacteristicLengthMax",lc)
+    gmsh.model.mesh.generate(3)
+    gmsh.option.setNumber("Mesh.MshFileVersion",2.2); gmsh.write(fname)
+    return {k:len(v) for k,v in g.items()}
+
+print(build_msh(LC, LZ, "tesla.msh"))
+print([l for l in open("tesla.msh").read().split("$Elements")[1].splitlines()[1:3]])
+# -- output
+{'inlet': 1, 'outlet': 1, 'walls': 30, 'back': 1, 'front': 1}
+['5981', '1 3 2 4 1 1942 2007 1637 1330']
+
+# -- cell 16 (0.3s, exit 0)
+import shutil
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+r = subprocess.run(["gmshToFoam","tesla.msh"],capture_output=True,text=True)
+print([l for l in r.stdout.splitlines() if "gets name" in l or "undefined" in l or "Warning" in l])
+b=open("constant/polyMesh/boundary").read(); print(b[b.index("\n5\n"):][:700])
+# -- output
+['--> FOAM Warning : ', '--> FOAM Warning : ', 'Patch 0 gets name back', 'Patch 1 gets name walls', 'Patch 2 gets name inlet', 'Patch 3 gets name outlet', 'Patch 4 gets name front', '--> FOAM Warning : ', '    Found 4146 undefined faces in mesh; adding to default patch defaultFaces']
+
+5
+(
+    back
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1835;
+        startFace       3432;
+    }
+    walls
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          464;
+        startFace       5267;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          6;
+        startFace       5731;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          6;
+        startFace       5737;
+    }
+    front
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1835;
+        startFace
+
+# -- cell 17 (1.0s, exit 0)
+import re
+p="constant/polyMesh/boundary"; b=open(p).read()
+def settype(b,name,typ):
+    i=b.index("    "+name+"\n"); j=b.index("}",i)
+    seg=b[i:j].replace("type            patch;","type            %s;"%typ)
+    seg=seg.replace("physicalType    patch;","physicalType    %s;"%typ)
+    return b[:i]+seg+b[j:]
+for n in ("front","back"): b=settype(b,n,"empty")
+b=settype(b,"walls","wall")
+open(p,"w").write(b)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True)
+print("\n".join(r.stdout.splitlines()[-32:]))
+# -- output
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               1835         4140         1.47592e-06  (0 0 0) (0.12 0.020071 0.001)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.12 0.020071 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (2.11841e-18 -6.29293e-18 7.60697e-16) OK.
+    Max cell openness = 2.16654e-16 OK.
+    Max aspect ratio = 2.01921 OK.
+    Minimum face area = 2.10361e-07. Maximum face area = 1.58337e-06.  Face area magnitudes OK.
+    Min volume = 2.10361e-10. Max volume = 1.58337e-09.  Total volume = 1.47592e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 30.0679 average: 5.65634
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.977228 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 18 (0.2s, exit 1)
+nt,nc,_ = gmsh.model.mesh.getNodes()
+xyz = dict(zip(nt, np.array(nc).reshape(-1,3)))
+et,ei,en = gmsh.model.mesh.getElementsByType(3)   # quads (both z-planes)
+q = np.array(en).reshape(-1,4)
+fig,ax=plt.subplots(figsize=(14,3))
+for e in q:
+    P=np.array([xyz[n] for n in e])
+    if abs(P[:,2]).max()<1e-12:
+        ax.fill(P[:,0]*1000,P[:,1]*1000,facecolor='none',edgecolor='k',lw=0.3)
+ax.set_aspect('equal'); ax.set_title("coarse quad layer, lc=1mm (mm axes)")
+fig
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[18][39m[32m, line 3[39m
+[32m      1[39m nt,nc,_ = gmsh.model.mesh.getNodes()
+[32m      2[39m xyz = dict(zip(nt, np.array(nc).reshape(-[32m1[39m,[32m3[39m)))
+[32m----> [39m[32m3[39m et,ei,en = gmsh.model.mesh.getElementsByType([32m3[39m)   [38;5;66;03m# quads (both z-planes)[39;00m
+[32m      4[39m q = np.array(en).reshape(-[32m1[39m,[32m4[39m)
+[32m      5[39m fig,ax=plt.subplots(figsize=([32m14[39m,[32m3[39m))
+[32m      6[39m [38;5;28;01mfor[39;00m e [38;5;28;01min[39;00m q:
+
+[31mValueError[39m: not enough values to unpack (expected 3, got 2)
+
+# -- cell 19 (1.3s, exit 0)
+ei,en = gmsh.model.mesh.getElementsByType(3)
+q = np.array(en).reshape(-1,4)
+fig,ax=plt.subplots(figsize=(14,3))
+n=0
+for e in q:
+    P=np.array([xyz[i] for i in e])
+    if abs(P[:,2]).max()<1e-12:
+        ax.fill(P[:,0]*1000,P[:,1]*1000,facecolor='none',edgecolor='k',lw=0.3); n+=1
+ax.set_aspect('equal'); ax.set_title(f"coarse quad layer, lc=1mm, {n} faces (mm)")
+fig
+# -- output
+
+
+# -- cell 20 (1.5s, exit 0)
+nt,nc,_ = gmsh.model.mesh.getNodes()
+xyz = dict(zip(nt, np.array(nc).reshape(-1,3)))
+ei,en = gmsh.model.mesh.getElementsByType(3)
+q = np.array(en).reshape(-1,4)
+fig,ax=plt.subplots(figsize=(14,3))
+n=0
+for e in q:
+    P=np.array([xyz[i] for i in e])
+    if abs(P[:,2]).max()<1e-12:
+        ax.fill(P[:,0]*1000,P[:,1]*1000,facecolor='none',edgecolor='k',lw=0.3); n+=1
+ax.set_aspect('equal'); ax.set_title(f"coarse quad layer, lc=1mm, {n} faces (mm)")
+fig
+# -- output
+
+
+# -- cell 21 (2.3s, exit 0)
+LC_FINE = 0.0005    # chosen: 12 cells across the 6 mm channel
+print(build_msh(LC_FINE, LZ, "tesla.msh"))
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+r = subprocess.run(["gmshToFoam","tesla.msh"],capture_output=True,text=True); print(r.returncode)
+p="constant/polyMesh/boundary"; b=open(p).read()
+for n in ("front","back"): b=settype(b,n,"empty")
+b=settype(b,"walls","wall"); open(p,"w").write(b)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True)
+print("\n".join([l for l in r.stdout.splitlines() if any(k in l for k in
+  ("cells","faces:","Mesh has","aspect","skewness","non-orthogonality","Non-ortho","Total volume","Mesh OK","***","Minimum face"))]))
+# -- output
+{'inlet': 1, 'outlet': 1, 'walls': 30, 'back': 1, 'front': 1}
+0
+    faces:            26165
+    internal faces:   12391
+    cells:            6426
+Overall number of cells of each type:
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    Max aspect ratio = 2.04229 OK.
+    Minimum face area = 9.55471e-08. Maximum face area = 8.0145e-07.  Face area magnitudes OK.
+    Min volume = 9.55471e-11. Max volume = 4.23594e-10.  Total volume = 1.47579e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 30.5343 average: 5.63176
+    Non-orthogonality check OK.
+    Max skewness = 0.575391 OK.
+Mesh OK.
+
+# -- cell 22 (0.9s, exit 0)
+lin=[e for e in face_m.edges() if e.geom_type==bd.GeomType.LINE and e.length>0.004]
+ang=sorted(set(round(np.degrees(np.arctan2((e@1-e@0).Y,(e@1-e@0).X))%180,2) for e in lin))
+print("straight wall directions vs +x (deg, mod 180):", ang)
+print("  -> branch-out leg 135deg =", 135.0 in ang, "; return leg 60deg (=-60) =", 120.0 in ang)
+ar=lambda n:sum(f.area for f in gmsh.model.getEntities(2) for _ in [0]) # placeholder
+r=subprocess.run(["checkMesh","-writeFields","(nonOrthoAngle)"],capture_output=True,text=True)
+print("\n".join([l for l in r.stdout.splitlines() if "patch" in l.lower() and "Face" not in l][:3]))
+import re
+pf=dict(re.findall(r"^\s{4}(\w+)\n.*?nFaces\s+(\d+);", open("constant/polyMesh/boundary").read(), re.S|re.M))
+print("patch nFaces:", pf, " inlet area should be 6e-6 m2 =", 6e-3*LZ)
+# -- output
+straight wall directions vs +x (deg, mod 180): [np.float64(0.0), np.float64(90.0), np.float64(120.0)]
+  -> branch-out leg 135deg = False ; return leg 60deg (=-60) = True
+    boundary patches: 5
+Checking patch topology for multiply connected surfaces...
+patch nFaces: {'back': '6426', 'walls': '898', 'inlet': '12', 'outlet': '12', 'front': '6426'}  inlet area should be 6e-6 m2 = 6e-06
+
+# -- cell 23 (0.1s, exit 0)
+lin=[e for e in face_m.edges() if e.geom_type==bd.GeomType.LINE]
+from collections import Counter
+cnt=Counter(round(np.degrees(np.arctan2((e@1-e@0).Y,(e@1-e@0).X))%180,1) for e in lin)
+print("straight wall directions (deg mod 180) -> count:", dict(sorted(cnt.items())))
+print("request/design check: branch-out leg at 135 deg present:", 135.0 in cnt,
+      "| return leg at -60 deg present:", 120.0 in cnt)
+# -- output
+straight wall directions (deg mod 180) -> count: {np.float64(0.0): 10, np.float64(90.0): 2, np.float64(120.0): 8, np.float64(135.0): 4}
+request/design check: branch-out leg at 135 deg present: True | return leg at -60 deg present: True
+
+# -- cell 24 (0.9s, exit 0)
+solid = bd.extrude(face_m, LZ)
+print("solid volume m3:", solid.volume, " vs mesh total volume 1.47579e-06")
+grp={"inlet":[],"outlet":[],"walls":[],"front":[],"back":[]}
+for f in solid.faces():
+    n=f.normal_at(); c=f.center()
+    if abs(abs(n.Z)-1)<1e-6:   grp["back" if c.Z<LZ/2 else "front"].append(f)
+    elif abs(abs(n.X)-1)<1e-6 and abs(c.X)<1e-9:      grp["inlet"].append(f)
+    elif abs(abs(n.X)-1)<1e-6 and abs(c.X-0.12)<1e-9: grp["outlet"].append(f)
+    else: grp["walls"].append(f)
+for k,v in grp.items():
+    sh=v[0] if len(v)==1 else bd.Compound(children=v)
+    bd.export_stl(sh, k+".stl", tolerance=1e-5, angular_tolerance=0.1)
+    print(k, len(v), "faces ->", k+".stl", round(sum(f.area for f in v),8), "m2")
+# -- output
+solid volume m3: 1.4757607830440602e-06  vs mesh total volume 1.47579e-06
+inlet 1 faces -> inlet.stl 6e-06 m2
+outlet 1 faces -> outlet.stl 6e-06 m2
+walls 30 faces -> walls.stl 0.00043501 m2
+front 1 faces -> front.stl 0.00147576 m2
+back 1 faces -> back.stl 0.00147576 m2
+

@@ -1,0 +1,312 @@
+# -- cell 1 (18.2s, exit 0)
+import build123d as bd, numpy as np, math, os
+print(bd.__version__ if hasattr(bd,'__version__') else 'ok')
+os.makedirs("constant/triSurface", exist_ok=True)
+
+# --- parameters (all from the request, in METRES) ---
+R_out   = 0.320/2      # 320 mm OD
+R_in    = 0.190/2      # 190 mm ID
+GAP     = 0.012        # 12 mm between friction faces
+N_VANE  = 36
+W_VANE  = 0.008        # 8 mm vane width (tangential)
+
+annulus = bd.extrude(bd.Plane.XY * (bd.Circle(R_out) - bd.Circle(R_in)), GAP)
+vane0 = bd.Box(2*R_out, W_VANE, GAP, align=(bd.Align.CENTER,)*3).moved(bd.Pos(0,0,GAP/2))
+vanes = [vane0.moved(bd.Rot(0,0,i*360/N_VANE)) for i in range(N_VANE)]
+fluid = annulus - vanes
+print(fluid.volume, len(fluid.faces()), fluid.bounding_box())
+# -- output
+0.11.1
+The history saving thread hit an unexpected error (OperationalError('database is locked')).History will not be written to the database.
+0.0004001833478597357 216 bbox: -0.15994999218505765 <= x <= 0.15994999218505782, -0.1599499921850577 <= y <= 0.1599499921850577, 0.0 <= z <= 0.012
+
+# -- cell 2 (0.1s, exit 0)
+import collections
+def clas(f):
+    c = f.center(); r = math.hypot(c.X, c.Y)
+    if isinstance(f.geom_type, str): gt = f.geom_type
+    else: gt = str(f.geom_type)
+    return gt, round(c.Z,4), round(r,4)
+cnt = collections.Counter(clas(f) for f in fluid.faces())
+for k,v in sorted(cnt.items()): print(k,v)
+# -- output
+('GeomType.CYLINDER', 0.006, 0.095) 36
+('GeomType.CYLINDER', 0.006, 0.16) 36
+('GeomType.PLANE', 0.0, 0.1317) 36
+('GeomType.PLANE', 0.006, 0.1275) 72
+('GeomType.PLANE', 0.012, 0.1317) 36
+
+# -- cell 3 (3.9s, exit 0)
+fl = fluid.faces()
+groups = {
+ "friction_bottom": [f for f in fl if str(f.geom_type)=="GeomType.PLANE" and abs(f.center().Z)<1e-9],
+ "friction_top":    [f for f in fl if str(f.geom_type)=="GeomType.PLANE" and abs(f.center().Z-GAP)<1e-9],
+ "vanes":           [f for f in fl if str(f.geom_type)=="GeomType.PLANE" and abs(f.center().Z-GAP/2)<1e-9],
+ "inlet":           [f for f in fl if str(f.geom_type)=="GeomType.CYLINDER" and math.hypot(f.center().X,f.center().Y)<0.12],
+ "outlet":          [f for f in fl if str(f.geom_type)=="GeomType.CYLINDER" and math.hypot(f.center().X,f.center().Y)>0.12],
+}
+for name, faces in groups.items():
+    sh = bd.Compound(children=faces)
+    bd.export_stl(sh, f"constant/triSurface/{name}.stl", tolerance=2e-4, angular_tolerance=0.1, ascii_format=True)
+    # rename solid to patch name
+    p=f"constant/triSurface/{name}.stl"; t=open(p).read().replace("solid ","solid %s "%name,1)
+    open(p,"w").write(t)
+    print(name, len(faces), sum(f.area for f in faces), os.path.getsize(p))
+# -- output
+friction_bottom 36 0.03334861232164415 163976
+friction_top 36 0.03334861232164415 163973
+vanes 72 0.056189583418509624 36454
+inlet 36 0.00370580927122131 151822
+outlet 36 0.00860735568849712 176111
+
+# -- cell 4 (1.0s, exit 0)
+import textwrap, subprocess, os
+for d in ["system","constant"]: os.makedirs(d, exist_ok=True)
+head = lambda cls,obj: f"""FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"""
+open("system/controlDict","w").write(head("dictionary","controlDict")+
+ "application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n")
+open("system/fvSchemes","w").write(head("dictionary","fvSchemes")+"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(head("dictionary","fvSolution")+"solvers{} \n")
+BASE=0.0025
+xmin,xmax=-0.1650,0.1650; zmin,zmax=-0.005,0.017
+nx=int(round((xmax-xmin)/BASE)); nz=int(round((zmax-zmin)/BASE))
+open("system/blockMeshDict","w").write(head("dictionary","blockMeshDict")+f"""
+scale 1;
+vertices ( ({xmin} {xmin} {zmin}) ({xmax} {xmin} {zmin}) ({xmax} {xmax} {zmin}) ({xmin} {xmax} {zmin})
+           ({xmin} {xmin} {zmax}) ({xmax} {xmin} {zmax}) ({xmax} {xmax} {zmax}) ({xmin} {xmax} {zmax}) );
+blocks ( hex (0 1 2 3 4 5 6 7) ({nx} {nx} {nz}) simpleGrading (1 1 1) );
+edges (); boundary ( bg {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); }} ); mergePatchPairs ();
+""")
+print(nx,nz, subprocess.run(["blockMesh"],capture_output=True,text=True).stdout[-400:])
+# -- output
+132 9  j : 0.0025 .. 0.0025
+        k : 0.00244444 .. 0.00244444
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.165 -0.165 -0.005) (0.165 0.165 0.017)
+  nPoints: 176890
+  nCells: 156816
+  nFaces: 490248
+  nInternalFaces: 450648
+----------------
+Patches
+----------------
+  patch 0 (start: 450648 size: 39600) name: bg
+
+End
+
+# -- cell 5 (20.2s, exit 0)
+names=["friction_bottom","friction_top","vanes","inlet","outlet"]
+geom="\n".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in names)
+refs="\n".join(f'      {n} {{ level (1 1); patchInfo {{ type {"patch" if n in ("inlet","outlet") else "wall"}; }} }}' for n in names)
+open("system/snappyHexMeshDict","w").write(head("dictionary","snappyHexMeshDict")+f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geom}
+}};
+castellatedMeshControls
+{{
+  maxLocalCells 4000000; maxGlobalCells 8000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2; resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+  features ();
+  refinementSurfaces
+  {{
+{refs}
+  }}
+  refinementRegions {{}};
+  locationInMesh (0.12701 0.011113 0.006);
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5; nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers{{}} expansionRatio 1.2; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedianAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80; minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6;
+""")
+ang=math.radians(5); print(0.1275*math.cos(ang),0.1275*math.sin(ang))
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True); print(r.stdout[-1500:])
+# -- output
+0.12701482400669756 0.011112357200326417
+0
+
+Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:4529  faces:15239  points:6218
+Cells per refinement level:
+    0	213
+    1	4316
+Writing mesh to time constant
+Wrote mesh in = 0.01 s.
+Mesh snapped in = 0.58 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 14.49 s.
+End
+
+# -- cell 6 (59.0s, exit 0)
+pts=[]
+for i in range(N_VANE):
+    a=math.radians((i+0.5)*360/N_VANE); r=0.1275
+    pts.append(f"      ( ({r*math.cos(a):.6f} {r*math.sin(a):.6f} 0.006) fluid )")
+locs="locationsInMesh (\n"+"\n".join(pts)+"\n  );\n  singleRegionName true;"
+d=open("system/snappyHexMeshDict").read().replace("locationInMesh (0.12701 0.011113 0.006);", locs)
+open("system/snappyHexMeshDict","w").write(d)
+subprocess.run(["blockMesh"],capture_output=True,text=True)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True); print(r.stdout[-900:], r.stderr[-500:])
+# -- output
+1                : 0
+Snapped mesh : cells:156364  faces:521428  points:209120
+Cells per refinement level:
+    0	8148
+    1	148216
+Writing mesh to time constant
+Wrote mesh in = 0.43 s.
+Mesh snapped in = 24.07 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 43.81 s.
+End
+
+# -- cell 7 (1.3s, exit 0)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True); print(r.stdout[-2600:])
+# -- output
+2
+  <<Writing region 23 with 4346 cells to cellSet region23
+  <<Writing region 24 with 4242 cells to cellSet region24
+  <<Writing region 25 with 4242 cells to cellSet region25
+  <<Writing region 26 with 4167 cells to cellSet region26
+  <<Writing region 27 with 4167 cells to cellSet region27
+  <<Writing region 28 with 4242 cells to cellSet region28
+  <<Writing region 29 with 4242 cells to cellSet region29
+  <<Writing region 30 with 4346 cells to cellSet region30
+  <<Writing region 31 with 4346 cells to cellSet region31
+  <<Writing region 32 with 4345 cells to cellSet region32
+  <<Writing region 33 with 4345 cells to cellSet region33
+  <<Writing region 34 with 4529 cells to cellSet region34
+  <<Writing region 35 with 4529 cells to cellSet region35
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+         friction_bottom    21356    22732  ok (non-closed singly connected)
+            friction_top    21356    22732  ok (non-closed singly connected)
+                   vanes    33312    37432  ok (non-closed singly connected)
+                   inlet     1968     2580  ok (non-closed singly connected)
+                  outlet     4904     5808  ok (non-closed singly connected)
+                    ".*"    82896    81484      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+                CellZone        Cells       Points       VolumeBoundingBox
+                  fluid       156364       209120  0.000400166 (-0.15995 -0.15995 -2.02149e-08) (0.15995 0.15995 0.012)
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.15995 -0.15995 -2.02149e-08) (0.15995 0.15995 0.012)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (3.03123e-16 7.88701e-17 -2.02719e-15) OK.
+    Max cell openness = 3.18563e-16 OK.
+    Max aspect ratio = 5.29686 OK.
+    Minimum face area = 2.88371e-07. Maximum face area = 8.27005e-06.  Face area magnitudes OK.
+    Min volume = 2.48341e-10. Max volume = 2.09694e-08.  Total volume = 0.000400166.  Cell volumes OK.
+    Mesh non-orthogonality Max: 51.8577 average: 9.54593
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.97187 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 8 (1.0s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pv.OFF_SCREEN=True
+os.makedirs("VTK",exist_ok=True)
+subprocess.run(["foamToVTK","-latestTime","-no-internal"],capture_output=True,text=True)
+import glob
+print(glob.glob("VTK/**/*.vt*",recursive=True)[:10])
+# -- output
+['VTK/t22.vtm.series', 'VTK/t22_0.vtm', 'VTK/t22_0/boundary.vtm', 'VTK/t22_0/boundary/vanes.vtp', 'VTK/t22_0/boundary/inlet.vtp', 'VTK/t22_0/boundary/outlet.vtp', 'VTK/t22_0/boundary/friction_top.vtp', 'VTK/t22_0/boundary/friction_bottom.vtp']
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+
+# -- cell 9 (0.5s, exit 0)
+cols={"vanes":"orange","inlet":"green","outlet":"red","friction_top":"lightblue","friction_bottom":"grey"}
+p=pv.Plotter(off_screen=True,window_size=(900,800))
+for n,c in cols.items():
+    m=pv.read(f"VTK/t22_0/boundary/{n}.vtp")
+    if n=="friction_top": m=m.clip(normal='y',origin=(0,0,0))
+    p.add_mesh(m,color=c,show_edges=(n!="friction_top"),line_width=0.3)
+p.camera_position=[(0.3,-0.3,0.35),(0,0,0.006),(0,0,1)]
+p.screenshot("view.png"); print("ok")
+# -- output
+ok
+
+[0m[33m2026-09-14 10:39:47.057 (  10.046s) [    7380C2FEA780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 10:39:47.057 (  10.047s) [    7380C2FEA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 10:39:47.070 (  10.060s) [    7380C2FEA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 10 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("view.png"))
+# -- output
+
+
+# -- cell 11 (0.1s, exit 0)
+import numpy as np
+def rad(m): 
+    p=m.points; return np.hypot(p[:,0],p[:,1])
+for n in ["inlet","outlet"]:
+    m=pv.read(f"VTK/t22_0/boundary/{n}.vtp"); r=rad(m); print(n, r.min(), r.max())
+# vane width from CAD: the two side faces of the vane at angle 0 are at y=+-0.004
+vf=groups["vanes"]; ys=sorted(set(round(f.center().Y,6) for f in vf if abs(f.center().X-0.1275)<0.02))
+print("vane side face y offsets near theta=0:", ys, "-> width", ys[-1]-ys[0])
+print("passages:",36, "gap z:", 0.012, "cells:",156364)
+# -- output
+inlet 0.0949945 0.095009625
+outlet 0.15999316 0.16000511
+vane side face y offsets near theta=0: [-0.067181, -0.060252, -0.047343, -0.039826, -0.026068, -0.018189, -0.004, 0.004, 0.018189, 0.026068, 0.039826, 0.047343, 0.060252, 0.067181] -> width 0.134362
+passages: 36 gap z: 0.012 cells: 156364
+

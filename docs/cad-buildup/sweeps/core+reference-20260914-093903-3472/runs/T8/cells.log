@@ -1,0 +1,544 @@
+# -- cell 1 (0.1s, exit 0)
+import os, subprocess
+print(os.getcwd(), os.listdir('.'))
+print(subprocess.run(['bash','-c','echo $WM_PROJECT_DIR; foamVersion 2>/dev/null | head -1'],capture_output=True,text=True).stdout)
+# -- output
+/home/qiuzi/.openreynolds-buildup/work/T8-20260914-111637-5b62/t8 ['.reference']
+/usr/lib/openfoam/openfoam2512
+
+# -- cell 2 (0.1s, exit 0)
+import os, subprocess, textwrap
+
+# --- parameters (metres). From the request: duct 30x30 mm, 200 mm long;
+# copper block 40 long x 30 wide x 10 thick, centred at mid-length.
+H  = 0.030      # duct height and width
+L  = 0.200      # duct length
+BL = 0.040      # block length (x)
+BT = 0.010      # block thickness (z), recessed below floor z=0
+X = [0.0, (L-BL)/2, (L+BL)/2, L]   # 0, 0.08, 0.12, 0.2
+Y = [0.0, H]
+Z = [-BT, 0.0, H]
+CELL = 0.005    # coarse target cell size
+
+verts = {}
+def V(i,j,k):
+    key=(i,j,k)
+    if key not in verts: verts[key]=len(verts)
+    return verts[key]
+
+def hexblk(i0,i1,j0,j1,k0,k1,zone):
+    c = lambda a,b,cc: V(i0 if a==0 else i1, j0 if b==0 else j1, k0 if cc==0 else k1)
+    h = [c(0,0,0),c(1,0,0),c(1,1,0),c(0,1,0),c(0,0,1),c(1,0,1),c(1,1,1),c(0,1,1)]
+    n = [max(1,round((X[i1]-X[i0])/CELL)), max(1,round((Y[j1]-Y[j0])/CELL)), max(1,round((Z[k1]-Z[k0])/CELL))]
+    return dict(h=h, n=n, zone=zone, idx=(i0,i1,j0,j1,k0,k1))
+
+blocks = [hexblk(0,1,0,1,1,2,'fluid'), hexblk(1,2,0,1,1,2,'fluid'), hexblk(2,3,0,1,1,2,'fluid'),
+          hexblk(1,2,0,1,0,1,'solid')]
+
+FACE = {'xmin':[(0,0,0),(0,0,1),(0,1,1),(0,1,0)], 'xmax':[(1,0,0),(1,1,0),(1,1,1),(1,0,1)],
+        'ymin':[(0,0,0),(1,0,0),(1,0,1),(0,0,1)], 'ymax':[(0,1,0),(0,1,1),(1,1,1),(1,1,0)],
+        'zmin':[(0,0,0),(0,1,0),(1,1,0),(1,0,0)], 'zmax':[(0,0,1),(1,0,1),(1,1,1),(0,1,1)]}
+def face(b,side):
+    i0,i1,j0,j1,k0,k1 = b['idx']
+    return [V(i0 if a==0 else i1, j0 if bb==0 else j1, k0 if cc==0 else k1) for a,bb,cc in FACE[side]]
+
+f0,f1,f2,sol = blocks
+patches = {
+ 'inlet'      : [face(f0,'xmin')],
+ 'outlet'     : [face(f2,'xmax')],
+ 'duct_wall'  : [face(b,s) for b in (f0,f1,f2) for s in ('ymin','ymax','zmax')]
+                + [face(f0,'zmin'), face(f2,'zmin')],
+ 'block_wall' : [face(sol,s) for s in ('xmin','xmax','ymin','ymax','zmin')],
+}
+print({k:len(v) for k,v in patches.items()}, [b['n'] for b in blocks], len(verts))
+# -- output
+{'inlet': 1, 'outlet': 1, 'duct_wall': 11, 'block_wall': 5} [[16, 6, 6], [8, 6, 6], [16, 6, 6], [8, 6, 2]] 20
+
+# -- cell 3 (0.2s, exit 0)
+for d in ['system','constant']: os.makedirs(d, exist_ok=True)
+head = """FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"""
+vlist = sorted(verts.items(), key=lambda kv: kv[1])
+vtxt = "\n".join("    (%.6f %.6f %.6f)" % (X[i],Y[j],Z[k]) for (i,j,k),_ in vlist)
+btxt = "\n".join("    hex (%s) %s (%d %d %d) simpleGrading (1 1 1)" %
+                 (" ".join(map(str,b['h'])), b['zone'], *b['n']) for b in blocks)
+ptxt = ""
+for name,faces in patches.items():
+    typ = 'patch' if name in ('inlet','outlet') else 'wall'
+    ptxt += "    %s\n    {\n        type %s;\n        faces\n        (\n%s\n        );\n    }\n" % (
+        name, typ, "\n".join("            (%s)" % " ".join(map(str,f)) for f in faces))
+dict_txt = head % 'blockMeshDict' + """
+scale 1;
+vertices
+(
+%s
+);
+blocks
+(
+%s
+);
+edges ();
+boundary
+(
+%s);
+mergePatchPairs ();
+""" % (vtxt, btxt, ptxt)
+open('system/blockMeshDict','w').write(dict_txt)
+open('system/controlDict','w').write(head % 'controlDict' + """
+application chtMultiRegionFoam; startFrom startTime; startTime 0; stopAt endTime;
+endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;
+""")
+open('system/fvSchemes','w').write(head % 'fvSchemes' + "\nddtSchemes{default steadyState;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\n")
+open('system/fvSolution','w').write(head % 'fvSolution' + "\nsolvers{}\n")
+r = subprocess.run(['blockMesh'],capture_output=True,text=True)
+print(r.stdout[-1500:], r.stderr[-800:])
+# -- output
+ting topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 3
+		Number of boundary faces : 18
+		Number of defined boundary faces : 18
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+    Block 1 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+    Block 2 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+    Block 3 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+Adding cell zones
+    0	fluid
+    1	solid
+No patch pairs to merge
+
+Writing polyMesh with 2 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 -0.01) (0.2 0.03 0.03)
+  nPoints: 2135
+  nCells: 1536
+  nFaces: 5152
+  nInternalFaces: 4064
+----------------
+Cell Zones
+----------------
+  zone 0 (size: 1440) name: fluid
+  zone 1 (size: 96) name: solid
+----------------
+Patches
+----------------
+  patch 0 (start: 4064 size: 36) name: inlet
+  patch 1 (start: 4100 size: 36) name: outlet
+  patch 2 (start: 4136 size: 912) name: duct_wall
+  patch 3 (start: 5048 size: 104) name: block_wall
+
+End
+
+# -- cell 4 (2.7s, exit 0)
+r = subprocess.run(['splitMeshRegions','-cellZones','-overwrite'],capture_output=True,text=True)
+print(r.stdout[-2000:]); print(r.stderr[-500:])
+print(os.listdir('constant'))
+# -- output
+lowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Creating single patch per inter-region interface.
+
+Trying to match regions to existing cell zones.
+
+
+Number of regions:2
+
+Writing region per cell file (for manual decomposition) to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-111637-5b62/t8/constant/cellToRegion"
+
+Writing region per cell as volScalarField to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-111637-5b62/t8/0/cellToRegion"
+
+Region	Cells
+------	-----
+0	1440
+1	96
+
+Region	Zone	Name
+------	----	----
+0	(0)	fluid
+1	(1)	solid
+
+Sizes of interfaces between regions:
+
+Interface	Region	Region	Faces
+---------	------	------	-----
+0		0	1	48
+
+Reading volScalarField: cellToRegion
+
+
+Adding patches
+
+
+Adding patches
+
+For interface between region fluid and solid added patches
+    4	fluid_to_solid
+    5	solid_to_fluid
+
+Region 0
+-------- 
+Creating mesh for region 0 fluid
+Writing dummy "fluid/fvSchemes"
+Writing dummy "fluid/fvSolution"
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region0 points back to base mesh.
+Writing map faceRegionAddressing from region0 faces back to base mesh.
+Writing map cellRegionAddressing from region0 cells back to base mesh.
+Writing map boundaryRegionAddressing from region0 boundary back to base mesh.
+
+Region 1
+-------- 
+Creating mesh for region 1 solid
+Writing dummy "solid/fvSchemes"
+Writing dummy "solid/fvSolution"
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region1 points back to base mesh.
+Writing map faceRegionAddressing from region1 faces back to base mesh.
+Writing map cellRegionAddressing from region1 cells back to base mesh.
+Writing map boundaryRegionAddressing from region1 boundary back to base mesh.
+End
+
+
+
+['cellToRegion', 'solid', 'polyMesh', 'fluid']
+
+# -- cell 5 (0.4s, exit 0)
+for reg in ('fluid','solid'):
+    r=subprocess.run(['checkMesh','-region',reg],capture_output=True,text=True)
+    print('==',reg); print(r.stdout[-900:])
+# -- output
+== fluid
+2 0.03 0.03)
+    solid               0            0            0            (1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.2 0.03 0.03)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-3.02043e-18 2.71838e-17 -1.83852e-18) OK.
+    Max cell openness = 1.35525e-16 OK.
+    Max aspect ratio = 1 OK.
+    Minimum face area = 2.5e-05. Maximum face area = 2.5e-05.  Face area magnitudes OK.
+    Min volume = 1.25e-07. Max volume = 1.25e-07.  Total volume = 0.00018.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.33067e-14 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+
+== solid
+50) (-1e+150 -1e+150 -1e+150)
+    solid               96           189          1.2e-05      (0.08 0 -0.01) (0.12 0.03 0)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0.08 0 -0.01) (0.12 0.03 0)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (7.13291e-18 8.91614e-18 1.35525e-16) OK.
+    Max cell openness = 1.35525e-16 OK.
+    Max aspect ratio = 1 OK.
+    Minimum face area = 2.5e-05. Maximum face area = 2.5e-05.  Face area magnitudes OK.
+    Min volume = 1.25e-07. Max volume = 1.25e-07.  Total volume = 1.2e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.00457e-14 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 6 (1.5s, exit 1)
+import pyvista as pv
+pv.start_xvfb() if False else None
+pv.global_theme.background='white'
+f = pv.OpenFOAMReader('case.foam') if os.path.exists('case.foam') else None
+open('case.foam','w').close()
+def render(fn):
+    p = pv.Plotter(off_screen=True, window_size=(1100,600))
+    for reg,col in (('fluid','lightblue'),('solid','darkorange')):
+        m = pv.POpenFOAMReader('case.foam'); m.case_type='reconstructed'
+        b = pv.read_meshio if False else None
+    # simpler: read polyMesh via foamToVTK
+    subprocess.run(['foamToVTK','-region','fluid','-ascii','-no-boundary'],capture_output=True,text=True)
+    subprocess.run(['foamToVTK','-region','solid','-ascii','-no-boundary'],capture_output=True,text=True)
+    fl = pv.read(sorted(__import__('glob').glob('VTK/**/fluid_0.vtk',recursive=True))[0])
+    so = pv.read(sorted(__import__('glob').glob('VTK/**/solid_0.vtk',recursive=True))[0])
+    p.add_mesh(fl, color='lightblue', show_edges=True, opacity=0.35)
+    p.add_mesh(so, color='darkorange', show_edges=True)
+    p.camera_position=[(0.35,-0.3,0.22),(0.1,0.015,0.005),(0,0,1)]
+    p.screenshot(fn); return fn
+print(render('coarse.png'))
+print(__import__('glob').glob('VTK/**/*.vtk',recursive=True))
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 11:18:44.973 (   0.234s) [    7055F3EBE780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 11:18:44.974 (   0.235s) [    7055F3EBE780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 11:18:44.987 (   0.248s) [    7055F3EBE780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[31m---------------------------------------------------------------------------[39m
+[31mIndexError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 20[39m
+[32m     16[39m     p.add_mesh(fl, color=[33m'lightblue'[39m, show_edges=[38;5;28;01mTrue[39;00m, opacity=[32m0.35[39m)
+[32m     17[39m     p.add_mesh(so, color=[33m'darkorange'[39m, show_edges=[38;5;28;01mTrue[39;00m)
+[32m     18[39m     p.camera_position=[([32m0.35[39m,-[32m0.3[39m,[32m0.22[39m),([32m0.1[39m,[32m0.015[39m,[32m0.005[39m),([32m0[39m,[32m0[39m,[32m1[39m)]
+[32m     19[39m     p.screenshot(fn); [38;5;28;01mreturn[39;00m fn
+[32m---> [39m[32m20[39m print(render([33m'coarse.png'[39m))
+[32m     21[39m print(__import__([33m'glob'[39m).glob([33m'VTK/**/*.vtk'[39m,recursive=[38;5;28;01mTrue[39;00m))
+
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 14[39m, in [36mrender[39m[34m(fn)[39m
+[32m     10[39m         b = pv.read_meshio [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m     11[39m     [38;5;66;03m# simpler: read polyMesh via foamToVTK[39;00m
+[32m     12[39m     subprocess.run([[33m'foamToVTK'[39m,[33m'-region'[39m,[33m'fluid'[39m,[33m'-ascii'[39m,[33m'-no-boundary'[39m],capture_output=[38;5;28;01mTrue[39;00m,text=[38;5;28;01mTrue[39;00m)
+[32m     13[39m     subprocess.run([[33m'foamToVTK'[39m,[33m'-region'[39m,[33m'solid'[39m,[33m'-ascii'[39m,[33m'-no-boundary'[39m],capture_output=[38;5;28;01mTrue[39;00m,text=[38;5;28;01mTrue[39;00m)
+[32m---> [39m[32m14[39m     fl = pv.read(sorted(__import__([33m'glob'[39m).glob([33m'VTK/**/fluid_0.vtk'[39m,recursive=[38;5;28;01mTrue[39;00m))[[32m0[39m])
+[32m     15[39m     so = pv.read(sorted(__import__([33m'glob'[39m).glob([33m'VTK/**/solid_0.vtk'[39m,recursive=[38;5;28;01mTrue[39;00m))[[32m0[39m])
+[32m     16[39m     p.add_mesh(fl, color=[33m'lightblue'[39m, show_edges=[38;5;28;01mTrue[39;00m, opacity=[32m0.35[39m)
+[32m     17[39m     p.add_mesh(so, color=[33m'darkorange'[39m, show_edges=[38;5;28;01mTrue[39;00m)
+
+[31mIndexError[39m: list index out of range
+
+# -- cell 7 (0.1s, exit 0)
+import glob
+print(glob.glob('VTK/**/*.vt*',recursive=True)[:20])
+# -- output
+['VTK/solid/t8_0.vtm', 'VTK/solid/t8.vtm.series', 'VTK/solid/t8_0/internal.vtu', 'VTK/fluid/t8_0.vtm', 'VTK/fluid/t8.vtm.series', 'VTK/fluid/t8_0/internal.vtu']
+
+# -- cell 8 (1.8s, exit 0)
+import pyvista as pv, glob
+pv.global_theme.background='white'
+def render(fn, cam=[(0.32,-0.28,0.20),(0.1,0.015,0.0),(0,0,1)]):
+    fl = pv.read('VTK/fluid/t8_0/internal.vtu'); so = pv.read('VTK/solid/t8_0/internal.vtu')
+    p = pv.Plotter(off_screen=True, window_size=(1100,600))
+    p.add_mesh(fl, color='lightblue', show_edges=True, opacity=0.30)
+    p.add_mesh(so, color='darkorange', show_edges=True)
+    p.camera_position=cam; p.screenshot(fn); return fl.n_cells, so.n_cells
+print(render('coarse.png'))
+# -- output
+(1440, 96)
+
+[0m[33m2026-09-14 11:19:09.320 (  24.581s) [    7055F3EBE780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 11:19:09.321 (  24.582s) [    7055F3EBE780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 9 (0.3s, exit 0)
+from IPython.display import Image, display
+display(Image('coarse.png'))
+# -- output
+
+
+# -- cell 10 (0.6s, exit 0)
+import shutil
+CELL = 0.0025                     # final cell size, my choice (12x12 cells across the duct)
+for d in ['constant/polyMesh','constant/fluid','constant/solid','0','VTK']:
+    shutil.rmtree(d, ignore_errors=True)
+verts.clear()
+blocks = [hexblk(0,1,0,1,1,2,'fluid'), hexblk(1,2,0,1,1,2,'fluid'), hexblk(2,3,0,1,1,2,'fluid'),
+          hexblk(1,2,0,1,0,1,'solid')]
+f0,f1,f2,sol = blocks
+patches = {
+ 'inlet'      : [face(f0,'xmin')],
+ 'outlet'     : [face(f2,'xmax')],
+ 'duct_wall'  : [face(b,s) for b in (f0,f1,f2) for s in ('ymin','ymax','zmax')]
+                + [face(f0,'zmin'), face(f2,'zmin')],
+ 'block_wall' : [face(sol,s) for s in ('xmin','xmax','ymin','ymax','zmin')],
+}
+vlist = sorted(verts.items(), key=lambda kv: kv[1])
+vtxt = "\n".join("    (%.6f %.6f %.6f)" % (X[i],Y[j],Z[k]) for (i,j,k),_ in vlist)
+btxt = "\n".join("    hex (%s) %s (%d %d %d) simpleGrading (1 1 1)" %
+                 (" ".join(map(str,b['h'])), b['zone'], *b['n']) for b in blocks)
+ptxt = ""
+for name,faces in patches.items():
+    typ = 'patch' if name in ('inlet','outlet') else 'wall'
+    ptxt += "    %s\n    {\n        type %s;\n        faces\n        (\n%s\n        );\n    }\n" % (
+        name, typ, "\n".join("            (%s)" % " ".join(map(str,f)) for f in faces))
+open('system/blockMeshDict','w').write(head % 'blockMeshDict' +
+    "\nscale 1;\nvertices\n(\n%s\n);\nblocks\n(\n%s\n);\nedges ();\nboundary\n(\n%s);\nmergePatchPairs ();\n" % (vtxt,btxt,ptxt))
+print([b['n'] for b in blocks])
+print(subprocess.run(['blockMesh'],capture_output=True,text=True).stdout[-500:])
+print(subprocess.run(['splitMeshRegions','-cellZones','-overwrite'],capture_output=True,text=True).stdout[-600:])
+# -- output
+[[32, 12, 12], [16, 12, 12], [32, 12, 12], [16, 12, 4]]
+mation
+----------------
+  boundingBox: (0 0 -0.01) (0.2 0.03 0.03)
+  nPoints: 14573
+  nCells: 12288
+  nFaces: 39040
+  nInternalFaces: 34688
+----------------
+Cell Zones
+----------------
+  zone 0 (size: 11520) name: fluid
+  zone 1 (size: 768) name: solid
+----------------
+Patches
+----------------
+  patch 0 (start: 34688 size: 144) name: inlet
+  patch 1 (start: 34832 size: 144) name: outlet
+  patch 2 (start: 34976 size: 3648) name: duct_wall
+  patch 3 (start: 38624 size: 416) name: block_wall
+
+End
+
+
+llRegionAddressing from region0 cells back to base mesh.
+Writing map boundaryRegionAddressing from region0 boundary back to base mesh.
+
+Region 1
+-------- 
+Creating mesh for region 1 solid
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region1 points back to base mesh.
+Writing map faceRegionAddressing from region1 faces back to base mesh.
+Writing map cellRegionAddressing from region1 cells back to base mesh.
+Writing map boundaryRegionAddressing from region1 boundary back to base mesh.
+End
+
+# -- cell 11 (0.5s, exit 0)
+import re
+for reg in ('fluid','solid'):
+    r=subprocess.run(['checkMesh','-region',reg],capture_output=True,text=True).stdout
+    print('==',reg)
+    print("\n".join(l for l in r.splitlines() if re.search(r'patch|Total volume|bounding box|Mesh OK|\*\*\*|cells:|faces:',l))[:1600])
+# -- output
+== fluid
+    faces:            36624
+    internal faces:   32496
+    cells:            11520
+    boundary patches: 4
+Checking patch topology for multiply connected surfaces...
+    Overall domain bounding box (0 0 0) (0.2 0.03 0.03)
+    Min volume = 1.5625e-08. Max volume = 1.5625e-08.  Total volume = 0.00018.  Cell volumes OK.
+Mesh OK.
+== solid
+    faces:            2608
+    internal faces:   2000
+    cells:            768
+    boundary patches: 2
+Checking patch topology for multiply connected surfaces...
+    Overall domain bounding box (0.08 0 -0.01) (0.12 0.03 0)
+    Min volume = 1.5625e-08. Max volume = 1.5625e-08.  Total volume = 1.2e-05.  Cell volumes OK.
+Mesh OK.
+
+# -- cell 12 (0.1s, exit 0)
+for reg in ('fluid','solid'):
+    t=open(f'constant/{reg}/polyMesh/boundary').read()
+    print('==',reg)
+    print("\n".join(l.strip() for l in t.splitlines() if re.match(r'^\s*(\w+)$',l) or 'type' in l or 'nFaces' in l or 'sampleRegion' in l or 'sampleMode' in l)[-1200:])
+# -- output
+== fluid
+FoamFile
+4
+inlet
+type            patch;
+nFaces          144;
+outlet
+type            patch;
+nFaces          144;
+duct_wall
+type            wall;
+nFaces          3648;
+fluid_to_solid
+type            mappedWall;
+nFaces          192;
+sampleMode      nearestPatchFace;
+sampleRegion    solid;
+== solid
+FoamFile
+2
+block_wall
+type            wall;
+nFaces          416;
+solid_to_fluid
+type            mappedWall;
+nFaces          192;
+sampleMode      nearestPatchFace;
+sampleRegion    fluid;
+
+# -- cell 13 (1.1s, exit 0)
+open('constant/regionProperties','w').write(head % 'regionProperties' +
+    "\nregions ( fluid (fluid) solid (solid) );\n")
+def pts(reg):
+    import numpy as np
+    t=open(f'constant/{reg}/polyMesh/points').read()
+    a=np.array([list(map(float,m.groups())) for m in re.finditer(r'\(([-\d.e+]+) ([-\d.e+]+) ([-\d.e+]+)\)',t)])
+    return a
+import numpy as np
+for reg in ('fluid','solid'):
+    a=pts(reg); print(reg,'extent mm:', np.round((a.max(0)-a.min(0))*1000,4), 'min mm:', np.round(a.min(0)*1000,4))
+print('interface area m2:', 192*(0.0025**2), 'expected', 0.04*0.03)
+print('fluid vol m3 1.8e-4 expected', 0.2*0.03*0.03, '| solid vol expected', 0.04*0.03*0.01)
+subprocess.run(['foamToVTK','-region','fluid','-no-boundary'],capture_output=True); subprocess.run(['foamToVTK','-region','solid','-no-boundary'],capture_output=True)
+print(render('final.png'))
+display(Image('final.png'))
+# -- output
+fluid extent mm: [200.  30.  30.] min mm: [0. 0. 0.]
+solid extent mm: [40. 30. 10.] min mm: [ 80.   0. -10.]
+interface area m2: 0.0012000000000000001 expected 0.0012
+fluid vol m3 1.8e-4 expected 0.00017999999999999998 | solid vol expected 1.1999999999999999e-05
+(11520, 768)
+
+[0m[33m2026-09-14 11:20:06.333 (  81.594s) [    7055F3EBE780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 11:20:06.334 (  81.595s) [    7055F3EBE780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

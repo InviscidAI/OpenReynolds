@@ -1,0 +1,589 @@
+{
+  "run_id": "20260914-104031-94cf",
+  "case": "T23",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T23-20260914-104031-94cf",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T23-20260914-104031-94cf/t23",
+  "started_at": "2026-09-14T10:40:31",
+  "ended_at": "2026-09-14T10:49:09",
+  "seconds": 514.4,
+  "n_turns": 22,
+  "n_steps": 20,
+  "first_mesh_step": 14,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.9148,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 44,
+    "cache_read": 440643,
+    "cache_write": 36918,
+    "output": 18539
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd, numpy as np\nfrom build123d import Pos, Rot\n\nR_HOLLOW, R_BALL, R_HOLE, L_CUBE = 16.0, 15.0, 12.0, 40.0\n\nhollow = bd.Sphere(R_HOLLOW)\nball   = bd.Sphere(R_BALL)\ncx = Rot(0, 90, 0) * bd.Cylinder(R_HOLE, L_CUBE)\ncy = Rot(90, 0, 0) * bd.Cylinder(R_HOLE, L_CUBE)\ncz = bd.Cylinder(R_HOLE, L_CUBE)\n\nwater_mm = (hollow + cx + cy + cz) - ball\nprint(water_mm.is_valid(), len(water_mm.solids()), water_mm.volume)\nprint(water_mm.bounding_box())\nfor i, f in enumerate(water_mm.faces()):\n    print(i, type(f.geometry_type).__name__, f.geometry_type, round(f.area,2), [round(v,3) for v in f.center()])",
+      "exit_code": 1,
+      "seconds": 2.610181770000054,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[1]\u001b[39m\u001b[32m, line 13\u001b[39m\n\u001b[32m      9\u001b[39m cy = Rot(\u001b[32m90\u001b[39m, \u001b[32m0\u001b[39m, \u001b[32m0\u001b[39m) * bd.Cylinder(R_HOLE, L_CUBE)\n\u001b[32m     10\u001b[39m cz = bd.Cylinder(R_HOLE, L_CUBE)\n\u001b[32m     11\u001b[39m \n\u001b[32m     12\u001b[39m water_mm = (hollow + cx + cy + cz) - ball\n\u001b[32m---> \u001b[39m\u001b[32m13\u001b[39m print(water_mm.is_valid(), len(water_mm.solids()), water_mm.volume)\n\u001b[32m     14\u001b[39m print(water_mm.bounding_box())\n\u001b[32m     15\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m i, f \u001b[38;5;28;01min\u001b[39;00m enumerate(water_mm.faces()):\n\u001b[32m     16\u001b[39m     print(i, type(f.geometry_type).__name__, f.geometry_type, round(f.area,\u001b[32m2\u001b[39m), [round(v,\u001b[32m3\u001b[39m) \u001b[38;5;28;01mfor\u001b[39;00m v \u001b[38;5;28;01min\u001b[39;00m f.center()])\n\n\u001b[31mTypeError\u001b[39m: 'bool' object is not callable",
+      "image": ""
+    },
+    {
+      "cmd": "print(water_mm.is_valid, len(water_mm.solids()), round(water_mm.volume,2))\nprint(water_mm.bounding_box())\nfor i, f in enumerate(water_mm.faces()):\n    print(i, f.geometry_type, round(f.area,2), [round(v,3) for v in f.center()])",
+      "exit_code": 1,
+      "seconds": 0.10086466299981112,
+      "output": "True 1 20658.56\nbbox: -20.000000100000005 <= x <= 20.000000100000005, -20.000000100000005 <= y <= 20.000000100000005, -20.0 <= z <= 20.0\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[2]\u001b[39m\u001b[32m, line 4\u001b[39m\n\u001b[32m      1\u001b[39m print(water_mm.is_valid, len(water_mm.solids()), round(water_mm.volume,\u001b[32m2\u001b[39m))\n\u001b[32m      2\u001b[39m print(water_mm.bounding_box())\n\u001b[32m      3\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m i, f \u001b[38;5;28;01min\u001b[39;00m enumerate(water_mm.faces()):\n\u001b[32m----> \u001b[39m\u001b[32m4\u001b[39m     print(i, f.geometry_type, round(f.area,\u001b[32m2\u001b[39m), [round(v,\u001b[32m3\u001b[39m) \u001b[38;5;28;01mfor\u001b[39;00m v \u001b[38;5;28;01min\u001b[39;00m f.center()])\n\n\u001b[31mAttributeError\u001b[39m: 'Face' object has no attribute 'geometry_type'",
+      "image": ""
+    },
+    {
+      "cmd": "f0 = water_mm.faces()[0]\nprint([a for a in dir(f0) if 'type' in a.lower() or 'radius' in a.lower()])\nfor i, f in enumerate(water_mm.faces()):\n    print(i, f.geom_type, round(f.area,3), [round(v,4) for v in f.center()])",
+      "exit_code": 0,
+      "seconds": 0.05078266600048664,
+      "output": "['geom_type', 'radius', 'radius_of_gyration', 'shape_type']\n0 GeomType.SPHERE 16.96 [9.6919, -9.6919, 8.2543]\n1 GeomType.CYLINDER 665.688 [15.2915, 0.0, 12.0]\n2 GeomType.CYLINDER 665.688 [-12.0, -15.2915, 0.0]\n3 GeomType.CYLINDER 665.688 [-12.0, 0.0, 15.2915]\n4 GeomType.SPHERE 16.96 [9.6919, 9.6919, 8.2543]\n5 GeomType.CYLINDER 665.688 [-12.0, 15.2915, -0.0]\n6 GeomType.SPHERE 16.96 [9.6919, 9.6919, -8.2543]\n7 GeomType.CYLINDER 665.688 [-12.0, 0.0, -15.2915]\n8 GeomType.PLANE 452.389 [20.0, -0.0, -0.0]\n9 GeomType.SPHERE 16.96 [9.6919, -9.6919, -8.2543]\n10 GeomType.SPHERE 16.96 [-9.6919, -9.6919, -8.2543]\n11 GeomType.CYLINDER 665.688 [-15.2915, 0.0, 12.0]\n12 GeomType.SPHERE 16.96 [-9.6919, -9.6919, 8.2543]\n13 GeomType.PLANE 452.389 [0.0, -20.0, 0.0]\n14 GeomType.SPHERE 16.96 [-9.6919, 9.6919, 8.2543]\n15 GeomType.PLANE 452.389 [0.0, -0.0, 20.0]\n16 GeomType.PLANE 452.389 [0.0, 20.0, -0.0]\n17 GeomType.SPHERE 16.96 [-9.6919, 9.6919, -8.2543]\n18 GeomType.PLANE 452.389 [0.0, -0.0, -20.0]\n19 GeomType.PLANE 452.389 [-20.0, -0.0, -0.0]\n20 GeomType.SPHERE 2827.433 [-15.0, 0.0, 0.0]",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd, numpy as np\nfrom build123d import Pos, Rot\n\n# Dimensions from the request (mm; scaled to metres before export)\nR_HOLLOW, R_BALL, R_HOLE, L_CUBE = 16.0, 15.0, 12.0, 40.0\n\nhollow = bd.Sphere(R_HOLLOW)\nball   = bd.Sphere(R_BALL)\ncx = Rot(0, 90, 0) * bd.Cylinder(R_HOLE, L_CUBE)   # hole axis along x, spans -20..20\ncy = Rot(90, 0, 0) * bd.Cylinder(R_HOLE, L_CUBE)\ncz = bd.Cylinder(R_HOLE, L_CUBE)\n\nwater_mm = (hollow + cx + cy + cz) - ball          # water = hollow+holes, ball removed\nprint(\"valid\", water_mm.is_valid, \"solids\", len(water_mm.solids()), \"vol mm^3\", round(water_mm.volume, 2))\nprint(water_mm.bounding_box())\nfor i, f in enumerate(water_mm.faces()):\n    bc = f.bounding_box().center()\n    print(i, f.geom_type, round(f.area, 3), [round(v, 3) for v in bc])",
+      "exit_code": 0,
+      "seconds": 1.2036492679999355,
+      "output": "valid True solids 1 vol mm^3 20658.56\nbbox: -20.000000100000005 <= x <= 20.000000100000005, -20.000000100000005 <= y <= 20.000000100000005, -20.0 <= z <= 20.0\n0 GeomType.SPHERE 16.96 [8.12, -8.12, 8.12]\n1 GeomType.CYLINDER 665.688 [15.292, 0.0, 0.0]\n2 GeomType.CYLINDER 665.688 [0.0, -15.292, 0.0]\n3 GeomType.CYLINDER 665.688 [-0.0, 0.0, 15.292]\n4 GeomType.SPHERE 16.96 [8.12, 8.12, 8.12]\n5 GeomType.CYLINDER 665.688 [0.0, 15.292, -0.0]\n6 GeomType.SPHERE 16.96 [8.12, 8.12, -8.12]\n7 GeomType.CYLINDER 665.688 [0.0, -0.0, -15.292]\n8 GeomType.PLANE 452.389 [20.0, 0.0, 0.0]\n9 GeomType.SPHERE 16.96 [8.12, -8.12, -8.12]\n10 GeomType.SPHERE 16.96 [-8.12, -8.12, -8.12]\n11 GeomType.CYLINDER 665.688 [-15.292, 0.0, -0.0]\n12 GeomType.SPHERE 16.96 [-8.12, -8.12, 8.12]\n13 GeomType.PLANE 452.389 [0.0, -20.0, 0.0]\n14 GeomType.SPHERE 16.96 [-8.12, 8.12, 8.12]\n15 GeomType.PLANE 452.389 [0.0, 0.0, 20.0]\n16 GeomType.PLANE 452.389 [0.0, 20.0, -0.0]\n17 GeomType.SPHERE 16.96 [-8.12, 8.12, -8.12]\n18 GeomType.PLANE 452.389 [0.0, 0.0, -20.0]\n19 GeomType.PLANE 452.389 [-20.0, 0.0, -0.0]\n20 GeomType.SPHERE 2827.433 [0.0, 0.0, 0.0]",
+      "image": ""
+    },
+    {
+      "cmd": "MM = 0.001\nwater = water_mm.scale(MM)     # metres from here on\nprint(\"vol m^3\", water.volume, \" bbox\", water.bounding_box())\n\naxes = {\"xp\": (0,+1), \"xn\": (0,-1), \"yp\": (1,+1), \"yn\": (1,-1), \"zp\": (2,+1), \"zn\": (2,-1)}\npatches = {}\nfor f in water.faces():\n    c = f.bounding_box().center()\n    r = f.radius if f.geom_type in (bd.GeomType.SPHERE, bd.GeomType.CYLINDER) else None\n    if f.geom_type == bd.GeomType.SPHERE:\n        key = \"ball\" if abs(r - 0.015) < 1e-6 else \"hollow\"\n    elif f.geom_type == bd.GeomType.CYLINDER:\n        i, s = max(axes.items(), key=lambda kv: kv[1][1]*c[kv[1][0]])[1]\n        key = \"hole_\" + [k for k,v in axes.items() if v == (i,s)][0]\n    else:\n        i, s = max(axes.items(), key=lambda kv: kv[1][1]*c[kv[1][0]])[1]\n        key = \"open_\" + [k for k,v in axes.items() if v == (i,s)][0]\n    patches.setdefault(key, []).append(f)\n\nfor k, fl in sorted(patches.items()):\n    print(k, len(fl), \"area m^2\", round(sum(x.area for x in fl), 8),\n          \"radii\", sorted({round(x.radius,5) for x in fl if x.geom_type != bd.GeomType.PLANE}))",
+      "exit_code": 1,
+      "seconds": 0.10086109300027601,
+      "output": "vol m^3 2.0658555464300347e-05  bbox bbox: -0.020000099999999577 <= x <= 0.020000100000000427, -0.020000100000000427 <= y <= 0.020000099999999577, -0.019999999999999574 <= z <= 0.020000000000000427\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[5]\u001b[39m\u001b[32m, line 13\u001b[39m\n\u001b[32m      9\u001b[39m     r = f.radius \u001b[38;5;28;01mif\u001b[39;00m f.geom_type \u001b[38;5;28;01min\u001b[39;00m (bd.GeomType.SPHERE, bd.GeomType.CYLINDER) \u001b[38;5;28;01melse\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m\n\u001b[32m     10\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m f.geom_type == bd.GeomType.SPHERE:\n\u001b[32m     11\u001b[39m         key = \u001b[33m\"ball\"\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m abs(r - \u001b[32m0.015\u001b[39m) < \u001b[32m1e-6\u001b[39m \u001b[38;5;28;01melse\u001b[39;00m \u001b[33m\"hollow\"\u001b[39m\n\u001b[32m     12\u001b[39m     \u001b[38;5;28;01melif\u001b[39;00m f.geom_type == bd.GeomType.CYLINDER:\n\u001b[32m---> \u001b[39m\u001b[32m13\u001b[39m         i, s = max(axes.items(), key=\u001b[38;5;28;01mlambda\u001b[39;00m kv: kv[\u001b[32m1\u001b[39m][\u001b[32m1\u001b[39m]*c[kv[\u001b[32m1\u001b[39m][\u001b[32m0\u001b[39m]])[\u001b[32m1\u001b[39m]\n\u001b[32m     14\u001b[39m         key = \u001b[33m\"hole_\"\u001b[39m + [k \u001b[38;5;28;01mfor\u001b[39;00m k,v \u001b[38;5;28;01min\u001b[39;00m axes.items() \u001b[38;5;28;01mif\u001b[39;00m v == (i,s)][\u001b[32m0\u001b[39m]\n\u001b[32m     15\u001b[39m     \u001b[38;5;28;01melse\u001b[39;00m:\n\u001b[32m     16\u001b[39m         i, s = max(axes.items(), key=\u001b[38;5;28;01mlambda\u001b[39;00m kv: kv[\u001b[32m1\u001b[39m][\u001b[32m1\u001b[39m]*c[kv[\u001b[32m1\u001b[39m][\u001b[32m0\u001b[39m]])[\u001b[32m1\u001b[39m]\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[5]\u001b[39m\u001b[32m, line 13\u001b[39m, in \u001b[36m<lambda>\u001b[39m\u001b[34m(kv)\u001b[39m\n\u001b[32m---> \u001b[39m\u001b[32m13\u001b[39m         i, s = max(axes.items(), key=\u001b[38;5;28;01mlambda\u001b[39;00m kv: kv[\u001b[32m1\u001b[39m][\u001b[32m1\u001b[39m]*c[kv[\u001b[32m1\u001b[39m][\u001b[32m0\u001b[39m]])[\u001b[32m1\u001b[39m]\n\n\u001b[31mTypeError\u001b[39m: 'Vector' object is not subscriptable",
+      "image": ""
+    },
+    {
+      "cmd": "MM = 0.001\nwater = water_mm.scale(MM)     # metres from here on\nprint(\"vol m^3\", water.volume, water.bounding_box())\n\nAX = {\"xp\": (0, +1), \"xn\": (0, -1), \"yp\": (1, +1), \"yn\": (1, -1), \"zp\": (2, +1), \"zn\": (2, -1)}\ndef side(c):                                   # which face-direction a feature points to\n    t = c.to_tuple()\n    return max(AX, key=lambda k: AX[k][1] * t[AX[k][0]])\n\npatches = {}\nfor f in water.faces():\n    c = f.bounding_box().center()\n    if f.geom_type == bd.GeomType.SPHERE:\n        key = \"ball\" if abs(f.radius - R_BALL*MM) < 1e-7 else \"hollow\"\n    elif f.geom_type == bd.GeomType.CYLINDER:\n        key = \"hole_\" + side(c)\n    else:\n        key = \"open_\" + side(c)\n    patches.setdefault(key, []).append(f)\n\nfor k, fl in sorted(patches.items()):\n    rr = sorted({round(x.radius, 6) for x in fl if x.geom_type != bd.GeomType.PLANE})\n    print(f\"{k:9s} nfaces={len(fl)} area={sum(x.area for x in fl):.6e} radii={rr}\")\nprint(\"total patches:\", len(patches))",
+      "exit_code": 0,
+      "seconds": 0.1008393830006753,
+      "output": "vol m^3 2.0658555464300347e-05 bbox: -0.020000099999999577 <= x <= 0.020000100000000427, -0.020000100000000427 <= y <= 0.020000099999999577, -0.019999999999999574 <= z <= 0.020000000000000427\nball      nfaces=1 area=2.827433e-03 radii=[0.015]\nhole_xn   nfaces=1 area=6.656880e-04 radii=[0.012]\nhole_xp   nfaces=1 area=6.656880e-04 radii=[0.012]\nhole_yn   nfaces=1 area=6.656880e-04 radii=[0.012]\nhole_yp   nfaces=1 area=6.656880e-04 radii=[0.012]\nhole_zn   nfaces=1 area=6.656880e-04 radii=[0.012]\nhole_zp   nfaces=1 area=6.656880e-04 radii=[0.012]\nhollow    nfaces=8 area=1.356818e-04 radii=[0.016]\nopen_xn   nfaces=1 area=4.523893e-04 radii=[]\nopen_xp   nfaces=1 area=4.523893e-04 radii=[]\nopen_yn   nfaces=1 area=4.523893e-04 radii=[]\nopen_yp   nfaces=1 area=4.523893e-04 radii=[]\nopen_zn   nfaces=1 area=4.523893e-04 radii=[]\nopen_zp   nfaces=1 area=4.523893e-04 radii=[]\ntotal patches: 14\n\n/tmp/ipykernel_65640/723371857.py:7: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.\n  t = c.to_tuple()",
+      "image": ""
+    },
+    {
+      "cmd": "import os, subprocess\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nfor k, fl in patches.items():\n    bd.export_stl(bd.Compound(children=[bd.Solid(f.wrapped) if False else f for f in fl]),\n                  f\"constant/triSurface/{k}.stl\", tolerance=2e-5, angular_tolerance=0.2)\nbd.export_step(water, \"water.step\")\nprint(sorted(os.listdir(\"constant/triSurface\")))\nprint(subprocess.run([\"ls\",\"-l\",\"constant/triSurface\"],capture_output=True,text=True).stdout)",
+      "exit_code": 0,
+      "seconds": 63.66599025200048,
+      "output": "['ball.stl', 'hole_xn.stl', 'hole_xp.stl', 'hole_yn.stl', 'hole_yp.stl', 'hole_zn.stl', 'hole_zp.stl', 'hollow.stl', 'open_xn.stl', 'open_xp.stl', 'open_yn.stl', 'open_yp.stl', 'open_zn.stl', 'open_zp.stl']\ntotal 26612\n-rw-rw-r-- 1 qiuzi qiuzi 25137684 Sep 14 10:43 ball.stl\n-rw-rw-r-- 1 qiuzi qiuzi    79134 Sep 14 10:42 hole_xn.stl\n-rw-rw-r-- 1 qiuzi qiuzi    79184 Sep 14 10:42 hole_xp.stl\n-rw-rw-r-- 1 qiuzi qiuzi    79384 Sep 14 10:42 hole_yn.stl\n-rw-rw-r-- 1 qiuzi qiuzi    79384 Sep 14 10:42 hole_yp.stl\n-rw-rw-r-- 1 qiuzi qiuzi    77834 Sep 14 10:42 hole_zn.stl\n-rw-rw-r-- 1 qiuzi qiuzi    77834 Sep 14 10:42 hole_zp.stl\n-rw-rw-r-- 1 qiuzi qiuzi  1396734 Sep 14 10:42 hollow.stl\n-rw-rw-r-- 1 qiuzi qiuzi    35134 Sep 14 10:43 open_xn.stl\n-rw-rw-r-- 1 qiuzi qiuzi    35134 Sep 14 10:42 open_xp.stl\n-rw-rw-r-- 1 qiuzi qiuzi    35134 Sep 14 10:42 open_yn.stl\n-rw-rw-r-- 1 qiuzi qiuzi    35134 Sep 14 10:42 open_yp.stl\n-rw-rw-r-- 1 qiuzi qiuzi    35134 Sep 14 10:43 open_zn.stl\n-rw-rw-r-- 1 qiuzi qiuzi    35134 Sep 14 10:42 open_zp.stl",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.BRepMesh import BRepMesh_IncrementalMesh\nfrom OCP.BRep import BRep_Tool\nfrom OCP.TopLoc import TopLoc_Location\nfrom OCP.TopAbs import TopAbs_REVERSED\n\nLIN_DEF = 2e-4   # 0.2 mm chord tolerance\nBRepMesh_IncrementalMesh(water.wrapped, LIN_DEF, False, 0.35, True)\n\ndef face_tris(f):\n    loc = TopLoc_Location()\n    tri = BRep_Tool.Triangulation_s(f.wrapped, loc)\n    trsf = loc.Transformation()\n    pts = np.array([[p.X(), p.Y(), p.Z()] for p in\n                    (tri.Node(i).Transformed(trsf) for i in range(1, tri.NbNodes()+1))])\n    idx = np.array([[t.Value(1)-1, t.Value(2)-1, t.Value(3)-1]\n                    for t in (tri.Triangle(i) for i in range(1, tri.NbTriangles()+1))])\n    if f.wrapped.Orientation() == TopAbs_REVERSED:\n        idx = idx[:, [0, 2, 1]]\n    return pts, idx\n\ndef write_stl(path, name, chunks):\n    with open(path, \"w\") as fh:\n        fh.write(f\"solid {name}\\n\")\n        for pts, idx in chunks:\n            for a, b, c in idx:\n                p, q, r = pts[a], pts[b], pts[c]\n                n = np.cross(q-p, r-p); ln = np.linalg.norm(n)\n                n = n/ln if ln > 0 else np.array([0., 0., 1.])\n                fh.write(f\" facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\\n  outer loop\\n\")\n                for v in (p, q, r):\n                    fh.write(f\"   vertex {v[0]:.9e} {v[1]:.9e} {v[2]:.9e}\\n\")\n                fh.write(\"  endloop\\n endfacet\\n\")\n        fh.write(f\"endsolid {name}\\n\")\n\nntri = 0\nfor k, fl in patches.items():\n    chunks = [face_tris(f) for f in fl]\n    ntri += sum(len(i) for _, i in chunks)\n    write_stl(f\"constant/triSurface/{k}.stl\", k, chunks)\nprint(\"total triangles\", ntri)\nprint(subprocess.run([\"du\",\"-sh\",\"constant/triSurface\"],capture_output=True,text=True).stdout)",
+      "exit_code": 0,
+      "seconds": 42.65909477199966,
+      "output": "total triangles 544336\n139M\tconstant/triSurface",
+      "image": ""
+    },
+    {
+      "cmd": "from OCP.BRepTools import BRepTools\nBRepTools.Clean_s(water.wrapped)\nBRepMesh_IncrementalMesh(water.wrapped, LIN_DEF, False, 0.35, True)\nntri = 0\nfor k, fl in patches.items():\n    chunks = [face_tris(f) for f in fl]\n    n = sum(len(i) for _, i in chunks); ntri += n\n    write_stl(f\"constant/triSurface/{k}.stl\", k, chunks)\n    print(k, n)\nprint(\"total triangles\", ntri)\nprint(subprocess.run([\"du\",\"-sh\",\"constant/triSurface\"],capture_output=True,text=True).stdout)",
+      "exit_code": 0,
+      "seconds": 10.328656745999979,
+      "output": "hollow 98\nhole_xp 90\nhole_yn 88\nhole_zp 88\nhole_yp 88\nhole_zn 88\nopen_xp 34\nhole_xn 88\nopen_yn 34\nopen_zp 34\nopen_yp 34\nopen_zn 34\nopen_xn 34\nball 752\ntotal triangles 1584\n444K\tconstant/triSurface",
+      "image": ""
+    },
+    {
+      "cmd": "LIN_DEF2 = 5e-5\nBRepTools.Clean_s(water.wrapped)\nBRepMesh_IncrementalMesh(water.wrapped, LIN_DEF2, False, 0.2, True)\nall_tris, ntri = [], 0\nfor k, fl in patches.items():\n    chunks = [face_tris(f) for f in fl]\n    ntri += sum(len(i) for _, i in chunks)\n    write_stl(f\"constant/triSurface/{k}.stl\", k, chunks)\n    all_tris += [(p[i], p[j], p[l]) for p, idx in chunks for i, j, l in idx]\nprint(\"total triangles\", ntri)\n\nfrom collections import Counter\nkey = lambda v: tuple(np.round(v, 9))\nec = Counter()\nfor t in all_tris:\n    ks = [key(v) for v in t]\n    for a, b in zip(ks, ks[1:]+ks[:1]):\n        ec[frozenset((a, b))] += 1\nprint(\"edges used once (free):\", sum(1 for v in ec.values() if v == 1),\n      \" used twice:\", sum(1 for v in ec.values() if v == 2),\n      \" other:\", sum(1 for v in ec.values() if v > 2))",
+      "exit_code": 0,
+      "seconds": 12.285680680000041,
+      "output": "total triangles 4518\nedges used once (free): 2  used twice: 6772  other: 2",
+      "image": ""
+    },
+    {
+      "cmd": "bad = [(sorted(e), c) for e, c in ec.items() if c != 2]\nfor e, c in bad:\n    print(c, [tuple(round(x,6) for x in v) for v in e])",
+      "exit_code": 0,
+      "seconds": 0.05064480600049137,
+      "output": "4 [(np.float64(-0.001679), np.float64(-0.0), np.float64(-0.014906)), (np.float64(0.0), np.float64(-0.0), np.float64(-0.015))]\n1 [(np.float64(0.0), np.float64(-0.0), np.float64(-0.015))]\n4 [(np.float64(-0.001679), np.float64(-0.0), np.float64(0.014906)), (np.float64(0.0), np.float64(-0.0), np.float64(0.015))]\n1 [(np.float64(0.0), np.float64(-0.0), np.float64(0.015))]",
+      "image": ""
+    },
+    {
+      "cmd": "def write_stl(path, name, chunks):          # redefine: drop degenerate triangles\n    with open(path, \"w\") as fh:\n        fh.write(f\"solid {name}\\n\")\n        for pts, idx in chunks:\n            for a, b, c in idx:\n                p, q, r = pts[a], pts[b], pts[c]\n                n = np.cross(q-p, r-p); ln = np.linalg.norm(n)\n                if ln < 1e-16:\n                    continue\n                n = n/ln\n                fh.write(f\" facet normal {n[0]:.6e} {n[1]:.6e} {n[2]:.6e}\\n  outer loop\\n\")\n                for v in (p, q, r):\n                    fh.write(f\"   vertex {v[0]:.9e} {v[1]:.9e} {v[2]:.9e}\\n\")\n                fh.write(\"  endloop\\n endfacet\\n\")\n        fh.write(f\"endsolid {name}\\n\")\n\nall_tris, ntri = [], 0\nfor k, fl in patches.items():\n    chunks = [face_tris(f) for f in fl]\n    write_stl(f\"constant/triSurface/{k}.stl\", k, chunks)\n    keep = [(p[i], p[j], p[l]) for p, idx in chunks for i, j, l in idx\n            if np.linalg.norm(np.cross(p[j]-p[i], p[l]-p[i])) > 1e-16]\n    ntri += len(keep); all_tris += keep\nec = Counter()\nfor t in all_tris:\n    ks = [key(v) for v in t]\n    for a, b in zip(ks, ks[1:]+ks[:1]):\n        ec[frozenset((a, b))] += 1\nprint(\"triangles\", ntri, \"| free edges\", sum(1 for v in ec.values() if v == 1),\n      \"| >2:\", sum(1 for v in ec.values() if v > 2))",
+      "exit_code": 0,
+      "seconds": 7.523035232999973,
+      "output": "triangles 4516 | free edges 0 | >2: 0",
+      "image": ""
+    },
+    {
+      "cmd": "import gmsh\ngmsh.initialize()\ngmsh.model.add(\"water\")\ngmsh.merge(\"water.step\")\nsurfs = gmsh.model.getEntities(2)\nAREA = {\"ball\": 2.827433e-3, \"hollow\": 1.696022e-5, \"hole\": 6.656880e-4, \"open\": 4.523893e-4}\ngroups = {}\nfor dim, tag in surfs:\n    a = gmsh.model.occ.getMass(dim, tag)\n    com = np.array(gmsh.model.occ.getCenterOfMass(dim, tag))\n    bb = np.array(gmsh.model.getBoundingBox(dim, tag)); bc = (bb[:3]+bb[3:])/2\n    kind = min(AREA, key=lambda k: abs(AREA[k]-a)/AREA[k])\n    name = kind if kind in (\"ball\", \"hollow\") else f\"{kind}_{side(bd.Vector(*bc))}\"\n    groups.setdefault(name, []).append(tag)\n    print(f\"{tag:3d} a={a:.3e} -> {name}\")\nprint(sorted(groups), len(groups))",
+      "exit_code": 0,
+      "seconds": 2.456810796999889,
+      "output": "Info    : Reading 'water.step'...\nInfo    :  - Label 'Shapes/COMPOUND' (3D)\nInfo    : Done reading 'water.step'\n  1 a=1.696e-05 -> hollow\n  2 a=6.657e-04 -> hole_xp\n  3 a=6.657e-04 -> hole_yn\n  4 a=6.657e-04 -> hole_zp\n  5 a=1.696e-05 -> hollow\n  6 a=6.657e-04 -> hole_yp\n  7 a=1.696e-05 -> hollow\n  8 a=6.657e-04 -> hole_zn\n  9 a=4.524e-04 -> open_xp\n 10 a=1.696e-05 -> hollow\n 11 a=1.696e-05 -> hollow\n 12 a=6.657e-04 -> hole_xn\n 13 a=1.696e-05 -> hollow\n 14 a=4.524e-04 -> open_yn\n 15 a=1.696e-05 -> hollow\n 16 a=4.524e-04 -> open_zp\n 17 a=4.524e-04 -> open_yp\n 18 a=1.696e-05 -> hollow\n 19 a=4.524e-04 -> open_zn\n 20 a=4.524e-04 -> open_xn\n 21 a=2.827e-03 -> ball\n['ball', 'hole_xn', 'hole_xp', 'hole_yn', 'hole_yp', 'hole_zn', 'hole_zp', 'hollow', 'open_xn', 'open_xp', 'open_yn', 'open_yp', 'open_zn', 'open_zp'] 14\n\n/tmp/ipykernel_65640/723371857.py:7: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.\n  t = c.to_tuple()",
+      "image": ""
+    },
+    {
+      "cmd": "for name, tags in groups.items():\n    gmsh.model.addPhysicalGroup(2, tags, name=name)\nvols = [t for d, t in gmsh.model.getEntities(3)]\ngmsh.model.addPhysicalGroup(3, vols, name=\"internal\")\n\ndf = gmsh.model.mesh.field.add(\"Distance\")\ngmsh.model.mesh.field.setNumbers(df, \"SurfacesList\", groups[\"ball\"])\nth = gmsh.model.mesh.field.add(\"Threshold\")\ngmsh.model.mesh.field.setNumber(th, \"InField\", df)\ngmsh.model.mesh.field.setNumber(th, \"SizeMin\", 5.0e-4)   # ~2 cells across the 1 mm gap\ngmsh.model.mesh.field.setNumber(th, \"SizeMax\", 2.0e-3)\ngmsh.model.mesh.field.setNumber(th, \"DistMin\", 1.2e-3)\ngmsh.model.mesh.field.setNumber(th, \"DistMax\", 5.0e-3)\ngmsh.model.mesh.field.setAsBackgroundMesh(th)\ngmsh.option.setNumber(\"Mesh.MeshSizeFromPoints\", 0)\ngmsh.option.setNumber(\"Mesh.MeshSizeFromCurvature\", 0)\ngmsh.option.setNumber(\"Mesh.MeshSizeExtendFromBoundary\", 0)\ngmsh.option.setNumber(\"Mesh.Algorithm3D\", 1)\ngmsh.model.mesh.generate(3)\ngmsh.write(\"water.msh\")\nprint(\"nodes\", len(gmsh.model.mesh.getNodes()[0]))",
+      "exit_code": 0,
+      "seconds": 4.962776522999775,
+      "output": "Info    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (BSpline)\nInfo    : [ 10%] Meshing curve 2 (Circle)\nInfo    : [ 10%] Meshing curve 3 (BSpline)\nInfo    : [ 10%] Meshing curve 4 (Ellipse)\nInfo    : [ 10%] Meshing curve 5 (BSpline)\nInfo    : [ 10%] Meshing curve 6 (Ellipse)\nInfo    : [ 20%] Meshing curve 7 (Line)\nInfo    : [ 20%] Meshing curve 8 (Circle)\nInfo    : [ 20%] Meshing curve 9 (Ellipse)\nInfo    : [ 20%] Meshing curve 10 (BSpline)\nInfo    : [ 20%] Meshing curve 11 (Ellipse)\nInfo    : [ 20%] Meshing curve 12 (Ellipse)\nInfo    : [ 30%] Meshing curve 13 (BSpline)\nInfo    : [ 30%] Meshing curve 14 (Ellipse)\nInfo    : [ 30%] Meshing curve 15 (Ellipse)\nInfo    : [ 30%] Meshing curve 16 (Ellipse)\nInfo    : [ 30%] Meshing curve 17 (Line)\nInfo    : [ 30%] Meshing curve 18 (Circle)\nInfo    : [ 40%] Meshing curve 19 (Ellipse)\nInfo    : [ 40%] Meshing curve 20 (Ellipse)\nInfo    : [ 40%] Meshing curve 21 (BSpline)\nInfo    : [ 40%] Meshing curve 22 (Ellipse)\nInfo    : [ 40%] Meshing curve 23 (BSpline)\nInfo    : [ 40%] Meshing curve 24 (Ellipse)\nInfo    : [ 50%] Meshing curve 25 (Ellipse)\nInfo    : [ 50%] Meshing curve 26 (BSpline)\nInfo    : [ 50%] Meshing curve 27 (Line)\nInfo    : [ 50%] Meshing curve 28 (Circle)\nInfo    : [ 50%] Meshing curve 29 (Circle)\nInfo    : [ 60%] Meshing curve 30 (Ellipse)\nInfo    : [ 60%] Meshing curve 31 (Circle)\nInfo    : [ 60%] Meshing curve 32 (Ellipse)\nInfo    : [ 60%] Meshing curve 33 (Circle)\nInfo    : [ 60%] Meshing curve 34 (BSpline)\nInfo    : [ 60%] Meshing curve 35 (Line)\nInfo    : [ 70%] Meshing curve 36 (BSpline)\nInfo    : [ 70%] Meshing curve 37 (Ellipse)\nInfo    : [ 70%] Meshing curve 38 (BSpline)\nInfo    : [ 70%] Meshing curve 39 (Ellipse)\nInfo    : [ 70%] Meshing curve 40 (BSpline)\nInfo    : [ 70%] Meshing curve 41 (Circle)\nInfo    : [ 80%] Meshing curve 42 (Circle)\nInfo    : [ 80%] Meshing curve 43 (Line)\nInfo    : [ 80%] Meshing curve 44 (Circle)\nInfo    : [ 80%] Meshing curve 45 (Circle)\nInfo    : [ 80%] Meshing curve \n... 5236 characters cut ...\nnodes removed 0 11)\nInfo    : It. 16500 - 16489 nodes created - worst tet radius 1.15337 (nodes removed 0 11)\nInfo    : It. 17000 - 16989 nodes created - worst tet radius 1.14202 (nodes removed 0 11)\nInfo    : It. 17500 - 17488 nodes created - worst tet radius 1.13237 (nodes removed 0 12)\nInfo    : It. 18000 - 17988 nodes created - worst tet radius 1.12311 (nodes removed 0 12)\nInfo    : It. 18500 - 18488 nodes created - worst tet radius 1.11432 (nodes removed 0 12)\nInfo    : It. 19000 - 18988 nodes created - worst tet radius 1.10687 (nodes removed 0 12)\nInfo    : It. 19500 - 19488 nodes created - worst tet radius 1.09881 (nodes removed 0 12)\nInfo    : It. 20000 - 19988 nodes created - worst tet radius 1.09105 (nodes removed 0 12)\nInfo    : It. 20500 - 20488 nodes created - worst tet radius 1.08225 (nodes removed 0 12)\nInfo    : It. 21000 - 20988 nodes created - worst tet radius 1.0747 (nodes removed 0 12)\nInfo    : It. 21500 - 21487 nodes created - worst tet radius 1.06679 (nodes removed 0 13)\nInfo    : It. 22000 - 21987 nodes created - worst tet radius 1.05858 (nodes removed 0 13)\nInfo    : It. 22500 - 22487 nodes created - worst tet radius 1.0514 (nodes removed 0 13)\nInfo    : It. 23000 - 22987 nodes created - worst tet radius 1.04393 (nodes removed 0 13)\nInfo    : It. 23500 - 23487 nodes created - worst tet radius 1.03676 (nodes removed 0 13)\nInfo    : It. 24000 - 23987 nodes created - worst tet radius 1.03026 (nodes removed 0 13)\nInfo    : It. 24500 - 24487 nodes created - worst tet radius 1.0238 (nodes removed 0 13)\nInfo    : It. 25000 - 24987 nodes created - worst tet radius 1.01747 (nodes removed 0 13)\nInfo    : It. 25500 - 25487 nodes created - worst tet radius 1.01103 (nodes removed 0 13)\nInfo    : It. 26000 - 25987 nodes created - worst tet radius 1.00432 (nodes removed 0 13)\nInfo    : 3D refinement terminated (45019 nodes total):\nInfo    :  - 2 Delaunay cavities modified for star shapeness\nInfo    :  - 13 nodes could not be inserted\nInfo    :  - 226298 tetrahedra created in 1.5635 sec. (144738 tets/s)\nInfo    : 0 node relocations\nInfo    : Done meshing 3D (Wall 2.97237s, CPU 2.9724s)\nInfo    : Optimizing mesh...\nInfo    : Optimizing volume 1\nInfo    : Optimization starts (volume = 2.06115e-05) with worst = 0.00367882 / average = 0.768256:\nInfo    : 0.00 < quality < 0.10 :       529 elements\nInfo    : 0.10 < quality < 0.20 :      1506 elements\nInfo    : 0.20 < quality < 0.30 :      2577 elements\nInfo    : 0.30 < quality < 0.40 :      4130 elements\nInfo    : 0.40 < quality < 0.50 :      6387 elements\nInfo    : 0.50 < quality < 0.60 :     11591 elements\nInfo    : 0.60 < quality < 0.70 :     26489 elements\nInfo    : 0.70 < quality < 0.80 :     57809 elements\nInfo    : 0.80 < quality < 0.90 :     78606 elements\nInfo    : 0.90 < quality < 1.00 :     36674 elements\nInfo    : 4556 edge swaps, 109 node relocations (volume = 2.06115e-05): worst = 0.193298 / average = 0.78066 (Wall 0.127489s, CPU 0.127703s)\nInfo    : 4591 edge swaps, 112 node relocations (volume = 2.06115e-05): worst = 0.212471 / average = 0.780734 (Wall 0.159483s, CPU 0.159697s)\nInfo    : 4594 edge swaps, 112 node relocations (volume = 2.06115e-05): worst = 0.212471 / average = 0.780741 (Wall 0.188764s, CPU 0.188978s)\nInfo    : No ill-shaped tets in the mesh :-)\nInfo    : 0.00 < quality < 0.10 :         0 elements\nInfo    : 0.10 < quality < 0.20 :         0 elements\nInfo    : 0.20 < quality < 0.30 :         4 elements\nInfo    : 0.30 < quality < 0.40 :      4063 elements\nInfo    : 0.40 < quality < 0.50 :      6152 elements\nInfo    : 0.50 < quality < 0.60 :     11372 elements\nInfo    : 0.60 < quality < 0.70 :     26637 elements\nInfo    : 0.70 < quality < 0.80 :     58075 elements\nInfo    : 0.80 < quality < 0.90 :     79375 elements\nInfo    : 0.90 < quality < 1.00 :     36512 elements\nInfo    : Done optimizing mesh (Wall 0.457119s, CPU 0.456985s)\nInfo    : 45019 nodes 260542 elements\nInfo    : Writing 'water.msh'...\nInfo    : Done writing 'water.msh'\nnodes 45019",
+      "image": ""
+    },
+    {
+      "cmd": "import shutil, textwrap\ngmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\ngmsh.option.setNumber(\"Mesh.SaveAll\", 0)\ngmsh.write(\"water.msh\")\ngmsh.finalize()\n\nos.makedirs(\"system\", exist_ok=True)\nhead = lambda cls, obj: (\"FoamFile\\n{ version 2.0; format ascii; class %s; object %s; }\\n\" % (cls, obj))\nopen(\"system/controlDict\",\"w\").write(head(\"dictionary\",\"controlDict\") + textwrap.dedent(\"\"\"\napplication blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\ndeltaT 1; writeControl timeStep; writeInterval 1;\n\"\"\"))\nopen(\"system/fvSchemes\",\"w\").write(head(\"dictionary\",\"fvSchemes\") + \"ddtSchemes{default steadyState;}\\ngradSchemes{default Gauss linear;}\\ndivSchemes{default none;}\\nlaplacianSchemes{default Gauss linear corrected;}\\n\")\nopen(\"system/fvSolution\",\"w\").write(head(\"dictionary\",\"fvSolution\") + \"solvers{}\\n\")\nr = subprocess.run([\"gmshToFoam\",\"water.msh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[-2500:], r.stderr[-1500:])",
+      "exit_code": 0,
+      "seconds": 4.161227519000022,
+      "output": "Info    : Writing 'water.msh'...\nInfo    : Done writing 'water.msh'\n0  * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nStarting to read mesh format at line 2\nRead format version 2.2  ascii 0\n\nStarting to read physical names at line 5\nPhysical names:15\n    Surface 1\thollow\n    Surface 2\thole_xp\n    Surface 3\thole_yn\n    Surface 4\thole_zp\n    Surface 5\thole_yp\n    Surface 6\thole_zn\n    Surface 7\topen_xp\n    Surface 8\thole_xn\n    Surface 9\topen_yn\n    Surface 10\topen_zp\n    Surface 11\topen_yp\n    Surface 12\topen_zn\n    Surface 13\topen_xn\n    Surface 14\tball\n    Volume 15\tinternal\n\nStarting to read points at line 23\nVertices to be read: 45019\nVertices read:45019\n\nStarting to read cells at line 45045\nCells to be read: 259549\n\nMapping region 1 to Foam patch 0\nMapping region 2 to Foam patch 1\nMapping region 3 to Foam patch 2\nMapping region 4 to Foam patch 3\nMapping region 5 to Foam patch 4\nMapping region 6 to Foam patch 5\nMapping region 7 to Foam patch 6\nMapping region 8 to Foam patch 7\nMapping region 9 to Foam patch 8\nMapping region 10 to Foam patch 9\nMapping region 11 to Foam patch 10\nMapping region 12 to Foam patch 11\nMapping region 13 to Foam patch 12\nMapping region 14 to Foam patch 13\nMapping region 15 to Foam cellZone 0\nCells:\n    total:222193\n    hex  :0\n    prism:0\n    pyr  :0\n    tet  :222193\n\nCellZones:\nZone\tSize\n    0\t222193\n\nPatch 0 gets name hollow\nPatch 1 gets name hole_xp\nPatch 2 gets name hole_yn\nPatch 3 gets name hole_zp\nPatch 4 gets name hole_yp\nPatch 5 gets name hole_zn\nPatch 6 gets name open_xp\nPatch 7 gets name hole_xn\nPatch 8 gets name open_yn\nPatch 9 gets name open_zp\nPatch 10 gets name open_yp\nPatch 11 gets name open_zn\nPatch 12 gets name open_xn\nPatch 13 gets name ball\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 37356 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\nFinding faces of patch 4\nFinding faces of patch 5\nFinding faces of patch 6\nFinding faces of patch 7\nFinding faces of patch 8\nFinding faces of patch 9\nFinding faces of patch 10\nFinding faces of patch 11\nFinding faces of patch 12\nFinding faces of patch 13\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone internal and cellSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(r.stdout[-3500:])",
+      "exit_code": 0,
+      "seconds": 1.0530179170000338,
+      "output": "leModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           45019\n    faces:            463064\n    internal faces:   425708\n    cells:            222193\n    faces per cell:   4\n    boundary patches: 14\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     0\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    222193\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    hollow              1448     912      ok (non-closed singly connected)  \n    hole_xp             1186     682      ok (non-closed singly connected)  \n    hole_yn             1201     689      ok (non-closed singly connected)  \n    hole_zp             1178     677      ok (non-closed singly connected)  \n    hole_yp             1193     684      ok (non-closed singly connected)  \n    hole_zn             1191     684      ok (non-closed singly connected)  \n    open_xp             288      164      ok (non-closed singly connected)  \n    hole_xn             1183     679      ok (non-closed singly connected)  \n    open_yn             286      163      ok (non-closed singly connected)  \n    open_zp             288      164      ok (non-closed singly connected)  \n    open_yp             286      163      ok (non-closed singly connected)  \n    open_zn             288      164      ok (non-closed singly connected)  \n    open_xn             288      164      ok (non-closed singly connected)  \n    ball                27052    13528    ok (closed singly connected)      \n    \".*\"                37356    18682    ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    internal            222193       45019        2.06115e-05  (-0.02 -0.02 -0.02) (0.02 0.02 0.02)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.02 -0.02 -0.02) (0.02 0.02 0.02)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (1.74941e-17 -2.5887e-17 -3.17669e-18) OK.\n    Max cell openness = 2.93267e-16 OK.\n    Max aspect ratio = 8.53022 OK.\n    Minimum face area = 4.78493e-08. Maximum face area = 4.51888e-06.  Face area magnitudes OK.\n    Min volume = 6.31712e-12. Max volume = 3.10504e-09.  Total volume = 2.06115e-05.  Cell volumes OK.\n    Mesh non-orthogonality Max: 67.8129 average: 21.4124\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.964526 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.start_xvfb() if hasattr(pv,'start_xvfb') else None\npv.OFF_SCREEN = True\nm = pv.read(\"water.msh\")\nprint(m)\nclip = m.clip(normal=\"z\", origin=(0,0,0))\np = pv.Plotter(off_screen=True, window_size=(900,800))\np.add_mesh(clip, show_edges=True, line_width=0.3, color=\"lightblue\")\np.camera_position = \"xy\"\np.show(screenshot=\"clip.png\")",
+      "exit_code": 1,
+      "seconds": 0.7022587509991354,
+      "output": "/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mKeyError\u001b[39m                                  Traceback (most recent call last)\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/reader.py:129\u001b[39m, in \u001b[36mget_reader\u001b[39m\u001b[34m(filename, force_ext)\u001b[39m\n\u001b[32m    128\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m--> \u001b[39m\u001b[32m129\u001b[39m     Reader = \u001b[30;43mCLASS_READERS\u001b[39;49m\u001b[30;43m[\u001b[39;49m\u001b[30;43mext\u001b[39;49m\u001b[30;43m]\u001b[39;49m\n\u001b[32m    130\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mKeyError\u001b[39;00m:\n\n\u001b[31mKeyError\u001b[39m: '.msh'\n\nDuring handling of the above exception, another exception occurred:\n\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:451\u001b[39m, in \u001b[36m_read_dispatch\u001b[39m\u001b[34m(filename, force_ext, file_format, progress_bar, validate)\u001b[39m\n\u001b[32m    450\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m--> \u001b[39m\u001b[32m451\u001b[39m     reader = \u001b[30;43mpv\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mget_reader\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mfilename\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mforce_ext\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m    452\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m:\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/reader.py:143\u001b[39m, in \u001b[36mget_reader\u001b[39m\u001b[34m(filename, force_ext)\u001b[39m\n\u001b[32m    142\u001b[39m         msg = \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33m`pyvista.get_reader` does not support a file with the \u001b[39m\u001b[38;5;132;01m{\u001b[39;00mext\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m extension\u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m--> \u001b[39m\u001b[32m143\u001b[39m         \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01\n... 1690 characters cut ...\n38;5;28;01mTrue\u001b[39;00m, window_size=(\u001b[32m900\u001b[39m,\u001b[32m800\u001b[39m))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243\u001b[39m, in \u001b[36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f\u001b[39m\u001b[34m(*args, **kwargs)\u001b[39m\n\u001b[32m    239\u001b[39m             warn_external(msg, PyVistaDeprecationWarning)\n\u001b[32m    241\u001b[39m         warn_positional_args()\n\u001b[32m--> \u001b[39m\u001b[32m243\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mf\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43margs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43mkwargs\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:347\u001b[39m, in \u001b[36mread\u001b[39m\u001b[34m(filename, force_ext, file_format, progress_bar, cls, validate)\u001b[39m\n\u001b[32m    230\u001b[39m \u001b[38;5;129m@_deprecate_positional_args\u001b[39m(allowed=[\u001b[33m'\u001b[39m\u001b[33mfilename\u001b[39m\u001b[33m'\u001b[39m])\n\u001b[32m    231\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mread\u001b[39m(  \u001b[38;5;66;03m# noqa: PLR0917\u001b[39;00m\n\u001b[32m    232\u001b[39m     filename: PathStrSeq,\n\u001b[32m   (...)\u001b[39m\u001b[32m    238\u001b[39m     validate: \u001b[38;5;28mbool\u001b[39m | \u001b[38;5;28;01mNone\u001b[39;00m = \u001b[38;5;28;01mNone\u001b[39;00m,\n\u001b[32m    239\u001b[39m ) -> DataObject:\n\u001b[32m    240\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"Read any file type supported by ``vtk`` or ``meshio``.\u001b[39;00m\n\u001b[32m    241\u001b[39m \n\u001b[32m    242\u001b[39m \u001b[33;03m    Automatically determines the correct reader to use then wraps the\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m    345\u001b[39m \n\u001b[32m    346\u001b[39m \u001b[33;03m    \"\"\"\u001b[39;00m\n\u001b[32m--> \u001b[39m\u001b[32m347\u001b[39m     result = \u001b[30;43m_read_dispatch\u001b[39;49m\u001b[30;43m(\u001b[39;49m\n\u001b[32m    348\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mfilename\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    349\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mforce_ext\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mforce_ext\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    350\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mfile_format\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mfile_format\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    351\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mprogress_bar\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mprogress_bar\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    352\u001b[39m \u001b[30;43m        \u001b[39;49m\u001b[30;43mvalidate\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mvalidate\u001b[39;49m\u001b[30;43m,\u001b[39;49m\n\u001b[32m    353\u001b[39m \u001b[30;43m    \u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m    354\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28mcls\u001b[39m \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m \u001b[38;5;129;01mand\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(result, \u001b[38;5;28mcls\u001b[39m):\n\u001b[32m    355\u001b[39m         msg = (\n\u001b[32m    356\u001b[39m             \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33mExpected an instance of \u001b[39m\u001b[38;5;132;01m{\u001b[39;00m\u001b[38;5;28mcls\u001b[39m.\u001b[34m__name__\u001b[39m\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m when reading \u001b[39m\u001b[38;5;132;01m{\u001b[39;00mfilename\u001b[38;5;132;01m!r}\u001b[39;00m\u001b[33m, \u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m    357\u001b[39m             \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33mbut got \u001b[39m\u001b[38;5;132;01m{\u001b[39;00m\u001b[38;5;28mtype\u001b[39m(result).\u001b[34m__name__\u001b[39m\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m.\u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m    358\u001b[39m         )\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:460\u001b[39m, in \u001b[36m_read_dispatch\u001b[39m\u001b[34m(filename, force_ext, file_format, progress_bar, validate)\u001b[39m\n\u001b[32m    458\u001b[39m     \u001b[38;5;28;01mfrom\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34;01mmeshio\u001b[39;00m\u001b[34;01m.\u001b[39;00m\u001b[34;01m_exceptions\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[38;5;28;01mimport\u001b[39;00m ReadError  \u001b[38;5;66;03m# noqa: PLC0415\u001b[39;00m\n\u001b[32m    459\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mImportError\u001b[39;00m:\n\u001b[32m--> \u001b[39m\u001b[32m460\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mOSError\u001b[39;00m(msg)\n\u001b[32m    461\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m    462\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m read_meshio(filename)\n\n\u001b[31mOSError\u001b[39m: This file was not able to be automatically read by pyvista.\n  '/home/qiuzi/.openreynolds-buildup/work/T23-20260914-104031-94cf/t23/water.msh'",
+      "image": ""
+    },
+    {
+      "cmd": "open(\"case.foam\",\"w\").close()\nrd = pv.OpenFOAMReader(\"case.foam\"); rd.set_active_time_value(0.0) if rd.time_values else None\nrd.enable_all_patch_arrays()\nblk = rd.read()\ninternal = blk[\"internalMesh\"]\nclip = internal.clip(normal=\"z\", origin=(0,0,1e-6))\np = pv.Plotter(off_screen=True, window_size=(900,850))\np.add_mesh(clip, show_edges=True, line_width=0.4, color=\"lightsteelblue\")\np.camera_position = \"xy\"; p.show(screenshot=\"clip.png\")",
+      "exit_code": 0,
+      "seconds": 1.1034137629994802,
+      "output": "\u001b[0m\u001b[33m2026-09-14 10:48:19.947 (  10.942s) [    753403C9A780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 10:48:19.947 (  10.943s) [    753403C9A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 10:48:19.959 (  10.955s) [    753403C9A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_65640/411640029.py:9: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  p.camera_position = \"xy\"; p.show(screenshot=\"clip.png\")",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import pyvista as pv\npv.OFF_SCREEN = True\nopen(\"case.foam\", \"w\").close()\nrd = pv.OpenFOAMReader(\"case.foam\")\nrd.enable_all_patch_arrays()\nblk = rd.read()\ninternal = blk[\"internalMesh\"]\nclip = internal.clip(normal=\"z\", origin=(0, 0, 1e-6))\np = pv.Plotter(off_screen=True, window_size=(900, 850))\np.add_mesh(clip, show_edges=True, line_width=0.4, color=\"lightsteelblue\")\np.camera_position = \"xy\"\np.show(screenshot=\"clip.png\")\nprint(internal.n_cells, [b for b in blk[\"boundary\"].keys()])",
+      "exit_code": 0,
+      "seconds": 1.5339938719998827,
+      "output": "222193 ['hollow', 'hole_xp', 'hole_yn', 'hole_zp', 'hole_yp', 'hole_zn', 'open_xp', 'hole_xn', 'open_yn', 'open_zp', 'open_yp', 'open_zn', 'open_xn', 'ball']\n\n\u001b[0m\u001b[33m2026-09-14 10:48:37.161 (  28.156s) [    753403C9A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 10:48:37.162 (  28.157s) [    753403C9A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_65640/878299264.py:12: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  p.show(screenshot=\"clip.png\")",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "b = blk[\"boundary\"]\ndef radii(name, axis=None):\n    pts = b[name].points\n    return np.linalg.norm(pts, axis=1)\nprint(\"ball   r  min/max mm\", radii(\"ball\").min()*1e3, radii(\"ball\").max()*1e3)\nprint(\"hollow r  min/max mm\", radii(\"hollow\").min()*1e3, radii(\"hollow\").max()*1e3)\nprint(\"gap (hollow-ball) mm\", radii(\"hollow\").min()*1e3 - radii(\"ball\").max()*1e3)\nfor h in (\"hole_xp\", \"hole_yp\", \"hole_zp\"):\n    q = b[h].points; ax = \"xyz\".index(h[-2])\n    perp = np.delete(q, ax, axis=1)\n    print(h, \"wall radius mm\", np.linalg.norm(perp, axis=1).max()*1e3,\n          \"axial extent mm\", q[:, ax].min()*1e3, q[:, ax].max()*1e3)\no = b[\"open_xp\"].points\nprint(\"open_xp plane x mm\", o[:,0].min()*1e3, o[:,0].max()*1e3,\n      \"disc radius mm\", np.linalg.norm(o[:,1:], axis=1).max()*1e3)\ncc = internal.cell_centers().points; rc = np.linalg.norm(cc, axis=1)\nprint(\"cells with 15<r<16 mm:\", int(((rc>0.015)&(rc<0.016)).sum()))",
+      "exit_code": 0,
+      "seconds": 0.10106875300061802,
+      "output": "ball   r  min/max mm 14.999999 15.000001\nhollow r  min/max mm 15.999999 16.0\ngap (hollow-ball) mm 0.9999981\nhole_xp wall radius mm 12.000001 axial extent mm 10.583005 20.0\nhole_yp wall radius mm 12.000001 axial extent mm 10.583005 20.0\nhole_zp wall radius mm 12.000001 axial extent mm 10.583005 20.0\nopen_xp plane x mm 20.0 20.0 disc radius mm 12.000001\ncells with 15<r<16 mm: 118316",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 2559,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 1936,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382467.6863527
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 165,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 64,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382477.5091982
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 323,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 425,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382489.7858393
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "end_turn",
+      "output_tokens": 1542,
+      "fenced": false,
+      "text_chars": 944,
+      "thinking_chars": 1639,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382511.5938287
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 484,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382520.2017941
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 1259,
+      "fenced": true,
+      "text_chars": 168,
+      "thinking_chars": 975,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382542.8022034
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 649,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 281,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382556.5985537
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 540,
+      "fenced": true,
+      "text_chars": 126,
+      "thinking_chars": 544,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382567.916218
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 1935,
+      "fenced": true,
+      "text_chars": 170,
+      "thinking_chars": 1219,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382661.337387
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 921,
+      "fenced": true,
+      "text_chars": 77,
+      "thinking_chars": 745,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382721.7772512
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 834,
+      "fenced": true,
+      "text_chars": 94,
+      "thinking_chars": 636,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382749.2835717
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 220,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 283,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382770.8845065
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 1087,
+      "fenced": true,
+      "text_chars": 85,
+      "thinking_chars": 413,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382791.1412537
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 909,
+      "fenced": true,
+      "text_chars": 154,
+      "thinking_chars": 455,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382816.1647248
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 854,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 258,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382834.394814
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 689,
+      "fenced": true,
+      "text_chars": 84,
+      "thinking_chars": 268,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382853.417172
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 251,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 442,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382867.0819445
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 1084,
+      "fenced": true,
+      "text_chars": 133,
+      "thinking_chars": 1081,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382885.1198072
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 301,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 98,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382895.252336
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 621,
+      "fenced": true,
+      "text_chars": 109,
+      "thinking_chars": 218,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382911.9611373
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 726,
+      "fenced": true,
+      "text_chars": 138,
+      "thinking_chars": 291,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382929.1513689
+    },
+    {
+      "turn": 22,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 586,
+      "fenced": false,
+      "text_chars": 79,
+      "thinking_chars": 963,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789382941.2546363
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 4,516 triangles across 14 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "ball.stl",
+          "hole_xn.stl",
+          "hole_xp.stl",
+          "hole_yn.stl",
+          "hole_yp.stl",
+          "hole_zn.stl",
+          "hole_zp.stl",
+          "hollow.stl",
+          "open_xn.stl",
+          "open_xp.stl",
+          "open_yn.stl",
+          "open_yp.stl",
+          "open_zn.stl",
+          "open_zp.stl"
+        ],
+        "triangles": 4516
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the patch set",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 4516
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "untested",
+      "why": "no triangle pair was tested on 4,516 triangles, so this is not a reading either way",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 0
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the ball's diameter, measured on the meshed ball patch, and its centre position",
+      "measured": null
+    },
+    {
+      "property": "the water gap between ball and hollow wall, measured between the two meshed patches, at the six hole axes and at a diagonal",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "the water volume, against the hollow plus six holes minus the ball",
+      "measured": null
+    },
+    {
+      "property": "the ball patch's area, against the analytic sphere, and whether it is closed",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "n/a",
+          "concern": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "n/a",
+          "concern": "no triangle pair was tested on 4,516 triangles, so this is not a reading either way",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 22,
+    "steps": 20,
+    "seconds": 516.9,
+    "killed": false,
+    "first_mesh_step": 14,
+    "first_mesh_turn": 16
+  }
+}

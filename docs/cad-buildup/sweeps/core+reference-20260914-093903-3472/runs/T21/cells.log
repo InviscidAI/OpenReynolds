@@ -1,0 +1,602 @@
+# -- cell 1 (2.2s, exit 0)
+import build123d as bd, numpy as np, math, os, subprocess
+print(bd.__version__ if hasattr(bd,'__version__') else 'ok')
+print(os.getcwd(), os.listdir('.'))
+# -- output
+0.11.1
+/home/qiuzi/.openreynolds-buildup/work/T21-20260914-103506-d411/t21 ['.reference']
+
+# -- cell 2 (0.9s, exit 0)
+import build123d as bd, math
+from build123d import Pos, Axis, GeomType
+
+mm = 1e-3
+LX, LY, LZ = 160*mm, 100*mm, 40*mm      # internal cavity
+TW  = 3*mm                               # wall thickness
+SD, SH = 10*mm, 25*mm                    # standoff dia, height
+HD, HDEP = 4*mm, 12*mm                   # blind hole dia, depth
+INSET = 15*mm                            # standoff axis inset from each corner
+VW, VH, VZ = 30*mm, 20*mm, 10*mm         # vent width(y), height(z), bottom above floor
+
+cavity = Pos(LX/2, LY/2, LZ/2) * bd.Box(LX, LY, LZ)
+centers = [(x, y) for x in (INSET, LX-INSET) for y in (INSET, LY-INSET)]
+posts = [Pos(x, y, SH/2) * bd.Cylinder(SD/2, SH) for x, y in centers]
+holes = [Pos(x, y, SH-HDEP/2) * bd.Cylinder(HD/2, HDEP) for x, y in centers]
+vent  = Pos(-TW/2, LY/2, VZ+VH/2) * bd.Box(TW, VW, VH)
+
+fluid = cavity
+for p in posts: fluid = fluid - p
+for h in holes: fluid = fluid + h
+fluid = fluid + vent
+
+exp = LX*LY*LZ - 4*math.pi*(SD/2)**2*SH + 4*math.pi*(HD/2)**2*HDEP + TW*VW*VH
+print("volume", fluid.volume, "expected", exp)
+print("bbox", fluid.bounding_box())
+print("nfaces", len(fluid.faces()), "nsolids", len(fluid.solids()))
+# -- output
+volume 0.0006345492041555149 expected 0.0006345492041555149
+bbox bbox: -0.003 <= x <= 0.16, 0.0 <= y <= 0.1, 0.0 <= z <= 0.04
+nfaces 27 nsolids 1
+
+# -- cell 3 (0.1s, exit 0)
+TOL=1e-9
+faces = fluid.faces()
+cyl = faces.filter_by(GeomType.CYLINDER)
+post_cyl = [f for f in cyl if abs(f.radius - SD/2) < TOL]
+hole_cyl = [f for f in cyl if abs(f.radius - HD/2) < TOL]
+pl  = faces.filter_by(GeomType.PLANE)
+def at(f, axis, val): return abs(f.center().to_tuple()[axis] - val) < TOL
+top   = [f for f in pl if at(f,2,LZ)]
+floor = [f for f in pl if at(f,2,0)]
+ventf = [f for f in pl if at(f,0,-TW)]
+post_top = [f for f in pl if at(f,2,SH)]
+hole_bot = [f for f in pl if at(f,2,SH-HDEP)]
+named = set(id(f) for f in top+floor+ventf+post_top+hole_bot)
+walls = [f for f in pl if id(f) not in named]
+groups = {"top":top, "vent":ventf, "floor":floor, "walls":walls,
+          "standoffs":post_cyl+post_top, "blindholes":hole_cyl+hole_bot}
+for k,v in groups.items(): print(k, len(v), "area=", sum(f.area for f in v))
+print("total faces classified", sum(len(v) for v in groups.values()), "of", len(faces))
+# -- output
+top 1 area= 0.016
+vent 1 area= 0.0006
+floor 1 area= 0.01568584073464102
+walls 8 area= 0.0205
+standoffs 8 area= 0.0034054864364913362
+blindholes 8 area= 0.0006534512719466771
+total faces classified 27 of 27
+
+/tmp/ipykernel_60118/195589924.py:7: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  def at(f, axis, val): return abs(f.center().to_tuple()[axis] - val) < TOL
+
+# -- cell 4 (5.4s, exit 0)
+import os, subprocess
+os.makedirs("constant/triSurface", exist_ok=True)
+for k,v in groups.items():
+    shp = bd.Compound(children=[bd.Face(f.wrapped) for f in v])
+    bd.export_stl(shp, f"constant/triSurface/{k}.stl", tolerance=5e-5, angular_tolerance=0.2, ascii_format=True)
+    # rename solid label to patch name
+    p=f"constant/triSurface/{k}.stl"
+    s=open(p).read().replace("solid ", f"solid {k} ",1) if False else open(p).read()
+    lines=s.splitlines()
+    lines[0]=f"solid {k}"; lines[-1]=f"endsolid {k}"
+    open(p,"w").write("\n".join(lines)+"\n")
+    print(k, os.path.getsize(p), lines[0], sum(1 for l in lines if l.strip().startswith("facet")))
+# -- output
+top 529 solid top 2
+vent 531 solid vent 2
+floor 228233 solid floor 902
+walls 5593 solid walls 22
+standoffs 902739 solid standoffs 3568
+blindholes 675041 solid blindholes 2668
+
+# -- cell 5 (0.6s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+pl = pv.Plotter(off_screen=True, window_size=(1000,750))
+cols={"top":"lightblue","vent":"red","floor":"grey","walls":"wheat","standoffs":"green","blindholes":"magenta"}
+tot=0
+for k,c in cols.items():
+    m=pv.read(f"constant/triSurface/{k}.stl"); tot+=m.n_cells
+    pl.add_mesh(m, color=c, opacity=0.45 if k in("top","walls") else 1.0, show_edges=True, line_width=0.5)
+pl.camera_position=[(0.3,-0.25,0.25),(0.08,0.05,0.02),(0,0,1)]
+pl.screenshot("view.png"); print("tris",tot)
+# -- output
+tris 7164
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 10:37:06.436 (   0.249s) [    764173CB7780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 10:37:06.437 (   0.250s) [    764173CB7780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 10:37:06.450 (   0.263s) [    764173CB7780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 6 (0.2s, exit 0)
+import matplotlib.pyplot as plt, matplotlib.image as mpimg
+img=mpimg.imread("view.png"); plt.figure(figsize=(9,7)); plt.imshow(img); plt.axis('off'); plt.show()
+# -- output
+
+
+# -- cell 7 (0.1s, exit 0)
+import pyvista as pv
+union=None
+for k in groups:
+    m=pv.read(f"constant/triSurface/{k}.stl")
+    union = m if union is None else union.merge(m)
+u=union.clean(tolerance=1e-7)
+be=u.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False)
+print("free edges:", be.n_cells, "tris:", u.n_cells)
+# -- output
+free edges: 0 tris: 7164
+
+# -- cell 8 (0.1s, exit 0)
+import os, textwrap
+os.makedirs("system", exist_ok=True)
+def head(cls, obj, loc):
+    return f"""FoamFile{{version 2.0; format ascii; class {cls}; location "{loc}"; object {obj};}}\n"""
+open("system/controlDict","w").write(head("dictionary","controlDict","system")+
+ "application blockMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n")
+open("system/fvSchemes","w").write(head("dictionary","fvSchemes","system")+
+ "gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write(head("dictionary","fvSolution","system")+"solvers{}\n")
+
+BC = 0.005  # base cell size 5 mm (coarse first)
+x0,x1 = -0.005, 0.165
+y0,y1 = -0.005, 0.105
+z0,z1 = -0.005, 0.045
+nx,ny,nz = [int(round((b-a)/BC)) for a,b in ((x0,x1),(y0,y1),(z0,z1))]
+bm = head("dictionary","blockMeshDict","system") + f"""
+scale 1;
+vertices ( ({x0} {y0} {z0}) ({x1} {y0} {z0}) ({x1} {y1} {z0}) ({x0} {y1} {z0})
+           ({x0} {y0} {z1}) ({x1} {y0} {z1}) ({x1} {y1} {z1}) ({x0} {y1} {z1}) );
+blocks ( hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1) );
+edges ();
+boundary ( outer {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); }} );
+"""
+open("system/blockMeshDict","w").write(bm)
+print(nx,ny,nz,nx*ny*nz)
+# -- output
+34 22 10 7480
+
+# -- cell 9 (0.3s, exit 0)
+patches = ["top","vent","floor","walls","standoffs","blindholes"]
+lev = {"top":(0,0),"vent":(1,1),"floor":(1,1),"walls":(1,1),"standoffs":(2,2),"blindholes":(3,3)}
+geom = "\n".join(f'  {p}.stl {{ type triSurfaceMesh; name {p}; }}' for p in patches)
+refs = "\n".join(f'    {p} {{ level ({lev[p][0]} {lev[p][1]}); patchInfo {{ type wall; }} }}' for p in patches)
+shm = head("dictionary","snappyHexMeshDict","system") + f"""
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geom}
+}}
+castellatedMeshControls
+{{
+  maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2;
+  features ();
+  refinementSurfaces
+  {{
+{refs}
+  }}
+  resolveFeatureAngle 30;
+  refinementRegions {{}}
+  locationInMesh (0.080 0.050 0.035);
+  allowFreeStandingZoneFaces false;
+}}
+snapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+  nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}
+addLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1.0; finalLayerThickness 0.3; minThickness 0.1;
+  nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;
+  maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0;
+  nLayerIter 50; }}
+meshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02;
+  minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }}
+mergeTolerance 1e-6;
+debug 0;
+"""
+open("system/snappyHexMeshDict","w").write(shm)
+import subprocess
+r=subprocess.run(["blockMesh","-case",".","-dict","system/blockMeshDict"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-400:], r.stderr[-500:])
+# -- output
+0  .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.005 -0.005 -0.005) (0.165 0.105 0.045)
+  nPoints: 8855
+  nCells: 7480
+  nFaces: 23748
+  nInternalFaces: 21132
+----------------
+Patches
+----------------
+  patch 0 (start: 21132 size: 2616) name: outer
+
+End
+
+# -- cell 10 (15.4s, exit 0)
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode); print(r.stdout[-2500:]); print(r.stderr[-800:])
+# -- output
+0
+ of intersected edges : 11208
+
+Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+
+Merging all points on surface that
+- are used by only two boundary faces and
+- make an angle with a cosine of more than 0.866025.
+
+Removing 1216 straight edge points ...
+
+Edge intersection testing:
+    Number of edges             : 93188
+    Number of edges to retest   : 5024
+    Number of intersected edges : 11208
+
+Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:27932  faces:93188  points:37639
+Cells per refinement level:
+    0	3228
+    1	13776
+    2	7344
+    3	3584
+Writing mesh to time constant
+Wrote mesh in = 0.08 s.
+Mesh snapped in = 6.38 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 11.93 s.
+End
+
+# -- cell 11 (0.4s, exit 0)
+r=subprocess.run(["checkMesh","-constant"],capture_output=True,text=True)
+print(r.stdout[-3000:])
+# -- output
+M_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           37639
+    faces:            93188
+    internal faces:   81980
+    cells:            27932
+    faces per cell:   6.27123
+    boundary patches: 6
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     23624
+    prisms:        1152
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     3156
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   32
+            5   64
+            6   868
+            9   1568
+           12   496
+           15   120
+           18   8
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                     top     1216     1365  ok (non-closed singly connected)
+                    vent       96      117  ok (non-closed singly connected)
+                   floor     2832     3029  ok (non-closed singly connected)
+                   walls     3272     3499  ok (non-closed singly connected)
+               standoffs     2480     2656  ok (non-closed singly connected)
+              blindholes     1312     1396  ok (non-closed singly connected)
+                    ".*"    11208    11414      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.003 -3.38813e-21 -1.69407e-21) (0.16 0.1 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (7.29693e-17 3.64428e-17 3.97719e-15) OK.
+    Max cell openness = 2.76235e-16 OK.
+    Max aspect ratio = 3.24788 OK.
+    Minimum face area = 1.18651e-07. Maximum face area = 2.68462e-05.  Face area magnitudes OK.
+    Min volume = 3.52001e-11. Max volume = 1.35392e-07.  Total volume = 0.000634633.  Cell volumes OK.
+    Mesh non-orthogonality Max: 48.6956 average: 9.9373
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.508706 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 12 (0.5s, exit 0)
+r=subprocess.run(["foamToVTK","-constant","-ascii"],capture_output=True,text=True); print(r.returncode, r.stdout[-200:])
+import glob, pyvista as pv
+print(glob.glob("VTK/**/*.vt*", recursive=True)[:20])
+# -- output
+0 ary  : "VTK/t21_0/boundary/walls.vtp"
+    Boundary  : "VTK/t21_0/boundary/standoffs.vtp"
+    Boundary  : "VTK/t21_0/boundary/blindholes.vtp"
+Wrote in 0.14 s, 247992 kB
+
+End: 0.23 s, 285784 kB (peak)
+
+
+['VTK/t21.vtm.series', 'VTK/t21_0.vtm', 'VTK/t21_0/boundary.vtm', 'VTK/t21_0/internal.vtu', 'VTK/t21_0/boundary/standoffs.vtp', 'VTK/t21_0/boundary/vent.vtp', 'VTK/t21_0/boundary/floor.vtp', 'VTK/t21_0/boundary/top.vtp', 'VTK/t21_0/boundary/walls.vtp', 'VTK/t21_0/boundary/blindholes.vtp']
+
+# -- cell 13 (0.3s, exit 0)
+cad_area = {k: sum(f.area for f in v) for k,v in groups.items()}
+for k in patches:
+    m=pv.read(f"VTK/t21_0/boundary/{k}.vtp"); a=m.compute_cell_sizes(length=False,volume=False)["Area"].sum()
+    print(f"{k:11s} mesh {a:.6e}  cad {cad_area[k]:.6e}  diff {100*(a-cad_area[k])/cad_area[k]:+.2f}%")
+vol=pv.read("VTK/t21_0/internal.vtu").compute_cell_sizes(length=False,area=False)["Volume"].sum()
+print("mesh volume", vol, "cad", fluid.volume)
+# -- output
+top         mesh 1.600000e-02  cad 1.600000e-02  diff -0.00%
+vent        mesh 5.999999e-04  cad 6.000000e-04  diff -0.00%
+floor       mesh 1.568614e-02  cad 1.568584e-02  diff +0.00%
+walls       mesh 2.050000e-02  cad 2.050000e-02  diff -0.00%
+standoffs   mesh 3.398144e-03  cad 3.405486e-03  diff -0.22%
+blindholes  mesh 6.506793e-04  cad 6.534513e-04  diff -0.42%
+mesh volume 0.0006347945909736548 cad 0.0006345492041555149
+
+# -- cell 14 (0.4s, exit 0)
+g=pv.read("VTK/t21_0/internal.vtu")
+sl=g.slice(normal=(0,1,0), origin=(0,0.015,0))
+p=pv.Plotter(off_screen=True, window_size=(1200,500))
+p.add_mesh(sl, color="lightsteelblue", show_edges=True, line_width=0.6)
+p.view_xz(); p.camera.zoom(1.4); p.screenshot("slice.png")
+img=mpimg.imread("slice.png"); plt.figure(figsize=(13,5.5)); plt.imshow(img); plt.axis('off'); plt.show()
+# -- output
+[0m[33m2026-09-14 10:39:08.612 ( 122.425s) [    764173CB7780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 10:39:08.613 ( 122.426s) [    764173CB7780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 15 (0.1s, exit 0)
+BC = 0.0025
+nx,ny,nz = [int(round((b-a)/BC)) for a,b in ((x0,x1),(y0,y1),(z0,z1))]
+open("system/blockMeshDict","w").write(head("dictionary","blockMeshDict","system") + f"""
+scale 1;
+vertices ( ({x0} {y0} {z0}) ({x1} {y0} {z0}) ({x1} {y1} {z0}) ({x0} {y1} {z0})
+           ({x0} {y0} {z1}) ({x1} {y0} {z1}) ({x1} {y1} {z1}) ({x0} {y1} {z1}) );
+blocks ( hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1) );
+edges ();
+boundary ( outer {{ type patch; faces ((0 3 2 1)(4 5 6 7)(0 1 5 4)(2 3 7 6)(1 2 6 5)(0 4 7 3)); }} );
+""")
+lev = {"top":(0,0),"vent":(1,1),"floor":(1,1),"walls":(1,1),"standoffs":(1,1),"blindholes":(2,2)}
+refs = "\n".join(f'    {p} {{ level ({lev[p][0]} {lev[p][1]}); patchInfo {{ type wall; }} }}' for p in patches)
+shm2 = shm.split("refinementSurfaces")[0] + "refinementSurfaces\n  {\n" + refs + "\n  }\n" + \
+       shm.split("resolveFeatureAngle",1)[1].join(["  resolveFeatureAngle",""])
+open("system/snappyHexMeshDict","w").write(shm2)
+print(nx*ny*nz); print(open("system/snappyHexMeshDict").read()[400:1200])
+# -- output
+59840
+doffs; }
+  blindholes.stl { type triSurfaceMesh; name blindholes; }
+}
+castellatedMeshControls
+{
+  maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; maxLoadUnbalance 0.1;
+  nCellsBetweenLevels 2;
+  features ();
+  refinementSurfaces
+  {
+    top { level (0 0); patchInfo { type wall; } }
+    vent { level (1 1); patchInfo { type wall; } }
+    floor { level (1 1); patchInfo { type wall; } }
+    walls { level (1 1); patchInfo { type wall; } }
+    standoffs { level (1 1); patchInfo { type wall; } }
+    blindholes { level (2 2); patchInfo { type wall; } }
+  }
+  resolveFeatureAngle 30;
+  refinementRegions {}
+  locationInMesh (0.080 0.050 0.035);
+  allowFreeStandingZoneFaces false;
+}
+snapControls { nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+  nFeatureSnapIter 10;
+
+# -- cell 16 (31.0s, exit 0)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True); print(r.returncode, r.stdout[-150:])
+r=subprocess.run(["snappyHexMesh","-overwrite"],capture_output=True,text=True)
+print(r.returncode); print(r.stdout[-900:])
+# -- output
+0 ls: 59840
+  nFaces: 184752
+  nInternalFaces: 174288
+----------------
+Patches
+----------------
+  patch 0 (start: 174288 size: 10464) name: outer
+
+End
+
+
+0
+       : 0
+Snapped mesh : cells:90372  faces:296380  points:115995
+Cells per refinement level:
+    0	33908
+    1	52880
+    2	3584
+Writing mesh to time constant
+Wrote mesh in = 0.23 s.
+Mesh snapped in = 11.72 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 20.96 s.
+End
+
+# -- cell 17 (0.8s, exit 0)
+r=subprocess.run(["checkMesh","-constant"],capture_output=True,text=True)
+print(r.stdout[r.stdout.find("Checking topology"):])
+# -- output
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                     top     3760     4065  ok (non-closed singly connected)
+                    vent      380      421  ok (non-closed singly connected)
+                   floor    10032    10269  ok (non-closed singly connected)
+                   walls    13088    13543  ok (non-closed singly connected)
+               standoffs     2480     2656  ok (non-closed singly connected)
+              blindholes     1312     1396  ok (non-closed singly connected)
+                    ".*"    31052    31246      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.00300121 -8.47033e-22 -8.47033e-22) (0.16 0.1 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-4.20243e-16 7.2537e-16 1.9112e-14) OK.
+    Max cell openness = 2.77198e-16 OK.
+    Max aspect ratio = 3.24504 OK.
+    Minimum face area = 1.18651e-07. Maximum face area = 6.85395e-06.  Face area magnitudes OK.
+    Min volume = 3.52001e-11. Max volume = 1.74079e-08.  Total volume = 0.000634633.  Cell volumes OK.
+    Mesh non-orthogonality Max: 48.6762 average: 8.23484
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.511555 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 18 (2.4s, exit 0)
+r=subprocess.run(["foamToVTK","-constant","-ascii","-overwrite"],capture_output=True,text=True)
+g=pv.read("VTK/t21_0/internal.vtu")
+sl=g.slice(normal=(0,1,0), origin=(0,0.05,0))
+p=pv.Plotter(off_screen=True, window_size=(1200,450)); p.add_mesh(sl,color="lightsteelblue",show_edges=True,line_width=0.4)
+p.view_xz(); p.camera.zoom(1.5); p.screenshot("slice_vent.png")
+p2=pv.Plotter(off_screen=True, window_size=(1000,750))
+for k,c in cols.items():
+    p2.add_mesh(pv.read(f"VTK/t21_0/boundary/{k}.vtp"), color=c, opacity=0.35 if k in("top","walls") else 1.0)
+p2.camera_position=[(0.30,-0.24,0.22),(0.08,0.05,0.02),(0,0,1)]; p2.screenshot("patches.png")
+f,ax=plt.subplots(2,1,figsize=(12,11))
+for a,fn in zip(ax,["slice_vent.png","patches.png"]): a.imshow(mpimg.imread(fn)); a.axis('off')
+plt.show()
+# -- output
+[0m[33m2026-09-14 10:40:23.209 ( 197.022s) [    764173CB7780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 10:40:23.210 ( 197.023s) [    764173CB7780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 10:40:23.290 ( 197.103s) [    764173CB7780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 10:40:23.291 ( 197.104s) [    764173CB7780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 19 (0.1s, exit 0)
+print("standoff cyl radii (mm):", sorted({round(f.radius*1e3,4) for f in post_cyl}), "asked 5.0")
+print("standoff top z (mm):", sorted({round(f.center().Z*1e3,4) for f in post_top}), "asked 25")
+print("hole radii (mm):", sorted({round(f.radius*1e3,4) for f in hole_cyl}), "asked 2.0")
+print("hole bottom z (mm):", sorted({round(f.center().Z*1e3,4) for f in hole_bot}), "-> depth", 25-13, "asked 12")
+print("standoff axes (mm):", sorted([(round(x*1e3),round(y*1e3)) for x,y in centers]), "-> 15 mm in from each corner")
+bb=ventf[0].bounding_box()
+print("vent face: x=%.4f mm, y %.1f..%.1f, z %.1f..%.1f mm -> %0.0f x %0.0f, sill %0.0f above floor"%(
+  bb.min.X*1e3, bb.min.Y*1e3, bb.max.Y*1e3, bb.min.Z*1e3, bb.max.Z*1e3,
+  (bb.max.Y-bb.min.Y)*1e3,(bb.max.Z-bb.min.Z)*1e3, bb.min.Z*1e3))
+tb=top[0].bounding_box(); print("open top: %.0f x %.0f mm at z=%.0f mm"%((tb.max.X-tb.min.X)*1e3,(tb.max.Y-tb.min.Y)*1e3,tb.max.Z*1e3))
+# -- output
+standoff cyl radii (mm): [5.0] asked 5.0
+standoff top z (mm): [25.0] asked 25
+hole radii (mm): [2.0] asked 2.0
+hole bottom z (mm): [13.0] -> depth 12 asked 12
+standoff axes (mm): [(15, 15), (15, 85), (145, 15), (145, 85)] -> 15 mm in from each corner
+vent face: x=-3.0000 mm, y 35.0..65.0, z 10.0..30.0 mm -> 30 x 20, sill 10 above floor
+open top: 160 x 100 mm at z=40 mm
+
