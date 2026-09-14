@@ -27,6 +27,16 @@ PRICE_PER_MTOK: dict[str, dict[str, float]] = {
     "claude-opus-5": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
     "claude-sonnet-5": {"input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50},
     "claude-haiku-4-5": {"input": 1.00, "output": 5.00, "cache_read": 0.10, "cache_write": 1.25},
+    # Aster's rates, read off its own `/v1/models` (which reports them per model) rather
+    # than off the marketing page, whose gpt-oss figure disagreed with the API's. Chat
+    # Completions never bills a cache *write* -- `openai_api._token_classes` always
+    # reports that class as 0 -- so 0.0 here is the true rate, not a missing one.
+    "kimi-k3": {"input": 2.50, "output": 12.50, "cache_read": 0.25, "cache_write": 0.0},
+    "glm-5.2": {"input": 1.00, "output": 4.00, "cache_read": 0.20, "cache_write": 0.0},
+    # gpt-oss publishes no cached rate, so a cached prefix is priced at the full input
+    # rate: an unbilled discount we do not know about understates nothing.
+    "gpt-oss-120b": {"input": 0.15, "output": 0.60, "cache_read": 0.15, "cache_write": 0.0},
+    "gpt-oss-120b-fast": {"input": 0.15, "output": 0.60, "cache_read": 0.15, "cache_write": 0.0},
 }
 """What a token costs, **by model**, next to the models themselves.
 
@@ -124,6 +134,12 @@ PRESETS: dict[str, Preset] = {
             "minimax", "anthropic", "https://api.minimax.io/anthropic",
             "MiniMax-M2", "MiniMax-M2", 200_000,
             "MINIMAX_API_KEY", "MiniMax through its Anthropic-compatible endpoint.",
+        ),
+        Preset(
+            "aster", "openai", "https://api.asterlab.ai/v1",
+            "kimi-k3", "gpt-oss-120b-fast", 1_048_576,
+            "ASTER_API_KEY", "Aster's serving stack (Kimi K3, GLM 5.2, gpt-oss) over its "
+            "OpenAI-compatible endpoint.",
         ),
         Preset(
             "openrouter", "openai", "https://openrouter.ai/api/v1",
