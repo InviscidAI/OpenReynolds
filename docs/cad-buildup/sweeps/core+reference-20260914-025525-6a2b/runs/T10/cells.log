@@ -1,0 +1,456 @@
+# -- cell 1 (0.1s, exit 0)
+import numpy as np, math, os, subprocess
+print(os.getcwd(), os.listdir('.'))
+
+# ---- given parameters (from request) ----
+R_HUB   = 45.0      # mm
+R_TIP   = 90.0      # mm  (blade span 45 mm)
+N_BLADE = 28
+CHORD   = 22.0      # mm
+THICK   = 0.06      # 6% max thickness
+STAG_ROOT = 30.0    # deg
+TWIST     = 35.0    # deg extra at tip
+PITCH = 2*math.pi/N_BLADE
+# ---- assumption (not given): camber ----
+CAMB_M = 0.04       # 4% max camber
+CAMB_P = 0.40       # at 40% chord
+
+def naca(n=81, m=CAMB_M, p=CAMB_P, t=THICK):
+    """closed NACA-4 style section, unit chord, x in [0,1]; returns (N,2) loop"""
+    beta = np.linspace(0, math.pi, n)
+    x = 0.5*(1-np.cos(beta))                     # cosine clustering
+    yt = 5*t*(0.2969*np.sqrt(x)-0.1260*x-0.3516*x**2+0.2843*x**3-0.1036*x**4)
+    yc = np.where(x < p, m/p**2*(2*p*x-x**2), m/(1-p)**2*((1-2*p)+2*p*x-x**2))
+    dy = np.where(x < p, 2*m/p**2*(p-x),        2*m/(1-p)**2*(p-x))
+    th = np.arctan(dy)
+    xu, yu = x-yt*np.sin(th), yc+yt*np.cos(th)
+    xl, yl = x+yt*np.sin(th), yc-yt*np.cos(th)
+    up = np.stack([xu, yu], 1)
+    lo = np.stack([xl, yl], 1)[::-1]
+    return np.vstack([up, lo[1:-1]])             # open loop (closed by wire)
+
+sec = naca()
+print("pitch deg", math.degrees(PITCH), " pitch@hub mm", PITCH*R_HUB, " @tip", PITCH*R_TIP)
+print("max thickness/chord", (naca()[:,1].max()-0) , "chk t_max:",
+      max(np.interp(xx,[0,1],[0,0]) for xx in [0]) )
+# measure thickness directly
+n=81; up=sec[:n]; lo=sec[n-1:][::-1]
+print("t_max measured =", round(float(np.max(up[:,1]-np.interp(up[:,0], np.r_[lo[:,0],1.0], np.r_[lo[:,1],0.0]))),4))
+print("camber max =", round(float(np.max(0.5*(up[:,1]+np.interp(up[:,0], np.r_[lo[:,0],1.0], np.r_[lo[:,1],0.0])))),4))
+# -- output
+/home/qiuzi/.openreynolds-buildup/work/T10-20260914-025525-555b/t10 []
+pitch deg 12.857142857142858  pitch@hub mm 10.09797638653862  @tip 20.19595277307724
+max thickness/chord 0.06924369386516252 chk t_max: 0.0
+t_max measured = 0.0601
+camber max = 0.04
+
+# -- cell 2 (2.5s, exit 1)
+import build123d as bd
+from build123d import Vector, Axis
+
+X_IN  = -(0.5*CHORD*math.cos(math.radians(STAG_ROOT)) + CHORD)   # one chord upstream of blade
+X_OUT = -X_IN                                                    # one chord downstream
+
+def stagger_deg(r):
+    return STAG_ROOT + TWIST*(r-R_HUB)/(R_TIP-R_HUB)
+
+def section_3d(r, npts=81):
+    """aerofoil section at radius r, wrapped on cylinder of radius r, stacked on mid-chord at x=0,theta=0"""
+    s = naca(npts)                       # unit chord, x in [0,1]
+    xc = (s[:,0]-0.5)*CHORD              # centre on mid-chord
+    yc = s[:,1]*CHORD
+    g  = math.radians(stagger_deg(r))
+    xa = xc*math.cos(g) - yc*math.sin(g)          # axial
+    ta = xc*math.sin(g) + yc*math.cos(g)          # tangential arc length
+    th = ta/r
+    pts = [Vector(float(xa[i]), r*math.cos(th[i]), r*math.sin(th[i])) for i in range(len(th))]
+    return pts
+
+R_LO, R_HI = R_HUB-2.0, R_TIP+2.0
+radii = np.linspace(R_LO, R_HI, 9)
+wires = [bd.Wire(bd.Spline(section_3d(float(r)), periodic=True)) for r in radii]
+blade = bd.loft(wires, ruled=False)
+print(type(blade), "volume mm^3", round(blade.volume,1), "bbox", blade.bounding_box())
+print("X_IN,X_OUT", round(X_IN,3), round(X_OUT,3))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 25[39m
+[32m     21[39m 
+[32m     22[39m R_LO, R_HI = R_HUB-[32m2.0[39m, R_TIP+[32m2.0[39m
+[32m     23[39m radii = np.linspace(R_LO, R_HI, [32m9[39m)
+[32m     24[39m wires = [bd.Wire(bd.Spline(section_3d(float(r)), periodic=[38;5;28;01mTrue[39;00m)) [38;5;28;01mfor[39;00m r [38;5;28;01min[39;00m radii]
+[32m---> [39m[32m25[39m blade = bd.loft(wires, ruled=[38;5;28;01mFalse[39;00m)
+[32m     26[39m print(type(blade), [33m"volume mm^3"[39m, round(blade.volume,[32m1[39m), [33m"bbox"[39m, blade.bounding_box())
+[32m     27[39m print([33m"X_IN,X_OUT"[39m, round(X_IN,[32m3[39m), round(X_OUT,[32m3[39m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    157[39m objs = [38;5;28mlist[39m(objs)  [38;5;66;03m# To determine its length[39;00m
+[32m    158[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(objs) < [32m2[39m:
+[32m--> [39m[32m159[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mMore than one wire is required[39m[33m"[39m)
+[32m    160[39m vertices = [obj [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m objs [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj.wrapped, TopoDS_Vertex)]
+[32m    161[39m vertex_count = [38;5;28mlen[39m(vertices)
+
+[31mValueError[39m: More than one wire is required
+
+# -- cell 3 (0.1s, exit 0)
+import inspect
+src = inspect.getsource(bd.loft); print(src[:2000])
+# -- output
+def loft(
+    sections: Face | Sketch | Iterable[Vertex | Face | Sketch] | None = None,
+    ruled: bool = False,
+    clean: bool = True,
+    mode: Mode = Mode.ADD,
+) -> Part:
+    """Part Operation: loft
+
+    Loft the pending sketches/faces, across all workplanes, into a solid.
+
+    Args:
+        sections (Vertex, Face, Sketch): slices to loft into object. If not provided, pending_faces
+            will be used. If vertices are to be used, a vertex can be the first, last, or
+            first and last elements.
+        ruled (bool, optional): discontiguous layer tangents. Defaults to False.
+        clean (bool, optional): Remove extraneous internal structure. Defaults to True.
+        mode (Mode, optional): combination mode. Defaults to Mode.ADD.
+    """
+
+    def normalize_list_of_lists(lst):
+        lengths = {len(sub) for sub in lst}
+        if lengths <= {0}:
+            return []
+        if lengths == {1}:
+            return [sub[0] for sub in lst]
+        if len(lengths) > 1:
+            raise ValueError("The number of holes in the sections must be the same")
+        raise ValueError(
+            f"loft supports a maximum of 1 hole per section but one or more section "
+            f"has {max(lengths)} hole - loft the perimeter and holes separately and "
+            f"subtract the holes"
+        )
+
+    context: BuildPart | None = BuildPart._get_context("loft")
+
+    section_list = flatten_sequence(sections)
+    validate_inputs(context, "loft", section_list)
+
+    # If no explicit sections provided, use pending_faces from context
+    if all(s is None for s in section_list):
+        if context is None or not context.pending_faces:
+            raise ValueError("No sections provided")
+        input_sections = context.pending_faces
+        context.pending_faces = []
+        context.pending_face_planes = []
+    else:
+        input_sections = section_list
+
+    # Validate Vertex placement
+    if any(isinstance(s, Vertex) for s in input_sections):
+        if not isinstance(
+
+# -- cell 4 (2.5s, exit 0)
+import build123d as bd
+from build123d import Vector, Axis
+
+X_IN  = -(0.5*CHORD*math.cos(math.radians(STAG_ROOT)) + CHORD)   # one chord upstream of blade
+X_OUT = -X_IN                                                    # one chord downstream
+
+def stagger_deg(r):
+    return STAG_ROOT + TWIST*(r-R_HUB)/(R_TIP-R_HUB)
+
+def section_3d(r, npts=81):
+    """aerofoil section at radius r wrapped on the cylinder r, stacked mid-chord at x=0, theta=0"""
+    s = naca(npts)
+    xc = (s[:,0]-0.5)*CHORD
+    yc = s[:,1]*CHORD
+    g  = math.radians(stagger_deg(r))
+    xa = xc*math.cos(g) - yc*math.sin(g)     # axial
+    ta = xc*math.sin(g) + yc*math.cos(g)     # tangential arc length
+    th = ta/r
+    return [Vector(float(xa[i]), r*math.cos(th[i]), r*math.sin(th[i])) for i in range(len(th))]
+
+R_LO, R_HI = R_HUB-2.0, R_TIP+2.0            # extended past hub/shroud for clean cutting
+radii = np.linspace(R_LO, R_HI, 9)
+wires = [bd.Wire(bd.Spline(section_3d(float(r)), periodic=True)) for r in radii]
+blade = bd.Solid.make_loft(wires, ruled=False)
+print("blade volume mm^3", round(blade.volume,1))
+print("bbox", blade.bounding_box())
+print("X_IN,X_OUT", round(X_IN,3), round(X_OUT,3))
+# -- output
+blade volume mm^3 1099.6
+bbox bbox: -16.24420574252821 <= x <= 9.672074060089313, 42.67656154414031 <= y <= 92.46454350142464, -22.112090727321043 <= z <= 12.343160923840284
+X_IN,X_OUT -31.526 31.526
+
+# -- cell 5 (0.1s, exit 0)
+for r in [43.0, 67.5, 92.0]:
+    pts=np.array([[p.X,p.Y,p.Z] for p in section_3d(r)])
+    w=bd.Wire(bd.Spline(section_3d(r), periodic=True))
+    print(r, "pts x", pts[:,0].min().round(3), pts[:,0].max().round(3), " wire bbox x",
+          round(w.bounding_box().min.X,3), round(w.bounding_box().max.X,3), " len", round(w.length,3))
+# -- output
+43.0 pts x -9.694 9.672  wire bbox x -9.694 9.672  len 44.464
+67.5 pts x -7.487 7.431  wire bbox x -7.488 7.431  len 44.464
+92.0 pts x -4.536 4.376  wire bbox x -4.536 4.376  len 44.464
+
+# -- cell 6 (26.3s, exit 0)
+v,f = blade.tessellate(0.05)
+P = np.array([[p.X,p.Y,p.Z] for p in v])
+r = np.hypot(P[:,1],P[:,2])
+print("tess x", P[:,0].min().round(3), P[:,0].max().round(3), " r", r.min().round(3), r.max().round(3))
+print("ntri", len(f))
+# -- output
+tess x -16.244 9.66  r 43.0 93.095
+ntri 1212439
+
+# -- cell 7 (0.6s, exit 1)
+radii = np.linspace(R_LO, R_HI, 15)
+wires = [bd.Wire(bd.Spline(section_3d(float(r)), periodic=True)) for r in radii]
+blade = bd.Solid.make_loft(wires, ruled=True)
+v,f = blade.tessellate(0.2)
+P = np.array([[p.X,p.Y,p.Z] for p in v]); rr = np.hypot(P[:,1],P[:,2])
+print("volume", round(blade.volume,1), "ntri", len(f))
+print("tess x", P[:,0].min().round(3), P[:,0].max().round(3), " r", rr.min().round(3), rr.max().round(3))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mStdFail_NotDone[39m                           Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[7][39m[32m, line 3[39m
+[32m      1[39m radii = np.linspace(R_LO, R_HI, [32m15[39m)
+[32m      2[39m wires = [bd.Wire(bd.Spline(section_3d(float(r)), periodic=[38;5;28;01mTrue[39;00m)) [38;5;28;01mfor[39;00m r [38;5;28;01min[39;00m radii]
+[32m----> [39m[32m3[39m blade = bd.Solid.make_loft(wires, ruled=[38;5;28;01mTrue[39;00m)
+[32m      4[39m v,f = blade.tessellate([32m0.2[39m)
+[32m      5[39m P = np.array([[p.X,p.Y,p.Z] [38;5;28;01mfor[39;00m p [38;5;28;01min[39;00m v]); rr = np.hypot(P[:,[32m1[39m],P[:,[32m2[39m])
+[32m      6[39m print([33m"volume"[39m, round(blade.volume,[32m1[39m), [33m"ntri"[39m, len(f))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:197[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    193[39m         loft_builder.AddWire(obj.wrapped)
+[32m    195[39m loft_builder.Build()
+[32m--> [39m[32m197[39m [38;5;28;01mreturn[39;00m [30;43mloft_builder[39;49m[30;43m.[39;49m[30;43mShape[39;49m[30;43m([39;49m[30;43m)[39;49m
+
+[31mStdFail_NotDone[39m: BRep_API: command not done
+
+# -- cell 8 (0.4s, exit 0)
+def naca_sides(n=61, m=CAMB_M, p=CAMB_P, t=THICK):
+    """upper & lower surfaces LE->TE, unit chord, sharp closed TE"""
+    beta = np.linspace(0, math.pi, n); x = 0.5*(1-np.cos(beta))
+    yt = 5*t*(0.2969*np.sqrt(x)-0.1260*x-0.3516*x**2+0.2843*x**3-0.1036*x**4)
+    yt = yt - x*yt[-1]                                  # close the TE exactly
+    yc = np.where(x < p, m/p**2*(2*p*x-x**2), m/(1-p)**2*((1-2*p)+2*p*x-x**2))
+    dy = np.where(x < p, 2*m/p**2*(p-x),        2*m/(1-p)**2*(p-x))
+    th = np.arctan(dy)
+    up = np.stack([x-yt*np.sin(th), yc+yt*np.cos(th)], 1)
+    lo = np.stack([x+yt*np.sin(th), yc-yt*np.cos(th)], 1)
+    return up, lo
+
+def wrap(pts2, r):
+    """(x_chord,y_chord) unit-chord section coords -> 3D points on cylinder radius r"""
+    g = math.radians(stagger_deg(r))
+    xc = (pts2[:,0]-0.5)*CHORD; yc = pts2[:,1]*CHORD
+    xa = xc*math.cos(g) - yc*math.sin(g)
+    ta = xc*math.sin(g) + yc*math.cos(g)
+    th = ta/r
+    return [Vector(float(xa[i]), r*math.cos(th[i]), r*math.sin(th[i])) for i in range(len(th))]
+
+def section_wire(r):
+    up, lo = naca_sides()
+    return bd.Wire([bd.Spline(wrap(up, r)), bd.Spline(wrap(lo[::-1], r))])
+
+radii = np.linspace(R_LO, R_HI, 15)
+wires = [section_wire(float(r)) for r in radii]
+blade = bd.Solid.make_loft(wires, ruled=True)
+print("volume mm^3", round(blade.volume,2), "faces", len(blade.faces()))
+v,f = blade.tessellate(0.2); P=np.array([[q.X,q.Y,q.Z] for q in v]); rr=np.hypot(P[:,1],P[:,2])
+print("x", P[:,0].min().round(3), P[:,0].max().round(3), "r", rr.min().round(3), rr.max().round(3), "ntri", len(f))
+# -- output
+volume mm^3 627.61 faces 28
+x -9.694 9.672 r 43.0 92.0 ntri 26790
+
+# -- cell 9 (0.1s, exit 1)
+up,lo = naca_sides(401)
+A2 = np.trapz(up[:,1],up[:,0]) - np.trapz(lo[:,1],lo[:,0])      # unit chord area
+print("section area unit-chord", round(A2,5), "-> mm^2", round(A2*CHORD**2,3))
+print("x span*area =", round(A2*CHORD**2*(R_HI-R_LO),1), " actual loft volume", round(blade.volume,1))
+print("t_max/c measured =", round(float(np.max(up[:,1]-lo[:,1])),4),
+      "  camber_max/c =", round(float(np.max(0.5*(up[:,1]+lo[:,1]))),4),
+      "  chord check mm =", round(float((up[:,0].max()-up[:,0].min())*CHORD),3))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 2[39m
+[32m      1[39m up,lo = naca_sides([32m401[39m)
+[32m----> [39m[32m2[39m A2 = np.trapz(up[:,[32m1[39m],up[:,[32m0[39m]) - np.trapz(lo[:,[32m1[39m],lo[:,[32m0[39m])      [38;5;66;03m# unit chord area[39;00m
+[32m      3[39m print([33m"section area unit-chord"[39m, round(A2,[32m5[39m), [33m"-> mm^2"[39m, round(A2*CHORD**[32m2[39m,[32m3[39m))
+[32m      4[39m print([33m"x span*area ="[39m, round(A2*CHORD**[32m2[39m*(R_HI-R_LO),[32m1[39m), [33m" actual loft volume"[39m, round(blade.volume,[32m1[39m))
+[32m      5[39m print("t_max/c measured =", round(float(np.max(up[:,1]-lo[:,1])),4),
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/numpy/__init__.py:769[39m, in [36m__getattr__[39m[34m(attr)[39m
+[32m    762[39m [38;5;28;01mif[39;00m attr [38;5;129;01min[39;00m __expired_attributes__:
+[32m    763[39m     [38;5;28;01mraise[39;00m [38;5;167;01mAttributeError[39;00m(
+[32m    764[39m         [33mf[39m[33m"[39m[33m`np.[39m[38;5;132;01m{[39;00mattr[38;5;132;01m}[39;00m[33m` was removed in the NumPy 2.0 release. [39m[33m"[39m
+[32m    765[39m         [33mf[39m[33m"[39m[38;5;132;01m{[39;00m__expired_attributes__[attr][38;5;132;01m}[39;00m[33m"[39m,
+[32m    766[39m         name=[38;5;28;01mNone[39;00m
+[32m    767[39m     )
+[32m--> [39m[32m769[39m [38;5;28;01mraise[39;00m [38;5;167;01mAttributeError[39;00m([33mf[39m[33m"[39m[33mmodule [39m[38;5;132;01m{[39;00m[34m__name__[39m[38;5;132;01m!r}[39;00m[33m has no attribute [39m[38;5;132;01m{[39;00mattr[38;5;132;01m!r}[39;00m[33m"[39m)
+
+[31mAttributeError[39m: module 'numpy' has no attribute 'trapz'
+
+# -- cell 10 (0.1s, exit 0)
+up,lo = naca_sides(401)
+A2 = np.trapezoid(up[:,1],up[:,0]) - np.trapezoid(lo[:,1],lo[:,0])
+print("section area unit-chord", round(A2,5), "-> mm^2", round(A2*CHORD**2,3))
+print("area*span =", round(A2*CHORD**2*(R_HI-R_LO),1), " loft volume", round(blade.volume,1))
+print("t_max/c =", round(float(np.max(up[:,1]-lo[:,1])),4),
+      " camber_max/c =", round(float(np.max(0.5*(up[:,1]+lo[:,1]))),4))
+# -- output
+section area unit-chord 0.04099 -> mm^2 19.842
+area*span = 972.2  loft volume 627.6
+t_max/c = 0.0599  camber_max/c = 0.04
+
+# -- cell 11 (0.1s, exit 1)
+print("valid?", blade.is_valid())
+v,f = blade.tessellate(0.05)
+P=np.array([[q.X,q.Y,q.Z] for q in v]); T=np.array(f)
+a,b,c = P[T[:,0]],P[T[:,1]],P[T[:,2]]
+vol = np.abs(np.einsum('ij,ij->i', a, np.cross(b,c)).sum()/6.0)
+print("tess volume", round(vol,1), " occ volume", round(blade.volume,1), "ntri",len(T))
+# area of one section wire's enclosed region, via a planar-ish check at mid radius
+w = section_wire(67.5); print("wire len at r=67.5:", round(w.length,3), " (perimeter ~", round(2.04*CHORD,2),")")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[11][39m[32m, line 1[39m
+[32m----> [39m[32m1[39m print([33m"valid?"[39m, blade.is_valid())
+[32m      2[39m v,f = blade.tessellate([32m0.05[39m)
+[32m      3[39m P=np.array([[q.X,q.Y,q.Z] [38;5;28;01mfor[39;00m q [38;5;28;01min[39;00m v]); T=np.array(f)
+[32m      4[39m a,b,c = P[T[:,[32m0[39m]],P[T[:,[32m1[39m]],P[T[:,[32m2[39m]]
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 12 (0.1s, exit 0)
+print("valid?", blade.is_valid)
+v,f = blade.tessellate(0.05)
+P=np.array([[q.X,q.Y,q.Z] for q in v]); T=np.array(f)
+a,b,c = P[T[:,0]],P[T[:,1]],P[T[:,2]]
+print("tess volume", round(abs(np.einsum('ij,ij->i',a,np.cross(b,c)).sum()/6.0),1),
+      " occ volume", round(blade.volume,1), "ntri",len(T))
+print("wire len r=67.5:", round(section_wire(67.5).length,3), " perimeter est", round(2.04*CHORD,2))
+# -- output
+valid? False
+tess volume 661.4  occ volume 627.6 ntri 2204
+wire len r=67.5: 44.464  perimeter est 44.88
+
+# -- cell 13 (0.7s, exit 0)
+def section_poly(r, n=61):
+    up, lo = naca_sides(n)
+    pts2 = np.vstack([up, lo[::-1][1:-1]])          # closed loop, sharp LE/TE
+    p3 = wrap(pts2, r)
+    return bd.Wire(bd.Polyline(p3 + [p3[0]]))
+
+radii = np.linspace(R_LO, R_HI, 9)
+blade = bd.Solid.make_loft([section_poly(float(r)) for r in radii], ruled=True)
+print("valid?", blade.is_valid, "volume", round(blade.volume,1), "faces", len(blade.faces()))
+# -- output
+valid? False volume 646.8 faces 960
+
+# -- cell 14 (0.2s, exit 0)
+import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+up,lo = naca_sides(61); pts2=np.vstack([up, lo[::-1][1:-1]]); loop=np.vstack([pts2,pts2[0]])
+fig,ax=plt.subplots(1,2,figsize=(11,4))
+ax[0].plot(loop[:,0],loop[:,1],'-o',ms=2); ax[0].set_aspect('equal'); ax[0].set_title("unit section")
+for r in [45,67.5,90]:
+    p=np.array([[q.X,q.Y,q.Z] for q in wrap(np.vstack([pts2,pts2[0]]), r)])
+    th=np.arctan2(p[:,2],p[:,1]); ax[1].plot(p[:,0], r*th, label=f"r={r}")
+ax[1].set_aspect('equal'); ax[1].legend(); ax[1].set_title("x vs r*theta")
+# shoelace area of unit loop
+A=0.5*abs(np.sum(loop[:-1,0]*loop[1:,1]-loop[1:,0]*loop[:-1,1]))
+print("shoelace area unit chord", round(A,5), "-> mm^2", round(A*CHORD**2,2), " *49 =", round(A*CHORD**2*49,1))
+plt.savefig("sec.png",dpi=90)
+# -- output
+shoelace area unit chord 0.04098 -> mm^2 19.83  *49 = 971.8
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 15 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("sec.png"))
+# -- output
+
+
+# -- cell 16 (1.8s, exit 0)
+PITCH_DEG = 360.0/N_BLADE
+prof = bd.Plane.XZ * bd.Rectangle(X_OUT-X_IN, R_TIP-R_HUB)   # placeholder plane, fix below
+prof = bd.Face(bd.Wire(bd.Polyline([Vector(X_IN,R_HUB,0),Vector(X_OUT,R_HUB,0),
+                                    Vector(X_OUT,R_TIP,0),Vector(X_IN,R_TIP,0),Vector(X_IN,R_HUB,0)])))
+sector = bd.revolve(prof, axis=Axis.X, revolution_arc=PITCH_DEG)
+print("sector vol", round(sector.volume,1), "expected",
+      round(math.radians(PITCH_DEG)/2*(R_TIP**2-R_HUB**2)*(X_OUT-X_IN),1), "faces", len(sector.faces()))
+bladeA = blade
+bladeB = blade.rotate(Axis.X, PITCH_DEG)
+fluid = sector - bladeA - bladeB
+print("fluid vol", round(fluid.volume,1), "valid", fluid.is_valid, "solids", len(fluid.solids()), "faces", len(fluid.faces()))
+# -- output
+sector vol 42977.5 expected 42977.5 faces 6
+fluid vol 42086.1 valid True solids 1 faces 987
+
+# -- cell 17 (240.0s, exit 0)
+groups = {k: [] for k in ["hub","shroud","inlet","outlet","periodic_1","periodic_2",
+                          "blade_suction","blade_pressure"]}
+tol = 1e-6
+for fc in fluid.faces():
+    c = fc.center()
+    r = math.hypot(c.Y, c.Z); th = math.degrees(math.atan2(c.Z, c.Y))
+    n = fc.normal_at(c)
+    if abs(n.X) > 0.999 and abs(c.X - X_IN) < 1e-6:      groups["inlet"].append(fc)
+    elif abs(n.X) > 0.999 and abs(c.X - X_OUT) < 1e-6:   groups["outlet"].append(fc)
+    elif abs(r-R_HUB) < 1e-6 and abs(n.X) < 1e-6:        groups["hub"].append(fc)
+    elif abs(r-R_TIP) < 1e-6 and abs(n.X) < 1e-6:        groups["shroud"].append(fc)
+    elif abs(th) < 1e-6:                                  groups["periodic_1"].append(fc)
+    elif abs(th-PITCH_DEG) < 1e-6:                        groups["periodic_2"].append(fc)
+    else:
+        dA = bd.Shape.distance_to(fc, bladeA); dB = bd.Shape.distance_to(fc, bladeB)
+        groups["blade_suction" if dA < dB else "blade_pressure"].append(fc)
+tot = 0
+for k,v in groups.items():
+    a = sum(f.area for f in v); tot += len(v)
+    print(f"{k:15s} nfaces {len(v):4d}  area {a:9.2f} mm^2")
+print("classified", tot, "of", len(fluid.faces()))
+# -- output
+
+
+# -- cell 18 (240.0s, exit 0)
+print("poll")
+# -- output
+
+
+# -- cell 19 (240.0s, exit 0)
+print("poll 2")
+# -- output
+
+

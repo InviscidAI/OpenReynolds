@@ -1,0 +1,621 @@
+# -- cell 1 (2.2s, exit 0)
+import build123d as bd, numpy as np
+W=8.0; t=1.0; p=W+t
+r_cell = W/np.sqrt(3)
+h = bd.RegularPolygon(radius=r_cell, side_count=6, major_radius=True)
+print(type(h), h.area, h.bounding_box())
+# -- output
+<class 'build123d.objects_sketch.RegularPolygon'> 55.42562584220409 bbox: -4.618802153517007 <= x <= 4.618802153517007, -4.0 <= y <= 4.000000000000001, 0.0 <= z <= 0.0
+
+# -- cell 2 (0.6s, exit 0)
+S=80.0
+dx=p*np.sqrt(3)/2; dy=p
+inset = bd.Rectangle(S-2*t, S-2*t)
+frags=[]; full=h.area
+for i in range(-8,9):
+    for j in range(-8,9):
+        cx=i*dx; cy=j*dy+(i%2)*dy/2
+        hx = bd.Pos(cx,cy)*h
+        if abs(cx)-4.7>S/2 or abs(cy)-4.7>S/2: continue
+        f = inset & hx
+        if f.area > 0.4*full: frags.append((cx,cy,f))
+print(len(frags), "cells;  areas min/max frac:", min(f.area for _,_,f in frags)/full, max(f.area for _,_,f in frags)/full)
+print("open area frac of duct:", sum(f.area for _,_,f in frags)/(S*S))
+# -- output
+93 cells;  areas min/max frac: 0.5041651245988523 1.0
+open area frac of duct: 0.7285797416502993
+
+# -- cell 3 (0.3s, exit 0)
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig,ax=plt.subplots(figsize=(6,6))
+for cx,cy,f in frags:
+    for w in f.wires():
+        pts=np.array([(v.X,v.Y) for v in w.vertices()]+[(w.vertices()[0].X,w.vertices()[0].Y)])
+        ax.fill(pts[:,0],pts[:,1],'w',ec='k',lw=0.5)
+ax.add_patch(plt.Rectangle((-40,-40),80,80,fill=False,ec='r'))
+ax.set_aspect(1); ax.set_xlim(-45,45); ax.set_ylim(-45,45); ax.set_title("honeycomb section (fluid cells white)")
+fig.savefig("section.png",dpi=110)
+print("ok")
+# -- output
+ok
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 4 (0.1s, exit 0)
+from IPython.display import Image, display
+display(Image("section.png"))
+# -- output
+
+
+# -- cell 5 (0.4s, exit 0)
+fig,ax=plt.subplots(figsize=(6,6))
+for cx,cy,f in frags:
+    for e in f.edges():
+        a,b=e@0, e@1
+        ax.plot([a.X,b.X],[a.Y,b.Y],'k-',lw=0.6)
+ax.add_patch(plt.Rectangle((-40,-40),80,80,fill=False,ec='r'))
+ax.set_aspect(1); ax.set_xlim(-45,45); ax.set_ylim(-45,45)
+fig.savefig("section.png",dpi=110); display(Image("section.png"))
+# -- output
+
+
+# -- cell 6 (1.6s, exit 0)
+import time
+L_up, L_core, L_dn = 40.0, 20.0, 80.0
+cells3d = bd.Compound([bd.extrude(bd.Pos(0,0,0)*f, L_core) for _,_,f in frags])
+core_box = bd.Pos(0,0,L_core/2)*bd.Box(S,S,L_core)
+duct = bd.Pos(0,0,(L_core-L_up+L_dn)/2)*bd.Box(S,S,L_up+L_core+L_dn)
+t0=time.time(); plate = core_box - cells3d; print("plate", time.time()-t0, plate.volume)
+t0=time.time(); fluid = duct - plate; print("fluid", time.time()-t0, fluid.volume, "expected", 80*80*120+sum(f.area for _,_,f in frags)*20)
+print(fluid.bounding_box(), len(fluid.solids()))
+# -- output
+plate 0.8274011611938477 34741.793068761894
+fluid 0.5171136856079102 861258.206931229 expected 861258.2069312383
+bbox: -40.0 <= x <= 40.0, -40.0 <= y <= 40.0, -40.0 <= z <= 100.0 1
+
+# -- cell 7 (0.1s, exit 0)
+ZMIN,ZMAX=-L_up, L_core+L_dn
+def classify(f):
+    bb=f.bounding_box(); tol=1e-7
+    flat=lambda a,b: abs(a-b)<tol
+    if flat(bb.min.Z,ZMIN) and flat(bb.max.Z,ZMIN): return "inlet"
+    if flat(bb.min.Z,ZMAX) and flat(bb.max.Z,ZMAX): return "outlet"
+    for c,v in (("X",S/2),("X",-S/2),("Y",S/2),("Y",-S/2)):
+        if flat(getattr(bb.min,c),v) and flat(getattr(bb.max,c),v): return "ductwalls"
+    return "honeycomb"
+groups={}
+for f in fluid.faces(): groups.setdefault(classify(f),[]).append(f)
+for k,v in groups.items(): print(k, len(v), round(sum(f.area for f in v),1))
+print("hand: inlet/outlet 6400, ductwalls", 4*S*(L_up+L_dn), "hc sides", sum(f.area for _,_,f in frags)*0+round(sum(sum(e.length for e in f.edges()) for _,_,f in frags)*20,1), "+ 2 endfaces", round(2*(S*S-sum(f.area for _,_,f in frags)),1))
+# -- output
+ductwalls 8 38400.0
+honeycomb 544 52933.5
+inlet 1 6400.0
+outlet 1 6400.0
+hand: inlet/outlet 6400, ductwalls 38400.0 hc sides 49459.3 + 2 endfaces 3474.2
+
+# -- cell 8 (0.6s, exit 0)
+import os
+sc=0.001
+fluid_m = bd.scale(fluid, sc)
+def classify_s(f,s=sc):
+    bb=f.bounding_box(); tol=1e-9
+    flat=lambda a,b: abs(a-b)<tol
+    if flat(bb.min.Z,ZMIN*s) and flat(bb.max.Z,ZMIN*s): return "inlet"
+    if flat(bb.min.Z,ZMAX*s) and flat(bb.max.Z,ZMAX*s): return "outlet"
+    for c,v in (("X",S/2*s),("X",-S/2*s),("Y",S/2*s),("Y",-S/2*s)):
+        if flat(getattr(bb.min,c),v) and flat(getattr(bb.max,c),v): return "ductwalls"
+    return "honeycomb"
+g={}
+for f in fluid_m.faces(): g.setdefault(classify_s(f),[]).append(f)
+print({k:(len(v),round(sum(x.area for x in v),6)) for k,v in g.items()}, fluid_m.volume)
+bd.export_step(fluid_m,"fluid.step")
+for k,v in g.items(): bd.export_stl(bd.Compound(v), f"{k}.stl", tolerance=2e-5, angular_tolerance=0.3)
+print(sorted(os.listdir(".")))
+# -- output
+{'ductwalls': (8, 0.0384), 'honeycomb': (544, 0.052933), 'inlet': (1, 0.0064), 'outlet': (1, 0.0064)} 0.0008612582069312015
+['ductwalls.stl', 'fluid.step', 'honeycomb.stl', 'inlet.stl', 'outlet.stl', 'section.png']
+
+# -- cell 9 (1.7s, exit 0)
+import gmsh
+def build_mesh(core_h, duct_h, out="fluid.msh", nthreads=8):
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal",1)
+    gmsh.model.add("hc")
+    gmsh.model.occ.importShapes("fluid.step"); gmsh.model.occ.synchronize()
+    tol=1e-9; names={}
+    for (d,tag) in gmsh.model.getEntities(2):
+        x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(d,tag)
+        f=lambda a,b: abs(a-b)<tol
+        if f(z0,ZMIN*sc) and f(z1,ZMIN*sc): k="inlet"
+        elif f(z0,ZMAX*sc) and f(z1,ZMAX*sc): k="outlet"
+        elif any(f(a,v) and f(b,v) for a,b,v in [(x0,x1,S/2*sc),(x0,x1,-S/2*sc),(y0,y1,S/2*sc),(y0,y1,-S/2*sc)]): k="ductwalls"
+        else: k="honeycomb"
+        names.setdefault(k,[]).append(tag)
+    for k,tags in names.items():
+        gmsh.model.addPhysicalGroup(2,tags,name=k)
+    gmsh.model.addPhysicalGroup(3,[v[1] for v in gmsh.model.getEntities(3)],name="fluid")
+    fld=gmsh.model.mesh.field.add("Box")
+    gmsh.model.mesh.field.setNumber(fld,"VIn",core_h); gmsh.model.mesh.field.setNumber(fld,"VOut",duct_h)
+    gmsh.model.mesh.field.setNumber(fld,"XMin",-1); gmsh.model.mesh.field.setNumber(fld,"XMax",1)
+    gmsh.model.mesh.field.setNumber(fld,"YMin",-1); gmsh.model.mesh.field.setNumber(fld,"YMax",1)
+    gmsh.model.mesh.field.setNumber(fld,"ZMin",-0.006); gmsh.model.mesh.field.setNumber(fld,"ZMax",0.026)
+    gmsh.model.mesh.field.setNumber(fld,"Thickness",0.02)
+    gmsh.model.mesh.field.setAsBackgroundMesh(fld)
+    for o,v in [("Mesh.MeshSizeFromPoints",0),("Mesh.MeshSizeFromCurvature",0),("Mesh.MeshSizeExtendFromBoundary",0),
+                ("Mesh.Algorithm",5),("Mesh.Algorithm3D",10),("General.NumThreads",nthreads),("Mesh.MshFileVersion",2.2)]:
+        gmsh.option.setNumber(o,v)
+    gmsh.model.mesh.generate(3)
+    gmsh.write(out)
+    n=len(gmsh.model.mesh.getElementsByType(4)[0]); print("tets",n, {k:len(v) for k,v in names.items()})
+    gmsh.finalize(); return n
+build_mesh(0.003,0.006)
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [  0%] Meshing curve 3 (Line)
+Info    : [  0%] Meshing curve 6 (Line)
+Info    : [  0%] Meshing curve 7 (Line)
+Info    : [  0%] Meshing curve 5 (Line)
+Info    : [  0%] Meshing curve 4 (Line)
+Info    : [  0%] Meshing curve 8 (Line)
+Info    : [  0%] Meshing curve 2 (Line)
+Info    : [  0%] Meshing curve 9 (Line)
+Info    : [  0%] Meshing curve 10 (Line)
+Info    : [  0%] Meshing curve 11 (Line)
+Info    : [  0%] Meshing curve 12 (Line)
+Info    : [  0%] Meshing curve 13 (Line)
+Info    : [  0%] Meshing curve 14 (Line)
+Info    : [  0%] Meshing curve 15 (Line)
+Info    : [  0%] Meshing curve 16 (Line)
+Info    : [  0%] Meshing curve 17 (Line)
+Info    : [  0%] Meshing curve 18 (Line)
+Info    : [  0%] Meshing curve 20 (Line)
+Info    : [  0%] Meshing curve 21 (Line)
+Info    : [  0%] Meshing curve 19 (Line)
+Info    : [  0%] Meshing curve 22 (Line)
+Info    : [  0%] Meshing curve 23 (Line)
+Info    : [  0%] Meshing curve 26 (Line)
+Info    : [  0%] Meshing curve 27 (Line)
+Info    : [  0%] Meshing curve 25 (Line)
+Info    : [  0%] Meshing curve 24 (Line)
+Info    : [  0%] Meshing curve 28 (Line)
+Info    : [  0%] Meshing curve 30 (Line)
+Info    : [  0%] Meshing curve 29 (Line)
+Info    : [  0%] Meshing curve 31 (Line)
+Info    : [  0%] Meshing curve 32 (Line)
+Info    : [  0%] Meshing curve 33 (Line)
+Info    : [  0%] Meshing curve 34 (Line)
+Info    : [  0%] Meshing curve 35 (Line)
+Info    : [ 10%] Meshing curve 36 (Line)
+Info    : [ 10%] Meshing curve 37 (Line)
+Info    : [ 10%] Meshing curve 38 (Line)
+Info    : [ 10%] Meshing curve 39 (Line)
+Info    : [ 10%] Meshing curve 40 (Line)
+Info    : [ 10%] Meshing curve 41 (Line)
+Info    : [ 10%] Meshing curve 42 (Line)
+Info    : [ 10%] Meshing curve 43 (Line)
+Info    : [ 10%] Meshing curve 44 (Line)
+Info    : [ 10%] Meshing curve 45 (Line)
+Info    : [ 10%] Meshing curve 46 (Line)
+Info    : [ 10%] Meshing curve 47 (Line)
+Info    : [ 10%]
+... 97949 characters cut ...
+7 (Plane, Delaunay)
+Info    : [100%] Meshing surface 548 (Plane, Delaunay)
+Info    : [100%] Meshing surface 549 (Plane, Delaunay)
+Info    : [100%] Meshing surface 550 (Plane, Delaunay)
+Info    : [100%] Meshing surface 551 (Plane, Delaunay)
+Info    : [100%] Meshing surface 552 (Plane, Delaunay)
+Info    : [100%] Meshing surface 553 (Plane, Delaunay)
+Info    : [100%] Meshing surface 554 (Plane, Delaunay)
+Info    : Done meshing 2D (Wall 0.203264s, CPU 1.00947s)
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Input mesh hash 480e86d7265956e0
+Info    : Creating an empty mesh with 13225 vertices
+Info    : Initialization of tet. mesh
+Info    : Delaunay of      13221 points on   4 threads - mesh.nvert: 4         
+Info    : Recovering 244 missing facet(s)
+Info    : Recover Delaunay
+Info    : All volumes of the BRep were found and colorized accordingly
+Info    : Computing mesh sizes...
+Info    : Done computing mesh sizes
+Info    : Delaunay of      15180 points on   4 threads - mesh.nvert: 13225     
+Info    :           -      13474 points filtered
+Info    :           =       1706 points added
+Info    : Computing mesh sizes...
+Info    : Done computing mesh sizes
+Info    : Delaunay of       7563 points on   2 threads - mesh.nvert: 14931     
+Info    :           -       5820 points filtered
+Info    :           =       1743 points added
+Info    : Computing mesh sizes...
+Info    : Done computing mesh sizes
+Info    : Delaunay of       2268 points on   1 threads - mesh.nvert: 16674     
+Info    :           -       1425 points filtered
+Info    :           =        843 points added
+Info    : Computing mesh sizes...
+Info    : Done computing mesh sizes
+Info    : Delaunay of        359 points on   1 threads - mesh.nvert: 17517     
+Info    :           -        176 points filtered
+Info    :           =        183 points added
+Info    : Computing mesh sizes...
+Info    : Done computing mesh sizes
+Info    : Delaunay of         29 points on   1 threads - mesh.nvert: 17700     
+Info    :           -         10 points filtered
+Info    :           =         19 points added
+Info    : Computing mesh sizes...
+Info    : Done computing mesh sizes
+Info    : Delaunay of          3 points on   1 threads - mesh.nvert: 17719     
+Info    : Computing mesh sizes...
+Info    : Done computing mesh sizes
+Info    : Improving       5437 tet. on   8 thrd (S & ER)
+Info    : Improving       2501 tet. on   8 thrd (S & ER)
+Info    : Improving       2263 tet. on   8 thrd (S & ER)
+Info    : Improving       2163 tet. on   8 thrd (S & ER)
+Info    : Improving       2116 tet. on   8 thrd (S & ER)
+Info    : Improving       2108 tet. on   8 thrd (S & ER)
+Info    : Improving       2097 tet. on   8 thrd (GSC)
+Info    : Improving       2031 tet. on   8 thrd (S & ER)
+Info    : Improving       1992 tet. on   8 thrd (S & ER)
+Info    : Improving       1970 tet. on   8 thrd (S & ER)
+Info    : Improving       1962 tet. on   8 thrd (S & ER)
+Info    : Improving       1957 tet. on   8 thrd (S & ER)
+Info    : Improving       1957 tet. on   8 thrd (GSC)
+Info    : Improving       1938 tet. on   8 thrd (S & ER)
+Info    : Improving       1934 tet. on   8 thrd (S & ER)
+Info    : Improving       1932 tet. on   8 thrd (S & ER)
+Info    : Improving       1932 tet. on   8 thrd (S & ER)
+Info    : Improving       1932 tet. on   8 thrd (S & ER)
+Info    : Improving       1932 tet. on   8 thrd (GSC)
+Info    : Improving       1930 tet. on   8 thrd (S & ER)
+Info    :  	Final tet. mesh contains 106096 tetrahedra
+Info    :  	Final tet. mesh contains 17722 vertices
+Info    : tEmptyMesh  	 = 	    0.089
+Info    : tVerifyBnd  	 = 	    0.005
+Info    : tBndRecovery	 = 	    0.134
+Info    : tConvertMesh	 = 	    0.006
+Info    : tRefine     	 = 	    0.045
+Info    : tOptimize   	 = 	    0.575
+Info    : Done meshing 3D (Wall 0.898522s, CPU 4.24518s)
+Info    : 17722 nodes 100329 elements
+Info    : Writing 'fluid.msh'...
+Info    : Done writing 'fluid.msh'
+tets 66057 {'honeycomb': 554}
+66057
+
+# -- cell 10 (0.5s, exit 0)
+gmsh.initialize(); gmsh.model.add("chk")
+gmsh.model.occ.importShapes("fluid.step"); gmsh.model.occ.synchronize()
+print(gmsh.model.getBoundingBox(-1,-1))
+ents=gmsh.model.getEntities(2)
+print(len(ents), [gmsh.model.getBoundingBox(2,t) for d,t in ents[:3]])
+gmsh.finalize()
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+(-0.040000100000000004, -0.040000100000000004, -0.040000100000000004, 0.040000100000000004, 0.040000100000000004, 0.10000010000000001)
+554 [(-0.040000100000000004, -0.040000100000000004, -0.040000100000000004, -0.0399999, 0.040000100000000004, 1e-07), (-0.040000100000000004, -0.040000100000000004, -0.040000100000000004, 0.040000100000000004, -0.0399999, 1e-07), (-0.040000100000000004, -0.040000100000000004, -1e-07, 0.040000100000000004, 0.040000100000000004, 1e-07)]
+
+# -- cell 11 (1.6s, exit 0)
+import gmsh
+def build_mesh(core_h, duct_h, out="fluid.msh", nthreads=8, tol=1e-6):
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal",0)
+    gmsh.model.add("hc")
+    gmsh.model.occ.importShapes("fluid.step"); gmsh.model.occ.synchronize()
+    names={}
+    for (d,tag) in gmsh.model.getEntities(2):
+        x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(d,tag)
+        f=lambda a,b: abs(a-b)<tol
+        if f(z0,ZMIN*sc) and f(z1,ZMIN*sc): k="inlet"
+        elif f(z0,ZMAX*sc) and f(z1,ZMAX*sc): k="outlet"
+        elif any(f(a,v) and f(b,v) for a,b,v in [(x0,x1,S/2*sc),(x0,x1,-S/2*sc),(y0,y1,S/2*sc),(y0,y1,-S/2*sc)]): k="ductwalls"
+        else: k="honeycomb"
+        names.setdefault(k,[]).append(tag)
+    for k,tags in names.items(): gmsh.model.addPhysicalGroup(2,tags,name=k)
+    gmsh.model.addPhysicalGroup(3,[v[1] for v in gmsh.model.getEntities(3)],name="fluid")
+    fld=gmsh.model.mesh.field.add("Box")
+    for o,v in [("VIn",core_h),("VOut",duct_h),("XMin",-1),("XMax",1),("YMin",-1),("YMax",1),
+                ("ZMin",-0.006),("ZMax",0.026),("Thickness",0.02)]:
+        gmsh.model.mesh.field.setNumber(fld,o,v)
+    gmsh.model.mesh.field.setAsBackgroundMesh(fld)
+    for o,v in [("Mesh.MeshSizeFromPoints",0),("Mesh.MeshSizeFromCurvature",0),("Mesh.MeshSizeExtendFromBoundary",0),
+                ("Mesh.Algorithm",5),("Mesh.Algorithm3D",10),("General.NumThreads",nthreads),("Mesh.MshFileVersion",2.2)]:
+        gmsh.option.setNumber(o,v)
+    gmsh.model.mesh.generate(3)
+    gmsh.write(out)
+    ntet=len(gmsh.model.mesh.getElementsByType(4)[1])//4
+    print("tets",ntet,{k:len(v) for k,v in names.items()})
+    gmsh.finalize()
+build_mesh(0.003,0.006)
+# -- output
+tets 66093 {'ductwalls': 8, 'honeycomb': 544, 'inlet': 1, 'outlet': 1}
+
+# -- cell 12 (0.6s, exit 0)
+import os, subprocess, textwrap
+os.makedirs("system",exist_ok=True); os.makedirs("constant",exist_ok=True)
+hdr=lambda cls,obj: f"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\n"
+open("system/controlDict","w").write(hdr("dictionary","controlDict")+textwrap.dedent("""
+application simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;
+writePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;
+"""))
+open("system/fvSchemes","w").write(hdr("dictionary","fvSchemes")+"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(hdr("dictionary","fvSolution")+"solvers{} SIMPLE{}\n")
+r=subprocess.run(["gmshToFoam","fluid.msh"],capture_output=True,text=True); print(r.returncode, r.stdout[-800:], r.stderr[-500:])
+# -- output
+0 e 0
+Cells:
+    total:66093
+    hex  :0
+    prism:0
+    pyr  :0
+    tet  :66093
+
+CellZones:
+Zone	Size
+    0	66093
+
+Patch 0 gets name ductwalls
+Patch 1 gets name honeycomb
+Patch 2 gets name inlet
+Patch 3 gets name outlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 26816 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone fluid and cellSet
+End
+
+# -- cell 13 (0.5s, exit 0)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True); print(r.stdout[-2500:])
+# -- output
+line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           17706
+    faces:            145594
+    internal faces:   118778
+    cells:            66093
+    faces per cell:   4
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    66093
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    ductwalls           4616     2472     ok (non-closed singly connected)  
+    honeycomb           21228    10538    ok (non-closed singly connected)  
+    inlet               486      272      ok (non-closed singly connected)  
+    outlet              486      272      ok (non-closed singly connected)  
+    ".*"                26816    13226    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               66093        17706        0.000861258  (-0.04 -0.04 -0.04) (0.04 0.04 0.1)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.04 -0.04 -0.04) (0.04 0.04 0.1)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (4.50223e-18 -4.70965e-18 -1.0737e-17) OK.
+    Max cell openness = 3.13386e-16 OK.
+    Max aspect ratio = 10.0392 OK.
+    Minimum face area = 4.33013e-07. Maximum face area = 6.68095e-05.  Face area magnitudes OK.
+    Min volume = 2.25473e-10. Max volume = 1.56433e-07.  Total volume = 0.000861258.  Cell volumes OK.
+    Mesh non-orthogonality Max: 71.2583 average: 25.609
+   *Number of severely non-orthogonal (> 70 degrees) faces: 1.
+    Non-orthogonality check OK.
+  <<Writing 1 non-orthogonal faces to set nonOrthoFaces
+    Face pyramids OK.
+    Max skewness = 1.93312 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 14 (0.7s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+pl=pv.Plotter(off_screen=True,window_size=(900,700))
+cols={"honeycomb":"tan","ductwalls":"lightsteelblue","inlet":"green","outlet":"red"}
+for k,c in cols.items():
+    m=pv.read(f"{k}.stl")
+    pl.add_mesh(m,color=c,show_edges=False,opacity=1.0 if k!="ductwalls" else 0.25)
+pl.camera_position=[(0.18,-0.15,0.16),(0,0,0.03),(0,0,1)]
+pl.screenshot("view.png"); display(Image("view.png"))
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 03:02:13.782 (   0.385s) [    704E29556780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 03:02:13.782 (   0.385s) [    704E29556780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 03:02:13.794 (   0.397s) [    704E29556780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 15 (2.8s, exit 0)
+import time; t0=time.time()
+build_mesh(0.0015,0.003)
+print("gmsh secs", round(time.time()-t0,1))
+# -- output
+tets 425767 {'ductwalls': 8, 'honeycomb': 544, 'inlet': 1, 'outlet': 1}
+gmsh secs 2.7
+
+# -- cell 16 (4.3s, exit 0)
+import shutil
+shutil.rmtree("constant/polyMesh",ignore_errors=True)
+r=subprocess.run(["gmshToFoam","fluid.msh"],capture_output=True,text=True); print(r.returncode)
+r=subprocess.run(["checkMesh"],capture_output=True,text=True)
+print(r.stdout[r.stdout.find("Mesh stats"):][:900])
+print(r.stdout[r.stdout.find("Checking geometry"):][:1600])
+# -- output
+0
+Mesh stats 
+    points:           92161
+    faces:            897609
+    internal faces:   805459
+    cells:            425767
+    faces per cell:   4
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    425767
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    ductwalls           18494    9571     ok (non-closed singly connected)  
+    honeycomb           69822    34943    ok (non-closed singly connected) 
+Checking geometry...
+    Overall domain bounding box (-0.04 -0.04 -0.04) (0.04 0.04 0.1)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (2.10907e-17 -1.05393e-17 6.35111e-17) OK.
+    Max cell openness = 2.85842e-16 OK.
+    Max aspect ratio = 7.31919 OK.
+    Minimum face area = 2.81321e-07. Maximum face area = 1.91218e-05.  Face area magnitudes OK.
+    Min volume = 6.61025e-11. Max volume = 2.2147e-08.  Total volume = 0.000861258.  Cell volumes OK.
+    Mesh non-orthogonality Max: 69.0039 average: 23.1626
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.12612 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 17 (0.1s, exit 0)
+import re
+b=open("constant/polyMesh/boundary").read()
+for p in ["ductwalls","honeycomb"]:
+    b=re.sub(r"(\b%s\n\s*\{\s*\n\s*type\s+)patch;"%p, r"\1wall;", b)
+open("constant/polyMesh/boundary","w").write(b)
+print(re.findall(r"(\w+)\n\s*\{\n\s*type\s+(\w+);", b))
+# measurements from the CAD solid (mm)
+c0=[f for cx,cy,f in frags if abs(cx)<1e-9 and abs(cy)<1e-9][0]
+bb=c0.bounding_box()
+print("interior cell across flats (y) mm:", round(bb.max.Y-bb.min.Y,4), "asked 8")
+print("cell pitch mm:", dy, "-> wall thickness mm:", round(dy-(bb.max.Y-bb.min.Y),4), "asked 1")
+fb=fluid.bounding_box()
+print("duct section mm:", fb.max.X-fb.min.X, fb.max.Y-fb.min.Y, "asked 80x80")
+print("core thickness mm:", L_core, "upstream", L_up, "downstream", L_dn)
+print("cells through full depth? plate volume/(core box - open*20):", round(plate.volume,1), round(S*S*L_core-sum(f.area for _,_,f in frags)*L_core,1))
+# -- output
+[('ductwalls', 'wall'), ('honeycomb', 'wall'), ('inlet', 'patch'), ('outlet', 'patch')]
+interior cell across flats (y) mm: 8.0 asked 8
+cell pitch mm: 9.0 -> wall thickness mm: 1.0 asked 1
+duct section mm: 80.0 80.0 asked 80x80
+core thickness mm: 20.0 upstream 40.0 downstream 80.0
+cells through full depth? plate volume/(core box - open*20): 34741.8 34741.8
+
+# -- cell 18 (3.9s, exit 0)
+gmsh.initialize(); gmsh.option.setNumber("General.Terminal",0)
+gmsh.open("fluid.msh")
+phys={gmsh.model.getPhysicalName(2,t):t for d,t in gmsh.model.getPhysicalGroups(2)}
+ntag,ncrd,_=gmsh.model.mesh.getNodes(); P={int(t):ncrd[3*i:3*i+3] for i,t in enumerate(ntag)}
+for name,ptag in phys.items():
+    tris=[]
+    for ent in gmsh.model.getEntitiesForPhysicalGroup(2,ptag):
+        et,_,en=gmsh.model.mesh.getElements(2,ent)
+        for t_,nodes in zip(et,en):
+            if t_==2: tris += [nodes[i:i+3] for i in range(0,len(nodes),3)]
+    with open(f"{name}.stl","w") as fh:
+        fh.write(f"solid {name}\n")
+        for a,b,c in tris:
+            p,q,r_=P[a],P[b],P[c]; n=np.cross(q-p,r_-p); n=n/(np.linalg.norm(n) or 1)
+            fh.write("facet normal %g %g %g\n outer loop\n"%tuple(n))
+            for v in (p,q,r_): fh.write("  vertex %.9g %.9g %.9g\n"%tuple(v))
+            fh.write(" endloop\nendfacet\n")
+        fh.write(f"endsolid {name}\n")
+    print(name, len(tris))
+gmsh.finalize()
+# -- output
+ductwalls 18494
+honeycomb 69822
+inlet 1910
+outlet 1924
+
+# -- cell 19 (4.0s, exit 0)
+import collections
+tris=[]
+for name in ["inlet","outlet","ductwalls","honeycomb"]:
+    m=pv.read(f"{name}.stl"); f=m.faces.reshape(-1,4)[:,1:]; pts=m.points
+    for t_ in f: tris.append([tuple(np.round(pts[i],9)) for i in t_])
+de=collections.Counter()
+for a,b,c in tris:
+    for e in ((a,b),(b,c),(c,a)): de[e]+=1
+ue=collections.Counter(tuple(sorted(e)) for e in de.elements())
+print("triangles",len(tris))
+print("free edges (undirected count!=2):", sum(1 for e,n in ue.items() if n!=2))
+print("same-direction duplicated edges:", sum(1 for e,n in de.items() if n>1))
+# -- output
+triangles 92150
+free edges (undirected count!=2): 0
+same-direction duplicated edges: 0
+
+# -- cell 20 (2.0s, exit 0)
+V=0.0
+for a,b,c in tris:
+    a,b,c=map(np.array,(a,b,c)); V+=np.dot(a,np.cross(b,c))/6
+print("signed volume", V, "fluid volume", fluid_m.volume, "-> normals point", "outward" if V>0 else "inward")
+# -- output
+signed volume 0.0008613151 fluid volume 0.0008612582069312015 -> normals point outward
+

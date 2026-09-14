@@ -9,6 +9,8 @@ whose toolbox path is empty so that nothing can render one.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from openreynolds.backend.base import ExecResult
@@ -292,13 +294,38 @@ def test_the_desk_is_told_to_record_the_numbers_it_chose():
     assert 'outcome: "refuse"' in text
 
 
-def test_the_reference_the_brief_names_is_the_one_that_gets_copied():
-    """A brief naming a path the workspace does not have is how a desk spends its
-    opening steps looking for what it was told it had -- seven of twenty-seven, measured,
-    which is why `test_the_nudge_stops_pointing_at_recipes_that_are_not_there` exists."""
+def test_the_reference_the_brief_names_is_reachable_from_the_desks_own_directory(tmp_path):
+    """The first attempt at this addition failed exactly here, and silently.
+
+    `prepare` copied the reference to the workspace root while the desk's working
+    directory is the *case* directory one level down, so `.reference/b123d_api.md` --
+    the path the brief gives -- resolved to nothing. In
+    `core+reference-20260914-025525-6a2b` one run of ten took the brief at its word, ran
+    the grep it suggests, and got an empty string back; its own `os.listdir('.')` printed
+    `[]`. The file existed, the brief named it, and no desk could reach it.
+
+    A brief naming a path the workspace does not have is how a desk spends its opening
+    steps looking for what it was told it had -- seven of twenty-seven, measured, which
+    is why `test_the_nudge_stops_pointing_at_recipes_that_are_not_there` exists. So this
+    test resolves the path the brief gives *against the directory the desk is given*,
+    rather than checking the source file exists somewhere.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import cad_buildup
     from openreynolds.buildup import isolation
 
     for name in core.REFERENCE_FILES:
         assert name in brief(), f"{name} is handed over and never mentioned"
         assert (isolation.TOOLBOX_DIR / name).is_file(), (
             f"{name} is named in the brief and is not on disk to copy")
+
+    workspace, _geometry, _prompt = cad_buildup.prepare(
+        "T20", tmp_path, tmp_path / "run", "reachable")
+    case_dir = workspace / "t20"
+    for name in core.REFERENCE_FILES:
+        as_the_brief_says = case_dir / core.REFERENCE_DIR / name
+        assert as_the_brief_says.is_file(), (
+            f"the brief tells the desk to read {core.REFERENCE_DIR}/{name} from its "
+            f"working directory and it is not there: {as_the_brief_says}")
+        assert as_the_brief_says.stat().st_size > 1000

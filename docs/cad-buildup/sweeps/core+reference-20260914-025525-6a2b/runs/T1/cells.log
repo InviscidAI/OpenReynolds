@@ -1,0 +1,396 @@
+# -- cell 1 (2.2s, exit 0)
+import build123d as bd
+from build123d import Pos, Rectangle, Circle, extrude
+import numpy as np
+
+W   = 0.010    # passage width  (given: 10 mm)
+L   = 0.120    # leg length     (given: 120 mm)
+RC  = 0.015    # centreline bend radius (given: 15 mm)
+THK = 0.001    # z-thickness, my choice (2D: one cell)
+RI, RO = RC - W/2, RC + W/2
+
+lower = Pos(-L/2, -RC) * Rectangle(L, W)
+upper = Pos(-L/2,  RC) * Rectangle(L, W)
+annul = (Circle(RO) - Circle(RI)) & (Pos(RO/2, 0) * Rectangle(RO, 2*RO))
+face  = lower + upper + annul
+solid = extrude(face, THK)
+
+print("RI, RO, centreline R:", RI, RO, (RI+RO)/2)
+print("face area m^2:", face.area, " expected:", 2*L*W + np.pi*(RO**2-RI**2)/2)
+print("volume m^3:", solid.volume)
+print("bbox:", solid.bounding_box())
+print("n faces:", len(solid.faces()))
+# -- output
+RI, RO, centreline R: 0.009999999999999998 0.02 0.015
+face area m^2: 0.0028712388980384703  expected: 0.002871238898038469
+volume m^3: 2.8712388980384697e-06
+bbox: bbox: -0.12 <= x <= 0.02, -0.02 <= y <= 0.02, 0.0 <= z <= 0.001
+n faces: 10
+
+# -- cell 2 (0.2s, exit 0)
+import os, subprocess, math, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+
+NA, NW, NB = 30, 5, 6     # coarse: leg-length, across-width, per-90deg-arc cells
+s = math.sqrt(0.5)
+V2 = [(-L,-RO),(0,-RO),(0,-RI),(-L,-RI),(RO,0),(RI,0),(0,RO),(0,RI),(-L,RO),(-L,RI)]
+verts = [(x,y,0.0) for x,y in V2] + [(x,y,THK) for x,y in V2]
+
+def vstr(): return "\n".join("    (%.8g %.8g %.8g)"%v for v in verts)
+blocks = [((0,1,2,3,10,11,12,13),(NA,NW,1)),
+          ((1,4,5,2,11,14,15,12),(NB,NW,1)),
+          ((4,6,7,5,14,16,17,15),(NB,NW,1)),
+          ((6,8,9,7,16,18,19,17),(NA,NW,1))]
+arcs = [(1,4,(RO*s,-RO*s)),(2,5,(RI*s,-RI*s)),(4,6,(RO*s,RO*s)),(5,7,(RI*s,RI*s))]
+arcs += [(a+10,b+10,m) for a,b,m in arcs]
+patches = {
+ "inlet":  [(0,10,13,3)],
+ "outlet": [(8,9,19,18)],
+ "walls":  [(0,1,11,10),(2,3,13,12),(1,4,14,11),(2,12,15,5),(4,6,16,14),(5,15,17,7),(6,8,18,16),(7,17,19,9)],
+ "frontAndBack": [(0,3,2,1),(1,2,5,4),(4,5,7,6),(6,7,9,8),(10,11,12,13),(11,14,15,12),(14,16,17,15),(16,18,19,17)],
+}
+ptype = {"inlet":"patch","outlet":"patch","walls":"wall","frontAndBack":"empty"}
+
+d  = "FoamFile{version 2.0; format ascii; class dictionary; object blockMeshDict;}\nscale 1;\n\nvertices\n(\n"+vstr()+"\n);\n\nblocks\n(\n"
+for v,n in blocks: d += "    hex (%s) (%d %d %d) simpleGrading (1 1 1)\n"%(" ".join(map(str,v)),*n)
+d += ");\n\nedges\n(\n"
+for a,b,m in arcs: d += "    arc %d %d (%.8g %.8g %.8g)\n"%(a,b,m[0],m[1], 0.0 if a<10 else THK)
+d += ");\n\nboundary\n(\n"
+for name,fs in patches.items():
+    d += "    %s\n    {\n        type %s;\n        faces\n        (\n"%(name,ptype[name])
+    for f in fs: d += "            (%s)\n"%" ".join(map(str,f))
+    d += "        );\n    }\n"
+d += ");\n\nmergePatchPairs ();\n"
+open("system/blockMeshDict","w").write(d)
+
+ctrl = """FoamFile{version 2.0; format ascii; class dictionary; object controlDict;}
+application icoFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; writeFormat ascii; runTimeModifiable true;
+"""
+open("system/controlDict","w").write(ctrl)
+open("system/fvSchemes","w").write("FoamFile{version 2.0; format ascii; class dictionary; object fvSchemes;}\nddtSchemes{default Euler;}\ngradSchemes{default Gauss linear;}\ndivSchemes{default none;}\nlaplacianSchemes{default Gauss linear corrected;}\n")
+open("system/fvSolution","w").write("FoamFile{version 2.0; format ascii; class dictionary; object fvSolution;}\nsolvers{}\n")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stdout[-1500:], r.stderr[-800:])
+# -- output
+ime
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 3
+		Number of boundary faces : 18
+		Number of defined boundary faces : 18
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.004 .. 0.004
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 1 cell size :
+        i : 0.00522105 .. 0.00522105
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 2 cell size :
+        i : 0.00522105 .. 0.00522105
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 3 cell size :
+        i : 0.004 .. 0.004
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.12 -0.02 0) (0.02 0.02 0.001)
+  nPoints: 876
+  nCells: 360
+  nFaces: 1517
+  nInternalFaces: 643
+----------------
+Patches
+----------------
+  patch 0 (start: 643 size: 5) name: inlet
+  patch 1 (start: 648 size: 5) name: outlet
+  patch 2 (start: 653 size: 144) name: walls
+  patch 3 (start: 797 size: 720) name: frontAndBack
+
+End
+
+# -- cell 3 (0.6s, exit 1)
+import pyvista as pv, subprocess
+pv.start_xvfb() if hasattr(pv,'start_xvfb') else None
+print(subprocess.run(["checkMesh"],capture_output=True,text=True).stdout[-1200:])
+m = pv.OpenFOAMReader("case.foam") if False else None
+open("case.foam","w").close()
+r = pv.OpenFOAMReader("case.foam"); r.SetPatchArrays; mesh = r.read()
+p = pv.Plotter(off_screen=True, window_size=(900,600))
+p.add_mesh(mesh.combine().extract_surface(), show_edges=True, color="lightblue")
+p.view_xy(); p.screenshot("mesh.png")
+# -- output
+singly connected)  
+    frontAndBack        720      876      ok (non-closed singly connected)  
+    ".*"                874      876      ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.12 -0.02 0) (0.02 0.02 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (-2.09223e-19 -1.27208e-17 -1.6604e-17) OK.
+    Max cell openness = 1.68447e-16 OK.
+    Max aspect ratio = 2 OK.
+    Minimum face area = 2e-06. Maximum face area = 9.83512e-06.  Face area magnitudes OK.
+    Min volume = 5.69402e-09. Max volume = 9.83512e-09.  Total volume = 2.86587e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 3.92986 average: 0.41996
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.30646 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 6[39m
+[32m      2[39m pv.start_xvfb() [38;5;28;01mif[39;00m hasattr(pv,[33m'start_xvfb'[39m) [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m      3[39m print(subprocess.run([[33m"checkMesh"[39m],capture_output=[38;5;28;01mTrue[39;00m,text=[38;5;28;01mTrue[39;00m).stdout[-[32m1200[39m:])
+[32m      4[39m m = pv.OpenFOAMReader([33m"case.foam"[39m) [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m      5[39m open([33m"case.foam"[39m,[33m"w"[39m).close()
+[32m----> [39m[32m6[39m r = pv.OpenFOAMReader([33m"case.foam"[39m); r.SetPatchArrays; mesh = r.read()
+[32m      7[39m p = pv.Plotter(off_screen=[38;5;28;01mTrue[39;00m, window_size=([32m900[39m,[32m600[39m))
+[32m      8[39m p.add_mesh(mesh.combine().extract_surface(), show_edges=[38;5;28;01mTrue[39;00m, color=[33m"lightblue"[39m)
+[32m      9[39m p.view_xy(); p.screenshot([33m"mesh.png"[39m)
+
+[31mAttributeError[39m: 'OpenFOAMReader' object has no attribute 'SetPatchArrays'
+
+# -- cell 4 (0.2s, exit 0)
+import pyvista as pv
+open("case.foam","w").close()
+mesh = pv.OpenFOAMReader("case.foam").read().combine().extract_surface()
+p = pv.Plotter(off_screen=True, window_size=(900,600))
+p.add_mesh(mesh, show_edges=True, color="lightblue")
+p.view_xy(); p.screenshot("mesh_coarse.png")
+# -- output
+array([[[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       ...,
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]]], shape=(600, 900, 3), dtype=uint8)
+
+/tmp/ipykernel_350713/467356890.py:3: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  mesh = pv.OpenFOAMReader("case.foam").read().combine().extract_surface()
+[0m[33m2026-09-14 02:57:34.821 (   3.305s) [    7592C50F8780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 02:57:34.821 (   3.305s) [    7592C50F8780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 02:57:34.834 (   3.318s) [    7592C50F8780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 5 (0.2s, exit 0)
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.collections import PolyCollection
+import numpy as np, re
+
+def read_pts(f="constant/polyMesh/points"):
+    t=open(f).read(); body=t[t.index("(",t.index("\n(")):]
+    return np.array(re.findall(r"\(([-\d.eE+ ]+)\)",body)[:], dtype=object)
+raw=open("constant/polyMesh/points").read()
+pts=np.array([list(map(float,m.split())) for m in re.findall(r"\(([-0-9.eE+ ]+)\)",raw)])
+raw=open("constant/polyMesh/faces").read()
+faces=[list(map(int,m.split())) for m in re.findall(r"\d+\(([\d ]+)\)",raw)]
+polys=[pts[f][:,:2] for f in faces if np.allclose(pts[f][:,2],0.0)]
+fig,ax=plt.subplots(figsize=(9,5))
+ax.add_collection(PolyCollection(polys,facecolors="lightblue",edgecolors="k",lw=0.4))
+ax.set_aspect("equal"); ax.autoscale_view(); ax.set_xlabel("x [m]"); ax.set_ylabel("y [m]")
+ax.set_title("U-bend fluid mesh, z=0 plane (coarse, %d cells)"%len(polys))
+plt.show()
+# -- output
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 6 (0.2s, exit 0)
+fig
+# -- output
+
+
+# -- cell 7 (0.5s, exit 0)
+def write_blockmesh(NA, NW, NB, path="system/blockMeshDict"):
+    d  = "FoamFile{version 2.0; format ascii; class dictionary; object blockMeshDict;}\nscale 1;\n\nvertices\n(\n"+vstr()+"\n);\n\nblocks\n(\n"
+    for v,(a,b,c) in [(blocks[0][0],(NA,NW,1)),(blocks[1][0],(NB,NW,1)),(blocks[2][0],(NB,NW,1)),(blocks[3][0],(NA,NW,1))]:
+        d += "    hex (%s) (%d %d %d) simpleGrading (1 1 1)\n"%(" ".join(map(str,v)),a,b,c)
+    d += ");\n\nedges\n(\n"
+    for a,b,m in arcs: d += "    arc %d %d (%.8g %.8g %.8g)\n"%(a,b,m[0],m[1], 0.0 if a<10 else THK)
+    d += ");\n\nboundary\n(\n"
+    for name,fs in patches.items():
+        d += "    %s\n    {\n        type %s;\n        faces\n        (\n"%(name,ptype[name])
+        for f in fs: d += "            (%s)\n"%" ".join(map(str,f))
+        d += "        );\n    }\n"
+    d += ");\n\nmergePatchPairs ();\n"
+    open(path,"w").write(d)
+
+write_blockmesh(120, 20, 24)   # 1 mm along legs, 0.5 mm across, ~0.98 mm along bend arc
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stdout[-600:])
+c = subprocess.run(["checkMesh"], capture_output=True, text=True).stdout
+print("\n".join(l for l in c.splitlines() if any(k in l for k in ("cells:","Max aspect","non-orthogonality","skewness","Total volume","Mesh OK","***","Failed"))))
+# -- output
+0.001 .. 0.001
+
+    Block 3 cell size :
+        i : 0.001 .. 0.001
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.12 -0.02 0) (0.02 0.02 0.001)
+  nPoints: 12138
+  nCells: 5760
+  nFaces: 23348
+  nInternalFaces: 11212
+----------------
+Patches
+----------------
+  patch 0 (start: 11212 size: 20) name: inlet
+  patch 1 (start: 11232 size: 20) name: outlet
+  patch 2 (start: 11252 size: 576) name: walls
+  patch 3 (start: 11828 size: 11520) name: frontAndBack
+
+End
+
+
+    cells:            5760
+    Max aspect ratio = 2.41451 OK.
+    Min volume = 3.35191e-10. Max volume = 6.45856e-10.  Total volume = 2.8709e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 1.00439 average: 0.0503183
+    Max skewness = 0.0777586 OK.
+Mesh OK.
+
+# -- cell 8 (0.1s, exit 0)
+from build123d import export_stl, Compound
+import numpy as np
+groups = {"inlet":[], "outlet":[], "walls":[], "frontAndBack":[]}
+for f in solid.faces():
+    n = f.normal_at(f.center()); c = f.center()
+    if abs(n.Z) > 0.9:                       groups["frontAndBack"].append(f)
+    elif abs(c.X + L) < 1e-9 and c.Y < 0:    groups["inlet"].append(f)
+    elif abs(c.X + L) < 1e-9 and c.Y > 0:    groups["outlet"].append(f)
+    else:                                    groups["walls"].append(f)
+for k,v in groups.items():
+    a = sum(f.area for f in v)
+    export_stl(Compound(children=v), k+".stl")
+    print(k, len(v), "area=%.6g"%a)
+print("expected inlet/outlet area:", W*THK, " frontAndBack:", 2*face.area,
+      " walls:", THK*(2*(2*L) + np.pi*(RI+RO)))
+# -- output
+inlet 1 area=1e-05
+outlet 1 area=1e-05
+walls 6 area=0.000574248
+frontAndBack 2 area=0.00574248
+expected inlet/outlet area: 1e-05  frontAndBack: 0.005742477796076941  walls: 0.0005742477796076938
+
+# -- cell 9 (0.1s, exit 0)
+print("passage width   : %.4f m (asked 0.010)" % (RO-RI))
+print("leg length      : %.4f m (asked 0.120)" % L)
+print("centreline R    : %.4f m (asked 0.015)" % ((RO+RI)/2))
+print("bend sweep      : 180 deg by construction (two 90 deg blocks, theta -90..0..+90)")
+print("inlet patch area from mesh dict: %.3g m2 = width*thickness" % (W*THK))
+print("mesh: 5760 hex cells, 1 cell in z, frontAndBack empty -> 2D")
+# -- output
+passage width   : 0.0100 m (asked 0.010)
+leg length      : 0.1200 m (asked 0.120)
+centreline R    : 0.0150 m (asked 0.015)
+bend sweep      : 180 deg by construction (two 90 deg blocks, theta -90..0..+90)
+inlet patch area from mesh dict: 1e-05 m2 = width*thickness
+mesh: 5760 hex cells, 1 cell in z, frontAndBack empty -> 2D
+

@@ -1,0 +1,13 @@
+{
+  "alarm": {
+    "alarm": "wedged",
+    "why": "last beat is 670s old",
+    "turn": 2
+  },
+  "turns": 2,
+  "steps": 1,
+  "seconds": 696.1,
+  "killed": false,
+  "first_mesh_step": 0,
+  "first_mesh_turn": 0
+}

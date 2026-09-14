@@ -1,0 +1,567 @@
+{
+  "run_id": "20260914-025836-3f7b",
+  "case": "T11",
+  "arm": "core",
+  "model": "claude-opus-5",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T11-20260914-025836-3f7b",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T11-20260914-025836-3f7b/t11",
+  "started_at": "2026-09-14T02:58:37",
+  "ended_at": "2026-09-14T03:03:55",
+  "seconds": 308.8,
+  "n_turns": 21,
+  "n_steps": 20,
+  "first_mesh_step": 11,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.9899,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 42,
+    "cache_read": 383888,
+    "cache_write": 49106,
+    "output": 19633
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd, numpy as np\nW=8.0; t=1.0; p=W+t\nr_cell = W/np.sqrt(3)\nh = bd.RegularPolygon(radius=r_cell, side_count=6, major_radius=True)\nprint(type(h), h.area, h.bounding_box())",
+      "exit_code": 0,
+      "seconds": 2.206985133001581,
+      "output": "<class 'build123d.objects_sketch.RegularPolygon'> 55.42562584220409 bbox: -4.618802153517007 <= x <= 4.618802153517007, -4.0 <= y <= 4.000000000000001, 0.0 <= z <= 0.0",
+      "image": ""
+    },
+    {
+      "cmd": "S=80.0\ndx=p*np.sqrt(3)/2; dy=p\ninset = bd.Rectangle(S-2*t, S-2*t)\nfrags=[]; full=h.area\nfor i in range(-8,9):\n    for j in range(-8,9):\n        cx=i*dx; cy=j*dy+(i%2)*dy/2\n        hx = bd.Pos(cx,cy)*h\n        if abs(cx)-4.7>S/2 or abs(cy)-4.7>S/2: continue\n        f = inset & hx\n        if f.area > 0.4*full: frags.append((cx,cy,f))\nprint(len(frags), \"cells;  areas min/max frac:\", min(f.area for _,_,f in frags)/full, max(f.area for _,_,f in frags)/full)\nprint(\"open area frac of duct:\", sum(f.area for _,_,f in frags)/(S*S))",
+      "exit_code": 0,
+      "seconds": 0.6021923770022113,
+      "output": "93 cells;  areas min/max frac: 0.5041651245988523 1.0\nopen area frac of duct: 0.7285797416502993",
+      "image": ""
+    },
+    {
+      "cmd": "import matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\nfig,ax=plt.subplots(figsize=(6,6))\nfor cx,cy,f in frags:\n    for w in f.wires():\n        pts=np.array([(v.X,v.Y) for v in w.vertices()]+[(w.vertices()[0].X,w.vertices()[0].Y)])\n        ax.fill(pts[:,0],pts[:,1],'w',ec='k',lw=0.5)\nax.add_patch(plt.Rectangle((-40,-40),80,80,fill=False,ec='r'))\nax.set_aspect(1); ax.set_xlim(-45,45); ax.set_ylim(-45,45); ax.set_title(\"honeycomb section (fluid cells white)\")\nfig.savefig(\"section.png\",dpi=110)\nprint(\"ok\")",
+      "exit_code": 0,
+      "seconds": 0.2513621310063172,
+      "output": "ok\n[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use(\"Agg\")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]",
+      "image": ""
+    },
+    {
+      "cmd": "from IPython.display import Image, display\ndisplay(Image(\"section.png\"))",
+      "exit_code": 0,
+      "seconds": 0.05069830600405112,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "fig,ax=plt.subplots(figsize=(6,6))\nfor cx,cy,f in frags:\n    for e in f.edges():\n        a,b=e@0, e@1\n        ax.plot([a.X,b.X],[a.Y,b.Y],'k-',lw=0.6)\nax.add_patch(plt.Rectangle((-40,-40),80,80,fill=False,ec='r'))\nax.set_aspect(1); ax.set_xlim(-45,45); ax.set_ylim(-45,45)\nfig.savefig(\"section.png\",dpi=110); display(Image(\"section.png\"))",
+      "exit_code": 0,
+      "seconds": 0.40164619099959964,
+      "output": "",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import time\nL_up, L_core, L_dn = 40.0, 20.0, 80.0\ncells3d = bd.Compound([bd.extrude(bd.Pos(0,0,0)*f, L_core) for _,_,f in frags])\ncore_box = bd.Pos(0,0,L_core/2)*bd.Box(S,S,L_core)\nduct = bd.Pos(0,0,(L_core-L_up+L_dn)/2)*bd.Box(S,S,L_up+L_core+L_dn)\nt0=time.time(); plate = core_box - cells3d; print(\"plate\", time.time()-t0, plate.volume)\nt0=time.time(); fluid = duct - plate; print(\"fluid\", time.time()-t0, fluid.volume, \"expected\", 80*80*120+sum(f.area for _,_,f in frags)*20)\nprint(fluid.bounding_box(), len(fluid.solids()))",
+      "exit_code": 0,
+      "seconds": 1.6045472679979866,
+      "output": "plate 0.8274011611938477 34741.793068761894\nfluid 0.5171136856079102 861258.206931229 expected 861258.2069312383\nbbox: -40.0 <= x <= 40.0, -40.0 <= y <= 40.0, -40.0 <= z <= 100.0 1",
+      "image": ""
+    },
+    {
+      "cmd": "ZMIN,ZMAX=-L_up, L_core+L_dn\ndef classify(f):\n    bb=f.bounding_box(); tol=1e-7\n    flat=lambda a,b: abs(a-b)<tol\n    if flat(bb.min.Z,ZMIN) and flat(bb.max.Z,ZMIN): return \"inlet\"\n    if flat(bb.min.Z,ZMAX) and flat(bb.max.Z,ZMAX): return \"outlet\"\n    for c,v in ((\"X\",S/2),(\"X\",-S/2),(\"Y\",S/2),(\"Y\",-S/2)):\n        if flat(getattr(bb.min,c),v) and flat(getattr(bb.max,c),v): return \"ductwalls\"\n    return \"honeycomb\"\ngroups={}\nfor f in fluid.faces(): groups.setdefault(classify(f),[]).append(f)\nfor k,v in groups.items(): print(k, len(v), round(sum(f.area for f in v),1))\nprint(\"hand: inlet/outlet 6400, ductwalls\", 4*S*(L_up+L_dn), \"hc sides\", sum(f.area for _,_,f in frags)*0+round(sum(sum(e.length for e in f.edges()) for _,_,f in frags)*20,1), \"+ 2 endfaces\", round(2*(S*S-sum(f.area for _,_,f in frags)),1))",
+      "exit_code": 0,
+      "seconds": 0.1007159729997511,
+      "output": "ductwalls 8 38400.0\nhoneycomb 544 52933.5\ninlet 1 6400.0\noutlet 1 6400.0\nhand: inlet/outlet 6400, ductwalls 38400.0 hc sides 49459.3 + 2 endfaces 3474.2",
+      "image": ""
+    },
+    {
+      "cmd": "import os\nsc=0.001\nfluid_m = bd.scale(fluid, sc)\ndef classify_s(f,s=sc):\n    bb=f.bounding_box(); tol=1e-9\n    flat=lambda a,b: abs(a-b)<tol\n    if flat(bb.min.Z,ZMIN*s) and flat(bb.max.Z,ZMIN*s): return \"inlet\"\n    if flat(bb.min.Z,ZMAX*s) and flat(bb.max.Z,ZMAX*s): return \"outlet\"\n    for c,v in ((\"X\",S/2*s),(\"X\",-S/2*s),(\"Y\",S/2*s),(\"Y\",-S/2*s)):\n        if flat(getattr(bb.min,c),v) and flat(getattr(bb.max,c),v): return \"ductwalls\"\n    return \"honeycomb\"\ng={}\nfor f in fluid_m.faces(): g.setdefault(classify_s(f),[]).append(f)\nprint({k:(len(v),round(sum(x.area for x in v),6)) for k,v in g.items()}, fluid_m.volume)\nbd.export_step(fluid_m,\"fluid.step\")\nfor k,v in g.items(): bd.export_stl(bd.Compound(v), f\"{k}.stl\", tolerance=2e-5, angular_tolerance=0.3)\nprint(sorted(os.listdir(\".\")))",
+      "exit_code": 0,
+      "seconds": 0.6019962979989941,
+      "output": "{'ductwalls': (8, 0.0384), 'honeycomb': (544, 0.052933), 'inlet': (1, 0.0064), 'outlet': (1, 0.0064)} 0.0008612582069312015\n['ductwalls.stl', 'fluid.step', 'honeycomb.stl', 'inlet.stl', 'outlet.stl', 'section.png']",
+      "image": ""
+    },
+    {
+      "cmd": "import gmsh\ndef build_mesh(core_h, duct_h, out=\"fluid.msh\", nthreads=8):\n    gmsh.initialize()\n    gmsh.option.setNumber(\"General.Terminal\",1)\n    gmsh.model.add(\"hc\")\n    gmsh.model.occ.importShapes(\"fluid.step\"); gmsh.model.occ.synchronize()\n    tol=1e-9; names={}\n    for (d,tag) in gmsh.model.getEntities(2):\n        x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(d,tag)\n        f=lambda a,b: abs(a-b)<tol\n        if f(z0,ZMIN*sc) and f(z1,ZMIN*sc): k=\"inlet\"\n        elif f(z0,ZMAX*sc) and f(z1,ZMAX*sc): k=\"outlet\"\n        elif any(f(a,v) and f(b,v) for a,b,v in [(x0,x1,S/2*sc),(x0,x1,-S/2*sc),(y0,y1,S/2*sc),(y0,y1,-S/2*sc)]): k=\"ductwalls\"\n        else: k=\"honeycomb\"\n        names.setdefault(k,[]).append(tag)\n    for k,tags in names.items():\n        gmsh.model.addPhysicalGroup(2,tags,name=k)\n    gmsh.model.addPhysicalGroup(3,[v[1] for v in gmsh.model.getEntities(3)],name=\"fluid\")\n    fld=gmsh.model.mesh.field.add(\"Box\")\n    gmsh.model.mesh.field.setNumber(fld,\"VIn\",core_h); gmsh.model.mesh.field.setNumber(fld,\"VOut\",duct_h)\n    gmsh.model.mesh.field.setNumber(fld,\"XMin\",-1); gmsh.model.mesh.field.setNumber(fld,\"XMax\",1)\n    gmsh.model.mesh.field.setNumber(fld,\"YMin\",-1); gmsh.model.mesh.field.setNumber(fld,\"YMax\",1)\n    gmsh.model.mesh.field.setNumber(fld,\"ZMin\",-0.006); gmsh.model.mesh.field.setNumber(fld,\"ZMax\",0.026)\n    gmsh.model.mesh.field.setNumber(fld,\"Thickness\",0.02)\n    gmsh.model.mesh.field.setAsBackgroundMesh(fld)\n    for o,v in [(\"Mesh.MeshSizeFromPoints\",0),(\"Mesh.MeshSizeFromCurvature\",0),(\"Mesh.MeshSizeExtendFromBoundary\",0),\n                (\"Mesh.Algorithm\",5),(\"Mesh.Algorithm3D\",10),(\"General.NumThreads\",nthreads),(\"Mesh.MshFileVersion\",2.2)]:\n        gmsh.option.setNumber(o,v)\n    gmsh.model.mesh.generate(3)\n    gmsh.write(out)\n    n=len(gmsh.model.mesh.getElementsByType(4)[0]); print(\"tets\",n, {k:len(v) for k,v in names.items()})\n    gmsh.finalize(); return n\nbuild_mesh(0.003,0.006)",
+      "exit_code": 0,
+      "seconds": 1.7050354800012428,
+      "output": "Info    :  - Label 'Shapes/COMPOUND' (3D)\nInfo    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Line)\nInfo    : [  0%] Meshing curve 3 (Line)\nInfo    : [  0%] Meshing curve 6 (Line)\nInfo    : [  0%] Meshing curve 7 (Line)\nInfo    : [  0%] Meshing curve 5 (Line)\nInfo    : [  0%] Meshing curve 4 (Line)\nInfo    : [  0%] Meshing curve 8 (Line)\nInfo    : [  0%] Meshing curve 2 (Line)\nInfo    : [  0%] Meshing curve 9 (Line)\nInfo    : [  0%] Meshing curve 10 (Line)\nInfo    : [  0%] Meshing curve 11 (Line)\nInfo    : [  0%] Meshing curve 12 (Line)\nInfo    : [  0%] Meshing curve 13 (Line)\nInfo    : [  0%] Meshing curve 14 (Line)\nInfo    : [  0%] Meshing curve 15 (Line)\nInfo    : [  0%] Meshing curve 16 (Line)\nInfo    : [  0%] Meshing curve 17 (Line)\nInfo    : [  0%] Meshing curve 18 (Line)\nInfo    : [  0%] Meshing curve 20 (Line)\nInfo    : [  0%] Meshing curve 21 (Line)\nInfo    : [  0%] Meshing curve 19 (Line)\nInfo    : [  0%] Meshing curve 22 (Line)\nInfo    : [  0%] Meshing curve 23 (Line)\nInfo    : [  0%] Meshing curve 26 (Line)\nInfo    : [  0%] Meshing curve 27 (Line)\nInfo    : [  0%] Meshing curve 25 (Line)\nInfo    : [  0%] Meshing curve 24 (Line)\nInfo    : [  0%] Meshing curve 28 (Line)\nInfo    : [  0%] Meshing curve 30 (Line)\nInfo    : [  0%] Meshing curve 29 (Line)\nInfo    : [  0%] Meshing curve 31 (Line)\nInfo    : [  0%] Meshing curve 32 (Line)\nInfo    : [  0%] Meshing curve 33 (Line)\nInfo    : [  0%] Meshing curve 34 (Line)\nInfo    : [  0%] Meshing curve 35 (Line)\nInfo    : [ 10%] Meshing curve 36 (Line)\nInfo    : [ 10%] Meshing curve 37 (Line)\nInfo    : [ 10%] Meshing curve 38 (Line)\nInfo    : [ 10%] Meshing curve 39 (Line)\nInfo    : [ 10%] Meshing curve 40 (Line)\nInfo    : [ 10%] Meshing curve 41 (Line)\nInfo    : [ 10%] Meshing curve 42 (Line)\nInfo    : [ 10%] Meshing curve 43 (Line)\nInfo    : [ 10%] Meshing curve 44 (Line)\nInfo    : [ 10%] Meshing curve 45 (Line)\nInfo    : [ 10%] Meshing curve 46 (Line)\nInfo    : [ 10%] Meshing curve 47 (Line)\nInfo    : [ 10%]\n... 97949 characters cut ...\n7 (Plane, Delaunay)\nInfo    : [100%] Meshing surface 548 (Plane, Delaunay)\nInfo    : [100%] Meshing surface 549 (Plane, Delaunay)\nInfo    : [100%] Meshing surface 550 (Plane, Delaunay)\nInfo    : [100%] Meshing surface 551 (Plane, Delaunay)\nInfo    : [100%] Meshing surface 552 (Plane, Delaunay)\nInfo    : [100%] Meshing surface 553 (Plane, Delaunay)\nInfo    : [100%] Meshing surface 554 (Plane, Delaunay)\nInfo    : Done meshing 2D (Wall 0.203264s, CPU 1.00947s)\nInfo    : Meshing 3D...\nInfo    : 3D Meshing 1 volume with 1 connected component\nInfo    : Input mesh hash 480e86d7265956e0\nInfo    : Creating an empty mesh with 13225 vertices\nInfo    : Initialization of tet. mesh\nInfo    : Delaunay of      13221 points on   4 threads - mesh.nvert: 4         \nInfo    : Recovering 244 missing facet(s)\nInfo    : Recover Delaunay\nInfo    : All volumes of the BRep were found and colorized accordingly\nInfo    : Computing mesh sizes...\nInfo    : Done computing mesh sizes\nInfo    : Delaunay of      15180 points on   4 threads - mesh.nvert: 13225     \nInfo    :           -      13474 points filtered\nInfo    :           =       1706 points added\nInfo    : Computing mesh sizes...\nInfo    : Done computing mesh sizes\nInfo    : Delaunay of       7563 points on   2 threads - mesh.nvert: 14931     \nInfo    :           -       5820 points filtered\nInfo    :           =       1743 points added\nInfo    : Computing mesh sizes...\nInfo    : Done computing mesh sizes\nInfo    : Delaunay of       2268 points on   1 threads - mesh.nvert: 16674     \nInfo    :           -       1425 points filtered\nInfo    :           =        843 points added\nInfo    : Computing mesh sizes...\nInfo    : Done computing mesh sizes\nInfo    : Delaunay of        359 points on   1 threads - mesh.nvert: 17517     \nInfo    :           -        176 points filtered\nInfo    :           =        183 points added\nInfo    : Computing mesh sizes...\nInfo    : Done computing mesh sizes\nInfo    : Delaunay of         29 points on   1 threads - mesh.nvert: 17700     \nInfo    :           -         10 points filtered\nInfo    :           =         19 points added\nInfo    : Computing mesh sizes...\nInfo    : Done computing mesh sizes\nInfo    : Delaunay of          3 points on   1 threads - mesh.nvert: 17719     \nInfo    : Computing mesh sizes...\nInfo    : Done computing mesh sizes\nInfo    : Improving       5437 tet. on   8 thrd (S & ER)\nInfo    : Improving       2501 tet. on   8 thrd (S & ER)\nInfo    : Improving       2263 tet. on   8 thrd (S & ER)\nInfo    : Improving       2163 tet. on   8 thrd (S & ER)\nInfo    : Improving       2116 tet. on   8 thrd (S & ER)\nInfo    : Improving       2108 tet. on   8 thrd (S & ER)\nInfo    : Improving       2097 tet. on   8 thrd (GSC)\nInfo    : Improving       2031 tet. on   8 thrd (S & ER)\nInfo    : Improving       1992 tet. on   8 thrd (S & ER)\nInfo    : Improving       1970 tet. on   8 thrd (S & ER)\nInfo    : Improving       1962 tet. on   8 thrd (S & ER)\nInfo    : Improving       1957 tet. on   8 thrd (S & ER)\nInfo    : Improving       1957 tet. on   8 thrd (GSC)\nInfo    : Improving       1938 tet. on   8 thrd (S & ER)\nInfo    : Improving       1934 tet. on   8 thrd (S & ER)\nInfo    : Improving       1932 tet. on   8 thrd (S & ER)\nInfo    : Improving       1932 tet. on   8 thrd (S & ER)\nInfo    : Improving       1932 tet. on   8 thrd (S & ER)\nInfo    : Improving       1932 tet. on   8 thrd (GSC)\nInfo    : Improving       1930 tet. on   8 thrd (S & ER)\nInfo    :  \tFinal tet. mesh contains 106096 tetrahedra\nInfo    :  \tFinal tet. mesh contains 17722 vertices\nInfo    : tEmptyMesh  \t = \t    0.089\nInfo    : tVerifyBnd  \t = \t    0.005\nInfo    : tBndRecovery\t = \t    0.134\nInfo    : tConvertMesh\t = \t    0.006\nInfo    : tRefine     \t = \t    0.045\nInfo    : tOptimize   \t = \t    0.575\nInfo    : Done meshing 3D (Wall 0.898522s, CPU 4.24518s)\nInfo    : 17722 nodes 100329 elements\nInfo    : Writing 'fluid.msh'...\nInfo    : Done writing 'fluid.msh'\ntets 66057 {'honeycomb': 554}\n66057",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.initialize(); gmsh.model.add(\"chk\")\ngmsh.model.occ.importShapes(\"fluid.step\"); gmsh.model.occ.synchronize()\nprint(gmsh.model.getBoundingBox(-1,-1))\nents=gmsh.model.getEntities(2)\nprint(len(ents), [gmsh.model.getBoundingBox(2,t) for d,t in ents[:3]])\ngmsh.finalize()",
+      "exit_code": 0,
+      "seconds": 0.4515982580051059,
+      "output": "Info    :  - Label 'Shapes/COMPOUND' (3D)\n(-0.040000100000000004, -0.040000100000000004, -0.040000100000000004, 0.040000100000000004, 0.040000100000000004, 0.10000010000000001)\n554 [(-0.040000100000000004, -0.040000100000000004, -0.040000100000000004, -0.0399999, 0.040000100000000004, 1e-07), (-0.040000100000000004, -0.040000100000000004, -0.040000100000000004, 0.040000100000000004, -0.0399999, 1e-07), (-0.040000100000000004, -0.040000100000000004, -1e-07, 0.040000100000000004, 0.040000100000000004, 1e-07)]",
+      "image": ""
+    },
+    {
+      "cmd": "import gmsh\ndef build_mesh(core_h, duct_h, out=\"fluid.msh\", nthreads=8, tol=1e-6):\n    gmsh.initialize()\n    gmsh.option.setNumber(\"General.Terminal\",0)\n    gmsh.model.add(\"hc\")\n    gmsh.model.occ.importShapes(\"fluid.step\"); gmsh.model.occ.synchronize()\n    names={}\n    for (d,tag) in gmsh.model.getEntities(2):\n        x0,y0,z0,x1,y1,z1 = gmsh.model.getBoundingBox(d,tag)\n        f=lambda a,b: abs(a-b)<tol\n        if f(z0,ZMIN*sc) and f(z1,ZMIN*sc): k=\"inlet\"\n        elif f(z0,ZMAX*sc) and f(z1,ZMAX*sc): k=\"outlet\"\n        elif any(f(a,v) and f(b,v) for a,b,v in [(x0,x1,S/2*sc),(x0,x1,-S/2*sc),(y0,y1,S/2*sc),(y0,y1,-S/2*sc)]): k=\"ductwalls\"\n        else: k=\"honeycomb\"\n        names.setdefault(k,[]).append(tag)\n    for k,tags in names.items(): gmsh.model.addPhysicalGroup(2,tags,name=k)\n    gmsh.model.addPhysicalGroup(3,[v[1] for v in gmsh.model.getEntities(3)],name=\"fluid\")\n    fld=gmsh.model.mesh.field.add(\"Box\")\n    for o,v in [(\"VIn\",core_h),(\"VOut\",duct_h),(\"XMin\",-1),(\"XMax\",1),(\"YMin\",-1),(\"YMax\",1),\n                (\"ZMin\",-0.006),(\"ZMax\",0.026),(\"Thickness\",0.02)]:\n        gmsh.model.mesh.field.setNumber(fld,o,v)\n    gmsh.model.mesh.field.setAsBackgroundMesh(fld)\n    for o,v in [(\"Mesh.MeshSizeFromPoints\",0),(\"Mesh.MeshSizeFromCurvature\",0),(\"Mesh.MeshSizeExtendFromBoundary\",0),\n                (\"Mesh.Algorithm\",5),(\"Mesh.Algorithm3D\",10),(\"General.NumThreads\",nthreads),(\"Mesh.MshFileVersion\",2.2)]:\n        gmsh.option.setNumber(o,v)\n    gmsh.model.mesh.generate(3)\n    gmsh.write(out)\n    ntet=len(gmsh.model.mesh.getElementsByType(4)[1])//4\n    print(\"tets\",ntet,{k:len(v) for k,v in names.items()})\n    gmsh.finalize()\nbuild_mesh(0.003,0.006)",
+      "exit_code": 0,
+      "seconds": 1.6051116369999363,
+      "output": "tets 66093 {'ductwalls': 8, 'honeycomb': 544, 'inlet': 1, 'outlet': 1}",
+      "image": ""
+    },
+    {
+      "cmd": "import os, subprocess, textwrap\nos.makedirs(\"system\",exist_ok=True); os.makedirs(\"constant\",exist_ok=True)\nhdr=lambda cls,obj: f\"FoamFile{{version 2.0; format ascii; class {cls}; object {obj};}}\\n\"\nopen(\"system/controlDict\",\"w\").write(hdr(\"dictionary\",\"controlDict\")+textwrap.dedent(\"\"\"\napplication simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1;\ndeltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;\nwritePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;\n\"\"\"))\nopen(\"system/fvSchemes\",\"w\").write(hdr(\"dictionary\",\"fvSchemes\")+\"ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\\n\")\nopen(\"system/fvSolution\",\"w\").write(hdr(\"dictionary\",\"fvSolution\")+\"solvers{} SIMPLE{}\\n\")\nr=subprocess.run([\"gmshToFoam\",\"fluid.msh\"],capture_output=True,text=True); print(r.returncode, r.stdout[-800:], r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.5519069910005783,
+      "output": "0 e 0\nCells:\n    total:66093\n    hex  :0\n    prism:0\n    pyr  :0\n    tet  :66093\n\nCellZones:\nZone\tSize\n    0\t66093\n\nPatch 0 gets name ductwalls\nPatch 1 gets name honeycomb\nPatch 2 gets name inlet\nPatch 3 gets name outlet\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 26816 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone fluid and cellSet\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "r=subprocess.run([\"checkMesh\"],capture_output=True,text=True); print(r.stdout[-2500:])",
+      "exit_code": 0,
+      "seconds": 0.45170364800287643,
+      "output": "line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           17706\n    faces:            145594\n    internal faces:   118778\n    cells:            66093\n    faces per cell:   4\n    boundary patches: 4\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     0\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    66093\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    ductwalls           4616     2472     ok (non-closed singly connected)  \n    honeycomb           21228    10538    ok (non-closed singly connected)  \n    inlet               486      272      ok (non-closed singly connected)  \n    outlet              486      272      ok (non-closed singly connected)  \n    \".*\"                26816    13226    ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    fluid               66093        17706        0.000861258  (-0.04 -0.04 -0.04) (0.04 0.04 0.1)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.04 -0.04 -0.04) (0.04 0.04 0.1)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (4.50223e-18 -4.70965e-18 -1.0737e-17) OK.\n    Max cell openness = 3.13386e-16 OK.\n    Max aspect ratio = 10.0392 OK.\n    Minimum face area = 4.33013e-07. Maximum face area = 6.68095e-05.  Face area magnitudes OK.\n    Min volume = 2.25473e-10. Max volume = 1.56433e-07.  Total volume = 0.000861258.  Cell volumes OK.\n    Mesh non-orthogonality Max: 71.2583 average: 25.609\n   *Number of severely non-orthogonal (> 70 degrees) faces: 1.\n    Non-orthogonality check OK.\n  <<Writing 1 non-orthogonal faces to set nonOrthoFaces\n    Face pyramids OK.\n    Max skewness = 1.93312 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.start_xvfb() if hasattr(pv,'start_xvfb') else None\npl=pv.Plotter(off_screen=True,window_size=(900,700))\ncols={\"honeycomb\":\"tan\",\"ductwalls\":\"lightsteelblue\",\"inlet\":\"green\",\"outlet\":\"red\"}\nfor k,c in cols.items():\n    m=pv.read(f\"{k}.stl\")\n    pl.add_mesh(m,color=c,show_edges=False,opacity=1.0 if k!=\"ductwalls\" else 0.25)\npl.camera_position=[(0.18,-0.15,0.16),(0,0,0.03),(0,0,1)]\npl.screenshot(\"view.png\"); display(Image(\"view.png\"))",
+      "exit_code": 0,
+      "seconds": 0.6525904239970259,
+      "output": "/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-14 03:02:13.782 (   0.385s) [    704E29556780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 03:02:13.782 (   0.385s) [    704E29556780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 03:02:13.794 (   0.397s) [    704E29556780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import time; t0=time.time()\nbuild_mesh(0.0015,0.003)\nprint(\"gmsh secs\", round(time.time()-t0,1))",
+      "exit_code": 0,
+      "seconds": 2.759171306999633,
+      "output": "tets 425767 {'ductwalls': 8, 'honeycomb': 544, 'inlet': 1, 'outlet': 1}\ngmsh secs 2.7",
+      "image": ""
+    },
+    {
+      "cmd": "import shutil\nshutil.rmtree(\"constant/polyMesh\",ignore_errors=True)\nr=subprocess.run([\"gmshToFoam\",\"fluid.msh\"],capture_output=True,text=True); print(r.returncode)\nr=subprocess.run([\"checkMesh\"],capture_output=True,text=True)\nprint(r.stdout[r.stdout.find(\"Mesh stats\"):][:900])\nprint(r.stdout[r.stdout.find(\"Checking geometry\"):][:1600])",
+      "exit_code": 0,
+      "seconds": 4.311692217001109,
+      "output": "0\nMesh stats \n    points:           92161\n    faces:            897609\n    internal faces:   805459\n    cells:            425767\n    faces per cell:   4\n    boundary patches: 4\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     0\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    425767\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    ductwalls           18494    9571     ok (non-closed singly connected)  \n    honeycomb           69822    34943    ok (non-closed singly connected) \nChecking geometry...\n    Overall domain bounding box (-0.04 -0.04 -0.04) (0.04 0.04 0.1)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (2.10907e-17 -1.05393e-17 6.35111e-17) OK.\n    Max cell openness = 2.85842e-16 OK.\n    Max aspect ratio = 7.31919 OK.\n    Minimum face area = 2.81321e-07. Maximum face area = 1.91218e-05.  Face area magnitudes OK.\n    Min volume = 6.61025e-11. Max volume = 2.2147e-08.  Total volume = 0.000861258.  Cell volumes OK.\n    Mesh non-orthogonality Max: 69.0039 average: 23.1626\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 1.12612 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "import re\nb=open(\"constant/polyMesh/boundary\").read()\nfor p in [\"ductwalls\",\"honeycomb\"]:\n    b=re.sub(r\"(\\b%s\\n\\s*\\{\\s*\\n\\s*type\\s+)patch;\"%p, r\"\\1wall;\", b)\nopen(\"constant/polyMesh/boundary\",\"w\").write(b)\nprint(re.findall(r\"(\\w+)\\n\\s*\\{\\n\\s*type\\s+(\\w+);\", b))\n# measurements from the CAD solid (mm)\nc0=[f for cx,cy,f in frags if abs(cx)<1e-9 and abs(cy)<1e-9][0]\nbb=c0.bounding_box()\nprint(\"interior cell across flats (y) mm:\", round(bb.max.Y-bb.min.Y,4), \"asked 8\")\nprint(\"cell pitch mm:\", dy, \"-> wall thickness mm:\", round(dy-(bb.max.Y-bb.min.Y),4), \"asked 1\")\nfb=fluid.bounding_box()\nprint(\"duct section mm:\", fb.max.X-fb.min.X, fb.max.Y-fb.min.Y, \"asked 80x80\")\nprint(\"core thickness mm:\", L_core, \"upstream\", L_up, \"downstream\", L_dn)\nprint(\"cells through full depth? plate volume/(core box - open*20):\", round(plate.volume,1), round(S*S*L_core-sum(f.area for _,_,f in frags)*L_core,1))",
+      "exit_code": 0,
+      "seconds": 0.05061968600057298,
+      "output": "[('ductwalls', 'wall'), ('honeycomb', 'wall'), ('inlet', 'patch'), ('outlet', 'patch')]\ninterior cell across flats (y) mm: 8.0 asked 8\ncell pitch mm: 9.0 -> wall thickness mm: 1.0 asked 1\nduct section mm: 80.0 80.0 asked 80x80\ncore thickness mm: 20.0 upstream 40.0 downstream 80.0\ncells through full depth? plate volume/(core box - open*20): 34741.8 34741.8",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.initialize(); gmsh.option.setNumber(\"General.Terminal\",0)\ngmsh.open(\"fluid.msh\")\nphys={gmsh.model.getPhysicalName(2,t):t for d,t in gmsh.model.getPhysicalGroups(2)}\nntag,ncrd,_=gmsh.model.mesh.getNodes(); P={int(t):ncrd[3*i:3*i+3] for i,t in enumerate(ntag)}\nfor name,ptag in phys.items():\n    tris=[]\n    for ent in gmsh.model.getEntitiesForPhysicalGroup(2,ptag):\n        et,_,en=gmsh.model.mesh.getElements(2,ent)\n        for t_,nodes in zip(et,en):\n            if t_==2: tris += [nodes[i:i+3] for i in range(0,len(nodes),3)]\n    with open(f\"{name}.stl\",\"w\") as fh:\n        fh.write(f\"solid {name}\\n\")\n        for a,b,c in tris:\n            p,q,r_=P[a],P[b],P[c]; n=np.cross(q-p,r_-p); n=n/(np.linalg.norm(n) or 1)\n            fh.write(\"facet normal %g %g %g\\n outer loop\\n\"%tuple(n))\n            for v in (p,q,r_): fh.write(\"  vertex %.9g %.9g %.9g\\n\"%tuple(v))\n            fh.write(\" endloop\\nendfacet\\n\")\n        fh.write(f\"endsolid {name}\\n\")\n    print(name, len(tris))\ngmsh.finalize()",
+      "exit_code": 0,
+      "seconds": 3.860642088999157,
+      "output": "ductwalls 18494\nhoneycomb 69822\ninlet 1910\noutlet 1924",
+      "image": ""
+    },
+    {
+      "cmd": "import collections\ntris=[]\nfor name in [\"inlet\",\"outlet\",\"ductwalls\",\"honeycomb\"]:\n    m=pv.read(f\"{name}.stl\"); f=m.faces.reshape(-1,4)[:,1:]; pts=m.points\n    for t_ in f: tris.append([tuple(np.round(pts[i],9)) for i in t_])\nde=collections.Counter()\nfor a,b,c in tris:\n    for e in ((a,b),(b,c),(c,a)): de[e]+=1\nue=collections.Counter(tuple(sorted(e)) for e in de.elements())\nprint(\"triangles\",len(tris))\nprint(\"free edges (undirected count!=2):\", sum(1 for e,n in ue.items() if n!=2))\nprint(\"same-direction duplicated edges:\", sum(1 for e,n in de.items() if n>1))",
+      "exit_code": 0,
+      "seconds": 4.010681558000215,
+      "output": "triangles 92150\nfree edges (undirected count!=2): 0\nsame-direction duplicated edges: 0",
+      "image": ""
+    },
+    {
+      "cmd": "V=0.0\nfor a,b,c in tris:\n    a,b,c=map(np.array,(a,b,c)); V+=np.dot(a,np.cross(b,c))/6\nprint(\"signed volume\", V, \"fluid volume\", fluid_m.volume, \"-> normals point\", \"outward\" if V>0 else \"inward\")",
+      "exit_code": 0,
+      "seconds": 2.005521769002371,
+      "output": "signed volume 0.0008613151 fluid volume 0.0008612582069312015 -> normals point outward",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 5572,
+      "fenced": true,
+      "text_chars": 130,
+      "thinking_chars": 5770,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354800.9125364
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 545,
+      "fenced": true,
+      "text_chars": 154,
+      "thinking_chars": 234,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354810.118031
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 465,
+      "fenced": true,
+      "text_chars": 111,
+      "thinking_chars": 194,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354816.3931334
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 70,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354817.9050949
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 452,
+      "fenced": true,
+      "text_chars": 111,
+      "thinking_chars": 261,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354824.3658798
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 815,
+      "fenced": true,
+      "text_chars": 127,
+      "thinking_chars": 637,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354835.7507231
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 1314,
+      "fenced": true,
+      "text_chars": 118,
+      "thinking_chars": 989,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354856.5790248
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 872,
+      "fenced": true,
+      "text_chars": 70,
+      "thinking_chars": 478,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354866.9846485
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 1747,
+      "fenced": true,
+      "text_chars": 113,
+      "thinking_chars": 626,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354888.6951907
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 432,
+      "fenced": true,
+      "text_chars": 123,
+      "thinking_chars": 284,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354896.2987168
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 1226,
+      "fenced": true,
+      "text_chars": 101,
+      "thinking_chars": 299,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354908.829018
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 718,
+      "fenced": true,
+      "text_chars": 98,
+      "thinking_chars": 318,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354919.225138
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 191,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 250,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354923.680702
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 674,
+      "fenced": true,
+      "text_chars": 109,
+      "thinking_chars": 480,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354933.3644087
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 349,
+      "fenced": true,
+      "text_chars": 104,
+      "thinking_chars": 563,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354940.0074873
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 214,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354946.1851842
+    },
+    {
+      "turn": 17,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 779,
+      "fenced": true,
+      "text_chars": 106,
+      "thinking_chars": 412,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354961.2109354
+    },
+    {
+      "turn": 18,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 1134,
+      "fenced": true,
+      "text_chars": 143,
+      "thinking_chars": 716,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354976.3866878
+    },
+    {
+      "turn": 19,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 701,
+      "fenced": true,
+      "text_chars": 95,
+      "thinking_chars": 725,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354990.0816748
+    },
+    {
+      "turn": 20,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 256,
+      "fenced": true,
+      "text_chars": 85,
+      "thinking_chars": 211,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789354998.6001952
+    },
+    {
+      "turn": 21,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 1107,
+      "fenced": false,
+      "text_chars": 2156,
+      "thinking_chars": 209,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789355016.1144779
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 92,150 triangles across 4 file(s) (patch set read from .)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "ductwalls.stl",
+          "honeycomb.stl",
+          "inlet.stl",
+          "outlet.stl"
+        ],
+        "triangles": 92150
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the patch set (patch set read from .)",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 92150
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 10 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 10
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the number of open honeycomb cells through the core, counted on the mesh, against the number the geometry should give",
+      "measured": null
+    },
+    {
+      "property": "the cell width across the flats and the wall thickness, measured on the meshed honeycomb patches",
+      "measured": null
+    },
+    {
+      "property": "the open area ratio of the core \u2014 honeycomb open area over duct section \u2014 measured, not derived from inputs",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "the honeycomb wall patch's total area, against the swept perimeter of the open cells",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "n/a",
+          "concern": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 21,
+    "steps": 20,
+    "seconds": 310.0,
+    "killed": false,
+    "first_mesh_step": 11,
+    "first_mesh_turn": 12
+  }
+}

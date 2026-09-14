@@ -1,0 +1,6 @@
+T18: run 20260914-033441-20f8
+  workspace /home/qiuzi/.openreynolds-buildup/work/T18-20260914-033441-20f8 clean (0 entries, 39 house names, no toolbox)
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T18-20260914-033441-20f8/.reference/b123d_api.md
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+reference-20260914-025525-6a2b/runs/T18
+  done in 326.3s, 24 cells, $1.00, checkMesh ok, passed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+reference-20260914-025525-6a2b/runs/T18 --case /home/qiuzi/.openreynolds-buildup/work/T18-20260914-033441-20f8/t18

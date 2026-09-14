@@ -1,0 +1,305 @@
+"""Built by the CAD desk, one accepted cell at a time.
+
+This file is not a record written beside the work; it is the work. Every cell below ran
+in the desk's kernel, in this order, and was accepted only after the names it uses were
+shown to be bound by a cell above it. It is run from empty at the finish, and what it
+makes there is compared against what is in the case directory.
+
+The prose above each cell is the desk's own reasoning for it, carried with the action
+rather than thrown away -- it is the only record of why this shape is this shape.
+"""
+
+# -- cell 1 -------------------------------------------------------------------------
+# I'll send that as an actual cell.
+import numpy as np, math, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+M      = 3.0        # module, mm          (given)
+Z1, Z2 = 20, 30     # teeth               (given)
+ALPHA  = math.radians(20.0)   # pressure angle (given)
+BL     = 0.3        # backlash along pitch line, mm (given)
+SIGMA  = math.radians(90.0)   # shaft angle (given)
+
+D1 = math.atan2(Z1, Z2)          # pitch cone half angles
+D2 = SIGMA - D1
+R1, R2 = M*Z1/2, M*Z2/2          # pitch radii
+RO = math.hypot(R1, R2)          # outer cone distance
+FW = RO/3.0                      # face width (assumed: standard R/3)
+RI = RO - FW
+print(f"delta1={math.degrees(D1):.3f} deg  delta2={math.degrees(D2):.3f} deg  sum={math.degrees(D1+D2):.1f}")
+print(f"r1={R1} r2={R2}  Ro={RO:.3f}  face width={FW:.3f}  Ri={RI:.3f}  k={RI/RO:.4f}")
+
+inv = lambda a: math.tan(a) - a
+
+def section(z, delta, phase=0.0, nf=10, na=4, nr=4):
+    """closed polygon (x,y) of the gear cross-section at the plane Z = Ro*cos(delta)."""
+    r  = M*z/2.0
+    rv = r/math.cos(delta)            # back-cone (virtual spur) pitch radius
+    rb = rv*math.cos(ALPHA)
+    ra, rf = rv + M, rv - 1.25*M
+    t  = math.pi*M/2.0 - BL/2.0       # tooth thickness at pitch, backlash split evenly
+    psi = t/(2.0*rv)
+    ap = math.acos(rb/rv)
+    half = lambda rho: psi + inv(ap) - inv(math.acos(min(1.0, rb/max(rho, rb))))
+    zp = RO*math.cos(delta)
+    def P(rho, th):                   # virtual-plane polar -> section plane polar
+        s = rho - rv
+        rad = zp*(r + s*math.cos(delta))/(zp - s*math.sin(delta))
+        return rad, th*math.cos(delta)
+    flank = [P(rho, half(rho)) for rho in np.linspace(max(rb, rf), ra, nf)]
+    if rf < rb:
+        flank = [P(rf, half(rb))] + flank
+    pitchang = 2*math.pi/z
+    pts = []
+    for k in range(z):
+        c = phase + k*pitchang
+        for rad, dth in reversed(flank):           # up the -theta flank
+            pts.append((rad, c - dth))
+        rad_t, dth_t = flank[-1]
+        for a in np.linspace(-dth_t, dth_t, na)[1:-1]:
+            pts.append((rad_t, c + a))
+        for rad, dth in flank:                     # down the +theta flank
+            pts.append((rad, c + dth))
+        rad_r, dth_r = flank[0]
+        for a in np.linspace(c + dth_r, c + pitchang - dth_r, nr)[1:-1]:
+            pts.append((rad_r, a))
+    return [(rad*math.cos(th), rad*math.sin(th)) for rad, th in pts], rv, rb
+
+p1, rv1, rb1 = section(Z1, D1)
+p2, rv2, rb2 = section(Z2, D2, phase=math.pi/Z2)
+print("virtual radii", round(rv1,3), round(rv2,3), " base", round(rb1,3), round(rb2,3))
+print("pts", len(p1), len(p2))
+fig, ax = plt.subplots(figsize=(6,6))
+a = np.array(p1+[p1[0]]); ax.plot(a[:,0], a[:,1], lw=0.8)
+ax.add_artist(plt.Circle((0,0), R1, fill=False, color='r', ls='--'))
+ax.set_aspect('equal'); ax.set_title("pinion section at Z=Ro cos(delta1)")
+plt.savefig("sec1.png", dpi=90)
+
+# -- cell 2 -------------------------------------------------------------------------
+from IPython.display import display
+fig2, ax = plt.subplots(1,2,figsize=(11,5.5))
+for axi,(p,rp,ttl) in zip(ax,[(p1,R1,"pinion z=20"),(p2,R2,"wheel z=30")]):
+    a=np.array(p+[p[0]]); axi.plot(a[:,0],a[:,1],lw=0.7)
+    axi.add_artist(plt.Circle((0,0),rp,fill=False,color='r',ls='--'))
+    axi.set_aspect('equal'); axi.set_title(ttl)
+display(fig2)
+# measured circular tooth thickness at pitch radius, in the section plane
+def meas_thick(p, rp):
+    a=np.array(p); th=np.arctan2(a[:,1],a[:,0]); rr=np.hypot(a[:,0],a[:,1])
+    return rr.min(), rr.max()
+for p,rp,z,d in [(p1,R1,Z1,D1),(p2,R2,Z2,D2)]:
+    rmin,rmax=meas_thick(p,rp)
+    print(f"z={z}: section rmin={rmin:.3f} rmax={rmax:.3f}  (pitch r={rp})")
+
+# -- cell 3 -------------------------------------------------------------------------
+# Point ordering was wrong (tip→root then jumping back to tip). Fix: root→tip on the −θ flank, tip arc
+def section(z, delta, phase=0.0, nf=10, na=4, nr=4):
+    """closed CCW polygon (x,y) of the gear cross-section at the plane Z = Ro*cos(delta)."""
+    r  = M*z/2.0
+    rv = r/math.cos(delta)            # back-cone (virtual spur) pitch radius
+    rb = rv*math.cos(ALPHA)
+    ra, rf = rv + M, rv - 1.25*M
+    t  = math.pi*M/2.0 - BL/2.0       # tooth thickness at pitch, backlash split evenly
+    psi = t/(2.0*rv)
+    ap = math.acos(rb/rv)
+    half = lambda rho: psi + inv(ap) - inv(math.acos(min(1.0, rb/max(rho, rb))))
+    zp = RO*math.cos(delta)
+    def P(rho, th):                   # virtual back-cone polar -> section-plane polar
+        s = rho - rv
+        rad = zp*(r + s*math.cos(delta))/(zp - s*math.sin(delta))
+        return rad, th*math.cos(delta)
+    flank = [P(rho, half(rho)) for rho in np.linspace(max(rb, rf), ra, nf)]   # root->tip
+    if rf < rb:
+        flank = [P(rf, half(rb))] + flank
+    pitchang = 2*math.pi/z
+    pts = []
+    for k in range(z):
+        c = phase + k*pitchang
+        for rad, dth in flank:                       # up the -theta flank
+            pts.append((rad, c - dth))
+        rad_t, dth_t = flank[-1]
+        for a in np.linspace(-dth_t, dth_t, na)[1:-1]:
+            pts.append((rad_t, c + a))
+        for rad, dth in reversed(flank):             # down the +theta flank
+            pts.append((rad, c + dth))
+        rad_r, dth_r = flank[0]
+        for a in np.linspace(c + dth_r, c + pitchang - dth_r, nr)[1:-1]:
+            pts.append((rad_r, a))
+    return [(rad*math.cos(th), rad*math.sin(th)) for rad, th in pts], rv, rb
+
+p1, rv1, rb1 = section(Z1, D1)
+p2, rv2, rb2 = section(Z2, D2, phase=math.pi/Z2)
+fig3, ax = plt.subplots(1,2,figsize=(11,5.5))
+for axi,(p,rp,ttl) in zip(ax,[(p1,R1,"pinion z=20"),(p2,R2,"wheel z=30")]):
+    a=np.array(p+[p[0]]); axi.plot(a[:,0],a[:,1],lw=0.7)
+    axi.add_artist(plt.Circle((0,0),rp,fill=False,color='r',ls='--'))
+    axi.set_aspect('equal'); axi.set_title(ttl)
+display(fig3)
+
+# -- cell 4 -------------------------------------------------------------------------
+# Profile is right. Now the solids: loft each toothed section from the heel plane to the toe plane, sc
+import build123d as bd
+print(bd.__version__ if hasattr(bd,'__version__') else '')
+import inspect
+print(inspect.signature(bd.loft))
+print(inspect.signature(bd.make_face))
+print([n for n in dir(bd) if 'olyl' in n or n in ('Wire','Face','Rot','Pos','scale','Cylinder','Box')])
+
+# -- cell 5 -------------------------------------------------------------------------
+import time
+def gear_solid(z, delta, phase):
+    """toothed bevel gear body, axis +z, apex at origin, heel plane at Ro*cos(delta)."""
+    pts, rv, rb = section(z, delta, phase=phase)
+    zp = RO*math.cos(delta)
+    k  = RI/RO
+    fo = bd.make_face(bd.Polyline(*[(x, y, zp) for x, y in pts], close=True))
+    fi = bd.make_face(bd.Polyline(*[(k*x, k*y, k*zp) for x, y in pts], close=True))
+    return bd.loft([fi, fo], ruled=True)
+
+t0=time.time()
+PHASE1 = math.pi/Z1      # pinion: tooth SPACE centred on the +x meridian
+PHASE2 = 0.0             # wheel : tooth centred on +x (and, z2 even, on -x) meridian
+g1 = gear_solid(Z1, D1, PHASE1)
+g2 = gear_solid(Z2, D2, PHASE2)
+print("loft time", round(time.time()-t0,1))
+for nm,g in [("pinion",g1),("wheel",g2)]:
+    print(nm, "vol(mm^3)=%.1f"%g.volume, "bbox", [round(v,2) for v in g.bounding_box().min], [round(v,2) for v in g.bounding_box().max], "solids", len(g.solids()))
+
+# -- cell 6 -------------------------------------------------------------------------
+w_rot = bd.Rot(0, 90, 0)          # wheel axis +z -> +x ; its -x meridian -> +z (faces the pinion)
+g2r = w_rot * g2
+print("wheel bbox", [round(v,2) for v in g2r.bounding_box().min], [round(v,2) for v in g2r.bounding_box().max])
+print([m for m in dir(g1) if 'dist' in m.lower()])
+
+# -- cell 7 -------------------------------------------------------------------------
+d, pA, pB = g1.distance_to_with_closest_points(g2r)
+print("min distance pinion-wheel = %.4f mm"%d)
+print("closest points", [round(v,3) for v in pA], [round(v,3) for v in pB])
+print("normal backlash expected = %.4f  (0.3 along pitch line x cos20)"%(BL*math.cos(ALPHA)))
+print("overlap volume =", (g1 & g2r).volume if (g1 & g2r).solids() else 0.0)
+
+# -- cell 8 -------------------------------------------------------------------------
+# No interference (overlap volume 0). Now measure the backlash where it is defined: on the pitch cone 
+print([m for m in dir(g1) if 'insid' in m.lower() or 'contain' in m.lower()])
+Rm = (RO+RI)/2.0
+P0 = (Rm*math.sin(D1), 0.0, Rm*math.cos(D1))
+print("mean pitch point", [round(v,3) for v in P0], " r=%.3f"%(Rm*math.sin(D1)))
+print("inside pinion?", g1.is_inside(P0) if hasattr(g1,'is_inside') else '?', " inside wheel?", g2r.is_inside(P0) if hasattr(g2r,'is_inside') else '?')
+
+# -- cell 9 -------------------------------------------------------------------------
+rp_m = Rm*math.sin(D1); zp_m = Rm*math.cos(D1)
+Q = lambda phi: (rp_m*math.cos(phi), rp_m*math.sin(phi), zp_m)
+def edge(solid, inside_start, sgn, hi=0.20):
+    lo, hh = 0.0, hi
+    assert solid.is_inside(Q(0.0)) == inside_start and solid.is_inside(Q(sgn*hh)) != inside_start
+    for _ in range(40):
+        mid = 0.5*(lo+hh)
+        (lo, hh) = (mid, hh) if solid.is_inside(Q(sgn*mid)) == inside_start else (lo, mid)
+    return 0.5*(lo+hh)
+for sgn in (+1, -1):
+    pw = edge(g2r, True,  sgn)     # leaving the wheel tooth
+    pp = edge(g1,  False, sgn)     # entering the pinion tooth
+    print("side %+d: wheel flank at arc %.4f mm, pinion flank at %.4f mm -> gap %.4f mm"
+          % (sgn, pw*rp_m, pp*rp_m, (pp-pw)*rp_m))
+
+# -- cell 10 ------------------------------------------------------------------------
+# The angular unrolling factor was inverted: developing the back cone gives θ_axis = θ_dev / cos δ, no
+def section(z, delta, phase=0.0, nf=10, na=4, nr=4):
+    """closed CCW polygon (x,y) of the gear cross-section at the plane Z = Ro*cos(delta)."""
+    r  = M*z/2.0
+    rv = r/math.cos(delta)            # back-cone (virtual spur) pitch radius
+    rb = rv*math.cos(ALPHA)
+    ra, rf = rv + M, rv - 1.25*M
+    t  = math.pi*M/2.0 - BL/2.0       # tooth thickness at pitch, backlash split evenly
+    psi = t/(2.0*rv)
+    ap = math.acos(rb/rv)
+    half = lambda rho: psi + inv(ap) - inv(math.acos(min(1.0, rb/max(rho, rb))))
+    zp = RO*math.cos(delta)
+    def P(rho, th):                   # developed back cone -> section-plane polar
+        s = rho - rv
+        rad = zp*(r + s*math.cos(delta))/(zp - s*math.sin(delta))
+        return rad, th/math.cos(delta)
+    flank = [P(rho, half(rho)) for rho in np.linspace(max(rb, rf), ra, nf)]   # root->tip
+    if rf < rb:
+        flank = [P(rf, half(rb))] + flank
+    pitchang = 2*math.pi/z
+    pts = []
+    for k in range(z):
+        c = phase + k*pitchang
+        for rad, dth in flank:
+            pts.append((rad, c - dth))
+        rad_t, dth_t = flank[-1]
+        for a in np.linspace(-dth_t, dth_t, na)[1:-1]:
+            pts.append((rad_t, c + a))
+        for rad, dth in reversed(flank):
+            pts.append((rad, c + dth))
+        rad_r, dth_r = flank[0]
+        for a in np.linspace(c + dth_r, c + pitchang - dth_r, nr)[1:-1]:
+            pts.append((rad_r, a))
+    return [(rad*math.cos(th), rad*math.sin(th)) for rad, th in pts], rv, rb
+
+p1,_,_ = section(Z1, D1, PHASE1); p2,_,_ = section(Z2, D2, PHASE2)
+fig4, ax = plt.subplots(1,2,figsize=(11,5.5))
+for axi,(p,rp,ttl) in zip(ax,[(p1,R1,"pinion z=20"),(p2,R2,"wheel z=30")]):
+    a=np.array(p+[p[0]]); axi.plot(a[:,0],a[:,1],lw=0.7)
+    axi.add_artist(plt.Circle((0,0),rp,fill=False,color='r',ls='--'))
+    axi.set_aspect('equal'); axi.set_title(ttl)
+display(fig4)
+
+# -- cell 11 ------------------------------------------------------------------------
+# Teeth now have the right proportions. Rebuild the solids and re-measure the backlash.
+g1  = gear_solid(Z1, D1, PHASE1)
+g2r = bd.Rot(0, 90, 0) * gear_solid(Z2, D2, PHASE2)
+print("pinion vol %.1f  bbox %s %s"%(g1.volume,[round(v,2) for v in g1.bounding_box().min],[round(v,2) for v in g1.bounding_box().max]))
+print("wheel  vol %.1f  bbox %s %s"%(g2r.volume,[round(v,2) for v in g2r.bounding_box().min],[round(v,2) for v in g2r.bounding_box().max]))
+for sgn in (+1,-1):
+    pw = edge(g2r, True, sgn); pp = edge(g1, False, sgn)
+    print("side %+d gap = %.4f mm  (wheel flank %.4f, pinion flank %.4f)"%(sgn,(pp-pw)*rp_m,pw*rp_m,pp*rp_m))
+
+# -- cell 12 ------------------------------------------------------------------------
+# Backlash is there and symmetric. Let me refine the flank sampling (chordal error thins the teeth sli
+NF = 20   # flank sample points (chordal error < ~0.01 mm)
+_sec = section
+def section(z, delta, phase=0.0, nf=NF, na=4, nr=4):
+    return _sec(z, delta, phase, nf, na, nr)
+g1  = gear_solid(Z1, D1, PHASE1)
+g2r = bd.Rot(0, 90, 0) * gear_solid(Z2, D2, PHASE2)
+
+def backlash_at(frac):
+    R = frac*RO; rr = R*math.sin(D1); zz = R*math.cos(D1)
+    Qf = lambda phi: (rr*math.cos(phi), rr*math.sin(phi), zz)
+    def ed(solid, inside_start, sgn, hi=0.20):
+        lo, hh = 0.0, hi
+        for _ in range(40):
+            mid = 0.5*(lo+hh)
+            (lo, hh) = (mid, hh) if solid.is_inside(Qf(sgn*mid)) == inside_start else (lo, mid)
+        return 0.5*(lo+hh)*rr
+    return [ed(g1, False, s) - ed(g2r, True, s) for s in (+1,-1)]
+
+for frac in (0.98, (1+RI/RO)/2, RI/RO*1.02):
+    b = backlash_at(frac)
+    print("cone distance %.2f mm (%.2f Ro): backlash per side %.4f / %.4f mm -> total %.4f"
+          % (frac*RO, frac, b[0], b[1], sum(b)))
+
+# -- cell 13 ------------------------------------------------------------------------
+# Enough measuring — the shape is right (backlash 0.31 mm total at mean cone distance, ≈0.3 nominal). 
+LX, LY, LZ = 160.0, 140.0, 120.0     # cavity, mm (given)
+WT   = 12.0                          # wall thickness, mm            (assumed)
+RS1, RS2 = 10.0, 12.5                # shaft radii, mm               (assumed)
+CLR  = 5.0                           # radial shaft/bore clearance   (assumed)
+RB1, RB2 = RS1+CLR, RS2+CLR          # bore radii
+ZH1 = RO*math.cos(D1)                # pinion heel plane z = 45
+XH2 = RO*math.cos(D2)                # wheel  heel plane x = 30
+
+box = bd.Box(LX, LY, LZ)                                        # centred on the apex
+pass1 = bd.Pos(0,0,LZ/2)        * bd.Cylinder(RB1, WT, align=(bd.Align.CENTER,)*2+(bd.Align.MIN,))
+pass2 = bd.Rot(0,90,0) * bd.Pos(0,0,LX/2) * bd.Cylinder(RB2, WT, align=(bd.Align.CENTER,)*2+(bd.Align.MIN,))
+shaft1 = bd.Pos(0,0,ZH1)        * bd.Cylinder(RS1, LZ/2+WT-ZH1, align=(bd.Align.CENTER,)*2+(bd.Align.MIN,))
+shaft2 = bd.Rot(0,90,0) * bd.Pos(0,0,XH2) * bd.Cylinder(RS2, LX/2+WT-XH2, align=(bd.Align.CENTER,)*2+(bd.Align.MIN,))
+pinion = g1 + shaft1
+wheel  = g2r + shaft2
+fluid  = (box + pass1 + pass2) - pinion - wheel
+print("fluid vol %.1f mm^3, solids %d, faces %d"%(fluid.volume, len(fluid.solids()), len(fluid.faces())))
+print("bbox", [round(v,1) for v in fluid.bounding_box().min], [round(v,1) for v in fluid.bounding_box().max])
+print("box vol %.1f  pinion %.1f  wheel %.1f"%(box.volume, pinion.volume, wheel.volume))

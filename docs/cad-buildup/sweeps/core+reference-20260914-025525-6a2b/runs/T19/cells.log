@@ -1,0 +1,140 @@
+# -- cell 1 (2.7s, exit 0)
+import os, math, numpy as np, build123d as bd
+print(os.getcwd(), os.listdir("."))
+
+R_SHAFT = 20.0        # mm, 40 mm dia sealed length (given)
+R_BORE  = 20.05       # mm, 40.1 mm dia bore        (given)
+L       = 60.0        # mm, bore length             (given)
+KW_W    = 12.0        # mm keyway width             (given)
+KW_D    = 5.0         # mm keyway depth             (given)
+X_FLOOR = R_SHAFT - KW_D   # 15.0 mm flat keyway floor
+
+keyway = bd.Box(30, KW_W, L, align=(bd.Align.MIN, bd.Align.CENTER, bd.Align.MIN)).moved(bd.Pos(X_FLOOR,0,0))
+shaft  = bd.Cylinder(R_SHAFT, L, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)) - keyway
+bore   = bd.Cylinder(R_BORE , L, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN))
+fluid  = bore - shaft
+print("volume mm^3", fluid.volume, " bbox", fluid.bounding_box())
+print("faces", len(fluid.faces()))
+# -- output
+/home/qiuzi/.openreynolds-buildup/work/T19-20260914-033752-61c1/t19 []
+volume mm^3 3758.44830390027  bbox bbox: -20.05 <= x <= 20.05, -20.05 <= y <= 20.05, 0.0 <= z <= 60.0
+faces 7
+
+# -- cell 2 (0.1s, exit 0)
+for i,f in enumerate(fluid.faces()):
+    print(i, f.geom_type, "area=%.3f"%f.area, "center=", tuple(round(c,4) for c in f.center()),
+          "normal=", tuple(round(c,4) for c in f.normal_at(f.center())),
+          "radius=", getattr(f,"radius",None))
+# -- output
+0 GeomType.CYLINDER area=7558.672 center= (-20.05, 0.0, 30.0) normal= (-1.0, 0.0, 0.0) radius= 20.05
+1 GeomType.PLANE area=62.641 center= (15.6128, 0.0, 60.0) normal= (0.0, 0.0, 1.0) radius= None
+2 GeomType.PLANE area=62.641 center= (15.6128, 0.0, 0.0) normal= (-0.0, -0.0, -1.0) radius= None
+3 GeomType.CYLINDER area=6808.560 center= (-20.0, 0.0, 30.0) normal= (1.0, -0.0, -0.0) radius= 20.0
+4 GeomType.PLANE area=244.727 center= (17.0394, -6.0, 30.0) normal= (0.0, -1.0, -0.0) radius= None
+5 GeomType.PLANE area=720.000 center= (15.0, 0.0, 30.0) normal= (-1.0, -0.0, 0.0) radius= None
+6 GeomType.PLANE area=244.727 center= (17.0394, 6.0, 30.0) normal= (-0.0, 1.0, 0.0) radius= None
+
+# -- cell 3 (0.3s, exit 1)
+import subprocess, inspect
+os.makedirs("constant/triSurface", exist_ok=True)
+fl = fluid.faces()
+patches = {"bore": [fl[0]], "shaft": [fl[3]], "keywayFloor": [fl[5]],
+           "keywayFlanks": [fl[4], fl[6]], "highPressure": [fl[2]], "lowPressure": [fl[1]]}
+MM = 0.001  # mm -> m, applied once here
+for name, faces in patches.items():
+    shp = bd.Compound(children=[f.scale(MM) for f in faces])
+    ex = bd.Mesher(); ex.add_shape(shp, linear_deflection=2e-6, angular_deflection=0.1)
+    ex.write(f"constant/triSurface/{name}.stl")
+print(subprocess.run(["ls","-la","constant/triSurface"],capture_output=True,text=True).stdout)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 9[39m
+[32m      5[39m            [33m"keywayFlanks"[39m: [fl[[32m4[39m], fl[[32m6[39m]], [33m"highPressure"[39m: [fl[[32m2[39m]], [33m"lowPressure"[39m: [fl[[32m1[39m]]}
+[32m      6[39m MM = [32m0.001[39m  [38;5;66;03m# mm -> m, applied once here[39;00m
+[32m      7[39m [38;5;28;01mfor[39;00m name, faces [38;5;28;01min[39;00m patches.items():
+[32m      8[39m     shp = bd.Compound(children=[f.scale(MM) [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m faces])
+[32m----> [39m[32m9[39m     ex = bd.Mesher(); ex.add_shape(shp, linear_deflection=[32m2e-6[39m, angular_deflection=[32m0.1[39m)
+[32m     10[39m     ex.write(f"constant/triSurface/{name}.stl")
+[32m     11[39m print(subprocess.run([[33m"ls"[39m,[33m"-la"[39m,[33m"constant/triSurface"[39m],capture_output=[38;5;28;01mTrue[39;00m,text=[38;5;28;01mTrue[39;00m).stdout)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/mesher.py:446[39m, in [36mMesher.add_shape[39m[34m(self, shape, linear_deflection, angular_deflection, mesh_type, part_number, uuid_value)[39m
+[32m    444[39m [38;5;66;03m# Check mesh[39;00m
+[32m    445[39m [38;5;28;01mif[39;00m [38;5;129;01mnot[39;00m mesh_3mf.IsValid():
+[32m--> [39m[32m446[39m     [38;5;28;01mraise[39;00m [38;5;167;01mRuntimeError[39;00m([33m"[39m[33m3mf mesh is invalid[39m[33m"[39m)
+[32m    447[39m [38;5;28;01mif[39;00m [38;5;129;01mnot[39;00m mesh_3mf.IsManifoldAndOriented():
+[32m    448[39m     warnings.warn([33m"[39m[33m3mf mesh is not manifold[39m[33m"[39m, stacklevel=[32m2[39m)
+
+[31mRuntimeError[39m: 3mf mesh is invalid
+
+# -- cell 4 (0.1s, exit 0)
+print(inspect.signature(bd.export_stl))
+# -- output
+(to_export: build123d.topology.shape_core.Shape, file_path: os.PathLike | str | bytes, tolerance: float = 0.001, angular_tolerance: float = 0.1, ascii_format: bool = False) -> bool
+
+# -- cell 5 (0.3s, exit 1)
+import subprocess
+os.makedirs("constant/triSurface", exist_ok=True)
+fl = fluid.faces()
+patches = {"bore": [fl[0]], "shaft": [fl[3]], "keywayFloor": [fl[5]],
+           "keywayFlanks": [fl[4], fl[6]], "highPressure": [fl[2]], "lowPressure": [fl[1]]}
+MM = 0.001  # mm -> m, applied once, here
+for name, faces in patches.items():
+    shell = bd.Shell([f.scale(MM) for f in faces])
+    bd.export_stl(shell, f"constant/triSurface/{name}.stl", tolerance=1e-6, angular_tolerance=0.02)
+print(subprocess.run(["ls","-l","constant/triSurface"],capture_output=True,text=True).stdout)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mStandard_TypeMismatch[39m                     Traceback (most recent call last)
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/two_d.py:2902[39m, in [36mShell.__init__[39m[34m(self, obj, label, color, parent)[39m
+[32m   2901[39m [38;5;28;01mtry[39;00m:
+[32m-> [39m[32m2902[39m     obj = [30;43mTopoDS[39;49m[30;43m.[39;49m[30;43mShell[39;49m[30;43m([39;49m[30;43m_sew_topods_faces[39;49m[30;43m([39;49m[30;43m[[39;49m[30;43mf[39;49m[30;43m.[39;49m[30;43mwrapped[39;49m[30;43m [39;49m[30;43;01mfor[39;49;00m[30;43m [39;49m[30;43mf[39;49m[30;43m [39;49m[30;43;01min[39;49;00m[30;43m [39;49m[30;43mobj[39;49m[30;43m][39;49m[30;43m)[39;49m[30;43m)[39;49m
+[32m   2903[39m [38;5;28;01mexcept[39;00m Standard_TypeMismatch [38;5;28;01mas[39;00m exc:
+
+[31mStandard_TypeMismatch[39m: TopoDS::Shell
+
+The above exception was the direct cause of the following exception:
+
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 8[39m
+[32m      4[39m patches = {"bore": [fl[0]], "shaft": [fl[3]], "keywayFloor": [fl[5]],
+[32m      5[39m            [33m"keywayFlanks"[39m: [fl[[32m4[39m], fl[[32m6[39m]], [33m"highPressure"[39m: [fl[[32m2[39m]], [33m"lowPressure"[39m: [fl[[32m1[39m]]}
+[32m      6[39m MM = [32m0.001[39m  [38;5;66;03m# mm -> m, applied once, here[39;00m
+[32m      7[39m [38;5;28;01mfor[39;00m name, faces [38;5;28;01min[39;00m patches.items():
+[32m----> [39m[32m8[39m     shell = bd.Shell([f.scale(MM) [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m faces])
+[32m      9[39m     bd.export_stl(shell, f"constant/triSurface/{name}.stl", tolerance=[32m1e-6[39m, angular_tolerance=[32m0.02[39m)
+[32m     10[39m print(subprocess.run([[33m"ls"[39m,[33m"-l"[39m,[33m"constant/triSurface"[39m],capture_output=[38;5;28;01mTrue[39;00m,text=[38;5;28;01mTrue[39;00m).stdout)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/two_d.py:2904[39m, in [36mShell.__init__[39m[34m(self, obj, label, color, parent)[39m
+[32m   2902[39m         obj = TopoDS.Shell(_sew_topods_faces([f.wrapped [38;5;28;01mfor[39;00m f [38;5;129;01min[39;00m obj]))
+[32m   2903[39m     [38;5;28;01mexcept[39;00m Standard_TypeMismatch [38;5;28;01mas[39;00m exc:
+[32m-> [39m[32m2904[39m         [38;5;28;01mraise[39;00m [38;5;167;01mTypeError[39;00m([33m"[39m[33mUnable to create Shell, invalid input type[39m[33m"[39m) [38;5;28;01mfrom[39;00m[38;5;250m [39m[34;01mexc[39;00m
+[32m   2906[39m [38;5;28msuper[39m().[34m__init__[39m(
+[32m   2907[39m     obj=obj,
+[32m   2908[39m     label=label,
+[32m   2909[39m     color=color,
+[32m   2910[39m     parent=parent,
+[32m   2911[39m )
+
+[31mTypeError[39m: Unable to create Shell, invalid input type
+
+# -- cell 6 (3.3s, exit 0)
+import subprocess
+os.makedirs("constant/triSurface", exist_ok=True)
+fl = fluid.faces()
+patches = {"bore": [fl[0]], "shaft": [fl[3]], "keywayFloor": [fl[5]],
+           "keywayFlanks": [fl[4], fl[6]], "highPressure": [fl[2]], "lowPressure": [fl[1]]}
+MM = 0.001  # mm -> m, applied once, here
+for name, faces in patches.items():
+    comp = bd.Compound(children=[f.scale(MM) for f in faces])
+    bd.export_stl(comp, f"constant/triSurface/{name}.stl", tolerance=1e-6, angular_tolerance=0.02)
+print(subprocess.run(["ls","-l","constant/triSurface"],capture_output=True,text=True).stdout)
+# -- output
+total 388
+-rw-rw-r-- 1 qiuzi qiuzi 99584 Sep 14 03:40 bore.stl
+-rw-rw-r-- 1 qiuzi qiuzi 94884 Sep 14 03:40 highPressure.stl
+-rw-rw-r-- 1 qiuzi qiuzi   284 Sep 14 03:40 keywayFlanks.stl
+-rw-rw-r-- 1 qiuzi qiuzi   184 Sep 14 03:40 keywayFloor.stl
+-rw-rw-r-- 1 qiuzi qiuzi 94884 Sep 14 03:41 lowPressure.stl
+-rw-rw-r-- 1 qiuzi qiuzi 89884 Sep 14 03:40 shaft.stl
+

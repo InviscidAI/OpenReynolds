@@ -1,0 +1,915 @@
+# -- cell 1 (2.2s, exit 0)
+import numpy as np, build123d as bd, os
+os.makedirs("constant/triSurface", exist_ok=True)
+
+C_ROOT, C_TIP, SPAN = 0.120, 0.080, 0.200
+def naca4(m, p, t, n=80):
+    beta = np.linspace(0, np.pi, n)
+    x = (1 - np.cos(beta)) / 2
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1036*x**4)
+    yc = np.where(x < p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p) + 2*p*x - x**2))
+    dyc = np.where(x < p, 2*m/p**2*(p - x), 2*m/(1-p)**2*(p - x))
+    th = np.arctan(dyc)
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    X = np.concatenate([xu[::-1], xl[1:]])
+    Y = np.concatenate([yu[::-1], yl[1:]])
+    return np.column_stack([X, Y])
+
+pts = naca4(0.02, 0.4, 0.12)
+print(pts.shape, pts[0], pts[-1], "thickness/c:", (pts[:,1].max()-pts[:,1].min()))
+# -- output
+(159, 2) [ 1.00000000e+00 -1.66164608e-17] [1.00000000e+00 1.66164608e-17] thickness/c: 0.12156166925900525
+
+# -- cell 2 (0.1s, exit 0)
+def section(chord, z):
+    P = [bd.Vector(float(x)*chord, float(y)*chord, z) for x, y in pts]
+    n = len(P)//2
+    up = bd.Spline(P[:n+1])          # TE -> LE (upper)
+    lo = bd.Spline(P[n:])            # LE -> TE (lower)
+    return bd.Wire([up.edge(), lo.edge()])
+
+Z_ROOT_EXT = -0.010   # root section extended below the wall plane so it cuts the floor cleanly
+w0 = section(C_ROOT, Z_ROOT_EXT)
+w1 = section(C_ROOT, 0.0)
+w2 = section(C_TIP,  SPAN)
+for w in (w0, w1, w2):
+    print(w.is_closed, w.length, w.bounding_box())
+# -- output
+True 0.24500155556695316 bbox: -9.931105305566762e-06 <= x <= 0.1200001, -0.005085106976963704 <= y <= 0.009504212521613284, -0.010000100000000003 <= z <= -0.009999899999999997
+True 0.24500155556695316 bbox: -9.931105305566762e-06 <= x <= 0.1200001, -0.005085106976963704 <= y <= 0.009504212521613284, -1e-07 <= z <= 1e-07
+True 0.16333437037796877 bbox: -6.654066906582947e-06 <= x <= 0.0800001, -0.003390104651306013 <= y <= 0.006336175014408856, 0.19999989999999995 <= z <= 0.20000010000000007
+
+# -- cell 3 (0.3s, exit 1)
+wing = bd.loft([w0, w1, w2], ruled=True)
+print(type(wing), wing.volume, wing.bounding_box(), wing.is_valid())
+# check chord at a few spans by sectioning
+for z in (0.0, 0.1, 0.2-1e-6):
+    sec = bd.Plane(origin=(0,0,z)).intersect(wing)
+    bb = sec.bounding_box()
+    print(f"z={z:.3f} chord={bb.max.X-bb.min.X:.5f} x_LE={bb.min.X:.5f} t={bb.max.Y-bb.min.Y:.5f}")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 1[39m
+[32m----> [39m[32m1[39m wing = bd.loft([w0, w1, w2], ruled=[38;5;28;01mTrue[39;00m)
+[32m      2[39m print(type(wing), wing.volume, wing.bounding_box(), wing.is_valid())
+[32m      3[39m [38;5;66;03m# check chord at a few spans by sectioning[39;00m
+[32m      4[39m [38;5;28;01mfor[39;00m z [38;5;28;01min[39;00m ([32m0.0[39m, [32m0.1[39m, [32m0.2[39m-[32m1e-6[39m):
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    157[39m objs = [38;5;28mlist[39m(objs)  [38;5;66;03m# To determine its length[39;00m
+[32m    158[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(objs) < [32m2[39m:
+[32m--> [39m[32m159[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mMore than one wire is required[39m[33m"[39m)
+[32m    160[39m vertices = [obj [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m objs [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj.wrapped, TopoDS_Vertex)]
+[32m    161[39m vertex_count = [38;5;28mlen[39m(vertices)
+
+[31mValueError[39m: More than one wire is required
+
+# -- cell 4 (0.1s, exit 1)
+wing = bd.Solid.make_loft([w0, w1, w2], ruled=True)
+print(type(wing), wing.volume, wing.is_valid())
+print(wing.bounding_box())
+for z in (0.0, 0.1, 0.1999):
+    sec = bd.Plane(origin=(0,0,z)).intersect(wing)
+    bb = sec.bounding_box()
+    print(f"z={z:.4f} chord={bb.max.X-bb.min.X:.5f} x_LE={bb.min.X:.5f} thick={bb.max.Y-bb.min.Y:.5f}")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 2[39m
+[32m      1[39m wing = bd.Solid.make_loft([w0, w1, w2], ruled=[38;5;28;01mTrue[39;00m)
+[32m----> [39m[32m2[39m print(type(wing), wing.volume, wing.is_valid())
+[32m      3[39m print(wing.bounding_box())
+[32m      4[39m [38;5;28;01mfor[39;00m z [38;5;28;01min[39;00m ([32m0.0[39m, [32m0.1[39m, [32m0.1999[39m):
+[32m      5[39m     sec = bd.Plane(origin=([32m0[39m,[32m0[39m,z)).intersect(wing)
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 5 (0.2s, exit 1)
+print(type(wing), wing.volume, wing.is_valid, wing.bounding_box())
+for z in (0.0, 0.1, 0.1999):
+    sec = bd.Plane(origin=(0,0,z)).intersect(wing)
+    bb = sec.bounding_box()
+    print(f"z={z:.4f} chord={bb.max.X-bb.min.X:.5f} x_LE={bb.min.X:.5f} thick={bb.max.Y-bb.min.Y:.5f}")
+# -- output
+<class 'build123d.topology.three_d.Solid'> 0.00017738675261803126 True bbox: -9.931105305566762e-06 <= x <= 0.1200001, -0.005085106976963704 <= y <= 0.009504212521613284, -0.010000100000000003 <= z <= 0.20000010000000007
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 4[39m
+[32m      1[39m print(type(wing), wing.volume, wing.is_valid, wing.bounding_box())
+[32m      2[39m [38;5;28;01mfor[39;00m z [38;5;28;01min[39;00m ([32m0.0[39m, [32m0.1[39m, [32m0.1999[39m):
+[32m      3[39m     sec = bd.Plane(origin=([32m0[39m,[32m0[39m,z)).intersect(wing)
+[32m----> [39m[32m4[39m     bb = sec.bounding_box()
+[32m      5[39m     print(f"z={z:.4f} chord={bb.max.X-bb.min.X:.5f} x_LE={bb.min.X:.5f} thick={bb.max.Y-bb.min.Y:.5f}")
+
+[31mAttributeError[39m: 'ShapeList' object has no attribute 'bounding_box'
+
+# -- cell 6 (0.3s, exit 0)
+for z in (0.0, 0.1, 0.1999):
+    sec = bd.Plane(origin=(0,0,z)).intersect(wing)
+    bb = bd.Compound(list(sec)).bounding_box() if not hasattr(sec,'bounding_box') else sec.bounding_box()
+    print(f"z={z:.4f} chord={bb.max.X-bb.min.X:.5f} x_LE={bb.min.X:.6f} thick={bb.max.Y-bb.min.Y:.5f}")
+# -- output
+z=0.0000 chord=0.12001 x_LE=-0.000010 thick=0.01459
+z=0.1000 chord=0.10001 x_LE=-0.000008 thick=0.01216
+z=0.1999 chord=0.08003 x_LE=-0.000007 thick=0.00973
+
+# -- cell 7 (0.3s, exit 0)
+wing = bd.Solid.make_loft([w0, w1, w2], ruled=True)   # ruled -> linear taper between sections
+print(type(wing), "volume", wing.volume, "valid", wing.is_valid, wing.bounding_box())
+for z in (0.0, 0.1, 0.1999):
+    sec = bd.Plane(origin=(0,0,z)).intersect(wing)
+    bb = bd.Compound(list(sec)).bounding_box() if not hasattr(sec,'bounding_box') else sec.bounding_box()
+    print(f"z={z:.4f} chord={bb.max.X-bb.min.X:.5f} x_LE={bb.min.X:.6f} thick={bb.max.Y-bb.min.Y:.5f} t/c={(bb.max.Y-bb.min.Y)/(bb.max.X-bb.min.X):.4f}")
+# -- output
+<class 'build123d.topology.three_d.Solid'> volume 0.00017738675261803126 valid True bbox: -9.931105305566762e-06 <= x <= 0.1200001, -0.005085106976963704 <= y <= 0.009504212521613284, -0.010000100000000003 <= z <= 0.20000010000000007
+z=0.0000 chord=0.12001 x_LE=-0.000010 thick=0.01459 t/c=0.1216
+z=0.1000 chord=0.10001 x_LE=-0.000008 thick=0.01216 t/c=0.1216
+z=0.1999 chord=0.08003 x_LE=-0.000007 thick=0.00973 t/c=0.1216
+
+# -- cell 8 (0.1s, exit 0)
+XMIN, XMAX = -4*C_ROOT, C_ROOT + 8*C_ROOT        # 4 chords upstream of LE, 8 downstream of TE
+YMIN, YMAX = -3*C_ROOT, 3*C_ROOT                 # 3 chords each side
+ZMIN, ZMAX = 0.0, SPAN + 3*C_ROOT                # root wall at z=0, 3 chords above the tip
+print(XMIN, XMAX, YMIN, YMAX, ZMIN, ZMAX)
+
+def rect_face(origin, normal, u, v, du, dv):
+    p = bd.Plane(origin=bd.Vector(origin), x_dir=bd.Vector(u), z_dir=bd.Vector(normal))
+    return (p * bd.Rectangle(du, dv)).faces()[0]
+
+cx, cy, cz = (XMIN+XMAX)/2, (YMIN+YMAX)/2, (ZMIN+ZMAX)/2
+LX, LY, LZ = XMAX-XMIN, YMAX-YMIN, ZMAX-ZMIN
+faces = {
+ "inlet":    rect_face((XMIN, cy, cz), (1,0,0), (0,1,0), None, LY, LZ),
+ "outlet":   rect_face((XMAX, cy, cz), (1,0,0), (0,1,0), None, LY, LZ),
+ "rootWall": rect_face((cx, cy, ZMIN), (0,0,1), (1,0,0), None, LX, LY),
+ "top":      rect_face((cx, cy, ZMAX), (0,0,1), (1,0,0), None, LX, LY),
+ "sideA":    rect_face((cx, YMIN, cz), (0,1,0), (1,0,0), None, LX, LZ),
+ "sideB":    rect_face((cx, YMAX, cz), (0,1,0), (1,0,0), None, LX, LZ),
+}
+for k, f in faces.items():
+    print(k, f.area, f.bounding_box())
+# -- output
+-0.48 1.08 -0.36 0.36 0.0 0.56
+inlet 0.4032 bbox: -0.48 <= x <= -0.48, -0.36 <= y <= 0.36, 0.0 <= z <= 0.56
+outlet 0.4032 bbox: 1.08 <= x <= 1.08, -0.36 <= y <= 0.36, 0.0 <= z <= 0.56
+rootWall 1.1232 bbox: -0.48 <= x <= 1.08, -0.36 <= y <= 0.36, 0.0 <= z <= 0.0
+top 1.1232 bbox: -0.48 <= x <= 1.08, -0.36 <= y <= 0.36, 0.56 <= z <= 0.56
+sideA 0.8736000000000002 bbox: -0.48 <= x <= 1.08, -0.36 <= y <= -0.36, 0.0 <= z <= 0.56
+sideB 0.8736000000000002 bbox: -0.48 <= x <= 1.08, 0.36 <= y <= 0.36, 0.0 <= z <= 0.56
+
+# -- cell 9 (12.7s, exit 0)
+from build123d import export_stl
+tri = "constant/triSurface/"
+export_stl(wing, tri+"wing.stl", tolerance=2e-5, angular_tolerance=0.1)
+export_stl(faces["inlet"], tri+"inlet.stl")
+export_stl(faces["outlet"], tri+"outlet.stl")
+export_stl(faces["rootWall"], tri+"rootWall.stl")
+export_stl(bd.Compound([faces["top"], faces["sideA"], faces["sideB"]]), tri+"farField.stl")
+import subprocess
+print(subprocess.run(["ls","-la",tri],capture_output=True,text=True).stdout)
+# -- output
+total 13604
+drwxrwxr-x 2 qiuzi qiuzi     4096 Sep 14 03:14 .
+drwxrwxr-x 3 qiuzi qiuzi     4096 Sep 14 03:13 ..
+-rw-rw-r-- 1 qiuzi qiuzi      384 Sep 14 03:14 farField.stl
+-rw-rw-r-- 1 qiuzi qiuzi      184 Sep 14 03:14 inlet.stl
+-rw-rw-r-- 1 qiuzi qiuzi      184 Sep 14 03:14 outlet.stl
+-rw-rw-r-- 1 qiuzi qiuzi      184 Sep 14 03:14 rootWall.stl
+-rw-rw-r-- 1 qiuzi qiuzi 13905584 Sep 14 03:14 wing.stl
+
+# -- cell 10 (0.7s, exit 0)
+import pyvista as pv
+pv.start_xvfb() if False else None
+w = pv.read(tri+"wing.stl"); print("wing tris", w.n_cells, w.bounds)
+p = pv.Plotter(off_screen=True, window_size=(900,650))
+p.add_mesh(w, color="tan", show_edges=False)
+for n,c in [("inlet","blue"),("outlet","red"),("rootWall","grey"),("farField","lightblue")]:
+    p.add_mesh(pv.read(tri+n+".stl"), color=c, opacity=0.18)
+p.camera_position = "iso"; p.screenshot("view_all.png")
+# -- output
+wing tris 278110 BoundsTuple(x_min = -9.807860806176905e-06,
+            x_max =  0.11999999731779099,
+            y_min = -0.00508440425619483,
+            y_max =  0.009504063986241817,
+            z_min = -0.009999999776482582,
+            z_max =  0.20000000298023224)
+array([[[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       ...,
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]],
+
+       [[255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255],
+        ...,
+        [255, 255, 255],
+        [255, 255, 255],
+        [255, 255, 255]]], shape=(650, 900, 3), dtype=uint8)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 03:14:53.918 (   0.378s) [    7AF7BD80F780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 03:14:53.919 (   0.378s) [    7AF7BD80F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 03:14:53.932 (   0.391s) [    7AF7BD80F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 11 (0.4s, exit 0)
+import matplotlib.pyplot as plt
+p = pv.Plotter(off_screen=True, window_size=(900,650))
+p.add_mesh(w, color="tan")
+for n,c in [("inlet","blue"),("outlet","red"),("rootWall","grey"),("farField","lightblue")]:
+    p.add_mesh(pv.read(tri+n+".stl"), color=c, opacity=0.2)
+p.set_background("white"); p.camera_position=[(1.2,-1.2,1.0),(0.3,0,0.15),(0,0,1)]
+img = p.screenshot("view_all.png", return_img=True)
+print(img.shape, (img<250).sum())
+plt.figure(figsize=(9,6.5)); plt.imshow(img); plt.axis("off"); plt.show()
+# -- output
+(650, 900, 3) 1552035
+
+[0m[33m2026-09-14 03:15:02.531 (   8.990s) [    7AF7BD80F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 03:15:02.532 (   8.991s) [    7AF7BD80F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 12 (0.3s, exit 0)
+import os, textwrap
+os.makedirs("system", exist_ok=True); os.makedirs("constant", exist_ok=True)
+HEAD = "FoamFile{version 2.0; format ascii; class dictionary; object %s;}\n"
+NX, NY, NZ = 39, 18, 14   # ~0.04 m base cells
+bm = HEAD % "blockMeshDict" + f"""
+scale 1;
+vertices
+(
+ ({XMIN} {YMIN} {ZMIN}) ({XMAX} {YMIN} {ZMIN}) ({XMAX} {YMAX} {ZMIN}) ({XMIN} {YMAX} {ZMIN})
+ ({XMIN} {YMIN} {ZMAX}) ({XMAX} {YMIN} {ZMAX}) ({XMAX} {YMAX} {ZMAX}) ({XMIN} {YMAX} {ZMAX})
+);
+blocks ( hex (0 1 2 3 4 5 6 7) ({NX} {NY} {NZ}) simpleGrading (1 1 1) );
+edges ();
+boundary
+(
+ inlet    {{ type patch; faces ((0 4 7 3)); }}
+ outlet   {{ type patch; faces ((1 2 6 5)); }}
+ rootWall {{ type wall;  faces ((0 3 2 1)); }}
+ farField {{ type patch; faces ((4 5 6 7) (0 1 5 4) (3 7 6 2)); }}
+);
+mergePatchPairs ();
+"""
+open("system/blockMeshDict","w").write(bm)
+ctrl = HEAD % "controlDict" + "\napplication simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n"
+open("system/controlDict","w").write(ctrl)
+open("system/fvSchemes","w").write(HEAD % "fvSchemes" + "\nddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;}\n")
+open("system/fvSolution","w").write(HEAD % "fvSolution" + "\nsolvers{} \n")
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-800:], r.stderr[-500:])
+# -- output
+0  boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.04 .. 0.04
+        j : 0.04 .. 0.04
+        k : 0.04 .. 0.04
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.48 -0.36 0) (1.08 0.36 0.56)
+  nPoints: 11400
+  nCells: 9828
+  nFaces: 30984
+  nInternalFaces: 27984
+----------------
+Patches
+----------------
+  patch 0 (start: 27984 size: 252) name: inlet
+  patch 1 (start: 28236 size: 252) name: outlet
+  patch 2 (start: 28488 size: 702) name: rootWall
+  patch 3 (start: 29190 size: 1794) name: farField
+
+End
+
+# -- cell 13 (0.8s, exit 0)
+sfe = HEAD % "surfaceFeatureExtractDict" + """
+wing.stl { extractionMethod extractFromSurface; extractFromSurfaceCoeffs { includedAngle 150; } writeObj no; }
+"""
+open("system/surfaceFeatureExtractDict","w").write(sfe)
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-600:], r.stderr[-300:])
+# -- output
+0   : 0
+        mixed              : 0
+        non-feature        : 413
+    edges  : 416
+    of which
+        external edges     : 416
+        internal edges     : 0
+        flat edges         : 0
+        open edges         : 0
+        multiply connected : 0
+
+Writing extendedFeatureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T14-20260914-031236-2957/t14/constant/extendedFeatureEdgeMesh/wing.extendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T14-20260914-031236-2957/t14/constant/triSurface/wing.eMesh"
+ExecutionTime = 0.56 s  ClockTime = 1 s
+
+End
+
+# -- cell 14 (6.7s, exit 0)
+LEV_MIN, LEV_MAX = 3, 4
+snap = HEAD % "snappyHexMeshDict" + f"""
+castellatedMesh true; snap true; addLayers false;
+geometry
+{{
+    wing.stl {{ type triSurfaceMesh; name wing; }}
+    refBox {{ type searchableBox; min (-0.05 -0.08 -0.02); max (0.25 0.08 0.24); }}
+}};
+castellatedMeshControls
+{{
+    maxLocalCells 2000000; maxGlobalCells 5000000; minRefinementCells 10; nCellsBetweenLevels 2;
+    features ( {{ file "wing.eMesh"; level {LEV_MAX}; }} );
+    refinementSurfaces {{ wing {{ level ({LEV_MIN} {LEV_MAX}); patchInfo {{ type wall; }} }} }};
+    refinementRegions {{ refBox {{ mode inside; levels ((1e15 2)); }} }};
+    resolveFeatureAngle 30; locationInMesh (0.5 0.2 0.3); allowFreeStandingZoneFaces true;
+}}
+snapControls
+{{ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5; nFeatureSnapIter 10;
+  implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }}
+addLayersControls
+{{ relativeSizes true; layers {{}} expansionRatio 1.2; finalLayerThickness 0.5; minThickness 0.1;
+   nGrow 0; featureAngle 120; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;
+   maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedianAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }}
+meshQualityControls {{ #includeEtc "caseDicts/meshQualityDict" }}
+writeFlags (); mergeTolerance 1e-6;
+"""
+open("system/snappyHexMeshDict","w").write(snap)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-1500:], r.stderr[-500:])
+# -- output
+1  level:
+    0	9403
+    1	1865
+    2	11202
+    3	5653
+    4	12774
+Writing mesh to time constant
+Wrote mesh in = 0.1 s.
+Mesh refined in = 5.01 s.
+
+Morphing phase
+--------------
+
+Duplicating 0 points on faceZones of type boundary
+Snapping to features in 10 iterations ...
+Constructing mesh displacer ...
+Using mesh parameters 
+{
+    maxNonOrtho     65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave      80;
+    minVol          1e-13;
+    minTetQuality   1e-15;
+    minArea         -1;
+    minTwist        0.02;
+    minDeterminant  0.001;
+    minFaceWeight   0.05;
+    minVolRatio     0.01;
+    minTriangleTwist -1;
+    minEdgeLength   -1;
+}
+
+
+Checking initial mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Detected 0 illegal faces (concave, zero area or negative cell pyramid volume)
+Checked initial mesh in = 0.97 s
+
+
+Smoothing patch points ...
+Smoothing iteration 0
+Found 384 non-manifold point(s).
+
+Scaling iteration 0
+  FATAL IO ERROR: (openfoam-2512)
+Entry 'errorReduction' not found in dictionary "/home/qiuzi/.openreynolds-buildup/work/T14-20260914-031236-2957/t14/system/snappyHexMeshDict/meshQualityControls"
+
+
+file: system/snappyHexMeshDict/meshQualityControls at line 18 to 77.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 15 (2.5s, exit 0)
+snap = snap.replace('meshQualityControls {{', 'X').replace(
+  'meshQualityControls { #includeEtc "caseDicts/meshQualityDict" }',
+  'meshQualityControls { #includeEtc "caseDicts/meshQualityDict" \n errorReduction 0.75; nSmoothScale 4; }')
+open("system/snappyHexMeshDict","w").write(snap)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-900:], r.stderr[-300:])
+# -- output
+-6 AM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+ Mesh.so
+#8  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+#9  ? in /lib/x86_64-linux-gnu/libc.so.6
+#10  __libc_start_main in /lib/x86_64-linux-gnu/libc.so.6
+#11  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+=============
+
+# -- cell 16 (0.1s, exit 0)
+print(r.stdout[-6000:-900])
+# -- output
+i/.openreynolds-buildup/work/T14-20260914-031236-2957/t14
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.12 s
+
+Overall mesh bounding box  : (-0.48 -0.36 0) (1.08 0.36 0.56)
+Relative tolerance         : 1e-06
+Absolute matching distance : 1.8071e-06
+
+Reading refinement surfaces.
+Read refinement surfaces in = 0.13 s
+
+Reading refinement shells.
+Refinement level 2 for all cells inside refBox
+Read refinement shells in = 0 s
+
+Setting refinement level of surface to be consistent with shells.
+For geometry wing.stl detected 0 uncached triangles out of 278110
+Checked shell refinement in = 1.06 s
+
+Reading features.
+Read edgeMesh wing.eMesh
+    points      : 415
+    edges       : 416
+    boundingBox : (-9.706e-06 -0.0050844 -0.01) (0.12 0.00950406 0.2)
+
+Refinement level according to distance to "wing.eMesh" (415 points, 416 edges).
+    level 4 for all cells within 0 metre.
+Read features in = 0 s
+
+
+Determining initial surface intersections
+-----------------------------------------
+
+Edge intersection testing:
+    Number of edges             : 133755
+    Number of edges to retest   : 0
+    Number of intersected edges : 0
+Edge intersection testing:
+    Number of edges             : 133755
+    Number of edges to retest   : 133755
+    Number of intersected edges : 3246
+Calculated surface intersections in = 0.14 s
+
+Initial mesh : cells:40897  faces:133755  points:52181
+Cells per refinement level:
+    0	9403
+    1	1865
+    2	11202
+    3	5653
+    4	12774
+Setting refinement level of surface to be consistent with curvature.
+Checked curvature refinement in = 0 s
+
+
+Adding patches for surface regions
+----------------------------------
+
+Patch Type                Region                        
+----- ----                ------                        
+wing:
+
+4     wall                wing                          
+
+Added patches in = 0 s
+
+Edge intersection testing:
+    Number of edges             : 133755
+    Number of edges to retest   : 6634
+    Number of intersected edges : 6520
+Decomposition method none [1]
+
+Refinement phase
+----------------
+
+Found point (0.5 0.2 0.3) in cell 5430 on processor 0
+
+Feature refinement iteration 0
+------------------------------
+
+Marked for refinement due to explicit features             : 0 cells.
+Determined cells to refine in = 0.25 s
+Selected for feature refinement : 0 cells (out of 40897)
+Stopping refining since too few cells selected.
+
+
+Surface refinement iteration 0
+------------------------------
+
+Marked for refinement due to surface intersection          : 0 cells.
+Marked for refinement due to curvature/regions             : 0 cells.
+Determined cells to refine in = 0.27 s
+Selected for refinement : 0 cells (out of 40897)
+Stopping refining since too few cells selected.
+
+
+Removing mesh beyond surface intersections
+------------------------------------------
+
+Setting cellZones according to locationsInMesh:
+Location : (0.5 0.2 0.3)
+    cellZone : none
+
+For cellZone none found point (0.5 0.2 0.3) in global region 0 out of 1 regions.
+--> FOAM Warning : 
+    From void Foam::meshRefinement::nearestFace(const Foam::labelUList&, const Foam::bitSet&, Foam::autoPtr<Foam::mapDistribute>&, Foam::labelList&, Foam::label) const
+    in file meshRefinement/meshRefinement.C at line 526
+    Did not visit some faces, e.g. face 0 at (-0.44 -0.34 0.02)
+Keeping all cells containing inside points
+Selected for keeping : 40897 cells.
+Edge intersection testing:
+    Number of edges             : 133755
+    Number of edges to retest   : 0
+    Number of intersected edges : 6520
+
+Shell refinement iteration 0
+----------------------------
+
+Marked for refinement due to distance to explicit features : 0 cells.
+Marked for refinement due to refinement shells             : 1 cells.
+Determined cells to refine in = 0.12 s
+Selected for internal refinement : 408 cells (out of 40897)
+hexRef8 : Dumping cell as obj to "/home/qiuzi/.openreynolds-buildup/work/T14-20260914-031236-2957/t14/cell_14254.obj"
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FO
+
+# -- cell 17 (13.5s, exit 0)
+import glob
+for f in glob.glob("cell_*.obj"): os.remove(f)
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode)
+print(r.stdout[-1200:])
+# -- output
+0
+ > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:40897  faces:132942  points:51472
+Cells per refinement level:
+    0	9403
+    1	1865
+    2	11202
+    3	5653
+    4	12774
+Writing mesh to time constant
+Wrote mesh in = 0.1 s.
+Mesh snapped in = 6.52 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 12.97 s.
+End
+
+# -- cell 18 (0.5s, exit 0)
+r = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True)
+print(r.stdout[-2500:])
+# -- output
+2
+    faces:            132942
+    internal faces:   123319
+    cells:            40897
+    faces per cell:   6.26601
+    boundary patches: 5
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     35805
+    prisms:        477
+    wedges:        0
+    pyramids:      0
+    tet wedges:    9
+    tetrahedra:    0
+    polyhedra:     4606
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   93
+            5   123
+            6   976
+            7   1
+            9   2991
+           12   369
+           14   3
+           15   43
+           18   7
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      252      285  ok (non-closed singly connected)
+                  outlet      252      285  ok (non-closed singly connected)
+                rootWall     1504     1680  ok (non-closed singly connected)
+                farField     1794     1880  ok (non-closed singly connected)
+                    wing     5821     6027  ok (non-closed singly connected)
+                    ".*"     9623     9869      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.48 -0.36 0) (1.08 0.36 0.560001)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.84443e-16 -1.94795e-15 -1.55062e-15) OK.
+    Max cell openness = 3.1393e-16 OK.
+    Max aspect ratio = 4.61728 OK.
+    Minimum face area = 1.76002e-06. Maximum face area = 0.00160687.  Face area magnitudes OK.
+    Min volume = 2.45053e-09. Max volume = 6.42828e-05.  Total volume = 0.628827.  Cell volumes OK.
+    Mesh non-orthogonality Max: 49.0933 average: 9.53091
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.60886 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 19 (0.4s, exit 0)
+open("case.foam","w").write("")
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0)
+mesh = rd.read(); b = mesh["boundary"]
+print(b.keys())
+wp = b["wing"]
+print("wing patch bounds", wp.bounds, "area", wp.area)
+pl = pv.Plotter(off_screen=True, window_size=(1000,500)); pl.set_background("white")
+pl.add_mesh(wp, color="tan", show_edges=True, line_width=0.5)
+pl.add_mesh(b["rootWall"].clip_box([-0.1,0.3,-0.15,0.15,-1,1], invert=True), color="lightgrey", opacity=0.4, show_edges=True)
+pl.camera_position=[(0.45,-0.45,0.45),(0.06,0,0.1),(0,0,1)]
+img = pl.screenshot("wing_patch.png", return_img=True)
+plt.figure(figsize=(10,5)); plt.imshow(img); plt.axis("off"); plt.show()
+# -- output
+['inlet', 'outlet', 'rootWall', 'farField', 'wing']
+wing patch bounds BoundsTuple(x_min = -0.0002036749938270077,
+            x_max =  0.119998998939991,
+            y_min = -0.0050806100480258465,
+            y_max =  0.00952570978552103,
+            z_min =  0.0,
+            z_max =  0.20007100701332092) area 0.04132320032781746
+
+[0m[33m2026-09-14 03:16:27.375 (  93.834s) [    7AF7BD80F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 03:16:27.376 (  93.835s) [    7AF7BD80F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 20 (35.5s, exit 0)
+snap_final = snap.replace("wing {{ level", "X").replace(f"level ({LEV_MIN} {LEV_MAX})", "level (4 5)") \
+                 .replace(f'file "wing.eMesh"; level {LEV_MAX}', 'file "wing.eMesh"; level 5') \
+                 .replace("levels ((1e15 2))", "levels ((1e15 3))")
+assert "level (4 5)" in snap_final and "level 5;" in snap_final and "1e15 3" in snap_final
+open("system/snappyHexMeshDict","w").write(snap_final)
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-700:])
+# -- output
+0  = 19.43 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 34.9 s.
+End
+
+# -- cell 21 (1.1s, exit 0)
+r = subprocess.run(["checkMesh","-constant"], capture_output=True, text=True)
+print(r.stdout[-1600:])
+# -- output
+ected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      252      285  ok (non-closed singly connected)
+                  outlet      252      285  ok (non-closed singly connected)
+                rootWall     3186     3443  ok (non-closed singly connected)
+                farField     1794     1880  ok (non-closed singly connected)
+                    wing    13162    13683  ok (non-closed singly connected)
+                    ".*"    18646    19244      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.48 -0.36 0) (1.08 0.36 0.56)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.09341e-17 -4.49626e-16 3.922e-15) OK.
+    Max cell openness = 3.21031e-16 OK.
+    Max aspect ratio = 4.60199 OK.
+    Minimum face area = 4.42361e-07. Maximum face area = 0.0016005.  Face area magnitudes OK.
+    Min volume = 3.54631e-10. Max volume = 6.40197e-05.  Total volume = 0.628826.  Cell volumes OK.
+    Mesh non-orthogonality Max: 49.057 average: 7.99207
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.92537 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 22 (0.6s, exit 0)
+print([l for l in r.stdout.splitlines() if "cells:" in l or "cells " in l][:5])
+rd = pv.OpenFOAMReader("case.foam"); rd.set_active_time_value(0.0)
+mesh = rd.read(); wp = mesh["boundary"]["wing"]
+pts_w = wp.points
+for z0 in (0.005, 0.10, 0.195):
+    m = np.abs(pts_w[:,2]-z0) < 0.002
+    print(f"z={z0}: chord={pts_w[m,0].max()-pts_w[m,0].min():.5f} LE x={pts_w[m,0].min():.5f} thick={pts_w[m,1].max()-pts_w[m,1].min():.5f}")
+sl = mesh["internalMesh"].slice(normal="z", origin=(0,0,0.05))
+pl = pv.Plotter(off_screen=True, window_size=(900,500)); pl.set_background("white")
+pl.add_mesh(sl, color="white", show_edges=True, line_width=0.4)
+pl.view_xy(); pl.camera.zoom(1.0); pl.camera.focal_point=(0.06,0,0.05); pl.camera.position=(0.06,0,1.0); pl.camera.parallel_projection=True; pl.camera.parallel_scale=0.12
+img = pl.screenshot("slice_z05.png", return_img=True)
+plt.figure(figsize=(9,5)); plt.imshow(img); plt.axis("off"); plt.show()
+# -- output
+['    cells:            146755', 'Overall number of cells of each type:']
+z=0.005: chord=0.11922 LE x=-0.00000 thick=0.01446
+z=0.1: chord=0.10022 LE x=-0.00000 thick=0.01215
+z=0.195: chord=0.08122 LE x=-0.00000 thick=0.00987
+
+[0m[33m2026-09-14 03:17:27.838 ( 154.297s) [    7AF7BD80F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 03:17:27.839 ( 154.298s) [    7AF7BD80F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 23 (0.1s, exit 0)
+for f in glob.glob("cell_*.obj"): os.remove(f)
+print(sorted(os.listdir(".")), sorted(os.listdir("constant/triSurface")))
+# -- output
+['case.foam', 'constant', 'slice_z05.png', 'system', 'view_all.png', 'wing_patch.png'] ['farField.stl', 'inlet.stl', 'outlet.stl', 'rootWall.stl', 'wing.eMesh', 'wing.stl']
+

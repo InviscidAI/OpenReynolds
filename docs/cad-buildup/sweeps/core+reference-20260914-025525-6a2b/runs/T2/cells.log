@@ -1,0 +1,32 @@
+# -- cell 1 (0.1s, exit 0)
+import subprocess, os
+print(os.getcwd(), os.listdir("."))
+print(subprocess.run(["ls","/usr/lib/openfoam/openfoam2512/etc"],capture_output=True,text=True).stdout[:300])
+# -- output
+/home/qiuzi/.openreynolds-buildup/work/T2-20260914-034014-70bf/t2 []
+bashrc
+caseDicts
+cellModels
+codeTemplates
+colourTables
+config.csh
+config.sh
+controlDict
+cshrc
+openfoam
+templates
+thermoData
+
+# -- cell 2 (288.7s, exit 0)
+import build123d as bd, os
+D = 0.040          # sphere diameter (given)
+R = D/2
+UP, DOWN, SIDE = 5*D, 15*D, 5*D   # given: 5D up, 15D down, 5D sides/top/bottom
+sphere = bd.Sphere(radius=R)
+print("bbox", sphere.bounding_box(), "vol", sphere.volume, "exact", 4/3*3.141592653589793*R**3)
+os.makedirs("constant/triSurface", exist_ok=True)
+bd.export_stl(sphere, "constant/triSurface/sphere.stl", tolerance=1e-5, angular_tolerance=0.1)
+print(os.path.getsize("constant/triSurface/sphere.stl"))
+# -- output
+
+
