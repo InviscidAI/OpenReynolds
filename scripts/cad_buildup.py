@@ -136,12 +136,19 @@ def prepare(case: str, parent: Path, run_dir: Path,
         geometry = str(target)
         print(f"  fixture {name} -> {geometry}")
 
+    # Into the *case* directory, which is the desk's working directory, because that is
+    # what the brief calls `.reference/b123d_api.md`. Putting it at the workspace root
+    # instead is what the first attempt at this addition did: the file existed, the brief
+    # named it, and no desk could reach it -- T16 ran the grep the brief suggests and got
+    # an empty string back. A brief naming a path the workspace does not have is the
+    # failure this repo already measured at seven cells of twenty-seven.
+    case_dir = workspace / case.lower()
     for name in core.REFERENCE_FILES:
         source = TOOLBOX_DIR / name
         if not source.is_file():
             raise SystemExit(f"the core desk is given {name} and it is not on disk at "
                              f"{source}; run python3 {TOOLBOX_DIR / 'b123d_api.py'}")
-        handed = workspace / core.REFERENCE_DIR / name
+        handed = case_dir / core.REFERENCE_DIR / name
         handed.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, handed)
         print(f"  reference {name} -> {handed}")
