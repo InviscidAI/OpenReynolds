@@ -75,6 +75,32 @@ Signatures below are shown as parameter names and defaults, with annotations dro
 width and the builder-mode `mode=` parameter dropped entirely. This is algebra mode:
 operations name their operands, nothing is pending, and nothing is inherited from an
 enclosing context.
+
+## Prefer these over the raw OCCT bindings underneath
+
+build123d sits on OCCT, and `OCP` is importable, so `BRepAlgoAPI_*`, `BRepMesh_*`,
+`TopoDS_*`, `TopExp_*`, `Bnd_*` and `gp_*` are all reachable from a cell. Reach for them
+last, and for a specific reason you can state.
+
+Two things go wrong when you drop to the kernel by reflex rather than by need.
+
+**Its objects do not answer the same way.** OCCT is a C++ API through bindings: what reads
+as a property here is usually a method there, and the failure is a confusing
+`TypeError: 'bool' object is not callable`, or an `AttributeError` on a name that looked
+right. `Shape.is_valid` below is a property, so it is `shape.is_valid` and not
+`shape.is_valid()`. A wrapper listed in this file with no `()` takes no `()`.
+
+**Its error reporting is not Python's.** Several kernel algorithms report failure through a
+status method rather than by raising, the names differ between algorithms, and guessing one
+costs a cell -- `IsDone()` exists far more widely than `HasErrors()`, which is not on every
+class that looks like it should carry it. If you must call one, ask the object what it
+offers, in the same cell that constructs it: `[n for n in dir(obj) if n[0].isupper()]`.
+Never discover it after a long `Build()` you would then have to repeat.
+
+When a wrapper below does the job, it is the supported path, it is what the rest of this
+toolbox expects to be handed, and it is the one whose spelling this file guarantees. When
+nothing here does the job, dropping to OCCT is legitimate -- do it deliberately, introspect
+before you call, and keep the expensive part in its own cell.
 """
 
 # -- the curated selection -----------------------------------------------------

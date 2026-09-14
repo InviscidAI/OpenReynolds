@@ -50,12 +50,27 @@ def core_desk(backend, store, texts):
 # -- what the core does not say --------------------------------------------------
 
 
-def test_the_core_brief_names_no_house_surface_at_all():
+def test_the_core_brief_names_exactly_what_it_hands_over_and_nothing_else():
     """Not a style point: the brief is the one thing the desk certainly reads, so a
-    toolbox named there is a toolbox found there, and the arm is not a bare arm."""
-    found = isolation.scan({"brief": core.CORE_SYSTEM, "nudge": core.CORE_NUDGE})
-    assert not found.contaminated, found.lines()
+    toolbox named there is a toolbox found there.
+
+    The arm is no longer bare -- it is handed `b123d_api.md`, on the measured evidence
+    that 17 of 27 API-surface failures in `core+declare_gate-20260913-124524-aa21` were
+    build123d, across 12 of 26 cases. So the invariant tightens rather than relaxes: the
+    brief may name the file it hands over, and may still name nothing else. The word
+    `toolbox` stays out entirely, because the directory name is a house surface on its
+    own and this arm has no toolbox to point at -- what it has is one file in a
+    `.reference` directory of its own.
+    """
+    text = {"brief": core.CORE_SYSTEM, "nudge": core.CORE_NUDGE}
+    assert not isolation.scan(text, given=core.REFERENCE_FILES).contaminated
+
+    leaked = isolation.scan(text).hits
+    assert {hit.name for hit in leaked} == set(core.REFERENCE_FILES), (
+        "the brief names a house surface that was not handed over: "
+        f"{sorted({hit.name for hit in leaked} - set(core.REFERENCE_FILES))}")
     assert "toolbox" not in (core.CORE_SYSTEM + core.CORE_NUDGE).lower()
+    assert core.REFERENCE_DIR != isolation.TOOLBOX_NAME
 
 
 def test_the_nudge_stops_pointing_at_recipes_that_are_not_there():
@@ -203,4 +218,87 @@ def test_the_whole_conversation_of_a_core_run_stays_clean(backend, store):
         for message in call["messages"]:
             for chunk in message["content"] if isinstance(message["content"], list) else []:
                 said.append(str(chunk.get("text", "") if isinstance(chunk, dict) else chunk))
-    assert not isolation.scan({"thread": "\n".join(said)}).contaminated
+    thread = {"thread": "\n".join(said)}
+    assert not isolation.scan(thread, given=core.REFERENCE_FILES).contaminated
+    # And the half that still has to hold: nothing beyond what was handed over.
+    assert {hit.name for hit in isolation.scan(thread).hits} <= set(core.REFERENCE_FILES)
+
+
+# -- what this addition closes, and the failures it is answering -------------------
+#
+# Each test names the runs behind it. An addition with no run behind it is the top-down
+# catalogue this phase exists to undo.
+
+
+def brief() -> str:
+    return core.brief(900)
+
+
+def test_the_desk_is_told_where_the_build123d_reference_is_and_how_to_use_it():
+    """`cell_increase_is_desk_side_retry_churn_not_the_gate`, 15 of 26 cases.
+
+    In `core+declare_gate-20260913-124524-aa21`, 27 of the 36 cells that raised a named
+    exception were the desk calling something that does not exist, and 17 of those were
+    build123d. The desk had no reference because `CoreDesk` is the arm given no tools;
+    `b123d_api.md` was opened by 0 of 26 runs and `help()`/`inspect.signature()` by 1.
+    """
+    text = brief()
+    assert f"{core.REFERENCE_DIR}/b123d_api.md" in text
+    assert "inspect.signature" in text and "help(" in text, (
+        "the file's whole design is discovery-then-introspect; the brief has to say the "
+        "second half or the desk stops at a reading list")
+    assert "grep" in text
+    assert "reading list" in text
+
+
+def test_the_desk_is_told_that_a_name_without_parens_is_a_property():
+    """Six cases raised `TypeError: 'bool' object is not callable` -- T5, T6, T10, T11,
+    T23, T24 -- which is what calling a property like a method looks like. T24's was
+    `fluid.is_valid()`, and `Shape.is_valid` is listed in the reference without parens.
+    The notation only helps if the desk is told it is notation."""
+    assert "property and takes none" in " ".join(brief().split())
+
+
+def test_the_desk_is_told_what_normals_actually_measures():
+    """`check_misunderstood_while_the_geometry_is_understood`, T21.
+
+    T21 pre-waived `normals` because "STLs are the boundary faces of the fluid solid, so
+    their normals point out of the fluid" -- correct about the geometry, and not what the
+    check measures, so it read back `xpass` on a check that was already clean. The
+    `union_closure` precedent is the argument: one explanatory line took its `xpass`
+    count from 2 to 0.
+    """
+    text = " ".join(brief().split())
+    assert "winding consistency and not orientation" in text
+    assert "does not waive it" in text
+    normals = text.index("`normals` counts edges walked twice")
+    closure = text.index("`union_closure` welds every STL")
+    assert abs(normals - closure) < 1200, "the two explanations belong together"
+
+
+def test_the_desk_is_told_to_record_the_numbers_it_chose():
+    """`assumption_recorded_nowhere_when_the_request_carries_no_number`, T25.
+
+    T25 wrote a 2.10 m fan and a 3.00 m length into its first cell, before any question,
+    for a request that states no dimension at all -- and across 2,386 characters of reply
+    text used not one word marking those numbers as its own. The repo's own convention is
+    `openreynolds/cad/check.py`: a legitimate-but-ambiguous result is "a warning with its
+    assumption stated, not a refusal".
+    """
+    text = " ".join(brief().split())
+    assert "is an assumption" in text
+    assert "which numbers came from the request and which came from you" in text
+    # The refusal route still exists; this is the case short of it, not a replacement.
+    assert 'outcome: "refuse"' in text
+
+
+def test_the_reference_the_brief_names_is_the_one_that_gets_copied():
+    """A brief naming a path the workspace does not have is how a desk spends its
+    opening steps looking for what it was told it had -- seven of twenty-seven, measured,
+    which is why `test_the_nudge_stops_pointing_at_recipes_that_are_not_there` exists."""
+    from openreynolds.buildup import isolation
+
+    for name in core.REFERENCE_FILES:
+        assert name in brief(), f"{name} is handed over and never mentioned"
+        assert (isolation.TOOLBOX_DIR / name).is_file(), (
+            f"{name} is named in the brief and is not on disk to copy")

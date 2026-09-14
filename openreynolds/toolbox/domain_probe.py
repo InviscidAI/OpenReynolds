@@ -117,9 +117,17 @@ class Union:
     they do not, `cad_audit.py` is the script that says so.
     """
 
-    def __init__(self, triangles: np.ndarray, files: list[str], manifest: dict | None = None):
+    def __init__(self, triangles: np.ndarray, files: list[str], manifest: dict | None = None,
+                 counts: list[int] | None = None):
         self.triangles = np.asarray(triangles, dtype=float)
         self.files = list(files)
+        self.counts = list(counts or [])
+        """Triangles contributed per file, in `files` order.
+
+        Kept so a caller can attribute a union-level finding back to the file it came
+        from. An open-edge count over the whole union says a surface does not close; it
+        does not say where, and the desk that was told 2,177 spent nine cells finding out
+        by hand."""
         self.manifest = manifest or {}
         self.index = surfaces.Index(self.triangles)
         flat = self.triangles.reshape(-1, 3)
@@ -161,8 +169,15 @@ class Union:
         return self._shell_indexes[shell]
 
 
-def read_union(directory: Path) -> Union:
-    """The patch STLs of a triSurface directory, plus `patches.json` if it is there."""
+def read_union(directory: Path, names: set[str] | None = None) -> Union:
+    """The patch STLs of a triSurface directory, plus `patches.json` if it is there.
+
+    `names`, when given, restricts the read to those filenames. A directory can hold a
+    file the mesh was not built from -- a whole-surface export left behind by an
+    abandoned route -- and welding that against the live per-patch files manufactures a
+    second copy of every triangle. The caller that knows which files the mesh dictionary
+    named passes them; everything else still reads the directory whole.
+    """
     directory = Path(directory)
     if not directory.exists():
         raise Refused(
@@ -183,7 +198,12 @@ def read_union(directory: Path) -> Union:
         except (OSError, ValueError):
             manifest = None
 
+    wanted = {str(n) for n in names} if names else None
     names = sorted(p.name for p in directory.iterdir() if p.suffix.lower() == ".stl")
+    if wanted is not None:
+        restricted = [n for n in names if n in wanted]
+        if restricted:
+            names = restricted
     if not names:
         raise Refused(
             f"refused: no .stl files in {directory}. A patch set is one STL per patch "
@@ -196,13 +216,14 @@ def read_union(directory: Path) -> Union:
         if tris is None or len(tris) == 0:
             continue
         parts.append(tris)
-        files.append(name)
+        files.append(name)  # counts follow parts, so the two stay in step
     if not parts:
         raise Refused(
             f"refused: the .stl files in {directory} hold no triangles between them. "
             "Check the export wrote facets, not an empty solid."
         )
-    return Union(np.concatenate(parts, axis=0), files, manifest)
+    return Union(np.concatenate(parts, axis=0), files, manifest,
+                 [int(len(part)) for part in parts])
 
 
 def _components(triangles: np.ndarray) -> np.ndarray:

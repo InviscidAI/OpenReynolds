@@ -62,6 +62,14 @@ class Record:
     mesh_exists: bool = False
     checkmesh_ok: bool = False
     usd: float = 0.0
+    given: list[str] = field(default_factory=list)
+    """Filenames this arm was handed on purpose, and which are therefore not evidence of
+    contamination when the run is seen touching them.
+
+    The arm declares it here rather than the observer being told at the command line,
+    because the observer grades a run directory that may be graded again next week by
+    somebody who does not remember which arm wrote it. A run that says what it was given
+    can be re-graded correctly from disk alone."""
     tokens: dict[str, int] = field(default_factory=dict)
     stopped: str = ""
     """One of `TERMINAL`, always."""

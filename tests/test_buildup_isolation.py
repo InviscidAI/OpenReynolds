@@ -130,3 +130,42 @@ def test_the_sweep_drivers_own_log_is_not_grepped_back_at_it(tmp_path):
     found = isolation.scan_run(run)
     assert found.contaminated
     assert {hit.where for hit in found.hits} == {"cells.log"}
+
+
+# -- a file handed over on purpose is not a sighting of us -------------------------
+
+
+def test_a_file_the_arm_was_handed_is_not_a_house_surface():
+    """Without this the addition it exists for voids the sweep measuring it.
+
+    `house_names` reads every `.py` and `.md` in the toolbox off disk, so the moment the
+    core desk is handed `b123d_api.md` and greps it -- the behaviour that was paid for --
+    every run in the sweep grades contaminated, and a contaminated sweep is void by §2 of
+    its own report. The grep cannot tell a desk that found us from a desk that used what
+    it was given, so the arm has to say which.
+    """
+    from openreynolds.buildup import core
+
+    default = isolation.house_names()
+    assert "b123d_api.md" in default, (
+        "the reference is a toolbox file and is a house surface until it is handed over")
+
+    handed = isolation.house_names(given=core.REFERENCE_FILES)
+    assert "b123d_api.md" not in handed
+    assert "cad_convert.py" in handed, (
+        "handing over one file must not open the rest of the toolbox")
+    assert isolation.TOOLBOX_NAME in handed, "the directory name is still a house surface"
+
+
+def test_greping_the_handed_reference_does_not_contaminate_but_the_toolbox_does():
+    """The two halves of the same rule, on the text a desk would actually produce."""
+    from openreynolds.buildup import core
+
+    used = {"cells.log": 'subprocess.run(["grep", "-n", "fillet", ".reference/b123d_api.md"])'}
+    assert not isolation.scan(used, given=core.REFERENCE_FILES).contaminated
+    assert isolation.scan(used).contaminated, (
+        "without `given` this is the false positive that voids the sweep")
+
+    found = {"cells.log": 'open("/work/.toolbox/cad_convert.py").read()'}
+    assert isolation.scan(found, given=core.REFERENCE_FILES).contaminated, (
+        "reaching past what was handed over is still finding us")
