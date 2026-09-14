@@ -370,7 +370,36 @@ def test_the_mode_parameter_is_stripped_from_every_signature(index):
 
 @pytest.mark.parametrize("pattern", [r"\bBRep\w*", r"\bBnd_\w*", r"\bTopoDS\w*", r"\bgp_\w+"])
 def test_raw_occt_bindings_are_absent_from_the_index(index, pattern):
-    assert not re.search(pattern, index), f"OCCT binding matching {pattern} in the index"
+    """Not *offered*, which is what the exclusion was always about.
+
+    Scoped to entry lines for the same reason the builder-mode test above is: the index
+    must not read as a reading list for the kernel underneath. The preamble is allowed to
+    name these prefixes, and now does -- telling a desk which surface to avoid requires
+    saying which surface that is, and a sweep measured what its absence costs. See
+    `test_the_index_steers_away_from_raw_occt`.
+    """
+    for line in index.splitlines():
+        if line.startswith("- ") or line.startswith("  "):
+            assert not re.search(pattern, line), \
+                f"OCCT binding matching {pattern} offered as an entry: {line!r}"
+
+
+def test_the_index_steers_away_from_raw_occt(index):
+    """The steer earns its place on measured evidence rather than taste.
+
+    In `core+declare_gate-20260913-124524-aa21`, 5 of the 27 API-surface failures were
+    raw OCCT reached by reflex, and one of them -- `BRepAlgoAPI_Defeaturing.HasErrors`,
+    a method that class does not have -- discarded a 643-second `Build()` that had already
+    succeeded and cost T5 its mesh. Six further cases raised
+    `TypeError: 'bool' object is not callable`, which is what calling a property like a
+    method looks like when you are half in one API and half in the other.
+    """
+    assert "Prefer these over the raw OCCT bindings underneath" in index
+    assert "'bool' object is not callable" in index
+    assert "IsDone()" in index, "the status-method trap is the specific one that cost a run"
+    heading = index.index("Prefer these over the raw OCCT")
+    first_entry = index.index("\n- `")
+    assert heading < first_entry, "the steer belongs in the preamble, before the entries"
 
 
 @pytest.mark.parametrize("leak", ["dataclass", "Callable", "sqrt", "radians"])

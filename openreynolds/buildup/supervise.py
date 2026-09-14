@@ -245,7 +245,7 @@ class Supervisor:
 
     def observe(self, *, case_dir: Path | None = None, spec: dict[str, Any] | None = None,
                 watch: Watch | None = None, expected: list[str] | None = None,
-                ) -> dict[str, Any]:
+                given: list[str] | None = None) -> dict[str, Any]:
         """Grade the run: contaminated or not, what the probes found, how it ended.
 
         Everything here reads the run directory and the case as they stand on disk. It
@@ -255,7 +255,10 @@ class Supervisor:
         beats = heartbeat.read(self.dir)
         watch = watch if watch is not None else self.seen()
 
-        dirt = isolation.scan_run(self.dir, expected=expected or [])
+        # The arm's own declaration when the caller does not override it: a run
+        # re-graded from disk next week has to reach the same verdict as this one.
+        handed = given if given is not None else list(data.get("given") or [])
+        dirt = isolation.scan_run(self.dir, expected=expected or [], given=handed)
         found = probes.run_all(Path(case_dir), dict(spec or {})) if case_dir else []
 
         data["beats"] = [vars(beat) for beat in beats]

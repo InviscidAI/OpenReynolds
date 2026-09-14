@@ -49,6 +49,11 @@ from cad_accept import LOCAL_FIXTURES, load_prompts, spend  # noqa: E402
 from openreynolds.llm.presets import prices  # noqa: E402
 from openreynolds.buildup import core, heartbeat, isolation, record  # noqa: E402
 
+TOOLBOX_DIR = isolation.TOOLBOX_DIR
+"""Where the reference this arm is handed is read from. The arm is given one file
+out of it, never the directory: `isolation.house_names` still covers every other
+name in there, so a run that reaches for `cad_convert.py` still grades contaminated."""
+
 WORK = Path(os.environ.get("OPENREYNOLDS_BUILDUP_WORK")
             or Path.home() / ".openreynolds-buildup" / "work")
 """Where the per-case workspace roots are made, and **outside the repository**.
@@ -114,6 +119,10 @@ def prepare(case: str, parent: Path, run_dir: Path,
     report = isolation.preflight(workspace)
     print(f"  workspace {workspace} clean ({report['entries']} entries, "
           f"{report['house_names']} house names, no toolbox)")
+    # The order is the same one the fixture relies on and for the same reason: the
+    # assertion runs on an empty directory, and everything this arm is handed on purpose
+    # is copied in after it. A reference copied first is one more exception the preflight
+    # would have to carry.
 
     geometry = ""
     if prompt["geometry"]:
@@ -126,6 +135,16 @@ def prepare(case: str, parent: Path, run_dir: Path,
         shutil.copyfile(source, target)
         geometry = str(target)
         print(f"  fixture {name} -> {geometry}")
+
+    for name in core.REFERENCE_FILES:
+        source = TOOLBOX_DIR / name
+        if not source.is_file():
+            raise SystemExit(f"the core desk is given {name} and it is not on disk at "
+                             f"{source}; run python3 {TOOLBOX_DIR / 'b123d_api.py'}")
+        handed = workspace / core.REFERENCE_DIR / name
+        handed.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, handed)
+        print(f"  reference {name} -> {handed}")
     return workspace, geometry, prompt
 
 
@@ -199,6 +218,7 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
         run_id=identifier, case=case, arm="core", model=cfg.mesher_model or cfg.model,
         workspace=str(workspace), case_dir=str(workspace / case.lower()),
         expects=str(prompt.get("expects") or "done"),
+        given=list(core.REFERENCE_FILES),
         started_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
     record.save(run_dir, entry)
 

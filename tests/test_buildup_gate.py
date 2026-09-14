@@ -200,9 +200,9 @@ def test_only_the_core_desk_is_offered_the_declare_tool():
 
 
 def test_the_core_brief_teaches_the_tool_and_the_waiver():
-    from openreynolds.buildup.core import CORE_SYSTEM
+    from openreynolds.buildup import core
 
-    brief = CORE_SYSTEM.format(step_timeout=240)
+    brief = core.brief(240)
     assert "declare_complete" in brief
     assert "waive" in brief
     assert "checkMesh" in brief and "advisory" in brief

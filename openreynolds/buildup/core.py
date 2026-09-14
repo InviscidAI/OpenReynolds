@@ -92,6 +92,17 @@ selectors, `export_step`), **gmsh** (the module, OCC-enabled), numpy, matplotlib
 pyvista rendering headless through OSMesa. Running as root. **No network** -- pip and apt \
 cannot reach an index, so anything not listed here is a constraint, not an install.
 
+`{{reference_dir}}/b123d_api.md` in your working directory is build123d grouped by what each \
+thing is for -- the operators, the primitives, the selectors, what measures a shape, what \
+reads and writes files. It is a reading list, not a reference: use it to find out that \
+something exists, then ask the kernel what it takes -- \
+`inspect.signature(bd.fillet)`, `help(bd.ShapeList.filter_by)` -- which answers against the \
+library actually installed and cannot go stale. \
+`subprocess.run(["grep", "-n", "fillet", "{{reference_dir}}/b123d_api.md"], \
+capture_output=True, text=True)` is the search. A name in there with no `()` after it is a \
+property and takes none. It is the only file of ours you have; there is nothing else to \
+look for.
+
 # The rules of this desk
 
 **Write build123d in algebra mode, directly.** Every operation names its operands -- \
@@ -157,16 +168,30 @@ it is recorded as one, and it finishes in a single call. Said after the check ha
 it is still accepted and recorded differently. Naming a check that then does not flag is \
 recorded too, and means you expected something about your own geometry that was not there.
 
-One of them is worth knowing precisely, because it is easy to be right about the geometry \
-and wrong about the check: **`union_closure` welds every STL in the directory into a \
+Two of them are worth knowing precisely, because it is easy to be right about the geometry \
+and wrong about the check. **`union_closure` welds every STL in the directory into a \
 single surface and counts the free edges of that union.** Individual patch files are open \
 surfaces by construction and that is not what it measures, so "each patch is a separate \
-sheet" does not explain a non-zero count.
+sheet" does not explain a non-zero count. **`normals` counts edges walked twice in the \
+same direction on that same union, which is winding consistency and not orientation.** \
+Whether your faces point into the fluid or out of it is not what it measures and does not \
+waive it; two triangles wound opposite ways is. A surface can be correctly outward-facing \
+throughout and still fail it, and a count of zero says nothing about which way the \
+normals point.
 
 **When the request cannot be answered correctly** -- a file that declares no length unit, a \
 request that states no dimension at all -- call `declare_complete` with \
 `outcome: "refuse"` and a one-line `reason`, and build nothing. Reporting up is the work in \
 that case; guessing is not.
+
+**Every number you chose rather than were given is an assumption, and it goes in your \
+closing summary as one.** Short of a refusal, a request will still leave things open -- a \
+wall thickness nobody stated, a domain extent, where "near the floor" is -- and choosing \
+is your job. Recording the choice is also your job: say which numbers came from the \
+request and which came from you, in the same place you report what you measured. A \
+dimension written down as though it had been given is the one kind of wrong answer nobody \
+downstream can see, because it is self-consistent everywhere it appears and the geometry \
+built from it checks out perfectly.
 
 If you run out of steps or seconds before you get there, `checkMesh` still runs on \
 whatever is in the directory and you are told what it found -- an unexamined mesh is the \
@@ -322,6 +347,34 @@ def _union(current: list[float], other: list[float]) -> list[float]:
            [max(current[i + 3], other[i + 3]) for i in range(3)]
 
 
+REFERENCE_DIR = ".reference"
+"""Where the files this arm is handed live inside its workspace.
+
+Not `.toolbox`: that name is itself a house surface (`isolation.TOOLBOX_NAME`), and a
+desk that writes it has found us whether or not the directory exists. This one is the
+arm's own, holds only what the arm was given, and is named in the brief."""
+
+REFERENCE_FILES = ("b123d_api.md",)
+"""What the core desk is handed, and the whole of it.
+
+One file, added on measured evidence rather than because it seemed useful: in
+`core+declare_gate-20260913-124524-aa21`, 27 of the 36 cells that raised a named
+exception were the desk calling something that does not exist, across 15 of 26 cases,
+and 17 of those 27 were build123d -- exactly this file's subject. Nothing else from the
+toolbox comes with it: `house_names` still covers every other name in there, so a run
+that reaches for `cad_convert.py` still grades contaminated."""
+
+
+def brief(step_timeout: int | float = STEP_TIMEOUT_S) -> str:
+    """The core brief as the desk receives it.
+
+    A renderer rather than a raw `.format` at every call site: `CORE_SYSTEM` carries
+    placeholders, and a caller that forgets one gets a `KeyError` at the moment it can
+    least afford one. Anything that wants to read the brief -- a test, a report, the desk
+    itself -- goes through here."""
+    return CORE_SYSTEM.format(step_timeout=step_timeout, reference_dir=REFERENCE_DIR)
+
+
 class CoreDesk(CadDesk):
     """The same loop, told less, judged by `checkMesh`, and given no tools at all.
 
@@ -335,6 +388,12 @@ class CoreDesk(CadDesk):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.toolbox = ""
+        """Still empty, and the reference below does not change that.
+
+        `self.toolbox` is what renders a path to the *toolbox*, and this arm has none.
+        What it has is one file copied into its own workspace under `REFERENCE_DIR`,
+        which the brief names directly. The distinction is the measurement: a desk that
+        can render `/work/.toolbox` can go looking in it."""
         self._declares: list[dict[str, Any]] = []
         self._warned: set[str] = set()
         """Which advisory checks have raised a concern on some earlier declare. A waiver
@@ -342,7 +401,7 @@ class CoreDesk(CadDesk):
         prediction. `gate.evaluate` does the labelling and the desk cannot reach it."""
 
     def _system(self) -> str:
-        return CORE_SYSTEM.format(step_timeout=STEP_TIMEOUT_S)
+        return brief(STEP_TIMEOUT_S)
 
     def _nudge(self) -> str:
         return CORE_NUDGE

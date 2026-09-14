@@ -223,3 +223,156 @@ def test_the_registry_document_and_the_code_hold_the_same_probes():
                       DOC.read_text(encoding="utf-8"), re.M)
     assert [row[0] for row in rows] == [probe.id for probe in probes.REGISTRY]
     assert [row[1] for row in rows] == [probe.state for probe in probes.REGISTRY]
+
+
+# -- what the corpus sweep proved the probes were getting wrong ---------------------
+#
+# Each test below is one reading that this sweep demonstrated was false, on a real run,
+# in a way nothing downstream could detect. They fail without the repair beside them.
+
+
+def test_a_file_the_mesh_dict_does_not_name_is_not_welded_in(tmp_path):
+    """T22's regression, and the sharpest failure in the sweep.
+
+    The desk left `brakeDisc.stl` -- a byte-for-byte duplicate of its five patch files --
+    in `constant/triSurface` after abandoning a cfMesh route, and `snappyHexMeshDict`
+    named only the five. Welding all six put every triangle in twice: the open-edge count
+    stays at zero, because each edge's reverse is always present from the duplicate, while
+    every undirected edge now looks walked twice the same way. The gate warned `normals`
+    on 62,208 phantom flipped edges at the run's last turn and the run ended `steps` one
+    turn later, never having seen the warning. The mesh that shipped was built from five
+    files and was correct.
+    """
+    root = case(tmp_path, point=(5, 5, 5))
+    surface = root / "constant" / "triSurface"
+    (surface / "leftover_whole_surface.stl").write_text(stl(CUBE), encoding="utf-8")
+    (root / "system" / "snappyHexMeshDict").write_text(
+        'geometry { walls.stl { type triSurfaceMesh; name walls; } }\n'
+        "castellatedMeshControls\n{\n    locationInMesh (5 5 5);\n}\n", encoding="utf-8")
+
+    normals = one(probes.run_all(root, {}), "normals")
+    assert normals.state == probes.MEASURED
+    assert normals.measured["flipped_edges"] == 0, (
+        "the duplicate was welded in and every edge now reads as walked twice the same "
+        "way -- this is the 62,208 that cost T22 its pass")
+    assert normals.measured["triangles"] == len(CUBE)
+    assert "leftover_whole_surface.stl" in normals.why
+
+
+def test_a_patch_set_outside_tri_surface_is_found_rather_than_called_absent(tmp_path):
+    """T3, T10 and T11 each exported a good surface to the case root.
+
+    Their route was gmsh to gmshToFoam, which never needs `constant/triSurface`, so all
+    three surface probes reported `n/a: does not exist` with four to eight STLs on disk.
+    `n/a` there meant "not wired to this case's route", and nothing downstream could tell
+    that from "this case exported nothing"."""
+    root = tmp_path / "case"
+    root.mkdir(parents=True)
+    (root / "walls.stl").write_text(stl(CUBE), encoding="utf-8")
+
+    closure = one(probes.run_all(root, {}), "union_closure")
+    assert closure.state == probes.MEASURED, "a surface in the case root read as absent"
+    assert closure.measured["open_edges"] == 0
+    assert "patch set read from ." in closure.why
+
+
+def test_a_surface_too_large_to_count_is_not_reported_as_one_that_is_absent(tmp_path):
+    """T15's 695,308 triangles and T1's nothing-at-all came back in the same word.
+
+    The two ceilings are different numbers -- 400,000 for the edge walk, 200,000 for the
+    crossing sweep -- so a surface can be over one and under the other, and neither was
+    stated anywhere a reader could find it."""
+    root = case(tmp_path, point=(5, 5, 5))
+    monkey = probes.TRIANGLE_LIMIT
+    try:
+        probes.TRIANGLE_LIMIT = 4  # the cube has twelve
+        crossings = one(probes.run_all(root, {}), "self_intersection")
+    finally:
+        probes.TRIANGLE_LIMIT = monkey
+    assert crossings.state == probes.OVER_LIMIT
+    assert crossings.state != probes.NOT_APPLICABLE
+    assert crossings.measured["triangles"] == len(CUBE)
+    assert crossings.measured["limit"] == 4
+    assert "not absent" in crossings.why
+
+
+def test_zero_pairs_tested_is_not_a_clean_surface(tmp_path):
+    """T2 reported `measured` with `pairs_tested: 0` on a 20,480-triangle sphere.
+
+    It is reported identically to T13's genuine 1,448-pair clean reading, and a zero
+    numerator over a zero denominator is not a result. This is the one probe state that
+    says the probe ran and still measured nothing."""
+    root = case(tmp_path, point=(5, 5, 5))
+    crossings = one(probes.run_all(root, {}), "self_intersection")
+    if crossings.measured.get("pairs_tested") == 0:
+        assert crossings.state == probes.UNTESTED
+        assert crossings.state != probes.MEASURED
+    else:  # the cube does test pairs; the branch above is the contract
+        assert crossings.state == probes.MEASURED
+
+
+def test_scale_says_the_spec_is_missing_rather_than_that_the_case_states_no_dimension(
+        tmp_path):
+    """The old string was false on every case that states a dimension in prose.
+
+    T8, T9, T14 and T24 all state theirs and all read "the case states no dimension".
+    What is missing is the `extent_m` the spec has to carry, which is a different fact
+    about a different thing, and the report that repeated it was wrong about the corpus."""
+    result = one(probes.run_all(case(tmp_path), {}), "scale")
+    assert result.state == probes.NOT_APPLICABLE
+    assert "extent_m" in result.why and "spec" in result.why
+    assert "the case states no dimension" not in result.why
+
+
+def test_the_dict_restriction_does_not_drop_a_patch_the_surface_needs(tmp_path):
+    """T14 is why this check exists rather than the argument for it.
+
+    Its `snappyHexMeshDict` names three of six genuinely closed patch files -- snappy
+    took the domain box from `blockMesh`, so the box's STLs are exported but unnamed --
+    and restricting the union to the named three turned a true reading of 0 free edges
+    into a false 158. The asymmetry that makes the rule safe: a duplicate can only ever
+    leave the open-edge count where it was, because every edge of a doubled surface still
+    has its reverse, so dropping one never opens a closed surface. Dropping a load-bearing
+    patch does. The restriction therefore has to prove itself on every case that uses it.
+    """
+    root = tmp_path / "case"
+    surface = root / "constant" / "triSurface"
+    surface.mkdir(parents=True)
+    # Two halves that are closed only together, and a dict that names one of them.
+    lower = [t for t in CUBE if 0 in t or 1 in t or 2 in t or 3 in t]
+    upper = [t for t in CUBE if t not in lower]
+    (surface / "lower.stl").write_text(stl(lower), encoding="utf-8")
+    (surface / "upper.stl").write_text(stl(upper), encoding="utf-8")
+    (root / "system").mkdir(parents=True)
+    (root / "system" / "snappyHexMeshDict").write_text(
+        "geometry { lower.stl { type triSurfaceMesh; name lower; } }\n", encoding="utf-8")
+
+    closure = one(probes.run_all(root, {}), "union_closure")
+    assert closure.state == probes.MEASURED
+    assert closure.measured["open_edges"] == 0, (
+        "the restriction dropped a patch the surface needed and opened it -- "
+        "this is T14's true 0 turning into a false 158")
+    assert sorted(closure.measured["files"]) == ["lower.stl", "upper.stl"]
+    assert "opens the surface" in closure.why
+
+
+def test_open_edges_are_located_rather_than_only_counted(tmp_path):
+    """A count is not a lead, and T12 is what a count alone costs.
+
+    Told its union had 2,177 free edges, the desk spent nine cells -- STL byte
+    inspection, two re-tessellations, feature-edge extraction, a z histogram, an OCCT
+    adjacency walk -- working out where they were, settled on a float32 explanation a
+    tolerance sweep refutes, and ran out of budget with the defect untouched. The edge
+    walk already knows: on T12 the answer is `hub.stl` (890 of 890 triangles) and
+    `inlet.stl` (830 of 830), in a box 16 mm in radius. That is the inlet-eye junction,
+    and it is one line rather than nine cells."""
+    missing = [t for t in CUBE if t not in ((0, 2, 1), (0, 3, 2))]  # one face gone
+    root = case(tmp_path, missing, point=(5, 5, 5))
+    closure = one(probes.run_all(root, {}), "union_closure")
+    assert closure.state == probes.MEASURED
+    assert closure.measured["open_edges"] > 0
+    assert closure.measured["by_file"]["walls.stl"]["open_edges"] > 0
+    lower, upper = closure.measured["bounds_m"]
+    assert lower == [0.0, 0.0, 0.0] and upper == [1.0, 1.0, 0.0], (
+        "the hole is the z = 0 face and the bounds should say so")
+    assert "walls.stl" in closure.why

@@ -79,17 +79,31 @@ class Dirty(Exception):
     than asserted, and the assumption held for exactly as long as nobody looked."""
 
 
-def house_names(toolbox: Path | None = None) -> tuple[str, ...]:
+def house_names(toolbox: Path | None = None,
+                given: Iterable[str] = ()) -> tuple[str, ...]:
     """Every filename a run must not be seen touching, read off the toolbox as it is.
 
     Off disk rather than written down, so a tool added next week is covered by the grep
-    without anyone remembering to add it here."""
+    without anyone remembering to add it here.
+
+    `given` is the arm's own answer to that: a file this arm was **handed on purpose** is
+    not a sighting of us, and greping it is the behaviour that was paid for rather than
+    evidence against the run. Without this, handing the core desk one reference turns all
+    26 runs contaminated and voids the sweep measuring it -- the grep cannot tell a desk
+    that found us from a desk that used what it was given, so the arm has to say which.
+
+    It is deliberately not `expected`. That inverts the verdict -- a tooled arm is invalid
+    if it never reached what it was handed -- which is right for a tool that is the whole
+    point of the arm, and wrong for a reference a case may legitimately never need. A desk
+    meshing a box should not grade contaminated for not looking anything up.
+    """
     directory = Path(toolbox or TOOLBOX_DIR)
+    handed = {str(name) for name in given}
     names = {TOOLBOX_NAME}
     if directory.is_dir():
         for path in directory.rglob("*"):
             if path.is_file() and path.suffix in (".py", ".md"):
-                if path.name not in GENERIC:
+                if path.name not in GENERIC and path.name not in handed:
                     names.add(path.name)
     return tuple(sorted(names))
 
@@ -218,14 +232,14 @@ def _under(path: Path, parent: Path) -> bool:
 
 
 def scan(texts: Mapping[str, str], *, toolbox: Path | None = None,
-         expected: Iterable[str] = ()) -> Contamination:
+         expected: Iterable[str] = (), given: Iterable[str] = ()) -> Contamination:
     """Grep the run's own words for house surfaces. `texts` is name -> whole text.
 
     The cell log and every captured output, which between them are everything the run
     saw or said. Searched as text rather than as paths because the sighting that
     mattered last round was a `grep` for a filename, not an import of it.
     """
-    names = set(house_names(toolbox)) | {str(REPO)}
+    names = set(house_names(toolbox, given)) | {str(REPO)}
     hits: list[Hit] = []
     for where, text in texts.items():
         for number, line in enumerate((text or "").splitlines(), start=1):
@@ -267,7 +281,7 @@ still read. A file the desk cannot write to is not evidence about the desk."""
 
 
 def scan_run(run_dir: Path, *, toolbox: Path | None = None,
-             expected: Iterable[str] = (),
+             expected: Iterable[str] = (), given: Iterable[str] = (),
              exclude: Iterable[str] = OBSERVER_FILES) -> Contamination:
     """The same grep over everything a run directory holds that reads as text."""
     directory = Path(run_dir)
@@ -283,7 +297,7 @@ def scan_run(run_dir: Path, *, toolbox: Path | None = None,
                 encoding="utf-8", errors="replace")
         except OSError:
             continue
-    return scan(texts, toolbox=toolbox, expected=expected)
+    return scan(texts, toolbox=toolbox, expected=expected, given=given)
 
 
 _STEP = re.compile(r"```python\n(.*?)```", re.S)
