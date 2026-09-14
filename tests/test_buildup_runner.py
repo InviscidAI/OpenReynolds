@@ -259,3 +259,131 @@ def test_refused_is_a_terminal_state_the_record_will_accept():
 
     assert "refused" in record.TERMINAL
     assert record.classify("refused") == "refused"
+
+
+# -- the kernel goes down with the run ---------------------------------------------
+
+
+def test_the_runner_puts_the_kernel_down_on_every_path_out_of_a_run(tmp_path, monkeypatch):
+    """The leak that cost a machine, and it was one uncalled method.
+
+    `LocalBackend.close` has always called `kernel_stop`, and `run_one` never called
+    `close`. A kernel holds 0.4-1.3 GB, so a 26-case sweep ended with 26 of them
+    resident. On 2026-09-14 that reached the end of a 62 GB box with no swap: no OOM kill
+    fired, `sshd` simply stopped being able to fork at 03:41, and
+    `core+reference-20260914-025525-6a2b` died at 10 of 26 with `Under memory pressure`
+    still repeating for hours, because the orphans outlived the driver that made them.
+
+    Both endings are exercised against the real `run_one`: the one where the desk returns
+    and the one where it raises. A cleanup that only covers the happy path is the bug
+    wearing a fix.
+    """
+    closed: list[str] = []
+
+    class Backend:
+        def __init__(self, *a, **k):
+            pass
+
+        def close(self):
+            closed.append("closed")
+
+    class Result:
+        case_dir, steps, tokens, stopped = "", [], {}, "done"
+        check, script = None, ""
+
+    def desk_that(outcome):
+        class Desk:
+            on_turn = on_step = staticmethod(lambda *a, **k: None)
+
+            def __init__(self, *a, **k):
+                pass
+
+            def run(self, *a, **k):
+                if outcome == "raise":
+                    raise RuntimeError("the desk fell over")
+                return Result()
+        return Desk
+
+    import openreynolds.backend.local as local_backend
+
+    for outcome in ("return", "raise"):
+        closed.clear()
+        monkeypatch.setattr(local_backend, "LocalBackend", Backend)
+        monkeypatch.setattr(local_backend, "find_bashrc", lambda: "/dev/null")
+        monkeypatch.setattr(runner.core, "CoreDesk", desk_that(outcome))
+        monkeypatch.setattr(runner, "prepare", lambda *a, **k: (
+            tmp_path / "ws", "", {"request": "a duct", "properties": [], "expects": "done"}))
+        (tmp_path / "ws").mkdir(exist_ok=True)
+        run_dir = tmp_path / f"run-{outcome}"
+        run_dir.mkdir()
+        try:
+            runner.drive("T1", tmp_path, tmp_path, 0, 0.0, run_dir=run_dir)
+        except BaseException:
+            pass  # the raising case is supposed to propagate; the cleanup is the point
+        assert closed, (
+            f"the run ended by {outcome} and nothing put the kernel down -- "
+            "this is the leak that exhausted a 62 GB machine")
+
+
+def test_a_cleanup_failure_never_masks_the_runs_result(tmp_path, monkeypatch):
+    """A kernel that will not go down is not a reason to lose the measurement."""
+    class Stubborn:
+        def __init__(self, *a, **k):
+            pass
+
+        def close(self):
+            raise RuntimeError("kernel will not die")
+
+    class Result:
+        case_dir, steps, tokens, stopped = "", [], {}, "done"
+        check, script = None, ""
+
+    class Desk:
+        on_turn = on_step = staticmethod(lambda *a, **k: None)
+
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, *a, **k):
+            return Result()
+
+    import openreynolds.backend.local as local_backend
+
+    monkeypatch.setattr(local_backend, "LocalBackend", Stubborn)
+    monkeypatch.setattr(local_backend, "find_bashrc", lambda: "/dev/null")
+    monkeypatch.setattr(runner.core, "CoreDesk", Desk)
+    monkeypatch.setattr(runner, "prepare", lambda *a, **k: (
+        tmp_path / "ws", "", {"request": "a duct", "properties": [], "expects": "done"}))
+    (tmp_path / "ws").mkdir(exist_ok=True)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    runner.drive("T1", tmp_path, tmp_path, 0, 0.0, run_dir=run_dir)  # must not raise
+
+
+def test_the_runner_installs_a_sigterm_handler_so_the_watchers_grace_window_is_usable():
+    """The watcher waits `GRACE_S` between its TERM and its KILL, on the stated reason
+    that it is "long enough for the run's own `finally` to write what it had". Python's
+    default SIGTERM disposition terminates without unwinding, so no `finally` ran and the
+    window was unusable -- which is also why a killed run's record used to keep its
+    defaults, worked around by writing per turn.
+
+    A `killpg` on the runner's group does not reach the kernel on its own: `job_start`
+    gives every job `start_new_session=True`, deliberately, so a job's own tree dies with
+    it. That is right for the job and is exactly why the runner has to put the kernel
+    down itself rather than relying on the signal reaching it.
+    """
+    source = (ROOT / "scripts" / "cad_buildup.py").read_text()
+    assert "signal.signal(signal.SIGTERM" in source, (
+        "no SIGTERM handler; the watcher's grace window cannot be used")
+    handler = source[source.index("def on_terminate"):][:400]
+    assert "put_the_kernel_down()" in handler
+    assert "SIG_DFL" in handler, (
+        "the exit status must still say killed-by-SIGTERM rather than an invented one")
+
+
+def test_the_backend_close_contract_still_stops_the_kernel():
+    """The fix relies on `close()` meaning `kernel_stop()`. If that stops being true the
+    runner is calling something that no longer does the job."""
+    source = (ROOT / "openreynolds" / "backend" / "local.py").read_text()
+    block = source[source.index("    def close(self)"):][:600]
+    assert "kernel_stop()" in block

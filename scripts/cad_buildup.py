@@ -34,6 +34,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import sys
 import time
 import traceback
@@ -278,6 +279,47 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     desk.on_turn = on_turn
     desk.on_step = on_step
 
+    # **The kernel goes down with the run, on every path out of it.**
+    #
+    # `backend.close()` already does the right thing -- `LocalBackend.close` calls
+    # `kernel_stop`, and the channel's `stop` is idempotent and swallows a kernel that has
+    # already gone -- and until now nothing ever called it. A kernel holds 0.4-1.3 GB of
+    # its own, and a 26-case sweep therefore ended with 26 of them resident. On
+    # 2026-09-14 that reached the end of a 62 GB machine with no swap: no OOM kill ever
+    # fired, `sshd` simply stopped being able to fork at 03:41, the box was unreachable
+    # until it was restarted at 09:22, and `core+reference-20260914-025525-6a2b` died at
+    # 10 of 26 with `Under memory pressure` still repeating hours later, because the
+    # orphans outlived the driver that made them.
+    #
+    # Two paths, because there are two ways a run ends and neither covered the other:
+    #
+    # * the ordinary one, `finally` below, which covers a return and an exception alike;
+    # * **a SIGTERM from the watcher**, which the `on_turn` note above already describes:
+    #   the default disposition terminates without unwinding, so no `finally` runs. The
+    #   watcher deliberately waits `GRACE_S` between its TERM and its KILL, "long enough
+    #   for the run's own `finally` to write what it had" -- a window nothing could use,
+    #   because there was no handler to use it. Now there is.
+    #
+    # A `killpg` on the runner's group does not reach the kernel by itself: `job_start`
+    # gives every job `start_new_session=True` on purpose, so that killing a job reaches
+    # its own tree (an `mpirun` puts its ranks below it). That is right for the job and
+    # it is exactly why the kernel survives a signal aimed at the runner, so the runner
+    # has to put it down itself.
+    def put_the_kernel_down() -> None:
+        try:
+            backend.close()
+        except Exception:  # noqa: BLE001 - a run's result outranks its cleanup
+            pass
+
+    def on_terminate(signum: int, _frame: Any) -> None:
+        put_the_kernel_down()
+        # Re-raise as the default disposition so the exit status still says "killed by
+        # SIGTERM" rather than inventing one. The watcher reads liveness, not our code.
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    previous = signal.signal(signal.SIGTERM, on_terminate)
+
     try:
         result = desk.run(prompt["request"], case=case.lower(), geometry=geometry)
     except BaseException as exc:  # noqa: BLE001 - a crash is a result too
@@ -290,6 +332,8 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
         raise
     finally:
         pulse.done()
+        put_the_kernel_down()
+        signal.signal(signal.SIGTERM, previous)
 
     entry.seconds = round(time.time() - started, 1)
     entry.case_dir = result.case_dir
