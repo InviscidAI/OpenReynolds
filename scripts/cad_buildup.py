@@ -227,6 +227,14 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
         workspace=str(workspace), case_dir=str(workspace / case.lower()),
         expects=str(prompt.get("expects") or "done"),
         given=list(core.REFERENCE_FILES),
+        # Set here rather than beside the other end-of-run fields, because `on_turn` and
+        # `on_step` both save the record while the run is still going and the watcher can
+        # kill it between any two of those saves. A killed run then wrote
+        # `properties: []`, which does not read as "this run measured none" -- it reads as
+        # "this case asked for none", and a sweep report says so in the section that
+        # exists to catch exactly that. T4, T10 and T23 recorded zero against 5, 6 and 6.
+        properties=[{"property": text, "measured": None}
+                    for text in (prompt.get("properties") or [])],
         started_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
     record.save(run_dir, entry)
 
@@ -348,7 +356,6 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     # ran them, and a run that ended on a budget still made the declares it made.
     entry.declares = list(getattr(desk, "_declares", []) or [])
     entry.why = "; ".join(result.check.missing) if result.check else ""
-    entry.properties = [{"property": text, "measured": None} for text in prompt["properties"]]
     # Did this run do what its case asked? For nearly every case that is the mesh; for a
     # refusal case it is the decline, and the two are opposites. Scoring on
     # `checkmesh_ok` alone is what recorded T6's guess as a success.

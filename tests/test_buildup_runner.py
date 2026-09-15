@@ -159,6 +159,56 @@ def test_the_record_carries_the_accounting_before_the_run_returns(tmp_path, monk
     assert seen[1]["n_turns"] == 2
 
 
+def test_the_record_carries_the_named_properties_before_the_run_returns(tmp_path, monkeypatch):
+    """The same defect as the accounting above, in the field nobody checked.
+
+    `properties` was assigned from `prompt` beside the other end-of-run fields, so a
+    killed run kept the default empty list -- and an empty list does not read as "this
+    run measured none of them". It reads as "this case named none", which is what a
+    sweep report then says in the one section that exists to catch a run measuring
+    nothing. In `core-kimi-k3-20260914-143522-e17d` that was T4, T10 and T23 recording
+    zero against the 5, 6 and 6 their prompts name.
+    """
+    module = load_runner()
+
+    from openreynolds.buildup import record
+
+    seen: list[dict] = []
+    run_dir_holder: list[Path] = []
+
+    class StubDesk:
+        on_turn = None
+        on_step = None
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, *_args, **_kwargs):
+            self.on_turn(turn=1, steps=0, stop_reason="end_turn", output_tokens=10,
+                         tokens={"input": 1, "output": 10}, fenced=False, text_chars=1,
+                         thinking_chars=0, text="x", block_types=["text"])
+            seen.append(record.load(run_dir_holder[0]))
+            raise AssertionError("the kill lands here; the run never returns")
+
+    real_prepare = module.prepare
+
+    def prepare(case, parent, run_dir, identifier=""):
+        run_dir_holder.append(Path(run_dir))
+        return real_prepare(case, parent, run_dir, identifier)
+
+    monkeypatch.setattr(module, "prepare", prepare)
+    monkeypatch.setattr(module.core, "CoreDesk", StubDesk)
+    monkeypatch.setattr(module, "find_bashrc", lambda: "/dev/null", raising=False)
+
+    with pytest.raises(AssertionError, match="the kill lands here"):
+        module.drive("T1", tmp_path / "work", tmp_path / "runs", 0, 0.0)
+
+    named = [p["property"] for p in seen[0]["properties"]]
+    assert named, "a killed run recorded no properties, so the case reads as naming none"
+    assert len(named) == len(module.load_prompts()["T1"]["properties"])
+    assert all(p["measured"] is None for p in seen[0]["properties"])
+
+
 def test_two_sweeps_do_not_ask_for_the_same_workspace(tmp_path, monkeypatch):
     """A sweep names its run directories after the case -- `runs/T3` -- so a workspace
     named from the directory is `T3-T3` for every sweep that ever runs.
