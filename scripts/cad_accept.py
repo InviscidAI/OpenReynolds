@@ -216,13 +216,17 @@ def save_record(arm: str, name: str, record: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def spend(tokens: dict[str, int], model: str = "") -> float:
-    """What these tokens cost at `model`'s rates.
+def spend(tokens: dict[str, int], model: str = "", provider: str = "") -> float:
+    """What these tokens cost at this `model`'s rates at this `provider`.
 
     `model` is defaulted rather than required only so an old call site is a wrong number
     instead of a crash while it is being updated -- and an empty model prices at zero,
-    which is loud. Every call site in the tree passes one."""
-    return presets_spend(tokens, model)
+    which is loud. Every call site in the tree passes one.
+
+    `provider` is what makes the rate right where a model is served by more than one
+    vendor: kimi-k3 is 20% dearer at Moonshot than at Aster, and a table keyed on the
+    model id alone cannot say which run it is pricing."""
+    return presets_spend(tokens, model, provider)
 
 
 # -- the workspace -------------------------------------------------------------
@@ -553,7 +557,7 @@ def run_desk(cfg, backend, store, prompt: dict[str, Any], out: Path) -> dict[str
         "desk_seconds": round(result.seconds, 1),
         "steps": len(result.steps),
         "tokens": dict(result.tokens),
-        "usd": round(spend(result.tokens, cfg.mesher_model or cfg.model), 4),
+        "usd": round(spend(result.tokens, cfg.mesher_model or cfg.model, cfg.provider), 4),
         "script_lines": len((result.script or "").splitlines()),
         "check": _check_digest(result.check),
         "artifacts": sorted(files) + sorted(extra),
@@ -619,7 +623,7 @@ def run_old(cfg, backend, store, prompt: dict[str, Any], out: Path) -> dict[str,
         "ok": bool(result.ok), "stopped": result.stopped, "error": result.error,
         "summary": result.summary, "case_dir": result.case_dir,
         "seconds": round(wall, 1), "steps": len(result.steps),
-        "tokens": dict(result.tokens), "usd": round(spend(result.tokens, cfg.mesher_model or cfg.model), 4),
+        "tokens": dict(result.tokens), "usd": round(spend(result.tokens, cfg.mesher_model or cfg.model, cfg.provider), 4),
         "missing": list(result.check.missing) if result.check else [],
         "artifacts": sorted(files) + sorted(extra),
     }
