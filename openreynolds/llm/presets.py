@@ -31,7 +31,13 @@ PRICE_PER_MTOK: dict[str, dict[str, float]] = {
     # than off the marketing page, whose gpt-oss figure disagreed with the API's. Chat
     # Completions never bills a cache *write* -- `openai_api._token_classes` always
     # reports that class as 0 -- so 0.0 here is the true rate, not a missing one.
-    "kimi-k3": {"input": 2.50, "output": 12.50, "cache_read": 0.25, "cache_write": 0.0},
+    # Keyed by vendor as well as model, because a model id does not determine a price:
+    # the same open weights cost different amounts at different vendors, and kimi-k3 is
+    # 20% dearer at Moonshot than at Aster. An unqualified `kimi-k3` is deliberately not
+    # here -- "some vendor's kimi-k3" has no price, and `prices()` returning None is what
+    # stops a run that cannot say what it cost.
+    "aster:kimi-k3": {"input": 2.50, "output": 12.50, "cache_read": 0.25, "cache_write": 0.0},
+    "moonshot:kimi-k3": {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 0.0},
     "glm-5.2": {"input": 1.00, "output": 4.00, "cache_read": 0.20, "cache_write": 0.0},
     # gpt-oss publishes no cached rate, so a cached prefix is priced at the full input
     # rate: an unbilled discount we do not know about understates nothing.
@@ -64,22 +70,28 @@ comparison between two sweeps whose models differ -- which is exactly what the b
 chain exists to make."""
 
 
-def prices(model: str) -> dict[str, float] | None:
+def prices(model: str, provider: str = "") -> dict[str, float] | None:
     """The rates for a model, or `None` when we do not know them.
 
     `None` rather than an empty dict on purpose: an empty dict prices a run at zero, and
     a zero that means "unpriced" is indistinguishable from a zero that means "free" --
     which is the shape of the bug this table was moved to fix."""
-    return PRICE_PER_MTOK.get((model or "").strip())
+    key = (model or "").strip()
+    who = (provider or "").strip().lower()
+    if who:
+        qualified = PRICE_PER_MTOK.get(f"{who}:{key}")
+        if qualified is not None:
+            return qualified
+    return PRICE_PER_MTOK.get(key)
 
 
-def spend(tokens: dict[str, int] | None, model: str) -> float:
+def spend(tokens: dict[str, int] | None, model: str, provider: str = "") -> float:
     """What a run cost, at this model's rates. Unknown model prices at 0.0.
 
     Callers that report a number to somebody should refuse an unpriced model up front
     rather than let this return zero -- `scripts/cad_buildup.py` does, beside its key
     check, because a sweep ranks its findings by cost."""
-    rates = prices(model) or {}
+    rates = prices(model, provider) or {}
     return sum(rates.get(name, 0.0) * int(count or 0) / 1e6
                for name, count in (tokens or {}).items())
 

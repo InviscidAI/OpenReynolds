@@ -555,3 +555,19 @@ def test_responses_drops_the_extras_it_is_refused_and_remembers():
     assert "include" not in provider._kwargs("m", "s", [], [], "medium", 500)
     provider.lean = True
     assert "reasoning" not in provider._kwargs("m", "s", [], [], "medium", 500)
+
+
+def test_a_model_served_by_two_vendors_is_priced_by_vendor():
+    """kimi-k3 is 20% dearer at Moonshot than at Aster, so the model id alone cannot
+    price a run. An unqualified id has no price at all rather than a plausible wrong
+    one -- `cad_buildup` refuses to start on `None`, and that refusal is the point."""
+    from openreynolds.llm.presets import prices, spend
+
+    assert prices("kimi-k3", "aster")["output"] == 12.50
+    assert prices("kimi-k3", "moonshot")["output"] == 15.00
+    assert prices("kimi-k3") is None
+    # A model sold by one vendor stays keyed on its own id.
+    assert prices("claude-opus-5", "anthropic") == prices("claude-opus-5")
+    tokens = {"input": 1_000_000, "output": 1_000_000}
+    assert spend(tokens, "kimi-k3", "moonshot") > spend(tokens, "kimi-k3", "aster")
+    assert spend(tokens, "kimi-k3") == 0.0

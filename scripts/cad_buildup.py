@@ -202,14 +202,15 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     if missing:
         raise SystemExit(f"missing configuration: {missing}")
     model = cfg.mesher_model or cfg.model
-    if prices(model) is None:
+    if prices(model, cfg.provider) is None:
         # Beside the key check, and for the same reason: this is the thing that writes
         # the records a sweep ranks by cost. An unpriced model does not make the run
         # cheaper, it makes the number meaningless -- and a meaningless number that
         # looks like a real one is how the first baseline reported $3.00 for $7.49.
         raise SystemExit(
-            f"no price on record for {model!r}, so this run could not report what it "
-            "cost. Add its rates to openreynolds/llm/presets.PRICE_PER_MTOK.")
+            f"no price on record for {model!r} at {cfg.provider!r}, so this run could not "
+            "report what it cost. "
+            "Add its rates to openreynolds/llm/presets.PRICE_PER_MTOK.")
     bashrc = find_bashrc()
     if not bashrc:
         raise SystemExit("no OpenFOAM installation found; set OPENREYNOLDS_FOAM_BASHRC")
@@ -265,7 +266,7 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
         totals = fields.pop("tokens", None)
         if totals:
             entry.tokens = dict(totals)
-            entry.usd = round(spend(entry.tokens, entry.model), 4)
+            entry.usd = round(spend(entry.tokens, entry.model, cfg.provider), 4)
         entry.n_turns = int(fields.get("turn") or entry.n_turns)
         entry.seconds = round(time.time() - started, 1)
         record.save(run_dir, entry)
@@ -347,7 +348,7 @@ def drive(case: str, parent: Path, runs: Path, steps: int, seconds: float,
     entry.case_dir = result.case_dir
     entry.n_steps = len(result.steps)
     entry.tokens = dict(result.tokens)
-    entry.usd = round(spend(result.tokens, entry.model), 4)
+    entry.usd = round(spend(result.tokens, entry.model, cfg.provider), 4)
     entry.stopped = result.stopped or "done"
     entry.mesh_exists = bool(result.check and result.check.regions)
     entry.checkmesh_ok = bool(result.check and result.check.ok)
