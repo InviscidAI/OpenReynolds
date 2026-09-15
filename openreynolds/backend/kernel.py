@@ -471,7 +471,18 @@ class Driver:
         from jupyter_client.manager import KernelManager
 
         self.km = KernelManager(kernel_name="python3")
-        self.km.start_kernel()
+        # History off, because the history is a liability here and never an asset. The
+        # desk never recalls a previous cell through IPython -- the cell log is what it
+        # reads -- but the sqlite history db is shared, and when it is missing or locked
+        # the thread that writes it reports the failure on *stdout*:
+        #
+        #   The history saving thread hit an unexpected error (OperationalError('no
+        #   such table: history')).History will not be written to the database.
+        #
+        # which lands inside the cell output the desk is charged to read, and inside the
+        # string a test compares against. It reached one run's `cells.log` in each of the
+        # last two sweeps, and it is what makes `test_kernel_channel` flaky.
+        self.km.start_kernel(extra_arguments=["--HistoryManager.enabled=False"])
         self.connect()
 
     def connect(self):
