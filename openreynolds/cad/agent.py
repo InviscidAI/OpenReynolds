@@ -1091,8 +1091,8 @@ def _ran_out_of_room(count: int) -> str:
     again, where one told it ran out of room while thinking has something to act on.
     """
     if count == 1:
-        return ("That message arrived empty. Send one fenced ```python block with the "
-                "cell you want run.")
+        return ("That message arrived empty. Call run_cell with the cell you want run "
+                "-- it is the only thing that executes.")
     return (f"That message arrived empty again -- {count} times now. The whole reply "
             "was spent reasoning and it was cut off before any words were written, so "
             "nothing ran and nothing of it reached this thread. Do not solve the rest "
