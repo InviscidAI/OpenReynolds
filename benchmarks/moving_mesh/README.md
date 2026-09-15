@@ -61,7 +61,12 @@ there by the coupling scheme rather than the physics. The energy audit is the on
 check here that catches that.
 
 **The amplitude is reported, not graded.** No published amplitude for exactly this case
-has been verified from the paper itself, so the grader prints A/D without a verdict.
+has been found, so the grader prints A/D without a verdict. The two nearest, both read
+from the papers: Menon and Mittal (arXiv:2006.11649) give about 0.56 at U\* = 5 (2D,
+transverse, Re = 100, undamped, but their m\* = 10 is 2m/(rho D^2), about 6.4 on displaced
+mass); Placzek, Sigrist and Hamdouni (Computers & Fluids 38, 2009) peak at 0.58 at an
+effective stiffness k\*eff = 2.32, where this case sits at about 1.48, mostly at a
+lighter mass ratio of 3.3. Both domains have twice this case's blockage.
 Lock-in is graded (the response frequency lies nearer the spring's natural frequency
 than the fixed cylinder's shedding frequency), as are the Strouhal gate and the energy
 audit.
