@@ -224,3 +224,85 @@ at turn 30 on 62,208 phantom flipped edges.
 Preceded by the void `core+reference-20260914-025525-6a2b`, which found that the reference
 was copied where no desk could reach it. Run with a kernel janitor, disclosed in §8 of the
 report: kernels outlive their runs and exhausted the machine during the void sweep.
+
+## Four model arms, and what the corpus can say about a model — 2026-09-15
+
+Started from a question about the harness — *is our tool calling set up wrongly?* — because
+kimi-k3 scored 2/26 where Opus 5 scored 16/26, and kimi-k3 benchmarks at or above Opus 5.
+It ends somewhere else, and the route is most of the value.
+
+### The arms
+
+Ten cases (T1, T3, T5, T7, T11, T14, T16, T18, T22, T24), one run each, `medium` effort.
+
+| arm | model | provider | adapter | passed | $ | gen tok/s |
+|---|---|---|---|---|---|---|
+| `core+reference-20260914-093903-3472` | Opus 5 | Anthropic | `anthropic` | 7/10 | 9.54 | 51.6 |
+| `core-kimi-k3-20260914-143522-e17d` | kimi-k3 | Aster | `openai` | 2/10 | 3.33 | 14.8 |
+| `core-kimi-k3-moonshot-20260915-060615-0057` | kimi-k3 | Moonshot | `anthropic` | 2/10 | 5.26 | 25.5 |
+| `core-gpt-5.6-sol-20260915-044749-5e92` | gpt-5.6-sol | OpenAI | `openai-responses` | 8/10 | 5.12 | 39.3 |
+| `core-kimi-k3-moonshot-1800s-...-a25f` | kimi-k3 | Moonshot | `anthropic` | 3/7 at 2x clock | 4.21 | — |
+
+Contamination 0 in all four.
+
+### What was eliminated, and how
+
+- **The adapter.** kimi-k3 scores 2/10 on Chat Completions at Aster *and* on the Messages
+  API at Moonshot — the same adapter Opus 5 passes 7/10 on.
+- **The shared layer.** gpt-5.6-sol passes 8/10 through a third adapter, so the loop, the
+  block helpers, the brief and the corpus all work for a non-Claude model.
+- **The brief.** `88a393f`; both Moonshot arms ran on it.
+- **The provider.** Moonshot is first-party and 1.7x faster than Aster.
+- **Throughput and the clock.** Doubling the budget converted one case of seven.
+- **The geometry.** Failing kimi-k3 runs delivered meshes correct to 0.05-0.4%.
+
+### The conclusion, with its scope
+
+**On this corpus, kimi-k3 is materially weaker than Opus 5 or gpt-5.6-sol, principally
+through fluency in the library the corpus is built on.** It exits non-zero on 22% of cells
+against Opus 5's 6%, about two thirds of those `AttributeError`/`TypeError`/`ImportError`
+on build123d. Per-run classification of the doubled-budget arm found **four failures with
+four proximate causes** — a truncated `checkMesh` stdout, a zero-tolerance weld producing a
+false positive, and two instances of per-face `export_stl` leaving seams unwelded. That
+diversity is itself the evidence: one mechanism would be a bug, four unrelated ones is a
+capability profile.
+
+**It does not support "kimi-k3 is a worse model."** This corpus scores build123d, OpenFOAM
+dict syntax and a declare protocol, none of which a benchmark measures. Both things can be
+true at once.
+
+### Three limits, stated because they are not small
+
+1. **n is 10, then 7.** The 2-to-3 conversion at double budget is one case.
+2. **The cores differ.** Opus 5's 7/10 ran the old brief; the Moonshot and sol arms ran the
+   fixed one. No arm pair is a clean single-variable comparison.
+3. **The arms are unevenly audited, in the direction of the conclusion.** The adversarial
+   mesh vet — *try to break the green result* — was run on kimi-k3's passes and found T1
+   printing `min(legx.max(), 0.12)*1000`, clamping a wall extent that genuinely reaches
+   0.14 m down to the requested 120 mm, plus a hardcoded `0.030` dressed as a measured bend
+   radius. **That vet was never run on Opus 5's seven passes or sol's eight.** If they carry
+   the same thing the gap narrows. Closing this costs subagents and no model spend, and was
+   left undone deliberately rather than overlooked.
+
+### Harness defects found on the way, all fixed
+
+Every one was a control that was accepted and then silently did nothing:
+
+- `88a393f` — the core brief still described the fenced-block protocol `CELL_TOOL` replaced,
+  and named `run_cell` zero times. Cost 3.5-9% of turns on every model.
+- `47012e6` — a killed run's record dropped the case's named properties, so a sweep report
+  read "this case named none" instead of "none measured".
+- `4fc5fb7` — the IPython history db reported its own failures on the desk's stdout; off, the
+  suite went 22:04 to 6:14.
+- `43bc706` — `--seconds` moved the desk's budget and left the supervisor's deadline behind,
+  so a longer run would have been killed early and filed `wedged`.
+- `fb39d89` — the price table was keyed on model id alone; kimi-k3 is 20% dearer at Moonshot
+  than at Aster.
+- `4d9bb56` — `openai_api.py` cannot run any OpenAI model above gpt-5.2 with tools and
+  reasoning; the Responses adapter exists because of that.
+
+And two measured facts about endpoints worth keeping: **Aster accepts `reasoning_effort` and
+ignores it** (low/medium/high returned 114/73/78 reasoning tokens), which is why the Aster
+arm's meshes were wrong where Moonshot's were merely late; and **Anthropic's
+OpenAI-compatible endpoint refuses adaptive thinking outright**, which is why Opus 5 could
+not be used as the adapter control.
