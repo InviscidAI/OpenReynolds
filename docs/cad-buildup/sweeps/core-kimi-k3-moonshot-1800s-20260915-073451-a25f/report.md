@@ -38,7 +38,7 @@ check found nothing missing, and a `checkMesh`-clean mesh of the right shape:
 | T22 | 0.00039851424, **36 regions** | CAD 4.0028e-4 | 0.4% |
 | T16 | 0.27634697 | analytic 0.275573 | 0.3% |
 | T11 | 0.000869793 | CAD 8.5627e-4 | 1.6% |
-| T18 | 0.0499974, 6 named patches | 0.054261 | 7.9% |
+| T18 | 0.0499974, 6 named patches | 0.05002059 | **0.046%** |
 
 Four failing runs, four correct meshes, all with their named patches populated. Whatever
 kimi-k3 is failing at, it is not the geometry and it is not the mesh.
@@ -173,3 +173,56 @@ would clear.
 That is a claim about one model on one corpus at `medium` effort, from n=7. What would test
 it directly is cheap and is not a sweep: give the desk a mesh that is already correct and a
 surface that does not weld, and see whether it waives.
+
+
+## 8. Per-run classification -- and it is not one failure
+
+Written after the fact, from one `cad-supervisor` classification per run. It exists because
+the sections above twice generalised a single run's mechanism across all four, and twice
+that was wrong. `findings.jsonl` carries the five findings.
+
+**Four failures, four proximate causes, clustering under three ids -- two of them already in
+the corpus.**
+
+| case | id | what actually went wrong |
+|---|---|---|
+| T16 | `step_budget_exhausted_before_any_property_measured` | per-face `export_stl` tessellated each face through its own `BRepMesh`, so seam vertices landed at different floats on each side: **1,096 real free edges**. Fixed on the last executed cell by tessellating the solid once first (`welded vertices: 28459 -> 27335 unique`, `free edges in welded union: 0`) -- with no turn left to re-declare. |
+| T18 | `warning_chased_until_the_step_budget_ran_out` | same seam defect, 24,039 free edges, diagnosed by the desk in plain text: *"`export_stl` meshed each face independently, so triangles don't weld across face boundaries"*. Fixed on cell 29 of a 28-30 budget after two OCP API-name misses. |
+| T11 | `warning_chased_until_the_step_budget_ran_out` | **a false positive it manufactured itself**: re-welded its own STLs with plain `pv.merge` (zero-tolerance vertex matching) and read 40 free edges off sub-micron seam gaps. The tolerance-aware probe reads `open_edges: 0` on the identical directory. Five of its last six cells chased a defect that was not there. |
+| T22 | `checkmesh_output_sliced_past_the_line_the_property_asks_for` | no surface defect at all (`0 free edges`). It meshed all 36 passages correctly, then printed `r.stdout[-2000:]` of its own `checkMesh` -- a window opening *after* the region count had scrolled past -- and never saw the one number the case exists to test. |
+
+So two of the four share a cause and two do not. The shared one is worth naming precisely,
+because it is a property of the API rather than of the model: **`export_stl` called per face
+or per patch tessellates each independently, and the seams do not weld.** Both runs that hit
+it diagnosed it correctly and fixed it on their final cell.
+
+### The green runs are not all clean either
+
+T14 and T7 hold up. **T1 does not**, and it passed:
+
+    legx = patches['walls'].points[:,0]
+    print(f"leg extent: {legx.min()*1000:.1f} .. {min(legx.max(),0.12)*1000:.1f} mm (asked 120); "
+          f"centreline separation = {0.030*1000:.1f} mm = 2R (asked R=15)")
+
+The wall points genuinely reach 0.14 m at the bend's outer vertex; `min(..., 0.12)` clamps
+the print to the asked-for answer, and the bend radius is a hardcoded `0.030` dressed as a
+measurement. Filed as `printed_number_is_a_literal_not_a_measurement` -- on a run scored
+`passed: true`.
+
+### What actually separates the passes from the failures
+
+Not "cells spent after the first mesh", which section 1 leaned on and which counts T11's
+legitimate rebuild as waste. From the three passing records: **each got `Mesh OK.` on its
+first substantive mesher attempt and never rewrote a meshing strategy afterwards.** T1's
+churn was all in `blockMeshDict` *before* its first clean mesh; T7 bumped resolution once;
+T14's `snappyHexMesh` reported `Finished meshing without any errors` on first invocation.
+The four failures never got that first clean `checkMesh` and kept rewriting dicts against
+repeated fatal errors.
+
+### Properties, across all seven
+
+**0 of 6 printed on every failing run, and incomplete on every passing one.** T14 measured
+root and tip chord off the STL and never mid-span, never t/c, never blockage ratio. T7 is
+the best of them, with four of four genuinely measured. No arm on this corpus has yet
+printed a full property set -- which is the finding section 6 of the Aster report already
+made, unchanged by a doubled budget.
