@@ -1005,9 +1005,12 @@ class HostedBackend(Backend):
     def job_kill(self, job_id: str, signal: str = "TERM") -> JobStatus:
         """Signal a job's process group.
 
-        The service marks the job killed whether or not the signal reached anything,
-        so a returned status of `killed` is a record of the request, not proof that
-        the work stopped. Confirming that is `stop`'s job.
+        When the service finds no process group to signal it asks jobd what the job
+        is doing: a job that had already ended comes back with its real ending, and
+        one that may still be running is refused with `409 kill_not_delivered`
+        rather than marked killed (F-63, where a `killed` answer covered a shell that
+        went on running cases). A returned `killed` still says the signal was sent,
+        not that every child of the job obeyed it; confirming that is `stop`'s job.
         """
         return _job_status(
             _json(
