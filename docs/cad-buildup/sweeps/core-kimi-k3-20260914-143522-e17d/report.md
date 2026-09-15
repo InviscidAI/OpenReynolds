@@ -144,10 +144,17 @@ T21, T24, T6, T14 the surface probes are all clean while the delivered mesh is a
 On T2 and T9 they read STL files from a route the desk had already abandoned. Not one of
 the 35 findings in this sweep was caught by a probe. Every one came from the mesh vet.
 
-Known probe defects seen again: `self_intersection` reports `triangles: 0` alongside a
-nonzero `pairs_tested` on T9, T19, T20, T22, T24
-(`self_intersection_probe_returns_measured_on_zero_triangles`), and returns suspiciously
-small test counts on large surfaces (135 pairs on T16's 12,560 triangles).
+**Correction, after checking the probe rather than the reading.** An earlier draft of this
+section reported `self_intersection` returning `triangles: 0` beside a nonzero
+`pairs_tested` on T9, T19, T20, T22 and T24 as a recurrence of
+`self_intersection_probe_returns_measured_on_zero_triangles`. It is not. In that payload
+`triangles` is the count of triangles *participating in a crossing*, not the surface's
+triangle count, and `pairs_tested` counts pairs surviving the broadphase, which excludes
+welded neighbours. So `pairs: 0, triangles: 0, pairs_tested: 297` is a clean surface
+correctly reported, and a small tested count on a large surface (135 on T16's 12,560
+triangles) is what a clean, well-separated surface should give. The prior defect -- MEASURED
+returned on zero tested pairs -- is fixed: `_self_intersection` now returns UNTESTED for
+that case, which is what T2 reads. No probe defect recurs in this sweep.
 
 ## 5. The mesh vet — is the delivered mesh the volume the case asked for?
 
