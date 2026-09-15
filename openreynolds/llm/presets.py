@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-FAMILIES = ("anthropic", "openai")
+FAMILIES = ("anthropic", "openai", "openai-responses")
 
 FALLBACK_CONTEXT_WINDOW = 200_000
 """Assumed window for a vendor whose model is not in the table. Conservative on
@@ -37,6 +37,15 @@ PRICE_PER_MTOK: dict[str, dict[str, float]] = {
     # rate: an unbilled discount we do not know about understates nothing.
     "gpt-oss-120b": {"input": 0.15, "output": 0.60, "cache_read": 0.15, "cache_write": 0.0},
     "gpt-oss-120b-fast": {"input": 0.15, "output": 0.60, "cache_read": 0.15, "cache_write": 0.0},
+    # OpenAI's own rates, standard tier. Chat Completions bills no cache write either.
+    # `gpt-5.6-sol` is priced here but is NOT reachable through this adapter: OpenAI
+    # refuses function tools together with a reasoning effort on /v1/chat/completions for
+    # every model above gpt-5.2, and points at /v1/responses, which `OpenAIProvider` does
+    # not speak. The rate is recorded so that the day the adapter learns that API, the
+    # model is not silently priced at zero.
+    "gpt-5.6-sol": {"input": 4.00, "output": 20.00, "cache_read": 0.40, "cache_write": 0.0},
+    "gpt-5.2": {"input": 1.75, "output": 14.00, "cache_read": 0.175, "cache_write": 0.0},
+    "gpt-5.1": {"input": 1.25, "output": 10.00, "cache_read": 0.125, "cache_write": 0.0},
 }
 """What a token costs, **by model**, next to the models themselves.
 
@@ -114,6 +123,15 @@ PRESETS: dict[str, Preset] = {
             "openai", "openai", None,
             "gpt-5", "gpt-5-mini", 400_000,
             "OPENAI_API_KEY", "OpenAI, directly.",
+        ),
+        Preset(
+            # Required, not preferred: OpenAI refuses function tools beside a reasoning
+            # effort on Chat Completions for every model above gpt-5.2, so the newer
+            # models are reachable only here. `desk_model` stays on a Chat Completions
+            # generation because the front desk asks for no tools and no reasoning.
+            "openai-responses", "openai-responses", None,
+            "gpt-5.6-sol", "gpt-5.2", 400_000,
+            "OPENAI_API_KEY", "OpenAI through the Responses API: tools with reasoning.",
         ),
         Preset(
             "zai", "anthropic", "https://api.z.ai/api/anthropic",

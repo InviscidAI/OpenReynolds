@@ -66,6 +66,10 @@ def make_provider(
         base_url = f"{cfg.foamd_url.rstrip('/')}/v1/llm"
         api_key = cfg.foamd_api_key
     seconds = timeout if timeout is not None else getattr(cfg, "llm_timeout_s", None)
+    if family == "openai-responses":
+        from .responses_api import ResponsesProvider
+
+        return ResponsesProvider(api_key, base_url, seconds, default_headers)
     if family == "openai":
         from .openai_api import OpenAIProvider
 
