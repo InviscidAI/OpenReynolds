@@ -76,6 +76,7 @@ exclude = [
     "studies/",
     "user-test*.log",
     "scripts/",
+    "benchmarks/",
     ".github/",
     ".githooks/",
     "docs/",
