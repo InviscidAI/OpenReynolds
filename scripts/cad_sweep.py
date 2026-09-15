@@ -62,11 +62,27 @@ and both mean the same thing.
 Still a threshold somebody chose, and it still rests on the comparison. Re-measure with
 `--repeat` when the model or the brief changes, and say so here when you do."""
 
-DEADLINE_S = 1500.0
-"""What the supervisor is given before it calls a run wedged on its own authority.
+DEADLINE_MARGIN_S = 600.0
+"""How far past the desk's own budget the supervisor waits before calling a run wedged.
 
-Longer than the desk's own 900 s budget plus the finish check, so a healthy run always
-ends on its own terms and this only fires on one that cannot."""
+The invariant is that a healthy run always ends on its own terms and the supervisor only
+fires on one that cannot -- so the deadline has to be the desk's budget plus room for the
+finish check, not a constant. It was a constant, 1500 s, written against the default 900 s
+budget; `--seconds` moved the budget and left the deadline behind, so asking for a longer
+run bought nothing past 1500 s and turned a healthy slow run into a `wedged` one. The
+default is unchanged: 900 + 600 is the 1500 it always was."""
+
+
+def deadline_for(seconds: float) -> float:
+    """The supervisor's deadline for a desk given `seconds` (0 meaning its own default)."""
+    return float(seconds or agent_max_seconds()) + DEADLINE_MARGIN_S
+
+
+def agent_max_seconds() -> float:
+    """The desk's own default budget, read from the desk rather than copied here."""
+    from openreynolds.cad.agent import MAX_SECONDS
+
+    return float(MAX_SECONDS)
 
 
 def sweep_id() -> str:
@@ -106,7 +122,7 @@ def one_run(case: str, run_dir: Path, work: str, steps: int, seconds: float) -> 
     watcher = subprocess.Popen(
         [sys.executable, "-u", str(ROOT / "scripts" / "cad_supervise.py"), "watch",
          str(run_dir), *(["--case", case_dir] if case_dir else []),
-         "--deadline", str(DEADLINE_S)],
+         "--deadline", str(deadline_for(seconds))],
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     runner_out, _ = runner.communicate()
