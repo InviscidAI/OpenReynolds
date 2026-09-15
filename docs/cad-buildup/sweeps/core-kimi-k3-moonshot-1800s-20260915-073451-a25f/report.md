@@ -109,8 +109,38 @@ it did not buy the declare that had to come after it.
 So the failure is not in the closing protocol. It is upstream, in the export: kimi-k3
 writes a patch set that does not weld closed where the other two write one that does, and
 then pays the detect-declare-refuse-repair cycle out of the budget it needed to finish.
-T11's last cell is the tell -- `inspect.signature(bd.Shape.tessellate)` -- tessellation
-tolerance is exactly where per-patch STL exports stop sharing vertices along a seam.
+### And the export call was never the problem either
+
+Diffing the code that wrote the STLs rather than the STLs: the `export_stl` calls are
+equivalent. Both arms build a `Compound` from a face list and export it, at a tolerance far
+tighter than the 1e-3 default (Opus 2e-5, kimi-k3 3e-5), and `angular_tolerance` defaults to
+the 0.1 Opus passes explicitly. Nothing about the OCCT tessellation differs.
+
+What differed is what was handed to it. kimi-k3 classified the part's 51 faces by geometry
+type, and wrote the comparison against a string:
+
+    gt = f.geom_type
+    if gt == "SPHERE":            # a GeomType enum, compared to a str
+    elif gt == "CYLINDER":
+        d = bb.max.x - bb.min.x   # build123d spells it .X
+
+`gt == "SPHERE"` is never true, so all 51 faces fell to the `else` -- which prints and
+drops. Its own output carries the proof: `unclassified: GeomType.CYLINDER`, a face that is
+a `GeomType.CYLINDER` failing the test for `"CYLINDER"`. The groups came out
+`barrel 0, fins 0, head 0`, six empty patch files were exported, and the welded union had
+24,039 free edges because the part was not in it. The repaired cell (`gt == GT.CYLINDER`,
+`bb.max.X`) classifies 14 + 36 + 1 = 51, and the desk's own check then prints
+`free edges: 0`.
+
+So the chain is: a build123d API-shape error, made silent by a classifier whose fallback
+prints instead of raising, exporting empty patch sets that `union_closure` correctly caught
+at the gate. The gate worked. The repair worked. What it cost was the run.
+
+This is the corpus-level failure already measured on these arms, arriving in one cell:
+kimi-k3 exits non-zero on 22% of cells against Opus 5's 6%, and about two thirds of those
+are `AttributeError`/`TypeError`/`ImportError` on build123d's API -- the same `.x` for `.X`
+that burned T15 on the Aster arm. Opus avoids the class entirely by building its face lists
+explicitly from the geometry it constructed rather than classifying what came back.
 
 **This failure is already in the corpus**, from the Opus chain:
 `warning_chased_until_the_step_budget_ran_out`. It is not new, and it is not
