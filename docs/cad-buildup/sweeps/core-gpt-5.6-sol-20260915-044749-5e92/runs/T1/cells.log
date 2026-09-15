@@ -1,0 +1,1214 @@
+# -- cell 1 (2.7s, exit 0)
+import build123d as bd
+import matplotlib.pyplot as plt
+import numpy as np
+
+MM = 1e-3
+W = 10*MM
+L = 120*MM
+R = 15*MM
+T = 1*MM  # assumed computational extrusion thickness; one cell, empty faces
+
+lower = bd.Pos(0, -W/2, 0) * bd.Box(L, W, T)
+upper = bd.Pos(0, 2*R-W/2, 0) * bd.Box(L, W, T)
+outer = bd.Pos(L, R, 0) * bd.Cylinder(R+W/2, T)
+inner = bd.Pos(L, R, 0) * bd.Cylinder(R-W/2, T)
+right_half = bd.Pos(L, R-(R+W/2), 0) * bd.Box(R+W/2, 2*(R+W/2), T)
+bend = (outer - inner) & right_half
+fluid = lower + bend + upper
+
+th = np.linspace(-np.pi/2, np.pi/2, 201)
+fig, ax = plt.subplots(figsize=(9,3))
+ax.fill_between([0,L/MM], -W/(2*MM), W/(2*MM), color='lightblue')
+ax.fill_between([0,L/MM], (2*R-W/2)/MM, (2*R+W/2)/MM, color='lightblue')
+for rr in (R-W/2, R+W/2):
+    ax.plot((L+rr*np.cos(th))/MM, (R+rr*np.sin(th))/MM, 'b')
+ax.plot((L+R*np.cos(th))/MM, (R+R*np.sin(th))/MM, 'k--', lw=1)
+ax.set_aspect('equal'); ax.set_xlabel('x [mm]'); ax.set_ylabel('y [mm]'); ax.set_title('U-bend fluid passage (plan view)'); ax.grid(True)
+plt.show()
+print(f"Requested/measured passage width: 10.000 mm / {(R+W/2-(R-W/2))/MM:.3f} mm")
+print(f"Requested/measured straight leg length: 120.000 mm / {L/MM:.3f} mm")
+print(f"Requested/measured bend centreline radius: 15.000 mm / {((R-W/2)+(R+W/2))/(2*MM):.3f} mm")
+print(f"Requested/measured turn angle: 180.000 deg / {(th[-1]-th[0])*180/np.pi:.3f} deg")
+print(f"CAD volume: {fluid.volume:.9e} m^3; assumed thickness: {T/MM:.3f} mm")
+# -- output
+Requested/measured passage width: 10.000 mm / 10.000 mm
+Requested/measured straight leg length: 120.000 mm / 120.000 mm
+Requested/measured bend centreline radius: 15.000 mm / 15.000 mm
+Requested/measured turn angle: 180.000 deg / 180.000 deg
+CAD volume: 2.625564958e-06 m^3; assumed thickness: 1.000 mm
+
+# -- cell 2 (0.1s, exit 0)
+from pathlib import Path
+import math
+
+N_BEND = 12
+N_STRAIGHT = 60
+N_ARC_PER_BLOCK = 2
+N_WIDTH = 5
+Path('system').mkdir(exist_ok=True)
+Path('constant').mkdir(exist_ok=True)
+Path('constant/triSurface').mkdir(parents=True, exist_ok=True)
+
+# Cross-sections in flow order; each stores outer-wall point a and inner-wall point b.
+sections = [((0.0,-W/2),(0.0,W/2)), ((L,-W/2),(L,W/2))]
+phis = np.linspace(-math.pi/2, math.pi/2, N_BEND+1)
+for ph in phis[1:]:
+    a = (L+(R+W/2)*math.cos(ph), R+(R+W/2)*math.sin(ph))
+    b = (L+(R-W/2)*math.cos(ph), R+(R-W/2)*math.sin(ph))
+    sections.append((a,b))
+sections.append(((0.0,2*R+W/2),(0.0,2*R-W/2)))
+
+verts=[]
+for z in (0.0,T):
+    for a,b in sections:
+        verts += [(a[0],a[1],z),(b[0],b[1],z)]
+ns=len(sections); off=2*ns
+blocks=[]
+for i in range(ns-1):
+    nlong = N_STRAIGHT if i in (0,ns-2) else N_ARC_PER_BLOCK
+    blocks.append((2*i,2*(i+1),2*(i+1)+1,2*i+1,2*i+off,2*(i+1)+off,2*(i+1)+1+off,2*i+1+off,nlong))
+
+def fmtp(p): return '('+' '.join(f'{v:.12g}' for v in p)+')'
+lines=['FoamFile','{','    format ascii;','    class dictionary;','    object blockMeshDict;','}','scale 1;','vertices','(']
+lines += ['    '+fmtp(v) for v in verts]; lines += [');','edges','(']
+for k in range(N_BEND):
+    i=1+k; pm=(phis[k]+phis[k+1])/2
+    for side,rr in ((0,R+W/2),(1,R-W/2)):
+        mid=(L+rr*math.cos(pm),R+rr*math.sin(pm))
+        lines.append(f'    arc {2*i+side} {2*(i+1)+side} ({mid[0]:.12g} {mid[1]:.12g} 0)')
+        lines.append(f'    arc {2*i+side+off} {2*(i+1)+side+off} ({mid[0]:.12g} {mid[1]:.12g} {T:.12g})')
+lines += [');','blocks','(']
+for q in blocks:
+    lines.append(f'    hex ({" ".join(map(str,q[:8]))}) ({q[8]} {N_WIDTH} 1) simpleGrading (1 1 1)')
+lines += [');','boundary','(','    inlet { type patch; faces (']
+lines += [f'        (0 1 {1+off} {off})', '    ); }','    outlet { type patch; faces (']
+i=ns-1; lines += [f'        ({2*i} {2*i+off} {2*i+1+off} {2*i+1})','    ); }','    walls { type wall; faces (']
+for i in range(ns-1):
+    lines += [f'        ({2*i} {2*(i+1)} {2*(i+1)+off} {2*i+off})', f'        ({2*i+1} {2*i+1+off} {2*(i+1)+1+off} {2*(i+1)+1})']
+lines += ['    ); }','    frontAndBack { type empty; faces (']
+for i in range(ns-1):
+    lines += [f'        ({2*i} {2*i+1} {2*(i+1)+1} {2*(i+1)})', f'        ({2*i+off} {2*(i+1)+off} {2*(i+1)+1+off} {2*i+1+off})']
+lines += ['    ); }',');','mergePatchPairs ();']
+Path('system/blockMeshDict').write_text('\n'.join(lines)+'\n')
+bd.export_step(fluid, 'constant/triSurface/fluidVolume.step')
+print(f'Wrote blockMeshDict: {len(verts)} vertices, {len(blocks)} blocks, nominal {2*N_STRAIGHT*N_WIDTH + N_BEND*N_ARC_PER_BLOCK*N_WIDTH} cells')
+# -- output
+Wrote blockMeshDict: 60 vertices, 14 blocks, nominal 720 cells
+
+# -- cell 3 (0.4s, exit 1)
+import subprocess
+bm = subprocess.run(['blockMesh'], text=True, capture_output=True)
+print(bm.stdout[-5000:])
+if bm.returncode:
+    print(bm.stderr)
+    raise RuntimeError(f'blockMesh failed with code {bm.returncode}')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 15 2026
+Time   : 04:49:15
+Host   : yc-demo
+PID    : 487431
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 6[39m
+[32m      2[39m bm = subprocess.run([[33m'blockMesh'[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m      3[39m print(bm.stdout[-[32m5000[39m:])
+[32m      4[39m [38;5;28;01mif[39;00m bm.returncode:
+[32m      5[39m     print(bm.stderr)
+[32m----> [39m[32m6[39m     [38;5;28;01mraise[39;00m RuntimeError(f'blockMesh failed with code {bm.returncode}')
+
+[31mRuntimeError[39m: blockMesh failed with code 1
+
+# -- cell 4 (0.1s, exit 0)
+Path('system/controlDict').write_text('''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object controlDict;
+}
+application blockMesh;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 1;
+deltaT 1;
+writeControl timeStep;
+writeInterval 1;
+''')
+print('Wrote minimal system/controlDict for mesh utilities.')
+# -- output
+Wrote minimal system/controlDict for mesh utilities.
+
+# -- cell 5 (0.2s, exit 0)
+bm = subprocess.run(['blockMesh'], text=True, capture_output=True)
+print(bm.stdout[-5000:])
+if bm.returncode:
+    print(bm.stderr)
+    raise RuntimeError(f'blockMesh failed with code {bm.returncode}')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 15 2026
+Time   : 04:49:33
+Host   : yc-demo
+PID    : 487459
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 13
+		Number of boundary faces : 58
+		Number of defined boundary faces : 58
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.002 .. 0.002
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 1 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 2 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 3 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 4 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 5 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 6 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 7 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 8 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 9 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 10 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 11 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 12 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 13 cell size :
+        i : 0.002 .. 0.002
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 -0.005 0) (0.14 0.035 0.001)
+  nPoints: 1740
+  nCells: 720
+  nFaces: 3029
+  nInternalFaces: 1291
+----------------
+Patches
+----------------
+  patch 0 (start: 1291 size: 5) name: inlet
+  patch 1 (start: 1296 size: 5) name: outlet
+  patch 2 (start: 1301 size: 288) name: walls
+  patch 3 (start: 1589 size: 1440) name: frontAndBack
+
+End
+
+# -- cell 6 (0.8s, exit 0)
+import subprocess
+bm = subprocess.run(['blockMesh'], text=True, capture_output=True)
+print(bm.stdout[-2500:])
+if bm.returncode:
+    print(bm.stderr)
+    raise RuntimeError(f'blockMesh failed with code {bm.returncode}')
+# -- output
+ck topology
+
+	Basic statistics
+		Number of internal faces : 13
+		Number of boundary faces : 58
+		Number of defined boundary faces : 58
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+Deleting polyMesh directory "constant/polyMesh"
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.002 .. 0.002
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 1 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 2 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 3 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 4 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 5 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 6 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 7 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 8 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 9 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 10 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 11 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 12 cell size :
+        i : 0.00261613 .. 0.00261613
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+    Block 13 cell size :
+        i : 0.002 .. 0.002
+        j : 0.002 .. 0.002
+        k : 0.001 .. 0.001
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 -0.005 0) (0.14 0.035 0.001)
+  nPoints: 1740
+  nCells: 720
+  nFaces: 3029
+  nInternalFaces: 1291
+----------------
+Patches
+----------------
+  patch 0 (start: 1291 size: 5) name: inlet
+  patch 1 (start: 1296 size: 5) name: outlet
+  patch 2 (start: 1301 size: 288) name: walls
+  patch 3 (start: 1589 size: 1440) name: frontAndBack
+
+End
+
+# -- cell 7 (0.2s, exit 0)
+fig, ax = plt.subplots(figsize=(11,3.4))
+# straight-leg grid lines
+for y0 in np.linspace(-W/2,W/2,N_WIDTH+1): ax.plot([0,L],[y0,y0],color='#277da1',lw=.55)
+for y0 in np.linspace(2*R-W/2,2*R+W/2,N_WIDTH+1): ax.plot([0,L],[y0,y0],color='#277da1',lw=.55)
+for x0 in np.linspace(0,L,N_STRAIGHT+1):
+    ax.plot([x0,x0],[-W/2,W/2],color='#277da1',lw=.4)
+    ax.plot([x0,x0],[2*R-W/2,2*R+W/2],color='#277da1',lw=.4)
+# bend grid lines, 24 circumferential by 5 radial
+phi_fine=np.linspace(-np.pi/2,np.pi/2,N_BEND*N_ARC_PER_BLOCK+1)
+for rr in np.linspace(R-W/2,R+W/2,N_WIDTH+1):
+    ax.plot(L+rr*np.cos(phi_fine),R+rr*np.sin(phi_fine),color='#277da1',lw=.55)
+for ph in phi_fine:
+    ax.plot(L+np.array([R-W/2,R+W/2])*np.cos(ph),R+np.array([R-W/2,R+W/2])*np.sin(ph),color='#277da1',lw=.4)
+ax.set_aspect('equal'); ax.set_xlabel('x [m]'); ax.set_ylabel('y [m]'); ax.set_title('Coarse structured 2D mesh — 720 cells'); ax.grid(False)
+plt.show()
+print('Planar cell sizes: straights 2.000 x 2.000 mm; bend centreline approx. 1.963 x 2.000 mm')
+print('Through-plane: 1 cell across the assumed 1.000 mm extrusion; front/back are empty patches')
+# -- output
+Planar cell sizes: straights 2.000 x 2.000 mm; bend centreline approx. 1.963 x 2.000 mm
+Through-plane: 1 cell across the assumed 1.000 mm extrusion; front/back are empty patches
+
+# -- cell 8 (0.1s, exit 0)
+import re
+N_STRAIGHT_FINAL=240
+N_ARC_PER_BLOCK_FINAL=8
+N_WIDTH_FINAL=20
+p=Path('system/blockMeshDict')
+txt=p.read_text()
+txt=re.sub(r'(hex \([^\n]+\) \()60 5 1(\) simpleGrading)', rf'\g<1>{N_STRAIGHT_FINAL} {N_WIDTH_FINAL} 1\g<2>', txt)
+txt=re.sub(r'(hex \([^\n]+\) \()2 5 1(\) simpleGrading)', rf'\g<1>{N_ARC_PER_BLOCK_FINAL} {N_WIDTH_FINAL} 1\g<2>', txt)
+p.write_text(txt)
+nominal=2*N_STRAIGHT_FINAL*N_WIDTH_FINAL+N_BEND*N_ARC_PER_BLOCK_FINAL*N_WIDTH_FINAL
+print(f'Refined blockMeshDict to {nominal} cells: {N_WIDTH_FINAL} across, {N_STRAIGHT_FINAL} per straight, {N_BEND*N_ARC_PER_BLOCK_FINAL} around bend')
+# -- output
+Refined blockMeshDict to 11520 cells: 20 across, 240 per straight, 96 around bend
+
+# -- cell 9 (0.3s, exit 0)
+bm_final=subprocess.run(['blockMesh'], text=True, capture_output=True)
+print(bm_final.stdout[-2200:])
+if bm_final.returncode:
+    print(bm_final.stderr)
+    raise RuntimeError('final blockMesh failed')
+# -- output
+ng patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.0005 .. 0.0005
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 1 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 2 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 3 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 4 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 5 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 6 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 7 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 8 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 9 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 10 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 11 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 12 cell size :
+        i : 0.000654469 .. 0.000654469
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+    Block 13 cell size :
+        i : 0.0005 .. 0.0005
+        j : 0.0005 .. 0.0005
+        k : 0.001 .. 0.001
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 -0.005 0) (0.14 0.035 0.001)
+  nPoints: 24234
+  nCells: 11520
+  nFaces: 46676
+  nInternalFaces: 22444
+----------------
+Patches
+----------------
+  patch 0 (start: 22444 size: 20) name: inlet
+  patch 1 (start: 22464 size: 20) name: outlet
+  patch 2 (start: 22484 size: 1152) name: walls
+  patch 3 (start: 23636 size: 23040) name: frontAndBack
+
+End
+
+# -- cell 10 (1.0s, exit 0)
+h=subprocess.run(['foamToSurface','-help'],text=True,capture_output=True)
+print(h.stdout[:4000])
+# -- output
+Usage: foamToSurface [OPTIONS] <output>
+Arguments:
+  <output>          The output surface file
+Options:
+  -case <dir>       Case directory (instead of current directory)
+  -constant         Include 'constant/' dir in the times list
+  -latestTime       Select the latest time
+  -noZero           Exclude '0/' dir from the times list
+  -scale <factor>   Geometry scaling factor - default is 1
+  -time <ranges>    List of ranges. Eg, ':10,20 40:70 1000:', 'none', etc
+  -tri              Triangulate surface
+  -doc              Display documentation in browser
+  -help             Display short help and exit
+  -help-full        Display full help and exit
+
+Extract boundaries from an OpenFOAM mesh and write in a surface format
+
+Using: OpenFOAM-2512 (2512) - visit www.openfoam.com
+Build: _87ed40d2-20251219
+Arch:  LSB;label=32;scalar=64
+
+# -- cell 11 (1.0s, exit 0)
+h2=subprocess.run(['surfaceMeshExtract','-help'],text=True,capture_output=True)
+print(h2.stdout[:4500])
+# -- output
+Usage: surfaceMeshExtract [OPTIONS] <output>
+Arguments:
+  <output>          The output surface file
+Options:
+  -case <dir>       Case directory (instead of current directory)
+  -constant         Include 'constant/' dir in the times list
+  -excludeProcPatches
+                    Exclude processor patches
+  -extractZonePoints
+                    Extract point-patches for selected faceZones
+  -faceZones <wordRes>
+                    Specify single or multiple faceZones to extract
+                    Eg, 'cells' or '( slice "mfp-.*" )'
+  -featureAngle <angle>
+                    Auto-extract feature edges/points and put into separate
+                    point-patches
+  -latestTime       Select the latest time
+  -noZero           Exclude '0/' dir from the times list
+  -parallel         Run in parallel
+  -patches <wordRes>
+                    Specify single patch or multiple patches to extract.
+                    Eg, 'top' or '( front ".*back" )'
+  -region <name>    Specify mesh region (default: region0)
+  -time <ranges>    List of ranges. Eg, ':10,20 40:70 1000:', 'none', etc
+  -writeOBJ         Write added pointPatch points to .obj files
+  -doc              Display documentation in browser
+  -help             Display short help and exit
+  -help-compat      Display compatibility options and exit
+  -help-full        Display full help and exit
+
+Extract patch or faceZone surfaces from a polyMesh.
+
+Using: OpenFOAM-2512 (2512) - visit www.openfoam.com
+Build: _87ed40d2-20251219
+Arch:  LSB;label=32;scalar=64
+
+# -- cell 12 (1.6s, exit 0)
+surfdir=Path('constant/triSurface')
+for patch in ('inlet','outlet','walls','frontAndBack'):
+    out=surfdir/f'{patch}.stl'
+    r=subprocess.run(['surfaceMeshExtract','-constant','-patches',patch,str(out)],text=True,capture_output=True)
+    print(patch, 'OK' if r.returncode==0 else 'FAILED', out.stat().st_size if out.exists() else 0, 'bytes')
+    if r.returncode: print(r.stdout[-1500:],r.stderr)
+    if r.returncode: raise RuntimeError(f'export failed: {patch}')
+# -- output
+inlet OK 4920 bytes
+outlet OK 4883 bytes
+walls OK 320562 bytes
+frontAndBack OK 27 bytes
+
+# -- cell 13 (1.6s, exit 0)
+def facet_text(p0,p1,p2):
+    u=np.array(p1)-np.array(p0); v=np.array(p2)-np.array(p0); n=np.cross(u,v); n=n/np.linalg.norm(n)
+    s=f' facet normal {n[0]:.9g} {n[1]:.9g} {n[2]:.9g}\n  outer loop\n'
+    for p in (p0,p1,p2): s+=f'   vertex {p[0]:.12g} {p[1]:.12g} {p[2]:.12g}\n'
+    return s+'  endloop\n endfacet\n'
+
+def emit_quad(f,q,z,up):
+    p=[(q[k][0],q[k][1],z) for k in range(4)] # q is CCW
+    tris=((0,1,2),(0,2,3)) if up else ((0,2,1),(0,3,2))
+    for a,b,c in tris: f.write(facet_text(p[a],p[b],p[c]))
+
+with open('constant/triSurface/frontAndBack.stl','w') as f:
+    f.write('solid frontAndBack\n')
+    xs=np.linspace(0,L,N_STRAIGHT_FINAL+1)
+    ys0=np.linspace(-W/2,W/2,N_WIDTH_FINAL+1)
+    ys1=np.linspace(2*R-W/2,2*R+W/2,N_WIDTH_FINAL+1)
+    quads=[]
+    for ys in (ys0,ys1):
+        for i in range(N_STRAIGHT_FINAL):
+            for j in range(N_WIDTH_FINAL): quads.append(((xs[i],ys[j]),(xs[i+1],ys[j]),(xs[i+1],ys[j+1]),(xs[i],ys[j+1])))
+    ph=np.linspace(-np.pi/2,np.pi/2,N_BEND*N_ARC_PER_BLOCK_FINAL+1)
+    rs=np.linspace(R-W/2,R+W/2,N_WIDTH_FINAL+1)
+    for i in range(len(ph)-1):
+        for j in range(len(rs)-1):
+            # outer-old, outer-new, inner-new, inner-old is CCW
+            quads.append(((L+rs[j+1]*np.cos(ph[i]),R+rs[j+1]*np.sin(ph[i])),(L+rs[j+1]*np.cos(ph[i+1]),R+rs[j+1]*np.sin(ph[i+1])),(L+rs[j]*np.cos(ph[i+1]),R+rs[j]*np.sin(ph[i+1])),(L+rs[j]*np.cos(ph[i]),R+rs[j]*np.sin(ph[i]))))
+    for q in quads:
+        emit_quad(f,q,0.0,False); emit_quad(f,q,T,True)
+    f.write('endsolid frontAndBack\n')
+print(f'Wrote frontAndBack.stl with {4*len(quads)} triangles over {len(quads)} planar cells; size {Path("constant/triSurface/frontAndBack.stl").stat().st_size} bytes')
+# -- output
+Wrote frontAndBack.stl with 46080 triangles over 11520 planar cells; size 6610487 bytes
+
+# -- cell 14 (0.3s, exit 1)
+cm=subprocess.run(['checkMesh','-constant','-allGeometry','-allTopology'],text=True,capture_output=True)
+Path('checkMesh.log').write_text(cm.stdout+cm.stderr)
+print(cm.stdout[-5000:])
+if cm.returncode:
+    raise RuntimeError(f'checkMesh failed with code {cm.returncode}')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant -allGeometry -allTopology
+Date   : Sep 15 2026
+Time   : 04:51:36
+Host   : yc-demo
+PID    : 487949
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[14][39m[32m, line 5[39m
+[32m      1[39m cm=subprocess.run([[33m'checkMesh'[39m,[33m'-constant'[39m,[33m'-allGeometry'[39m,[33m'-allTopology'[39m],text=[38;5;28;01mTrue[39;00m,capture_output=[38;5;28;01mTrue[39;00m)
+[32m      2[39m Path([33m'checkMesh.log'[39m).write_text(cm.stdout+cm.stderr)
+[32m      3[39m print(cm.stdout[-[32m5000[39m:])
+[32m      4[39m [38;5;28;01mif[39;00m cm.returncode:
+[32m----> [39m[32m5[39m     [38;5;28;01mraise[39;00m RuntimeError(f'checkMesh failed with code {cm.returncode}')
+
+[31mRuntimeError[39m: checkMesh failed with code 1
+
+# -- cell 15 (0.3s, exit 0)
+diag=subprocess.run(['checkMesh','-constant','-allGeometry','-allTopology'],text=True,capture_output=True)
+print(diag.stdout)
+print(diag.stderr)
+print('return code:',diag.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant -allGeometry -allTopology
+Date   : Sep 15 2026
+Time   : 04:51:45
+Host   : yc-demo
+PID    : 487965
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+return code: 1
+
+# -- cell 16 (0.1s, exit 0)
+Path('system/fvSchemes').write_text('''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object fvSchemes;
+}
+ddtSchemes { default Euler; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+wallDist { method meshWave; }
+''')
+print('Wrote minimal system/fvSchemes for extended mesh-quality evaluation.')
+# -- output
+Wrote minimal system/fvSchemes for extended mesh-quality evaluation.
+
+# -- cell 17 (0.8s, exit 1)
+cm=subprocess.run(['checkMesh','-constant','-allGeometry','-allTopology'],text=True,capture_output=True)
+Path('checkMesh.log').write_text(cm.stdout+cm.stderr)
+print(cm.stdout[-6000:]); print(cm.stderr)
+if cm.returncode: raise RuntimeError(f'checkMesh failed with code {cm.returncode}')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant -allGeometry -allTopology
+Date   : Sep 15 2026
+Time   : 04:52:05
+Host   : yc-demo
+PID    : 488341
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1/system/fvSolution"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[17][39m[32m, line 4[39m
+[32m      1[39m cm=subprocess.run([[33m'checkMesh'[39m,[33m'-constant'[39m,[33m'-allGeometry'[39m,[33m'-allTopology'[39m],text=[38;5;28;01mTrue[39;00m,capture_output=[38;5;28;01mTrue[39;00m)
+[32m      2[39m Path([33m'checkMesh.log'[39m).write_text(cm.stdout+cm.stderr)
+[32m      3[39m print(cm.stdout[-[32m6000[39m:]); print(cm.stderr)
+[32m----> [39m[32m4[39m [38;5;28;01mif[39;00m cm.returncode: [38;5;28;01mraise[39;00m RuntimeError(f'checkMesh failed with code {cm.returncode}')
+
+[31mRuntimeError[39m: checkMesh failed with code 1
+
+# -- cell 18 (0.1s, exit 0)
+Path('system/fvSolution').write_text('''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object fvSolution;
+}
+solvers {}
+''')
+print('Wrote minimal mesh-only system/fvSolution.')
+# -- output
+Wrote minimal mesh-only system/fvSolution.
+
+# -- cell 19 (0.4s, exit 0)
+cm=subprocess.run(['checkMesh','-constant','-allGeometry','-allTopology'],text=True,capture_output=True)
+Path('checkMesh.log').write_text(cm.stdout+cm.stderr)
+print(cm.stdout[-6500:]); print(cm.stderr)
+if cm.returncode: raise RuntimeError(f'checkMesh failed with code {cm.returncode}')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant -allGeometry -allTopology
+Date   : Sep 15 2026
+Time   : 04:52:19
+Host   : yc-demo
+PID    : 488355
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           24234
+    internal points:  0
+    edges:            59389
+    internal edges:   10925
+    internal edges using one boundary point:   0
+    internal edges using two boundary points:  10925
+    faces:            46676
+    internal faces:   22444
+    cells:            11520
+    faces per cell:   6
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     11520
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+  <<Writing 4 cells with two non-boundary faces to set twoInternalFacesCells
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    inlet               20       42       ok (non-closed singly connected)   (0 -0.005 0) (0 0.005 0.001)
+    outlet              20       42       ok (non-closed singly connected)   (0 0.025 0) (0 0.035 0.001)
+    walls               1152     2308     ok (non-closed singly connected)   (0 -0.005 0) (0.14 0.035 0.001)
+    frontAndBack        23040    24234    ok (non-closed singly connected)   (0 -0.005 0) (0.14 0.035 0.001)
+    ".*"                24232    24234    ok (closed singly connected)       (0 -0.005 0) (0.14 0.035 0.001)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.005 0) (0.14 0.035 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (-5.01839e-18 1.36013e-17 2.45208e-17) OK.
+    Max cell openness = 2.78558e-16 OK.
+    Max aspect ratio = 1.47098 OK.
+    Minimum face area = 1.67685e-07. Maximum face area = 6.54469e-07.  Face area magnitudes OK.
+    Min volume = 1.67685e-10. Max volume = 3.23101e-10.  Total volume = 2.87115e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0.423136 average: 0.0128442
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.0169306 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.000327235 0.001 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.125 average: 0.472759
+    Cell determinant check OK.
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.401511 average: 0.499691
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.670741 average: 0.996974
+    Face volume ratio check OK.
+
+Mesh OK.
+
+End
+
+# -- cell 20 (0.7s, exit 0)
+amin=(bd.Align.MIN,bd.Align.MIN,bd.Align.MIN)
+acenter=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)
+lower = bd.Pos(0,-W/2,0) * bd.Box(L,W,T,align=amin)
+upper = bd.Pos(0,2*R-W/2,0) * bd.Box(L,W,T,align=amin)
+outer = bd.Pos(L,R,0) * bd.Cylinder(R+W/2,T,align=acenter)
+inner = bd.Pos(L,R,0) * bd.Cylinder(R-W/2,T,align=acenter)
+right_half = bd.Pos(L,R-(R+W/2),0) * bd.Box(R+W/2,2*(R+W/2),T,align=amin)
+bend = (outer-inner) & right_half
+fluid = lower + bend + upper
+expected_volume=(2*L*W+0.5*np.pi*((R+W/2)**2-(R-W/2)**2))*T
+bb=fluid.bounding_box()
+bd.export_step(fluid,'constant/triSurface/fluidVolume.step')
+print(f'CAD bounds min={tuple(round(v,6) for v in bb.min.to_tuple())}, max={tuple(round(v,6) for v in bb.max.to_tuple())}')
+print(f'CAD volume {fluid.volume:.9e} m^3; analytical target {expected_volume:.9e} m^3; relative error {(fluid.volume/expected_volume-1):.3e}')
+# -- output
+CAD bounds min=(0.0, -0.005, 0.0), max=(0.14, 0.035, 0.001)
+CAD volume 2.871238898e-06 m^3; analytical target 2.871238898e-06 m^3; relative error 0.000e+00
+
+/tmp/ipykernel_479823/294435486.py:13: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  print(f'CAD bounds min={tuple(round(v,6) for v in bb.min.to_tuple())}, max={tuple(round(v,6) for v in bb.max.to_tuple())}')
+
+# -- cell 21 (0.1s, exit 0)
+for fn in ('constant/polyMesh/points','constant/polyMesh/faces','constant/polyMesh/boundary'):
+    s=Path(fn).read_text()
+    print('\n---',fn,'---\n',s[:900])
+# -- output
+--- constant/polyMesh/points ---
+ /*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       vectorField;
+    location    "constant/polyMesh";
+    object      points;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+
+24234
+(
+(0 -0.005 0)
+(0.0005 -0.005 0)
+(0.001 -0.005 0)
+(0.0015 -0.00
+
+--- constant/polyMesh/faces ---
+ /*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       faceList;
+    location    "constant/polyMesh";
+    object      faces;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+
+46676
+(
+4(1 242 5303 5062)
+4(241 5302 5303 242)
+4(2 243 5304 5063)
+4(242 
+
+--- constant/polyMesh/boundary ---
+ /*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+4
+(
+    inlet
+    {
+        type            patch;
+        nFac
+
+# -- cell 22 (0.3s, exit 1)
+def foam_payload(path):
+    s=Path(path).read_text(); m=re.search(r'\n(\d+)\s*\n\(\s*\n',s)
+    if not m: raise ValueError(path)
+    return int(m.group(1)),s[m.end():]
+npnt,pbody=foam_payload('constant/polyMesh/points')
+mesh_pts=np.array([[float(x) for x in g] for g in re.findall(r'\(([-+0-9.eE]+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\)',pbody)[:npnt]])
+nface,fbody=foam_payload('constant/polyMesh/faces')
+mesh_faces=[]
+for n,ids in re.findall(r'(\d+)\(([^()]*)\)',fbody):
+    vals=[int(x) for x in ids.split()]
+    if len(vals)==int(n): mesh_faces.append(vals)
+    if len(mesh_faces)==nface: break
+bs=Path('constant/polyMesh/boundary').read_text()
+patch_ranges={name:(int(nf),int(st)) for name,body in re.findall(r'\n\s*(\w+)\s*\n\s*\{([^{}]*)\}',bs) for nf,st in [re.search(r'nFaces\s+(\d+);.*?startFace\s+(\d+);',body,re.S).groups()]}
+for name,(nf,st) in patch_ranges.items():
+    with open(f'constant/triSurface/{name}.stl','w') as f:
+        f.write(f'solid {name}\n')
+        nt=0
+        for ids in mesh_faces[st:st+nf]:
+            for k in range(1,len(ids)-1):
+                f.write(facet_text(mesh_pts[ids[0]],mesh_pts[ids[k]],mesh_pts[ids[k+1]])); nt+=1
+        f.write(f'endsolid {name}\n')
+    print(f'{name}: {nf} mesh faces -> {nt} exact-mesh triangles')
+print(f'Parsed {len(mesh_pts)} points and {len(mesh_faces)} faces from polyMesh')
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[22][39m[32m, line 14[39m
+[32m     10[39m     vals=[int(x) [38;5;28;01mfor[39;00m x [38;5;28;01min[39;00m ids.split()]
+[32m     11[39m     [38;5;28;01mif[39;00m len(vals)==int(n): mesh_faces.append(vals)
+[32m     12[39m     [38;5;28;01mif[39;00m len(mesh_faces)==nface: [38;5;28;01mbreak[39;00m
+[32m     13[39m bs=Path([33m'constant/polyMesh/boundary'[39m).read_text()
+[32m---> [39m[32m14[39m patch_ranges={name:(int(nf),int(st)) [38;5;28;01mfor[39;00m name,body [38;5;28;01min[39;00m re.findall([33mr'\n\s*(\w+)\s*\n\s*\{([^{}]*)\}'[39m,bs) [38;5;28;01mfor[39;00m nf,st [38;5;28;01min[39;00m [re.search([33mr'nFaces\s+(\d+);.*?startFace\s+(\d+);'[39m,body,re.S).groups()]}
+[32m     15[39m [38;5;28;01mfor[39;00m name,(nf,st) [38;5;28;01min[39;00m patch_ranges.items():
+[32m     16[39m     [38;5;28;01mwith[39;00m open(f'constant/triSurface/{name}.stl',[33m'w'[39m) [38;5;28;01mas[39;00m f:
+[32m     17[39m         f.write(f'solid {name}\n')
+
+[31mAttributeError[39m: 'NoneType' object has no attribute 'groups'
+
+# -- cell 23 (3.7s, exit 0)
+def foam_payload(path):
+    s=Path(path).read_text(); m=re.search(r'\n(\d+)\s*\n\(\s*\n',s)
+    if not m: raise ValueError(path)
+    return int(m.group(1)),s[m.end():]
+npnt,pbody=foam_payload('constant/polyMesh/points')
+mesh_pts=np.array([[float(x) for x in g] for g in re.findall(r'\(([-+0-9.eE]+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\)',pbody)[:npnt]])
+nface,fbody=foam_payload('constant/polyMesh/faces')
+mesh_faces=[]
+for n,ids in re.findall(r'(\d+)\(([^()]*)\)',fbody):
+    vals=[int(x) for x in ids.split()]
+    if len(vals)==int(n): mesh_faces.append(vals)
+    if len(mesh_faces)==nface: break
+bs=Path('constant/polyMesh/boundary').read_text(); patch_ranges={}
+for name,body in re.findall(r'\n\s*(\w+)\s*\n\s*\{([^{}]*)\}',bs):
+    m=re.search(r'nFaces\s+(\d+);.*?startFace\s+(\d+);',body,re.S)
+    if m: patch_ranges[name]=(int(m.group(1)),int(m.group(2)))
+for name,(nf,st) in patch_ranges.items():
+    with open(f'constant/triSurface/{name}.stl','w') as f:
+        f.write(f'solid {name}\n'); nt=0
+        for ids in mesh_faces[st:st+nf]:
+            for k in range(1,len(ids)-1):
+                f.write(facet_text(mesh_pts[ids[0]],mesh_pts[ids[k]],mesh_pts[ids[k+1]])); nt+=1
+        f.write(f'endsolid {name}\n')
+    print(f'{name}: {nf} mesh faces -> {nt} exact-mesh triangles')
+print(f'Parsed {len(mesh_pts)} points, {len(mesh_faces)} faces, and {len(patch_ranges)} patches')
+# -- output
+inlet: 20 mesh faces -> 40 exact-mesh triangles
+outlet: 20 mesh faces -> 40 exact-mesh triangles
+walls: 1152 mesh faces -> 2304 exact-mesh triangles
+frontAndBack: 23040 mesh faces -> 46080 exact-mesh triangles
+Parsed 24234 points, 46676 faces, and 4 patches
+

@@ -1,0 +1,6 @@
+T1: run 20260915-044749-040c
+  workspace /home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c clean (0 entries, 39 house names, no toolbox)
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1/.reference/b123d_api.md
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-gpt-5.6-sol-20260915-044749-5e92/runs/T1
+  done in 374.7s, 23 cells, $0.47, checkMesh ok, passed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-gpt-5.6-sol-20260915-044749-5e92/runs/T1 --case /home/qiuzi/.openreynolds-buildup/work/T1-20260915-044749-040c/t1

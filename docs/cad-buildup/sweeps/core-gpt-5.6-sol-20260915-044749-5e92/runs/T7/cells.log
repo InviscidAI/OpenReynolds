@@ -1,0 +1,513 @@
+# -- cell 1 (2.6s, exit 0)
+from pathlib import Path
+import build123d as bd
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+# All dimensions are metres. User dimensions: cavity 0.100 x 0.060 x 0.040 m; zones are 0.020 m cubes.
+L, W, H = 0.100, 0.060, 0.040
+ZONE = 0.020
+END_CLEARANCE = 0.005  # assumption: "near ... at one end"
+Y0 = (W - ZONE) / 2
+heater_min = (END_CLEARANCE, Y0, 0.0)
+cooler_min = (L - END_CLEARANCE - ZONE, Y0, H - ZONE)
+
+cavity = bd.Box(L, W, H, align=(bd.Align.MIN, bd.Align.MIN, bd.Align.MIN))
+heater = bd.Pos(*heater_min) * bd.Box(ZONE, ZONE, ZONE, align=(bd.Align.MIN, bd.Align.MIN, bd.Align.MIN))
+cooler = bd.Pos(*cooler_min) * bd.Box(ZONE, ZONE, ZONE, align=(bd.Align.MIN, bd.Align.MIN, bd.Align.MIN))
+bd.export_step(cavity, "cavity.step")
+bd.export_step(heater, "heater_zone.step")
+bd.export_step(cooler, "cooler_zone.step")
+
+print(f"Cavity requested/measured: {L:.3f} x {W:.3f} x {H:.3f} m; volume={cavity.volume:.9f} m^3")
+print(f"Heater requested/measured edge: {ZONE:.3f} m; volume={heater.volume:.9f} m^3; min={heater_min}")
+print(f"Cooler requested/measured edge: {ZONE:.3f} m; volume={cooler.volume:.9f} m^3; min={cooler_min}")
+
+fig = plt.figure(figsize=(8, 5))
+ax = fig.add_subplot(111, projection="3d")
+def add_box(origin, size, color, alpha, label):
+    x,y,z=origin; dx,dy,dz=size
+    p=[(x,y,z),(x+dx,y,z),(x+dx,y+dy,z),(x,y+dy,z),(x,y,z+dz),(x+dx,y,z+dz),(x+dx,y+dy,z+dz),(x,y+dy,z+dz)]
+    faces=[[p[i] for i in q] for q in [(0,1,2,3),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]]
+    ax.add_collection3d(Poly3DCollection(faces, facecolor=color, edgecolor=color, alpha=alpha, label=label))
+add_box((0,0,0),(L,W,H),"steelblue",0.08,"cavity")
+add_box(heater_min,(ZONE,)*3,"orangered",0.75,"heater")
+add_box(cooler_min,(ZONE,)*3,"deepskyblue",0.75,"cooler")
+ax.set(xlabel="x [m]", ylabel="y [m]", zlabel="z [m]", xlim=(0,L), ylim=(0,W), zlim=(0,H))
+ax.set_box_aspect((L,W,H)); ax.view_init(23,-58); ax.legend(loc="upper left")
+plt.tight_layout(); plt.savefig("geometry_overview.png", dpi=160); plt.show()
+# -- output
+Cavity requested/measured: 0.100 x 0.060 x 0.040 m; volume=0.000240000 m^3
+Heater requested/measured edge: 0.020 m; volume=0.000008000 m^3; min=(0.005, 0.019999999999999997, 0.0)
+Cooler requested/measured edge: 0.020 m; volume=0.000008000 m^3; min=(0.075, 0.019999999999999997, 0.02)
+
+# -- cell 2 (0.8s, exit 0)
+import os, subprocess, textwrap
+os.makedirs("system", exist_ok=True)
+os.makedirs("constant", exist_ok=True)
+block_mesh_dict = r'''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object blockMeshDict;
+}
+convertToMeters 1;
+vertices
+(
+    (0 0 0)       (0.100 0 0)       (0.100 0.060 0)       (0 0.060 0)
+    (0 0 0.040)   (0.100 0 0.040)   (0.100 0.060 0.040)   (0 0.060 0.040)
+);
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) (20 12 8) simpleGrading (1 1 1)
+);
+edges ();
+boundary
+(
+    walls
+    {
+        type wall;
+        faces
+        (
+            (0 4 7 3) (1 2 6 5)
+            (0 1 5 4) (3 7 6 2)
+            (0 3 2 1) (4 5 6 7)
+        );
+    }
+);
+mergePatchPairs ();
+'''
+topo_set_dict = r'''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object topoSetDict;
+}
+actions
+(
+    {
+        name heaterCells;
+        type cellSet;
+        action new;
+        source boxToCell;
+        box (0.005 0.020 0.000) (0.025 0.040 0.020);
+    }
+    {
+        name heater;
+        type cellZoneSet;
+        action new;
+        source setToCellZone;
+        set heaterCells;
+    }
+    {
+        name coolerCells;
+        type cellSet;
+        action new;
+        source boxToCell;
+        box (0.075 0.020 0.020) (0.095 0.040 0.040);
+    }
+    {
+        name cooler;
+        type cellZoneSet;
+        action new;
+        source setToCellZone;
+        set coolerCells;
+    }
+);
+'''
+control_dict = r'''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object controlDict;
+}
+application checkMesh;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 1;
+deltaT 1;
+writeControl timeStep;
+writeInterval 1;
+'''
+Path("system/blockMeshDict").write_text(block_mesh_dict)
+Path("system/topoSetDict").write_text(topo_set_dict)
+Path("system/controlDict").write_text(control_dict)
+for cmd in (["blockMesh"], ["topoSet"]):
+    r=subprocess.run(cmd, text=True, capture_output=True)
+    print(f"$ {' '.join(cmd)}\n" + "\n".join(r.stdout.splitlines()[-14:]))
+    if r.returncode: print(r.stderr); raise RuntimeError(cmd)
+# -- output
+$ blockMesh
+Mesh Information
+----------------
+  boundingBox: (0 0 0) (0.1 0.06 0.04)
+  nPoints: 2457
+  nCells: 1920
+  nFaces: 6256
+  nInternalFaces: 5264
+----------------
+Patches
+----------------
+  patch 0 (start: 5264 size: 992) name: walls
+
+End
+
+$ topoSet
+    Applying source setToCellZone
+    Adding all cells from cell set: heaterCells ...
+    cellZoneSet heater now size 64
+Created cellSet coolerCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.075 0.02 0.02) (0.095 0.04 0.04))
+    cellSet coolerCells now size 64
+Created cellZoneSet cooler
+    Applying source setToCellZone
+    Adding all cells from cell set: coolerCells ...
+    cellZoneSet cooler now size 64
+
+End
+
+# -- cell 3 (0.5s, exit 1)
+import pyvista as pv
+Path("case.foam").touch()
+pv.OFF_SCREEN = True
+reader = pv.OpenFOAMReader("case.foam")
+reader.skip_zero_time = False
+mesh_data = reader.read()
+print(mesh_data)
+print("Blocks:", list(mesh_data.keys()))
+for key in mesh_data.keys():
+    obj=mesh_data[key]
+    print(key, "cells=", obj.n_cells, "bounds=", tuple(round(v,6) for v in obj.bounds), "cell arrays=", list(obj.cell_data.keys()))
+# -- output
+MultiBlock (0x711774306020)
+  N Blocks:   2
+  X Bounds:   0.000e+00, 1.000e-01
+  Y Bounds:   0.000e+00, 6.000e-02
+  Z Bounds:   0.000e+00, 4.000e-02
+Blocks: ['internalMesh', 'boundary']
+internalMesh cells= 1920 bounds= (0.0, 0.1, 0.0, 0.06, 0.0, 0.04) cell arrays= []
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 11[39m
+[32m      7[39m print(mesh_data)
+[32m      8[39m print([33m"Blocks:"[39m, list(mesh_data.keys()))
+[32m      9[39m [38;5;28;01mfor[39;00m key [38;5;28;01min[39;00m mesh_data.keys():
+[32m     10[39m     obj=mesh_data[key]
+[32m---> [39m[32m11[39m     print(key, [33m"cells="[39m, obj.n_cells, [33m"bounds="[39m, tuple(round(v,[32m6[39m) [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m obj.bounds), [33m"cell arrays="[39m, list(obj.cell_data.keys()))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/dataobject.py:123[39m, in [36mDataObject.__getattr__[39m[34m(self, item)[39m
+[32m    121[39m [38;5;28;01mif[39;00m _resolve_pending_accessor(item):
+[32m    122[39m     [38;5;28;01mreturn[39;00m [38;5;28mobject[39m.[34m__getattribute__[39m([38;5;28mself[39m, item)
+[32m--> [39m[32m123[39m [38;5;28;01mreturn[39;00m [30;43msuper[39;49m[30;43m([39;49m[30;43m)[39;49m[30;43m.[39;49m[30;43m__getattribute__[39;49m[30;43m([39;49m[30;43mitem[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_vtk_utilities.py:146[39m, in [36mDisableVtkSnakeCase.__getattribute__[39m[34m(self, item)[39m
+[32m    144[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__getattribute__[39m([38;5;28mself[39m, item):
+[32m    145[39m     DisableVtkSnakeCase.check_attribute([38;5;28mself[39m, item)
+[32m--> [39m[32m146[39m     [38;5;28;01mreturn[39;00m [30;43mobject[39;49m[30;43m.[39;49m[30;43m__getattribute__[39;49m[30;43m([39;49m[30;43mself[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mitem[39;49m[30;43m)[39;49m
+
+[31mAttributeError[39m: 'MultiBlock' object has no attribute 'n_cells'
+
+# -- cell 4 (1.2s, exit 1)
+import pyvista as pv
+pv.OFF_SCREEN = True
+reader2 = pv.OpenFOAMReader("case.foam")
+reader2.skip_zero_time = False
+foam_mesh = reader2.read()
+internal = foam_mesh["internalMesh"]
+print(f"Actual internal mesh: cells={internal.n_cells}, points={internal.n_points}, bounds={internal.bounds}")
+plotter = pv.Plotter(off_screen=True, window_size=(1000,600))
+plotter.set_background("white")
+plotter.add_mesh(internal, style="wireframe", color="slategray", opacity=0.22, line_width=1)
+heater_box = pv.Box(bounds=(0.005,0.025,0.020,0.040,0.000,0.020))
+cooler_box = pv.Box(bounds=(0.075,0.095,0.020,0.040,0.020,0.040))
+plotter.add_mesh(heater_box, color="orangered", opacity=0.85, label="heater: 64 cells")
+plotter.add_mesh(cooler_box, color="deepskyblue", opacity=0.85, label="cooler: 64 cells")
+plotter.add_legend(face="white", bcolor="black")
+plotter.add_axes(); plotter.view_isometric(); plotter.camera.zoom(1.25)
+plotter.show(screenshot="coarse_mesh.png", auto_close=True)
+# -- output
+Actual internal mesh: cells=1920, points=2457, bounds=BoundsTuple(x_min = 0.0,
+            x_max = 0.10000000149011612,
+            y_min = 0.0,
+            y_max = 0.05999999865889549,
+            z_min = 0.0,
+            z_max = 0.03999999910593033)
+
+[0m[33m2026-09-15 04:55:44.043 (  16.641s) [    7118718CD780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-15 04:55:44.043 (  16.641s) [    7118718CD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 04:55:44.056 (  16.654s) [    7118718CD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 15[39m
+[32m     11[39m heater_box = pv.Box(bounds=([32m0.005[39m,[32m0.025[39m,[32m0.020[39m,[32m0.040[39m,[32m0.000[39m,[32m0.020[39m))
+[32m     12[39m cooler_box = pv.Box(bounds=([32m0.075[39m,[32m0.095[39m,[32m0.020[39m,[32m0.040[39m,[32m0.020[39m,[32m0.040[39m))
+[32m     13[39m plotter.add_mesh(heater_box, color=[33m"orangered"[39m, opacity=[32m0.85[39m, label=[33m"heater: 64 cells"[39m)
+[32m     14[39m plotter.add_mesh(cooler_box, color=[33m"deepskyblue"[39m, opacity=[32m0.85[39m, label=[33m"cooler: 64 cells"[39m)
+[32m---> [39m[32m15[39m plotter.add_legend(face=[33m"white"[39m, bcolor=[33m"black"[39m)
+[32m     16[39m plotter.add_axes(); plotter.view_isometric(); plotter.camera.zoom([32m1.25[39m)
+[32m     17[39m plotter.show(screenshot=[33m"coarse_mesh.png"[39m, auto_close=[38;5;28;01mTrue[39;00m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/plotter.py:1205[39m, in [36mBasePlotter.add_legend[39m[34m(self, *args, **kwargs)[39m
+[32m   1202[39m [38;5;129m@wraps[39m(Renderer.add_legend)
+[32m   1203[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34madd_legend[39m([38;5;28mself[39m, *args, **kwargs) -> _vtk.vtkLegendBoxActor:  [38;5;66;03m# numpydoc ignore=PR01,RT01[39;00m
+[32m   1204[39m [38;5;250m    [39m[33;03m"""Wrap ``Renderer.add_legend``."""[39;00m
+[32m-> [39m[32m1205[39m     [38;5;28;01mreturn[39;00m [30;43mself[39;49m[30;43m.[39;49m[30;43mrenderer[39;49m[30;43m.[39;49m[30;43madd_legend[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43margs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243[39m, in [36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f[39m[34m(*args, **kwargs)[39m
+[32m    239[39m             warn_external(msg, PyVistaDeprecationWarning)
+[32m    241[39m         warn_positional_args()
+[32m--> [39m[32m243[39m [38;5;28;01mreturn[39;00m [30;43mf[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43margs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/renderer.py:4252[39m, in [36mRenderer.add_legend[39m[34m(self, labels, bcolor, border, size, name, loc, face, font_family, background_opacity)[39m
+[32m   4250[39m     [38;5;28mself[39m._legend.SetNumberOfEntries([38;5;28mlen[39m([38;5;28mself[39m._labels))
+[32m   4251[39m     [38;5;28;01mfor[39;00m i, (vtk_object, text, color) [38;5;129;01min[39;00m [38;5;28menumerate[39m([38;5;28mself[39m._labels.values()):
+[32m-> [39m[32m4252[39m         vtk_object_input = [30;43mmake_legend_face[39;49m[30;43m([39;49m[30;43mface[39;49m[30;43m)[39;49m [38;5;28;01mif[39;00m face [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m vtk_object
+[32m   4253[39m         [38;5;28mself[39m._legend.SetEntry(i, vtk_object_input, text, [38;5;28mlist[39m(color.float_rgb))
+[32m   4255[39m [38;5;28;01melse[39;00m:
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/renderer.py:180[39m, in [36mmake_legend_face[39m[34m(face)[39m
+[32m    171[39m [38;5;28;01melse[39;00m:
+[32m    172[39m     msg = (
+[32m    173[39m         [33mf[39m[33m'[39m[33mInvalid face [39m[33m"[39m[38;5;132;01m{[39;00mface[38;5;132;01m}[39;00m[33m"[39m[33m.  Must be one of the following:[39m[38;5;130;01m\n[39;00m[33m'[39m
+[32m    174[39m         [33m'[39m[38;5;130;01m\t[39;00m[33m"[39m[33mtriangle[39m[33m"[39m[38;5;130;01m\n[39;00m[33m'[39m
+[32m   (...)[39m[32m    178[39m         [33m'[39m[38;5;130;01m\t[39;00m[33mpyvista.PolyData[39m[33m'[39m
+[32m    179[39m     )
+[32m--> [39m[32m180[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m(msg)
+[32m    182[39m [38;5;66;03m# Normalize the geometry[39;00m
+[32m    183[39m legendface = normalize(legendface)
+
+[31mValueError[39m: Invalid face "white".  Must be one of the following:
+	"triangle"
+	"circle"
+	"rectangle"
+	"none"
+	pyvista.PolyData
+
+# -- cell 5 (0.3s, exit 0)
+import pyvista as pv
+pv.OFF_SCREEN = True
+rdr = pv.OpenFOAMReader("case.foam"); rdr.skip_zero_time = False
+actual_mesh = rdr.read()["internalMesh"]
+p = pv.Plotter(off_screen=True, window_size=(1000,600)); p.set_background("white")
+p.add_mesh(actual_mesh, style="wireframe", color="slategray", opacity=0.22, line_width=1)
+p.add_mesh(pv.Box(bounds=(0.005,0.025,0.020,0.040,0.000,0.020)), color="orangered", opacity=0.85, label="heater: 64 cells")
+p.add_mesh(pv.Box(bounds=(0.075,0.095,0.020,0.040,0.020,0.040)), color="deepskyblue", opacity=0.85, label="cooler: 64 cells")
+p.add_legend(bcolor="white", face="rectangle"); p.add_axes(); p.view_isometric(); p.camera.zoom(1.25)
+p.show(screenshot="coarse_mesh.png", auto_close=True)
+print(f"Rendered generated mesh: {actual_mesh.n_cells} cells, dimensions {actual_mesh.bounds.x_max-actual_mesh.bounds.x_min:.6f} x {actual_mesh.bounds.y_max-actual_mesh.bounds.y_min:.6f} x {actual_mesh.bounds.z_max-actual_mesh.bounds.z_min:.6f} m")
+# -- output
+Rendered generated mesh: 1920 cells, dimensions 0.100000 x 0.060000 x 0.040000 m
+
+[0m[33m2026-09-15 04:55:57.888 (  30.486s) [    7118718CD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 04:55:57.889 (  30.487s) [    7118718CD780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_491625/1346162396.py:10: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.show(screenshot="coarse_mesh.png", auto_close=True)
+
+# -- cell 6 (0.3s, exit 1)
+import subprocess, re
+cm = subprocess.run(["checkMesh","-allGeometry","-allTopology"], text=True, capture_output=True)
+Path("checkMesh.log").write_text(cm.stdout + cm.stderr)
+print("\n".join(cm.stdout.splitlines()[-45:]))
+if cm.returncode != 0 or "Failed" in cm.stdout:
+    raise RuntimeError("checkMesh did not pass")
+cz = Path("constant/polyMesh/cellZones").read_text()
+bd_txt = Path("constant/polyMesh/boundary").read_text()
+for zone in ("heater","cooler"):
+    m=re.search(rf'\b{zone}\b\s*\{{.*?cellLabels\s+List<label>\s*(\d+)', cz, re.S)
+    print(f"zone {zone}: {m.group(1) if m else 'not parsed'} cells")
+m=re.search(r'\bwalls\b\s*\{.*?nFaces\s+(\d+)', bd_txt, re.S)
+print(f"boundary walls: {m.group(1) if m else 'not parsed'} faces; type wall")
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allGeometry -allTopology
+Date   : Sep 15 2026
+Time   : 04:56:06
+Host   : yc-demo
+PID    : 491976
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260915-045426-7cba/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 6[39m
+[32m      2[39m cm = subprocess.run([[33m"checkMesh"[39m,[33m"-allGeometry"[39m,[33m"-allTopology"[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m      3[39m Path([33m"checkMesh.log"[39m).write_text(cm.stdout + cm.stderr)
+[32m      4[39m print([33m"\n"[39m.join(cm.stdout.splitlines()[-[32m45[39m:]))
+[32m      5[39m [38;5;28;01mif[39;00m cm.returncode != [32m0[39m [38;5;28;01mor[39;00m [33m"Failed"[39m [38;5;28;01min[39;00m cm.stdout:
+[32m----> [39m[32m6[39m     [38;5;28;01mraise[39;00m RuntimeError([33m"checkMesh did not pass"[39m)
+[32m      7[39m cz = Path([33m"constant/polyMesh/cellZones"[39m).read_text()
+[32m      8[39m bd_txt = Path([33m"constant/polyMesh/boundary"[39m).read_text()
+[32m      9[39m [38;5;28;01mfor[39;00m zone [38;5;28;01min[39;00m ([33m"heater"[39m,[33m"cooler"[39m):
+
+[31mRuntimeError[39m: checkMesh did not pass
+
+# -- cell 7 (0.1s, exit 0)
+log_text = Path("checkMesh.log").read_text()
+print(log_text[-5000:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allGeometry -allTopology
+Date   : Sep 15 2026
+Time   : 04:56:06
+Host   : yc-demo
+PID    : 491976
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260915-045426-7cba/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T7-20260915-045426-7cba/t7/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 8 (0.4s, exit 0)
+Path("system/fvSchemes").write_text(r'''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object fvSchemes;
+}
+ddtSchemes { default none; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+''')
+Path("system/fvSolution").write_text(r'''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object fvSolution;
+}
+solvers {}
+''')
+validation = subprocess.run(["checkMesh","-allGeometry","-allTopology"], text=True, capture_output=True)
+Path("checkMesh.log").write_text(validation.stdout + validation.stderr)
+print("\n".join((validation.stdout+validation.stderr).splitlines()[-55:]))
+if validation.returncode != 0 or "Failed" in validation.stdout:
+    raise RuntimeError("checkMesh did not pass")
+# -- output
+Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    walls               992      994      ok (closed singly connected)       (0 0 0) (0.1 0.06 0.04)
+    ".*"                992      994      ok (closed singly connected)       (0 0 0) (0.1 0.06 0.04)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    heater              64           125          8e-06        (0.005 0.02 0) (0.025 0.04 0.02)
+    cooler              64           125          8e-06        (0.075 0.02 0.02) (0.095 0.04 0.04)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.1 0.06 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (2.13124e-17 -5.19149e-18 -3.4701e-17) OK.
+    Max cell openness = 1.35525e-16 OK.
+    Max aspect ratio = 1 OK.
+    Minimum face area = 2.5e-05. Maximum face area = 2.5e-05.  Face area magnitudes OK.
+    Min volume = 1.25e-07. Max volume = 1.25e-07.  Total volume = 0.00024.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.66533e-14 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.005 0.005 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.125 average: 0.761979
+    Cell determinant check OK.
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.5 average: 0.5
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 1 average: 1
+    Face volume ratio check OK.
+
+Mesh OK.
+
+End
+

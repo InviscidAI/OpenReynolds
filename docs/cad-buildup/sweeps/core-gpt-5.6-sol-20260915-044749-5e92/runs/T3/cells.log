@@ -1,0 +1,1334 @@
+# -- cell 1 (5.8s, exit 0)
+import build123d as bd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Requested dimensions, in metres
+CHANNEL_W = 0.006
+LENGTH = 0.120
+N_LOOPS = 4
+
+# Assumed Tesla-cell proportions, in metres
+LOOP_SPAN = 0.024
+LOOP_REACH = 0.015
+LOOP_STARTS = [0.012, 0.039, 0.066, 0.093]
+PATH_SAMPLES = 13
+
+# A coarse planar footprint: main duct plus four smooth, alternating teardrop bypass ducts.
+main_face = bd.Pos(LENGTH / 2, 0) * bd.Rectangle(LENGTH, CHANNEL_W)
+fluid_face = main_face
+loop_centrelines = []
+for i, x0 in enumerate(LOOP_STARTS):
+    side = 1 if i % 2 == 0 else -1
+    t = np.linspace(0.0, 1.0, PATH_SAMPLES)
+    # A pointed departure and broad downstream return form the teardrop centreline.
+    x = x0 + LOOP_SPAN * t
+    y = side * (CHANNEL_W * 0.22 + LOOP_REACH * np.sin(np.pi * t) * (0.72 + 0.28 * t))
+    pts = [bd.Vector(float(xj), float(yj), 0) for xj, yj in zip(x, y)]
+    loop_centrelines.append(np.column_stack((x, y)))
+    for a, b in zip(pts[:-1], pts[1:]):
+        d = b - a
+        segment = bd.Pos(a.X, a.Y) * bd.Rot(0, 0, np.degrees(np.arctan2(d.Y, d.X))) * bd.Rectangle(d.length, CHANNEL_W, align=(bd.Align.MIN, bd.Align.CENTER))
+        fluid_face = fluid_face + segment
+    for p in pts:
+        fluid_face = fluid_face + (bd.Pos(p.X, p.Y) * bd.Circle(CHANNEL_W / 2))
+
+# Inspect numerical envelope and coarse topology.
+bb = fluid_face.bounding_box()
+print(f"Requested channel width: {CHANNEL_W*1e3:.3f} mm")
+print(f"Built main-channel width: {(main_face.bounding_box().max.Y-main_face.bounding_box().min.Y)*1e3:.3f} mm")
+print(f"Requested overall length: about {LENGTH*1e3:.1f} mm")
+print(f"Built inlet-to-outlet length: {(bb.max.X-bb.min.X)*1e3:.3f} mm")
+print(f"Bypass count requested/built: {N_LOOPS}/{len(loop_centrelines)}")
+print(f"Assumed loop axial span: {LOOP_SPAN*1e3:.1f} mm; reach from centreline: {LOOP_REACH*1e3:.1f} mm")
+print(f"Fluid footprint area: {fluid_face.area*1e6:.2f} mm^2; solids: {len(fluid_face.solids())}; faces: {len(fluid_face.faces())}")
+
+# Plot the actual CAD boundary and the generating centrelines.
+fig, ax = plt.subplots(figsize=(12, 4))
+for edge in fluid_face.edges():
+    us = np.linspace(0, 1, 30)
+    q = np.array([[edge.position_at(float(u)).X, edge.position_at(float(u)).Y] for u in us])
+    ax.plot(q[:,0]*1e3, q[:,1]*1e3, color='navy', lw=1.3)
+for c in loop_centrelines:
+    ax.plot(c[:,0]*1e3, c[:,1]*1e3, '--', color='tomato', lw=0.8)
+ax.set_aspect('equal'); ax.grid(True, alpha=.25)
+ax.set_xlabel('x [mm]'); ax.set_ylabel('y [mm]')
+ax.set_title('Coarse Tesla-valve fluid footprint (blue boundary; red bypass centrelines)')
+plt.tight_layout()
+plt.show()
+# -- output
+Requested channel width: 6.000 mm
+Built main-channel width: 6.000 mm
+Requested overall length: about 120.0 mm
+Built inlet-to-outlet length: 120.000 mm
+Bypass count requested/built: 4/4
+Assumed loop axial span: 24.0 mm; reach from centreline: 15.0 mm
+Fluid footprint area: 1501.86 mm^2; solids: 0; faces: 1
+
+# -- cell 2 (0.2s, exit 1)
+# Inspect the CAD wire itself rather than inferring mesh patches from a bounding box.
+outer = fluid_face.outer_wire()
+ordered_edges = list(outer.edges())
+print(f"Outer boundary edges: {len(ordered_edges)}; closed: {outer.is_closed}")
+terminal_edges = []
+for j, e in enumerate(ordered_edges):
+    p0, p1 = e.position_at(0), e.position_at(1)
+    if abs(p1.X-p0.X) < 1e-10 and abs(e.length-CHANNEL_W) < 1e-8:
+        if abs(p0.X) < 1e-10:
+            terminal_edges.append(("inlet", j, e.length, p0, p1))
+        elif abs(p0.X-LENGTH) < 1e-10:
+            terminal_edges.append(("outlet", j, e.length, p0, p1))
+for name, j, le, p0, p1 in terminal_edges:
+    print(f"{name}: CAD edge {j}, length={le*1e3:.6f} mm, endpoints=({p0.X*1e3:.3f},{p0.Y*1e3:.3f}) to ({p1.X*1e3:.3f},{p1.Y*1e3:.3f}) mm")
+print("Terminal patch identity check:", [x[0] for x in terminal_edges])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 2[39m
+[32m      1[39m [38;5;66;03m# Inspect the CAD wire itself rather than inferring mesh patches from a bounding box.[39;00m
+[32m----> [39m[32m2[39m outer = fluid_face.outer_wire()
+[32m      3[39m ordered_edges = list(outer.edges())
+[32m      4[39m print(f"Outer boundary edges: {len(ordered_edges)}; closed: {outer.is_closed}")
+[32m      5[39m terminal_edges = []
+
+[31mAttributeError[39m: 'Sketch' object has no attribute 'outer_wire'
+
+# -- cell 3 (0.8s, exit 0)
+face0 = fluid_face.faces()[0]
+outer = face0.outer_wire()
+ordered_edges = list(outer.edges())
+print(f"Outer boundary edges: {len(ordered_edges)}; closed: {outer.is_closed}")
+terminal_edges = []
+for j, e in enumerate(ordered_edges):
+    p0, p1 = e.position_at(0), e.position_at(1)
+    if abs(p1.X-p0.X) < 1e-10 and abs(e.length-CHANNEL_W) < 1e-8:
+        if abs(p0.X) < 1e-10:
+            terminal_edges.append(("inlet", j, e.length, p0, p1))
+        elif abs(p0.X-LENGTH) < 1e-10:
+            terminal_edges.append(("outlet", j, e.length, p0, p1))
+for name, j, le, p0, p1 in terminal_edges:
+    print(f"{name}: CAD edge {j}, length={le*1e3:.6f} mm, endpoints=({p0.X*1e3:.3f},{p0.Y*1e3:.3f}) to ({p1.X*1e3:.3f},{p1.Y*1e3:.3f}) mm")
+print("Terminal patch identity check:", [x[0] for x in terminal_edges])
+# -- output
+Outer boundary edges: 104; closed: True
+inlet: CAD edge 0, length=6.000000 mm, endpoints=(0.000,3.000) to (0.000,-3.000) mm
+outlet: CAD edge 52, length=6.000000 mm, endpoints=(120.000,-3.000) to (120.000,3.000) mm
+Terminal patch identity check: ['inlet', 'outlet']
+
+# -- cell 4 (0.1s, exit 0)
+BOUNDARY_CHORD = 0.0008
+boundary_xy = []
+boundary_labels = []
+current = None
+for j, e in enumerate(ordered_edges):
+    n = max(1, int(np.ceil(e.length / BOUNDARY_CHORD)))
+    samples = np.array([[e.position_at(float(u)).X, e.position_at(float(u)).Y] for u in np.linspace(0, 1, n+1)])
+    if current is not None and np.linalg.norm(samples[0]-current) > np.linalg.norm(samples[-1]-current):
+        samples = samples[::-1]
+    if current is not None and np.linalg.norm(samples[0]-current) > 1e-8:
+        raise RuntimeError(f"CAD boundary discontinuity before edge {j}")
+    label = "inlet" if j == 0 else ("outlet" if j == 52 else "walls")
+    if not boundary_xy:
+        boundary_xy.extend(samples[:-1])
+    else:
+        boundary_xy.extend(samples[1:-1])
+    # Labels are rebuilt below from point-pair ownership, so retain edge polylines explicitly.
+    boundary_labels.append((label, samples))
+    current = samples[-1]
+
+# Reassemble exact edge polylines in sequence and retain one label per segment.
+poly = [boundary_labels[0][1][0]]
+seg_labels = []
+for label, samples in boundary_labels:
+    if np.linalg.norm(samples[0]-poly[-1]) > np.linalg.norm(samples[-1]-poly[-1]): samples = samples[::-1]
+    for q in samples[1:]:
+        poly.append(q); seg_labels.append(label)
+poly = np.asarray(poly)
+closure_error = np.linalg.norm(poly[-1]-poly[0])
+shoelace_area = 0.5*abs(np.dot(poly[:-1,0],poly[1:,1])-np.dot(poly[:-1,1],poly[1:,0]))
+print(f"Boundary segments: {len(seg_labels)} (inlet {seg_labels.count('inlet')}, outlet {seg_labels.count('outlet')}, walls {seg_labels.count('walls')})")
+print(f"Polyline closure error: {closure_error:.3e} m")
+print(f"CAD area: {face0.area*1e6:.3f} mm^2; discretized area: {shoelace_area*1e6:.3f} mm^2; difference: {(shoelace_area-face0.area)/face0.area*100:.3f}%")
+# -- output
+Boundary segments: 442 (inlet 8, outlet 8, walls 426)
+Polyline closure error: 0.000e+00 m
+CAD area: 1501.862 mm^2; discretized area: 1799.272 mm^2; difference: 19.803%
+
+# -- cell 5 (0.1s, exit 0)
+import inspect
+print("Wire ordering methods:", [n for n in dir(outer) if "order" in n.lower() or "edge" in n.lower()])
+for n in [n for n in dir(outer) if "order" in n.lower()]:
+    try: print(n, inspect.signature(getattr(outer, n)))
+    except Exception: pass
+# -- output
+Wire ordering methods: ['_ordered_shapes', 'edge', 'edges', 'fix_degenerate_edges', 'geom_LUT_EDGE', 'order', 'order_chamfer_edges', 'order_edges']
+order_chamfer_edges (reference_edge: 'Edge | None', edges: 'tuple[Edge, Edge]') -> 'tuple[Edge, Edge]'
+order_edges () -> 'ShapeList[Edge]'
+
+# -- cell 6 (0.8s, exit 0)
+ordered_edges = list(outer.order_edges())
+boundary_labels = []
+current = None
+for e in ordered_edges:
+    n = max(1, int(np.ceil(e.length / BOUNDARY_CHORD)))
+    samples = np.array([[e.position_at(float(u)).X, e.position_at(float(u)).Y] for u in np.linspace(0, 1, n+1)])
+    if current is not None and np.linalg.norm(samples[0]-current) > np.linalg.norm(samples[-1]-current): samples = samples[::-1]
+    xmean = float(samples[:,0].mean())
+    is_vertical_terminal = np.ptp(samples[:,0]) < 1e-10 and abs(e.length-CHANNEL_W) < 1e-8
+    label = "inlet" if is_vertical_terminal and abs(xmean) < 1e-10 else ("outlet" if is_vertical_terminal and abs(xmean-LENGTH) < 1e-10 else "walls")
+    boundary_labels.append((label, samples)); current = samples[-1]
+poly = [boundary_labels[0][1][0]]; seg_labels = []
+for label, samples in boundary_labels:
+    if np.linalg.norm(samples[0]-poly[-1]) > np.linalg.norm(samples[-1]-poly[-1]): samples = samples[::-1]
+    if np.linalg.norm(samples[0]-poly[-1]) > 1e-8: raise RuntimeError("ordered wire discontinuity")
+    for q in samples[1:]: poly.append(q); seg_labels.append(label)
+poly = np.asarray(poly)
+closure_error = np.linalg.norm(poly[-1]-poly[0])
+shoelace_area = 0.5*abs(np.dot(poly[:-1,0],poly[1:,1])-np.dot(poly[:-1,1],poly[1:,0]))
+print(f"Ordered CAD edges: {len(ordered_edges)}; boundary segments: {len(seg_labels)}")
+print(f"Terminal segment counts: inlet={seg_labels.count('inlet')}, outlet={seg_labels.count('outlet')}")
+print(f"Closure error: {closure_error:.3e} m")
+print(f"CAD area: {face0.area*1e6:.3f} mm^2; discretized area: {shoelace_area*1e6:.3f} mm^2; difference: {(shoelace_area-face0.area)/face0.area*100:.3f}%")
+# -- output
+Ordered CAD edges: 104; boundary segments: 442
+Terminal segment counts: inlet=8, outlet=8
+Closure error: 0.000e+00 m
+CAD area: 1501.862 mm^2; discretized area: 1799.272 mm^2; difference: 19.803%
+
+# -- cell 7 (0.3s, exit 0)
+print("Face wire methods:", [n for n in dir(face0) if "wire" in n.lower()])
+all_wires = list(face0.wires())
+wire_polys = []; wire_seg_labels = []
+for wi, wire in enumerate(all_wires):
+    edges = list(wire.order_edges()); records=[]; current=None
+    for e in edges:
+        n=max(1,int(np.ceil(e.length/BOUNDARY_CHORD)))
+        samples=np.array([[e.position_at(float(u)).X,e.position_at(float(u)).Y] for u in np.linspace(0,1,n+1)])
+        if current is not None and np.linalg.norm(samples[0]-current)>np.linalg.norm(samples[-1]-current): samples=samples[::-1]
+        xmean=float(samples[:,0].mean()); term=np.ptp(samples[:,0])<1e-10 and abs(e.length-CHANNEL_W)<1e-8
+        label="inlet" if term and abs(xmean)<1e-10 else ("outlet" if term and abs(xmean-LENGTH)<1e-10 else "walls")
+        records.append((label,samples)); current=samples[-1]
+    pts=[records[0][1][0]]; labels=[]
+    for label,samples in records:
+        if np.linalg.norm(samples[0]-pts[-1])>np.linalg.norm(samples[-1]-pts[-1]): samples=samples[::-1]
+        for q in samples[1:]: pts.append(q); labels.append(label)
+    pts=np.asarray(pts)
+    signed=0.5*(np.dot(pts[:-1,0],pts[1:,1])-np.dot(pts[:-1,1],pts[1:,0]))
+    wire_polys.append(pts); wire_seg_labels.append(labels)
+    print(f"wire {wi}: segments={len(labels)}, signed area={signed*1e6:.3f} mm^2, closure={np.linalg.norm(pts[-1]-pts[0]):.2e} m")
+areas=sorted([abs(0.5*(np.dot(p[:-1,0],p[1:,1])-np.dot(p[:-1,1],p[1:,0]))) for p in wire_polys],reverse=True)
+net_area=areas[0]-sum(areas[1:])
+print(f"Wires found: {len(all_wires)} (1 outer + {len(all_wires)-1} islands)")
+print(f"CAD area={face0.area*1e6:.3f} mm^2; polygon net area={net_area*1e6:.3f} mm^2; difference={(net_area-face0.area)/face0.area*100:.3f}%")
+# -- output
+Face wire methods: ['_wrap_wire', 'inner_wires', 'outer_wire', 'wire', 'wires']
+wire 0: segments=442, signed area=1799.272 mm^2, closure=0.00e+00 m
+wire 1: segments=52, signed area=-74.399 mm^2, closure=6.99e-18 m
+wire 2: segments=52, signed area=-74.399 mm^2, closure=8.67e-19 m
+wire 3: segments=52, signed area=-74.399 mm^2, closure=1.73e-18 m
+wire 4: segments=52, signed area=-74.399 mm^2, closure=1.73e-18 m
+Wires found: 5 (1 outer + 4 islands)
+CAD area=1501.862 mm^2; polygon net area=1501.678 mm^2; difference=-0.012%
+
+# -- cell 8 (0.9s, exit 1)
+import gmsh, os
+THICKNESS = 0.001       # assumed quasi-2D depth
+MESH_SIZE = 0.0010      # coarse in-plane target
+
+# Save the authored CAD geometry as a reproducible metric STEP solid.
+solid = bd.extrude(face0, THICKNESS)
+bd.export_step(solid, "teslaValve.step")
+
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize()
+gmsh.model.add("teslaValve")
+point_tags=[]; curve_labels={}; loop_tags=[]
+for pts, labels in zip(wire_polys, wire_seg_labels):
+    local_pts=[gmsh.model.geo.addPoint(float(x),float(y),0,MESH_SIZE) for x,y in pts[:-1]]
+    curves=[]
+    for k,label in enumerate(labels):
+        c=gmsh.model.geo.addLine(local_pts[k],local_pts[(k+1)%len(local_pts)])
+        curves.append(c); curve_labels[c]=label
+    loop_tags.append(gmsh.model.geo.addCurveLoop(curves))
+base_surface=gmsh.model.geo.addPlaneSurface(loop_tags)
+ext=gmsh.model.geo.extrude([(2,base_surface)],0,0,THICKNESS,numElements=[1],recombine=False)
+gmsh.model.geo.synchronize()
+top_surface=next[0][1]; volume=next[1][1]
+
+# Each original labeled curve is adjacent to the base and exactly one created side surface.
+side_groups={"inlet":set(),"outlet":set(),"walls":set()}
+for c,label in curve_labels.items():
+    upward,_=gmsh.model.getAdjacencies(1,c)
+    lateral=[int(s) for s in upward if int(s)!=base_surface]
+    if len(lateral)!=1: raise RuntimeError(f"curve {c} has lateral surfaces {lateral}")
+    side_groups[label].add(lateral[0])
+for name in ("inlet","outlet","walls"):
+    pg=gmsh.model.addPhysicalGroup(2,sorted(side_groups[name])); gmsh.model.setPhysicalName(2,pg,name)
+pg=gmsh.model.addPhysicalGroup(2,[base_surface,top_surface]); gmsh.model.setPhysicalName(2,pg,"frontAndBack")
+pg=gmsh.model.addPhysicalGroup(3,[volume]); gmsh.model.setPhysicalName(3,pg,"fluid")
+gmsh.option.setNumber("Mesh.MeshSizeMin",MESH_SIZE)
+gmsh.option.setNumber("Mesh.MeshSizeMax",MESH_SIZE)
+gmsh.option.setNumber("Mesh.Algorithm",6)
+gmsh.option.setNumber("Mesh.MshFileVersion",2.2)
+gmsh.model.mesh.generate(3)
+gmsh.write("teslaValve.msh")
+node_tags,_,_=gmsh.model.mesh.getNodes(); elem_types,elem_tags,_=gmsh.model.mesh.getElements(3,volume)
+print(f"CAD solid volume: {solid.volume*1e9:.3f} mm^3 (area x depth target: {face0.area*THICKNESS*1e9:.3f} mm^3)")
+print(f"Gmsh nodes: {len(node_tags)}; volume elements: {sum(len(a) for a in elem_tags)}; element types: {elem_types}")
+print("Patch surface counts:", {k:len(v) for k,v in side_groups.items()}, "; frontAndBack=2")
+gmsh.finalize()
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[8][39m[32m, line 23[39m
+[32m     19[39m     loop_tags.append(gmsh.model.geo.addCurveLoop(curves))
+[32m     20[39m base_surface=gmsh.model.geo.addPlaneSurface(loop_tags)
+[32m     21[39m ext=gmsh.model.geo.extrude([([32m2[39m,base_surface)],[32m0[39m,[32m0[39m,THICKNESS,numElements=[[32m1[39m],recombine=[38;5;28;01mFalse[39;00m)
+[32m     22[39m gmsh.model.geo.synchronize()
+[32m---> [39m[32m23[39m top_surface=next[[32m0[39m][[32m1[39m]; volume=next[[32m1[39m][[32m1[39m]
+[32m     24[39m 
+[32m     25[39m [38;5;66;03m# Each original labeled curve is adjacent to the base and exactly one created side surface.[39;00m
+[32m     26[39m side_groups={[33m"inlet"[39m:set(),[33m"outlet"[39m:set(),[33m"walls"[39m:set()}
+
+[31mTypeError[39m: 'builtin_function_or_method' object is not subscriptable
+
+# -- cell 9 (0.7s, exit 0)
+import gmsh, os
+THICKNESS = 0.001
+MESH_SIZE = 0.0010
+solid = bd.extrude(face0, THICKNESS)
+bd.export_step(solid, "teslaValve.step")
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize(); gmsh.model.add("teslaValve")
+curve_labels={}; loop_tags=[]
+for pts, labels in zip(wire_polys, wire_seg_labels):
+    local_pts=[gmsh.model.geo.addPoint(float(x),float(y),0,MESH_SIZE) for x,y in pts[:-1]]
+    curves=[]
+    for k,label in enumerate(labels):
+        c=gmsh.model.geo.addLine(local_pts[k],local_pts[(k+1)%len(local_pts)])
+        curves.append(c); curve_labels[c]=label
+    loop_tags.append(gmsh.model.geo.addCurveLoop(curves))
+base_surface=gmsh.model.geo.addPlaneSurface(loop_tags)
+ext=gmsh.model.geo.extrude([(2,base_surface)],0,0,THICKNESS,numElements=[1],recombine=False)
+gmsh.model.geo.synchronize()
+top_surface=ext[0][1]; volume=ext[1][1]
+side_groups={"inlet":set(),"outlet":set(),"walls":set()}
+for c,label in curve_labels.items():
+    upward,_=gmsh.model.getAdjacencies(1,c)
+    lateral=[int(s) for s in upward if int(s)!=base_surface]
+    if len(lateral)!=1: raise RuntimeError(f"curve {c} has lateral surfaces {lateral}")
+    side_groups[label].add(lateral[0])
+for name in ("inlet","outlet","walls"):
+    pg=gmsh.model.addPhysicalGroup(2,sorted(side_groups[name])); gmsh.model.setPhysicalName(2,pg,name)
+pg=gmsh.model.addPhysicalGroup(2,[base_surface,top_surface]); gmsh.model.setPhysicalName(2,pg,"frontAndBack")
+pg=gmsh.model.addPhysicalGroup(3,[volume]); gmsh.model.setPhysicalName(3,pg,"fluid")
+gmsh.option.setNumber("Mesh.MeshSizeMin",MESH_SIZE); gmsh.option.setNumber("Mesh.MeshSizeMax",MESH_SIZE)
+gmsh.option.setNumber("Mesh.Algorithm",6); gmsh.option.setNumber("Mesh.MshFileVersion",2.2)
+gmsh.model.mesh.generate(3); gmsh.write("teslaValve.msh")
+node_tags,_,_=gmsh.model.mesh.getNodes(); elem_types,elem_tags,_=gmsh.model.mesh.getElements(3,volume)
+print(f"CAD solid volume: {solid.volume*1e9:.3f} mm^3 (area x depth: {face0.area*THICKNESS*1e9:.3f} mm^3)")
+print(f"Gmsh nodes: {len(node_tags)}; volume elements: {sum(len(a) for a in elem_tags)}; element types: {elem_types}")
+print("Patch surface counts:", {k:len(v) for k,v in side_groups.items()}, "; frontAndBack=2")
+gmsh.finalize()
+# -- output
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Line)
+Info    : [ 10%] Meshing curve 5 (Line)
+Info    : [ 10%] Meshing curve 6 (Line)
+Info    : [ 10%] Meshing curve 7 (Line)
+Info    : [ 10%] Meshing curve 8 (Line)
+Info    : [ 10%] Meshing curve 9 (Line)
+Info    : [ 10%] Meshing curve 10 (Line)
+Info    : [ 10%] Meshing curve 11 (Line)
+Info    : [ 10%] Meshing curve 12 (Line)
+Info    : [ 10%] Meshing curve 13 (Line)
+Info    : [ 10%] Meshing curve 14 (Line)
+Info    : [ 10%] Meshing curve 15 (Line)
+Info    : [ 10%] Meshing curve 16 (Line)
+Info    : [ 10%] Meshing curve 17 (Line)
+Info    : [ 10%] Meshing curve 18 (Line)
+Info    : [ 10%] Meshing curve 19 (Line)
+Info    : [ 10%] Meshing curve 20 (Line)
+Info    : [ 10%] Meshing curve 21 (Line)
+Info    : [ 10%] Meshing curve 22 (Line)
+Info    : [ 10%] Meshing curve 23 (Line)
+Info    : [ 10%] Meshing curve 24 (Line)
+Info    : [ 10%] Meshing curve 25 (Line)
+Info    : [ 10%] Meshing curve 26 (Line)
+Info    : [ 10%] Meshing curve 27 (Line)
+Info    : [ 10%] Meshing curve 28 (Line)
+Info    : [ 10%] Meshing curve 29 (Line)
+Info    : [ 10%] Meshing curve 30 (Line)
+Info    : [ 10%] Meshing curve 31 (Line)
+Info    : [ 10%] Meshing curve 32 (Line)
+Info    : [ 10%] Meshing curve 33 (Line)
+Info    : [ 10%] Meshing curve 34 (Line)
+Info    : [ 10%] Meshing curve 35 (Line)
+Info    : [ 10%] Meshing curve 36 (Line)
+Info    : [ 10%] Meshing curve 37 (Line)
+Info    : [ 10%] Meshing curve 38 (Line)
+Info    : [ 10%] Meshing curve 39 (Line)
+Info    : [ 10%] Meshing curve 40 (Line)
+Info    : [ 10%] Meshing curve 41 (Line)
+Info    : [ 10%] Meshing curve 42 (Line)
+Info    : [ 10%] Meshing curve 43 (Line)
+Info    : [ 10%] Meshing curve 44 (Line)
+Info    : [ 10%] Meshing curve 45 (Line)
+Info    : [ 10%] Meshing curve 46 (Line)
+Info    : [ 10%] Meshing curve 47 (Line)
+Info    : [ 10%] Meshing curve 48 (Line)
+Info    : [ 10%] 
+... 163451 characters cut ...
+truded)
+Info    : Remeshing surface 3717
+Info    : Meshing surface 3717 (Extruded)
+Info    : Remeshing surface 3721
+Info    : Meshing surface 3721 (Extruded)
+Info    : Remeshing surface 3725
+Info    : Meshing surface 3725 (Extruded)
+Info    : Remeshing surface 3729
+Info    : Meshing surface 3729 (Extruded)
+Info    : Remeshing surface 3733
+Info    : Meshing surface 3733 (Extruded)
+Info    : Remeshing surface 3737
+Info    : Meshing surface 3737 (Extruded)
+Info    : Remeshing surface 3741
+Info    : Meshing surface 3741 (Extruded)
+Info    : Remeshing surface 3745
+Info    : Meshing surface 3745 (Extruded)
+Info    : Remeshing surface 3749
+Info    : Meshing surface 3749 (Extruded)
+Info    : Remeshing surface 3753
+Info    : Meshing surface 3753 (Extruded)
+Info    : Remeshing surface 3757
+Info    : Meshing surface 3757 (Extruded)
+Info    : Remeshing surface 3761
+Info    : Meshing surface 3761 (Extruded)
+Info    : Remeshing surface 3765
+Info    : Meshing surface 3765 (Extruded)
+Info    : Remeshing surface 3769
+Info    : Meshing surface 3769 (Extruded)
+Info    : Remeshing surface 3773
+Info    : Meshing surface 3773 (Extruded)
+Info    : Remeshing surface 3777
+Info    : Meshing surface 3777 (Extruded)
+Info    : Remeshing surface 3781
+Info    : Meshing surface 3781 (Extruded)
+Info    : Remeshing surface 3785
+Info    : Meshing surface 3785 (Extruded)
+Info    : Remeshing surface 3789
+Info    : Meshing surface 3789 (Extruded)
+Info    : Remeshing surface 3793
+Info    : Meshing surface 3793 (Extruded)
+Info    : Remeshing surface 3797
+Info    : Meshing surface 3797 (Extruded)
+Info    : Remeshing surface 3801
+Info    : Meshing surface 3801 (Extruded)
+Info    : Remeshing surface 3805
+Info    : Meshing surface 3805 (Extruded)
+Info    : Remeshing surface 3809
+Info    : Meshing surface 3809 (Extruded)
+Info    : Remeshing surface 3813
+Info    : Meshing surface 3813 (Extruded)
+Info    : Remeshing surface 3817
+Info    : Meshing surface 3817 (Extruded)
+Info    : Remeshing surface 3821
+Info    : Meshing surface 3821 (Extruded)
+Info    : Remeshing surface 3825
+Info    : Meshing surface 3825 (Extruded)
+Info    : Remeshing surface 3829
+Info    : Meshing surface 3829 (Extruded)
+Info    : Remeshing surface 3833
+Info    : Meshing surface 3833 (Extruded)
+Info    : Remeshing surface 3837
+Info    : Meshing surface 3837 (Extruded)
+Info    : Remeshing surface 3841
+Info    : Meshing surface 3841 (Extruded)
+Info    : Remeshing surface 3845
+Info    : Meshing surface 3845 (Extruded)
+Info    : Remeshing surface 3849
+Info    : Meshing surface 3849 (Extruded)
+Info    : Remeshing surface 3853
+Info    : Meshing surface 3853 (Extruded)
+Info    : Remeshing surface 3857
+Info    : Meshing surface 3857 (Extruded)
+Info    : Remeshing surface 3861
+Info    : Meshing surface 3861 (Extruded)
+Info    : Remeshing surface 3865
+Info    : Meshing surface 3865 (Extruded)
+Info    : Remeshing surface 3869
+Info    : Meshing surface 3869 (Extruded)
+Info    : Remeshing surface 3873
+Info    : Meshing surface 3873 (Extruded)
+Info    : Remeshing surface 3877
+Info    : Meshing surface 3877 (Extruded)
+Info    : Remeshing surface 3881
+Info    : Meshing surface 3881 (Extruded)
+Info    : Remeshing surface 3885
+Info    : Meshing surface 3885 (Extruded)
+Info    : Remeshing surface 3889
+Info    : Meshing surface 3889 (Extruded)
+Info    : Remeshing surface 3893
+Info    : Meshing surface 3893 (Extruded)
+Info    : Remeshing surface 3897
+Info    : Meshing surface 3897 (Extruded)
+Info    : Remeshing surface 3901
+Info    : Meshing surface 3901 (Extruded)
+Info    : Done meshing 3D (Wall 0.0973129s, CPU 0.101549s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 0.00046024s, CPU 0.00041s)
+Info    : 8714 nodes 44900 elements
+Info    : Writing 'teslaValve.msh'...
+Info    : Done writing 'teslaValve.msh'
+CAD solid volume: 1501.862 mm^3 (area x depth: 1501.862 mm^3)
+Gmsh nodes: 8714; volume elements: 24210; element types: [4]
+Patch surface counts: {'inlet': 8, 'outlet': 8, 'walls': 634} ; frontAndBack=2
+
+# -- cell 10 (0.8s, exit 0)
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize(); gmsh.option.setNumber("General.Terminal",0); gmsh.model.add("teslaValve")
+curve_labels={}; loop_tags=[]
+for pts, labels in zip(wire_polys, wire_seg_labels):
+    local_pts=[gmsh.model.geo.addPoint(float(x),float(y),0,MESH_SIZE) for x,y in pts[:-1]]; curves=[]
+    for k,label in enumerate(labels):
+        c=gmsh.model.geo.addLine(local_pts[k],local_pts[(k+1)%len(local_pts)])
+        curves.append(c); curve_labels[c]=label
+    loop_tags.append(gmsh.model.geo.addCurveLoop(curves))
+base_surface=gmsh.model.geo.addPlaneSurface(loop_tags)
+ext=gmsh.model.geo.extrude([(2,base_surface)],0,0,THICKNESS,numElements=[1],recombine=True)
+gmsh.model.geo.synchronize(); top_surface=ext[0][1]; volume=ext[1][1]
+side_groups={"inlet":set(),"outlet":set(),"walls":set()}
+for c,label in curve_labels.items():
+    upward,_=gmsh.model.getAdjacencies(1,c); lateral=[int(s) for s in upward if int(s)!=base_surface]
+    if len(lateral)!=1: raise RuntimeError(f"curve {c}: {lateral}")
+    side_groups[label].add(lateral[0])
+for name in ("inlet","outlet","walls"):
+    pg=gmsh.model.addPhysicalGroup(2,sorted(side_groups[name])); gmsh.model.setPhysicalName(2,pg,name)
+pg=gmsh.model.addPhysicalGroup(2,[base_surface,top_surface]); gmsh.model.setPhysicalName(2,pg,"frontAndBack")
+pg=gmsh.model.addPhysicalGroup(3,[volume]); gmsh.model.setPhysicalName(3,pg,"fluid")
+gmsh.option.setNumber("Mesh.MeshSizeMin",MESH_SIZE); gmsh.option.setNumber("Mesh.MeshSizeMax",MESH_SIZE)
+gmsh.option.setNumber("Mesh.Algorithm",6); gmsh.option.setNumber("Mesh.MshFileVersion",2.2)
+gmsh.model.mesh.generate(3); gmsh.write("teslaValve.msh")
+node_tags,_,_=gmsh.model.mesh.getNodes(); types,tags,_=gmsh.model.mesh.getElements(3,volume)
+print(f"Recombined mesh nodes: {len(node_tags)}; volume cells: {sum(len(a) for a in tags)}; Gmsh element types: {types}")
+print("Expected Gmsh type 6 = six-node triangular prism")
+gmsh.finalize()
+# -- output
+Recombined mesh nodes: 8714; volume cells: 8070; Gmsh element types: [6]
+Expected Gmsh type 6 = six-node triangular prism
+
+# -- cell 11 (1.5s, exit 0)
+import subprocess, pathlib, re
+pathlib.Path("system").mkdir(exist_ok=True)
+pathlib.Path("constant").mkdir(exist_ok=True)
+pathlib.Path("system/controlDict").write_text("FoamFile\n{ version 2.0; format ascii; class dictionary; object controlDict; }\napplication checkMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n")
+r=subprocess.run(["gmshToFoam","teslaValve.msh"],text=True,capture_output=True)
+print(r.stdout[-3000:]); print(r.stderr[-1000:])
+if r.returncode: raise RuntimeError(f"gmshToFoam failed {r.returncode}")
+bpath=pathlib.Path("constant/polyMesh/boundary")
+txt=bpath.read_text()
+# Change the explicitly named planar pair only; other patch types remain ordinary wall/inlet/outlet patches.
+pat=r"(frontAndBack\s*\{[^}]*?type\s+)patch(\s*;)"
+txt,n=re.subn(pat,r"\1empty\2",txt,flags=re.S)
+if n!=1: raise RuntimeError(f"frontAndBack patch edit count {n}")
+bpath.write_text(txt)
+print("\nOpenFOAM boundary table:\n",txt)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : gmshToFoam teslaValve.msh
+Date   : Sep 15 2026
+Time   : 04:51:35
+Host   : yc-demo
+PID    : 487947
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T3-20260915-044749-a1ac/t3
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:5
+    Surface 1	inlet
+    Surface 2	outlet
+    Surface 3	walls
+    Surface 4	frontAndBack
+    Volume 5	fluid
+
+Starting to read points at line 13
+Vertices to be read: 8714
+Vertices read:8714
+
+Starting to read cells at line 8730
+Cells to be read: 24860
+
+Mapping region 4 to Foam patch 0
+Mapping region 1 to Foam patch 1
+Mapping region 3 to Foam patch 2
+Mapping region 2 to Foam patch 3
+Mapping region 5 to Foam cellZone 0
+Cells:
+    total:8070
+    hex  :0
+    prism:8070
+    pyr  :0
+    tet  :0
+
+CellZones:
+Zone	Size
+    0	8070
+
+Patch 0 gets name frontAndBack
+Patch 1 gets name inlet
+Patch 2 gets name walls
+Patch 3 gets name outlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 16790 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone fluid and cellSet
+End
+
+
+
+
+OpenFOAM boundary table:
+ /*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+4
+(
+    frontAndBack
+    {
+        type            empty;
+        physicalType    patch;
+        nFaces          16140;
+        startFace       11780;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          8;
+        startFace       27920;
+    }
+    walls
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          634;
+        startFace       27928;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          8;
+        startFace       28562;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 12 (0.7s, exit 0)
+import pyvista as pv
+pathlib.Path("t3.foam").touch()
+reader=pv.OpenFOAMReader("t3.foam")
+reader.set_active_time_value(0.0)
+data=reader.read()
+print(data)
+# Collect internal mesh blocks and render all cell edges from the planar normal.
+mesh_blocks=[]
+for block in data:
+    if block is not None:
+        if isinstance(block,pv.MultiBlock): mesh_blocks.extend([b for b in block if b is not None and b.n_cells])
+        elif block.n_cells: mesh_blocks.append(block)
+mesh=mesh_blocks[0] if len(mesh_blocks)==1 else pv.merge(mesh_blocks)
+print(f"Rendered dataset: {mesh.n_cells} cells, {mesh.n_points} points, bounds={mesh.bounds}")
+pl=pv.Plotter(off_screen=True,window_size=(1400,500))
+pl.add_mesh(mesh,show_edges=True,color="lightsteelblue",edge_color="navy",line_width=0.35)
+pl.view_xy(); pl.camera.parallel_projection=True; pl.reset_camera()
+pl.add_text("Coarse 1 mm Tesla-valve mesh: 8,070 prismatic cells",font_size=12)
+pl.show(screenshot="coarseMesh.png")
+# -- output
+MultiBlock (0x734d987f67a0)
+  N Blocks:   2
+  X Bounds:   0.000e+00, 1.200e-01
+  Y Bounds:   -1.722e-02, 1.722e-02
+  Z Bounds:   0.000e+00, 1.000e-03
+Rendered dataset: 24860 cells, 8714 points, bounds=BoundsTuple(x_min =  0.0,
+            x_max =  0.11999999731779099,
+            y_min = -0.017216145992279053,
+            y_max =  0.017216145992279053,
+            z_min =  0.0,
+            z_max =  0.0010000000474974513)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-15 04:51:53.223 (   0.427s) [    734EC3252780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-15 04:51:53.223 (   0.428s) [    734EC3252780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 04:51:53.236 (   0.440s) [    734EC3252780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_479817/835595597.py:19: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot="coarseMesh.png")
+
+# -- cell 13 (0.3s, exit 0)
+r=subprocess.run(["checkMesh","-allGeometry","-allTopology"],text=True,capture_output=True)
+pathlib.Path("checkMesh.log").write_text(r.stdout+r.stderr)
+print((r.stdout+r.stderr)[-7000:])
+print("checkMesh return code:",r.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allGeometry -allTopology
+Date   : Sep 15 2026
+Time   : 04:52:04
+Host   : yc-demo
+PID    : 488339
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T3-20260915-044749-a1ac/t3
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T3-20260915-044749-a1ac/t3/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+checkMesh return code: 1
+
+# -- cell 14 (0.4s, exit 0)
+pathlib.Path("system/fvSchemes").write_text('''FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default Euler; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+''')
+pathlib.Path("system/fvSolution").write_text('''FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }
+solvers { }
+''')
+r=subprocess.run(["checkMesh","-allGeometry","-allTopology"],text=True,capture_output=True)
+pathlib.Path("checkMesh.log").write_text(r.stdout+r.stderr)
+print((r.stdout+r.stderr)[-7000:])
+if r.returncode: raise RuntimeError(f"checkMesh failed with code {r.returncode}")
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allGeometry -allTopology
+Date   : Sep 15 2026
+Time   : 04:52:15
+Host   : yc-demo
+PID    : 488351
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T3-20260915-044749-a1ac/t3
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           8714
+    internal points:  0
+    edges:            29217
+    internal edges:   3707
+    internal edges using one boundary point:   0
+    internal edges using two boundary points:  3707
+    faces:            28570
+    internal faces:   11780
+    cells:            8070
+    faces per cell:   5
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        8070
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+  <<Writing 650 cells with two non-boundary faces to set twoInternalFacesCells
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    frontAndBack        16140    8714     ok (non-closed singly connected)   (0 -0.0172161 0) (0.12 0.0172161 0.001)
+    inlet               8        18       ok (non-closed singly connected)   (0 -0.003 0) (0 0.003 0.001)
+    walls               634      1272     ok (non-closed singly connected)   (0 -0.0172161 0) (0.12 0.0172161 0.001)
+    outlet              8        18       ok (non-closed singly connected)   (0.12 -0.003 0) (0.12 0.003 0.001)
+    ".*"                16790    8714     ok (closed singly connected)       (0 -0.0172161 0) (0.12 0.0172161 0.001)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               8070         8714         1.50168e-06  (0 -0.0172161 0) (0.12 0.0172161 0.001)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.0172161 0) (0.12 0.0172161 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (6.73319e-19 1.25387e-18 4.78163e-21) OK.
+    Max cell openness = 2.97843e-16 OK.
+    Max aspect ratio = 19.2629 OK.
+    Minimum face area = 1.38862e-09. Maximum face area = 1.03211e-06.  Face area magnitudes OK.
+    Min volume = 1.38862e-12. Max volume = 3.66105e-10.  Total volume = 1.50168e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 47.4945 average: 4.8907
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.75545 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 1.05978e-05 0.00103211 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.00015252 average: 0.259597
+ ***Cells with small determinant (< 0.001) found, number of cells: 7
+  <<Writing 7 under-determined cells to set underdeterminedCells
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.0148629 average: 0.477355
+ ***Faces with small interpolation weight (< 0.05) found, number of faces: 13
+  <<Writing 13 faces with low interpolation weights to set lowWeightFaces
+    Face volume ratio : minimum: 0.0150872 average: 0.919181
+    Face volume ratio check OK.
+
+Failed 2 mesh checks.
+
+End
+
+# -- cell 15 (0.8s, exit 0)
+MIN_SEGMENT = 0.00020
+clean_polys=[]; clean_labels=[]
+for pts, labels in zip(wire_polys,wire_seg_labels):
+    raw=pts[:-1]; n=len(raw); keep=[0]
+    for i in range(1,n):
+        if np.linalg.norm(raw[i]-raw[keep[-1]]) >= MIN_SEGMENT: keep.append(i)
+    if len(keep)>2 and np.linalg.norm(raw[keep[-1]]-raw[keep[0]]) < MIN_SEGMENT: keep.pop()
+    cp=raw[keep]
+    cl=[]
+    for a_idx,b_idx in zip(keep,keep[1:]+[keep[0]+n]):
+        labs=[labels[k%n] for k in range(a_idx,b_idx)]
+        nonwall=[x for x in labs if x!="walls"]
+        cl.append(nonwall[0] if nonwall and all(x==nonwall[0] for x in nonwall) else "walls")
+    clean_polys.append(np.vstack([cp,cp[0]])); clean_labels.append(cl)
+areas_clean=[]
+for p in clean_polys:
+    areas_clean.append(abs(0.5*(np.dot(p[:-1,0],p[1:,1])-np.dot(p[:-1,1],p[1:,0]))))
+net_clean=max(areas_clean)-(sum(areas_clean)-max(areas_clean))
+all_lengths=[np.linalg.norm(p[i+1]-p[i]) for p in clean_polys for i in range(len(p)-1)]
+print(f"Segments before/after: {sum(map(len,wire_seg_labels))}/{sum(map(len,clean_labels))}")
+print(f"Minimum cleaned segment: {min(all_lengths)*1e3:.4f} mm")
+print(f"CAD area={face0.area*1e6:.3f} mm^2; cleaned area={net_clean*1e6:.3f} mm^2; change={(net_clean-face0.area)/face0.area*100:.4f}%")
+print(f"Clean inlet/outlet segment counts: {sum(x.count('inlet') for x in clean_labels)}/{sum(x.count('outlet') for x in clean_labels)}")
+# -- output
+Segments before/after: 650/634
+Minimum cleaned segment: 0.2718 mm
+CAD area=1501.862 mm^2; cleaned area=1501.690 mm^2; change=-0.0114%
+Clean inlet/outlet segment counts: 8/8
+
+# -- cell 16 (0.8s, exit 0)
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize(); gmsh.option.setNumber("General.Terminal",0); gmsh.model.add("teslaValveClean")
+curve_labels={}; loop_tags=[]
+for pts, labels in zip(clean_polys,clean_labels):
+    local_pts=[gmsh.model.geo.addPoint(float(x),float(y),0,MESH_SIZE) for x,y in pts[:-1]]; curves=[]
+    for k,label in enumerate(labels):
+        c=gmsh.model.geo.addLine(local_pts[k],local_pts[(k+1)%len(local_pts)])
+        curves.append(c); curve_labels[c]=label
+    loop_tags.append(gmsh.model.geo.addCurveLoop(curves))
+base_surface=gmsh.model.geo.addPlaneSurface(loop_tags)
+ext=gmsh.model.geo.extrude([(2,base_surface)],0,0,THICKNESS,numElements=[1],recombine=True)
+gmsh.model.geo.synchronize(); top_surface=ext[0][1]; volume=ext[1][1]
+side_groups={"inlet":set(),"outlet":set(),"walls":set()}
+for c,label in curve_labels.items():
+    upward,_=gmsh.model.getAdjacencies(1,c); lateral=[int(s) for s in upward if int(s)!=base_surface]
+    if len(lateral)!=1: raise RuntimeError(f"curve {c}: {lateral}")
+    side_groups[label].add(lateral[0])
+for name in ("inlet","outlet","walls"):
+    pg=gmsh.model.addPhysicalGroup(2,sorted(side_groups[name])); gmsh.model.setPhysicalName(2,pg,name)
+pg=gmsh.model.addPhysicalGroup(2,[base_surface,top_surface]); gmsh.model.setPhysicalName(2,pg,"frontAndBack")
+pg=gmsh.model.addPhysicalGroup(3,[volume]); gmsh.model.setPhysicalName(3,pg,"fluid")
+gmsh.option.setNumber("Mesh.MeshSizeMin",MESH_SIZE); gmsh.option.setNumber("Mesh.MeshSizeMax",MESH_SIZE)
+gmsh.option.setNumber("Mesh.Algorithm",6); gmsh.option.setNumber("Mesh.MshFileVersion",2.2)
+gmsh.model.mesh.generate(3); gmsh.write("teslaValve.msh")
+node_tags,_,_=gmsh.model.mesh.getNodes(); types,tags,_=gmsh.model.mesh.getElements(3,volume)
+print(f"Clean mesh nodes={len(node_tags)}, cells={sum(len(a) for a in tags)}, element types={types}")
+gmsh.finalize()
+# -- output
+Clean mesh nodes=8146, cells=7518, element types=[6]
+
+# -- cell 17 (0.4s, exit 0)
+import shutil
+shutil.rmtree("constant/polyMesh",ignore_errors=True)
+r=subprocess.run(["gmshToFoam","teslaValve.msh"],text=True,capture_output=True)
+if r.returncode: print(r.stdout+r.stderr); raise RuntimeError("gmshToFoam failed")
+bpath=pathlib.Path("constant/polyMesh/boundary"); txt=bpath.read_text()
+txt,n=re.subn(r"(frontAndBack\s*\{[^}]*?type\s+)patch(\s*;)",r"\1empty\2",txt,flags=re.S)
+if n!=1: raise RuntimeError(f"frontAndBack edit count {n}")
+bpath.write_text(txt)
+print("Conversion cell summary:")
+for line in r.stdout.splitlines():
+    if any(key in line for key in ("total:","prism:","Patch 0 gets","Patch 1 gets","Patch 2 gets","Patch 3 gets")): print(line)
+print(re.sub(r"//.*","",txt)[-900:])
+# -- output
+Conversion cell summary:
+    total:7518
+    prism:7518
+Patch 0 gets name frontAndBack
+Patch 1 gets name inlet
+Patch 2 gets name walls
+Patch 3 gets name outlet
+                              |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+
+
+4
+(
+    frontAndBack
+    {
+        type            empty;
+        physicalType    patch;
+        nFaces          15036;
+        startFace       10960;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          8;
+        startFace       25996;
+    }
+    walls
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          618;
+        startFace       26004;
+    }
+    outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          8;
+        startFace       26622;
+    }
+)
+
+# -- cell 18 (0.8s, exit 0)
+r=subprocess.run(["checkMesh","-allGeometry","-allTopology"],text=True,capture_output=True)
+log=r.stdout+r.stderr; pathlib.Path("checkMesh.log").write_text(log)
+print(log[-5200:])
+if r.returncode or "Failed" in log: raise RuntimeError("checkMesh did not pass cleanly")
+# -- output
+|
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allGeometry -allTopology
+Date   : Sep 15 2026
+Time   : 04:53:10
+Host   : yc-demo
+PID    : 489015
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T3-20260915-044749-a1ac/t3
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           8146
+    internal points:  0
+    edges:            27261
+    internal edges:   3439
+    internal edges using one boundary point:   0
+    internal edges using two boundary points:  3439
+    faces:            26630
+    internal faces:   10960
+    cells:            7518
+    faces per cell:   5
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        7518
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+  <<Writing 634 cells with two non-boundary faces to set twoInternalFacesCells
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    frontAndBack        15036    8146     ok (non-closed singly connected)   (0 -0.0172161 0) (0.12 0.0172161 0.001)
+    inlet               8        18       ok (non-closed singly connected)   (0 -0.003 0) (0 0.003 0.001)
+    walls               618      1240     ok (non-closed singly connected)   (0 -0.0172161 0) (0.12 0.0172161 0.001)
+    outlet              8        18       ok (non-closed singly connected)   (0.12 -0.003 0) (0.12 0.003 0.001)
+    ".*"                15670    8146     ok (closed singly connected)       (0 -0.0172161 0) (0.12 0.0172161 0.001)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               7518         8146         1.50169e-06  (0 -0.0172161 0) (0.12 0.0172161 0.001)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.0172161 0) (0.12 0.0172161 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (1.83633e-19 1.19361e-18 2.41496e-20) OK.
+    Max cell openness = 2.1481e-16 OK.
+    Max aspect ratio = 2.32109 OK.
+    Minimum face area = 4.22184e-08. Maximum face area = 1.04424e-06.  Face area magnitudes OK.
+    Min volume = 4.22184e-11. Max volume = 3.62143e-10.  Total volume = 1.50169e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 23.2966 average: 4.40524
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.434572 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.000271776 0.00104424 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.0521012 average: 0.259676
+    Cell determinant check OK.
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.3109 average: 0.480852
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.451167 average: 0.930034
+    Face volume ratio check OK.
+
+Mesh OK.
+
+End
+
+# -- cell 19 (0.2s, exit 0)
+r=subprocess.run(["foamToSurface","-help"],text=True,capture_output=True)
+print((r.stdout+r.stderr)[:5000])
+# -- output
+Usage: foamToSurface [OPTIONS] <output>
+Arguments:
+  <output>          The output surface file
+Options:
+  -case <dir>       Case directory (instead of current directory)
+  -constant         Include 'constant/' dir in the times list
+  -latestTime       Select the latest time
+  -noZero           Exclude '0/' dir from the times list
+  -scale <factor>   Geometry scaling factor - default is 1
+  -time <ranges>    List of ranges. Eg, ':10,20 40:70 1000:', 'none', etc
+  -tri              Triangulate surface
+  -doc              Display documentation in browser
+  -help             Display short help and exit
+  -help-full        Display full help and exit
+
+Extract boundaries from an OpenFOAM mesh and write in a surface format
+
+Using: OpenFOAM-2512 (2512) - visit www.openfoam.com
+Build: _87ed40d2-20251219
+Arch:  LSB;label=32;scalar=64
+
+# -- cell 20 (1.3s, exit 0)
+tri_dir=pathlib.Path("constant/triSurface"); shutil.rmtree(tri_dir,ignore_errors=True); tri_dir.mkdir(parents=True)
+# Parse OpenFOAM's ASCII point and face lists.
+pt_lines=pathlib.Path("constant/polyMesh/points").read_text().splitlines()
+pts=[]
+for line in pt_lines:
+    m=re.match(r"\s*\(([-+0-9.eE]+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\)\s*$",line)
+    if m: pts.append(tuple(map(float,m.groups())))
+pts=np.asarray(pts)
+face_lines=pathlib.Path("constant/polyMesh/faces").read_text().splitlines(); faces=[]
+for line in face_lines:
+    m=re.match(r"\s*\d+\(([^)]*)\)\s*$",line)
+    if m: faces.append([int(x) for x in m.group(1).split()])
+# Patch ranges are explicit in the boundary table.
+btxt=pathlib.Path("constant/polyMesh/boundary").read_text(); patches={}
+for name,body in re.findall(r"\n\s*(\w+)\s*\{([^}]*)\}",btxt,re.S):
+    nf=re.search(r"nFaces\s+(\d+)",body); sf=re.search(r"startFace\s+(\d+)",body)
+    if nf and sf: patches[name]=(int(sf.group(1)),int(nf.group(1)))
+def write_stl(name,start,count):
+    tris=[]
+    for f in faces[start:start+count]:
+        for k in range(1,len(f)-1): tris.append((f[0],f[k],f[k+1]))
+    with open(tri_dir/f"{name}.stl","w") as out:
+        out.write(f"solid {name}\n")
+        for a,b,c in tris:
+            pa,pb,pc=pts[[a,b,c]]; n=np.cross(pb-pa,pc-pa); nn=np.linalg.norm(n); n=n/nn if nn else n
+            out.write(f" facet normal {n[0]:.12g} {n[1]:.12g} {n[2]:.12g}\n  outer loop\n")
+            for p in (pa,pb,pc): out.write(f"   vertex {p[0]:.12g} {p[1]:.12g} {p[2]:.12g}\n")
+            out.write("  endloop\n endfacet\n")
+        out.write(f"endsolid {name}\n")
+    return len(tris)
+counts={name:write_stl(name,*rng) for name,rng in patches.items()}
+print(f"Parsed {len(pts)} points and {len(faces)} faces")
+print("Exported patch STL triangle counts:",counts)
+# -- output
+Parsed 8146 points and 26630 faces
+Exported patch STL triangle counts: {'frontAndBack': 15036, 'inlet': 16, 'walls': 1236, 'outlet': 16}
+
+# -- cell 21 (0.9s, exit 1)
+reader=pv.OpenFOAMReader("t3.foam"); reader.set_active_time_value(0.0); data=reader.read()
+print("Top-level blocks:",[(data.get_block_name(i),type(data[i]).__name__,data[i].n_cells if data[i] is not None else None) for i in range(len(data))])
+internal=None
+for i in range(len(data)):
+    b=data[i]
+    if data.get_block_name(i)=="internalMesh": internal=b
+if internal is None:
+    # OpenFOAMReader commonly nests internalMesh under the first multiblock.
+    for b in data:
+        if isinstance(b,pv.MultiBlock):
+            for j in range(len(b)):
+                if b.get_block_name(j)=="internalMesh": internal=b[j]
+if internal is None: raise RuntimeError("internalMesh block not found")
+pl=pv.Plotter(off_screen=True,window_size=(1500,540))
+pl.add_mesh(internal,show_edges=True,color="aliceblue",edge_color="navy",line_width=0.4)
+pl.view_xy(); pl.camera.parallel_projection=True; pl.reset_camera()
+pl.add_text(f"Checked coarse Tesla-valve mesh: {internal.n_cells:,} one-layer prisms",font_size=12)
+pl.show(screenshot="teslaValveMesh.png")
+print(f"Rendered internalMesh: {internal.n_cells} cells, {internal.n_points} points")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[21][39m[32m, line 2[39m
+[32m      1[39m reader=pv.OpenFOAMReader([33m"t3.foam"[39m); reader.set_active_time_value([32m0.0[39m); data=reader.read()
+[32m----> [39m[32m2[39m print([33m"Top-level blocks:"[39m,[(data.get_block_name(i),type(data[i]).__name__,data[i].n_cells [38;5;28;01mif[39;00m data[i] [38;5;28;01mis[39;00m [38;5;28;01mnot[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m) [38;5;28;01mfor[39;00m i [38;5;28;01min[39;00m range(len(data))])
+[32m      3[39m internal=[38;5;28;01mNone[39;00m
+[32m      4[39m [38;5;28;01mfor[39;00m i [38;5;28;01min[39;00m range(len(data)):
+[32m      5[39m     b=data[i]
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/dataobject.py:123[39m, in [36mDataObject.__getattr__[39m[34m(self, item)[39m
+[32m    121[39m [38;5;28;01mif[39;00m _resolve_pending_accessor(item):
+[32m    122[39m     [38;5;28;01mreturn[39;00m [38;5;28mobject[39m.[34m__getattribute__[39m([38;5;28mself[39m, item)
+[32m--> [39m[32m123[39m [38;5;28;01mreturn[39;00m [30;43msuper[39;49m[30;43m([39;49m[30;43m)[39;49m[30;43m.[39;49m[30;43m__getattribute__[39;49m[30;43m([39;49m[30;43mitem[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_vtk_utilities.py:146[39m, in [36mDisableVtkSnakeCase.__getattribute__[39m[34m(self, item)[39m
+[32m    144[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__getattribute__[39m([38;5;28mself[39m, item):
+[32m    145[39m     DisableVtkSnakeCase.check_attribute([38;5;28mself[39m, item)
+[32m--> [39m[32m146[39m     [38;5;28;01mreturn[39;00m [30;43mobject[39;49m[30;43m.[39;49m[30;43m__getattribute__[39;49m[30;43m([39;49m[30;43mself[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mitem[39;49m[30;43m)[39;49m
+
+[31mAttributeError[39m: 'MultiBlock' object has no attribute 'n_cells'
+
+# -- cell 22 (0.2s, exit 0)
+reader=pv.OpenFOAMReader("t3.foam"); reader.set_active_time_value(0.0); data=reader.read()
+def walk_blocks(mb,prefix=""):
+    found=[]
+    for i in range(len(mb)):
+        name=mb.get_block_name(i); b=mb[i]; path=f"{prefix}/{name}"
+        if isinstance(b,pv.MultiBlock): found.extend(walk_blocks(b,path))
+        elif b is not None:
+            print(path,type(b).__name__,b.n_cells); found.append((name,b))
+    return found
+leaves=walk_blocks(data)
+internal=next((b for name,b in leaves if name=="internalMesh"),None)
+if internal is None: raise RuntimeError("internalMesh block not found")
+pl=pv.Plotter(off_screen=True,window_size=(1500,540))
+pl.add_mesh(internal,show_edges=True,color="aliceblue",edge_color="navy",line_width=0.4)
+pl.view_xy(); pl.camera.parallel_projection=True; pl.reset_camera()
+pl.add_text(f"Checked coarse Tesla-valve mesh: {internal.n_cells:,} one-layer prisms",font_size=12)
+pl.show(screenshot="teslaValveMesh.png")
+print(f"Rendered internalMesh: {internal.n_cells} cells, {internal.n_points} points")
+# -- output
+/internalMesh UnstructuredGrid 7518
+/boundary/frontAndBack PolyData 15036
+/boundary/inlet PolyData 8
+/boundary/walls PolyData 618
+/boundary/outlet PolyData 8
+Rendered internalMesh: 7518 cells, 8146 points
+
+[0m[33m2026-09-15 04:54:10.144 ( 137.348s) [    734EC3252780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 04:54:10.144 ( 137.349s) [    734EC3252780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_479817/2397728001.py:17: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot="teslaValveMesh.png")
+
