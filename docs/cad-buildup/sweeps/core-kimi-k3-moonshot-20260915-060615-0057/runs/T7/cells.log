@@ -1,0 +1,475 @@
+# -- cell 1 (0.6s, exit 0)
+import os, subprocess, textwrap
+
+os.makedirs("system", exist_ok=True)
+os.makedirs("constant", exist_ok=True)
+
+# Minimal case scaffolding so blockMesh/checkMesh have an application to read
+open("system/controlDict", "w").write(textwrap.dedent("""\
+    FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+    application blockMesh;
+    startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+    deltaT 1; writeControl timeStep; writeInterval 1;
+"""))
+open("system/fvSchemes", "w").write(
+    'FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }\n')
+open("system/fvSolution", "w").write(
+    'FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }\n')
+
+# Cavity: 100 x 60 x 40 mm -> metres. One hex block, 2 mm pitch, all faces = walls.
+Lx, Ly, Lz = 0.100, 0.060, 0.040
+nx, ny, nz = 50, 30, 20   # 2 mm cells, 30 k cells
+
+open("system/blockMeshDict", "w").write(textwrap.dedent(f"""\
+    FoamFile {{ version 2.0; format ascii; class dictionary; object blockMeshDict; }}
+    scale 1;
+    vertices
+    (
+        (0   0   0  )   // 0
+        ({Lx} 0   0  )  // 1
+        ({Lx} {Ly} 0  ) // 2
+        (0   {Ly} 0  )  // 3
+        (0   0   {Lz})  // 4
+        ({Lx} 0   {Lz}) // 5
+        ({Lx} {Ly} {Lz})// 6
+        (0   {Ly} {Lz}) // 7
+    );
+    blocks ( hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1) );
+    edges ();
+    boundary
+    (
+        walls
+        {{
+            type wall;
+            faces
+            (
+                (0 3 2 1)   // z = 0   floor
+                (4 5 6 7)   // z = Lz  ceiling
+                (0 1 5 4)   // y = 0
+                (3 7 6 2)   // y = Ly
+                (0 4 7 3)   // x = 0
+                (1 2 6 5)   // x = Lx
+            );
+        }}
+    );
+"""))
+
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stdout[-1500:]); print(r.stderr[-800:])
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-2000:])
+# -- output
+n
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260915-062336-e6a2/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 0
+		Number of boundary faces : 6
+		Number of defined boundary faces : 6
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.002 .. 0.002
+        j : 0.002 .. 0.002
+        k : 0.002 .. 0.002
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 0) (0.1 0.06 0.04)
+  nPoints: 33201
+  nCells: 30000
+  nFaces: 93100
+  nInternalFaces: 86900
+----------------
+Patches
+----------------
+  patch 0 (start: 86900 size: 6200) name: walls
+
+End
+
+
+
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 15 2026
+Time   : 06:24:49
+Host   : yc-demo
+PID    : 549439
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260915-062336-e6a2/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+# -- cell 2 (1.1s, exit 0)
+import subprocess, textwrap
+
+# Cell zones: 20 mm cubes, boundaries on the 2 mm grid.
+# heater: near floor, x=0 end.  cooler: near ceiling, x=Lx end. Centred in y.
+open("system/topoSetDict", "w").write(textwrap.dedent("""\
+    FoamFile { version 2.0; format ascii; class dictionary; object topoSetDict; }
+    actions
+    (
+        { name heaterSet; type cellSet; action new;
+          source boxToCell; sourceInfo { boxes ((0.004 0.020 0.002) (0.024 0.040 0.022)); } }
+        { name coolerSet; type cellSet; action new;
+          source boxToCell; sourceInfo { boxes ((0.076 0.020 0.018) (0.096 0.040 0.038)); } }
+        { name heater; type cellZoneSet; action new;
+          source setToCellZone; sourceInfo { set heaterSet; } }
+        { name cooler; type cellZoneSet; action new;
+          source setToCellZone; sourceInfo { set coolerSet; } }
+    );
+"""))
+
+r = subprocess.run(["topoSet"], capture_output=True, text=True)
+print(r.stdout[-1200:]); print(r.stderr[-400:])
+
+# Verdict: mesh quality + zone sizes
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+tail = [l for l in r.stdout.splitlines() if any(k in l for k in
+        ("cells:", "cellZone", "Mesh OK", "Failed", "boundingBox", "patch "))]
+print("\n".join(tail))
+# -- output
+iuzi/.openreynolds-buildup/work/T7-20260915-062336-e6a2/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet heaterSet
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.004 0.02 0.002) (0.024 0.04 0.022))
+    cellSet heaterSet now size 1000
+Created cellSet coolerSet
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.076 0.02 0.018) (0.096 0.04 0.038))
+    cellSet coolerSet now size 1000
+Created cellZoneSet heater
+    Applying source setToCellZone
+    Adding all cells from cell set: heaterSet ...
+    cellZoneSet heater now size 1000
+Created cellZoneSet cooler
+    Applying source setToCellZone
+    Adding all cells from cell set: coolerSet ...
+    cellZoneSet cooler now size 1000
+
+End
+
+# -- cell 3 (0.3s, exit 0)
+import subprocess, os
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-1600:])
+print("--- cellZones file:", os.path.exists("constant/polyMesh/cellZones"))
+print(open("constant/polyMesh/cellZones").read()[:600])
+# -- output
+M: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 15 2026
+Time   : 06:25:26
+Host   : yc-demo
+PID    : 549588
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260915-062336-e6a2/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+--- cellZones file: True
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    form
+
+# -- cell 4 (0.3s, exit 0)
+import subprocess
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print("rc:", r.returncode, "stdout len:", len(r.stdout), "stderr len:", len(r.stderr))
+print(r.stdout[len(r.stdout)-2500:])
+print("STDERR:", r.stderr[-500:])
+# -- output
+rc: 1 stdout len: 1797 stderr len: 305
+ds-buildup/work/T7-20260915-062336-e6a2/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+STDERR: 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+# -- cell 5 (1.1s, exit 0)
+import subprocess, textwrap
+open("system/fvSchemes", "w").write(textwrap.dedent("""\
+    FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }
+    ddtSchemes          { default steadyState; }
+    gradSchemes         { default Gauss linear; }
+    divSchemes          { default Gauss linear; }
+    laplacianSchemes    { default Gauss linear corrected; }
+    interpolationSchemes{ default linear; }
+    snGradSchemes       { default corrected; }
+"""))
+
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print("rc:", r.returncode)
+print(r.stdout[r.stdout.find("Create mesh"):])
+# -- output
+rc: 0
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           33201
+    faces:            93100
+    internal faces:   86900
+    cells:            30000
+    faces per cell:   6
+    boundary patches: 1
+    point zones:      0
+    face zones:       0
+    cell zones:       2
+
+Overall number of cells of each type:
+    hexahedra:     30000
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    walls               6200     6202     ok (closed singly connected)      
+    ".*"                6200     6202     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    heater              1000         1331         8e-06        (0.004 0.02 0.002) (0.024 0.04 0.022)
+    cooler              1000         1331         8e-06        (0.076 0.02 0.018) (0.096 0.04 0.038)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.1 0.06 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (9.01339e-17 -9.94581e-17 -8.37811e-17) OK.
+    Max cell openness = 1.05879e-16 OK.
+    Max aspect ratio = 1 OK.
+    Minimum face area = 4e-06. Maximum face area = 4e-06.  Face area magnitudes OK.
+    Min volume = 8e-09. Max volume = 8e-09.  Total volume = 0.00024.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 4.83904e-14 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 6 (0.3s, exit 0)
+import subprocess
+# VTK export of the boundary mesh plus the two cell zones
+r = subprocess.run(["foamToVTK", "-cellZones", "heater,cooler"],
+                   capture_output=True, text=True)
+print(r.stdout[-600:], r.stderr[-300:])
+import glob
+print(sorted(glob.glob("VTK/**/*.vtk", recursive=True)))
+# -- output
+Using: OpenFOAM-2512 (2512) - visit www.openfoam.com
+Build: _87ed40d2-20251219
+
+Expected 0 arguments but found 1
+Invalid option: -cellZones
+
+See 'foamToVTK -help' for usage
+ or 'foamToVTK -help-full' for extended usage
+
+ 
+[]
+
+# -- cell 7 (1.0s, exit 0)
+import subprocess, glob
+# cellSets heaterSet/coolerSet were left behind by topoSet; export those
+for s in ["heaterSet", "coolerSet"]:
+    r = subprocess.run(["foamToVTK", "-cellSet", s], capture_output=True, text=True)
+    print(s, r.returncode, r.stderr[-200:])
+r = subprocess.run(["foamToVTK"], capture_output=True, text=True)
+print("full:", r.returncode, r.stderr[-200:])
+print(sorted(glob.glob("VTK/**/*.vtk", recursive=True)))
+# -- output
+heaterSet 0 
+coolerSet 0 
+full: 0 
+[]
+
+# -- cell 8 (0.1s, exit 0)
+import glob, os
+print(sorted(glob.glob("VTK/**/*", recursive=True)))
+# -- output
+['VTK/coolerSet.vtm.series', 'VTK/coolerSet_0', 'VTK/coolerSet_0.vtm', 'VTK/coolerSet_0/boundary', 'VTK/coolerSet_0/boundary.vtm', 'VTK/coolerSet_0/boundary/walls.vtp', 'VTK/coolerSet_0/internal.vtu', 'VTK/heaterSet.vtm.series', 'VTK/heaterSet_0', 'VTK/heaterSet_0.vtm', 'VTK/heaterSet_0/boundary', 'VTK/heaterSet_0/boundary.vtm', 'VTK/heaterSet_0/boundary/walls.vtp', 'VTK/heaterSet_0/internal.vtu', 'VTK/t7.vtm.series', 'VTK/t7_0', 'VTK/t7_0.vtm', 'VTK/t7_0/boundary', 'VTK/t7_0/boundary.vtm', 'VTK/t7_0/boundary/walls.vtp', 'VTK/t7_0/internal.vtu']
+
+# -- cell 9 (0.8s, exit 0)
+import pyvista as pv
+pv.OFF_SCREEN = True
+
+walls  = pv.read("VTK/t7_0/boundary/walls.vtp")
+heater = pv.read("VTK/heaterSet_0/internal.vtu")
+cooler = pv.read("VTK/coolerSet_0/internal.vtu")
+
+pl = pv.Plotter(off_screen=True)
+pl.add_mesh(walls,  color="lightsteelblue", opacity=0.25, show_edges=False, label="cavity walls")
+pl.add_mesh(heater, color="red",  show_edges=True, edge_color="darkred", label="heater")
+pl.add_mesh(cooler, color="deepskyblue", show_edges=True, edge_color="navy", label="cooler")
+pl.add_legend()
+pl.add_axes()
+pl.camera_position = [(0.22, -0.18, 0.15), (0.05, 0.03, 0.02), (0, 0, 1)]
+pl.screenshot("mesh_overview.png", scale=2)
+pl.show()
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-15 06:27:06.878 (   0.249s) [    702D9A502780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-15 06:27:06.878 (   0.250s) [    702D9A502780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:27:06.891 (   0.262s) [    702D9A502780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_549088/3233694555.py:16: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show()
+

@@ -1,0 +1,795 @@
+# -- cell 1 (0.2s, exit 0)
+import math
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import RegularPolygon as MplHex
+
+# ---- parameters (metres) ----
+ACROSS_FLATS = 0.008          # hex cell width across flats
+APOTHEM = ACROSS_FLATS / 2    # 4 mm
+WALL_T  = 0.001               # wall between cells
+PITCH   = 2*APOTHEM + WALL_T  # nearest-neighbour distance = 9 mm
+R_HEX   = APOTHEM / math.cos(math.radians(30))  # circumradius
+HALF    = 0.040               # duct half width (80 mm square)
+Z_CORE0, Z_CORE1 = 0.0, 0.020 # honeycomb extent
+Z_IN,  Z_OUT     = -0.040, 0.100   # inlet / outlet planes
+
+# hex lattice: a1=(PITCH,0), a2=(PITCH/2, PITCH*sqrt(3)/2), flats normal to a1
+a1 = np.array([PITCH, 0.0])
+a2 = np.array([PITCH/2, PITCH*math.sqrt(3)/2])
+centers = []
+n = int(HALF/PITCH) + 3
+for i in range(-n, n+1):
+    for j in range(-n, n+1):
+        c = i*a1 + j*a2
+        # keep any hexagon that touches the duct square
+        if abs(c[0]) < HALF + R_HEX and abs(c[1]) < HALF + R_HEX:
+            centers.append(c)
+centers = np.array(centers)
+print("hexes:", len(centers), " pitch(mm):", PITCH*1000, " R(mm):", R_HEX*1000)
+
+fig, ax = plt.subplots(figsize=(6,6))
+for c in centers:
+    ax.add_patch(MplHex(c, 6, radius=R_HEX, orientation=math.radians(30),
+                        fill=False, edgecolor="b", lw=0.7))
+ax.add_patch(plt.Rectangle((-HALF,-HALF), 2*HALF, 2*HALF, fill=False, edgecolor="r", lw=1.5))
+ax.set_aspect("equal"); ax.set_xlim(-0.05,0.05); ax.set_ylim(-0.05,0.05)
+ax.set_title("cell pattern vs duct section")
+plt.savefig("pattern.png", dpi=110); plt.show()
+# -- output
+hexes: 105  pitch(mm): 9.000000000000002  R(mm): 4.618802153517006
+[no picture came back from this cell, and it looks like it drew one. This cell called `matplotlib.use("Agg")`, which switches the figure away from the inline backend that sends it here. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 2 (0.1s, exit 0)
+from IPython.display import Image
+Image("pattern.png")
+# -- output
+
+
+# -- cell 3 (11.2s, exit 0)
+import build123d as bd
+from functools import reduce
+
+duct = bd.Pos(0, 0, (Z_IN+Z_OUT)/2) * bd.Box(2*HALF, 2*HALF, Z_OUT-Z_IN)
+core = bd.Pos(0, 0, (Z_CORE0+Z_CORE1)/2) * bd.Box(2*HALF, 2*HALF, Z_CORE1-Z_CORE0)
+
+# pointy-top hexagon: flats normal to x (rotation 30 deg), extruded through the core
+def cell_prism(cx, cy):
+    hexsk = bd.RegularPolygon(radius=R_HEX, side_count=6, rotation=30)
+    prism = bd.extrude(hexsk, amount=Z_CORE1-Z_CORE0)
+    return bd.Pos(cx, cy, Z_CORE0) * prism
+
+cells = []
+for c in centers:
+    p = cell_prism(c[0], c[1]) & core      # clip partial edge cells to the plate
+    if p.volume > 1e-12:
+        cells.append(p)
+print("cells kept:", len(cells))
+
+cells_union = reduce(lambda a, b: a + b, cells)
+honeycomb_solid = core - cells_union
+air = duct - honeycomb_solid
+
+exp_mm3 = (2*HALF*1000)**2 * (Z_OUT-Z_IN)*1000 - honeycomb_solid.volume*1e9
+print(f"air volume      : {air.volume*1e9:,.1f} mm^3 (expected {exp_mm3:,.1f})")
+print(f"honeycomb walls : {honeycomb_solid.volume*1e9:,.1f} mm^3")
+print(f"open fraction at core: {cells_union.volume*1e9 / (80*80*20):.4f}")
+print("air solids:", len(air.solids()), " faces:", len(air.faces()))
+bd.export_step(air, "air.step")
+# -- output
+cells kept: 105
+air volume      : 869,793.2 mm^3 (expected 869,793.2)
+honeycomb walls : 26,206.8 mm^3
+open fraction at core: 0.7953
+air solids: 1  faces: 556
+True
+
+# -- cell 4 (1.1s, exit 1)
+import pyvista as pv
+pv.set_jupyter_backend("static")
+
+verts, tris = air.tessellate(2e-4)
+faces_pv = np.hstack([[3]+list(t) for t in tris])
+mesh = pv.PolyData(np.array(verts), faces_pv)
+
+pl = pv.Plotter(off_screen=True, window_size=(900,700))
+pl.add_mesh(mesh.clip(normal="-z", origin=(0,0,0.03)), color="tan", show_edges=False)
+pl.add_mesh(pv.Box(bounds=(-0.05,0.05,-0.05,0.05,-0.05,0.11)), style="wireframe", color="k", opacity=0.05)
+pl.view_isometric(); pl.add_text("air volume, clipped at z=30 mm", font_size=10)
+pl.show()
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 6[39m
+[32m      2[39m pv.set_jupyter_backend([33m"static"[39m)
+[32m      3[39m 
+[32m      4[39m verts, tris = air.tessellate([32m2e-4[39m)
+[32m      5[39m faces_pv = np.hstack([[[32m3[39m]+list(t) [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m tris])
+[32m----> [39m[32m6[39m mesh = pv.PolyData(np.array(verts), faces_pv)
+[32m      7[39m 
+[32m      8[39m pl = pv.Plotter(off_screen=[38;5;28;01mTrue[39;00m, window_size=([32m900[39m,[32m700[39m))
+[32m      9[39m pl.add_mesh(mesh.clip(normal=[33m"-z"[39m, origin=([32m0[39m,[32m0[39m,[32m0.03[39m)), color=[33m"tan"[39m, show_edges=[38;5;28;01mFalse[39;00m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/misc.py:442[39m, in [36m_AutoFreezeMeta.__call__[39m[34m(cls, *args, **kwargs)[39m
+[32m    441[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__call__[39m([38;5;28mcls[39m: [38;5;28mtype[39m[_T], *args, **kwargs) -> _T:
+[32m--> [39m[32m442[39m     obj = [30;43msuper[39;49m[30;43m([39;49m[30;43m)[39;49m[30;43m.[39;49m[30;43m__call__[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43margs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m  [38;5;66;03m# type: ignore[misc][39;00m
+[32m    443[39m     obj._no_new_attributes([38;5;28mcls[39m)
+[32m    444[39m     [38;5;28;01mreturn[39;00m obj
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_posit
+... 2392 characters cut ...
+[39m
+[32m     31[39m [38;5;250m[39m[33;03m"""Convert numpy array or array-like to a :vtk:`vtkPoints` object.[39;00m
+[32m     32[39m 
+[32m     33[39m [33;03mParameters[39;00m
+[32m   (...)[39m[32m     68[39m 
+[32m     69[39m [33;03m"""[39;00m
+[32m     70[39m [38;5;28;01mtry[39;00m:
+[32m---> [39m[32m71[39m     points_ = [30;43m_validation[39;49m[30;43m.[39;49m[30;43mvalidate_arrayNx3[39;49m[30;43m([39;49m[30;43mpoints[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mname[39;49m[30;43m=[39;49m[30;43m'[39;49m[30;43mpoints[39;49m[30;43m'[39;49m[30;43m)[39;49m
+[32m     72[39m [38;5;28;01mexcept[39;00m [38;5;167;01mValueError[39;00m [38;5;28;01mas[39;00m e:
+[32m     73[39m     [38;5;28;01mif[39;00m [33m'[39m[33mpoints has shape (0,)[39m[33m'[39m [38;5;129;01min[39;00m [38;5;28mrepr[39m(e) [38;5;129;01mand[39;00m allow_empty:
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_validation/validate.py:925[39m, in [36mvalidate_arrayNx3[39m[34m(arr, reshape, **kwargs)[39m
+[32m    922[39m     shape = (-[32m1[39m, [32m3[39m)  [38;5;66;03m# type: ignore[assignment][39;00m
+[32m    923[39m _set_default_kwarg_mandatory(kwargs, [33m'[39m[33mmust_have_shape[39m[33m'[39m, shape)
+[32m--> [39m[32m925[39m [38;5;28;01mreturn[39;00m [30;43mvalidate_array[39;49m[30;43m([39;49m[30;43marr[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_validation/validate.py:294[39m, in [36mvalidate_array[39m[34m(arr, must_have_shape, must_have_ndim, must_have_dtype, must_have_length, must_have_min_length, must_have_max_length, must_be_nonnegative, must_be_finite, must_be_real, must_be_integer, must_be_sorted, must_be_in_range, strict_lower_bound, strict_upper_bound, reshape_to, broadcast_to, dtype_out, as_any, copy, to_list, to_tuple, name)[39m
+[32m     60[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mvalidate_array[39m(
+[32m     61[39m     arr: [38;5;28mfloat[39m | ArrayLike[[38;5;28mfloat[39m],
+[32m     62[39m     /,
+[32m   (...)[39m[32m     85[39m     name: [38;5;28mstr[39m = [33m'[39m[33mArray[39m[33m'[39m,
+[32m     86[39m ):
+[32m     87[39m [38;5;250m    [39m[33;03m"""Check and validate a numeric array meets specific requirements.[39;00m
+[32m     88[39m 
+[32m     89[39m [33;03m    Validate an array to ensure it is numeric, has a specific shape,[39;00m
+[32m   (...)[39m[32m    292[39m 
+[32m    293[39m [33;03m    """[39;00m
+[32m--> [39m[32m294[39m     arr_out = [30;43m_cast_to_numpy[39;49m[30;43m([39;49m[30;43marr[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mas_any[39;49m[30;43m=[39;49m[30;43mas_any[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mcopy[39;49m[30;43m=[39;49m[30;43mcopy[39;49m[30;43m)[39;49m
+[32m    296[39m     [38;5;66;03m# Check type[39;00m
+[32m    297[39m     [38;5;28;01mif[39;00m must_be_real:
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_validation/_cast_array.py:133[39m, in [36m_cast_to_numpy[39m[34m(arr, as_any, dtype, copy, must_be_real)[39m
+[32m    131[39m [38;5;28;01melif[39;00m out.dtype.name == [33m'[39m[33mobject[39m[33m'[39m:
+[32m    132[39m     msg = [33mf[39m[33m'[39m[33mObject arrays are not supported. Got [39m[38;5;132;01m{[39;00marr[38;5;132;01m}[39;00m[33m when casting to a NumPy array.[39m[33m'[39m
+[32m--> [39m[32m133[39m     [38;5;28;01mraise[39;00m [38;5;167;01mTypeError[39;00m(msg)
+[32m    134[39m [38;5;28;01mreturn[39;00m out
+
+[31mTypeError[39m: Object arrays are not supported. Got [Vector(-0.04, -0.04, -0.04) Vector(-0.04, -0.04, 0.1)
+ Vector(-0.04, 0.04, -0.04) ... Vector(0.031, 0.0288675134595, 0.02)
+ Vector(0.031, 0.033486315613, 0.02) Vector(0.031, 0.033486315613, 0)] when casting to a NumPy array.
+
+# -- cell 5 (0.4s, exit 0)
+import pyvista as pv
+pv.set_jupyter_backend("static")
+
+verts, tris = air.tessellate(2e-4)
+pts = np.array([[v.X, v.Y, v.Z] for v in verts], dtype=float)
+faces_pv = np.hstack([[3, *t] for t in tris]).astype(np.int64)
+mesh = pv.PolyData(pts, faces_pv)
+print("triangles:", mesh.n_cells)
+
+pl = pv.Plotter(off_screen=True, window_size=(900,700))
+pl.add_mesh(mesh.clip(normal="-z", origin=(0,0,0.03)), color="tan")
+pl.view_isometric(); pl.add_text("air volume, clipped at z=30 mm", font_size=10)
+pl.show()
+# -- output
+triangles: 2772
+
+[0m[33m2026-09-15 06:31:38.873 (  15.380s) [    75C63E2A4780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-15 06:31:38.874 (  15.381s) [    75C63E2A4780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:31:38.887 (  15.394s) [    75C63E2A4780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 6 (0.2s, exit 0)
+pl = pv.Plotter(off_screen=True, window_size=(900,700))
+core_part = mesh.clip(normal="z", origin=(0,0,0.015))   # keep z <= 15 mm
+pl.add_mesh(core_part, color="tan")
+pl.view_xy()
+pl.add_text("core region from outlet side: honeycomb voids in the plate", font_size=10)
+pl.show()
+# -- output
+[0m[33m2026-09-15 06:32:00.894 (  37.401s) [    75C63E2A4780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:32:00.895 (  37.402s) [    75C63E2A4780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 7 (0.3s, exit 0)
+import os
+os.makedirs("constant/triSurface", exist_ok=True)
+
+EPS = 1e-6
+groups = {"inlet": [], "outlet": [], "ductWalls": [], "honeycombWalls": []}
+for f in air.faces():
+    c = f.center()
+    if abs(c.Z - Z_IN) < EPS:
+        groups["inlet"].append(f)
+    elif abs(c.Z - Z_OUT) < EPS:
+        groups["outlet"].append(f)
+    elif abs(abs(c.X) - HALF) < EPS or abs(abs(c.Y) - HALF) < EPS:
+        groups["ductWalls"].append(f)
+    else:
+        groups["honeycombWalls"].append(f)
+
+for name, fl in groups.items():
+    comp = bd.Compound(children=fl)
+    bd.export_stl(comp, f"constant/triSurface/{name}.stl", tolerance=1e-5, angular_tolerance=0.2)
+    print(f"{name:14s}: {len(fl):4d} faces, area {comp.area*1e6:12.1f} mm^2")
+
+# sanity: expected areas
+open_area = cells_union.volume / (Z_CORE1-Z_CORE0)
+print(f"\nexpected inlet area : {(2*HALF)**2*1e6:.1f} mm^2 (full square)")
+print(f"duct walls expected : {4*2*HALF*(Z_OUT-Z_IN)*1e6:.1f} mm^2")
+print(f"cell open area      : {open_area*1e6:.1f} mm^2 of { (2*HALF)**2*1e6:.0f} mm^2")
+# -- output
+inlet         :    1 faces, area       6400.0 mm^2
+outlet        :    1 faces, area       6400.0 mm^2
+ductWalls     :    4 faces, area      43978.1 mm^2
+honeycombWalls:  550 faces, area      52089.8 mm^2
+
+expected inlet area : 6400.0 mm^2 (full square)
+duct walls expected : 44800.0 mm^2
+cell open area      : 5089.7 mm^2 of 6400 mm^2
+
+# -- cell 8 (0.3s, exit 0)
+import subprocess, shutil, textwrap, os
+
+os.makedirs("system", exist_ok=True); os.makedirs("0", exist_ok=True)
+print("surfaceFeatures:", shutil.which("surfaceFeatures"),
+      "| surfaceFeatureExtract:", shutil.which("surfaceFeatureExtract"))
+
+open("system/controlDict","w").write(textwrap.dedent("""\
+    FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+    application snappyHexMesh;
+    startFrom latestTime; startTime 0; stopAt endTime; endTime 1;
+    deltaT 1; writeControl timeStep; writeInterval 1;
+    writeFormat ascii; writePrecision 8; runTimeModifiable false;
+"""))
+
+# background mesh: 4 mm cells over the whole duct
+open("system/blockMeshDict","w").write(textwrap.dedent("""\
+    FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }
+    scale 1;
+    vertices
+    (
+        (-0.04 -0.04 -0.04) ( 0.04 -0.04 -0.04) ( 0.04  0.04 -0.04) (-0.04  0.04 -0.04)
+        (-0.04 -0.04  0.10) ( 0.04 -0.04  0.10) ( 0.04  0.04  0.10) (-0.04  0.04  0.10)
+    );
+    blocks ( hex (0 1 2 3 4 5 6 7) (20 20 35) simpleGrading (1 1 1) );
+    edges ();
+    boundary
+    (
+        walls { type wall; faces ( (0 4 7 3) (1 2 6 5) (0 1 5 4) (3 7 6 2) (0 3 2 1) (4 5 6 7) ); }
+    );
+"""))
+
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-300:] if r.returncode==0 else r.stderr[-500:])
+# -- output
+surfaceFeatures: None | surfaceFeatureExtract: /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/surfaceFeatureExtract
+0 ng polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.04 -0.04 -0.04) (0.04 0.04 0.1)
+  nPoints: 15876
+  nCells: 14000
+  nFaces: 43800
+  nInternalFaces: 40200
+----------------
+Patches
+----------------
+  patch 0 (start: 40200 size: 3600) name: walls
+
+End
+
+# -- cell 9 (0.5s, exit 0)
+open("system/surfaceFeatureExtractDict","w").write(textwrap.dedent("""\
+    FoamFile { version 2.0; format ascii; class dictionary; object surfaceFeatureExtractDict; }
+    honeycombWalls.stl { extractionMethod extractFromSurface; includedAngle 150; }
+    ductWalls.stl      { extractionMethod extractFromSurface; includedAngle 150; }
+    inlet.stl          { extractionMethod extractFromSurface; includedAngle 150; }
+    outlet.stl         { extractionMethod extractFromSurface; includedAngle 150; }
+    writeObj yes;
+"""))
+
+open("system/snappyHexMeshDict","w").write(textwrap.dedent("""\
+    FoamFile { version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }
+    castellatedMesh true;
+    snap            true;
+    addLayers       false;
+
+    geometry
+    {
+        inlet         { type triSurfaceMesh; file "inlet.stl";         patchInfo { type patch; } }
+        outlet        { type triSurfaceMesh; file "outlet.stl";        patchInfo { type patch; } }
+        ductWalls     { type triSurfaceMesh; file "ductWalls.stl";     patchInfo { type wall;  } }
+        honeycombWalls{ type triSurfaceMesh; file "honeycombWalls.stl";patchInfo { type wall;  } }
+        coreBox { type searchableBox; min (-0.0405 -0.0405 -0.003); max (0.0405 0.0405 0.023); }
+    }
+
+    castellatedMeshControls
+    {
+        maxLocalCells 10000000; maxGlobalCells 20000000; minRefinementCells 10;
+        maxLoadUnbalance 0.10; nCellsBetweenLevels 2;
+        resolveFeatureAngle 30; allowFreeStandingZoneFaces true;
+        features ( { file "honeycombWalls.eMesh"; level 2; } );
+        refinementSurfaces
+        {
+            honeycombWalls { level (2 2); }
+            ductWalls      { level (1 1); }
+        }
+        refinementRegions { coreBox { mode inside; levels ((1e15 2)); } }
+        locationInMesh (0.0 0.0 -0.02);
+    }
+
+    snapControls
+    {
+        nSmoothPatch 3; tolerance 2.0; nSolveIter 100; nRelaxIter 5;
+        nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true;
+        multiRegionFeatureSnap false;
+    }
+
+    addLayersControls
+    {
+        relativeSizes true;
+        layers {}
+        expansionRatio 1.0; finalLayerThickness 0.5; minThickness 0.1;
+        nGrow 0; featureAngle 60; nRelaxIter 5; nSmoothSurfaceNormals 1;
+        nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5;
+        maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0;
+        nLayerIter 50; nRelaxedIter 20;
+    }
+
+    meshQualityControls
+    {
+        maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4;
+        maxConcave 80; minVol 1e-13; minTetQuality -1e30; minArea -1;
+        minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.05;
+        minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4;
+        errorReduction 0.75;
+    }
+    mergeTolerance 1e-6;
+"""))
+
+r1 = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print("sfe:", r1.returncode, (r1.stdout or r1.stderr)[-200:])
+r2 = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print("shm:", r2.returncode)
+print(r2.stdout[-1200:] if r2.returncode==0 else r2.stderr[-1500:])
+# -- output
+sfe: 0 tendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T11-20260915-062722-c60c/t11/constant/triSurface/outlet.eMesh"
+ExecutionTime = 0.01 s  ClockTime = 0 s
+
+End
+
+
+shm: 1
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T11-20260915-062722-c60c/t11/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 10 (54.1s, exit 0)
+open("system/fvSchemes","w").write(textwrap.dedent("""\
+    FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }
+    ddtSchemes { default steadyState; }
+    gradSchemes { default Gauss linear; }
+    divSchemes { default Gauss upwind; }
+    laplacianSchemes { default Gauss linear corrected; }
+    interpolationSchemes { default linear; }
+    snGradSchemes { default corrected; }
+"""))
+open("system/fvSolution","w").write(textwrap.dedent("""\
+    FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }
+    solvers { p { solver GAMG; tolerance 1e-6; relTol 0.1; smoother GaussSeidel; } }
+    SIMPLE { nNonOrthogonalCorrectors 0; }
+"""))
+
+r2 = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print("shm:", r2.returncode)
+print(r2.stdout[-1000:] if r2.returncode==0 else (r2.stdout[-600:]+r2.stderr[-900:]))
+# -- output
+shm: 0
+lume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:184468  faces:590355  points:222843
+Cells per refinement level:
+    0	8424
+    1	22220
+    2	153824
+Writing mesh to time constant
+Wrote mesh in = 0.48 s.
+Mesh snapped in = 26.78 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 43.46 s.
+End
+
+# -- cell 11 (1.4s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-2200:])
+# -- output
+prisms:        11696
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     7373
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            5   1395
+            6   488
+            9   4770
+           12   477
+           15   98
+           18   145
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   walls     1256     1490  ok (non-closed singly connected)
+               ductWalls    17618    18812  ok (non-closed singly connected)
+          honeycombWalls    48325    49718  ok (non-closed singly connected)
+                    ".*"    67199    67972      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.040003228 -0.04000335 -0.04) (0.040003228 0.040003349 0.1)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (7.0172641e-16 -1.9266298e-16 -6.1588618e-17) OK.
+    Max cell openness = 4.1167408e-16 OK.
+    Max aspect ratio = 5.3647992 OK.
+    Minimum face area = 2.2615842e-08. Maximum face area = 1.6976591e-05.  Face area magnitudes OK.
+    Min volume = 2.4178021e-10. Max volume = 6.7785788e-08.  Total volume = 0.00086992914.  Cell volumes OK.
+    Mesh non-orthogonality Max: 57.555469 average: 8.4210573
+    Non-orthogonality check OK.
+    Face pyramids OK.
+ ***Max skewness = 4.0835362, 6 highly skew faces detected which may impair the quality of the results
+  <<Writing 6 skew faces to set skewFaces
+    Coupled point location match (average 0) OK.
+
+Failed 1 mesh checks.
+
+End
+
+# -- cell 12 (0.3s, exit 0)
+print(open("constant/polyMesh/boundary").read())
+open("case.foam","w").write("")
+import pyvista as pv
+reader = pv.POpenFOAMReader("case.foam")
+reader.cell_to_point_creation = False
+reader.enable_all_patch_arrays()
+mb = reader.read()
+print(list(mb.keys()))
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+3
+(
+    walls
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          1256;
+        startFace       523156;
+    }
+    ductWalls
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          17618;
+        startFace       524412;
+    }
+    honeycombWalls
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          48325;
+        startFace       542030;
+    }
+)
+
+// ************************************************************************* //
+
+['internalMesh', 'boundary']
+
+# -- cell 13 (3.6s, exit 0)
+s = open("system/snappyHexMeshDict").read()
+s = s.replace("""        refinementSurfaces
+        {
+            honeycombWalls { level (2 2); }
+            ductWalls      { level (1 1); }
+        }
+        refinementRegions { coreBox { mode inside; levels ((1e15 2)); } }""",
+"""        refinementSurfaces
+        {
+            honeycombWalls { level (3 3); }
+            ductWalls      { level (1 1); }
+            inlet          { level (0 0); }
+            outlet         { level (0 0); }
+        }
+        refinementRegions { coreBox { mode inside; levels ((1e15 2)); } }""")
+s = s.replace('{ file "honeycombWalls.eMesh"; level 2; }', '{ file "honeycombWalls.eMesh"; level 3; }')
+s = s.replace("nCellsBetweenLevels 2;", "nCellsBetweenLevels 3;")
+open("system/snappyHexMeshDict","w").write(s)
+
+r2 = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print("shm:", r2.returncode)
+print(r2.stdout[-900:] if r2.returncode==0 else (r2.stdout[-500:]+r2.stderr[-900:]))
+# -- output
+shm: -6
+ the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+shDistribute&, Foam::List<int> const&, double, int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#6  Foam::snappyRefineDriver::featureEdgeRefine(Foam::refinementParameters const&, int, int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#7  Foam::snappyRefineDriver::doRefine(Foam::dictionary const&, Foam::refinementParameters const&, Foam::snapParameters const&, bool, Foam::meshRefinement::FaceMergeType, Foam::dictionary const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#8  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+#9  ? in /lib/x86_64-linux-gnu/libc.so.6
+#10  __libc_start_main in /lib/x86_64-linux-gnu/libc.so.6
+#11  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+=============
+
+# -- cell 14 (4.0s, exit 0)
+r2 = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print("rc:", r2.returncode)
+out = r2.stdout
+i = out.find("error")
+print(out[max(0,i-1500):i+1500] if i>=0 else out[-3000:])
+print("---STDERR---"); print(r2.stderr[:1500])
+# -- output
+rc: -6
+ 
+    From Foam::triFace Foam::tetIndices::faceTriIs(const Foam::polyMesh&, bool) const
+    in file ./src/OpenFOAM/lnInclude/tetIndicesI.H at line 70
+    No base point for face 153203, 4(19764 60731 84746 41858), produces a valid tet decomposition.
+--> FOAM Warning : 
+    From Foam::triFace Foam::tetIndices::faceTriIs(const Foam::polyMesh&, bool) const
+    in file ./src/OpenFOAM/lnInclude/tetIndicesI.H at line 70
+    No base point for face 153203, 4(19764 60731 84746 41858), produces a valid tet decomposition.
+--> FOAM Warning : 
+    From Foam::triFace Foam::tetIndices::faceTriIs(const Foam::polyMesh&, bool) const
+    in file ./src/OpenFOAM/lnInclude/tetIndicesI.H at line 70
+    No base point for face 153203, 4(19764 60731 84746 41858), produces a valid tet decomposition.
+--> FOAM Warning : 
+    From Foam::triFace Foam::tetIndices::faceTriIs(const Foam::polyMesh&, bool) const
+    in file ./src/OpenFOAM/lnInclude/tetIndicesI.H at line 70
+    No base point for face 153203, 4(19764 60731 84746 41858), produces a valid tet decomposition.
+Marked for refinement due to explicit features             : 5052 cells.
+Determined cells to refine in = 1.3 s
+Selected for feature refinement : 5052 cells (out of 184468)
+hexRef8 : Dumping cell as obj to "/home/qiuzi/.openreynolds-buildup/work/T11-20260915-062722-c60c/t11/cell_4021.obj"
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+
+---STDERR---
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cell 4021 of level 2 does not seem to have 8 points of equal or lower level
+cellPoints:7(74772 74773 4434 74086 34416 40562 40563)
+pointLevels:7(2 2 0 2 2 2 2)
+
+
+    From Foam::labelListList Foam::hexRef8::setRefinement(const Foam::labelList&, Foam::polyTopoChange&)
+    in file polyTopoChange/polyTopoChange/hexRef8/hexRef8.C at line 3787.
+
+FOAM aborting
+
+[stack trace]
+=============
+#1  Foam::error::simpleExit(int, bool) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libOpenFOAM.so
+#2  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libdynamicMesh.so
+#3  Foam::hexRef8::setRefinement(Foam::List<int> const&, Foam::polyTopoChange&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libdynamicMesh.so
+#4  Foam::meshRefinement::refine(Foam::List<int> const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#5  Foam::meshRefinement::refineAndBalance(Foam::string const&, Foam::decompositionMethod&, Foam::fvMeshDistribute&, Foam::List<int> const&, double, int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#6  Foam::snappyRefineDriver::featureEdgeRefine(Foam::refinementParameters const&, int, int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#7  Foam::snappyRefineDriver::doRefine(Foam::dictionary const&, Foam::refinementParameters const&, Foam::snapParameters c
+
+# -- cell 15 (229.6s, exit 0)
+import glob
+for f in glob.glob("cell_*.obj"): os.remove(f)
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+r2 = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print("shm:", r2.returncode)
+print(r2.stdout[-800:] if r2.returncode==0 else r2.stderr[-800:])
+# -- output
+shm: 0
+ points:852320
+Cells per refinement level:
+    0	8424
+    1	21907
+    2	86478
+    3	550766
+Writing mesh to time constant
+Wrote mesh in = 1.81 s.
+Mesh snapped in = 105.22 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 198.26 s.
+End
+
+# -- cell 16 (5.3s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+out = r.stdout
+i = out.find("Checking patch topology")
+print(out[out.find("Mesh stats"):out.find("Breakdown")])
+print(out[i:i+700])
+j = out.find("Checking geometry")
+print(out[j:])
+subprocess.run(["awk", "/^[a-zA-Z]/ {print}", "constant/polyMesh/boundary"], capture_output=False)
+# -- output
+Mesh stats 
+    points:           852320
+    faces:            2182946
+    internal faces:   1970360
+    cells:            667575
+    faces per cell:   6.2214822
+    boundary patches: 3
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     551119
+    prisms:        54634
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     61822
+    
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   walls     1256     1490  ok (non-closed singly connected)
+               ductWalls    27049    30046  ok (non-closed singly connected)
+          honeycombWalls   184281   189811  ok (non-closed singly connected)
+                    ".*"   212586   217795      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+1
+Checking geometry...
+    Overall domain bounding box (-0.039999999 -0.039999999 -0.04) (0.039999999 0.039999999 0.1)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (5.0793817e-16 -2.7563142e-16 -2.461051e-17) OK.
+    Max cell openness = 4.7862233e-16 OK.
+    Max aspect ratio = 3.4048438 OK.
+    Minimum face area = 8.9904665e-09. Maximum face area = 1.696651e-05.  Face area magnitudes OK.
+    Min volume = 2.749382e-11. Max volume = 6.7875848e-08.  Total volume = 0.00086962195.  Cell volumes OK.
+    Mesh non-orthogonality Max: 34.818134 average: 9.9727842
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.4592141 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+
+FoamFile
+CompletedProcess(args=['awk', '/^[a-zA-Z]/ {print}', 'constant/polyMesh/boundary'], returncode=0)
+

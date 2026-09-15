@@ -1,0 +1,620 @@
+{
+  "run_id": "20260915-064235-d215",
+  "case": "T16",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T16-20260915-064235-d215",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T16-20260915-064235-d215/t16",
+  "started_at": "2026-09-15T06:42:36",
+  "ended_at": "2026-09-15T06:58:26",
+  "seconds": 941.5,
+  "n_turns": 22,
+  "n_steps": 20,
+  "first_mesh_step": 11,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.463,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 31851,
+    "cache_read": 342154,
+    "cache_write": 0,
+    "output": 17654
+  },
+  "stopped": "time",
+  "expects": "done",
+  "passed": false,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, os\n\n# Dimensions in METRES (OpenFOAM reads raw numbers as metres).\n# Stations along axis z: fan exit 0, mid 0.45, nozzle 0.90\nZ = [0.0, 0.45, 0.90]\nR_OUT = [0.450, 0.430, 0.410]   # outer cowl inner surface\nR_IN  = [0.280, 0.310, 0.250]   # core cowl outer surface\n\nos.makedirs(\"constant/triSurface\", exist_ok=True)\n\n# Splines in the r-z plane (x = r, y = z), smooth blend through the 3 stations\nouter_edge = bd.Spline([(z, r, 0) for z, r in zip(Z, R_OUT)])\ninner_edge = bd.Spline([(z, r, 0) for z, r in zip(Z, R_IN)])\n\naxis = bd.Axis((0, 0, 0), (0, 0, 1))\n\n# Revolve each spline edge about the axis -> one surface per cowl patch\nouter_cowl = bd.revolve(outer_edge, axis)   # Face (surface of revolution)\ncore_cowl  = bd.revolve(inner_edge, axis)\n\n# Annular end rings at fan exit and nozzle\nring_in  = bd.Plane(origin=(0, 0, 0.0), z_dir=(0, 0, 1)) * (bd.Circle(R_OUT[0]) - bd.Circle(R_IN[0]))\nring_out = bd.Plane(origin=(0, 0, 0.9), z_dir=(0, 0, 1)) * (bd.Circle(R_OUT[2]) - bd.Circle(R_IN[2]))\n\n# --- Verify: radii of each revolved surface at the three stations ---\ndef radii_at(face, zvals):\n    out = []\n    for z in zvals:\n        # intersect surface with plane z=const: sample tessellation points near that z\n        pts = face.tessellate(0.002)[0]\n        pts = np.array([(p.X, p.Y, p.Z) for p in pts])\n        near = pts[np.abs(pts[:, 2] - z) < 0.005]\n        out.append(np.sqrt(near[:, 0]**2 + near[:, 1]**2).max())\n    return out\n\nprint(\"outer cowl radii @stations:\", np.round(radii_at(outer_cowl, Z), 4), \"target:\", R_OUT)\nprint(\"core cowl  radii @stations:\", np.round(radii_at(core_cowl, Z), 4), \"target:\", R_IN)\nprint(\"surfaces:\", outer_cowl.is_valid(), core_cowl.is_valid(), ring_in.is_valid(), ring_out.is_valid())\nprint(\"areas: outer %.4f core %.4f rin %.5f rout %.5f m^2\" % (\n    outer_cowl.area, core_cowl.area, ring_in.area, ring_out.area))",
+      "exit_code": 1,
+      "seconds": 2.3602195319981547,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mIndexError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[1]\u001b[39m\u001b[32m, line 37\u001b[39m\n\u001b[32m     33\u001b[39m         near = pts[np.abs(pts[:, \u001b[32m2\u001b[39m] - z) < \u001b[32m0.005\u001b[39m]\n\u001b[32m     34\u001b[39m         out.append(np.sqrt(near[:, \u001b[32m0\u001b[39m]**\u001b[32m2\u001b[39m + near[:, \u001b[32m1\u001b[39m]**\u001b[32m2\u001b[39m).max())\n\u001b[32m     35\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m out\n\u001b[32m     36\u001b[39m \n\u001b[32m---> \u001b[39m\u001b[32m37\u001b[39m print(\u001b[33m\"outer cowl radii @stations:\"\u001b[39m, np.round(radii_at(outer_cowl, Z), \u001b[32m4\u001b[39m), \u001b[33m\"target:\"\u001b[39m, R_OUT)\n\u001b[32m     38\u001b[39m print(\u001b[33m\"core cowl  radii @stations:\"\u001b[39m, np.round(radii_at(core_cowl, Z), \u001b[32m4\u001b[39m), \u001b[33m\"target:\"\u001b[39m, R_IN)\n\u001b[32m     39\u001b[39m print(\u001b[33m\"surfaces:\"\u001b[39m, outer_cowl.is_valid(), core_cowl.is_valid(), ring_in.is_valid(), ring_out.is_valid())\n\u001b[32m     40\u001b[39m print(\"areas: outer %.4f core %.4f rin %.5f rout %.5f m^2\" % (\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[1]\u001b[39m\u001b[32m, line 33\u001b[39m, in \u001b[36mradii_at\u001b[39m\u001b[34m(face, zvals)\u001b[39m\n\u001b[32m     29\u001b[39m     \u001b[38;5;28;01mfor\u001b[39;00m z \u001b[38;5;28;01min\u001b[39;00m zvals:\n\u001b[32m     30\u001b[39m         \u001b[38;5;66;03m# intersect surface with plane z=const: sample tessellation points near that z\u001b[39;00m\n\u001b[32m     31\u001b[39m         pts = face.tessellate(\u001b[32m0.002\u001b[39m)[\u001b[32m0\u001b[39m]\n\u001b[32m     32\u001b[39m         pts = np.array([(p.X, p.Y, p.Z) \u001b[38;5;28;01mfor\u001b[39;00m p \u001b[38;5;28;01min\u001b[39;00m pts])\n\u001b[32m---> \u001b[39m\u001b[32m33\u001b[39m         near = pts[np.abs(pts[:, \u001b[32m2\u001b[39m] - z) < \u001b[32m0.005\u001b[39m]\n\u001b[32m     34\u001b[39m         out.append(np.sqrt(near[:, \u001b[32m0\u001b[39m]**\u001b[32m2\u001b[39m + near[:, \u001b[32m1\u001b[39m]**\u001b[32m2\u001b[39m).max())\n\u001b[32m     35\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m out\n\n\u001b[31mIndexError\u001b[39m: too many indices for array: array is 1-dimensional, but 2 were indexed",
+      "image": ""
+    },
+    {
+      "cmd": "t = outer_cowl.tessellate(0.002)\nprint(type(t), len(t), type(t[0]), type(t[0][0]) if len(t[0]) else \"empty\")\nprint(t[0][0] if len(t[0]) else \"\")",
+      "exit_code": 0,
+      "seconds": 0.05070343600527849,
+      "output": "<class 'tuple'> 2 <class 'list'> empty",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, os\n\n# Dimensions in METRES (OpenFOAM reads raw numbers as metres).\nZ = [0.0, 0.45, 0.90]                    # stations: fan exit, mid, nozzle\nR_OUT = [0.450, 0.430, 0.410]            # outer cowl inner surface\nR_IN  = [0.280, 0.310, 0.250]            # core cowl outer surface\n\nos.makedirs(\"constant/triSurface\", exist_ok=True)\n\nouter_edge = bd.Spline([(z, r, 0) for z, r in zip(Z, R_OUT)])\ninner_edge = bd.Spline([(z, r, 0) for z, r in zip(Z, R_IN)])\n\naxis = bd.Axis((0, 0, 0), (0, 0, 1))\n\nouter_cowl = bd.revolve(outer_edge, axis)   # surface of revolution, outer cowl\ncore_cowl  = bd.revolve(inner_edge, axis)   # surface of revolution, core cowl\n\nring_in  = bd.Plane(origin=(0, 0, 0.0), z_dir=(0, 0, 1)) * (bd.Circle(R_OUT[0]) - bd.Circle(R_IN[0]))\nring_out = bd.Plane(origin=(0, 0, 0.9), z_dir=(0, 0, 1)) * (bd.Circle(R_OUT[2]) - bd.Circle(R_IN[2]))\n\n# Verify generator curves pass through the requested stations (sample the splines)\ndef radii_at(edge, zvals):\n    pts = np.array([tuple((edge @ t).position) for t in np.linspace(0, 1, 4001)])\n    return [np.sqrt(pts[np.abs(pts[:, 2] - z).argmin(), 0]**2 + pts[np.abs(pts[:, 2] - z).argmin(), 1]**2)\n            for z in zvals]\n\nprint(\"outer radii:\", np.round(radii_at(outer_edge, Z), 5), \"target:\", R_OUT)\nprint(\"core  radii:\", np.round(radii_at(inner_edge, Z), 5), \"target:\", R_IN)\nprint(\"valid:\", outer_cowl.is_valid(), core_cowl.is_valid(), ring_in.is_valid(), ring_out.is_valid())\nprint(\"areas m^2: outer %.4f core %.4f rin %.5f rout %.5f\" % (\n    outer_cowl.area, core_cowl.area, ring_in.area, ring_out.area))",
+      "exit_code": 1,
+      "seconds": 0.10077234300842974,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 28\u001b[39m\n\u001b[32m     24\u001b[39m     pts = np.array([tuple((edge @ t).position) \u001b[38;5;28;01mfor\u001b[39;00m t \u001b[38;5;28;01min\u001b[39;00m np.linspace(\u001b[32m0\u001b[39m, \u001b[32m1\u001b[39m, \u001b[32m4001\u001b[39m)])\n\u001b[32m     25\u001b[39m     return [np.sqrt(pts[np.abs(pts[:, 2] - z).argmin(), 0]**2 + pts[np.abs(pts[:, 2] - z).argmin(), 1]**2)\n\u001b[32m     26\u001b[39m             \u001b[38;5;28;01mfor\u001b[39;00m z \u001b[38;5;28;01min\u001b[39;00m zvals]\n\u001b[32m     27\u001b[39m \n\u001b[32m---> \u001b[39m\u001b[32m28\u001b[39m print(\u001b[33m\"outer radii:\"\u001b[39m, np.round(radii_at(outer_edge, Z), \u001b[32m5\u001b[39m), \u001b[33m\"target:\"\u001b[39m, R_OUT)\n\u001b[32m     29\u001b[39m print(\u001b[33m\"core  radii:\"\u001b[39m, np.round(radii_at(inner_edge, Z), \u001b[32m5\u001b[39m), \u001b[33m\"target:\"\u001b[39m, R_IN)\n\u001b[32m     30\u001b[39m print(\u001b[33m\"valid:\"\u001b[39m, outer_cowl.is_valid(), core_cowl.is_valid(), ring_in.is_valid(), ring_out.is_valid())\n\u001b[32m     31\u001b[39m print(\"areas m^2: outer %.4f core %.4f rin %.5f rout %.5f\" % (\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 24\u001b[39m, in \u001b[36mradii_at\u001b[39m\u001b[34m(edge, zvals)\u001b[39m\n\u001b[32m     23\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m radii_at(edge, zvals):\n\u001b[32m---> \u001b[39m\u001b[32m24\u001b[39m     pts = np.array([tuple((edge @ t).position) \u001b[38;5;28;01mfor\u001b[39;00m t \u001b[38;5;28;01min\u001b[39;00m np.linspace(\u001b[32m0\u001b[39m, \u001b[32m1\u001b[39m, \u001b[32m4001\u001b[39m)])\n\u001b[32m     25\u001b[39m     return [np.sqrt(pts[np.abs(pts[:, 2] - z).argmin(), 0]**2 + pts[np.abs(pts[:, 2] - z).argmin(), 1]**2)\n\u001b[32m     26\u001b[39m             \u001b[38;5;28;01mfor\u001b[39;00m z \u001b[38;5;28;01min\u001b[39;00m zvals]\n\n\u001b[31mAttributeError\u001b[39m: 'Vector' object has no attribute 'position'",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, os\n\n# Dimensions in METRES (OpenFOAM reads raw numbers as metres).\nZ = [0.0, 0.45, 0.90]                    # stations: fan exit, mid, nozzle\nR_OUT = [0.450, 0.430, 0.410]            # outer cowl inner surface\nR_IN  = [0.280, 0.310, 0.250]            # core cowl outer surface\n\nos.makedirs(\"constant/triSurface\", exist_ok=True)\n\nouter_edge = bd.Spline([(z, r, 0) for z, r in zip(Z, R_OUT)])\ninner_edge = bd.Spline([(z, r, 0) for z, r in zip(Z, R_IN)])\n\naxis = bd.Axis((0, 0, 0), (0, 0, 1))\n\nouter_cowl = bd.revolve(outer_edge, axis)   # surface of revolution, outer cowl\ncore_cowl  = bd.revolve(inner_edge, axis)   # surface of revolution, core cowl\n\nring_in  = bd.Plane(origin=(0, 0, 0.0), z_dir=(0, 0, 1)) * (bd.Circle(R_OUT[0]) - bd.Circle(R_IN[0]))\nring_out = bd.Plane(origin=(0, 0, 0.9), z_dir=(0, 0, 1)) * (bd.Circle(R_OUT[2]) - bd.Circle(R_IN[2]))\n\n# Verify generator curves pass through the requested stations (sample the splines)\ndef radii_at(edge, zvals):\n    pts = np.array([tuple(edge @ t) for t in np.linspace(0, 1, 4001)])\n    return [np.hypot(*pts[np.abs(pts[:, 2] - z).argmin()][:2]) for z in zvals]\n\nprint(\"outer radii:\", np.round(radii_at(outer_edge, Z), 5), \"target:\", R_OUT)\nprint(\"core  radii:\", np.round(radii_at(inner_edge, Z), 5), \"target:\", R_IN)\nprint(\"valid:\", outer_cowl.is_valid(), core_cowl.is_valid(), ring_in.is_valid(), ring_out.is_valid())\nprint(\"areas m^2: outer %.4f core %.4f rin %.5f rout %.5f\" % (\n    outer_cowl.area, core_cowl.area, ring_in.area, ring_out.area))",
+      "exit_code": 1,
+      "seconds": 0.2011164060095325,
+      "output": "outer radii: [0.45 0.45 0.45] target: [0.45, 0.43, 0.41]\ncore  radii: [0.28 0.28 0.28] target: [0.28, 0.31, 0.25]\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[4]\u001b[39m\u001b[32m, line 29\u001b[39m\n\u001b[32m     25\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m [np.hypot(*pts[np.abs(pts[:, \u001b[32m2\u001b[39m] - z).argmin()][:\u001b[32m2\u001b[39m]) \u001b[38;5;28;01mfor\u001b[39;00m z \u001b[38;5;28;01min\u001b[39;00m zvals]\n\u001b[32m     26\u001b[39m \n\u001b[32m     27\u001b[39m print(\u001b[33m\"outer radii:\"\u001b[39m, np.round(radii_at(outer_edge, Z), \u001b[32m5\u001b[39m), \u001b[33m\"target:\"\u001b[39m, R_OUT)\n\u001b[32m     28\u001b[39m print(\u001b[33m\"core  radii:\"\u001b[39m, np.round(radii_at(inner_edge, Z), \u001b[32m5\u001b[39m), \u001b[33m\"target:\"\u001b[39m, R_IN)\n\u001b[32m---> \u001b[39m\u001b[32m29\u001b[39m print(\u001b[33m\"valid:\"\u001b[39m, outer_cowl.is_valid(), core_cowl.is_valid(), ring_in.is_valid(), ring_out.is_valid())\n\u001b[32m     30\u001b[39m print(\"areas m^2: outer %.4f core %.4f rin %.5f rout %.5f\" % (\n\u001b[32m     31\u001b[39m     outer_cowl.area, core_cowl.area, ring_in.area, ring_out.area))\n\n\u001b[31mTypeError\u001b[39m: 'bool' object is not callable",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, os\n\n# Dimensions in METRES (OpenFOAM reads raw numbers as metres).\nZ = [0.0, 0.45, 0.90]                    # stations: fan exit, mid, nozzle\nR_OUT = [0.450, 0.430, 0.410]            # outer cowl inner surface\nR_IN  = [0.280, 0.310, 0.250]            # core cowl outer surface\n\nos.makedirs(\"constant/triSurface\", exist_ok=True)\n\n# Generator splines in the r-z plane: (x=r, y=0, z=axial), axis = z\nouter_edge = bd.Spline([(r, 0, z) for z, r in zip(Z, R_OUT)])\ninner_edge = bd.Spline([(r, 0, z) for z, r in zip(Z, R_IN)])\n\naxis = bd.Axis((0, 0, 0), (0, 0, 1))\n\nouter_cowl = bd.revolve(outer_edge, axis)   # surface of revolution, outer cowl\ncore_cowl  = bd.revolve(inner_edge, axis)   # surface of revolution, core cowl\n\nring_in  = bd.Plane(origin=(0, 0, 0.0), z_dir=(0, 0, 1)) * (bd.Circle(R_OUT[0]) - bd.Circle(R_IN[0]))\nring_out = bd.Plane(origin=(0, 0, 0.9), z_dir=(0, 0, 1)) * (bd.Circle(R_OUT[2]) - bd.Circle(R_IN[2]))\n\n# Verify generator curves pass through the requested stations (sample the splines)\ndef radii_at(edge, zvals):\n    pts = np.array([tuple(edge @ t) for t in np.linspace(0, 1, 4001)])\n    return [np.hypot(*pts[np.abs(pts[:, 2] - z).argmin()][:2]) for z in zvals]\n\nprint(\"outer radii:\", np.round(radii_at(outer_edge, Z), 5), \"target:\", R_OUT)\nprint(\"core  radii:\", np.round(radii_at(inner_edge, Z), 5), \"target:\", R_IN)\nprint(\"valid:\", outer_cowl.is_valid, core_cowl.is_valid, ring_in.is_valid, ring_out.is_valid)\nprint(\"areas m^2: outer %.4f core %.4f rin %.5f rout %.5f\" % (\n    outer_cowl.area, core_cowl.area, ring_in.area, ring_out.area))",
+      "exit_code": 0,
+      "seconds": 0.20112254600098822,
+      "output": "outer radii: [0.45 0.43 0.41] target: [0.45, 0.43, 0.41]\ncore  radii: [0.28 0.31 0.25] target: [0.28, 0.31, 0.25]\nvalid: True True True True\nareas m^2: outer 0.0000 core 0.0000 rin 0.38987 rout 0.33175",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np\nprint(type(outer_cowl), type(core_cowl))\nprint(\"outer bbox:\", outer_cowl.bounding_box().min, outer_cowl.bounding_box().max)\n# children?\nif hasattr(outer_cowl, \"faces\"):\n    print(\"n faces:\", len(outer_cowl.faces()), [f.area for f in outer_cowl.faces()])",
+      "exit_code": 0,
+      "seconds": 0.8026103430020157,
+      "output": "<class 'build123d.topology.composite.Part'> <class 'build123d.topology.composite.Part'>\nouter bbox: Vector: (X=0, Y=0, Z=0) Vector: (X=0, Y=0, Z=0)\nn faces: 0 []",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd, inspect\nprint(inspect.signature(bd.revolve))\nprint(bd.revolve.__doc__)",
+      "exit_code": 0,
+      "seconds": 0.8025340830063215,
+      "output": "(profiles: 'Face | Iterable[Face] | None' = None, axis: 'Axis' = Axis((0, 0, 0), (0, 0, 1)), revolution_arc: 'float' = 360.0, clean: 'bool' = True, mode: 'Mode' = <Mode.ADD>) -> 'Part'\nPart Operation: Revolve\n\nRevolve the profile or pending sketches/face about the given axis.\nNote that the most common use case is when the axis is in the same plane as the\nface to be revolved but this isn't required.\n\nArgs:\n    profiles (Face, optional): 2D profile(s) to revolve.\n    axis (Axis, optional): axis of rotation. Defaults to Axis.Z.\n    revolution_arc (float, optional): angular size of revolution. Defaults to 360.0.\n    clean (bool, optional): Remove extraneous internal structure. Defaults to True.\n    mode (Mode, optional): combination mode. Defaults to Mode.ADD.\n\nRaises:\n    ValueError: Invalid axis of revolution",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, os\n\n# Dimensions in METRES (OpenFOAM reads raw numbers as metres).\nZ = [0.0, 0.45, 0.90]                    # stations: fan exit, mid, nozzle\nR_OUT = [0.450, 0.430, 0.410]            # outer cowl inner surface\nR_IN  = [0.280, 0.310, 0.250]            # core cowl outer surface\n\nos.makedirs(\"constant/triSurface\", exist_ok=True)\n\n# Closed generator profile in the r-z plane (x=r, y=0, z=axial)\nouter_edge = bd.Spline([(r, 0, z) for z, r in zip(Z, R_OUT)])\ninner_edge = bd.Spline([(r, 0, z) for z, r in zip(Z, R_IN[::-1] and list(reversed(list(zip(Z, R_IN)))))]) \\\n    if False else bd.Spline([(r, 0, z) for z, r in reversed(list(zip(Z, R_IN)))])\n\nnozzle_line  = bd.Line((R_OUT[2], 0, Z[2]), (R_IN[2], 0, Z[2]))\nfanexit_line = bd.Line((R_IN[0], 0, Z[0]), (R_OUT[0], 0, Z[0]))\n\nprofile_wire = bd.Wire([outer_edge, nozzle_line, inner_edge, fanexit_line])\nprofile_face = bd.Face(profile_wire)\naxis = bd.Axis((0, 0, 0), (0, 0, 1))\nfluid = bd.revolve(profile_face, axis)\n\nprint(\"profile closed:\", profile_wire.is_closed, \"face valid:\", profile_face.is_valid)\nprint(\"fluid: type\", type(fluid).__name__, \"valid:\", fluid.is_valid, \"volume: %.5f m^3\" % fluid.volume)\n# analytic volume check via Pappus: V = 2*pi*r_cg*A_profile\nr_cg = profile_face.center().x\nprint(\"Pappus volume:  %.5f m^3  (profile area %.5f, r_cg %.4f)\" %\n      (2*np.pi*r_cg*profile_face.area, profile_face.area, r_cg))\nprint(\"faces:\", len(fluid.faces()))\nfor f in fluid.faces():\n    c = f.center()\n    print(\"  face: planar=%s center=(%.4f, %.4f, %.4f) r=%.4f area=%.4f\" % (\n        f.geom_type == \"PLANE\", c.x, c.y, c.z, np.hypot(c.x, c.y), f.area))",
+      "exit_code": 1,
+      "seconds": 0.050677206003456376,
+      "output": "profile closed: True face valid: True\nfluid: type Part valid: True volume: 0.27639 m^3\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[8]\u001b[39m\u001b[32m, line 27\u001b[39m\n\u001b[32m     23\u001b[39m \n\u001b[32m     24\u001b[39m print(\u001b[33m\"profile closed:\"\u001b[39m, profile_wire.is_closed, \u001b[33m\"face valid:\"\u001b[39m, profile_face.is_valid)\n\u001b[32m     25\u001b[39m print(\u001b[33m\"fluid: type\"\u001b[39m, type(fluid).__name__, \u001b[33m\"valid:\"\u001b[39m, fluid.is_valid, \u001b[33m\"volume: %.5f m^3\"\u001b[39m % fluid.volume)\n\u001b[32m     26\u001b[39m \u001b[38;5;66;03m# analytic volume check via Pappus: V = 2*pi*r_cg*A_profile\u001b[39;00m\n\u001b[32m---> \u001b[39m\u001b[32m27\u001b[39m r_cg = profile_face.center().x\n\u001b[32m     28\u001b[39m print(\"Pappus volume:  %.5f m^3  (profile area %.5f, r_cg %.4f)\" %\n\u001b[32m     29\u001b[39m       (\u001b[32m2\u001b[39m*np.pi*r_cg*profile_face.area, profile_face.area, r_cg))\n\u001b[32m     30\u001b[39m print(\u001b[33m\"faces:\"\u001b[39m, len(fluid.faces()))\n\n\u001b[31mAttributeError\u001b[39m: 'Vector' object has no attribute 'x'",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, os\n\n# Dimensions in METRES (OpenFOAM reads raw numbers as metres).\nZ = [0.0, 0.45, 0.90]                    # stations: fan exit, mid, nozzle\nR_OUT = [0.450, 0.430, 0.410]            # outer cowl inner surface\nR_IN  = [0.280, 0.310, 0.250]            # core cowl outer surface\n\nos.makedirs(\"constant/triSurface\", exist_ok=True)\n\n# Closed generator profile in the r-z plane (x=r, y=0, z=axial), traversed in order\nouter_edge = bd.Spline([(r, 0, z) for z, r in zip(Z, R_OUT)])\ninner_edge = bd.Spline([(r, 0, z) for z, r in reversed(list(zip(Z, R_IN)))])\nnozzle_line  = bd.Line((R_OUT[2], 0, Z[2]), (R_IN[2], 0, Z[2]))\nfanexit_line = bd.Line((R_IN[0], 0, Z[0]), (R_OUT[0], 0, Z[0]))\n\nprofile_wire = bd.Wire([outer_edge, nozzle_line, inner_edge, fanexit_line])\nprofile_face = bd.Face(profile_wire)\naxis = bd.Axis((0, 0, 0), (0, 0, 1))\nfluid = bd.revolve(profile_face, axis)\n\nr_cg = profile_face.center().X\nprint(\"profile closed:\", profile_wire.is_closed, \"| fluid valid:\", fluid.is_valid)\nprint(\"volume: %.5f m^3 | Pappus: %.5f m^3 (A=%.5f, r_cg=%.4f)\" %\n      (fluid.volume, 2*np.pi*r_cg*profile_face.area, profile_face.area, r_cg))\n\nfaces = fluid.faces()\nprint(\"faces:\", len(faces))\nfor f in faces:\n    c = f.center()\n    print(\"  planar=%s center=(%.4f, %.4f, %.4f) r=%.4f z=%.4f area=%.4f\" % (\n        f.geom_type == \"PLANE\", c.X, c.Y, c.Z, np.hypot(c.X, c.Y), c.Z, f.area))",
+      "exit_code": 0,
+      "seconds": 0.05068600700178649,
+      "output": "profile closed: True | fluid valid: True\nvolume: 0.27639 m^3 | Pappus: 0.27639 m^3 (A=0.12150, r_cg=0.3621)\nfaces: 4\n  planar=False center=(-0.4300, 0.0000, 0.4500) r=0.4300 z=0.4500 area=2.4340\n  planar=False center=(-0.0000, -0.0000, 0.9000) r=0.0000 z=0.9000 area=0.3318\n  planar=False center=(-0.3100, 0.0000, 0.4515) r=0.3100 z=0.4515 area=1.6795\n  planar=False center=(0.0000, -0.0000, 0.0000) r=0.0000 z=0.0000 area=0.3899",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np\n\n# Classify the four faces of the revolved annulus; axisymmetric => unambiguous\npatches = {}\nfor f in fluid.faces():\n    c = f.center()\n    r, z = np.hypot(c.X, c.Y), c.Z\n    if abs(z - 0.0) < 1e-9 and r < 1e-9:\n        patches[\"fanExit\"] = f        # annular ring at the fan exit plane\n    elif abs(z - 0.9) < 1e-9 and r < 1e-9:\n        patches[\"nozzleOutlet\"] = f   # annular ring at the nozzle plane\n    elif r > 0.37:\n        patches[\"outerCowl\"] = f      # surface of revolution at r~0.43 mid\n    else:\n        patches[\"coreCowl\"] = f       # surface of revolution at r~0.31 mid\nprint(\"patches:\", {k: round(v.area, 5) for k, v in patches.items()})\n\n# Export one STL per patch (units already metres; 0.05 mm linear tolerance)\nfor name, f in patches.items():\n    bd.export_stl(f, f\"constant/triSurface/{name}.stl\", tolerance=5e-5, angular_tolerance=0.05)\nprint(\"exported:\", sorted(os.listdir(\"constant/triSurface\")))\n\n# Verify the EXPORTED STL geometry: radii at the three stations, from the STL points\nimport pyvista as pv\nfor name, targets in [(\"outerCowl\", R_OUT), (\"coreCowl\", R_IN)]:\n    m = pv.read(f\"constant/triSurface/{name}.stl\")\n    p = m.points\n    rad = [np.hypot(*(p[np.abs(p[:, 2] - z) < 0.003][:, :2].T)).max() for z in Z]\n    print(name, \"radii @stations:\", np.round(rad, 4), \"target:\", targets)\nfor name, z, ro, ri in [(\"fanExit\", 0.0, 0.450, 0.280), (\"nozzleOutlet\", 0.9, 0.410, 0.250)]:\n    m = pv.read(f\"constant/triSurface/{name}.stl\")\n    r = np.hypot(*(m.points[:, :2].T))\n    print(name, \"z-range %.4f..%.4f  r: %.4f..%.4f target %.3f..%.3f\" %\n          (m.points[:, 2].min(), m.points[:, 2].max(), r.min(), r.max(), ri, ro))",
+      "exit_code": 0,
+      "seconds": 13.3918897669937,
+      "output": "patches: {'outerCowl': 2.43399, 'nozzleOutlet': 0.33175, 'coreCowl': 1.67951, 'fanExit': 0.38987}\nexported: ['coreCowl.stl', 'fanExit.stl', 'nozzleOutlet.stl', 'outerCowl.stl']\nouterCowl radii @stations: [0.45 0.43 0.41] target: [0.45, 0.43, 0.41]\ncoreCowl radii @stations: [0.28   0.3101 0.2505] target: [0.28, 0.31, 0.25]\nfanExit z-range 0.0000..0.0000  r: 0.2800..0.4500 target 0.280..0.450\nnozzleOutlet z-range 0.9000..0.9000  r: 0.2500..0.4100 target 0.250..0.410\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npv.set_jupyter_backend(\"static\")\npl = pv.Plotter(off_screen=True, window_size=(1000, 700))\ncolors = {\"outerCowl\": \"tan\", \"coreCowl\": \"steelblue\", \"fanExit\": \"lime\", \"nozzleOutlet\": \"tomato\"}\nfor name, c in colors.items():\n    pl.add_mesh(pv.read(f\"constant/triSurface/{name}.stl\"), color=c, opacity=0.85, show_edges=False)\npl.add_axes()\npl.view_vector((1.4, -2.2, 0.7))\npl.show()",
+      "exit_code": 0,
+      "seconds": 0.5020189350034343,
+      "output": "\u001b[0m\u001b[33m2026-09-15 06:49:11.660 (  29.877s) [    742F26CED780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-15 06:49:11.661 (  29.878s) [    742F26CED780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-15 06:49:11.674 (  29.891s) [    742F26CED780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import subprocess, os\nos.makedirs(\"system\", exist_ok=True)\n\ndef w(path, text):\n    with open(path, \"w\") as f: f.write(text)\n\nw(\"system/controlDict\", \"\"\"\nFoamFile { version 2.0; format ascii; class dictionary; object controlDict; }\napplication snappyHexMesh;\nstartFrom latestTime; startTime 0; stopAt endTime; endTime 1; deltaT 1;\nwriteControl timeStep; writeInterval 1; purgeWrite 0;\nwriteFormat ascii; writePrecision 8; writeCompression off;\ntimeFormat general; timePrecision 6; runTimeModifiable true;\n\"\"\")\n\n# Background box fully enclosing the duct (duct: r<=0.45, z in [0, 0.9])\nw(\"system/blockMeshDict\", \"\"\"\nFoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }\nconvertToMeters 1;\nvertices\n(\n    (-0.47 -0.47 -0.03)\n    ( 0.47 -0.47 -0.03)\n    ( 0.47  0.47 -0.03)\n    (-0.47  0.47 -0.03)\n    (-0.47 -0.47  0.93)\n    ( 0.47 -0.47  0.93)\n    ( 0.47  0.47  0.93)\n    (-0.47  0.47  0.93)\n);\nblocks ( hex (0 1 2 3 4 5 6 7) (48 48 49) simpleGrading (1 1 1) );\nedges ();\nboundary ( allOutside { type patch; faces ((0 4 7 3) (2 6 5 1) (1 5 4 0) (3 7 6 2) (0 3 2 1) (4 5 6 7)); } );\nmergePatchPairs ();\n\"\"\")\n\nw(\"system/surfaceFeatureExtractDict\", \"\"\"\nFoamFile { version 2.0; format ascii; class dictionary; object surfaceFeatureExtractDict; }\nouterCowl.stl    { extractionMethod extractFromSurface; includedAngle 150; subsetFeatures { nonManifoldEdges no; openEdges yes; } writeObj yes; }\ncoreCowl.stl     { extractionMethod extractFromSurface; includedAngle 150; subsetFeatures { nonManifoldEdges no; openEdges yes; } writeObj yes; }\nfanExit.stl      { extractionMethod extractFromSurface; includedAngle 150; subsetFeatures { nonManifoldEdges no; openEdges yes; } writeObj yes; }\nnozzleOutlet.stl { extractionMethod extractFromSurface; includedAngle 150; subsetFeatures { nonManifoldEdges no; openEdges yes; } writeObj yes; }\n\"\"\")\n\nw(\"system/snappyHexMeshDict\", \"\"\"\nFoamFile { version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }\ncastellatedMesh true; snap true; addLayers false;\n\ngeometry\n{\n    outerCowl    { type triSurfaceMesh; file \"outerCowl.stl\"; }\n    coreCowl     { type triSurfaceMesh; file \"coreCowl.stl\"; }\n    fanExit      { type triSurfaceMesh; file \"fanExit.stl\"; }\n    nozzleOutlet { type triSurfaceMesh; file \"nozzleOutlet.stl\"; }\n}\n\ncastellatedMeshControls\n{\n    maxLocalCells 1000000; maxGlobalCells 3000000; minRefinementCells 10;\n    maxLoadUnbalance 0.10; nCellsBetweenLevels 2;\n    features\n    (\n        { file \"outerCowl.eMesh\";    level 1; }\n        { file \"coreCowl.eMesh\";     level 1; }\n        { file \"fanExit.eMesh\";      level 1; }\n        { file \"nozzleOutlet.eMesh\"; level 1; }\n    );\n    refinementSurfaces\n    {\n        outerCowl    { level (2 2); }\n        coreCowl     { level (2 2); }\n        fanExit      { level (2 2); }\n        nozzleOutlet { level (2 2); }\n    }\n    resolveFeatureAngle 30;\n    refinementRegions { }\n    locationInMesh (0.36 0.0 0.45);   // inside the annulus at mid-duct (0.31 < r < 0.43)\n    allowFreeStandingZoneFaces false;\n}\n\nsnapControls\n{\n    nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5;\n    nFeatureSnapIter 10;\n    implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false;\n}\n\naddLayersControls\n{\n    relativeSizes true;\n    layers { }\n    expansionRatio 1.0; finalLayerThickness 0.3; minThickness 0.1;\n    nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1;\n    nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5;\n    maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90;\n    nBufferCellsNoExtrude 0; nLayerIter 50;\n}\n\nmeshQualityControls\n{\n    maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4;\n    maxConcave 80; minVol 1e-13; minTetQuality 1e-15;\n    minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.05;\n    minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75;\n}\n\"\"\")\n\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(\"blockMesh rc:\", r.returncode)\nprint(r.stdout[-600:])\nr2 = subprocess.run([\"surfaceFeatureExtract\"], capture_output=True, text=True)\nprint(\"sfe rc:\", r2.returncode, r2.stdout[-200:], r2.stderr[-300:])",
+      "exit_code": 0,
+      "seconds": 1.3538952649978455,
+      "output": "blockMesh rc: 0\ncal search)...\n\nCreating polyMesh from blockMesh\nCreating patches\nCreating cells\nCreating points with scale (1 1 1)\n    Block 0 cell size :\n        i : 0.019583333 .. 0.019583333\n        j : 0.019583333 .. 0.019583333\n        k : 0.019591837 .. 0.019591837\n\nNo patch pairs to merge\n\nWriting polyMesh with 0 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (-0.47 -0.47 -0.03) (0.47 0.47 0.93)\n  nPoints: 120050\n  nCells: 112896\n  nFaces: 345696\n  nInternalFaces: 331680\n----------------\nPatches\n----------------\n  patch 0 (start: 331680 size: 14016) name: allOutside\n\nEnd\n\n\nsfe rc: 0 eDirections.obj\"\n\nWriting featureEdgeMesh to \"/home/qiuzi/.openreynolds-buildup/work/T16-20260915-064235-d215/t16/constant/triSurface/nozzleOutlet.eMesh\"\nExecutionTime = 0.45 s  ClockTime = 0 s\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\nr = subprocess.run([\"snappyHexMesh\", \"-overwrite\"], capture_output=True, text=True)\nprint(\"rc:\", r.returncode)\nprint(r.stdout[-3000:])\nprint(\"STDERR:\", r.stderr[-1000:])",
+      "exit_code": 0,
+      "seconds": 0.5519367909873836,
+      "output": "rc: 1\n/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh -overwrite\nDate   : Sep 15 2026\nTime   : 06:50:44\nHost   : yc-demo\nPID    : 567568\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T16-20260915-064235-d215/t16\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nSTDERR: \n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T16-20260915-064235-d215/t16/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\n\nwith open(\"system/fvSchemes\", \"w\") as f:\n    f.write(\"\"\"\nFoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }\nddtSchemes { default steadyState; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default Gauss linear uncorrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default uncorrected; }\n\"\"\")\n\nwith open(\"system/fvSolution\", \"w\") as f:\n    f.write(\"\"\"\nFoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }\nsolvers { }\n\"\"\")\n\nr = subprocess.run([\"snappyHexMesh\", \"-overwrite\"], capture_output=True, text=True)\nprint(\"rc:\", r.returncode)\nprint(r.stdout[-2500:])\nprint(\"STDERR:\", r.stderr[-800:])",
+      "exit_code": 0,
+      "seconds": 0.5531260220013792,
+      "output": "rc: 1\n/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh -overwrite\nDate   : Sep 15 2026\nTime   : 06:50:58\nHost   : yc-demo\nPID    : 567677\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T16-20260915-064235-d215/t16\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nRead mesh in = 0.33 s\n\nSTDERR: \n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'mergeTolerance' not found in dictionary \"/home/qiuzi/.openreynolds-buildup/work/T16-20260915-064235-d215/t16/system/snappyHexMeshDict\"\n\n\nfile: system/snappyHexMeshDict at line 3 to 60.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, re\n\nwith open(\"system/snappyHexMeshDict\") as f:\n    txt = f.read()\nif \"mergeTolerance\" not in txt:\n    txt = txt.replace(\"castellatedMesh true; snap true; addLayers false;\",\n                      \"castellatedMesh true; snap true; addLayers false;\\nmergeTolerance 1e-06;\")\nwith open(\"system/snappyHexMeshDict\", \"w\") as f:\n    f.write(txt)\n\nr = subprocess.run([\"snappyHexMesh\", \"-overwrite\"], capture_output=True, text=True)\nprint(\"rc:\", r.returncode)\nprint(r.stdout[-2500:])\nprint(\"STDERR:\", r.stderr[-800:])",
+      "exit_code": 0,
+      "seconds": 167.28193636100332,
+      "output": "rc: 0\ntersected edges : 184008\n\nUndo iteration 0\n----------------\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\n\nMerging all points on surface that\n- are used by only two boundary faces and\n- make an angle with a cosine of more than 0.8660254.\n\nRemoving 54528 straight edge points ...\n\nEdge intersection testing:\n    Number of edges             : 1979180\n    Number of edges to retest   : 254562\n    Number of intersected edges : 184008\n\nUndo iteration 0\n----------------\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nSnapped mesh : cells:603116  faces:1979180  points:783208\nCells per refinement level:\n    0\t15432\n    1\t111835\n    2\t475849\nWriting mesh to time constant\nWrote mesh in = 1.6 s.\nMesh snapped in = 74.58 s.\nChecking final mesh ...\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nFinished meshing without any errors\nFinished meshing in = 131.35 s.\nEnd\n\n\nSTDERR:",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(\"rc:\", r.returncode)\nprint(r.stdout[-3500:])\nprint(\"STDERR:\", r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 4.515725754012237,
+      "output": "rc: 0\n PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T16-20260915-064235-d215/t16\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           783208\n    faces:            1979180\n    internal faces:   1795172\n    cells:            603116\n    faces per cell:   6.2580863\n    boundary patches: 4\n    point zones:      1\n    face zones:       0\n    cell zones:       0\n\nOverall number of cells of each type:\n    hexahedra:     466600\n    prisms:        44843\n    wedges:        0\n    pyramids:      0\n    tet wedges:    8\n    tetrahedra:    0\n    polyhedra:     91665\n    Breakdown of polyhedra by number of faces:\n        faces   number of cells\n            4   10388\n            5   9421\n            6   18988\n            9   32472\n           12   16872\n           15   3408\n           18   116\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n                   Patch    Faces   Points  Surface topology\n               outerCowl    91040    95860  ok (non-closed singly connected)\n                coreCowl    63044    69492  ok (non-closed singly connected)\n                 fanExit    16168    16416  ok (non-closed singly connected)\n            nozzleOutlet    13756    13980  ok (non-closed singly connected)\n                    \".*\"   184008   194140      ok (closed singly connected)\n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    No cellZones found.\n\nChecking basic pointZone addressing...\n               PointZone  PointsBoundingBox\n            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)\n\nChecking geometry...\n    Overall domain bounding box (-0.44998878 -0.44999166 0) (0.44999999 0.44999166 0.89999998)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (-5.2001572e-16 2.1521746e-16 4.4920039e-16) OK.\n    Max cell openness = 3.0818198e-16 OK.\n    Max aspect ratio = 4.4280603 OK.\n    Minimum face area = 6.7132341e-06. Maximum face area = 0.00040076088.  Face area magnitudes OK.\n    Min volume = 2.0026348e-08. Max volume = 7.8522531e-06.  Total volume = 0.27639417.  Cell volumes OK.\n    Mesh non-orthogonality Max: 41.584526 average: 11.484063\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.87669813 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd\n\n\nSTDERR:",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, glob\nimport pyvista as pv\nr = subprocess.run([\"foamToVTK\", \"-noZero\", \"-constant\"], capture_output=True, text=True)\nprint(\"rc:\", r.returncode, r.stdout[-200:], r.stderr[-200:])\n\nvtm = sorted(glob.glob(\"VTK/*.vtm\"))\nprint(vtm)\nds = pv.read(vtm[-1])\nprint(ds)\n# slice through the axis (y=0 plane)\nsl = ds.slice(normal=(0, 1, 0), origin=(0, 0, 0.45))\npl = pv.Plotter(off_screen=True, window_size=(900, 700))\npl.add_mesh(sl, show_edges=True, scalars=None, color=\"lightgrey\")\npl.add_text(\"slice y=0 through annulus\", font_size=10)\npl.view_vector((0, -1, 0))\npl.camera.up = (0, 0, 1)\npl.show()",
+      "exit_code": 0,
+      "seconds": 6.421922809997341,
+      "output": "rc: 0   : \"VTK/t16_0/boundary/coreCowl.vtp\"\n    Boundary  : \"VTK/t16_0/boundary/fanExit.vtp\"\n    Boundary  : \"VTK/t16_0/boundary/nozzleOutlet.vtp\"\nWrote in 2.38 s, 730364 kB\n\nEnd: 4.46 s, 730364 kB (peak)\n\n \n['VTK/t16_0.vtm']\nMultiBlock (0x742e1654f8e0)\n  N Blocks:   2\n  X Bounds:   -4.500e-01, 4.500e-01\n  Y Bounds:   -4.500e-01, 4.500e-01\n  Z Bounds:   0.000e+00, 9.000e-01\n\n\u001b[0m\u001b[33m2026-09-15 06:54:52.506 ( 370.723s) [    742F26CED780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-15 06:54:52.507 ( 370.724s) [    742F26CED780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import struct, os\nimport numpy as np\nfrom OCP.BRepMesh import BRepMesh_IncrementalMesh\nfrom OCP.BRep import BRep_Tool\nfrom OCP.TopAbs import TopAbs_Orientation, TopAbs_REVERSED\nfrom OCP.TopLoc import TopLoc_Location\n\n# Mesh the whole solid ONCE -> shared edges get identical vertex positions on both faces\nBRepMesh_IncrementalMesh(fluid.wrapped, 5e-5, False, 0.05, True)\n\ndef face_triangles(bd_face):\n    loc = TopLoc_Location()\n    tri = BRep_Tool.Triangulation_s(bd_face.wrapped, loc)\n    trsf = loc.Transformation()\n    n = tri.NbNodes()\n    pts = np.empty((n, 3))\n    for i in range(1, n + 1):\n        p = tri.Node(i).Transformed(trsf)\n        pts[i - 1] = (p.X(), p.Y(), p.Z())\n    m = tri.NbTriangles()\n    tris = np.empty((m, 3), dtype=np.int64)\n    rev = bd_face.wrapped.Orientation() == TopAbs_REVERSED\n    for i in range(1, m + 1):\n        a, b, c = tri.Triangle(i).Get()\n        tris[i - 1] = (a - 1, c - 1, b - 1) if rev else (a - 1, b - 1, c - 1)\n    return pts, tris\n\ndef write_stl(path, pts, tris):\n    v1 = pts[tris[:, 0]]; v2 = pts[tris[:, 1]]; v3 = pts[tris[:, 2]]\n    nrm = np.cross(v2 - v1, v3 - v1)\n    ln = np.linalg.norm(nrm, axis=1); ln[ln == 0] = 1.0\n    nrm /= ln[:, None]\n    with open(path, \"wb\") as f:\n        f.write(b\"\\0\" * 80)\n        f.write(struct.pack(\"<I\", len(tris)))\n        for i in range(len(tris)):\n            f.write(struct.pack(\"<12fH\", *nrm[i], *v1[i], *v2[i], *v3[i], 0))\n\nfor name, f in patches.items():\n    pts, tris = face_triangles(f)\n    write_stl(f\"constant/triSurface/{name}.stl\", pts, tris)\n    print(name, \"tris:\", len(tris), \"nodes:\", len(pts))",
+      "exit_code": 0,
+      "seconds": 3.7098670400009723,
+      "output": "outerCowl tris: 124222 nodes: 62548\nnozzleOutlet tris: 792 nodes: 792\ncoreCowl tris: 127497 nodes: 64158\nfanExit tris: 796 nodes: 796",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\nimport pyvista as pv\nfrom collections import Counter\n\nallpts, alltris, off = [], [], 0\nfor name in [\"outerCowl\", \"coreCowl\", \"fanExit\", \"nozzleOutlet\"]:\n    m = pv.read(f\"constant/triSurface/{name}.stl\")\n    f = m.faces.reshape(-1, 4)[:, 1:]\n    allpts.append(m.points); alltris.append(f + off); off += len(m.points)\nP = np.vstack(allpts); T = np.vstack(alltris)\n\n# weld by rounding (checker tolerance ~1e-7-ish; use 1e-6 m = 1 micron)\nkey = np.round(P / 1e-6).astype(np.int64)\n_, inv = np.unique(key, axis=0, return_inverse=True)\nTw = inv[T]\nedges = np.vstack([Tw[:, [0, 1]], Tw[:, [1, 2]], Tw[:, [2, 0]]])\ne_sorted = np.sort(edges, axis=1)\ncnt = Counter(map(tuple, e_sorted))\nfree = [e for e, c in cnt.items() if c == 1]\n# winding: edges appearing twice with same direction = normals inconsistency\ndir_cnt = Counter(map(tuple, edges))\nsame_dir = sum(1 for (a, b), c in dir_cnt.items() if c == 2)\nprint(\"free edges after weld:\", len(free))\nprint(\"same-direction doubled edges (winding):\", same_dir)",
+      "exit_code": 0,
+      "seconds": 1.8562725100055104,
+      "output": "free edges after weld: 1549\nsame-direction doubled edges (winding): 0",
+      "image": ""
+    },
+    {
+      "cmd": "# Where are the free edges? Map welded indices back to coordinates\nuw = np.unique(key, axis=0)          # welded grid points (order matches inv? no - get via unique)\nuid, inv_full = np.unique(key, axis=0, return_inverse=True)\n# representative coordinates of each welded point: mean of members\nrep = np.zeros((len(uid), 3))\nnp.add.at(rep, inv_full, P)\ncntp = np.bincount(inv_full)[:, None]\nrep /= cntp\n\nfe = np.array(free)\nfr = np.hypot(rep[fe[:, 0]], rep[fe[:, 1]]) if False else None\n# radius and z of free-edge endpoints\nr0 = np.hypot(rep[fe[:, 0], 0], rep[fe[:, 0], 1]); z0 = rep[fe[:, 0], 2]\nr1 = np.hypot(rep[fe[:, 1], 0], rep[fe[:, 1], 1]); z1 = rep[fe[:, 1], 2]\nimport numpy as np\nprint(\"free-edge endpoint r range: %.4f..%.4f\" % (min(r0.min(), r1.min()), max(r0.max(), r1.max())))\nprint(\"free-edge endpoint z range: %.5f..%.5f\" % (min(z0.min(), z1.min()), max(z0.max(), z1.max())))\n# histogram of z\nzs = np.concatenate([z0, z1])\nfor zc, lab in [(0.0, \"z=0 (fan exit)\"), (0.9, \"z=0.9 (nozzle)\")]:\n    print(lab, \"count:\", int((np.abs(zs - zc) < 0.01).sum()))\nprint(\"mid-duct count:\", int(((np.abs(zs) > 0.01) & (np.abs(zs - 0.9) > 0.01)).sum()))",
+      "exit_code": 0,
+      "seconds": 0.2516328330093529,
+      "output": "free-edge endpoint r range: 0.2500..0.4100\nfree-edge endpoint z range: 0.90000..0.90000\nz=0 (fan exit) count: 0\nz=0.9 (nozzle) count: 3098\nmid-duct count: 0",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np, pyvista as pv\n\ndef bnd_pts(name, z, rad_lo, rad_hi):\n    m = pv.read(f\"constant/triSurface/{name}.stl\")\n    p = m.points\n    sel = p[(np.abs(p[:, 2] - z) < 1e-4)]\n    r = np.hypot(sel[:, 0], sel[:, 1])\n    return sel[(r > rad_lo) & (r < rad_hi)]\n\nfor rad, lab in [(0.41, \"outer rim\"), (0.25, \"inner rim\")]:\n    ring = bnd_pts(\"nozzleOutlet\", 0.9, rad - 0.005, rad + 0.005)\n    cowl = bnd_pts(\"outerCowl\" if rad > 0.3 else \"coreCowl\", 0.9, rad - 0.005, rad + 0.005)\n    print(lab, \": ring nodes\", len(ring), \" cowl nodes\", len(cowl))\n    # nearest neighbour distance ring->cowl\n    from scipy.spatial import cKDTree\n    d = cKDTree(cowl).query(ring)[0]\n    print(\"  nearest-dist ring->cowl: max %.3e mean %.3e\" % (d.max(), d.mean()))",
+      "exit_code": 0,
+      "seconds": 0.10080481300246902,
+      "output": "outer rim : ring nodes 445  cowl nodes 425\n  nearest-dist ring->cowl: max 2.997e-03 mean 1.515e-03\ninner rim : ring nodes 347  cowl nodes 332\n  nearest-dist ring->cowl: max 2.359e-03 mean 1.183e-03",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 2111,
+      "fenced": true,
+      "text_chars": 424,
+      "thinking_chars": 4665,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454622.7450716
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 226,
+      "fenced": true,
+      "text_chars": 106,
+      "thinking_chars": 357,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454636.1734016
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 1239,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 2518,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454680.1563559
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 648,
+      "fenced": true,
+      "text_chars": 108,
+      "thinking_chars": 108,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454704.2426167
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 870,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 786,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454739.5188944
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 301,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 537,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454760.6452827
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 466,
+      "fenced": true,
+      "text_chars": 95,
+      "thinking_chars": 1536,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454786.3709888
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 1380,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 2736,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454841.525521
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 674,
+      "fenced": true,
+      "text_chars": 111,
+      "thinking_chars": 284,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454870.5183127
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 940,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 1046,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454908.497786
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 331,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 483,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789454947.4865696
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 2365,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 3328,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455020.3270156
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 142,
+      "fenced": true,
+      "text_chars": 86,
+      "thinking_chars": 94,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455039.8856277
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 310,
+      "fenced": true,
+      "text_chars": 103,
+      "thinking_chars": 137,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455057.3236623
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 220,
+      "fenced": true,
+      "text_chars": 64,
+      "thinking_chars": 40,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455070.8310876
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 117,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 89,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455249.892235
+    },
+    {
+      "turn": 17,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 414,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 583,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455283.0790055
+    },
+    {
+      "turn": 18,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 404,
+      "fenced": false,
+      "text_chars": 0,
+      "thinking_chars": 1410,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455312.7135026
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 1458,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 3563,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455376.589842
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 713,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 1413,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455408.842422
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 1195,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 2965,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455454.5812662
+    },
+    {
+      "turn": 22,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 1130,
+      "fenced": true,
+      "text_chars": 170,
+      "thinking_chars": 2994,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789455493.2016454
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "measured",
+      "why": "the meshing point from system/snappyHexMeshDict is inside the exported surface, 0.04998 m clear",
+      "measured": {
+        "point": [
+          0.36,
+          0.0,
+          0.45
+        ],
+        "source": "system/snappyHexMeshDict",
+        "classification": "inside",
+        "clearance_m": 0.04998158374611409
+      }
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "1,549 free edges on the welded union of 253,307 triangles across 4 file(s) -- on nozzleOutlet.stl (792 of 792 triangles), outerCowl.stl (425 of 124,222 triangles), coreCowl.stl (332 of 127,497 triangles)",
+      "measured": {
+        "open_edges": 1549,
+        "files": [
+          "coreCowl.stl",
+          "fanExit.stl",
+          "nozzleOutlet.stl",
+          "outerCowl.stl"
+        ],
+        "triangles": 253307,
+        "by_file": {
+          "nozzleOutlet.stl": {
+            "open_edges": 792,
+            "triangles": 792
+          },
+          "outerCowl.stl": {
+            "open_edges": 425,
+            "triangles": 124222
+          },
+          "coreCowl.stl": {
+            "open_edges": 332,
+            "triangles": 127497
+          }
+        },
+        "bounds_m": [
+          [
+            -0.40999,
+            -0.409997,
+            0.9
+          ],
+          [
+            0.41,
+            0.409997,
+            0.9
+          ]
+        ]
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the patch set",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 253307
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "over-limit",
+      "why": "253,307 triangles is over this probe's ceiling of 200,000, so no pair was tested -- the surface is present and unmeasured, not absent",
+      "measured": {
+        "triangles": 253307,
+        "limit": 200000
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the hub and tip radius at five equally spaced axial stations, measured on the two meshed cowl patches",
+      "measured": null
+    },
+    {
+      "property": "the annulus height at each of those five stations, measured, and the flow area at each",
+      "measured": null
+    },
+    {
+      "property": "the area ratio nozzle to inlet, from those measured areas",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "the air volume, against the analytic integral of the measured areas along the axis",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "warned",
+          "concern": "the welded surface has 1,549 free edges, so it does not close",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "n/a",
+          "concern": "253,307 triangles is over this probe's ceiling of 200,000, so no pair was tested -- the surface is present and unmeasured, not absent",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 22,
+    "steps": 20,
+    "seconds": 942.3,
+    "killed": false,
+    "first_mesh_step": 11,
+    "first_mesh_turn": 12
+  }
+}

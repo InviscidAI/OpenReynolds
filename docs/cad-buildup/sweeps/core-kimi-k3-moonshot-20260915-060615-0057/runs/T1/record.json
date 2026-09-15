@@ -1,0 +1,376 @@
+{
+  "run_id": "20260915-060615-aebc",
+  "case": "T1",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1",
+  "started_at": "2026-09-15T06:06:16",
+  "ended_at": "2026-09-15T06:15:23",
+  "seconds": 544.3,
+  "n_turns": 12,
+  "n_steps": 11,
+  "first_mesh_step": 1,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.3284,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 24856,
+    "cache_read": 164790,
+    "cache_write": 0,
+    "output": 13628
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import os, subprocess, textwrap\n\n# --- Parameters (metres) ---\nW  = 0.010   # passage width\nL  = 0.120   # leg length\nRc = 0.015   # bend centreline radius\nRi, Ro = Rc - W/2, Rc + W/2          # 0.010 / 0.020\nt  = 0.001   # z thickness (one cell, 2D)\n# coarse cell counts\nnx_leg, ny = 60, 10      # leg: along x, across width\nnr, nth  = 10, 30        # bend: radial, circumferential\n\nos.makedirs(\"system\", exist_ok=True)\n\ncontrolDict = \"\"\"FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      controlDict;\n}\napplication     none;\nstartFrom       startTime;\nstartTime       0;\nstopAt          endTime;\nendTime         1;\ndeltaT          1;\nwriteControl    timeStep;\nwriteInterval   1;\n\"\"\"\nopen(\"system/controlDict\",\"w\").write(controlDict)\n\ndef p(x, y, z): return f\"    ({x} {y} {z})\"\n\n# vertex list, z=0 then z=t\nxy = [(-L,-Ro),(0,-Ro),(0,-Ri),(-L,-Ri),(0,Ri),(0,Ro),(-L,Ro),(-L,Ri)]\nverts = [p(x,y,0) for (x,y) in xy] + [p(x,y,t) for (x,y) in xy]\n\nbmd = f\"\"\"FoamFile\n{{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      blockMeshDict;\n}}\n\nvertices\n(\n{chr(10).join(verts)}\n);\n\nblocks\n(\n    hex (0 1 2 3 8 9 10 11)      ({nx_leg} {ny} 1) simpleGrading (1 1 1)   // lower leg\n    hex (2 1 5 4 10 9 13 12)     ({nr} {nth} 1) simpleGrading (1 1 1)      // 180 deg bend\n    hex (7 4 5 6 15 12 13 14)    ({nx_leg} {ny} 1) simpleGrading (1 1 1)   // upper leg\n);\n\nedges\n(\n    arc 1 5  ({Ro} 0 0)\n    arc 4 2  ({Ri} 0 0)\n    arc 9 13 ({Ro} 0 {t})\n    arc 12 10 ({Ri} 0 {t})\n);\n\nboundary\n(\n    inlet\n    {{\n        type patch;\n        faces ( (0 8 11 3) );\n    }}\n    outlet\n    {{\n        type patch;\n        faces ( (7 15 14 6) );\n    }}\n    walls\n    {{\n        type wall;\n        faces\n        (\n            (0 1 9 8)      // lower leg bottom\n            (6 5 13 14)    // upper leg top\n            (1 5 13 9)     // bend outer\n            (2 4 12 10)    // bend inner\n        );\n    }}\n    frontAndBack\n    {{\n        type empty;\n        faces\n        (\n            (0 3 2 1) (2 4 5 1) (7 6 5 4)\n            (8 9 10 11) (10 9 13 12) (15 12 13 14)\n        );\n    }}\n);\n\"\"\"\nopen(\"system/blockMeshDict\",\"w\").write(bmd)\n\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.stdout[-800:], r.stderr[-400:])\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(r.stdout[-1600:])",
+      "exit_code": 0,
+      "seconds": 0.40242012101225555,
+      "output": "ysical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreating block mesh from \"system/blockMeshDict\"\nCreating block edges\nNo non-planar block faces defined\nCreating topology blocks\n \n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nBlock hex (2 1 5 4 10 9 13 12) (10 30 1) grading (1(1) 1(1) 1(1)) has inward-pointing faces\n    4(2 10 12 4) 4(1 5 13 9) 4(2 1 9 10) 4(4 12 13 5) \n\nfile: system/blockMeshDict/blocks at line 32.\n\n    From void Foam::blockDescriptor::check(const Foam::Istream&)\n    in file blockDescriptor/blockDescriptor.C at line 147.\n\nFOAM exiting\n\n\nM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh\nDate   : Sep 15 2026\nTime   : 06:09:26\nHost   : yc-demo\nPID    : 545026\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\n\n# extra vertices at the 0-degree section (angle 0, +x side)\nxy = [(-L,-Ro),(0,-Ro),(0,-Ri),(-L,-Ri),(0,Ri),(0,Ro),(-L,Ro),(-L,Ri),(Ro,0),(Ri,0)]\nverts = [p(x,y,0) for (x,y) in xy] + [p(x,y,t) for (x,y) in xy]\n\nc, s = np.cos(np.pi/4), np.sin(np.pi/4)   # arc mid-points at +/-45 deg\n\nbmd = f\"\"\"FoamFile\n{{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      blockMeshDict;\n}}\n\nvertices\n(\n{chr(10).join(verts)}\n);\n\nblocks\n(\n    hex (0 1 2 3 10 11 12 13)     ({nx_leg} {ny} 1) simpleGrading (1 1 1)      // lower leg\n    hex (2 1 8 9 12 11 18 19)     ({nr} {nth//2} 1) simpleGrading (1 1 1)      // bend -90..0 deg\n    hex (9 8 5 4 19 18 15 14)     ({nr} {nth//2} 1) simpleGrading (1 1 1)      // bend 0..90 deg\n    hex (7 4 5 6 17 14 15 16)     ({nx_leg} {ny} 1) simpleGrading (1 1 1)      // upper leg\n);\n\nedges\n(\n    arc 1 8  ({Ro*c} {-Ro*s} 0)\n    arc 9 2  ({Ri*c} {-Ri*s} 0)\n    arc 8 5  ({Ro*c} {Ro*s} 0)\n    arc 4 9  ({Ri*c} {Ri*s} 0)\n    arc 11 18 ({Ro*c} {-Ro*s} {t})\n    arc 19 12 ({Ri*c} {-Ri*s} {t})\n    arc 18 15 ({Ro*c} {Ro*s} {t})\n    arc 14 19 ({Ri*c} {Ri*s} {t})\n);\n\nboundary\n(\n    inlet\n    {{\n        type patch;\n        faces ( (0 10 13 3) );\n    }}\n    outlet\n    {{\n        type patch;\n        faces ( (7 17 16 6) );\n    }}\n    walls\n    {{\n        type wall;\n        faces\n        (\n            (0 1 11 10)     // lower leg bottom\n            (6 5 15 16)     // upper leg top\n            (1 8 18 11)     // bend outer, lower half\n            (8 5 15 18)     // bend outer, upper half\n            (2 9 19 12)     // bend inner, lower half\n            (9 4 14 19)     // bend inner, upper half\n        );\n    }}\n    frontAndBack\n    {{\n        type empty;\n        faces\n        (\n            (0 3 2 1) (2 9 8 1) (9 4 5 8) (7 6 5 4)\n            (10 11 12 13) (12 11 18 19) (19 18 15 14) (17 14 15 16)\n        );\n    }}\n);\n\"\"\"\nopen(\"system/blockMeshDict\",\"w\").write(bmd)\n\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(\"blockMesh rc:\", r.returncode, r.stderr[-300:])\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(r.stdout[-1800:])",
+      "exit_code": 0,
+      "seconds": 0.40165280099608935,
+      "output": "blockMesh rc: 0 \n/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh\nDate   : Sep 15 2026\nTime   : 06:10:59\nHost   : yc-demo\nPID    : 545100\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nout = r.stdout\nprint(out[out.find(\"Create mesh\"):])\nprint(\"rc:\", r.returncode)",
+      "exit_code": 0,
+      "seconds": 0.25116379201062955,
+      "output": "Create mesh for time = constant\n\nrc: 1",
+      "image": ""
+    },
+    {
+      "cmd": "print(\"STDOUT tail:\\n\", r.stdout[-3000:])\nprint(\"STDERR:\\n\", r.stderr[-2000:])\nimport os\nprint(os.listdir(\"constant/polyMesh\") if os.path.exists(\"constant/polyMesh\") else \"no polyMesh\")",
+      "exit_code": 0,
+      "seconds": 0.05077786599576939,
+      "output": "STDOUT tail:\n /*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh\nDate   : Sep 15 2026\nTime   : 06:11:09\nHost   : yc-demo\nPID    : 545120\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nSTDERR:\n \n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting\n\n\n['neighbour', 'faces', 'points', 'boundary', 'owner']",
+      "image": ""
+    },
+    {
+      "cmd": "open(\"system/fvSchemes\",\"w\").write(\"\"\"FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }\nddtSchemes  { default steadyState; }\ngradSchemes { default Gauss linear; }\ndivSchemes  { default none; }\nlaplacianSchemes { default none; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\n\"\"\")\nopen(\"system/fvSolution\",\"w\").write(\"\"\"FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }\nsolvers {}\n\"\"\")\n\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nout = r.stdout\nprint(out[out.find(\"Create mesh\"):])\nprint(\"rc:\", r.returncode)",
+      "exit_code": 0,
+      "seconds": 0.20139765599742532,
+      "output": "Create mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           3322\n    internal points:  0\n    faces:            6160\n    internal faces:   2840\n    cells:            1500\n    faces per cell:   6\n    boundary patches: 5\n    point zones:      0\n    face zones:       0\n    cell zones:       0\n\nOverall number of cells of each type:\n    hexahedra:     1500\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n ***Total number of faces on empty patches is not divisible by the number of cells in the mesh. Hence this mesh is not 1D or 2D.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    inlet               10       22       ok (non-closed singly connected)  \n    outlet              10       22       ok (non-closed singly connected)  \n    walls               180      364      ok (non-closed singly connected)  \n    frontAndBack        3000     3322     ok (non-closed singly connected)  \n    defaultFaces        120      244      ok (non-closed singly connected)  \n    \".*\"                3320     3322     ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    No cellZones found.\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.12 -0.02 0) (0.02 0.02 0.001)\n    Mesh has 1 geometric (non-empty/wedge) directions (1 0 0)\n    Mesh has 1 solution (non-empty) directions (1 0 0)\n ***Number of edges not aligned with or perpendicular to non-empty directions: 1220\n  <<Writing 682 points on non-aligned edges to set nonAlignedEdges\n    Boundary openness (3.4576e-19 6.68538e-19 -4.22516e-17) OK.\n    Max cell openness = 1.54752e-16 OK.\n    Max aspect ratio = 1 OK.\n    Minimum face area = 1e-06. Maximum face area = 2.09344e-06.  Face area magnitudes OK.\n    Min volume = 1.09755e-09. Max volume = 2.03831e-09.  Total volume = 2.87038e-06.  Cell volumes OK.\n    Mesh non-orthogonality Max: 1.39425 average: 0.0952538\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.0982994 OK.\n    Coupled point location match (average 0) OK.\n\nFailed 1 mesh checks.\n\nEnd\n\n\nrc: 0",
+      "image": ""
+    },
+    {
+      "cmd": "bmd = bmd.replace(\n\"\"\"            (2 9 19 12)     // bend inner, lower half\n            (9 4 14 19)     // bend inner, upper half\"\"\",\n\"\"\"            (2 9 19 12)     // bend inner, lower half\n            (9 4 14 19)     // bend inner, upper half\n            (3 2 12 13)     // lower leg inner wall (y=-Ri)\n            (7 4 14 17)     // upper leg inner wall (y=+Ri)\"\"\")\nopen(\"system/blockMeshDict\",\"w\").write(bmd)\n\nsubprocess.run([\"blockMesh\"], capture_output=True, text=True)\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nout = r.stdout\nseg = out[out.find(\"Mesh stats\"):]\n# print key lines\nimport re\nfor line in seg.splitlines():\n    if any(k in line for k in [\"cells:\", \"directions\", \"not aligned\", \"OK\", \"Failed\", \"Mesh OK\", \"Patch \", \"inlet\", \"outlet\", \"walls\", \"frontAndBack\", \"defaultFaces\", \"aspect\", \"non-orthogonality Max\", \"skewness\"]):\n        print(line)\nprint(\"rc:\", r.returncode)",
+      "exit_code": 0,
+      "seconds": 1.1534782079979777,
+      "output": "cells:            1500\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n    Patch               Faces    Points     Surface topology\n    inlet               10       22       ok (non-closed singly connected)  \n    outlet              10       22       ok (non-closed singly connected)  \n    walls               300      604      ok (non-closed singly connected)  \n    frontAndBack        3000     3322     ok (non-closed singly connected)  \n    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)\n    Mesh has 2 solution (non-empty) directions (1 1 0)\n    All edges aligned with or perpendicular to non-empty directions.\n    Boundary openness (3.4576e-19 6.68538e-19 -4.22516e-17) OK.\n    Max cell openness = 1.54752e-16 OK.\n    Max aspect ratio = 2 OK.\n    Minimum face area = 1e-06. Maximum face area = 2.09344e-06.  Face area magnitudes OK.\n    Min volume = 1.09755e-09. Max volume = 2.03831e-09.  Total volume = 2.87038e-06.  Cell volumes OK.\n    Mesh non-orthogonality Max: 1.39425 average: 0.0952538\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.0982994 OK.\n    Coupled point location match (average 0) OK.\nMesh OK.\nrc: 0",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv, glob\nsubprocess.run([\"foamToVTK\"], capture_output=True, text=True)\nvtk = sorted(glob.glob(\"VTK/t1_*.vtk\"))[-1]\nm = pv.read(vtk)\n\n# --- measurements from the mesh points ---\npts = pv.read(glob.glob(\"VTK/t1_*.vtk\")[0]).points  # constant time = 0 dir anyway\nb = m.bounds\nprint(f\"bounds: x [{b[0]:.4f},{b[1]:.4f}]  y [{b[2]:.4f},{b[3]:.4f}]  z [{b[4]:.4f},{b[5]:.4f}]\")\n\n# passage width at inlet: inlet patch faces\nimport re\ndef patch_pts(name):\n    surf = pv.read(sorted(glob.glob(f\"VTK/{name}/\"+name+\"_*.vtk\"))[-1])\n    return surf.points\npi = patch_pts(\"inlet\"); po = patch_pts(\"outlet\")\nw_in  = pi[:,1].max()-pi[:,1].min()\nw_out = po[:,1].max()-po[:,1].min()\nprint(f\"inlet width  = {w_in*1000:.3f} mm  (asked 10)  at x={pi[:,0].mean():.4f}\")\nprint(f\"outlet width = {w_out*1000:.3f} mm  (asked 10)  at x={po[:,0].mean():.4f}\")\nprint(f\"leg length (inlet x to bend start x=0) = {(0 - pi[:,0].mean())*1000:.3f} mm (asked 120)\")\nprint(f\"leg centreline offset = {(po[:,1].mean()-pi[:,1].mean())*1000:.3f} mm (asked 2*Rc=30)\")\n\n# bend radii: wall points near the bend (x>0)\npw = patch_pts(\"walls\")\nbw = pw[pw[:,0] > 1e-6]\nr = np.hypot(bw[:,0], bw[:,1])\nprint(f\"bend inner radius = {r.min()*1000:.3f} mm (asked {Ri*1000:.1f})\")\nprint(f\"bend outer radius = {r.max()*1000:.3f} mm (asked {Ro*1000:.1f})\")\n\n# --- render ---\npl = pv.Plotter(off_screen=True, window_size=(1100,600))\npl.add_mesh(m, style=\"wireframe\", color=\"k\", line_width=0.6)\npl.add_mesh(m.extract_cells(np.arange(0,m.n_cells,37)), color=\"lightblue\", opacity=0.5)\npl.view_xy(); pl.camera.zoom(1.1)\npl.add_title(f\"U-bend 2D structured mesh, {m.n_cells} cells (coarse)\")\npl.show()",
+      "exit_code": 1,
+      "seconds": 0.4519411679939367,
+      "output": "/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mIndexError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[7]\u001b[39m\u001b[32m, line 3\u001b[39m\n\u001b[32m      1\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m pyvista \u001b[38;5;28;01mas\u001b[39;00m pv, glob\n\u001b[32m      2\u001b[39m subprocess.run([\u001b[33m\"foamToVTK\"\u001b[39m], capture_output=\u001b[38;5;28;01mTrue\u001b[39;00m, text=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m----> \u001b[39m\u001b[32m3\u001b[39m vtk = sorted(glob.glob(\u001b[33m\"VTK/t1_*.vtk\"\u001b[39m))[-\u001b[32m1\u001b[39m]\n\u001b[32m      4\u001b[39m m = pv.read(vtk)\n\u001b[32m      5\u001b[39m \n\u001b[32m      6\u001b[39m \u001b[38;5;66;03m# --- measurements from the mesh points ---\u001b[39;00m\n\n\u001b[31mIndexError\u001b[39m: list index out of range",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"foamToVTK\"], capture_output=True, text=True)\nprint(r.stdout[-500:], r.stderr[-300:])\nprint(glob.glob(\"VTK/**/*\", recursive=True)[:20])",
+      "exit_code": 0,
+      "seconds": 0.2511935319926124,
+      "output": "lector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nInitial memory 223680 kB\nCreate mesh for time = constant\n\nVTK mesh topology: 0 s, 224472 kB\nTime: constant\n    Internal  : \"VTK/t1_0/internal.vtu\"\n    Boundary  : \"VTK/t1_0/boundary/inlet.vtp\"\n    Boundary  : \"VTK/t1_0/boundary/outlet.vtp\"\n    Boundary  : \"VTK/t1_0/boundary/walls.vtp\"\nWrote in 0.01 s, 225620 kB\n\nEnd: 0.01 s, 285784 kB (peak)\n\n \n['VTK/t1_0.vtm', 'VTK/t1.vtm.series', 'VTK/t1_0', 'VTK/t1_0/boundary.vtm', 'VTK/t1_0/internal.vtu', 'VTK/t1_0/boundary', 'VTK/t1_0/boundary/inlet.vtp', 'VTK/t1_0/boundary/outlet.vtp', 'VTK/t1_0/boundary/walls.vtp']",
+      "image": ""
+    },
+    {
+      "cmd": "import glob, pyvista as pv\n\nm  = pv.read(\"VTK/t1_0/internal.vtu\")\npi = pv.read(\"VTK/t1_0/boundary/inlet.vtp\").points\npo = pv.read(\"VTK/t1_0/boundary/outlet.vtp\").points\npw = pv.read(\"VTK/t1_0/boundary/walls.vtp\").points\n\nb = m.bounds\nprint(f\"bounds: x [{b[0]:.4f},{b[1]:.4f}]  y [{b[2]:.4f},{b[3]:.4f}]  z [{b[4]:.4f},{b[5]:.4f}]\")\nprint(f\"cells = {m.n_cells}\")\n\nprint(f\"inlet width  = {(pi[:,1].max()-pi[:,1].min())*1000:.3f} mm  (asked 10)   at x = {pi[:,0].mean():.4f} m\")\nprint(f\"outlet width = {(po[:,1].max()-po[:,1].min())*1000:.3f} mm  (asked 10)   at x = {po[:,0].mean():.4f} m\")\nprint(f\"leg length (open end to bend tangent x=0) = {(0-pi[:,0].mean())*1000:.3f} mm (asked 120)\")\nprint(f\"leg centreline offset = {(po[:,1].mean()-pi[:,1].mean())*1000:.3f} mm (asked 2*Rc = 30)\")\n\nbw = pw[pw[:,0] > 1e-6]\nrb = np.hypot(bw[:,0], bw[:,1])\nprint(f\"bend inner radius = {rb.min()*1000:.3f} mm (asked {Ri*1000:.1f})\")\nprint(f\"bend outer radius = {rb.max()*1000:.3f} mm (asked {Ro*1000:.1f})\")\nprint(f\"bend centreline radius = {(rb.min()+rb.max())/2*1000:.3f} mm (asked {Rc*1000:.1f})\")\n\npl = pv.Plotter(off_screen=True, window_size=(1100,620))\npl.add_mesh(m, style=\"wireframe\", color=\"k\", line_width=0.7)\npl.view_xy(); pl.camera.zoom(1.05)\npl.add_title(f\"U-bend: 2D structured hex mesh, {m.n_cells} cells (coarse)\")\npl.show()",
+      "exit_code": 0,
+      "seconds": 0.4544843080075225,
+      "output": "bounds: x [-0.1200,0.0200]  y [-0.0200,0.0200]  z [0.0000,0.0010]\ncells = 1500\ninlet width  = 10.000 mm  (asked 10)   at x = -0.1200 m\noutlet width = 10.000 mm  (asked 10)   at x = -0.1200 m\nleg length (open end to bend tangent x=0) = 120.000 mm (asked 120)\nleg centreline offset = 30.000 mm (asked 2*Rc = 30)\nbend inner radius = 10.000 mm (asked 10.0)\nbend outer radius = 20.000 mm (asked 20.0)\nbend centreline radius = 15.000 mm (asked 15.0)\n\n\u001b[0m\u001b[33m2026-09-15 06:13:52.898 (  53.367s) [    789E70C91780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-15 06:13:52.899 (  53.367s) [    789E70C91780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-15 06:13:52.912 (  53.381s) [    789E70C91780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_544777/3361581996.py:27: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  pl.show()",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "nx_leg, ny = 240, 40     # leg: 0.5 mm streamwise, 0.25 mm across\nnr, nth    = 40, 144     # bend: 0.25 mm radial, ~0.33 mm circumferential\n# regenerate dict with the refined counts (same vertices/edges/boundary text)\nimport re\nbmd_r = re.sub(r\"\\(\\d+ \\d+ 1\\) simpleGrading\",\n               lambda mo, it=iter([(nx_leg,ny),(nr,nth//2),(nr,nth//2),(nx_leg,ny)]):\n               f\"({next(it)[0]} {ny if False else ''}\", bmd)  # placeholder, do it plainly below\n# plain rebuild: just patch the four block lines\nlines = bmd.splitlines()\nblocks_new = [\n    f\"    hex (0 1 2 3 10 11 12 13)     ({nx_leg} {ny} 1) simpleGrading (1 1 1)      // lower leg\",\n    f\"    hex (2 1 8 9 12 11 18 19)     ({nr} {nth//2} 1) simpleGrading (1 1 1)      // bend -90..0 deg\",\n    f\"    hex (9 8 5 4 19 18 15 14)     ({nr} {nth//2} 1) simpleGrading (1 1 1)      // bend 0..90 deg\",\n    f\"    hex (7 4 5 6 17 14 15 16)     ({nx_leg} {ny} 1) simpleGrading (1 1 1)      // upper leg\",\n]\nout_lines, bi = [], 0\nfor ln in lines:\n    if ln.strip().startswith(\"hex\"):\n        out_lines.append(blocks_new[bi]); bi += 1\n    else:\n        out_lines.append(ln)\nbmd = \"\\n\".join(out_lines) + \"\\n\"\nopen(\"system/blockMeshDict\",\"w\").write(bmd)\n\nsubprocess.run([\"blockMesh\"], capture_output=True, text=True)\nr = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nseg = r.stdout[r.stdout.find(\"Mesh stats\"):]\nfor line in seg.splitlines():\n    if any(k in line for k in [\"cells:\", \"directions\", \"not aligned\", \"Failed\", \"Mesh OK\",\n                               \"aspect\", \"non-orthogonality Max\", \"skewness\", \"Min volume\"]):\n        print(line)\nprint(\"checkMesh rc:\", r.returncode)",
+      "exit_code": 0,
+      "seconds": 1.5547615999967093,
+      "output": "cells:            24960\n    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)\n    Mesh has 2 solution (non-empty) directions (1 1 0)\n    All edges aligned with or perpendicular to non-empty directions.\n    Max aspect ratio = 2 OK.\n    Min volume = 5.52189e-11. Max volume = 1.25e-10.  Total volume = 2.8712e-06.  Cell volumes OK.\n    Mesh non-orthogonality Max: 0.25811 average: 0.00800924\n    Max skewness = 0.0168227 OK.\nMesh OK.\ncheckMesh rc: 0",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, pyvista as pv\nsubprocess.run([\"foamToVTK\"], capture_output=True, text=True)\nm = pv.read(\"VTK/t1_0/internal.vtu\")\nprint(\"cells:\", m.n_cells)\npl = pv.Plotter(off_screen=True, window_size=(1100,620))\npl.add_mesh(m, style=\"wireframe\", color=\"k\", line_width=0.4)\npl.view_xy(); pl.camera.zoom(1.02)\npl.add_title(f\"U-bend final mesh: {m.n_cells} cells, hex, 2D (empty front/back)\")\npl.show()",
+      "exit_code": 0,
+      "seconds": 1.840264918995672,
+      "output": "cells: 24960\n\n\u001b[0m\u001b[33m2026-09-15 06:14:59.906 ( 120.375s) [    789E70C91780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-15 06:14:59.907 ( 120.376s) [    789E70C91780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_544777/3610381878.py:9: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  pl.show()",
+      "image": "1 picture"
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 6123,
+      "fenced": true,
+      "text_chars": 562,
+      "thinking_chars": 14048,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452565.5544004
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 3044,
+      "fenced": true,
+      "text_chars": 254,
+      "thinking_chars": 5248,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452658.6501606
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 115,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 125,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452669.264364
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 125,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 92,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452677.760125
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 261,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 171,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452694.2894616
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 1008,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 2341,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452741.201418
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 738,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 229,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452775.959647
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 107,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 68,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452790.068309
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 660,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 215,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452828.899262
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 893,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 904,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452864.9493136
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 329,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 651,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452894.2676942
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 225,
+      "fenced": false,
+      "text_chars": 0,
+      "thinking_chars": 748,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789452919.6047142
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "passage width, 10 mm, at the inlet, at mid-leg and at the crown of the bend",
+      "measured": null
+    },
+    {
+      "property": "leg length, 120 mm, both legs",
+      "measured": null
+    },
+    {
+      "property": "centreline bend radius, 15 mm",
+      "measured": null
+    },
+    {
+      "property": "included angle of the bend, 180 degrees",
+      "measured": null
+    },
+    {
+      "property": "the mesh is exactly one cell thick, and both side patches are typed `empty`",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "n/a",
+          "concern": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/t",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/t",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T1-20260915-060615-aebc/t1/constant/t",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 12,
+    "steps": 11,
+    "seconds": 545.6,
+    "killed": false,
+    "first_mesh_step": 1,
+    "first_mesh_turn": 2
+  }
+}

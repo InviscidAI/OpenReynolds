@@ -1,0 +1,10 @@
+T24: run 20260915-070653-1b9f
+  workspace /home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f clean (0 entries, 39 house names, no toolbox)
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f/t24/.reference/b123d_api.md
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-kimi-k3-moonshot-20260915-060615-0057/runs/T24
+<unknown>:2: SyntaxWarning: invalid escape sequence '\|'
+<unknown>:2: SyntaxWarning: invalid escape sequence '\|'
+<unknown>:2: SyntaxWarning: invalid escape sequence '\|'
+<unknown>:2: SyntaxWarning: invalid escape sequence '\|'
+  time in 907.0s, 7 cells, $0.52, checkMesh not ok, failed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-kimi-k3-moonshot-20260915-060615-0057/runs/T24 --case /home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f/t24

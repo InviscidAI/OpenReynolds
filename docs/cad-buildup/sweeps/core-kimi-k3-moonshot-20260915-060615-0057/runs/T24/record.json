@@ -1,0 +1,248 @@
+{
+  "run_id": "20260915-070653-1b9f",
+  "case": "T24",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f/t24",
+  "started_at": "2026-09-15T07:06:54",
+  "ended_at": "2026-09-15T07:22:05",
+  "seconds": 907.0,
+  "n_turns": 7,
+  "n_steps": 6,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0.5218,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 29763,
+    "cache_read": 99328,
+    "cache_write": 0,
+    "output": 26846
+  },
+  "stopped": "time",
+  "expects": "done",
+  "passed": false,
+  "why": "nothing in the case directory has been meshed yet",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, math\n\n# --- parameters (metres internally via mm/1000 at export; build123d is unitless, we build in mm then scale) ---\nR   = 60.0      # vessel inner radius, mm\nH   = 200.0     # vessel height, mm\nR_OUT = 20.0    # outlet radius, mm\nDUCT_W, DUCT_H = 20.0, 30.0   # duct width (tangential) x height, mm\nDUCT_L = 50.0   # duct length along its own axis, mm\nZ_DUCT = 40.0   # duct centerline height above floor (assumption: '40 mm above floor' = centerline)\nANG = 15.0      # degrees off the local tangent\nOVERLAP = 30.0  # how far the duct box pokes into the vessel so the union is clean\n\na = math.radians(ANG)\n\n# vessel gas volume: cylinder with the outlet hole cut through the top\nvessel = bd.Pos(0, 0, 0) * bd.Cylinder(radius=R, height=H, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nhole = bd.Pos(0, 0, H - 5) * bd.Cylinder(radius=R_OUT, height=10, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nvessel = vessel - hole\n\n# ducts: box in a local frame, x = duct axis (outward), z = global z\nducts = []\nduct_frames = []\nfor i in range(4):\n    th = math.radians(i * 90.0)\n    t_hat = (-math.sin(th), math.cos(th), 0.0)   # local tangent (swirl sense +)\n    r_hat = ( math.cos(th), math.sin(th), 0.0)   # local outward radial\n    # duct outward axis: 15 deg off tangent, toward the radial direction\n    u = tuple(math.cos(a)*t_hat[k] + math.sin(a)*r_hat[k] for k in range(3))\n    P = (R*math.cos(th), R*math.sin(th), Z_DUCT)          # point on wall\n    C = tuple(P[k] + u[k]*(DUCT_L - OVERLAP)/2 for k in range(3))  # box centre\n    Lbox = DUCT_L + OVERLAP\n    pln = bd.Plane(origin=C, x_dir=u, z_dir=(0, 0, 1))\n    box = pln * bd.Box(Lbox, DUCT_W, DUCT_H)\n    ducts.append(box)\n    duct_frames.append(dict(i=i, th=th, u=np.array(u), P=np.array(P), C=np.array(C), Lbox=Lbox, pln=pln))\n\nfluid = vessel\nfor d in ducts:\n    fluid = fluid + d\n\nprint(\"solid valid:\", fluid.is_valid(), \" volume(mm^3):\", fluid.volume)\nprint(\"bbox:\", fluid.bounding_box())\nprint(\"n faces:\", len(fluid.faces()))\nfor f in fluid.faces():\n    c = f.center()\n    n = f.normal_at()\n    print(f\"{str(f.geom_type):12s} area={f.area:10.1f}  c=({c.X:7.2f},{c.Y:7.2f},{c.Z:7.2f})  n=({n.X:5.2f},{n.Y:5.2f},{n.Z:5.2f})\")",
+      "exit_code": 1,
+      "seconds": 2.3573002530029044,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[1]\u001b[39m\u001b[32m, line 42\u001b[39m\n\u001b[32m     38\u001b[39m fluid = vessel\n\u001b[32m     39\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m d \u001b[38;5;28;01min\u001b[39;00m ducts:\n\u001b[32m     40\u001b[39m     fluid = fluid + d\n\u001b[32m     41\u001b[39m \n\u001b[32m---> \u001b[39m\u001b[32m42\u001b[39m print(\u001b[33m\"solid valid:\"\u001b[39m, fluid.is_valid(), \u001b[33m\" volume(mm^3):\"\u001b[39m, fluid.volume)\n\u001b[32m     43\u001b[39m print(\u001b[33m\"bbox:\"\u001b[39m, fluid.bounding_box())\n\u001b[32m     44\u001b[39m print(\u001b[33m\"n faces:\"\u001b[39m, len(fluid.faces()))\n\u001b[32m     45\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m fluid.faces():\n\n\u001b[31mTypeError\u001b[39m: 'bool' object is not callable",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, math\n\n# --- parameters (build123d unitless: we build in mm, scale to m at export/mesh) ---\nR   = 60.0      # vessel inner radius, mm\nH   = 200.0     # vessel height, mm\nR_OUT = 20.0    # outlet radius, mm\nDUCT_W, DUCT_H = 20.0, 30.0   # duct width (tangential) x height, mm\nDUCT_L = 50.0   # duct length along its own axis, mm\nZ_DUCT = 40.0   # duct centerline height above floor (assumption: '40 mm above floor' = centerline)\nANG = 15.0      # degrees off the local tangent\nOVERLAP = 30.0  # how far the duct box pokes into the vessel so the union is clean\n\na = math.radians(ANG)\n\n# vessel gas volume: cylinder with the outlet hole cut through the top\nvessel = bd.Pos(0, 0, 0) * bd.Cylinder(radius=R, height=H, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nhole = bd.Pos(0, 0, H - 5) * bd.Cylinder(radius=R_OUT, height=10, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nvessel = vessel - hole\n\n# ducts: box in a local frame, x = duct axis (outward), z = global z\nducts = []\nduct_frames = []\nfor i in range(4):\n    th = math.radians(i * 90.0)\n    t_hat = (-math.sin(th), math.cos(th), 0.0)   # local tangent (swirl sense +)\n    r_hat = ( math.cos(th), math.sin(th), 0.0)   # local outward radial\n    # duct outward axis: 15 deg off tangent, toward the radial direction\n    u = tuple(math.cos(a)*t_hat[k] + math.sin(a)*r_hat[k] for k in range(3))\n    P = (R*math.cos(th), R*math.sin(th), Z_DUCT)          # point on wall\n    C = tuple(P[k] + u[k]*(DUCT_L - OVERLAP)/2 for k in range(3))  # box centre\n    Lbox = DUCT_L + OVERLAP\n    pln = bd.Plane(origin=C, x_dir=u, z_dir=(0, 0, 1))\n    box = pln * bd.Box(Lbox, DUCT_W, DUCT_H)\n    ducts.append(box)\n    duct_frames.append(dict(i=i, th=th, u=np.array(u), P=np.array(P), C=np.array(C), Lbox=Lbox, pln=pln))\n\nfluid = vessel\nfor d in ducts:\n    fluid = fluid + d\n\nprint(\"solid valid:\", fluid.is_valid, \" volume(mm^3):\", fluid.volume)\nprint(\"bbox:\", fluid.bounding_box())\nprint(\"n faces:\", len(fluid.faces()))\nfor f in fluid.faces():\n    c = f.center()\n    n = f.normal_at()\n    print(f\"{str(f.geom_type):12s} area={f.area:10.1f}  c=({c.X:7.2f},{c.Y:7.2f},{c.Z:7.2f})  n=({n.X:5.2f},{n.Y:5.2f},{n.Z:5.2f})\")",
+      "exit_code": 0,
+      "seconds": 0.10105392299010418,
+      "output": "solid valid: True  volume(mm^3): 2392258.9743687315\nbbox: bbox: -82.60021051801672 <= x <= 82.60021051801672, -82.60021051801674 <= y <= 82.60021051801672, 0.0 <= z <= 200.0\nn faces: 29\nGeomType.CYLINDER area=   69002.3  c=( -60.00,   0.00, 100.00)  n=(-1.00, 0.00, 0.00)\nGeomType.PLANE area=    1138.3  c=(  66.50,  16.70,  25.00)  n=(-0.00, 0.00,-1.00)\nGeomType.PLANE area=   11309.7  c=(   0.00,  -0.00,   0.00)  n=(-0.00,-0.00,-1.00)\nGeomType.PLANE area=     884.1  c=(  59.47,  36.65,  40.00)  n=(-0.97, 0.26, 0.00)\nGeomType.PLANE area=    1138.3  c=(  66.50,  16.70,  55.00)  n=( 0.00,-0.00, 1.00)\nGeomType.PLANE area=   10053.1  c=(   0.00,  -0.00, 200.00)  n=( 0.00, 0.00, 1.00)\nGeomType.PLANE area=     291.8  c=(  57.20, -30.31,  40.00)  n=(-0.26,-0.97, 0.00)\nGeomType.PLANE area=    1138.3  c=( -16.70,  66.50,  25.00)  n=(-0.00,-0.00,-1.00)\nGeomType.PLANE area=     291.8  c=(  30.31,  57.20,  40.00)  n=( 0.97,-0.26,-0.00)\nGeomType.PLANE area=     884.1  c=( -36.65,  59.47,  40.00)  n=(-0.26,-0.97, 0.00)\nGeomType.PLANE area=    1138.3  c=( -16.70,  66.50,  55.00)  n=( 0.00, 0.00, 1.00)\nGeomType.PLANE area=    1138.3  c=( -66.50, -16.70,  25.00)  n=(-0.00,-0.00,-1.00)\nGeomType.PLANE area=     291.8  c=( -57.20,  30.31,  40.00)  n=( 0.26, 0.97,-0.00)\nGeomType.PLANE area=     884.1  c=( -59.47, -36.65,  40.00)  n=( 0.97,-0.26, 0.00)\nGeomType.PLANE area=    1138.3  c=( -66.50, -16.70,  55.00)  n=( 0.00, 0.00, 1.00)\nGeomType.PLANE area=    1138.3  c=(  16.70, -66.50,  25.00)  n=( 0.00,-0.00,-1.00)\nGeomType.PLANE area=     884.1  c=(  36.65, -59.47,  40.00)  n=( 0.26, 0.97,-0.00)\nGeomType.PLANE area=    1138.3  c=(  16.70, -66.50,  55.00)  n=(-0.00, 0.00, 1.00)\nGeomType.PLANE area=     291.8  c=( -30.31, -57.20,  40.00)  n=(-0.97, 0.26,-0.00)\nGeomType.PLANE area=     600.0  c=(  72.94,  48.30,  40.00)  n=( 0.26, 0.97,-0.00)\nGeomType.PLANE area=    2400.0  c=(  72.25,   7.07,  40.00)  n=( 0.97,-0.26,-0.00)\nGeomType.CYLINDER area=     628.3  c=( -20.00,   0.00, 197.50)  n=( 1.00,-0.00,-0.00)\nGeomType.PLANE area=     600.0  c=( -48.30,  72.94,  40.00)  n=(-0.97, 0.26, 0.00)\nGeomType.PLANE area=    2400.0  c=(  -7.07,  72.25,  40.00)  n=( 0.26, 0.97,-0.00)\nGeomType.PLANE area=     600.0  c=( -72.94, -48.30,  40.00)  n=(-0.26,-0.97, 0.00)\nGeomType.PLANE area=    2400.0  c=( -72.25,  -7.07,  40.00)  n=(-0.97, 0.26,-0.00)\nGeomType.PLANE area=     600.0  c=(  48.30, -72.94,  40.00)  n=( 0.97,-0.26, 0.00)\nGeomType.PLANE area=    2400.0  c=(   7.07, -72.25,  40.00)  n=(-0.26,-0.97, 0.00)\nGeomType.PLANE area=    1256.6  c=(   0.00,  -0.00, 195.00)  n=( 0.00, 0.00, 1.00)",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, math\n\n# --- parameters, METRES (OpenFOAM reads raw numbers as metres) ---\nR   = 0.060      # vessel inner radius\nH   = 0.200      # vessel height\nR_OUT = 0.020    # outlet radius\nDUCT_W, DUCT_H = 0.020, 0.030   # duct width (tangential) x height\nDUCT_L = 0.050   # duct length along its own axis, from the wall point outward\nZ_DUCT = 0.040   # duct centerline height above floor (assumption: '40 mm above floor' = centerline)\nANG = 15.0       # degrees off the local tangent, toward the radial direction\n\na = math.radians(ANG)\n\n# vessel gas volume: cylinder, outlet hole cut from exactly the top plane upward\nvessel = bd.Pos(0, 0, 0) * bd.Cylinder(radius=R, height=H, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nhole = bd.Pos(0, 0, H) * bd.Cylinder(radius=R_OUT, height=0.01, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nvessel = vessel - hole\n\n# ducts: box from wall point P outward along axis u (inner end exactly at P -> clean miter by the cylinder)\nducts = []\nduct_frames = []\nfor i in range(4):\n    th = math.radians(i * 90.0)\n    t_hat = np.array([-math.sin(th), math.cos(th), 0.0])   # local tangent (swirl sense)\n    r_hat = np.array([ math.cos(th), math.sin(th), 0.0])   # local outward radial\n    u = math.cos(a)*t_hat + math.sin(a)*r_hat              # duct outward axis, 15 deg off tangent\n    y = np.cross([0, 0, 1], u)                             # duct width direction (horizontal)\n    P = np.array([R*math.cos(th), R*math.sin(th), Z_DUCT]) # anchor point on wall, duct centerline\n    C = P + u*(DUCT_L/2)\n    pln = bd.Plane(origin=tuple(C), x_dir=tuple(u), z_dir=(0, 0, 1))\n    box = pln * bd.Box(DUCT_L, DUCT_W, DUCT_H)\n    ducts.append(box)\n    duct_frames.append(dict(i=i, u=u, y=y, P=P))\n\nfluid = vessel\nfor d in ducts:\n    fluid = fluid + d\n\n# outlet opening: disk face at z = H\noutlet_face = bd.Pos(0, 0, H) * bd.Face(bd.Circle(R_OUT))\n\nprint(\"fluid valid:\", fluid.is_valid, \" volume(m^3):\", fluid.volume)\nprint(\"outlet face area (expect pi*R_OUT^2 = %.6f):\" % (math.pi*R_OUT**2), outlet_face.area)\nprint(\"n faces:\", len(fluid.faces()))\nfor f in fluid.faces():\n    c = f.center(); n = f.normal_at()\n    print(f\"{str(f.geom_type):12s} area={f.area:9.6f}  c=({c.X:7.4f},{c.Y:7.4f},{c.Z:7.4f})  n=({n.X:5.2f},{n.Y:5.2f},{n.Z:5.2f})\")",
+      "exit_code": 1,
+      "seconds": 0.2010783550067572,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 41\u001b[39m\n\u001b[32m     37\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m d \u001b[38;5;28;01min\u001b[39;00m ducts:\n\u001b[32m     38\u001b[39m     fluid = fluid + d\n\u001b[32m     39\u001b[39m \n\u001b[32m     40\u001b[39m \u001b[38;5;66;03m# outlet opening: disk face at z = H\u001b[39;00m\n\u001b[32m---> \u001b[39m\u001b[32m41\u001b[39m outlet_face = bd.Pos(\u001b[32m0\u001b[39m, \u001b[32m0\u001b[39m, H) * bd.Face(bd.Circle(R_OUT))\n\u001b[32m     42\u001b[39m \n\u001b[32m     43\u001b[39m print(\u001b[33m\"fluid valid:\"\u001b[39m, fluid.is_valid, \u001b[33m\" volume(m^3):\"\u001b[39m, fluid.volume)\n\u001b[32m     44\u001b[39m print(\u001b[33m\"outlet face area (expect pi*R_OUT^2 = %.6f):\"\u001b[39m % (math.pi*R_OUT**\u001b[32m2\u001b[39m), outlet_face.area)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:1087\u001b[39m, in \u001b[36mShape.__rmul__\u001b[39m\u001b[34m(self, other)\u001b[39m\n\u001b[32m   1085\u001b[39m \u001b[38;5;250m\u001b[39m\u001b[33;03m\"\"\"right multiply for positioning operator *\"\"\"\u001b[39;00m\n\u001b[32m   1086\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(other, Location | Plane):\n\u001b[32m-> \u001b[39m\u001b[32m1087\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mself\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mmoved\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mother\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m   1088\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m   1089\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m [\u001b[38;5;28mself\u001b[39m.moved(loc) \u001b[38;5;28;01mfor\u001b[39;00m loc \u001b[38;5;129;01min\u001b[39;00m all_location_like(other)]\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:1682\u001b[39m, in \u001b[36mShape.moved\u001b[39m\u001b[34m(self, loc)\u001b[39m\n\u001b[32m   1680\u001b[39m     loc = loc.location\n\u001b[32m   1681\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28mself\u001b[39m._wrapped \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m:\n\u001b[32m-> \u001b[39m\u001b[32m1682\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mCannot move an empty shape\u001b[39m\u001b[33m\"\u001b[39m)\n\u001b[32m   1683\u001b[39m shape_copy: Shape = copy.deepcopy(\u001b[38;5;28mself\u001b[39m, \u001b[38;5;28;01mNone\u001b[39;00m)\n\u001b[32m   1684\u001b[39m shape_copy.wrapped = tcast(TOPODS, downcast(\u001b[38;5;28mself\u001b[39m.wrapped.Moved(loc.wrapped)))\n\n\u001b[31mValueError\u001b[39m: Cannot move an empty shape",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, math\n\n# --- parameters, METRES (OpenFOAM reads raw numbers as metres) ---\nR   = 0.060      # vessel inner radius\nH   = 0.200      # vessel height\nR_OUT = 0.020    # outlet radius\nDUCT_W, DUCT_H = 0.020, 0.030   # duct width (tangential) x height\nDUCT_L = 0.050   # duct length along its own axis, from the wall point outward\nZ_DUCT = 0.040   # duct centerline height above floor (assumption: '40 mm above floor' = centerline)\nANG = 15.0       # degrees off the local tangent, toward the radial direction\n\na = math.radians(ANG)\n\n# vessel gas volume: cylinder, outlet hole cut from exactly the top plane upward\nvessel = bd.Pos(0, 0, 0) * bd.Cylinder(radius=R, height=H, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nhole = bd.Pos(0, 0, H) * bd.Cylinder(radius=R_OUT, height=0.01, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nvessel = vessel - hole\n\n# ducts: box from wall point P outward along axis u (inner end exactly at P -> clean miter by the cylinder)\nducts = []\nduct_frames = []\nfor i in range(4):\n    th = math.radians(i * 90.0)\n    t_hat = np.array([-math.sin(th), math.cos(th), 0.0])   # local tangent (swirl sense)\n    r_hat = np.array([ math.cos(th), math.sin(th), 0.0])   # local outward radial\n    u = math.cos(a)*t_hat + math.sin(a)*r_hat              # duct outward axis, 15 deg off tangent\n    y = np.cross([0, 0, 1], u)                             # duct width direction (horizontal)\n    P = np.array([R*math.cos(th), R*math.sin(th), Z_DUCT]) # anchor point on wall, duct centerline\n    C = P + u*(DUCT_L/2)\n    pln = bd.Plane(origin=tuple(C), x_dir=tuple(u), z_dir=(0, 0, 1))\n    box = pln * bd.Box(DUCT_L, DUCT_W, DUCT_H)\n    ducts.append(box)\n    duct_frames.append(dict(i=i, u=u, y=y, P=P))\n\nfluid = vessel\nfor d in ducts:\n    fluid = fluid + d\n\n# outlet opening: disk face at z = H\noutlet_face = bd.Pos(0, 0, H) * bd.Face.make_from_wires(bd.Circle(R_OUT))\n\nprint(\"fluid valid:\", fluid.is_valid, \" volume(m^3):\", fluid.volume)\nprint(\"outlet face area (expect %.6f):\" % (math.pi*R_OUT**2), outlet_face.area)\nprint(\"n faces:\", len(fluid.faces()))\nfor f in fluid.faces():\n    c = f.center(); n = f.normal_at()\n    print(f\"{str(f.geom_type):12s} area={f.area:9.6f}  c=({c.X:7.4f},{c.Y:7.4f},{c.Z:7.4f})  n=({n.X:5.2f},{n.Y:5.2f},{n.Z:5.2f})\")",
+      "exit_code": 1,
+      "seconds": 0.10080533300060779,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[4]\u001b[39m\u001b[32m, line 41\u001b[39m\n\u001b[32m     37\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m d \u001b[38;5;28;01min\u001b[39;00m ducts:\n\u001b[32m     38\u001b[39m     fluid = fluid + d\n\u001b[32m     39\u001b[39m \n\u001b[32m     40\u001b[39m \u001b[38;5;66;03m# outlet opening: disk face at z = H\u001b[39;00m\n\u001b[32m---> \u001b[39m\u001b[32m41\u001b[39m outlet_face = bd.Pos(\u001b[32m0\u001b[39m, \u001b[32m0\u001b[39m, H) * bd.Face.make_from_wires(bd.Circle(R_OUT))\n\u001b[32m     42\u001b[39m \n\u001b[32m     43\u001b[39m print(\u001b[33m\"fluid valid:\"\u001b[39m, fluid.is_valid, \u001b[33m\" volume(m^3):\"\u001b[39m, fluid.volume)\n\u001b[32m     44\u001b[39m print(\u001b[33m\"outlet face area (expect %.6f):\"\u001b[39m % (math.pi*R_OUT**\u001b[32m2\u001b[39m), outlet_face.area)\n\n\u001b[31mAttributeError\u001b[39m: type object 'Face' has no attribute 'make_from_wires'",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, inspect\nprint(subprocess.run([\"grep\", \"-n\", \"-i\", \"make_face\\|make from\\|def Face\\|class Face\", \".reference/b123d_api.md\"], capture_output=True, text=True).stdout[:2000])\nimport build123d as bd\nprint([m for m in dir(bd.Face) if 'make' in m.lower() or 'from' in m.lower()])\nprint(inspect.signature(bd.Face.make_brep_surface) if hasattr(bd.Face,'make_brep_surface') else '')",
+      "exit_code": 0,
+      "seconds": 0.05097456699877512,
+      "output": "102:- `make_face(edges=None)`\n175:Built into a `Curve`, closed, and turned into a face with `make_face` when the outline is not one of the primitives above.\n\n['make_bezier_surface', 'make_composite', 'make_gordon_surface', 'make_holes', 'make_plane', 'make_rect', 'make_surface', 'make_surface_from_array_of_points', 'make_surface_from_curves', 'make_surface_patch']\n\n\n<>:2: SyntaxWarning: invalid escape sequence '\\|'\n<>:2: SyntaxWarning: invalid escape sequence '\\|'\n/tmp/ipykernel_575985/3148584503.py:2: SyntaxWarning: invalid escape sequence '\\|'\n  print(subprocess.run([\"grep\", \"-n\", \"-i\", \"make_face\\|make from\\|def Face\\|class Face\", \".reference/b123d_api.md\"], capture_output=True, text=True).stdout[:2000])",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, math\n\n# --- parameters, METRES (OpenFOAM reads raw numbers as metres) ---\nR   = 0.060      # vessel inner radius\nH   = 0.200      # vessel height\nR_OUT = 0.020    # outlet radius\nDUCT_W, DUCT_H = 0.020, 0.030   # duct width (tangential) x height\nDUCT_L = 0.050   # duct length along its own axis, from the wall point outward\nZ_DUCT = 0.040   # duct centerline height above floor (assumption: '40 mm above floor' = centerline)\nANG = 15.0       # degrees off the local tangent, toward the radial direction\n\na = math.radians(ANG)\n\n# vessel gas volume: cylinder, outlet hole cut from exactly the top plane upward\nvessel = bd.Pos(0, 0, 0) * bd.Cylinder(radius=R, height=H, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nhole = bd.Pos(0, 0, H) * bd.Cylinder(radius=R_OUT, height=0.01, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nvessel = vessel - hole\n\n# ducts: box from wall point P outward along axis u (inner end exactly at P -> clean miter by the cylinder)\nducts = []\nduct_frames = []\nfor i in range(4):\n    th = math.radians(i * 90.0)\n    t_hat = np.array([-math.sin(th), math.cos(th), 0.0])   # local tangent (swirl sense)\n    r_hat = np.array([ math.cos(th), math.sin(th), 0.0])   # local outward radial\n    u = math.cos(a)*t_hat + math.sin(a)*r_hat              # duct outward axis, 15 deg off tangent\n    y = np.cross([0, 0, 1], u)                             # duct width direction (horizontal)\n    P = np.array([R*math.cos(th), R*math.sin(th), Z_DUCT]) # anchor point on wall, duct centerline\n    C = P + u*(DUCT_L/2)\n    pln = bd.Plane(origin=tuple(C), x_dir=tuple(u), z_dir=(0, 0, 1))\n    box = pln * bd.Box(DUCT_L, DUCT_W, DUCT_H)\n    ducts.append(box)\n    duct_frames.append(dict(i=i, u=u, y=y, P=P))\n\nfluid = vessel\nfor d in ducts:\n    fluid = fluid + d\n\n# outlet opening: disk face at z = H\noutlet_face = bd.Pos(0, 0, H) * bd.make_face(bd.Circle(R_OUT).edges())\n\nprint(\"fluid valid:\", fluid.is_valid, \" volume(m^3):\", fluid.volume)\nprint(\"outlet face area (expect %.6f):\" % (math.pi*R_OUT**2), outlet_face.area)\nprint(\"n faces:\", len(fluid.faces()))\nfor f in fluid.faces():\n    c = f.center(); n = f.normal_at()\n    print(f\"{str(f.geom_type):12s} area={f.area:9.6f}  c=({c.X:7.4f},{c.Y:7.4f},{c.Z:7.4f})  n=({n.X:5.2f},{n.Y:5.2f},{n.Z:5.2f})\")",
+      "exit_code": 0,
+      "seconds": 0.10110380299738608,
+      "output": "fluid valid: True  volume(m^3): 0.0023676219263395882\noutlet face area (expect 0.001257): 0.0012566370614359172\nn faces: 27\nGeomType.CYLINDER area= 0.072641  c=(-0.0600, 0.0000, 0.1000)  n=(-1.00, 0.00, 0.00)\nGeomType.PLANE area= 0.011310  c=( 0.0000,-0.0000, 0.0000)  n=(-0.00,-0.00,-1.00)\nGeomType.PLANE area= 0.000881  c=( 0.0679, 0.0262, 0.0250)  n=(-0.00, 0.00,-1.00)\nGeomType.PLANE area= 0.000884  c=( 0.0595, 0.0367, 0.0400)  n=(-0.97, 0.26, 0.00)\nGeomType.PLANE area= 0.000881  c=( 0.0679, 0.0262, 0.0550)  n=( 0.00,-0.00, 1.00)\nGeomType.PLANE area= 0.011310  c=( 0.0000,-0.0000, 0.2000)  n=( 0.00, 0.00, 1.00)\nGeomType.PLANE area= 0.000300  c=( 0.0648,-0.0013, 0.0400)  n=(-0.26,-0.97, 0.00)\nGeomType.PLANE area= 0.000881  c=(-0.0262, 0.0679, 0.0250)  n=(-0.00,-0.00,-1.00)\nGeomType.PLANE area= 0.000300  c=( 0.0013, 0.0648, 0.0400)  n=( 0.97,-0.26,-0.00)\nGeomType.PLANE area= 0.000884  c=(-0.0367, 0.0595, 0.0400)  n=(-0.26,-0.97, 0.00)\nGeomType.PLANE area= 0.000881  c=(-0.0262, 0.0679, 0.0550)  n=( 0.00, 0.00, 1.00)\nGeomType.PLANE area= 0.000881  c=(-0.0679,-0.0262, 0.0250)  n=(-0.00,-0.00,-1.00)\nGeomType.PLANE area= 0.000300  c=(-0.0648, 0.0013, 0.0400)  n=( 0.26, 0.97,-0.00)\nGeomType.PLANE area= 0.000884  c=(-0.0595,-0.0367, 0.0400)  n=( 0.97,-0.26, 0.00)\nGeomType.PLANE area= 0.000881  c=(-0.0679,-0.0262, 0.0550)  n=( 0.00, 0.00, 1.00)\nGeomType.PLANE area= 0.000881  c=( 0.0262,-0.0679, 0.0250)  n=( 0.00,-0.00,-1.00)\nGeomType.PLANE area= 0.000884  c=( 0.0367,-0.0595, 0.0400)  n=( 0.26, 0.97,-0.00)\nGeomType.PLANE area= 0.000881  c=( 0.0262,-0.0679, 0.0550)  n=(-0.00, 0.00, 1.00)\nGeomType.PLANE area= 0.000300  c=(-0.0013,-0.0648, 0.0400)  n=(-0.97, 0.26,-0.00)\nGeomType.PLANE area= 0.000600  c=( 0.0729, 0.0483, 0.0400)  n=( 0.26, 0.97,-0.00)\nGeomType.PLANE area= 0.001500  c=( 0.0761, 0.0216, 0.0400)  n=( 0.97,-0.26,-0.00)\nGeomType.PLANE area= 0.000600  c=(-0.0483, 0.0729, 0.0400)  n=(-0.97, 0.26, 0.00)\nGeomType.PLANE area= 0.001500  c=(-0.0216, 0.0761, 0.0400)  n=( 0.26, 0.97,-0.00)\nGeomType.PLANE area= 0.000600  c=(-0.0729,-0.0483, 0.0400)  n=(-0.26,-0.97, 0.00)\nGeomType.PLANE area= 0.001500  c=(-0.0761,-0.0216, 0.0400)  n=(-0.97, 0.26,-0.00)\nGeomType.PLANE area= 0.000600  c=( 0.0483,-0.0729, 0.0400)  n=( 0.97,-0.26, 0.00)\nGeomType.PLANE area= 0.001500  c=( 0.0216,-0.0761, 0.0400)  n=(-0.26,-0.97, 0.00)",
+      "image": ""
+    },
+    {
+      "cmd": "import os\nos.makedirs(\"constant/triSurface\", exist_ok=True)\n\n# --- top annulus (top patch) = disk R with hole R_OUT, at z=H ---\ntop_annulus = bd.Pos(0, 0, H) * (\n    bd.make_face(bd.Circle(R).edges()) - bd.make_face(bd.Circle(R_OUT).edges())\n)\n\n# --- classify the solid's faces into patches ---\npatches = {}\nfaces = list(fluid.faces())\n\ndef local_coords(c, fr):\n    rel = np.array([c.X - fr[\"P\"][0], c.Y - fr[\"P\"][1], c.Z - fr[\"P\"][2]])\n    return rel @ fr[\"u\"], rel @ fr[\"y\"], rel @ np.array([0, 0, 1.0])\n\ndef box_dist(d, s, z):\n    # distance from local point to the duct box [0,L]x[-W/2,W/2]x[-H/2,H/2]\n    dd = max(0.0 - d, d - DUCT_L, 0.0)\n    ds = max(abs(s) - DUCT_W/2, 0.0)\n    dz = max(abs(z) - DUCT_H/2, 0.0)\n    return math.sqrt(dd*dd + ds*ds + dz*dz)\n\nunassigned = []\nfor f in faces:\n    c = f.center()\n    gt = str(f.geom_type)\n    if gt == \"GeomType.CYLINDER\":\n        patches.setdefault(\"wall\", []).append(f)\n    elif abs(c.Z - 0.0) < 1e-9 and f.area > 0.005:\n        patches.setdefault(\"floor\", []).append(f)\n    elif abs(c.Z - H) < 1e-9 and f.area > 0.005:\n        pass  # solid's full top disk: replaced by top_annulus + outlet_face\n    else:\n        best, bi = 1e9, None\n        for fr in duct_frames:\n            d, s, z = local_coords(c, fr)\n            dist = box_dist(d, s, z)\n            if dist < best:\n                best, bi = dist, fr[\"i\"]\n        if best > 1e-6:\n            unassigned.append((c, f.area, best))\n        else:\n            d, s, z = local_coords(c, duct_frames[bi])\n            if abs(d - DUCT_L) < 1e-9:\n                patches.setdefault(f\"inlet{bi+1}\", []).append(f)\n            else:\n                patches.setdefault(f\"ductWall{bi+1}\", []).append(f)\n\npatches[\"top\"] = [top_annulus]\npatches[\"outlet\"] = [outlet_face]\n\nprint(\"unassigned faces:\", unassigned)\nfor name in sorted(patches):\n    comp = bd.Compound.make_compound(patches[name])\n    bd.export_stl(comp, f\"constant/triSurface/{name}.stl\")\n    print(f\"{name:10s} faces={len(patches[name]):2d}  area={comp.area:.6f} m^2\")\nprint(sorted(os.listdir(\"constant/triSurface\")))",
+      "exit_code": 1,
+      "seconds": 0.050975795995327644,
+      "output": "unassigned faces: []\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[7]\u001b[39m\u001b[32m, line 55\u001b[39m\n\u001b[32m     51\u001b[39m patches[\u001b[33m\"outlet\"\u001b[39m] = [outlet_face]\n\u001b[32m     52\u001b[39m \n\u001b[32m     53\u001b[39m print(\u001b[33m\"unassigned faces:\"\u001b[39m, unassigned)\n\u001b[32m     54\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m name \u001b[38;5;28;01min\u001b[39;00m sorted(patches):\n\u001b[32m---> \u001b[39m\u001b[32m55\u001b[39m     comp = bd.Compound.make_compound(patches[name])\n\u001b[32m     56\u001b[39m     bd.export_stl(comp, f\"constant/triSurface/{name}.stl\")\n\u001b[32m     57\u001b[39m     print(f\"{name:10s} faces={len(patches[name]):2d}  area={comp.area:.6f} m^2\")\n\u001b[32m     58\u001b[39m print(sorted(os.listdir(\u001b[33m\"constant/triSurface\"\u001b[39m)))\n\n\u001b[31mAttributeError\u001b[39m: type object 'Compound' has no attribute 'make_compound'",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 4354,
+      "fenced": true,
+      "text_chars": 355,
+      "thinking_chars": 13269,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789456132.62362
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 962,
+      "fenced": true,
+      "text_chars": 123,
+      "thinking_chars": 489,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789456161.0522096
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 13803,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 42746,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789456527.017972
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 896,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 298,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789456556.4992487
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 201,
+      "fenced": true,
+      "text_chars": 68,
+      "thinking_chars": 78,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789456578.583011
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 938,
+      "fenced": true,
+      "text_chars": 75,
+      "thinking_chars": 355,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789456753.0732439
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 5692,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 17530,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789456916.0647275
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f/t24/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f/t24/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f/t24/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f/t24/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f/t24/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T24-20260915-070653-1b9f/t24/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "each inlet port's face normal, and the angle between it and the local tangent at that port, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "each inlet's area and its height above the floor, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the four ports' angular positions around the cylinder, measured, and the spread from 90 degrees apart",
+      "measured": null
+    },
+    {
+      "property": "the chamber volume and the four duct volumes separately, against the request",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 7,
+    "steps": 6,
+    "seconds": 910.1,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

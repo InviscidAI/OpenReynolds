@@ -1,0 +1,419 @@
+# -- cell 1 (2.4s, exit 1)
+import subprocess, os
+os.chdir("/home/qiuzi/.openreynolds-buildup/work/T5-20260915-061523-30aa/t5")
+import build123d as bd
+from build123d import import_step
+path = "/home/qiuzi/.openreynolds-buildup/work/T5-20260915-061523-30aa/geometry/assembly.step"
+# Peek at the header for declared units before importing
+head = subprocess.run(["head","-c","3000",path], capture_output=True, text=True).stdout
+print([l for l in head.split(";") if "SI_UNIT" in l or "LENGTH_UNIT" in l][:5])
+assy = import_step(path)
+solids = assy.solids()
+print("solids:", len(solids))
+print("valid:", all(s.is_valid() for s in solids))
+for i, s in enumerate(solids):
+    bb = s.bounding_box()
+    print(i, "bbox size:", tuple(round(v,2) for v in bb.size), "vol:", round(s.volume,1))
+# -- output
+[]
+solids: 3
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 12[39m
+[32m      8[39m print([l [38;5;28;01mfor[39;00m l [38;5;28;01min[39;00m head.split([33m";"[39m) [38;5;28;01mif[39;00m [33m"SI_UNIT"[39m [38;5;28;01min[39;00m l [38;5;28;01mor[39;00m [33m"LENGTH_UNIT"[39m [38;5;28;01min[39;00m l][:[32m5[39m])
+[32m      9[39m assy = import_step(path)
+[32m     10[39m solids = assy.solids()
+[32m     11[39m print([33m"solids:"[39m, len(solids))
+[32m---> [39m[32m12[39m print([33m"valid:"[39m, all(s.is_valid() [38;5;28;01mfor[39;00m s [38;5;28;01min[39;00m solids))
+[32m     13[39m [38;5;28;01mfor[39;00m i, s [38;5;28;01min[39;00m enumerate(solids):
+[32m     14[39m     bb = s.bounding_box()
+[32m     15[39m     print(i, [33m"bbox size:"[39m, tuple(round(v,[32m2[39m) [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m bb.size), [33m"vol:"[39m, round(s.volume,[32m1[39m))
+
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 12[39m, in [36m<genexpr>[39m[34m(.0)[39m
+[32m---> [39m[32m12[39m print([33m"valid:"[39m, all(s.is_valid() [38;5;28;01mfor[39;00m s [38;5;28;01min[39;00m solids))
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 2 (0.2s, exit 0)
+import re
+raw = subprocess.run(["head","-c","8000",path], capture_output=True, text=True).stdout
+units = sorted(set(re.findall(r"SI_UNIT\([^)]*\)", raw)))
+conv = sorted(set(re.findall(r"CONVERSION_BASED_UNIT\([^)]*\)", raw)))
+print("SI_UNITs:", units)
+print("CONV:", conv)
+print("valid:", [bool(s.is_valid) for s in solids])
+for i, s in enumerate(solids):
+    bb = s.bounding_box()
+    print(i, "size:", tuple(round(v,2) for v in bb.size), "min:", tuple(round(v,2) for v in bb.min), "vol:", round(s.volume,1), "faces:", len(s.faces()))
+# -- output
+SI_UNITs: []
+CONV: []
+valid: [True, True, True]
+0 size: (53.95, 46.29, 3.5) min: (-26.98, -19.42, -0.0) vol: 2552.3 faces: 34
+1 size: (37.61, 37.61, 11.2) min: (-18.8, -18.9, 20.1) vol: 12186.1 faces: 29
+2 size: (38.52, 38.52, 18.6) min: (-19.26, -19.36, 1.5) vol: 26455.7 faces: 15
+
+# -- cell 3 (0.3s, exit 0)
+import subprocess, os, re
+os.chdir("/home/qiuzi/.openreynolds-buildup/work/T5-20260915-061523-30aa/t5")
+import build123d as bd
+from build123d import import_step
+path = "/home/qiuzi/.openreynolds-buildup/work/T5-20260915-061523-30aa/geometry/assembly.step"
+raw = subprocess.run(["head","-c","12000",path], capture_output=True, text=True).stdout
+print("units:", sorted(set(re.findall(r"SI_UNIT\([^)]*\)|CONVERSION_BASED_UNIT\([^)]*\)", raw))))
+assy = import_step(path)
+solids = assy.solids()
+print("solids:", len(solids), "valid:", [bool(s.is_valid) for s in solids])
+for i, s in enumerate(solids):
+    bb = s.bounding_box()
+    print(i, "size:", tuple(round(v,2) for v in bb.size), "min:", tuple(round(v,2) for v in bb.min), "vol:", round(s.volume,1), "faces:", len(s.faces()))
+# -- output
+units: []
+solids: 3 valid: [True, True, True]
+0 size: (53.95, 46.29, 3.5) min: (-26.98, -19.42, -0.0) vol: 2552.3 faces: 34
+1 size: (37.61, 37.61, 11.2) min: (-18.8, -18.9, 20.1) vol: 12186.1 faces: 29
+2 size: (38.52, 38.52, 18.6) min: (-19.26, -19.36, 1.5) vol: 26455.7 faces: 15
+
+# -- cell 4 (0.7s, exit 0)
+full = subprocess.run(["grep","-ao","SI_UNIT([^)]*)\\|MILLI\\|METRE",path], capture_output=True, text=True).stdout
+print(set(full.split()))
+# visualize the assembly
+import matplotlib.pyplot as plt
+from build123d import export_stl
+export_stl(assy, "probe_assembly.stl", tolerance=0.05)
+import pyvista as pv
+pv.OFF_SCREEN = True
+m = pv.read("probe_assembly.stl")
+pl = pv.Plotter(off_screen=True)
+pl.add_mesh(m, opacity=0.6, show_edges=False)
+pl.camera_position = 'iso'
+pl.screenshot("assy.png")
+print(m.bounds)
+# -- output
+{'SI_UNIT($,.STERADIAN.)', 'SI_UNIT($,.RADIAN.)', 'SI_UNIT($,.METRE.)'}
+BoundsTuple(x_min = -26.97452163696289,
+            x_max =  26.975000381469727,
+            y_min = -19.418991088867188,
+            y_max =  26.869953155517578,
+            z_min =   0.0,
+            z_max =  31.299999237060547)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-15 06:16:48.195 (   0.289s) [    7D2520986780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-15 06:16:48.196 (   0.289s) [    7D2520986780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:16:48.209 (   0.303s) [    7D2520986780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[no picture came back from this cell, and it looks like it drew one. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 5 (0.1s, exit 0)
+from IPython.display import Image
+Image("assy.png")
+# -- output
+
+
+# -- cell 6 (0.1s, exit 0)
+out = subprocess.run(["grep","-aoE",".{80}(LENGTH_UNIT|SI_UNIT\\(\\$,\\.METRE\\.\\)).{40}", path], capture_output=True, text=True).stdout
+print(out[:3000])
+# -- output
+
+
+# -- cell 7 (0.1s, exit 0)
+raw_all = open(path, errors="ignore").read()
+import re
+idxs = [m.start() for m in re.finditer(r"METRE", raw_all)]
+print("n METRE:", len(idxs))
+for i in idxs[:10]:
+    print(repr(raw_all[max(0,i-160):i+80]))
+    print("---")
+# -- output
+n METRE: 1
+"(*)\nSI_UNIT($,.STERADIAN.)\nSOLID_ANGLE_UNIT()\n);\n#2300=(\nNAMED_UNIT(*)\nPLANE_ANGLE_UNIT()\nSI_UNIT($,.RADIAN.)\n);\n#2301=(\nLENGTH_UNIT()\nNAMED_UNIT(*)\nSI_UNIT($,.METRE.)\n);\n#2302=PRODUCT_DEFINITION_SHAPE('','',#2309);\n#2303=PRODUCT_DEFINITION"
+---
+
+# -- cell 8 (0.4s, exit 0)
+# Section view through the middle (y-z plane cut) to see the interior
+import numpy as np
+import pyvista as pv
+from build123d import export_stl, Plane
+# clip each solid's mesh at x=0 plane to see inside
+meshes = []
+for i, s in enumerate(solids):
+    export_stl(s, f"probe_s{i}.stl", tolerance=0.02)
+    meshes.append(pv.read(f"probe_s{i}.stl"))
+pl = pv.Plotter(off_screen=True, shape=(1,2))
+for k, clip_normal in enumerate([(1,0,0),(0,-1,0)]):
+    pl.subplot(0,k)
+    for m in meshes:
+        c = m.clip(normal=clip_normal, origin=(0.01,0,0) if k==0 else (0,0.01,0))
+        pl.add_mesh(c, opacity=0.8, show_edges=True)
+    pl.camera_position='iso'
+pl.screenshot("sections.png")
+Image("sections.png")
+# -- output
+[0m[33m2026-09-15 06:18:42.469 ( 114.563s) [    7D2520986780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:18:42.470 ( 114.563s) [    7D2520986780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 9 (0.4s, exit 1)
+# Cross-sections of the fused assembly at several heights
+union = solids[0].fuse(solids[1], solids[2])
+union = union.clean()
+print(type(union), len(union.solids()) if hasattr(union,'solids') else '')
+import matplotlib.pyplot as plt
+fig, axes = plt.subplots(1, 3, figsize=(15,5))
+for ax, z in zip(axes, [5, 12, 25]):
+    sec = union.section(Plane.XY.offset(z))
+    ax.set_title(f"z={z}")
+    ax.set_aspect('equal')
+    for f in sec.faces():
+        for w in [f.outer_wire()] + f.inner_wires():
+            pts = [w.position_at(t) for t in np.linspace(0,1,200)]
+            ax.plot([p.X for p in pts],[p.Y for p in pts], 'b-')
+plt.tight_layout(); plt.show()
+# -- output
+<class 'build123d.topology.composite.Part'> 2
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 8[39m
+[32m      4[39m print(type(union), len(union.solids()) [38;5;28;01mif[39;00m hasattr(union,[33m'solids'[39m) [38;5;28;01melse[39;00m [33m''[39m)
+[32m      5[39m [38;5;28;01mimport[39;00m matplotlib.pyplot [38;5;28;01mas[39;00m plt
+[32m      6[39m fig, axes = plt.subplots([32m1[39m, [32m3[39m, figsize=([32m15[39m,[32m5[39m))
+[32m      7[39m [38;5;28;01mfor[39;00m ax, z [38;5;28;01min[39;00m zip(axes, [[32m5[39m, [32m12[39m, [32m25[39m]):
+[32m----> [39m[32m8[39m     sec = union.section(Plane.XY.offset(z))
+[32m      9[39m     ax.set_title(f"z={z}")
+[32m     10[39m     ax.set_aspect([33m'equal'[39m)
+[32m     11[39m     [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m sec.faces():
+
+[31mAttributeError[39m: 'Part' object has no attribute 'section'
+
+# -- cell 10 (0.1s, exit 0)
+subprocess.run(["grep","-n","section",".reference/b123d_api.md"], capture_output=True, text=True).stdout[:800]
+# -- output
+'78:- `loft(sections=None, ruled=False, clean=True)`\n79:  a solid through a series of sections in order.\n80:- `sweep(sections=None, path=None, multisection=False, is_frenet=False, transition=Transition.TRANSFORMED, normal=None, binormal=None, clean=True)`\n81:  a section carried along a path; `is_frenet` for a path that twists.\n94:- `section(obj=None, section_by=..., height=0.0, clean=True)`\n'
+
+# -- cell 11 (0.6s, exit 0)
+import inspect
+from build123d import section
+print(inspect.signature(section))
+fig, axes = plt.subplots(1, 3, figsize=(15,5))
+for ax, z in zip(axes, [5, 12, 25]):
+    sec = section(union, section_by=Plane.XY, height=z)
+    ax.set_title(f"z={z}"); ax.set_aspect('equal')
+    for f in sec.faces():
+        for w in [f.outer_wire()] + f.inner_wires():
+            pts = [w.position_at(t) for t in np.linspace(0,1,300)]
+            ax.plot([p.X for p in pts],[p.Y for p in pts], 'b-')
+plt.tight_layout(); plt.show()
+# -- output
+(obj: 'Part | None' = None, section_by: 'Plane | Iterable[Plane]' = Plane((0, 0, 0), (1, 0, 0), (0, -1, 0)), height: 'float' = 0.0, clean: 'bool' = True, mode: 'Mode' = <Mode.PRIVATE>) -> 'Sketch'
+
+# -- cell 12 (1.3s, exit 0)
+union = solids[0].fuse(solids[1], solids[2])
+union = union.clean()
+fig, axes = plt.subplots(2, 3, figsize=(16,10))
+for ax, z in zip(axes.flat, [1.0, 2.0, 5, 12, 19, 22, 25, 28, 30.5]):
+    sec = section(union, section_by=Plane.XY, height=z)
+    faces = sec.faces()
+    ninner = sum(len(f.inner_wires()) for f in faces)
+    ax.set_title(f"z={z} faces={len(faces)} inner={ninner}")
+    ax.set_aspect('equal')
+    for f in faces:
+        for w in [f.outer_wire()] + f.inner_wires():
+            pts = [w.position_at(t) for t in np.linspace(0,1,300)]
+            ax.plot([p.X for p in pts],[p.Y for p in pts], 'b-')
+axes.flat[-1].axis('off') if len(axes.flat)>9 else None
+plt.tight_layout(); plt.show()
+# -- output
+
+
+# -- cell 13 (0.4s, exit 0)
+from build123d import section
+# Decisive test: enclosing box minus fused hardware -> where is the void?
+union = solids[0].fuse(solids[1], solids[2]); union = union.clean()
+bb = union.bounding_box()
+B = bd.Box(bb.size.X+2, bb.size.Y+2, bb.size.Z+2).locate(bd.Location(bb.center()))
+neg = B - union
+ns = neg.solids()
+print("negative regions:", len(ns))
+for s in ns:
+    sb = s.bounding_box()
+    touches = any(abs(a-b)<1e-6 for a,b in zip(sb.min, bb.min)) or any(abs(a-b)<1e-6 for a,b in zip(sb.max, bb.max))
+    print("vol:", round(s.volume,1), "size:", tuple(round(v,2) for v in sb.size), "touches outer box:", touches)
+# -- output
+negative regions: 2
+vol: 48777.1 size: (55.95, 48.29, 33.3) touches outer box: False
+vol: 2552.3 size: (53.95, 46.29, 3.5) touches outer box: True
+
+# -- cell 14 (0.2s, exit 1)
+# classify properly against B's boundary, and test identity of region2 vs solid 0
+Bmin, Bmax = B.bounding_box().min, B.bounding_box().max
+for j, s in enumerate(ns):
+    sb = s.bounding_box()
+    touch = any(abs(sb.min[k]-Bmin[k])<1e-6 or abs(sb.max[k]-Bmax[k])<1e-6 for k in range(3))
+    print(j, "vol", round(s.volume,1), "touches B wall:", touch)
+inter = ns[1].intersect(solids[0])
+print("region1 ∩ solid0 volume:", round(inter.volume if hasattr(inter,'volume') else -1, 2))
+print("solid0 volume:", round(solids[0].volume,2))
+# is solid 0 inside union?
+from build123d import Vector
+c = solids[0].center()
+print("s0 center in union:", union.is_inside(c))
+print("union solid volumes:", [round(s.volume,1) for s in union.solids()])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[14][39m[32m, line 5[39m
+[32m      1[39m [38;5;66;03m# classify properly against B's boundary, and test identity of region2 vs solid 0[39;00m
+[32m      2[39m Bmin, Bmax = B.bounding_box().min, B.bounding_box().max
+[32m      3[39m [38;5;28;01mfor[39;00m j, s [38;5;28;01min[39;00m enumerate(ns):
+[32m      4[39m     sb = s.bounding_box()
+[32m----> [39m[32m5[39m     touch = any(abs(sb.min[k]-Bmin[k])<[32m1e-6[39m [38;5;28;01mor[39;00m abs(sb.max[k]-Bmax[k])<[32m1e-6[39m [38;5;28;01mfor[39;00m k [38;5;28;01min[39;00m range([32m3[39m))
+[32m      6[39m     print(j, [33m"vol"[39m, round(s.volume,[32m1[39m), [33m"touches B wall:"[39m, touch)
+[32m      7[39m inter = ns[[32m1[39m].intersect(solids[[32m0[39m])
+[32m      8[39m print([33m"region1 ∩ solid0 volume:"[39m, round(inter.volume [38;5;28;01mif[39;00m hasattr(inter,[33m'volume'[39m) [38;5;28;01melse[39;00m -[32m1[39m, [32m2[39m))
+
+[36mCell[39m[36m [39m[32mIn[14][39m[32m, line 5[39m, in [36m<genexpr>[39m[34m(.0)[39m
+[32m----> [39m[32m5[39m     touch = any(abs(sb.min[k]-Bmin[k])<[32m1e-6[39m [38;5;28;01mor[39;00m abs(sb.max[k]-Bmax[k])<[32m1e-6[39m [38;5;28;01mfor[39;00m k [38;5;28;01min[39;00m range([32m3[39m))
+
+[31mTypeError[39m: 'Vector' object is not subscriptable
+
+# -- cell 15 (0.2s, exit 1)
+# classify properly against B's boundary, and test identity of region2 vs solid 0
+Bmin, Bmax = B.bounding_box().min, B.bounding_box().max
+for j, s in enumerate(ns):
+    sb = s.bounding_box()
+    touch = any(abs(sb.min[k]-Bmin[k])<1e-6 or abs(sb.max[k]-Bmax[k])<1e-6 for k in range(3))
+    print(j, "vol", round(s.volume,1), "touches B wall:", touch)
+inter = ns[1].intersect(solids[0])
+print("region1 & solid0 common volume:", round(sum(x.volume for x in inter.solids()), 2))
+print("solid0 volume:", round(solids[0].volume,2))
+print("union solid volumes:", [round(s.volume,1) for s in union.solids()])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[15][39m[32m, line 5[39m
+[32m      1[39m [38;5;66;03m# classify properly against B's boundary, and test identity of region2 vs solid 0[39;00m
+[32m      2[39m Bmin, Bmax = B.bounding_box().min, B.bounding_box().max
+[32m      3[39m [38;5;28;01mfor[39;00m j, s [38;5;28;01min[39;00m enumerate(ns):
+[32m      4[39m     sb = s.bounding_box()
+[32m----> [39m[32m5[39m     touch = any(abs(sb.min[k]-Bmin[k])<[32m1e-6[39m [38;5;28;01mor[39;00m abs(sb.max[k]-Bmax[k])<[32m1e-6[39m [38;5;28;01mfor[39;00m k [38;5;28;01min[39;00m range([32m3[39m))
+[32m      6[39m     print(j, [33m"vol"[39m, round(s.volume,[32m1[39m), [33m"touches B wall:"[39m, touch)
+[32m      7[39m inter = ns[[32m1[39m].intersect(solids[[32m0[39m])
+[32m      8[39m print([33m"region1 & solid0 common volume:"[39m, round(sum(x.volume [38;5;28;01mfor[39;00m x [38;5;28;01min[39;00m inter.solids()), [32m2[39m))
+
+[36mCell[39m[36m [39m[32mIn[15][39m[32m, line 5[39m, in [36m<genexpr>[39m[34m(.0)[39m
+[32m----> [39m[32m5[39m     touch = any(abs(sb.min[k]-Bmin[k])<[32m1e-6[39m [38;5;28;01mor[39;00m abs(sb.max[k]-Bmax[k])<[32m1e-6[39m [38;5;28;01mfor[39;00m k [38;5;28;01min[39;00m range([32m3[39m))
+
+[31mTypeError[39m: 'Vector' object is not subscriptable
+
+# -- cell 16 (0.4s, exit 0)
+# classify properly against B's boundary, and test identity of region2 vs solid 0
+Bbb = B.bounding_box()
+Bm = (Bbb.min.X, Bbb.min.Y, Bbb.min.Z); BM = (Bbb.max.X, Bbb.max.Y, Bbb.max.Z)
+for j, s in enumerate(ns):
+    sb = s.bounding_box()
+    sm = (sb.min.X, sb.min.Y, sb.min.Z); sM = (sb.max.X, sb.max.Y, sb.max.Z)
+    touch = any(abs(sm[k]-Bm[k])<1e-6 or abs(sM[k]-BM[k])<1e-6 for k in range(3))
+    print(j, "vol", round(s.volume,1), "touches B wall:", touch)
+inter = ns[1].intersect(solids[0])
+print("region1 & solid0 common volume:", round(sum(x.volume for x in inter.solids()), 2))
+print("solid0 volume:", round(solids[0].volume,2))
+print("union solid volumes:", [round(s.volume,1) for s in union.solids()])
+# -- output
+0 vol 48777.1 touches B wall: True
+1 vol 2552.3 touches B wall: False
+region1 & solid0 common volume: 2552.27
+solid0 volume: 2552.27
+union solid volumes: [2552.3, 38641.6]
+
+# -- cell 17 (0.3s, exit 0)
+pl = pv.Plotter(off_screen=True, shape=(1,3))
+for k in range(3):
+    pl.subplot(0,k)
+    pl.add_mesh(pv.read(f"probe_s{k}.stl"), show_edges=True, opacity=1.0)
+    pl.add_text(f"solid {k}", font_size=12)
+    pl.camera_position='iso'
+pl.screenshot("solids3.png")
+Image("solids3.png")
+# -- output
+[0m[33m2026-09-15 06:25:34.477 ( 526.570s) [    7D2520986780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:25:34.478 ( 526.571s) [    7D2520986780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 18 (0.4s, exit 0)
+s12 = solids[1].fuse(solids[2]); s12 = s12.clean()
+export_stl(s12, "probe_s12.stl", tolerance=0.02)
+export_stl(ns[1], "probe_neg1.stl", tolerance=0.02)
+pl = pv.Plotter(off_screen=True, shape=(1,2))
+pl.subplot(0,0)
+pl.add_mesh(pv.read("probe_s12.stl").clip(normal=(1,0,0), origin=(0.05,0,0)), show_edges=True)
+pl.add_text("s1+s2 clipped @ x=0")
+pl.subplot(0,1)
+pl.add_mesh(pv.read("probe_neg1.stl"), show_edges=True, color="orange")
+pl.add_text("neg region 1 (the 'void')")
+for k in range(2):
+    pl.subplot(0,k); pl.camera_position='iso'
+pl.screenshot("void.png")
+Image("void.png")
+# -- output
+[0m[33m2026-09-15 06:26:41.079 ( 593.172s) [    7D2520986780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:26:41.080 ( 593.173s) [    7D2520986780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 19 (0.3s, exit 0)
+n1bb = ns[1].bounding_box()
+print("neg region1 bbox min:", tuple(round(v,2) for v in (n1bb.min.X,n1bb.min.Y,n1bb.min.Z)),
+      "max:", tuple(round(v,2) for v in (n1bb.max.X,n1bb.max.Y,n1bb.max.Z)))
+for j,s in enumerate(union.solids()):
+    ub = s.bounding_box()
+    print("union solid", j, "vol", round(s.volume,1),
+          "min", tuple(round(v,2) for v in (ub.min.X,ub.min.Y,ub.min.Z)),
+          "max", tuple(round(v,2) for v in (ub.max.X,ub.max.Y,ub.max.Z)))
+# point membership tests
+tests = {"s0 center": solids[0].center(), "s1 center": solids[1].center(),
+         "s2 center": solids[2].center(), "region1 center": ns[1].center()}
+for name, pt in tests.items():
+    print(name, tuple(round(v,1) for v in (pt.X,pt.Y,pt.Z)),
+          "| in union:", union.is_inside(pt), "| in neg:", neg.is_inside(pt),
+          "| in s12:", s12.is_inside(pt))
+# -- output
+neg region1 bbox min: (-26.98, -19.42, -0.0) max: (26.98, 26.87, 3.5)
+union solid 0 vol 2552.3 min (-26.98, -19.42, -0.0) max (26.98, 26.87, 3.5)
+union solid 1 vol 38641.6 min (-19.26, -19.36, 1.5) max (19.26, 19.16, 31.3)
+s0 center (-0.0, 0.2, 0.9) | in union: True | in neg: True | in s12: False
+s1 center (-0.0, -0.1, 25.2) | in union: True | in neg: False | in s12: True
+s2 center (0.0, -0.0, 10.7) | in union: True | in neg: False | in s12: True
+region1 center (-0.0, 0.2, 0.9) | in union: True | in neg: True | in s12: False
+
+# -- cell 20 (1.5s, exit 0)
+fig, axes = plt.subplots(1, 2, figsize=(14,7))
+colors = ['tab:blue','tab:red','tab:green']
+for ax, pl_plane, tag in [(axes[0], Plane.YZ, "x=0 (y-z cut)"), (axes[1], Plane.XZ, "y=0 (x-z cut)")]:
+    ax.set_title(tag); ax.set_aspect('equal')
+    for i, s in enumerate(solids):
+        sec = section(s, section_by=pl_plane, height=0.0)
+        for f in sec.faces():
+            for w in [f.outer_wire()] + f.inner_wires():
+                pts = [w.position_at(t) for t in np.linspace(0,1,400)]
+                ax.plot([p.Y if pl_plane==Plane.YZ else p.X for p in pts],[p.Z for p in pts],
+                        color=colors[i], lw=1.2, label=f"s{i}")
+    ax.grid(alpha=0.3)
+handles, labels = axes[0].get_legend_handles_labels()
+axes[0].legend(dict(zip(labels,handles)).values(), dict(zip(labels,handles)).keys())
+plt.tight_layout(); plt.show()
+# -- output
+
+
+# -- cell 21 (0.7s, exit 0)
+fig, axes = plt.subplots(1, 5, figsize=(20,4.4))
+for ax, z in zip(axes, [21.0, 23.0, 25.0, 27.0, 30.0]):
+    sec = section(solids[1], section_by=Plane.XY, height=z)
+    faces = sec.faces()
+    ninner = sum(len(f.inner_wires()) for f in faces)
+    ax.set_title(f"s1 @ z={z}: {len(faces)}f {ninner}i", fontsize=10)
+    ax.set_aspect('equal')
+    for f in faces:
+        for w in [f.outer_wire()] + f.inner_wires():
+            pts = [w.position_at(t) for t in np.linspace(0,1,400)]
+            ax.plot([p.X for p in pts],[p.Y for p in pts], 'r-', lw=0.8)
+plt.tight_layout(); plt.show()
+# -- output
+
+

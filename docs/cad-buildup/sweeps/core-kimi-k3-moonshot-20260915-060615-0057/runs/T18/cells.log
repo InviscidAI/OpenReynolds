@@ -1,0 +1,1328 @@
+# -- cell 1 (2.6s, exit 1)
+import build123d as bd
+import numpy as np
+
+# ---- Parameters (metres) ----
+R_BARREL   = 0.045      # barrel OD 90 mm
+H_BARREL   = 0.120      # barrel height 120 mm
+R_FIN      = 0.070      # fin OD 140 mm
+T_FIN      = 0.003      # fin thickness 3 mm
+GAP_FIN    = 0.006      # air gap 6 mm
+N_FIN      = 12
+DUCT_HALF  = 0.150      # 300 x 300 mm duct cross-section
+Z_DUCT_LO  = -0.150     # 150 mm below cylinder base
+Z_DUCT_HI  = 0.120 + 0.300   # 300 mm above cylinder top (barrel top)
+
+# Fin stack: 12*3 + 11*6 = 102 mm, centred on the 120 mm barrel -> 9 mm margin each end
+fin_stack = N_FIN*T_FIN + (N_FIN-1)*GAP_FIN
+z0_fin = (H_BARREL - fin_stack)/2.0
+print("fin stack height:", fin_stack, "first fin starts at z =", z0_fin)
+
+# ---- Solid: barrel + fins + domed head ----
+barrel = bd.Pos(0, 0, H_BARREL/2) * bd.Cylinder(R_BARREL, H_BARREL)
+
+fins = None
+for i in range(N_FIN):
+    zc = z0_fin + i*(T_FIN+GAP_FIN) + T_FIN/2
+    f = bd.Pos(0, 0, zc) * bd.Cylinder(R_FIN, T_FIN)
+    fins = f if fins is None else fins + f
+
+head = bd.Pos(0, 0, H_BARREL) * bd.Sphere(R_BARREL)   # lower half lies inside barrel
+
+cyl_solid = barrel + fins + head
+cyl_solid = bd.Solid(cyl_solid.solid())  # single solid
+
+print("volume (m^3):", cyl_solid.volume)
+bb = cyl_solid.bounding_box()
+print("bbox:", bb.min, bb.max)
+# -- output
+fin stack height: 0.10200000000000001 first fin starts at z = 0.008999999999999994
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 32[39m
+[32m     28[39m 
+[32m     29[39m head = bd.Pos([32m0[39m, [32m0[39m, H_BARREL) * bd.Sphere(R_BARREL)   [38;5;66;03m# lower half lies inside barrel[39;00m
+[32m     30[39m 
+[32m     31[39m cyl_solid = barrel + fins + head
+[32m---> [39m[32m32[39m cyl_solid = bd.Solid(cyl_solid.solid())  [38;5;66;03m# single solid[39;00m
+[32m     33[39m 
+[32m     34[39m print([33m"volume (m^3):"[39m, cyl_solid.volume)
+[32m     35[39m bb = cyl_solid.bounding_box()
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:757[39m, in [36mSolid.__init__[39m[34m(self, obj, label, color, material, joints, parent)[39m
+[32m    754[39m [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj, Shell):
+[32m    755[39m     obj = Solid._make_solid(obj)
+[32m--> [39m[32m757[39m [30;43msuper[39;49m[30;43m([39;49m[30;43m)[39;49m[30;43m.[39;49m[30;43m__init__[39;49m[30;43m([39;49m
+[32m    758[39m [30;43m    [39;49m[30;43mobj[39;49m[30;43m=[39;49m[30;43mobj[39;49m[30;43m,[39;49m
+[32m    759[39m [30;43m    [39;49m[30;43;03m# label="" if label is None else label,[39;49;00m
+[32m    760[39m [30;43m    [39;49m[30;43mlabel[39;49m[30;43m=[39;49m[30;43mlabel[39;49m[30;43m,[39;49m
+[32m    761[39m [30;43m    [39;49m[30;43mcolor[39;49m[30;43m=[39;49m[30;43mcolor[39;49m[30;43m,[39;49m
+[32m    762[39m [30;43m    [39;49m[30;43mparent[39;49m[30;43m=[39;49m[30;43mparent[39;49m[30;43m,[39;49m
+[32m    763[39m [30;43m[39;49m[30;43m)[39;49m
+[32m    764[39m [38;5;28mself[39m.material = [33m"[39m[33m"[39m [38;5;28;01mif[39;00m material [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m material
+[32m    765[39m [38;5;28mself[39m.joints = {} [38;5;28;01mif[39;00m joints [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m joints
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:301[39m, in [36mShape.__init__[39m[34m(self, obj, label, color, parent)[39m
+[32m    293[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__init__[39m(
+[32m    294[39m     [38;5;28mself[39m,
+[32m    295[39m     obj: TopoDS_Shape | [38;5;28;01mNone[39;00m = [38;5;28;01mNone[39;00m,
+[32m   (...)[39m[32m    298[39m     parent: Compound | [38;5;28;01mNone[39;00m = [38;5;28;01mNone[39;00m,
+[32m    299[39m ):
+[32m    300[39m     [38;5;28mself[39m._wrapped: TOPODS | [38;5;28;01mNone[39;00m = (
+[32m--> [39m[32m301[39m         tcast(Optional[TOPODS], [30;43mdowncast[39;49m[30;43m([39;49m[30;43mobj[39;49m[30;43m)[39;49m) [38;5;28;01mif[39;00m obj [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m    302[39m     )
+[32m    303[39m     [38;5;28mself[39m.for_construction = [38;5;28;01mFalse[39;00m
+[32m    304[39m     [38;5;28mself[39m.label = label
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:3711[39m, in [36mdowncast[39m[34m(obj)[39m
+[32m   3701[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mdowncast[39m(obj: TopoDS_Shape) -> TopoDS_Shape:
+[32m   3702[39m [38;5;250m    [39m[33;03m"""Downcasts a TopoDS object to suitable specialized type[39;00m
+[32m   3703[39m 
+[32m   3704[39m [33;03m    Args:[39;00m
+[32m   (...)[39m[32m   3708[39m 
+[32m   3709[39m [33;03m    """[39;00m
+[32m-> [39m[32m3711[39m     f_downcast: Any = Shape.downcast_LUT[[30;43mshapetype[39;49m[30;43m([39;49m[30;43mobj[39;49m[30;43m)[39;49m]
+[32m   3712[39m     return_value = f_downcast(obj)
+[32m   3714[39m     [38;5;28;01mreturn[39;00m return_value
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:3781[39m, in [36mshapetype[39m[34m(obj)[39m
+[32m   3779[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mshapetype[39m(obj: TopoDS_Shape | [38;5;28;01mNone[39;00m) -> TopAbs_ShapeEnum:
+[32m   3780[39m [38;5;250m    [39m[33;03m"""Return TopoDS_Shape's TopAbs_ShapeEnum"""[39;00m
+[32m-> [39m[32m3781[39m     [38;5;28;01mif[39;00m obj [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;129;01mor[39;00m [30;43mobj[39;49m[30;43m.[39;49m[30;43mIsNull[39;49m():
+[32m   3782[39m         [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mNull TopoDS_Shape object[39m[33m"[39m)
+[32m   3784[39m     [38;5;28;01mreturn[39;00m obj.ShapeType()
+
+[31mAttributeError[39m: 'Solid' object has no attribute 'IsNull'
+
+# -- cell 2 (0.1s, exit 0)
+# union result is already a single Solid
+print(type(cyl_solid))
+solids = cyl_solid.solids()
+print("n solids:", len(solids))
+cyl_solid = solids[0]
+print("volume (m^3):", cyl_solid.volume)
+bb = cyl_solid.bounding_box()
+print("bbox min:", tuple(round(v,4) for v in bb.min), "max:", tuple(round(v,4) for v in bb.max))
+print("n faces:", len(cyl_solid.faces()))
+# -- output
+<class 'build123d.topology.composite.Part'>
+n solids: 1
+volume (m^3): 0.0012794136081744427
+bbox min: (-0.07, -0.07, 0.0) max: (0.07, 0.07, 0.165)
+n faces: 51
+
+# -- cell 3 (0.1s, exit 1)
+import os
+os.makedirs("constant/triSurface", exist_ok=True)
+
+barrel_faces, fin_faces, head_faces = [], [], []
+for f in cyl_solid.faces():
+    gt = f.geom_type
+    c = f.center()
+    r = np.hypot(c.x, c.y)
+    if gt == "SPHERE":
+        head_faces.append(f)
+    elif gt == "CYLINDER":
+        (barrel_faces if r < 0.06 else fin_faces).append(f)
+    elif gt == "PLANE":
+        if abs(c.z) < 1e-9:          # bottom disk of barrel
+            barrel_faces.append(f)
+        else:                        # annular fin top/bottom
+            fin_faces.append(f)
+    else:
+        print("unclassified:", gt, c)
+
+print("barrel:", len(barrel_faces), "fins:", len(fin_faces), "head:", len(head_faces))
+
+groups = {"barrel": barrel_faces, "fins": fin_faces, "head": head_faces}
+for name, fl in groups.items():
+    comp = bd.Compound(children=fl)
+    bd.export_stl(comp, f"constant/triSurface/{name}.stl")
+    print(name, "area =", round(sum(f.area for f in fl), 6), "m^2")
+
+# sanity: expected areas
+print("expected barrel side+rim area ~", 2*np.pi*R_BARREL*H_BARREL + np.pi*R_BARREL**2)
+print("expected fins area ~", N_FIN*(2*np.pi*(R_FIN**2-R_BARREL**2) + 2*np.pi*R_FIN*T_FIN))
+print("expected head area ~", 2*np.pi*R_BARREL**2)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 8[39m
+[32m      4[39m barrel_faces, fin_faces, head_faces = [], [], []
+[32m      5[39m [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m cyl_solid.faces():
+[32m      6[39m     gt = f.geom_type
+[32m      7[39m     c = f.center()
+[32m----> [39m[32m8[39m     r = np.hypot(c.x, c.y)
+[32m      9[39m     [38;5;28;01mif[39;00m gt == [33m"SPHERE"[39m:
+[32m     10[39m         head_faces.append(f)
+[32m     11[39m     [38;5;28;01melif[39;00m gt == [33m"CYLINDER"[39m:
+
+[31mAttributeError[39m: 'Vector' object has no attribute 'x'
+
+# -- cell 4 (0.1s, exit 1)
+barrel_faces, fin_faces, head_faces = [], [], []
+for f in cyl_solid.faces():
+    gt = f.geom_type
+    c = f.center()
+    cx, cy, cz = c[0], c[1], c[2]
+    r = np.hypot(cx, cy)
+    if gt == "SPHERE":
+        head_faces.append(f)
+    elif gt == "CYLINDER":
+        (barrel_faces if r < 0.06 else fin_faces).append(f)
+    elif gt == "PLANE":
+        if abs(cz) < 1e-9:           # bottom disk of barrel
+            barrel_faces.append(f)
+        else:                        # annular fin top/bottom
+            fin_faces.append(f)
+    else:
+        print("unclassified:", gt, tuple(c))
+
+print("barrel:", len(barrel_faces), "fins:", len(fin_faces), "head:", len(head_faces))
+
+groups = {"barrel": barrel_faces, "fins": fin_faces, "head": head_faces}
+for name, fl in groups.items():
+    comp = bd.Compound(children=fl)
+    bd.export_stl(comp, f"constant/triSurface/{name}.stl")
+    print(name, "area =", round(sum(f.area for f in fl), 6), "m^2")
+
+print("expected barrel (side + bottom disk) ~", 2*np.pi*R_BARREL*H_BARREL + np.pi*R_BARREL**2)
+print("expected fins ~", N_FIN*(2*np.pi*(R_FIN**2-R_BARREL**2) + 2*np.pi*R_FIN*T_FIN))
+print("expected head (hemisphere) ~", 2*np.pi*R_BARREL**2)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 5[39m
+[32m      1[39m barrel_faces, fin_faces, head_faces = [], [], []
+[32m      2[39m [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m cyl_solid.faces():
+[32m      3[39m     gt = f.geom_type
+[32m      4[39m     c = f.center()
+[32m----> [39m[32m5[39m     cx, cy, cz = c[[32m0[39m], c[[32m1[39m], c[[32m2[39m]
+[32m      6[39m     r = np.hypot(cx, cy)
+[32m      7[39m     [38;5;28;01mif[39;00m gt == [33m"SPHERE"[39m:
+[32m      8[39m         head_faces.append(f)
+
+[31mTypeError[39m: 'Vector' object is not subscriptable
+
+# -- cell 5 (0.1s, exit 0)
+c = cyl_solid.faces()[0].center()
+print(type(c), [a for a in dir(c) if not a.startswith('_')][:40])
+print(tuple(c.to_tuple()) if hasattr(c,'to_tuple') else '')
+# -- output
+<class 'build123d.geometry.Vector'> ['X', 'Y', 'Z', 'add', 'center', 'cross', 'distance_to_plane', 'dot', 'get_angle', 'get_signed_angle', 'intersect', 'length', 'multiply', 'normalized', 'project_to_line', 'project_to_plane', 'reverse', 'rotate', 'signed_distance_from_plane', 'sub', 'to_dir', 'to_pnt', 'to_tuple', 'transform', 'vector_index', 'wrapped']
+(-0.045, 5.5109105961630896e-18, 0.11549999999999999)
+
+/tmp/ipykernel_566870/217953657.py:3: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  print(tuple(c.to_tuple()) if hasattr(c,'to_tuple') else '')
+
+# -- cell 6 (0.1s, exit 1)
+barrel_faces, fin_faces, head_faces = [], [], []
+for f in cyl_solid.faces():
+    gt = f.geom_type
+    cx, cy, cz = f.center().X, f.center().Y, f.center().Z
+    r = np.hypot(cx, cy)
+    if gt == "SPHERE":
+        head_faces.append(f)
+    elif gt == "CYLINDER":
+        (barrel_faces if r < 0.06 else fin_faces).append(f)
+    elif gt == "PLANE":
+        if abs(cz) < 1e-9:           # bottom disk of barrel
+            barrel_faces.append(f)
+        else:                        # annular fin top/bottom
+            fin_faces.append(f)
+    else:
+        print("unclassified:", gt, (cx, cy, cz))
+
+print("barrel:", len(barrel_faces), "fins:", len(fin_faces), "head:", len(head_faces))
+
+groups = {"barrel": barrel_faces, "fins": fin_faces, "head": head_faces}
+for name, fl in groups.items():
+    comp = bd.Compound(children=fl)
+    bd.export_stl(comp, f"constant/triSurface/{name}.stl")
+    print(name, "area =", round(sum(f.area for f in fl), 6), "m^2")
+
+print("expected barrel (side + bottom disk) ~", 2*np.pi*R_BARREL*H_BARREL + np.pi*R_BARREL**2)
+print("expected fins ~", N_FIN*(2*np.pi*(R_FIN**2-R_BARREL**2) + 2*np.pi*R_FIN*T_FIN))
+print("expected head (hemisphere) ~", 2*np.pi*R_BARREL**2)
+# -- output
+unclassified: GeomType.CYLINDER (-0.045, 5.5109105961630896e-18, 0.11549999999999999)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.111)
+unclassified: GeomType.SPHERE (-0.03181980515339464, 3.8968022530597195e-18, 0.15181980515339463)
+unclassified: GeomType.CYLINDER (-0.07, 8.572527594031473e-18, 0.1095)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.108)
+unclassified: GeomType.CYLINDER (-0.045, 5.5109105961630896e-18, 0.10500000000000001)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.10200000000000001)
+unclassified: GeomType.CYLINDER (-0.07, 8.572527594031473e-18, 0.1005)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.099)
+unclassified: GeomType.CYLINDER (-0.045, 5.5109105961630896e-18, 0.096)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.09300000000000001)
+unclassified: GeomType.CYLINDER (-0.07, 8.572527594031473e-18, 0.09150000000000001)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.09000000000000001)
+unclassified: GeomType.CYLINDER (-0.045, 5.5109105961630896e-18, 0.08700000000000001)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.084)
+unclassified: GeomType.CYLINDER (-0.07, 8.572527594031473e-18, 0.0825)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.081)
+unclassified: GeomType.CYLINDER (-0.045, 5.5109105961630896e-18, 0.078)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.075)
+unclassified: GeomType.CYLINDER (-0.07, 8.572527594031473e-18, 0.0735)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.072)
+unclassified: GeomType.CYLINDER (-0.045, 5.5109105961630896e-18, 0.069)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.066)
+unclassified: GeomType.CYLINDER (-0.07, 8.572527594031473e-18, 0.0645)
+unclassified
+... 1023 characters cut ...
+ -8.154207559414456e-18, 0.036)
+unclassified: GeomType.CYLINDER (-0.045, 5.5109105961630896e-18, 0.032999999999999995)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.029999999999999995)
+unclassified: GeomType.CYLINDER (-0.07, 8.572527594031473e-18, 0.028499999999999998)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.026999999999999996)
+unclassified: GeomType.CYLINDER (-0.045, 5.5109105961630896e-18, 0.023999999999999994)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.020999999999999994)
+unclassified: GeomType.CYLINDER (-0.07, 8.572527594031473e-18, 0.019499999999999997)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.017999999999999995)
+unclassified: GeomType.CYLINDER (-0.045, 5.5109105961630896e-18, 0.014999999999999994)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.011999999999999993)
+unclassified: GeomType.CYLINDER (-0.07, 8.572527594031473e-18, 0.010499999999999994)
+unclassified: GeomType.PLANE (-5.551115123125783e-17, -8.154207559414456e-18, 0.008999999999999994)
+unclassified: GeomType.CYLINDER (-0.045, 5.5109105961630896e-18, 0.004499999999999997)
+unclassified: GeomType.PLANE (0.0, -4.2900007010304265e-18, 0.0)
+barrel: 0 fins: 0 head: 0
+[31m---------------------------------------------------------------------------[39m
+[31mAssertionError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 23[39m
+[32m     19[39m 
+[32m     20[39m groups = {[33m"barrel"[39m: barrel_faces, [33m"fins"[39m: fin_faces, [33m"head"[39m: head_faces}
+[32m     21[39m [38;5;28;01mfor[39;00m name, fl [38;5;28;01min[39;00m groups.items():
+[32m     22[39m     comp = bd.Compound(children=fl)
+[32m---> [39m[32m23[39m     bd.export_stl(comp, f"constant/triSurface/{name}.stl")
+[32m     24[39m     print(name, [33m"area ="[39m, round(sum(f.area [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m fl), [32m6[39m), [33m"m^2"[39m)
+[32m     25[39m 
+[32m     26[39m print([33m"expected barrel (side + bottom disk) ~"[39m, [32m2[39m*np.pi*R_BARREL*H_BARREL + np.pi*R_BARREL**[32m2[39m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/exporters3d.py:451[39m, in [36mexport_stl[39m[34m(to_export, file_path, tolerance, angular_tolerance, ascii_format)[39m
+[32m    423[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mexport_stl[39m(
+[32m    424[39m     to_export: Shape,
+[32m    425[39m     file_path: PathLike | [38;5;28mstr[39m | [38;5;28mbytes[39m,
+[32m   (...)[39m[32m    428[39m     ascii_format: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m,
+[32m    429[39m ) -> [38;5;28mbool[39m:
+[32m    430[39m [38;5;250m    [39m[33;03m"""Export STL[39;00m
+[32m    431[39m 
+[32m    432[39m [33;03m    Exports a shape to a specified STL file.[39;00m
+[32m   (...)[39m[32m    448[39m [33;03m        bool: Success[39;00m
+[32m    449[39m [33;03m    """[39;00m
+[32m    450[39m     mesh = BRepMesh_IncrementalMesh(
+[32m--> [39m[32m451[39m         [30;43mto_export[39;49m[30;43m.[39;49m[30;43mwrapped[39;49m, tolerance, [38;5;28;01mTrue[39;00m, angular_tolerance, [38;5;28;01mTrue[39;00m
+[32m    452[39m     )
+[32m    453[39m     mesh.Perform()
+[32m    455[39m     writer = StlAPI_Writer()
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:320[39m, in [36mShape.wrapped[39m[34m(self)[39m
+[32m    317[39m [38;5;129m@property[39m
+[32m    318[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mwrapped[39m([38;5;28mself[39m):
+[32m    319[39m [38;5;250m    [39m[33;03m"""OCP TopoDS object"""[39;00m
+[32m--> [39m[32m320[39m     [38;5;28;01massert[39;00m [38;5;28mself[39m._wrapped
+[32m    321[39m     [38;5;28;01mreturn[39;00m [38;5;28mself[39m._wrapped
+
+[31mAssertionError[39m:
+
+# -- cell 7 (0.2s, exit 0)
+GT = bd.GeomType
+barrel_faces, fin_faces, head_faces = [], [], []
+for f in cyl_solid.faces():
+    gt = f.geom_type
+    cen = f.center()
+    cx, cy, cz = cen.X, cen.Y, cen.Z
+    r = np.hypot(cx, cy)
+    if gt == GT.SPHERE:
+        head_faces.append(f)
+    elif gt == GT.CYLINDER:
+        (barrel_faces if r < 0.06 else fin_faces).append(f)
+    elif gt == GT.PLANE:
+        if abs(cz) < 1e-9:           # bottom disk of barrel
+            barrel_faces.append(f)
+        else:                        # annular fin top/bottom
+            fin_faces.append(f)
+    else:
+        print("unclassified:", gt, (cx, cy, cz))
+
+print("barrel:", len(barrel_faces), "fins:", len(fin_faces), "head:", len(head_faces))
+
+groups = {"barrel": barrel_faces, "fins": fin_faces, "head": head_faces}
+for name, fl in groups.items():
+    comp = bd.Compound(children=fl)
+    bd.export_stl(comp, f"constant/triSurface/{name}.stl")
+    print(name, "area =", round(sum(f.area for f in fl), 6), "m^2")
+
+print("expected barrel (side + bottom disk) ~", round(2*np.pi*R_BARREL*H_BARREL + np.pi*R_BARREL**2, 6))
+print("expected fins ~", round(N_FIN*(2*np.pi*(R_FIN**2-R_BARREL**2) + 2*np.pi*R_FIN*T_FIN), 6))
+print("expected head (hemisphere) ~", round(2*np.pi*R_BARREL**2, 6))
+# -- output
+barrel: 14 fins: 36 head: 1
+barrel area = 0.030112 m^2
+fins area = 0.232604 m^2
+head area = 0.012723 m^2
+expected barrel (side + bottom disk) ~ 0.040291
+expected fins ~ 0.232604
+expected head (hemisphere) ~ 0.012723
+
+# -- cell 8 (3.0s, exit 0)
+import build123d as bd
+import numpy as np
+import os
+
+# ---- Parameters (metres) ----
+R_BARREL   = 0.045      # barrel OD 90 mm
+H_BARREL   = 0.120      # barrel height 120 mm
+R_FIN      = 0.070      # fin OD 140 mm
+T_FIN      = 0.003      # fin thickness 3 mm
+GAP_FIN    = 0.006      # air gap 6 mm
+N_FIN      = 12
+DUCT_HALF  = 0.150      # 300 x 300 mm duct cross-section
+Z_DUCT_LO  = -0.150     # 150 mm below cylinder base
+Z_DUCT_HI  = H_BARREL + 0.300   # 300 mm above barrel top -> z = 0.42
+
+# Fin stack: 12*3 + 11*6 = 102 mm, centred on the 120 mm barrel -> 9 mm margin each end
+fin_stack = N_FIN*T_FIN + (N_FIN-1)*GAP_FIN
+z0_fin = (H_BARREL - fin_stack)/2.0
+
+# ---- Solid: barrel + fins + domed head ----
+barrel = bd.Pos(0, 0, H_BARREL/2) * bd.Cylinder(R_BARREL, H_BARREL)
+fins = None
+for i in range(N_FIN):
+    zc = z0_fin + i*(T_FIN+GAP_FIN) + T_FIN/2
+    f = bd.Pos(0, 0, zc) * bd.Cylinder(R_FIN, T_FIN)
+    fins = f if fins is None else fins + f
+head = bd.Pos(0, 0, H_BARREL) * bd.Sphere(R_BARREL)   # hemispherical dome; lower half inside barrel
+cyl_solid = (barrel + fins + head).solids()[0]
+
+os.makedirs("constant/triSurface", exist_ok=True)
+
+# ---- Classify faces by their own geometry (not bounding boxes) ----
+GT = bd.GeomType
+barrel_faces, fin_faces, head_faces = [], [], []
+for f in cyl_solid.faces():
+    gt = f.geom_type
+    cen = f.center()
+    r = np.hypot(cen.X, cen.Y)
+    if gt == GT.SPHERE:
+        head_faces.append(f)
+    elif gt == GT.CYLINDER:
+        (barrel_faces if r < 0.06 else fin_faces).append(f)   # r 0.045 barrel, 0.070 fin rim
+    elif gt == GT.PLANE:
+        if abs(cen.Z) < 1e-9:      # bottom disk of barrel
+            barrel_faces.append(f)
+        else:                      # annular fin top/bottom faces
+            fin_faces.append(f)
+    else:
+        print("unclassified:", gt)
+
+groups = {"barrel": barrel_faces, "fins": fin_faces, "head": head_faces}
+for name, fl in groups.items():
+    bd.export_stl(bd.Compound(children=fl), f"constant/triSurface/{name}.stl")
+    print(name, "faces:", len(fl), "area =", round(sum(f.area for f in fl), 6), "m^2")
+
+print("expected barrel (side + bottom disk) ~", round(2*np.pi*R_BARREL*H_BARREL + np.pi*R_BARREL**2, 6))
+print("expected fins ~", round(N_FIN*(2*np.pi*(R_FIN**2-R_BARREL**2) + 2*np.pi*R_FIN*T_FIN), 6))
+print("expected head (hemisphere) ~", round(2*np.pi*R_BARREL**2, 6))
+# -- output
+barrel faces: 14 area = 0.030112 m^2
+fins faces: 36 area = 0.232604 m^2
+head faces: 1 area = 0.012723 m^2
+expected barrel (side + bottom disk) ~ 0.040291
+expected fins ~ 0.232604
+expected head (hemisphere) ~ 0.012723
+
+# -- cell 9 (0.9s, exit 0)
+import pyvista as pv
+pv.set_jupyter_backend('static')
+pl = pv.Plotter(shape=(1,2), window_size=(1400,650))
+colors = {"barrel":"lightblue", "fins":"orange", "head":"lightgreen"}
+pl.subplot(0,0)
+for name in colors:
+    pl.add_mesh(pv.read(f"constant/triSurface/{name}.stl"), color=colors[name], show_edges=False)
+pl.add_title("solid patches (STL)"); pl.view_isometric(); pl.add_axes()
+
+# duct wireframe box for context
+pl.subplot(0,1)
+for name in colors:
+    pl.add_mesh(pv.read(f"constant/triSurface/{name}.stl"), color=colors[name])
+duct = pv.Box(bounds=(-DUCT_HALF,DUCT_HALF,-DUCT_HALF,DUCT_HALF,Z_DUCT_LO,Z_DUCT_HI))
+pl.add_mesh(duct, style='wireframe', color='k')
+pl.add_title("cylinder inside 300x300 duct, z in [-0.15, 0.42]"); pl.view_isometric(); pl.add_axes()
+pl.show()
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-15 06:53:52.680 (   0.252s) [    764AFD54F780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-15 06:53:52.680 (   0.253s) [    764AFD54F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:53:52.693 (   0.265s) [    764AFD54F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 10 (0.1s, exit 0)
+import os
+os.makedirs("system", exist_ok=True)
+
+# ---- blockMeshDict: duct background mesh, 10 mm cells (coarse) ----
+x0, x1 = -DUCT_HALF, DUCT_HALF
+z0, z1 = Z_DUCT_LO, Z_DUCT_HI
+nx = int(round((x1-x0)/0.010)); ny = nx; nz = int(round((z1-z0)/0.010))
+blockmesh = f"""FoamFile
+{{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}}
+convertToMeters 1;
+
+vertices
+(
+    ({x0} {x0} {z0})   //0
+    ({x1} {x0} {z0})   //1
+    ({x1} {x1} {z0})   //2
+    ({x0} {x1} {z0})   //3
+    ({x0} {x0} {z1})   //4
+    ({x1} {x0} {z1})   //5
+    ({x1} {x1} {z1})   //6
+    ({x0} {x1} {z1})   //7
+);
+
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1)
+);
+
+edges ();
+
+boundary
+(
+    inlet
+    {{
+        type patch;
+        faces ( (0 3 2 1) );
+    }}
+    outlet
+    {{
+        type patch;
+        faces ( (4 5 6 7) );
+    }}
+    walls
+    {{
+        type wall;
+        faces
+        (
+            (0 1 5 4)
+            (1 2 6 5)
+            (2 3 7 6)
+            (3 0 4 7)
+        );
+    }}
+);
+"""
+open("system/blockMeshDict","w").write(blockmesh)
+
+controldict = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      controlDict;
+}
+application     snappyHexMesh;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         1;
+deltaT          1;
+writeControl    timeStep;
+writeInterval   1;
+purgeWrite      0;
+writeFormat     ascii;
+writePrecision  6;
+writeCompression off;
+timeFormat      general;
+timePrecision   6;
+runTimeModifiable true;
+"""
+open("system/controlDict","w").write(controldict)
+print("blockMesh cells:", nx, ny, nz, "->", nx*ny*nz, "cells")
+print("wrote system/blockMeshDict, system/controlDict")
+# -- output
+blockMesh cells: 30 30 57 -> 51300 cells
+wrote system/blockMeshDict, system/controlDict
+
+# -- cell 11 (0.1s, exit 0)
+snappy = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      snappyHexMeshDict;
+}
+castellatedMesh true;
+snap            true;
+addLayers       false;
+
+geometry
+{
+    barrel
+    {
+        type triSurfaceMesh;
+        file "barrel.stl";
+    }
+    fins
+    {
+        type triSurfaceMesh;
+        file "fins.stl";
+    }
+    head
+    {
+        type triSurfaceMesh;
+        file "head.stl";
+    }
+}
+
+castellatedMeshControls
+{
+    maxLocalCells 1000000;
+    maxGlobalCells 4000000;
+    minRefinementCells 10;
+    maxLoadUnbalance 0.10;
+    nCellsBetweenLevels 2;
+
+    features
+    (
+    );
+
+    refinementSurfaces
+    {
+        barrel
+        {
+            level (2 2);
+        }
+        fins
+        {
+            level (2 3);
+        }
+        head
+        {
+            level (2 2);
+        }
+    }
+
+    resolveFeatureAngle 30;
+
+    refinementRegions
+    {
+    }
+
+    locationInMesh (0.10 0.10 -0.05);
+    allowFreeStandingZoneFaces false;
+}
+
+snapControls
+{
+    nSmoothPatch 3;
+    tolerance 2.0;
+    nSolveIter 30;
+    nRelaxIter 5;
+
+    nFeatureSnapIter 10;
+    implicitFeatureSnap false;
+    explicitFeatureSnap true;
+    multiRegionFeatureSnap false;
+}
+
+addLayersControls
+{
+    relativeSizes true;
+    layers
+    {
+    }
+    expansionRatio 1.0;
+    finalLayerThickness 0.3;
+    minThickness 0.1;
+    nGrow 0;
+    featureAngle 60;
+    nRelaxIter 3;
+    nSmoothSurfaceNormals 1;
+    nSmoothNormals 3;
+    nSmoothThickness 10;
+    maxFaceThicknessRatio 0.5;
+    maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle 90;
+    nBufferCellsNoExtrude 0;
+    nLayerIter 50;
+}
+
+meshQualityControls
+{
+    maxNonOrtho 65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave 80;
+    minVol 1e-13;
+    minTetQuality 1e-15;
+    minArea -1;
+    minTwist 0.02;
+    minDeterminant 0.001;
+    minFaceWeight 0.05;
+    minVolRatio 0.01;
+    minTriangleTwist -1;
+    nSmoothScale 4;
+    errorReduction 0.75;
+}
+
+mergeTolerance 1e-6;
+"""
+open("system/snappyHexMeshDict","w").write(snappy)
+print("wrote system/snappyHexMeshDict")
+# -- output
+wrote system/snappyHexMeshDict
+
+# -- cell 12 (0.5s, exit 0)
+import subprocess
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode)
+print(r.stdout[-1500:])
+print(r.stderr[-800:])
+# -- output
+0
+oint exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 0
+		Number of boundary faces : 6
+		Number of defined boundary faces : 6
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.01 .. 0.01
+        j : 0.01 .. 0.01
+        k : 0.01 .. 0.01
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.15 -0.15 -0.15) (0.15 0.15 0.42)
+  nPoints: 55738
+  nCells: 51300
+  nFaces: 158220
+  nInternalFaces: 149580
+----------------
+Patches
+----------------
+  patch 0 (start: 149580 size: 900) name: inlet
+  patch 1 (start: 150480 size: 900) name: outlet
+  patch 2 (start: 151380 size: 6840) name: walls
+
+End
+
+
+--> FOAM IOWarning :
+    Found [v1012] 'convertToMeters' entry instead of 'scale' in dictionary "system/blockMeshDict"
+
+    This keyword is 180 months old.
+
+# -- cell 13 (0.4s, exit 0)
+r = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print("rc:", r.returncode)
+tail = r.stdout[-2500:]
+print(tail)
+print(r.stderr[-500:])
+# -- output
+rc: 1
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 15 2026
+Time   : 06:55:50
+Host   : yc-demo
+PID    : 569929
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T18-20260915-064927-be62/t18
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T18-20260915-064927-be62/t18/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 14 (110.4s, exit 0)
+fvschemes = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSchemes;
+}
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+"""
+open("system/fvSchemes","w").write(fvschemes)
+
+fvsolution = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}
+solvers {}
+relaxationFactors {}
+"""
+open("system/fvSolution","w").write(fvsolution)
+
+r = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print("rc:", r.returncode)
+print(r.stdout[-2000:])
+print(r.stderr[-500:])
+# -- output
+rc: 0
+ls < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+
+Merging all points on surface that
+- are used by only two boundary faces and
+- make an angle with a cosine of more than 0.866025.
+
+Removing 4364 straight edge points ...
+
+Edge intersection testing:
+    Number of edges             : 1433228
+    Number of edges to retest   : 30692
+    Number of intersected edges : 164644
+
+Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:432692  faces:1433228  points:569688
+Cells per refinement level:
+    0	47340
+    1	10588
+    2	44772
+    3	329992
+Writing mesh to time constant
+Wrote mesh in = 1.16 s.
+Mesh snapped in = 45.88 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 89.16 s.
+End
+
+# -- cell 15 (3.3s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print("rc:", r.returncode)
+print(r.stdout[-3000:])
+print(r.stderr[-300:])
+# -- output
+rc: 0
+ * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           569688
+    faces:            1433228
+    internal faces:   1259780
+    cells:            432692
+    faces per cell:   6.22385
+    boundary patches: 6
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     398368
+    prisms:        1692
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     32632
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   484
+            5   5100
+            6   6976
+            7   32
+            9   9180
+           12   7756
+           14   64
+           15   2148
+           17   40
+           18   852
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      900      961  ok (non-closed singly connected)
+                  outlet      900      961  ok (non-closed singly connected)
+                   walls     6840     6960  ok (non-closed singly connected)
+                  barrel    15236    19985  ok (non-closed singly connected)
+                    fins   147816   152808  ok (non-closed singly connected)
+                    head     1756     2257  ok (non-closed singly connected)
+                    ".*"   173448   176676      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.15 -0.15 -0.15) (0.15 0.15 0.42)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.90161e-15 1.15047e-16 4.24373e-17) OK.
+    Max cell openness = 3.33583e-16 OK.
+    Max aspect ratio = 4.54163 OK.
+    Minimum face area = 6.19339e-07. Maximum face area = 0.000101576.  Face area magnitudes OK.
+    Min volume = 4.81826e-10. Max volume = 1.01565e-06.  Total volume = 0.0500222.  Cell volumes OK.
+    Mesh non-orthogonality Max: 41.7757 average: 9.06682
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.3431 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 16 (0.6s, exit 0)
+open("t18.foam","w").write("")
+reader = pv.get_reader("t18.foam")
+reader.enable_all_patch_arrays()
+mesh = reader.read()
+print(mesh.keys() if hasattr(mesh,'keys') else mesh)
+mb = mesh
+internal = mb["internalMesh"]
+print("blocks:", mb.keys())
+print("internal cells:", internal.n_cells)
+# -- output
+['internalMesh', 'boundary']
+blocks: ['internalMesh', 'boundary']
+internal cells: 432692
+
+# -- cell 17 (0.5s, exit 0)
+pl = pv.Plotter(shape=(1,2), window_size=(1500,700))
+
+# Left: y-normal slice through the fin stack region
+sl = internal.slice(normal=(0,1,0), origin=(0,0,0.06))
+pl.subplot(0,0)
+pl.add_mesh(sl, show_edges=True, color="white", lighting=False)
+pl.view_yz() if hasattr(pl,'view_yz') else None
+pl.camera_position = [(0.5, 0, 0.06), (0, 0, 0.06), (0, 0, 1)]
+pl.add_title("slice y=0: barrel + fins + gaps")
+
+# Right: full slice with duct extent
+sl2 = internal.slice(normal=(1,0,0), origin=(0,0,0.1))
+pl.subplot(0,1)
+pl.add_mesh(sl2, show_edges=True, color="white", lighting=False)
+pl.camera_position = [(0.9, 0, 0.15), (0, 0, 0.15), (0, 0, 1)]
+pl.add_title("slice x=0: full duct")
+pl.show()
+# -- output
+[0m[33m2026-09-15 06:58:48.409 ( 295.981s) [    764AFD54F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:58:48.410 ( 295.982s) [    764AFD54F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 18 (1.3s, exit 0)
+pl = pv.Plotter(window_size=(900,800))
+sl = internal.slice(normal=(1,0,0), origin=(0,0,0.06))
+pl.add_mesh(sl, show_edges=True, color="white", lighting=False)
+# zoom on fin stack: r from 0.03 to 0.08, z 0.03..0.09
+pl.camera_position = [(0.055, 0, 0.058), (0.055, 0, 0.058), (0,0,1)]
+pl.camera.focal_point = (0.0, 0.0, 0.058)
+pl.camera.position = (0.0, -0.15, 0.058)
+pl.camera.up = (0,0,1)
+pl.camera.zoom(3.0)
+pl.add_title("zoom: fin stack (fin 3 mm, gap 6 mm)")
+pl.show()
+
+# measure: count cells across a fin and a gap at r=0.055
+import numpy as np
+centers = internal.cell_centers().points
+sel = (np.abs(np.hypot(centers[:,0], centers[:,1]) - 0.055) < 0.004)
+zz = np.sort(centers[sel][:,2])
+# fin centers expected at z0_fin + i*0.009 + 0.0015
+print("fin centre z's:", [round(z0_fin + i*0.009 + 0.0015, 4) for i in range(12)])
+# -- output
+fin centre z's: [0.0105, 0.0195, 0.0285, 0.0375, 0.0465, 0.0555, 0.0645, 0.0735, 0.0825, 0.0915, 0.1005, 0.1095]
+
+[0m[33m2026-09-15 06:59:11.385 ( 318.957s) [    764AFD54F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:59:11.386 ( 318.958s) [    764AFD54F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 19 (0.3s, exit 0)
+pl = pv.Plotter(window_size=(900,800))
+sl = internal.slice(normal=(1,0,0), origin=(0,0,0.06))
+# crop to fin stack region
+sl = sl.clip_box(bounds=(-0.01,0.01, 0.02,0.09, 0.02,0.10), invert=False)
+pl.add_mesh(sl, show_edges=True, color="white", lighting=False)
+pl.view_vector((1,0,0), viewup=(0,0,1))
+pl.camera.zoom(1.4)
+pl.add_title("fin stack zoom: y 20-90 mm, z 20-100 mm")
+pl.show()
+# -- output
+[0m[33m2026-09-15 06:59:44.370 ( 351.943s) [    764AFD54F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:59:44.371 ( 351.943s) [    764AFD54F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 20 (1.1s, exit 0)
+c = internal.cell_centers().points
+r_c = np.hypot(c[:,0], c[:,1])
+
+def radial_extent(zlo, zhi, label):
+    sel = (c[:,2] > zlo) & (c[:,2] < zhi)
+    rr = r_c[sel]
+    print(f"{label}: n={sel.sum()}, min r = {rr.min():.4f}, max r = {rr.max():.4f}")
+
+radial_extent(0.0275, 0.0295, "fin z-band (fin at 27-30 mm)   ")
+radial_extent(0.0315, 0.0345, "gap z-band (gap at 30-36 mm)   ")
+radial_extent(0.14, 0.16, "above barrel, dome region      ")
+radial_extent(-0.10, -0.05, "below cylinder (all air)       ")
+
+# any cells inside the solid cylinder solid region?
+inside_barrel = (r_c < 0.044) & (c[:,2] > 0.001) & (c[:,2] < 0.119)
+inside_fin    = (r_c < 0.069) & (r_c > 0.044)
+finz = np.zeros(len(c), bool)
+for i in range(12):
+    zl = z0_fin + i*0.009; zh = zl + 0.003
+    finz |= (c[:,2] > zl+2e-4) & (c[:,2] < zh-2e-4)
+inside_fin &= finz
+print("cell centres inside barrel solid:", inside_barrel.sum())
+print("cell centres inside fin solids:  ", inside_fin.sum())
+# -- output
+fin z-band (fin at 27-30 mm)   : n=1998, min r = 0.0020, max r = 0.0800
+gap z-band (gap at 30-36 mm)   : n=19248, min r = 0.0086, max r = 0.0918
+above barrel, dome region      : n=4144, min r = 0.0232, max r = 0.2051
+below cylinder (all air)       : n=4500, min r = 0.0071, max r = 0.2051
+cell centres inside barrel solid: 851
+cell centres inside fin solids:   0
+
+# -- cell 21 (0.5s, exit 0)
+pl = pv.Plotter(shape=(1,2), window_size=(1500,700))
+sl = internal.slice(normal=(0,0,1), origin=(0,0,0.0285))  # through a fin
+pl.subplot(0,0)
+pl.add_mesh(sl, show_edges=True, color="white", lighting=False)
+pl.view_vector((0,0,1), viewup=(0,1,0)); pl.add_title("z = 28.5 mm (through fin)")
+sl2 = internal.slice(normal=(0,0,1), origin=(0,0,0.033))  # through a gap
+pl.subplot(0,1)
+pl.add_mesh(sl2, show_edges=True, color="white", lighting=False)
+pl.view_vector((0,0,1), viewup=(0,1,0)); pl.add_title("z = 33 mm (through gap)")
+pl.show()
+# -- output
+[0m[33m2026-09-15 07:01:40.242 ( 467.815s) [    764AFD54F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 07:01:40.243 ( 467.815s) [    764AFD54F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 22 (7.3s, exit 0)
+# rigorous: cells with ALL points inside the solid regions (would prove a leak)
+pts = internal.points
+pr = np.hypot(pts[:,0], pts[:,1])
+
+# cell -> point connectivity
+conn = internal.cells  # vtk cell array for mixed types: [n, p0..pn-1, n, ...]
+types = internal.celltypes
+leak = 0
+off = 0
+for i in range(internal.n_cells):
+    n = conn[off]
+    ids = conn[off+1:off+1+n]
+    off += n+1
+    rr = pr[ids]; zz = pts[ids,2]
+    if (rr.max() < 0.044) and (zz.min() > 0.0005) and (zz.max() < 0.1195):
+        leak += 1
+print("cells fully inside barrel solid:", leak)
+
+# check boundary file patch types
+print(open("constant/polyMesh/boundary").read()[:600])
+# -- output
+cells fully inside barrel solid: 0
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    form
+
+# -- cell 23 (0.1s, exit 0)
+txt = open("constant/polyMesh/boundary").read()
+import re
+for m in re.finditer(r'(\w+)\s*\{\s*type\s+(\w+);\s*nFaces\s+(\d+);', txt):
+    print(m.group(1), "->", m.group(2), "nFaces:", m.group(3))
+# -- output
+inlet -> patch nFaces: 900
+outlet -> patch nFaces: 900
+
+# -- cell 24 (0.1s, exit 0)
+print(txt[txt.find("6\n"):])
+# -- output
+6
+(
+    inlet
+    {
+        type            patch;
+        nFaces          900;
+        startFace       1259780;
+    }
+    outlet
+    {
+        type            patch;
+        nFaces          900;
+        startFace       1260680;
+    }
+    walls
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          6840;
+        startFace       1261580;
+    }
+    barrel
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          15236;
+        startFace       1268420;
+    }
+    fins
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          147816;
+        startFace       1283656;
+    }
+    head
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          1756;
+        startFace       1431472;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 25 (2.3s, exit 0)
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.StlAPI import StlAPI_Writer
+from OCP.Message import Message_Gravity
+import os
+
+# Duct box faces, grouped as named patches
+duct_box = bd.Box(2*DUCT_HALF, 2*DUCT_HALF, Z_DUCT_HI-Z_DUCT_LO,
+                  align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN)).moved(bd.Pos(0,0,Z_DUCT_LO))
+inlet_faces, outlet_faces, wall_faces = [], [], []
+for f in duct_box.faces():
+    cz = f.center().Z
+    if abs(cz - Z_DUCT_LO) < 1e-9: inlet_faces.append(f)
+    elif abs(cz - Z_DUCT_HI) < 1e-9: outlet_faces.append(f)
+    else: wall_faces.append(f)
+
+patch_groups = {
+    "barrel": barrel_faces, "fins": fin_faces, "head": head_faces,
+    "inlet": inlet_faces, "outlet": outlet_faces, "walls": wall_faces,
+}
+
+# Mesh EVERYTHING together once so shared edges discretise identically
+all_faces = [f for fl in patch_groups.values() for f in fl]
+whole = bd.Compound(children=all_faces)
+BRepMesh_IncrementalMesh(whole.wrapped, 1e-4, False, 0.3, True).Perform()
+
+for name, fl in patch_groups.items():
+    comp = bd.Compound(children=fl)
+    w = StlAPI_Writer()
+    ok = w.Write(comp.wrapped, f"constant/triSurface/{name}.stl")
+    print(name, "faces:", len(fl), "written:", ok)
+print(os.listdir("constant/triSurface"))
+# -- output
+barrel faces: 14 written: True
+fins faces: 36 written: True
+head faces: 1 written: True
+inlet faces: 1 written: True
+outlet faces: 1 written: True
+walls faces: 4 written: True
+['inlet.stl', 'walls.stl', 'barrel.stl', 'outlet.stl', 'head.stl', 'fins.stl']
+
+# -- cell 26 (0.5s, exit 0)
+import pyvista as pv, numpy as np
+meshes = {}
+for name in patch_groups:
+    m = pv.read(f"constant/triSurface/{name}.stl")
+    meshes[name] = m
+    print(f"{name:8s} tris: {m.n_cells:6d}  pts: {m.n_points:6d}  bounds z: "
+          f"{m.bounds[4]:.3f}..{m.bounds[5]:.3f}")
+
+# weld all into one surface, count free edges
+import vtk
+app = vtk.vtkAppendFilter()
+for m in meshes.values():
+    app.AddInputData(m)
+app.Update()
+ug = app.GetOutput()
+gf = vtk.vtkGeometryFilter(); gf.SetInputData(ug); gf.Update()
+clean = vtk.vtkCleanPolyData(); clean.SetInputConnection(gf.GetOutputPort()); clean.Update()
+fe = vtk.vtkFeatureEdges()
+fe.SetInputData(clean.GetOutput())
+fe.BoundaryEdgesOn(); fe.FeatureEdgesOff(); fe.NonManifoldEdgesOff(); fe.ManifoldEdgesOff()
+fe.Update()
+print("welded points:", clean.GetOutput().GetNumberOfPoints())
+print("FREE EDGES of welded union:", fe.GetOutput().GetNumberOfCells())
+
+# also weld only the cylinder solid (barrel+fins+head)
+app2 = vtk.vtkAppendFilter()
+for n in ("barrel","fins","head"):
+    app2.AddInputData(meshes[n])
+app2.Update()
+gf2 = vtk.vtkGeometryFilter(); gf2.SetInputData(app2.GetOutput()); gf2.Update()
+cl2 = vtk.vtkCleanPolyData(); cl2.SetInputConnection(gf2.GetOutputPort()); cl2.Update()
+fe2 = vtk.vtkFeatureEdges(); fe2.SetInputData(cl2.GetOutput())
+fe2.BoundaryEdgesOn(); fe2.FeatureEdgesOff(); fe2.NonManifoldEdgesOff(); fe2.ManifoldEdgesOff()
+fe2.Update()
+print("cylinder-only union free edges:", fe2.GetOutput().GetNumberOfCells())
+# -- output
+barrel   tris:   3400  pts:   3276  bounds z: 0.000..0.120
+fins     tris:   9072  pts:   6048  bounds z: 0.009..0.111
+head     tris:   2348  pts:   1238  bounds z: 0.120..0.165
+inlet    tris:      2  pts:      4  bounds z: -0.150..-0.150
+outlet   tris:      2  pts:      4  bounds z: 0.420..0.420
+walls    tris:      8  pts:      8  bounds z: -0.150..0.420
+welded points: 7420
+FREE EDGES of welded union: 0
+cylinder-only union free edges: 0
+
+# -- cell 27 (114.6s, exit 0)
+txt = open("system/blockMeshDict").read()
+txt = txt.replace("convertToMeters 1;", "scale 1;")
+open("system/blockMeshDict","w").write(txt)
+print("blockMeshDict: scale keyword updated")
+
+r1 = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print("blockMesh rc:", r1.returncode)
+r2 = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print("snappyHexMesh rc:", r2.returncode)
+for line in r2.stdout.splitlines():
+    if "cells:" in line or "error" in line.lower() and "faces in error" in line:
+        pass
+print(r2.stdout[-600:])
+# -- output
+blockMeshDict: scale keyword updated
+blockMesh rc: 0
+snappyHexMesh rc: 0
+                    : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 90.29 s.
+End
+

@@ -1,0 +1,1228 @@
+# -- cell 1 (2.5s, exit 1)
+import os, numpy as np
+os.chdir("/home/qiuzi/.openreynolds-buildup/work/T14-20260915-063350-58f6/t14")
+from build123d import *
+
+# ---- parameters (metres) ----
+C_ROOT, C_TIP, SPAN = 0.120, 0.080, 0.200
+UP, DOWN, SIDE, TOP = 4*C_ROOT, 8*C_ROOT, 3*C_ROOT, 3*C_ROOT   # 0.48, 0.96, 0.36, 0.36
+XMIN, XMAX = -UP, C_ROOT + DOWN
+YMIN, YMAX, ZMAX = -SIDE, SIDE, TOP
+
+def naca2412(chord, n=200):
+    m, p, t = 0.02, 0.4, 0.12
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2          # cosine spacing, 0..1
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1036*x**4)
+    yc  = np.where(x < p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p) + 2*p*x - x**2))
+    dyc = np.where(x < p, 2*m/p**2*(p - x), 2*m/(1-p)**2*(p - x))
+    th = np.arctan(dyc)
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    # closed polygon: TE -> upper -> LE -> lower -> TE
+    xs = np.concatenate([xu[::-1], xl[1:]])
+    ys = np.concatenate([yu[::-1], yl[1:]])
+    return [(float(chord*X), float(chord*Y), 0.0) for X, Y in zip(xs, ys)]
+
+root_wire = Wire.make_polygon(naca2412(C_ROOT))
+tip_wire  = Pos(0, 0, SPAN) * Wire.make_polygon(naca2412(C_TIP))
+wing = loft([root_wire, tip_wire], ruled=True)
+wing = wing.clean()
+
+bb = wing.bounding_box()
+print("wing bbox:", bb.min, "->", bb.max)
+print("span  :", bb.max.Z - bb.min.Z, " (asked 0.200)")
+# measure chords by slicing
+for z, c_ask in [(0.001, C_ROOT), (SPAN-0.001, C_TIP)]:
+    sec = wing.section(z)
+    print(f"chord @z={z}: {sec.bounding_box().max.X - sec.bounding_box().min.X:.5f}  (asked ~{c_ask})")
+print("root max thickness fraction ~", max(p[1] for p in naca2412(C_ROOT))/C_ROOT - min(p[1] for p in naca2412(C_ROOT))/C_ROOT)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 27[39m
+[32m     23[39m     [38;5;28;01mreturn[39;00m [(float(chord*X), float(chord*Y), [32m0.0[39m) [38;5;28;01mfor[39;00m X, Y [38;5;28;01min[39;00m zip(xs, ys)]
+[32m     24[39m 
+[32m     25[39m root_wire = Wire.make_polygon(naca2412(C_ROOT))
+[32m     26[39m tip_wire  = Pos([32m0[39m, [32m0[39m, SPAN) * Wire.make_polygon(naca2412(C_TIP))
+[32m---> [39m[32m27[39m wing = loft([root_wire, tip_wire], ruled=[38;5;28;01mTrue[39;00m)
+[32m     28[39m wing = wing.clean()
+[32m     29[39m 
+[32m     30[39m bb = wing.bounding_box()
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    157[39m objs = [38;5;28mlist[39m(objs)  [38;5;66;03m# To determine its length[39;00m
+[32m    158[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(objs) < [32m2[39m:
+[32m--> [39m[32m159[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mMore than one wire is required[39m[33m"[39m)
+[32m    160[39m vertices = [obj [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m objs [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj.wrapped, TopoDS_Vertex)]
+[32m    161[39m vertex_count = [38;5;28mlen[39m(vertices)
+
+[31mValueError[39m: More than one wire is required
+
+# -- cell 2 (0.7s, exit 1)
+import inspect
+print(inspect.signature(loft))
+wing = Solid.make_loft([root_wire, tip_wire], ruled=True).clean()
+bb = wing.bounding_box()
+print("wing bbox:", bb.min, "->", bb.max)
+print("span:", bb.max.Z - bb.min.Z, "(asked 0.200)")
+for z, c_ask in [(0.001, C_ROOT), (SPAN-0.001, C_TIP)]:
+    sec = wing.section(z)
+    print(f"chord @z={z}: {sec.bounding_box().max.X - sec.bounding_box().min.X:.5f}  (asked ~{c_ask})")
+# -- output
+(sections: 'Face | Sketch | Iterable[Vertex | Face | Sketch] | None' = None, ruled: 'bool' = False, clean: 'bool' = True, mode: 'Mode' = <Mode.ADD>) -> 'Part'
+wing bbox: Vector: (X=-9e-06, Y=-0.005085, Z=0) -> Vector: (X=0.12, Y=0.009504, Z=0.2)
+span: 0.20000020000000002 (asked 0.200)
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 8[39m
+[32m      4[39m bb = wing.bounding_box()
+[32m      5[39m print([33m"wing bbox:"[39m, bb.min, [33m"->"[39m, bb.max)
+[32m      6[39m print([33m"span:"[39m, bb.max.Z - bb.min.Z, [33m"(asked 0.200)"[39m)
+[32m      7[39m [38;5;28;01mfor[39;00m z, c_ask [38;5;28;01min[39;00m [([32m0.001[39m, C_ROOT), (SPAN-[32m0.001[39m, C_TIP)]:
+[32m----> [39m[32m8[39m     sec = wing.section(z)
+[32m      9[39m     print(f"chord @z={z}: {sec.bounding_box().max.X - sec.bounding_box().min.X:.5f}  (asked ~{c_ask})")
+
+[31mAttributeError[39m: 'Solid' object has no attribute 'section'
+
+# -- cell 3 (1.4s, exit 1)
+for z, c_ask in [(0.0005, C_ROOT), (SPAN-0.0005, C_TIP)]:
+    slab = Pos(0, 0, z) * Box(1, 1, 0.0005)
+    sec = wing & slab
+    bbx = sec.bounding_box()
+    print(f"chord @z={z}: {bbx.max.X - bbx.min.X:.5f}  (asked ~{c_ask})")
+print("wing volume:", wing.volume)
+
+# quick look
+import matplotlib.pyplot as plt
+pts = naca2412(C_ROOT)
+fig, ax = plt.subplots(figsize=(8,3))
+ax.plot([p[0] for p in pts], [p[1] for p in pts], '-')
+ax.set_aspect('equal'); ax.set_title('NACA 2412 root section'); plt.show()
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 4[39m
+[32m      1[39m [38;5;28;01mfor[39;00m z, c_ask [38;5;28;01min[39;00m [([32m0.0005[39m, C_ROOT), (SPAN-[32m0.0005[39m, C_TIP)]:
+[32m      2[39m     slab = Pos([32m0[39m, [32m0[39m, z) * Box([32m1[39m, [32m1[39m, [32m0.0005[39m)
+[32m      3[39m     sec = wing & slab
+[32m----> [39m[32m4[39m     bbx = sec.bounding_box()
+[32m      5[39m     print(f"chord @z={z}: {bbx.max.X - bbx.min.X:.5f}  (asked ~{c_ask})")
+[32m      6[39m print([33m"wing volume:"[39m, wing.volume)
+[32m      7[39m 
+
+[31mAttributeError[39m: 'NoneType' object has no attribute 'bounding_box'
+
+# -- cell 4 (0.2s, exit 1)
+wingp = Part(wing)
+for z, c_ask in [(0.001, C_ROOT), (0.100, (C_ROOT+C_TIP)/2), (SPAN-0.001, C_TIP)]:
+    sec = wingp.section(z)
+    bbx = sec.bounding_box()
+    print(f"chord @z={z:6.3f}: {bbx.max.X - bbx.min.X:.5f}  (asked ~{c_ask:.3f})")
+print("wing volume:", wing.volume)
+
+import matplotlib.pyplot as plt
+pts = naca2412(C_ROOT)
+fig, ax = plt.subplots(figsize=(8,3))
+ax.plot([p[0] for p in pts], [p[1] for p in pts], '-')
+ax.set_aspect('equal'); ax.set_title('NACA 2412 root section'); plt.show()
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 1[39m
+[32m----> [39m[32m1[39m wingp = Part(wing)
+[32m      2[39m [38;5;28;01mfor[39;00m z, c_ask [38;5;28;01min[39;00m [([32m0.001[39m, C_ROOT), ([32m0.100[39m, (C_ROOT+C_TIP)/[32m2[39m), (SPAN-[32m0.001[39m, C_TIP)]:
+[32m      3[39m     sec = wingp.section(z)
+[32m      4[39m     bbx = sec.bounding_box()
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/composite.py:165[39m, in [36mCompound.__init__[39m[34m(self, obj, label, color, material, joints, parent, children)[39m
+[32m    162[39m [38;5;28;01melse[39;00m:
+[32m    163[39m     topods_compound = obj
+[32m--> [39m[32m165[39m [30;43msuper[39;49m[30;43m([39;49m[30;43m)[39;49m[30;43m.[39;49m[30;43m__init__[39;49m[30;43m([39;49m
+[32m    166[39m [30;43m    [39;49m[30;43mobj[39;49m[30;43m=[39;49m[30;43mtopods_compound[39;49m[30;43m,[39;49m
+[32m    167[39m [30;43m    [39;49m[30;43mlabel[39;49m[30;43m=[39;49m[30;43mlabel[39;49m[30;43m,[39;49m
+[32m    168[39m [30;43m    [39;49m[30;43mcolor[39;49m[30;43m=[39;49m[30;43mcolor[39;49m[30;43m,[39;49m
+[32m    169[39m [30;43m    [39;49m[30;43mparent[39;49m[30;43m=[39;49m[30;43mparent[39;49m[30;43m,[39;49m
+[32m    170[39m [30;43m[39;49m[30;43m)[39;49m
+[32m    171[39m [38;5;28mself[39m.material = [33m"[39m[33m"[39m [38;5;28;01mif[39;00m material [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m material
+[32m    172[39m [38;5;28mself[39m.joints = {} [38;5;28;01mif[39;00m joints [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m joints
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:301[39m, in [36mShape.__init__[39m[34m(self, obj, label, color, parent)[39m
+[32m    293[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__init__[39m(
+[32m    294[39m     [38;5;28mself[39m,
+[32m    295[39m     obj: TopoDS_Shape | [38;5;28;01mNone[39;00m = [38;5;28;01mNone[39;00m,
+[32m   (...)[39m[32m    298[39m     parent: Compound | [38;5;28;01mNone[39;00m = [38;5;28;01mNone[39;00m,
+[32m    299[39m ):
+[32m    300[39m     [38;5;28mself[39m._wrapped: TOPODS | [38;5;28;01mNone[39;00m = (
+[32m--> [39m[32m301[39m         tcast(Optional[TOPODS], [30;43mdowncast[39;49m[30;43m([39;49m[30;43mobj[39;49m[30;43m)[39;49m) [38;5;28;01mif[39;00m obj [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m    302[39m     )
+[32m    303[39m     [38;5;28mself[39m.for_construction = [38;5;28;01mFalse[39;00m
+[32m    304[39m     [38;5;28mself[39m.label = label
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:3711[39m, in [36mdowncast[39m[34m(obj)[39m
+[32m   3701[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mdowncast[39m(obj: TopoDS_Shape) -> TopoDS_Shape:
+[32m   3702[39m [38;5;250m    [39m[33;03m"""Downcasts a TopoDS object to suitable specialized type[39;00m
+[32m   3703[39m 
+[32m   3704[39m [33;03m    Args:[39;00m
+[32m   (...)[39m[32m   3708[39m 
+[32m   3709[39m [33;03m    """[39;00m
+[32m-> [39m[32m3711[39m     f_downcast: Any = Shape.downcast_LUT[[30;43mshapetype[39;49m[30;43m([39;49m[30;43mobj[39;49m[30;43m)[39;49m]
+[32m   3712[39m     return_value = f_downcast(obj)
+[32m   3714[39m     [38;5;28;01mreturn[39;00m return_value
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:3781[39m, in [36mshapetype[39m[34m(obj)[39m
+[32m   3779[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mshapetype[39m(obj: TopoDS_Shape | [38;5;28;01mNone[39;00m) -> TopAbs_ShapeEnum:
+[32m   3780[39m [38;5;250m    [39m[33;03m"""Return TopoDS_Shape's TopAbs_ShapeEnum"""[39;00m
+[32m-> [39m[32m3781[39m     [38;5;28;01mif[39;00m obj [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;129;01mor[39;00m [30;43mobj[39;49m[30;43m.[39;49m[30;43mIsNull[39;49m():
+[32m   3782[39m         [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mNull TopoDS_Shape object[39m[33m"[39m)
+[32m   3784[39m     [38;5;28;01mreturn[39;00m obj.ShapeType()
+
+[31mAttributeError[39m: 'Solid' object has no attribute 'IsNull'
+
+# -- cell 5 (3.5s, exit 0)
+from build123d import Plane
+for z, c_ask in [(0.001, C_ROOT), (0.100, (C_ROOT+C_TIP)/2), (SPAN-0.001, C_TIP)]:
+    pln = Plane.XY.offset(z)
+    faces = wing.intersect(pln)   # cross-section faces/wires
+    print(type(faces), faces)
+    try:
+        bbx = faces.bounding_box()
+        print(f"chord @z={z:6.3f}: {bbx.max.X - bbx.min.X:.5f}  (asked ~{c_ask:.3f})")
+    except Exception as e:
+        print("  err", e)
+print("wing volume:", wing.volume)
+# -- output
+<class 'build123d.topology.shape_core.ShapeList'> [<build123d.topology.two_d.Face object at 0x765c34155a90>]
+  err 'ShapeList' object has no attribute 'bounding_box'
+<class 'build123d.topology.shape_core.ShapeList'> [<build123d.topology.two_d.Face object at 0x765c3f85a9e0>]
+  err 'ShapeList' object has no attribute 'bounding_box'
+<class 'build123d.topology.shape_core.ShapeList'> [<build123d.topology.two_d.Face object at 0x765c3f39e7b0>]
+  err 'ShapeList' object has no attribute 'bounding_box'
+wing volume: 0.0001657286933026807
+
+# -- cell 6 (4.1s, exit 0)
+import os, numpy as np
+os.chdir("/home/qiuzi/.openreynolds-buildup/work/T14-20260915-063350-58f6/t14")
+from build123d import *
+
+# ---- parameters (metres) ----
+C_ROOT, C_TIP, SPAN = 0.120, 0.080, 0.200
+UP, DOWN, SIDE, TOP = 4*C_ROOT, 8*C_ROOT, 3*C_ROOT, 3*C_ROOT   # 0.48, 0.96, 0.36, 0.36
+XMIN, XMAX = -UP, C_ROOT + DOWN
+YMIN, YMAX, ZMAX = -SIDE, SIDE, TOP
+
+def naca2412(chord, n=200):
+    m, p, t = 0.02, 0.4, 0.12
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2          # cosine spacing, 0..1
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1036*x**4)
+    yc  = np.where(x < p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p) + 2*p*x - x**2))
+    dyc = np.where(x < p, 2*m/p**2*(p - x), 2*m/(1-p)**2*(p - x))
+    th = np.arctan(dyc)
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    xs = np.concatenate([xu[::-1], xl[1:]])                  # TE->upper->LE->lower->TE
+    ys = np.concatenate([yu[::-1], yl[1:]])
+    return [(float(chord*X), float(chord*Y), 0.0) for X, Y in zip(xs, ys)]
+
+root_wire = Wire.make_polygon(naca2412(C_ROOT))
+tip_wire  = Pos(0, 0, SPAN) * Wire.make_polygon(naca2412(C_TIP))
+wing = Solid.make_loft([root_wire, tip_wire], ruled=True).clean()
+
+# ---- measure against the request ----
+bb = wing.bounding_box()
+print("wing bbox:", bb.min, "->", bb.max)
+print("span:", bb.max.Z - bb.min.Z, "(asked 0.200)")
+for z, c_ask in [(0.001, C_ROOT), (0.100, (C_ROOT+C_TIP)/2), (SPAN-0.001, C_TIP)]:
+    f = wing.intersect(Plane.XY.offset(z))[0]
+    fbb = f.bounding_box()
+    print(f"chord @z={z:6.3f}: {fbb.max.X - fbb.min.X:.5f}  (asked ~{c_ask:.3f})  xLE={fbb.min.X:.6f}")
+print("wing volume:", wing.volume)
+
+import matplotlib.pyplot as plt
+pts = naca2412(C_ROOT)
+fig, ax = plt.subplots(figsize=(8,3))
+ax.plot([p[0] for p in pts], [p[1] for p in pts], '-')
+ax.set_aspect('equal'); ax.set_title('NACA 2412 root section (m)'); plt.show()
+# -- output
+wing bbox: Vector: (X=-9e-06, Y=-0.005085, Z=0) -> Vector: (X=0.12, Y=0.009504, Z=0.2)
+span: 0.20000020000000002 (asked 0.200)
+chord @z= 0.001: 0.11978  (asked ~0.120)  xLE=-0.000009
+chord @z= 0.100: 0.09998  (asked ~0.100)  xLE=-0.000008
+chord @z= 0.199: 0.08019  (asked ~0.080)  xLE=-0.000006
+wing volume: 0.0001657286933026807
+
+# -- cell 7 (4.2s, exit 0)
+import os, numpy as np
+os.chdir("/home/qiuzi/.openreynolds-buildup/work/T14-20260915-063350-58f6/t14")
+from build123d import *
+from build123d import Plane
+
+# ---- parameters (metres) ----
+C_ROOT, C_TIP, SPAN = 0.120, 0.080, 0.200
+UP, DOWN, SIDE, TOP = 4*C_ROOT, 8*C_ROOT, 3*C_ROOT, 3*C_ROOT   # 0.48, 0.96, 0.36, 0.36
+XMIN, XMAX = -UP, C_ROOT + DOWN
+YMIN, YMAX, ZMAX = -SIDE, SIDE, TOP
+
+def naca2412(chord, n=200):
+    m, p, t = 0.02, 0.4, 0.12
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2          # cosine spacing, 0..1
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1036*x**4)
+    yc  = np.where(x < p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p) + 2*p*x - x**2))
+    dyc = np.where(x < p, 2*m/p**2*(p - x), 2*m/(1-p)**2*(p - x))
+    th = np.arctan(dyc)
+    xu, yu = x - yt*np.sin(th), yc + yt*np.cos(th)
+    xl, yl = x + yt*np.sin(th), yc - yt*np.cos(th)
+    xs = np.concatenate([xu[::-1], xl[1:]])                  # TE->upper->LE->lower->TE
+    ys = np.concatenate([yu[::-1], yl[1:]])
+    return [(float(chord*X), float(chord*Y), 0.0) for X, Y in zip(xs, ys)]
+
+root_wire = Wire.make_polygon(naca2412(C_ROOT))
+tip_wire  = Pos(0, 0, SPAN) * Wire.make_polygon(naca2412(C_TIP))
+wing = Solid.make_loft([root_wire, tip_wire], ruled=True).clean()
+
+# ---- measure against the request ----
+bb = wing.bounding_box()
+print("wing bbox:", bb.min, "->", bb.max)
+print("span:", bb.max.Z - bb.min.Z, "(asked 0.200)")
+for z, c_ask in [(0.001, C_ROOT), (0.100, (C_ROOT+C_TIP)/2), (SPAN-0.001, C_TIP)]:
+    f = wing.intersect(Plane.XY.offset(z))[0]
+    fbb = f.bounding_box()
+    print(f"chord @z={z:6.3f}: {fbb.max.X - fbb.min.X:.5f}  (asked ~{c_ask:.3f})  xLE={fbb.min.X:.6f}")
+print("wing volume:", wing.volume)
+
+import matplotlib.pyplot as plt
+pts = naca2412(C_ROOT)
+fig, ax = plt.subplots(figsize=(8,3))
+ax.plot([p[0] for p in pts], [p[1] for p in pts], '-')
+ax.set_aspect('equal'); ax.set_title('NACA 2412 root section (m)'); plt.show()
+# -- output
+wing bbox: Vector: (X=-9e-06, Y=-0.005085, Z=0) -> Vector: (X=0.12, Y=0.009504, Z=0.2)
+span: 0.20000020000000002 (asked 0.200)
+chord @z= 0.001: 0.11978  (asked ~0.120)  xLE=-0.000009
+chord @z= 0.100: 0.09998  (asked ~0.100)  xLE=-0.000008
+chord @z= 0.199: 0.08019  (asked ~0.080)  xLE=-0.000006
+wing volume: 0.0001657286933026807
+
+# -- cell 8 (1.3s, exit 1)
+# ---- fluid volume = box minus wing ----
+box = Pos((XMIN+XMAX)/2, (YMIN+YMAX)/2, ZMAX/2) * Box(XMAX-XMIN, YMAX-YMIN, ZMAX)
+air = (box - wing).clean()
+print("air solids:", len(air.solids()), " air volume:", air.volume(),
+      " box-wing:", (XMAX-XMIN)*(YMAX-YMIN)*ZMAX - wing.volume)
+
+# ---- patch face groups ----
+faces = air.faces()
+wall_f     = faces.filter_by(Axis.Z, reverse=False)   # will refine below
+def f_at(axis, val):
+    return [f for f in faces if abs(f.center() @ axis.direction - val) < 1e-9
+            and f.normal_at() @ axis.direction != 0 and GeomType.PLANE == f.geom_type]
+
+wall    = [f for f in faces if f.geom_type == GeomType.PLANE and abs(f.center().Z - 0.0)  < 1e-9 and abs(f.normal_at().Z + 1) < 1e-6]
+inlet   = [f for f in faces if f.geom_type == GeomType.PLANE and abs(f.center().X - XMIN) < 1e-9]
+outlet  = [f for f in faces if f.geom_type == GeomType.PLANE and abs(f.center().X - XMAX) < 1e-9]
+farfield= [f for f in faces if f.geom_type == GeomType.PLANE and
+           (abs(abs(f.center().Y) - SIDE) < 1e-9 or abs(f.center().Z - ZMAX) < 1e-9)]
+patch_faces = wall + inlet + outlet + farfield
+wing_f  = [f for f in faces if all(f not in g for g in [wall, inlet, outlet, farfield])]
+print("counts  wing:", len(wing_f), " wall:", len(wall), " inlet:", len(inlet),
+      " outlet:", len(outlet), " farfield:", len(farfield), " total:", len(faces))
+for name, grp in [("wall", wall), ("inlet", inlet), ("outlet", outlet), ("farfield", farfield), ("wing", wing_f)]:
+    print(name, "area:", sum(f.area for f in grp))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[8][39m[32m, line 4[39m
+[32m      1[39m [38;5;66;03m# ---- fluid volume = box minus wing ----[39;00m
+[32m      2[39m box = Pos((XMIN+XMAX)/[32m2[39m, (YMIN+YMAX)/[32m2[39m, ZMAX/[32m2[39m) * Box(XMAX-XMIN, YMAX-YMIN, ZMAX)
+[32m      3[39m air = (box - wing).clean()
+[32m----> [39m[32m4[39m print("air solids:", len(air.solids()), " air volume:", air.volume(),
+[32m      5[39m       [33m" box-wing:"[39m, (XMAX-XMIN)*(YMAX-YMIN)*ZMAX - wing.volume)
+[32m      6[39m 
+[32m      7[39m [38;5;66;03m# ---- patch face groups ----[39;00m
+
+[31mTypeError[39m: 'float' object is not callable
+
+# -- cell 9 (0.1s, exit 0)
+print(type(air))
+print("solids attr:", type(getattr(type(air), "solids", None)))
+print("volume attr:", type(getattr(type(air), "volume", None)))
+import inspect
+print("solids sig:", inspect.signature(getattr(air, "solids")) if callable(getattr(air, "solids", None)) else getattr(air, "solids", None))
+# -- output
+<class 'build123d.topology.composite.Part'>
+solids attr: <class 'function'>
+volume attr: <class 'property'>
+solids sig: () -> 'ShapeList[Solid]'
+
+# -- cell 10 (1.4s, exit 0)
+# ---- fluid volume = box minus wing ----
+box = Pos((XMIN+XMAX)/2, (YMIN+YMAX)/2, ZMAX/2) * Box(XMAX-XMIN, YMAX-YMIN, ZMAX)
+air = (box - wing).clean()
+print("air solids:", len(air.solids()), " air volume:", air.volume,
+      " box-wing:", (XMAX-XMIN)*(YMAX-YMIN)*ZMAX - wing.volume)
+
+# ---- patch face groups (planar domain faces by their plane; wing = the rest) ----
+faces = air.faces()
+wall     = [f for f in faces if f.geom_type == GeomType.PLANE and abs(f.center().Z)      < 1e-9 and f.normal_at().Z < -0.9]
+inlet    = [f for f in faces if f.geom_type == GeomType.PLANE and abs(f.center().X - XMIN) < 1e-9]
+outlet   = [f for f in faces if f.geom_type == GeomType.PLANE and abs(f.center().X - XMAX) < 1e-9]
+farfield = [f for f in faces if f.geom_type == GeomType.PLANE and
+            (abs(abs(f.center().Y) - SIDE) < 1e-9 or abs(f.center().Z - ZMAX) < 1e-9)]
+wing_f   = [f for f in faces if f not in wall + inlet + outlet + farfield]
+print("counts  wing:", len(wing_f), " wall:", len(wall), " inlet:", len(inlet),
+      " outlet:", len(outlet), " farfield:", len(farfield), " total:", len(faces))
+for name, grp in [("wing", wing_f), ("wall", wall), ("inlet", inlet), ("outlet", outlet), ("farfield", farfield)]:
+    print(f"{name:8s} area: {sum(f.area for f in grp):.5f}")
+# -- output
+air solids: 1  air volume: 0.40418627130669726  box-wing: 0.4041862713066973
+counts  wing: 399  wall: 1  inlet: 1  outlet: 1  farfield: 3  total: 405
+wing     area: 0.04136
+wall     area: 1.12202
+inlet    area: 0.25920
+outlet   area: 0.25920
+farfield area: 2.24640
+
+# -- cell 11 (0.4s, exit 0)
+import subprocess
+os.makedirs("constant/triSurface", exist_ok=True)
+
+groups = {"wing": wing_f, "wall": wall, "inlet": inlet, "outlet": outlet, "farfield": farfield}
+for name, grp in groups.items():
+    shp = grp[0] if len(grp) == 1 else Compound(children=grp)
+    export_stl(shp, f"constant/triSurface/{name}.stl", tolerance=1e-4, angular_tolerance=0.25)
+print(subprocess.run(["ls", "-la", "constant/triSurface"], capture_output=True, text=True).stdout)
+
+# free-edge check on the welded union of the five STLs
+import pyvista as pv
+meshes = {n: pv.read(f"constant/triSurface/{n}.stl") for n in groups}
+for n, m in meshes.items():
+    print(n, "tris:", m.n_cells, "pts:", m.n_points)
+union = meshes["wing"]
+for n in ["wall", "inlet", "outlet", "farfield"]:
+    union = union.merge(meshes[n], merge_points=True, tolerance=1e-6)
+fe = union.extract_feature_edges(boundary_edges=True, feature_edges=False,
+                                 manifold_edges=False, non_manifold_edges=False)
+print("union pts:", union.n_points, " free/boundary edges:", fe.n_cells)
+# -- output
+total 324
+drwxrwxr-x 2 qiuzi qiuzi   4096 Sep 15 06:41 .
+drwxrwxr-x 3 qiuzi qiuzi   4096 Sep 15 06:41 ..
+-rw-rw-r-- 1 qiuzi qiuzi    384 Sep 15 06:41 farfield.stl
+-rw-rw-r-- 1 qiuzi qiuzi    184 Sep 15 06:41 inlet.stl
+-rw-rw-r-- 1 qiuzi qiuzi    184 Sep 15 06:41 outlet.stl
+-rw-rw-r-- 1 qiuzi qiuzi  20184 Sep 15 06:41 wall.stl
+-rw-rw-r-- 1 qiuzi qiuzi 288184 Sep 15 06:41 wing.stl
+
+wing tris: 5762 pts: 3081
+wall tris: 402 pts: 402
+inlet tris: 2 pts: 4
+outlet tris: 2 pts: 4
+farfield tris: 6 pts: 8
+union pts: 3089  free/boundary edges: 0
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+
+# -- cell 12 (0.6s, exit 0)
+import pyvista as pv
+pv.OFF_SCREEN = True
+pl = pv.Plotter()
+pl.add_mesh(meshes["wing"], color="tan", show_edges=False)
+pl.add_mesh(meshes["wall"], color="grey", opacity=0.6, show_edges=True)
+pl.add_mesh(meshes["inlet"], color="blue", opacity=0.4)
+pl.add_mesh(meshes["outlet"], color="red", opacity=0.4)
+pl.add_mesh(meshes["farfield"], color="lightblue", opacity=0.3, show_edges=True)
+pl.add_axes(); pl.view_isometric()
+pl.show(screenshot="geometry_overview.png")
+print("saved")
+# -- output
+saved
+
+[0m[33m2026-09-15 06:42:05.113 (  38.578s) [    765D29013780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-15 06:42:05.114 (  38.578s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:42:05.127 (  38.592s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_557480/489623042.py:10: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot="geometry_overview.png")
+
+# -- cell 13 (0.1s, exit 0)
+import os
+os.makedirs("system", exist_ok=True)
+
+header = """/*--------------------------------*- C++ -*----------------------------------*\\
+| =========                 |                                                 |
+| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\\\    /   O peration     | Version:  2512                                  |
+|   \\\\  /    A nd           |                                                 |
+|    \\\\/     M anipulation  |                                                 |
+\\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       %s;
+    object      %s;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+"""
+
+nx, ny, nz = 78, 36, 18   # ~0.02 m background cells (coarse first)
+
+blockmesh = header % ("dictionary", "blockMeshDict") + f"""
+scale 1;
+
+vertices
+(
+    ({XMIN} {YMIN} 0)
+    ({XMAX} {YMIN} 0)
+    ({XMAX} {YMAX} 0)
+    ({XMIN} {YMAX} 0)
+    ({XMIN} {YMIN} {ZMAX})
+    ({XMAX} {YMIN} {ZMAX})
+    ({XMAX} {YMAX} {ZMAX})
+    ({XMIN} {YMAX} {ZMAX})
+);
+
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1)
+);
+
+boundary
+(
+    inlet
+    {{
+        type patch;
+        faces ( (0 4 7 3) );
+    }}
+    outlet
+    {{
+        type patch;
+        faces ( (1 2 6 5) );
+    }}
+    farfield
+    {{
+        type patch;
+        faces ( (0 1 5 4) (3 7 6 2) (4 5 6 7) );
+    }}
+    wall
+    {{
+        type wall;
+        faces ( (0 3 2 1) );
+    }}
+);
+"""
+open("system/blockMeshDict", "w").write(blockmesh)
+
+snappy = header % ("dictionary", "snappyHexMeshDict") + """
+castellatedMesh true;
+snap            true;
+addLayers       false;
+
+geometry
+{
+    wing { type triSurfaceMesh; file "wing.stl"; }
+}
+
+castellatedMeshControls
+{
+    maxLocalCells 1000000;
+    maxGlobalCells 2000000;
+    minRefinementCells 10;
+    maxLoadUnbalance 0.10;
+    nCellsBetweenLevels 2;
+    features
+    (
+        { file "wing.eMesh"; level 2; }
+    );
+    refinementSurfaces
+    {
+        wing { level (2 3); patchInfo { type wall; } }
+    }
+    resolveFeatureAngle 30;
+    refinementRegions {}
+    locationInMesh (-0.3 0.0 0.18);
+    allowFreeStandingZoneFaces true;
+}
+
+snapControls
+{
+    nSmoothPatch 3;
+    tolerance 2.0;
+    nSolveIter 100;
+    nRelaxIter 5;
+    nFeatureSnapIter 10;
+    implicitFeatureSnap false;
+    explicitFeatureSnap true;
+    multiRegionFeatureSnap false;
+}
+
+addLayersControls
+{
+    relativeSizes true;
+    layers {}
+    expansionRatio 1.0;
+    finalLayerThickness 0.3;
+    minThickness 0.1;
+    nGrow 0;
+    featureAngle 60;
+    slipFeatureAngle 30;
+    nRelaxIter 3;
+    nSmoothSurfaceNormals 1;
+    nSmoothNormals 3;
+    nSmoothThickness 10;
+    maxFaceThicknessRatio 0.5;
+    maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle 90;
+    nBufferCellsNoExtrude 0;
+    nLayerIter 50;
+}
+
+meshQualityControls
+{
+    maxNonOrtho 65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave 80;
+    minVol 1e-13;
+    minTetQuality 1e-15;
+    minArea -1;
+    minTwist 0.02;
+    minDeterminant 0.001;
+    minFaceWeight 0.05;
+    minVolRatio 0.01;
+    minTriangleTwist -1;
+    nSmoothScale 4;
+    errorReduction 0.75;
+}
+
+mergeTolerance 1e-6;
+"""
+open("system/snappyHexMeshDict", "w").write(snappy)
+
+sfe = header % ("dictionary", "surfaceFeatureExtractDict") + """
+wing.stl
+{
+    extractionMethod    extractFromSurface;
+    includedAngle       150;
+    subsetFeatures { nonManifoldEdges no; openEdges yes; }
+    writeObj            yes;
+}
+"""
+open("system/surfaceFeatureExtractDict", "w").write(sfe)
+
+control = header % ("dictionary", "controlDict") + """
+application     snappyHexMesh;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         1;
+deltaT          1;
+writeControl    timeStep;
+writeInterval   1;
+purgeWrite      0;
+writeFormat     ascii;
+writePrecision  6;
+writeCompression off;
+timeFormat      general;
+timePrecision   6;
+runTimeModifiable true;
+"""
+open("system/controlDict", "w").write(control)
+
+fvs = header % ("dictionary", "fvSchemes") + """
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+"""
+open("system/fvSchemes", "w").write(fvs)
+
+fvso = header % ("dictionary", "fvSolution") + """
+solvers {}
+relaxationFactors {}
+"""
+open("system/fvSolution", "w").write(fvso)
+print("case files written:", os.listdir("system"))
+# -- output
+case files written: ['controlDict', 'surfaceFeatureExtractDict', 'fvSolution', 'fvSchemes', 'blockMeshDict', 'snappyHexMeshDict']
+
+# -- cell 14 (0.6s, exit 0)
+import subprocess
+for cmd in [["blockMesh"], ["surfaceFeatureExtract"]]:
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    print(cmd[0], "rc=", r.returncode)
+    print(r.stdout[-400:], r.stderr[-400:])
+# -- output
+blockMesh rc= 0
+sh Information
+----------------
+  boundingBox: (-0.48 -0.36 0) (1.08 0.36 0.36)
+  nPoints: 55537
+  nCells: 50544
+  nFaces: 156492
+  nInternalFaces: 146772
+----------------
+Patches
+----------------
+  patch 0 (start: 146772 size: 648) name: inlet
+  patch 1 (start: 147420 size: 648) name: outlet
+  patch 2 (start: 148068 size: 5616) name: farfield
+  patch 3 (start: 153684 size: 2808) name: wall
+
+End
+
+ 
+surfaceFeatureExtract rc= 0
+50-58f6/t14/constant/extendedFeatureEdgeMesh/wing_regionEdges.obj"
+Writing 797 edge directions to "/home/qiuzi/.openreynolds-buildup/work/T14-20260915-063350-58f6/t14/constant/extendedFeatureEdgeMesh/wing_edgeDirections.obj"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T14-20260915-063350-58f6/t14/constant/triSurface/wing.eMesh"
+ExecutionTime = 0.02 s  ClockTime = 0 s
+
+End
+
+# -- cell 15 (19.2s, exit 0)
+r = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True, timeout=220)
+print("rc=", r.returncode)
+print(r.stdout[-1500:])
+print(r.stderr[-800:])
+# -- output
+rc= 0
+--------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:70480  faces:223817  points:83202
+Cells per refinement level:
+    0	50188
+    1	1768
+    2	5657
+    3	12867
+Writing mesh to time constant
+Wrote mesh in = 0.17 s.
+Mesh snapped in = 8.42 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 14.03 s.
+End
+
+# -- cell 16 (0.6s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r.stdout[-1800:])
+print(r.stderr[-300:])
+# -- output
+inition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      648      703  ok (non-closed singly connected)
+                  outlet      648      703  ok (non-closed singly connected)
+                farfield     5616     5767  ok (non-closed singly connected)
+                    wall     3155     3362  ok (non-closed singly connected)
+                    wing     5839     6043  ok (non-closed singly connected)
+                    ".*"    15906    16123      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.48 -0.36 0) (1.08 0.36 0.360003)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (3.37196e-16 7.84289e-17 -1.13934e-14) OK.
+    Max cell openness = 2.70999e-16 OK.
+    Max aspect ratio = 4.62481 OK.
+    Minimum face area = 1.87795e-06. Maximum face area = 0.000407664.  Face area magnitudes OK.
+    Min volume = 2.34509e-09. Max volume = 8.12543e-06.  Total volume = 0.404187.  Cell volumes OK.
+    Mesh non-orthogonality Max: 49.137 average: 6.76276
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.60268 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 17 (0.3s, exit 0)
+open("t14.foam", "w").write("")
+import pyvista as pv
+reader = pv.POpenFOAMReader("t14.foam")
+reader.enable_all_patch_arrays()
+reader.cell_to_point_creation = False
+mesh = reader.read()
+grid = mesh["internalMesh"]
+print("blocks:", list(mesh.keys()))
+wing_b = mesh["boundary"]["wing"]
+wall_b = mesh["boundary"]["wall"]
+
+sl = grid.slice(normal=(0,1,0), origin=(0,0,0.1))
+pl = pv.Plotter()
+pl.add_mesh(sl, show_edges=True, color="white", lighting=False)
+pl.add_mesh(wing_b, color="tan")
+pl.add_mesh(wall_b, color="grey", opacity=0.5)
+pl.view_isometric(); pl.add_axes()
+pl.show(screenshot="mesh_slice.png")
+print("wing patch cells:", wing_b.n_cells, " bbox:", wing_b.bounds)
+# -- output
+blocks: ['internalMesh', 'boundary']
+wing patch cells: 5839  bbox: BoundsTuple(x_min = -3.862569883494871e-06,
+            x_max =  0.11999999731779099,
+            y_min = -0.005081240087747574,
+            y_max =  0.00950354989618063,
+            z_min =  0.0,
+            z_max =  0.20007100701332092)
+
+[0m[33m2026-09-15 06:44:15.540 ( 169.005s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:44:15.541 ( 169.006s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_557480/67807954.py:18: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot="mesh_slice.png")
+
+# -- cell 18 (0.6s, exit 0)
+slz = grid.slice(normal=(0,0,1), origin=(0,0,0.05))
+clip = slz.clip_box(pv.Box([-0.15, 0.25, -0.12, 0.12, -0.01, 0.11]))
+pl = pv.Plotter()
+pl.add_mesh(clip, show_edges=True, color="white", lighting=False)
+pl.add_mesh(wing_b.clip_box(pv.Box([-0.15, 0.25, -0.12, 0.12, -0.01, 0.11])), color="tan", opacity=0.9)
+pl.view_xy(); pl.add_axes()
+pl.show(screenshot="mesh_wing_zoom.png")
+print("ok")
+# -- output
+ok
+
+[0m[33m2026-09-15 06:44:38.794 ( 192.259s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:44:38.795 ( 192.260s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_557480/1753563791.py:7: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot="mesh_wing_zoom.png")
+
+# -- cell 19 (0.3s, exit 0)
+slz = grid.slice(normal=(0,0,1), origin=(0,0,0.053))
+clip = slz.clip_box(pv.Box([-0.1, 0.2, -0.08, 0.08, -0.01, 0.11]))
+pl = pv.Plotter()
+pl.add_mesh(clip, show_edges=True, color="white", lighting=False)
+pl.view_xy(); pl.camera.zoom(1.6)
+pl.show(screenshot="mesh_wing_zoom2.png")
+print("ok")
+# -- output
+ok
+
+[0m[33m2026-09-15 06:45:05.901 ( 219.366s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:45:05.903 ( 219.367s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_557480/3217158248.py:6: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot="mesh_wing_zoom2.png")
+
+# -- cell 20 (0.4s, exit 0)
+import numpy as np
+c = grid.cell_centers().points
+sel = np.where((np.abs(c[:,2]-0.05) < 0.004) & (np.abs(c[:,1]) < 0.09) & (c[:,0] > -0.12) & (c[:,0] < 0.25))[0]
+band = grid.extract_cells(sel)
+surf = band.extract_surface()
+pl = pv.Plotter()
+pl.add_mesh(surf, show_edges=True, color="white", lighting=False, edge_color="black", line_width=0.3)
+pl.add_mesh(wing_b.clip_box(pv.Box([-0.12,0.25,-0.09,0.09,-0.01,0.11])), color="tan")
+pl.view_xy(); pl.camera.zoom(1.4)
+pl.show(screenshot="mesh_wing_zoom3.png")
+print("cells in band:", band.n_cells)
+# -- output
+cells in band: 1059
+
+/tmp/ipykernel_557480/1120274141.py:5: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  surf = band.extract_surface()
+[0m[33m2026-09-15 06:45:38.788 ( 252.252s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:45:38.789 ( 252.253s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_557480/1120274141.py:10: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot="mesh_wing_zoom3.png")
+
+# -- cell 21 (3.0s, exit 0)
+snappy = open("system/snappyHexMeshDict").read()
+snappy = snappy.replace("maxGlobalCells 2000000;", "maxGlobalCells 8000000;")
+snappy = snappy.replace('{ file "wing.eMesh"; level 2; }', '{ file "wing.eMesh"; level 3; }')
+snappy = snappy.replace("wing { level (2 3); patchInfo { type wall; } }",
+                        "wing { level (3 4); patchInfo { type wall; } }")
+snappy = snappy.replace("""geometry
+{
+    wing { type triSurfaceMesh; file "wing.stl"; }
+}""",
+"""geometry
+{
+    wing { type triSurfaceMesh; file "wing.stl"; }
+    wake { type searchableBox; min (0.05 -0.05 0.0); max (0.85 0.05 0.23); }
+}""")
+snappy = snappy.replace("refinementRegions {}",
+"""refinementRegions
+    {
+        wake { mode inside; levels ((1e15 2)); }
+    }""")
+open("system/snappyHexMeshDict", "w").write(snappy)
+print("dict updated")
+
+import subprocess
+r = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True, timeout=230)
+print("rc=", r.returncode)
+tail = r.stdout
+import re
+m = re.findall(r"Snapped mesh : cells:(\d+)", tail)
+print("snapped cells:", m)
+print(tail[-600:])
+# -- output
+dict updated
+rc= -6
+snapped cells: []
+FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+
+# -- cell 22 (2.5s, exit 0)
+r = subprocess.run("snappyHexMesh -overwrite > log.snappy 2>&1; echo rc=$?", shell=True, capture_output=True, text=True)
+print(r.stdout)
+log = open("log.snappy").read()
+import re
+i = log.find("FOAM FATAL")
+print(log[max(0,i-2000):i+1500] if i>=0 else log[-3000:])
+# -- output
+rc=134
+
+g.eMesh" (796 points, 797 edges).
+    level 3 for all cells within 0 metre.
+Read features in = 0 s
+
+
+Determining initial surface intersections
+-----------------------------------------
+
+Edge intersection testing:
+    Number of edges             : 223817
+    Number of edges to retest   : 0
+    Number of intersected edges : 0
+Edge intersection testing:
+    Number of edges             : 223817
+    Number of edges to retest   : 223817
+    Number of intersected edges : 5806
+Calculated surface intersections in = 0.24 s
+
+Initial mesh : cells:70480  faces:223817  points:83202
+Cells per refinement level:
+    0	50188
+    1	1768
+    2	5657
+    3	12867
+Setting refinement level of surface to be consistent with curvature.
+Checked curvature refinement in = 0 s
+
+
+Adding patches for surface regions
+----------------------------------
+
+Patch Type                Region                        
+----- ----                ------                        
+wing:
+
+4     wall                wing                          
+
+Added patches in = 0 s
+
+Edge intersection testing:
+    Number of edges             : 223817
+    Number of edges to retest   : 5839
+    Number of intersected edges : 5839
+Decomposition method none [1]
+
+Refinement phase
+----------------
+
+Found point (-0.3 0 0.18) in cell 23832 on processor 0
+
+Feature refinement iteration 0
+------------------------------
+
+Marked for refinement due to explicit features             : 0 cells.
+Determined cells to refine in = 0.33 s
+Selected for feature refinement : 0 cells (out of 70480)
+Stopping refining since too few cells selected.
+
+
+Surface refinement iteration 0
+------------------------------
+
+Marked for refinement due to surface intersection          : 265 cells.
+Marked for refinement due to curvature/regions             : 513 cells.
+Determined cells to refine in = 0.07 s
+Selected for refinement : 778 cells (out of 70480)
+hexRef8 : Dumping cell as obj to "/home/qiuzi/.openreynolds-buildup/work/T14-20260915-063350-58f6/t14/cell_50606.obj"
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cell 50606 of level 3 does not seem to have 8 points of equal or lower level
+cellPoints:6(27719 58705 59364 57470 57471 63103)
+pointLevels:6(0 3 3 3 3 3)
+
+
+    From Foam::labelListList Foam::hexRef8::setRefinement(const Foam::labelList&, Foam::polyTopoChange&)
+    in file polyTopoChange/polyTopoChange/hexRef8/hexRef8.C at line 3787.
+
+FOAM aborting
+
+[stack trace]
+=============
+#1  Foam::error::simpleExit(int, bool) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libOpenFOAM.so
+#2  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libdynamicMesh.so
+#3  Foam::hexRef8::setRefinement(Foam::List<int> const&, Foam::polyTopoChange&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libdynamicMesh.so
+#4  Foam::meshRefinement::refine(Foam::List<int> const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#5  Foam::meshRefinement::refineAndBalance(Foam::string const&, Foam::decompositionMethod&, Foam::fvMeshDistribute&, Foam::List<int> const&, double, int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#6  Foam::snappyRefineDriver::surfaceOnlyRefine(Foam::refinementParameters const&, int, int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#7  Foam::snappyRefineDriver::doRefine(Foam::dictionary const&, Foam::refinementParameters const&, Foam::snapParameters const&, bool,
+
+# -- cell 23 (63.2s, exit 0)
+r = subprocess.run("blockMesh > log.block 2>&1 && snappyHexMesh -overwrite > log.snappy 2>&1; echo rc=$?",
+                   shell=True, capture_output=True, text=True, timeout=230)
+print(r.stdout)
+log = open("log.snappy").read()
+import re
+print(re.findall(r"(?:Snapped|Layer) mesh : cells:\d+", log))
+print(log[-700:])
+# -- output
+rc=0
+
+['Snapped mesh : cells:250528']
+ = 29.84 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 45.3 s.
+End
+
+# -- cell 24 (1.6s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+out = r.stdout
+i = out.find("Checking patch topology")
+print(out[i:i+900])
+print(out[out.find("Checking geometry"):][-800:])
+# -- output
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      648      703  ok (non-closed singly connected)
+                  outlet      648      703  ok (non-closed singly connected)
+                farfield     5616     5767  ok (non-closed singly connected)
+                    wall     6606     6976  ok (non-closed singly connected)
+                    wing    13010    13519  ok (non-closed singly connected)
+                    ".*"    26528    27172      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+C
+Checking geometry...
+    Overall domain bounding box (-0.48 -0.36 0) (1.08 0.36 0.360001)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (6.59018e-17 1.30522e-16 -1.2363e-14) OK.
+    Max cell openness = 3.10069e-16 OK.
+    Max aspect ratio = 4.60209 OK.
+    Minimum face area = 4.3385e-07. Maximum face area = 0.000402651.  Face area magnitudes OK.
+    Min volume = 3.55155e-10. Max volume = 8.0532e-06.  Total volume = 0.404186.  Cell volumes OK.
+    Mesh non-orthogonality Max: 49.1169 average: 6.88855
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.03556 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 25 (1.7s, exit 1)
+import pyvista as pv, numpy as np
+reader = pv.POpenFOAMReader("t14.foam")
+reader.enable_all_patch_arrays()
+mesh = reader.read()
+grid = mesh["internalMesh"]
+wing_b = mesh["boundary"]["wing"]
+
+c = grid.cell_centers().points
+sel = np.where((np.abs(c[:,2]-0.05) < 0.004) & (np.abs(c[:,1]) < 0.09) & (c[:,0] > -0.12) & (c[:,0] < 0.25))[0]
+band = grid.extract_cells(sel)
+pl = pv.Plotter()
+pl.add_mesh(band.extract_surface(), show_edges=True, color="white", lighting=False,
+            edge_color="black", line_width=0.3, algorithm=None)
+pl.add_mesh(wing_b.clip_box(pv.Box([-0.12,0.25,-0.09,0.09,-0.01,0.11])), color="tan")
+pl.view_xy(); pl.camera.zoom(1.4)
+pl.show(screenshot="mesh_final_zoom.png")
+print("wing patch faces:", wing_b.n_cells, " z-range:", wing_b.bounds[4], wing_b.bounds[5])
+# -- output
+/tmp/ipykernel_557480/3366731780.py:12: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  pl.add_mesh(band.extract_surface(), show_edges=True, color="white", lighting=False,
+[0m[33m2026-09-15 06:48:35.446 ( 428.911s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:48:35.447 ( 428.911s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[25][39m[32m, line 12[39m
+[32m      8[39m c = grid.cell_centers().points
+[32m      9[39m sel = np.where((np.abs(c[:,[32m2[39m]-[32m0.05[39m) < [32m0.004[39m) & (np.abs(c[:,[32m1[39m]) < [32m0.09[39m) & (c[:,[32m0[39m] > -[32m0.12[39m) & (c[:,[32m0[39m] < [32m0.25[39m))[[32m0[39m]
+[32m     10[39m band = grid.extract_cells(sel)
+[32m     11[39m pl = pv.Plotter()
+[32m---> [39m[32m12[39m pl.add_mesh(band.extract_surface(), show_edges=True, color="white", lighting=False,
+[32m     13[39m             edge_color=[33m"black"[39m, line_width=[32m0.3[39m, algorithm=[38;5;28;01mNone[39;00m)
+[32m     14[39m pl.add_mesh(wing_b.clip_box(pv.Box([-[32m0.12[39m,[32m0.25[39m,-[32m0.09[39m,[32m0.09[39m,-[32m0.01[39m,[32m0.11[39m])), color=[33m"tan"[39m)
+[32m     15[39m pl.view_xy(); pl.camera.zoom([32m1.4[39m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243[39m, in [36m_deprecate_positional_args
+... 2896 characters cut ...
+ 3953[39m [30;43m    [39;49m[30;43mshow_scalar_bar[39;49m[30;43m=[39;49m[30;43mshow_scalar_bar[39;49m[30;43m,[39;49m
+[32m   3954[39m [30;43m    [39;49m[30;43mrender_points_as_spheres[39;49m[30;43m=[39;49m[30;43mrender_points_as_spheres[39;49m[30;43m,[39;49m
+[32m   3955[39m [30;43m    [39;49m[30;43mpoint_shape[39;49m[30;43m=[39;49m[30;43mpoint_shape[39;49m[30;43m,[39;49m
+[32m   3956[39m [30;43m    [39;49m[30;43msmooth_shading[39;49m[30;43m=[39;49m[30;43msmooth_shading[39;49m[30;43m,[39;49m
+[32m   3957[39m [30;43m    [39;49m[30;43mpbr[39;49m[30;43m=[39;49m[30;43mpbr[39;49m[30;43m,[39;49m
+[32m   3958[39m [30;43m    [39;49m[30;43mclim[39;49m[30;43m=[39;49m[30;43mclim[39;49m[30;43m,[39;49m
+[32m   3959[39m [30;43m    [39;49m[30;43mcmap[39;49m[30;43m=[39;49m[30;43mcmap[39;49m[30;43m,[39;49m
+[32m   3960[39m [30;43m    [39;49m[30;43mculling[39;49m[30;43m=[39;49m[30;43mculling[39;49m[30;43m,[39;49m
+[32m   3961[39m [30;43m    [39;49m[30;43mname[39;49m[30;43m=[39;49m[30;43mname[39;49m[30;43m,[39;49m
+[32m   3962[39m [30;43m    [39;49m[30;43mnan_color[39;49m[30;43m=[39;49m[30;43mnan_color[39;49m[30;43m,[39;49m
+[32m   3963[39m [30;43m    [39;49m[30;43mnan_opacity[39;49m[30;43m=[39;49m[30;43mnan_opacity[39;49m[30;43m,[39;49m
+[32m   3964[39m [30;43m    [39;49m[30;43mtexture[39;49m[30;43m=[39;49m[30;43mtexture[39;49m[30;43m,[39;49m
+[32m   3965[39m [30;43m    [39;49m[30;43mrgb[39;49m[30;43m=[39;49m[30;43mrgb[39;49m[30;43m,[39;49m
+[32m   3966[39m [30;43m    [39;49m[30;43mstyle[39;49m[30;43m=[39;49m[30;43mstyle[39;49m[30;43m,[39;49m
+[32m   3967[39m [30;43m    [39;49m[30;43mremove_existing_actor[39;49m[30;43m=[39;49m[30;43mremove_existing_actor[39;49m[30;43m,[39;49m
+[32m   3968[39m [30;43m    [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m,[39;49m
+[32m   3969[39m [30;43m[39;49m[30;43m)[39;49m
+[32m   3971[39m [38;5;28;01mif[39;00m show_vertices [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m:
+[32m   3972[39m     show_vertices = [38;5;28mself[39m._theme.show_vertices
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/_plotting.py:499[39m, in [36m_common_arg_parser[39m[34m(dataset, theme, n_colors, scalar_bar_args, split_sharp_edges, show_scalar_bar, render_points_as_spheres, point_shape, smooth_shading, pbr, clim, cmap, culling, name, nan_color, nan_opacity, texture, rgb, style, remove_existing_actor, **kwargs)[39m
+[32m    496[39m     msg = [33m'[39m[33m`scalar` is an invalid keyword argument. Perhaps you mean `scalars` with an s?[39m[33m'[39m
+[32m    497[39m     [38;5;28;01mraise[39;00m [38;5;167;01mTypeError[39;00m(msg)
+[32m--> [39m[32m499[39m [30;43massert_empty_kwargs[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m
+[32m    500[39m [38;5;28;01mreturn[39;00m (
+[32m    501[39m     scalar_bar_args,
+[32m    502[39m     split_sharp_edges,
+[32m   (...)[39m[32m    519[39m     vertex_opacity,
+[32m    520[39m )
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/misc.py:82[39m, in [36massert_empty_kwargs[39m[34m(**kwargs)[39m
+[32m     80[39m grammar = [33m'[39m[33mis an invalid keyword argument[39m[33m'[39m [38;5;28;01mif[39;00m n == [32m1[39m [38;5;28;01melse[39;00m [33m'[39m[33mare invalid keyword arguments[39m[33m'[39m
+[32m     81[39m message = [33mf[39m[33m'[39m[38;5;132;01m{[39;00mbad_arguments[38;5;132;01m}[39;00m[33m [39m[38;5;132;01m{[39;00mgrammar[38;5;132;01m}[39;00m[33m for `[39m[38;5;132;01m{[39;00mcaller[38;5;132;01m}[39;00m[33m`[39m[33m'[39m
+[32m---> [39m[32m82[39m [38;5;28;01mraise[39;00m [38;5;167;01mTypeError[39;00m(message)
+
+[31mTypeError[39m: "algorithm" is an invalid keyword argument for `_common_arg_parser`
+
+# -- cell 26 (0.3s, exit 0)
+pl = pv.Plotter()
+pl.add_mesh(band.extract_surface(), show_edges=True, color="white", lighting=False,
+            edge_color="black", line_width=0.3)
+pl.add_mesh(wing_b.clip_box(pv.Box([-0.12,0.25,-0.09,0.09,-0.01,0.11])), color="tan")
+pl.view_xy(); pl.camera.zoom(1.4)
+pl.show(screenshot="mesh_final_zoom.png")
+print("wing patch faces:", wing_b.n_cells, " z-range:", wing_b.bounds[4], wing_b.bounds[5])
+# -- output
+wing patch faces: 13010  z-range: 0.0 0.20000800490379333
+
+/tmp/ipykernel_557480/39177569.py:2: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  pl.add_mesh(band.extract_surface(), show_edges=True, color="white", lighting=False,
+[0m[33m2026-09-15 06:48:50.523 ( 443.988s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 06:48:50.525 ( 443.989s) [    765D29013780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_557480/39177569.py:6: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot="mesh_final_zoom.png")
+
+# -- cell 27 (0.1s, exit 0)
+import os
+for f in ["cell_50606.obj"]:
+    if os.path.exists(f): os.remove(f)
+print(sorted(os.listdir(".")))
+print(sorted(os.listdir("constant/triSurface")))
+# -- output
+['.reference', 'constant', 'geometry_overview.png', 'log.block', 'log.snappy', 'mesh_final_zoom.png', 'mesh_slice.png', 'mesh_wing_zoom.png', 'mesh_wing_zoom2.png', 'mesh_wing_zoom3.png', 'system', 't14.foam']
+['farfield.stl', 'inlet.stl', 'outlet.stl', 'wall.stl', 'wing.eMesh', 'wing.stl']
+
