@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from rich.console import Console
+from rich.markup import escape
 
 from . import images
 
@@ -111,6 +112,21 @@ class View(Protocol):
         them and, where a view can, show or offer to open them. The agent is not
         involved -- this is the harness delivering what it already has."""
 
+    def model(self, model: str, effort: str, provider: str) -> None:
+        """The model, effort or provider changed mid-session (`/model`, `/effort`).
+        A view that shows them in a header refreshes it."""
+
+    def approval(self, request_id: str, kind: str, title: str, detail: str, choices: list[str]) -> None:
+        """A question for the person, because they chose to be consulted (`modes.py`).
+        `kind` is job, mesh or checkpoint. The answer arrives as a typed line; the view
+        only has to make the question impossible to miss."""
+
+    def approval_done(self, request_id: str, outcome: str, note: str = "") -> None:
+        """The question `request_id` was answered: approved, declined or approved_all."""
+
+    def mode(self, mode: str) -> None:
+        """The session's mode, at the start and whenever the person switches it."""
+
 
 MAX_LISTED = 300
 
@@ -144,6 +160,10 @@ def plain_console(file: Any = None) -> Console:
 
 class ConsoleView(View):
     """The plain streaming terminal."""
+
+    surface = "plain"
+    """What `/help` is answered for (`cli._local`): the terminal's commands, without the
+    interface's completion and keys, which a line reader does not have."""
 
     def __init__(self, console: Console | None = None):
         self.console = console or plain_console()
@@ -308,7 +328,10 @@ class ConsoleView(View):
             self.console.print(f"[dim]newest: {pics[0]}[/]")
 
     def status(self, lines: list[str]) -> None:
+        # Escaped: `/help` prints argument forms like `[path]`, which rich would
+        # otherwise swallow as markup tags.
         for index, line in enumerate(lines):
+            line = escape(line)
             self.console.print(f"[cyan]{line}[/]" if index == 0 else f"[dim]{line}[/]")
 
     def mirrored(self, report: Any) -> None:
@@ -367,6 +390,35 @@ class ConsoleView(View):
 
     def desk(self, text: str) -> None:
         self.console.print(f"\n[bold cyan]desk[/] [cyan]{text}[/]", highlight=False)
+
+    def model(self, model: str, effort: str, provider: str) -> None:
+        self.console.print(f"[bold]model[/] {model}   [bold]effort[/] {effort}   "
+                           f"[bold]provider[/] {provider}")
+
+    def approval(self, request_id: str, kind: str, title: str, detail: str, choices: list[str]) -> None:
+        """Boxed, so a question waiting on the person does not scroll past as one more
+        line of tool output."""
+        rule = "-" * 60
+        self.console.print(f"\n[bold yellow]{rule}[/]", highlight=False)
+        self.console.print(f"[bold yellow]{escape(title)}[/]", highlight=False)
+        for line in (detail or "").splitlines():
+            self.console.print(f"  {line}", highlight=False, markup=False)
+        answer = "y approve / n decline (or say why) / a approve all"
+        if kind == "checkpoint":
+            answer = "y approve / n or say what to change / a approve all"
+        self.console.print(f"[yellow]{answer}[/]", highlight=False)
+        self.console.print(f"[bold yellow]{rule}[/]", highlight=False)
+
+    def approval_done(self, request_id: str, outcome: str, note: str = "") -> None:
+        said = {"approved": "approved", "declined": "declined",
+                "approved_all": "approved, and full auto from here on"}.get(outcome, outcome)
+        self.console.print(f"[yellow]{escape(said + (f': {note}' if note else ''))}[/]",
+                           highlight=False)
+
+    def mode(self, mode: str) -> None:
+        from .modes import label
+
+        self.console.print(f"[dim]mode: {label(mode)}[/]")
 
     def delivered(self, event: Any) -> None:
         """Say what arrived and, on a graphics terminal, draw it. Elsewhere the path

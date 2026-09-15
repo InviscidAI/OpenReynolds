@@ -23,7 +23,10 @@ from .backend.base import Backend, BackendError, WORKSPACE_ROOT
 from .browse import Browser
 from . import casebundle
 from .capture import Capture
-from . import commands, images, mesher
+from . import commands, images, mesher, switch
+from . import modes
+from .approval import Approver
+from .llm.presets import EFFORTS, models_for
 from .config import Config, config_path
 from .delivery import Gallery
 from .llm import PRESETS, ProviderError, make_provider, preset_for
@@ -111,6 +114,18 @@ def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
 @click.option("--study", "study_id", help="Resume a local study by id.")
 @click.option("--instance", "instance_id", help="Use a specific workspace instance.")
 @click.option("--model", help="Override the model for this session.")
+@click.option(
+    "--mode",
+    type=click.Choice(modes.choices(), case_sensitive=False),
+    default=None,
+    help="auto (full auto, the default), partial (ask before compute) or structured "
+         "(approve a plan and each stage).",
+)
+@click.option(
+    "--effort",
+    type=click.Choice(EFFORTS, case_sensitive=False),
+    help="How hard the model thinks this session. /effort changes it mid-study.",
+)
 @click.option("--no-capture", is_flag=True, help="Do not send anything to the platform.")
 @click.option("--plain", is_flag=True, help="Plain streaming terminal instead of the interface.")
 @click.option(
@@ -139,6 +154,8 @@ def main(
     study_id: str | None,
     instance_id: str | None,
     model: str | None,
+    effort: str | None,
+    mode: str | None,
     no_capture: bool,
     plain: bool,
     keep_alive: bool,
@@ -173,6 +190,19 @@ def main(
     cfg = Config.load()
     if model:
         cfg.model = model
+    # The mode: --mode, then OPENREYNOLDS_MODE, then the config file. A resumed study
+    # keeps the mode it was started in unless one of the first two says otherwise.
+    raw_mode = os.environ.get("OPENREYNOLDS_MODE")
+    if raw_mode and modes.normalize(raw_mode) is None:
+        console.print(
+            f"[yellow]OPENREYNOLDS_MODE={raw_mode} is not a mode "
+            f"({', '.join(modes.MODES)}), so it is ignored.[/]"
+        )
+    if mode:
+        cfg.mode = modes.normalize(mode) or modes.AUTO
+    mode_explicit = bool(mode) or modes.normalize(raw_mode) is not None
+    if effort:
+        cfg.effort = effort.lower()
     if no_capture:
         cfg.capture = False
 
@@ -196,6 +226,7 @@ def main(
         keep_alive=keep_alive,
         max_wait=max_wait,
         output_format=output_format,
+        mode_explicit=mode_explicit,
     )
     code = ONE_SHOT_EXIT_CODES.get(outcome or "ok", 0)
     if code:
@@ -1090,6 +1121,7 @@ def session(
     max_wait: float = 0.0,
     output_format: str = "text",
     interface: Any = None,
+    mode_explicit: bool | None = None,
 ) -> str | None:
     """Run one study to its end.
 
@@ -1118,6 +1150,24 @@ def session(
     # A trace file written on a machine running three studies could not say which
     # study any of its rows belonged to. It can now, and it costs one assignment.
     trace.begin(store.session.study_id)
+    # How much the person wants to be consulted. A resumed study keeps the mode it was
+    # chosen with, unless this run was told one (`--mode`, `OPENREYNOLDS_MODE`).
+    # `mode_explicit` is None from an embedder that sets only the environment.
+    if mode_explicit is None:
+        mode_explicit = modes.normalize(os.environ.get("OPENREYNOLDS_MODE")) is not None
+    stored_mode = modes.normalize(store.session.mode)
+    if resuming and stored_mode and not mode_explicit:
+        cfg.mode = stored_mode
+    cfg.mode = modes.normalize(cfg.mode) or modes.AUTO
+    if one_shot and cfg.mode != modes.AUTO:
+        # Checked before an instance is acquired: nothing is spent on a run that
+        # could only ever wait for an answer nobody can give.
+        raise click.UsageError(
+            f"{modes.label(cfg.mode)} mode ({cfg.mode}) needs someone to answer its "
+            "questions, and -p runs with nobody at the terminal. Run without -p, or "
+            "pass --mode auto."
+        )
+    store.session.mode = cfg.mode
     known_here = (store.dir / "session.json").is_file()
     """Whether this machine already held the study before this run. A resume without
     it is a study opened somewhere else, and it is named by its id rather than
@@ -1180,6 +1230,7 @@ def session(
         max_output=cfg.max_tool_output,
         home=store.session.home,
         on_fetch=_fetch_hook(capture),
+        mode=cfg.mode,
     )
     browser = Browser(backend, store, home=store.session.home)
     live_mirror = LiveMirror(browser, interval_s=cfg.mirror_interval_s)
@@ -1238,6 +1289,21 @@ def session(
         # command waited minutes behind a cycle's transfers. Held around each tool
         # call, this is how a cycle knows to stand aside (mirror.Gate).
         loop.gate = live_mirror.gate
+        # The mode the person chose, said at the start (header() keeps its shape). Only
+        # a reader somebody can type into can answer a question; -p has refused a
+        # non-auto mode before getting here, so no approver means nothing is asked.
+        view.mode(ctx.mode)
+        # Effort and provider too, which header() does not carry: the interface's bar
+        # shows them and `/model ` completes from the provider's known models.
+        view.model(cfg.model, cfg.effort, cfg.provider)
+        if getattr(reader, "accepts_input", True):
+            approver = Approver(
+                view, reader,
+                local=lambda command: _local(command, view, browser, store, loop, tracker),
+            )
+            loop.approver = approver
+            ctx.approver = approver
+        ctx.on_mode = getattr(loop, "set_mode", None)
         # The mesh desk: geometry and its mesh built by a second agent on this same
         # workspace, one bash block at a time, with its own model client (mesher/).
         # It needs nothing in this process but a key -- the machine it works on is the
@@ -1264,6 +1330,7 @@ def session(
                 interactive=not one_shot,
                 browser=browser,
                 preferences=cfg.preferences,
+                mode=ctx.mode,
             )
         )
         try:
@@ -1569,6 +1636,7 @@ def _situation_brief(
     interactive: bool,
     browser: Browser | None = None,
     preferences: str = "",
+    mode: str = "auto",
 ) -> str:
     """Facts about this session, assembled by the harness.
 
@@ -1597,6 +1665,10 @@ def _situation_brief(
             "start of every session. In their own words:"
         )
         lines.append(preferences.strip())
+    # The person's choice of mode, when it is not full auto. Nothing at all in auto, so
+    # that briefing is the same bytes it was before modes existed.
+    if modes.briefing(mode):
+        lines.append(modes.briefing(mode))
     if interactive:
         lines.append(
             "A person is at the terminal for this session and can answer you. Anything "
@@ -1608,6 +1680,31 @@ def _situation_brief(
             "can arrive, so a question asked here will not be seen."
         )
     return "\n".join(lines)
+
+
+def _with_mode(blurb: str, loop: Loop) -> str:
+    """A refreshed thread's blurb, still carrying the person's choice of mode."""
+    said = modes.briefing(loop.ctx.mode)
+    return f"{blurb}\n{said}" if said else blurb
+
+
+def _switch_mode(name: str, view: View, loop: Loop | None) -> None:
+    """`/mode` and `/mode <name>`: say what the modes are, or switch."""
+    current = loop.ctx.mode if loop is not None else modes.AUTO
+    if not name:
+        view.status(modes.status_lines(current))
+        return
+    if loop is None:
+        view.status(["there is no session to switch"])
+        return
+    chosen = loop.set_mode(name)
+    if chosen is None:
+        view.status([f"there is no mode called {name!r}", *modes.status_lines(current)])
+        return
+    view.status([
+        f"mode: {modes.label(chosen)}. {modes.DESCRIPTIONS[chosen]}",
+        "this applies from the next tool call",
+    ])
 
 
 def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
@@ -2079,8 +2176,22 @@ def _local(
         view.show_renders(store.renders_dir)
     elif command.kind == commands.OPEN:
         _open_folder(store.dir, view)
+    elif command.kind == commands.MODE:
+        _switch_mode(command.text, view, loop)
+    elif command.kind in (commands.YES, commands.NO, commands.ALL):
+        # An answer with no question open: a question is answered inside the turn
+        # that asked it (approval.Approver), so reaching here means nothing waits.
+        view.status(["nothing is waiting for an answer"])
     elif command.kind == commands.HELP:
-        view.status(commands.HELP_TEXT.splitlines())
+        # The web page sets `surface = "web"`: its keys and its commands differ.
+        view.status(commands.help_lines(command.text, getattr(view, "surface", "terminal")))
+    elif command.kind in (commands.MODEL, commands.EFFORT):
+        if loop is None:
+            view.status(["no model to change outside a session"])
+        elif command.kind == commands.MODEL:
+            view.status(switch.request(loop, command.text))
+        else:
+            view.status(switch.effort(loop, command.text))
 
 
 def _typed_while_working(
@@ -2333,6 +2444,11 @@ def _run_interactive(
             if spoken is QUIT:
                 return
             if spoken is None:
+                if loop.refresh_due:
+                    # `/model` to a model whose window this thread does not fit:
+                    # refreshed now, on the model that built it, so the switch can
+                    # go ahead from the next message.
+                    loop.refresh(_with_mode(situation(store, backend), loop))
                 continue
             from_prompt = True
 
@@ -2353,8 +2469,9 @@ def _run_interactive(
             live.catch_up()
         else:
             _mirror(browser, view)
-        if completed and loop.needs_refresh:
-            loop.refresh(situation(store, backend))
+        # `refresh_due` is a model switch waiting on a thread its window cannot hold.
+        if completed and (loop.needs_refresh or loop.refresh_due):
+            loop.refresh(_with_mode(situation(store, backend), loop))
 
 
 def _run_one_shot(
@@ -2406,7 +2523,7 @@ def _run_one_shot(
         if live is not None:
             live.catch_up()
         if loop.needs_refresh:
-            loop.refresh(situation(store, backend))
+            loop.refresh(_with_mode(situation(store, backend), loop))
     return "ok"
 
 

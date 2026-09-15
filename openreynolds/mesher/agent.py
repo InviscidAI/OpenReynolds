@@ -145,6 +145,8 @@ class Mesher:
         well because this desk holds the thread for minutes at a time, and a remark
         that waits that long is a remark that arrives after the thing it was about."""
         self.provider = make_provider(cfg)
+        self._endpoint = (cfg.provider, cfg.llm_api_key, cfg.llm_base_url)
+        """What `provider` was built for; see `_follow`."""
         self.model = cfg.mesher_model or cfg.model
         self.effort = cfg.mesher_effort or "high"
         self.max_steps = int(cfg.mesher_max_steps or MAX_STEPS)
@@ -152,7 +154,17 @@ class Mesher:
 
     # -- the run ---------------------------------------------------------------
 
+    def _follow(self) -> None:
+        """Pick up a mid-study `/model`: the model is read from the session's config at
+        every run, and the client rebuilt only when the provider, key or endpoint moved."""
+        self.model = self.cfg.mesher_model or self.cfg.model
+        endpoint = (self.cfg.provider, self.cfg.llm_api_key, self.cfg.llm_base_url)
+        if endpoint != self._endpoint:
+            self._endpoint = endpoint
+            self.provider = make_provider(self.cfg)
+
     def run(self, request: str, case: str | None = None) -> MeshResult:
+        self._follow()
         case_rel = _case_name(case)
         case_dir = f"{self.home}/{case_rel}"
         started = time.monotonic()

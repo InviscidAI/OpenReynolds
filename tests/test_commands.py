@@ -23,6 +23,18 @@ from openreynolds.commands import ASIDE, EXIT, FILES, HELP, OPEN, SAY, STATUS, p
         ("/help", HELP),
         ("/exit", EXIT),
         ("/quit", EXIT),
+        ("/mode partial", commands.MODE),
+        ("/model claude-sonnet-5", commands.MODEL),
+        ("/effort low", commands.EFFORT),
+        ("/yes", commands.YES),
+        ("/approve", commands.YES),
+        ("/y", commands.YES),
+        ("/no too many cells", commands.NO),
+        ("/deny", commands.NO),
+        ("/n", commands.NO),
+        ("/all", commands.ALL),
+        ("/yes all", commands.ALL),
+        ("/help modes", HELP),
     ],
 )
 def test_lines_are_classified(line, kind):
@@ -87,8 +99,22 @@ def test_status_names_the_last_job_once_it_has_finished(store):
 
 def test_the_help_lists_every_verb_it_accepts():
     """A command nobody can discover is a command nobody uses."""
-    for verb in ("/btw", "/status", "/files", "/open", "/help", "/exit"):
+    for verb in ("/btw", "/status", "/files", "/open", "/help", "/exit",
+                 "/mode", "/model", "/effort", "/yes", "/no", "/all"):
         assert verb in commands.HELP_TEXT
+
+
+def test_arguments_are_carried():
+    assert parse("/no the mesh is too coarse").text == "the mesh is too coarse"
+    assert parse("/mode Structured").text == "Structured"
+    assert parse("/help keys").text == "keys"
+
+
+def test_every_verb_in_the_registry_parses_to_its_kind():
+    for spec in commands.COMMANDS:
+        for name in (spec.verb, *spec.aliases):
+            expected = STATUS if spec.kind == ASIDE else spec.kind  # bare /btw asks
+            assert parse(name).kind == expected, name
 
 
 def test_renders_verbs_parse():

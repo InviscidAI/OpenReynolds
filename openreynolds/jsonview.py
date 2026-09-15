@@ -234,6 +234,10 @@ class JsonView(View):
     def usage(self, tokens: int, fraction: float) -> None:
         self.emit("usage", tokens=tokens, fraction=fraction)
 
+    def model(self, model: str, effort: str, provider: str) -> None:
+        """The session's model, effort or provider changed (`/model`, `/effort`)."""
+        self.emit("model", model=model, effort=effort, provider=provider)
+
     def watching(self, names: list[str]) -> None:
         self.emit("watching", names=list(names))
 
@@ -345,6 +349,19 @@ class JsonView(View):
 
     def desk(self, text: str) -> None:
         self.emit("desk", text=text)
+
+    def approval(self, request_id: str, kind: str, title: str, detail: str, choices: list[str]) -> None:
+        """Answered by sending a message: `/yes`, `/no [reason]` or `/all`."""
+        self.emit("approval", id=request_id, kind=kind, title=title, detail=detail,
+                  choices=list(choices))
+
+    def approval_done(self, request_id: str, outcome: str, note: str = "") -> None:
+        self.emit("approval_done", id=request_id, outcome=outcome, note=note)
+
+    def mode(self, mode: str) -> None:
+        from .modes import label
+
+        self.emit("mode", mode=mode, label=label(mode))
 
     def delivered(self, event: Any) -> None:
         self.emit(

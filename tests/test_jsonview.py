@@ -365,6 +365,8 @@ class FakeLoop:
         self.api_failures = 0
         self.blocked_reason = None
         self.needs_refresh = False
+        self.refresh_due = False
+        self.pending_model = None
         self.gate = None
         self.interject = None
 

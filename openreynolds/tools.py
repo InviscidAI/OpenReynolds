@@ -4,6 +4,11 @@ There is no `run_gate`, no `amend_spec`, no `ask_user` — asking is just talkin
 here inspects what the model is doing or refuses it on policy grounds. The handlers cap
 output and report facts; that is the whole job.
 
+A ninth, `checkpoint`, exists only when the person chose structured mode (`modes.py`):
+it puts a summary in front of them and waits for their answer. It is the person asking
+to be consulted, not the harness deciding to consult them, so in full auto it is not in
+the list at all.
+
 The eighth, `mesh`, delegates to the mesh desk (`mesher/`) rather than straight to the
 backend: it is the one tool whose work is a model loop of its own — an agent with one
 bash block a step, on the same workspace — and this module still knows nothing about
@@ -106,6 +111,18 @@ class ToolContext:
     on_tokens: Callable[[dict], None] | None = None
     """Called with the model usage a tool spent on the session's behalf -- the mesh
     desk's steps -- so it lands in the same totals as the main loop's."""
+    mode: str = "auto"
+    """How much the person chose to be consulted (`modes.py`). Read at every tool call,
+    so a `/mode` switch applies from the next one."""
+    plan_approved: bool = False
+    """Structured mode: whether a checkpoint has been approved since the session entered
+    the mode. Until one has, `job_start` and `mesh` are held."""
+    approver: Any = None
+    """The `approval.Approver` that puts a question to the person. None when nobody can
+    answer (a one-shot run), which is why a non-auto mode refuses to start there."""
+    on_mode: Callable[[str], None] | None = None
+    """Switches the session's mode (`Loop.set_mode`), for a checkpoint answered with
+    "approve all"."""
 
 
 def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
@@ -117,10 +134,17 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     question answerable -- the same prompt run with the desk and without it, which is
     the only honest way to settle whether a slow natural-language sub-agent beats the
     bash the caller already has.
+
+    `checkpoint` is the other: it is offered only in structured mode. A `/mode` switch
+    into or out of structured therefore changes the tool list once, which rewrites the
+    prompt cache from position 0 once; that is the price of the person's choice and it
+    is paid only when they make it. Sorted by name either way, so the list for a given
+    mode is always the same bytes.
     """
-    if ctx.mesher is not None:
-        return TOOLS
-    return [tool for tool in TOOLS if tool["name"] != "mesh"]
+    offered = TOOLS if ctx.mesher is not None else [tool for tool in TOOLS if tool["name"] != "mesh"]
+    if ctx.mode != "structured":
+        return offered
+    return sorted([*offered, CHECKPOINT_TOOL], key=lambda tool: tool["name"])
 
 
 FRESH_SHELL = (
@@ -346,6 +370,41 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 TOOL_NAMES = frozenset(tool["name"] for tool in TOOLS)
+
+CHECKPOINT_TOOL: dict[str, Any] = {
+    "name": "checkpoint",
+    "description": (
+        "Put where the study stands in front of the person and wait for their answer. "
+        "Offered because they chose structured mode: they want to agree a plan, and to "
+        "hear from you after each stage. The result says whether they approved, and "
+        "carries their words when they asked for changes. job_start and mesh calls are "
+        "held until a checkpoint has been approved in this mode."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "stage": {
+                "type": "string",
+                "description": (
+                    "What this checkpoint is about: plan, or a stage of the study "
+                    "(geometry, preview, mesh, checkMesh, probe, solve, reconstruct, "
+                    "render, animate, report)."
+                ),
+            },
+            "summary": {
+                "type": "string",
+                "description": "What was done, or what is proposed, in plain words.",
+            },
+            "next": {
+                "type": "string",
+                "description": "What happens next if the person approves.",
+            },
+        },
+        "required": ["stage", "summary", "next"],
+    },
+}
+"""Kept out of `TOOLS`: that list is what every mode offers, and this is structured
+mode's alone (`tools_for`)."""
 
 
 ToolResult = str | list[dict[str, Any]]
@@ -981,8 +1040,39 @@ def _mesh_accounting(result: Any) -> str:
     return line
 
 
+def _checkpoint(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """Ask the person, and hand back their answer as a fact.
+
+    Approval is recorded on the context, because structured mode holds `job_start` and
+    `mesh` until a plan has been approved (`Loop._consult`). Anything but an approval
+    carries the person's own words back as the changes they asked for."""
+    stage = str(args.get("stage") or "").strip() or "plan"
+    summary = str(args.get("summary") or "").strip()
+    after = str(args.get("next") or "").strip()
+    if ctx.mode != "structured":
+        return (f"The session is in {ctx.mode} mode, not structured mode, so this "
+                "checkpoint was not put to the person.")
+    if ctx.approver is None:
+        return "Nobody is here to answer, so this checkpoint was not put to anyone."
+    detail = summary + (f"\n\nnext: {after}" if after else "")
+    decision = ctx.approver.ask("checkpoint", f"Checkpoint: {stage}", detail)
+    if decision.approved:
+        ctx.plan_approved = True
+        text = f"The person approved the {stage} checkpoint. Carry on with: {after or 'the next stage'}"
+        if decision.all and ctx.on_mode is not None:
+            ctx.on_mode("auto")
+            text += ("\nThey also asked not to be asked again: the session is now in full "
+                     "auto mode and no further checkpoints are put to them.")
+        return text
+    if decision.note:
+        return (f"The person did not approve the {stage} checkpoint. The changes they "
+                f"asked for, in their words: {decision.note}")
+    return f"The person did not approve the {stage} checkpoint and gave no reason."
+
+
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "bash": _bash,
+    "checkpoint": _checkpoint,
     "fetch": _fetch,
     "mesh": _mesh,
     "job_check": _job_check,

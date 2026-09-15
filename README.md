@@ -100,8 +100,12 @@ these.
 | `job_start` | Launch a detached job: a mesh, a solve, a post-process. It outlives the call that started it, so an hours-long run is not held open by a request. |
 | `job_check` | Ask how a job is doing. It can hold the answer until the job ends, and returns early the moment you type. |
 | `job_kill` | Stop a job, and confirm it actually stopped. |
-| `fetch` | Read something from the open web: a paper, a benchmark table, a geometry reference. |
+| `fetch` | Copy files or directories out of the workspace onto your own machine, and say where they landed. Renders and reports come home this way. |
 | `mesh` | Describe a shape in words and get an OpenFOAM mesh of it on the workspace. A separate agent builds it on the same machine: it picks the mesher (gmsh body-fitted, `blockMesh`, `snappyHexMesh`, cfMesh), writes the geometry as a script, renders the mesh, measures it, and revises until `checkMesh` passes and the shape measures up to what was asked for. Saying it is done is not what ends it — the mesh has to be there, pass, carry patch names somebody chose, and have a script that rebuilds it. |
+
+A ninth, `checkpoint`, exists only when you choose structured mode (see *Modes*): it
+puts a summary of where the study stands, and what comes next, in front of you and
+waits for your answer. In full auto it is not in the tool list at all.
 
 ## The rule this repository keeps
 
@@ -110,6 +114,12 @@ code and wake the model with the facts, and capture a transcript.
 
 It may **not** enforce an order of work, block or rewrite a tool call, require an
 approval, inject a checklist or a workflow, or grade the output.
+
+That holds in the default mode, full auto, exactly as written. The one exception is
+yours to make: you can *choose* to be asked before compute is spent, or to run a study
+in stages you approve (see *Modes*). The harness then gates exactly what you asked to
+have gated and nothing else, for the same reason `/btw` exists: it is your say in how
+you want to be heard, not the harness's opinion about how the model should work.
 
 That is not a convention anyone has to remember. `tests/test_prompt.py` fails the build
 if imperative language appears in the system prompt, and `tests/test_briefing.py`
@@ -120,6 +130,70 @@ What the model gets instead is **your standing preferences**, relayed verbatim i
 own voice from `preferences.md` beside your config. Say you want the mesh rendered and
 checked before any solver time is spent, and that is what the agent is told you want.
 What it does about it is its call.
+
+## Modes
+
+How much the agent does before it asks you. The mode never changes what the agent is
+told about CFD; it decides only whether compute waits for you.
+
+| Mode | Label | What happens |
+| --- | --- | --- |
+| `auto` | Full auto | The default. Nothing is held and nothing waits for you. The briefing is the same bytes it was before modes existed. |
+| `partial` | Ask before compute | Every `job_start` and every `mesh` call is put to you before it runs, since those are what spend compute. `bash`, `read_file`, `write_file`, `fetch`, `job_check` and `job_kill` run freely. |
+| `structured` | Structured | The agent gets a `checkpoint` tool that shows you a summary and what comes next and waits for your answer. `job_start` and `mesh` are held until you have approved a checkpoint, the plan. The stages are the guided pipeline's own: geometry, preview, mesh, checkMesh, probe, solve, reconstruct, render, animate, report. |
+
+```bash
+openreynolds --mode partial              # or OPENREYNOLDS_MODE=partial, or "mode" in the config file
+```
+
+Answer a question with `/yes`, `/no <reason>` or `/all`. Typing `y` or `yes` approves;
+any other words decline and go back to the agent as your reason, verbatim. `/all`
+approves and switches the session to full auto for the rest of it. `/mode <name>`
+switches mid-session from the next tool call, and the agent is told. A resumed study
+keeps its mode unless you give one. `-p` with a mode other than `auto` is refused with
+exit code `2`, because nobody is there to answer.
+[docs/modes.md](docs/modes.md) has the whole of it.
+
+## In a session: commands, help and completion
+
+Anything you type reaches the model at its next step, so you can steer a run without
+stopping it. These are answered by the harness instead:
+
+| Command | What it does |
+| --- | --- |
+| `/btw <something>` | Say it without asking the agent to stop. |
+| `/status` | What is happening right now, with no model turn. |
+| `/files [path]`, `/renders`, `/open` | Look at the workspace, the pictures, or the local folder. |
+| `/mode [name]` | Show or switch the mode. |
+| `/model [model]` | Show the provider, model and effort, or switch model. |
+| `/effort [level]` | `low`, `medium` or `high`, from the next request. |
+| `/yes`, `/no [reason]`, `/all` | Answer an open question. |
+| `/help [topic]` | Everything here; `/help commands`, `modes`, `model`, `tools` or `keys` goes deeper. |
+| `/exit` | Leave. Jobs keep running. |
+
+In the interface, typing `/` opens a list of matching commands above the prompt, with
+the best match as grey text. Up and Down move, Tab takes the suggestion, Right takes the
+grey text, Esc closes the list. After `/mode `, `/model `, `/effort ` or `/help ` the
+list offers that command's choices. The hosted app's composer does the same from the
+same registry. [docs/session-commands.md](docs/session-commands.md) has every alias and
+key.
+
+## Changing the model mid-study
+
+```
+/model claude-opus-5            another model, same provider
+/model anthropic:claude-opus-5  another provider, if its key is in the environment
+/effort medium
+```
+
+A new model is probed, with an image, before it is accepted, so a typo or a text-only
+model is refused when you type it. It is applied between turns: typed while the agent
+is idle it answers your next message, typed mid-turn it takes over when the turn ends.
+Earlier thinking blocks are dropped from the thread, a thread too large for the new
+model's window (the one known for that model, otherwise the provider's) is refreshed
+first, and the prompt cache is written once more, so the first
+request after a switch costs more. Effort is read on every request and applies at once.
+[docs/switching-models.md](docs/switching-models.md) has the detail.
 
 ## Bring your own model
 
@@ -201,7 +275,9 @@ costs nothing and a rule that is enforced costs everything.
 | Command | What it does |
 | --- | --- |
 | `openreynolds` | Start a study. `--study <id>` resumes one, `--instance <id>` attaches to a particular workspace. |
-| `-p "..."` | Run non-interactively and exit. Exit code `0` done, `1` the model API failed or the session crashed, `2` hit `--max-wait` with work still running. |
+| `-p "..."` | Run non-interactively and exit. Exit code `0` done, `1` the model API failed or the session crashed, `2` hit `--max-wait` with work still running. With a mode other than `auto` it is refused as a usage error, also exit `2`. |
+| `--mode auto\|partial\|structured` | How much the agent does before asking you. See *Modes*. |
+| `--model <id>` / `--effort low\|medium\|high` | The model and reasoning effort for this session. `/model` and `/effort` change either mid-study. |
 | `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies` or `doctor` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
 | `openreynolds login` | Sign in; this machine gets its own service key. `--browser` for the device-code flow. |
 | `openreynolds config` | Provider, key, model, context window. `--key-file` and `--from-env` keep keys out of shell history. |
@@ -215,8 +291,10 @@ costs nothing and a rule that is enforced costs everything.
 | `openreynolds stop` | Stop this study's jobs and confirm they stopped. `--force` skips the prompt. |
 
 In a session, `/status` answers locally with no model turn, `/btw` says something
-without interrupting the work, and anything else you type reaches the model at its next
-step, so you can steer a run without stopping it. `/help` has the rest.
+without interrupting the work, `/mode`, `/model` and `/effort` change how the session
+runs, and anything else you type reaches the model at its next step, so you can steer a
+run without stopping it. `/help` has the rest; see *In a session: commands, help and
+completion*.
 
 ## Driving it from a program
 
@@ -251,13 +329,19 @@ three cases exit code `1` alone cannot tell apart. In between:
 | `stage` / `narration` / `desk` / `status` | What is happening now, in words. |
 | `mirrored` / `delivered` / `files` / `renders` | Files coming home, and what is in the workspace. |
 | `notice` / `warn` / `info` / `usage` / `watching` / `interjection` / `prompt` | The rest of the terminal's own reporting. |
+| `model` | The session's `model`, `effort` and `provider`: once at the start, and again whenever `/model` or `/effort` changes one. |
+| `mode` | The session's `mode` (`auto`, `partial` or `structured`) and its `label`: once at the start, and again at every `/mode` switch. |
+| `approval` | A question for the person, in ask-before-compute or structured mode: `id`, `kind` (`job`, `mesh` or `checkpoint`), `title`, `detail` and `choices`. The session waits for the answer. |
+| `approval_done` | The question `id` was answered: `outcome` is `approved`, `declined` or `approved_all`, and `note` carries what the person said. |
 | `error` | An exception escaped the session. `session_end` follows with `crashed`. |
 | `cost` | A trace event (see `OPENREYNOLDS_TRACE`), on the same stream. |
 
 Without `-p` the same flag makes a **conversation**: it reads newline-delimited JSON
 from stdin, one message per line, `{"type": "user", "text": "..."}`. A `prompt` event
 says when it is your turn. Anything on stdin that is not an object this understands is
-ignored rather than guessed at.
+ignored rather than guessed at. Commands go the same way: `{"type": "user", "text":
+"/status"}`. An `approval` is answered with a `user` line saying `/yes`, `/no <reason>`
+or `/all`, and until it is answered the session waits.
 
 ## Configuration
 
@@ -272,7 +356,8 @@ containers want:
 | --- | --- |
 | `OPENREYNOLDS_PROVIDER` | A preset name, or `reynolds` for the metered model. |
 | `OPENREYNOLDS_LLM_API_KEY` | The model key. The vendor's own name (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) is read too. |
-| `OPENREYNOLDS_MODEL` / `OPENREYNOLDS_EFFORT` | Which model, and how hard it is asked to think. |
+| `OPENREYNOLDS_MODEL` / `OPENREYNOLDS_EFFORT` | Which model, and how hard it is asked to think (`low`, `medium` or `high`). |
+| `OPENREYNOLDS_MODE` | `auto`, `partial` or `structured`, or an alias. A value that is not a mode is ignored with a warning: the config file's `mode` applies, or full auto, and a resumed study keeps its stored mode. |
 | `FOAMD_URL` / `FOAMD_API_KEY` | The workspace service and this machine's key. |
 | `OPENREYNOLDS_MIRROR_INTERVAL_S` | How often files come home. `0` turns it off. |
 | `OPENREYNOLDS_NARRATE_EVERY_S` | How often a long run wakes the model. `0` turns it off. |
@@ -289,7 +374,10 @@ or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
 | --- | --- |
 | `cli.py` | Entry point, session assembly, subcommands. |
 | `loop.py` | The tool-use loop: streaming, interjections, thread refresh. |
-| `tools.py` | The eight tool schemas and their handlers. |
+| `tools.py` | The eight tool schemas, `checkpoint` for structured mode, and their handlers. |
+| `modes.py` / `approval.py` | The three modes and what each gates; putting a question to the person and reading the answer. |
+| `commands.py` | The one registry of typed commands, read by the parser, `/help` and both completions. |
+| `switch.py` | Changing the model, provider or effort mid-study. |
 | `mesher/` | The agent behind the `mesh` tool: `brief.py` is what it is told, `agent.py` runs it one fenced `bash` block at a time on the instance that already has gmsh and OpenFOAM, and `check.py` decides whether it is finished. Geometry and meshing used to be a stack of generators and a spec language here; this replaced all of it on 2026-09-07. |
 | `watch.py` | Job polling, wake facts, progress, narration. |
 | `mirror.py` / `store.py` | Files home, and the local `./studies/<id>/` record. |
@@ -315,8 +403,11 @@ means wiring it end to end or failing the build.
 
 ## Security
 
-The agent runs an unsandboxed shell on your hosted instance with no approval gate; that
-is the design, not an oversight. [SECURITY.md](SECURITY.md) says what follows from it:
+The agent runs an unsandboxed shell on your hosted instance. In the default mode, full
+auto, there is no approval gate at all; that is the design, not an oversight. If you
+choose ask before compute or structured, the harness holds `job_start` and `mesh` for
+you and nothing else: `bash` still runs without asking in every mode, so a mode decides
+when compute is spent and is not a sandbox. [SECURITY.md](SECURITY.md) says what follows from it:
 what the model can see, what leaves your machine and when, and where to report a
 problem (security@inviscidai.com).
 

@@ -14,6 +14,7 @@ import time
 from contextlib import contextmanager, nullcontext
 from typing import Any, Callable
 
+from . import modes
 from .config import CONTEXT_REFRESH_FRACTION, CONTEXT_WINDOW_TOKENS, Config
 from .llm import BadRequest, Listener, Turn, make_provider
 from .prompt import system_prompt
@@ -74,6 +75,14 @@ class Loop:
         """Held around each tool call (`mirror.Gate`), so the background mirror can
         stand aside for it: its transfers share the container with the command and
         the command waited behind them -- a 27 s finish step took five minutes."""
+        self.approver: Any | None = None
+        """Puts a call to the person when they chose to be consulted (`modes.py`,
+        `approval.Approver`). None when nobody can answer. Never consulted in auto."""
+        self._notes: list[str] = []
+        """Harness facts waiting for a place in the thread. Said mid-turn (a `/mode`
+        switch typed while tools run) they cannot be a message of their own: the next
+        message has to be the tool results. They ride in that message instead."""
+        self._mid_turn = False
 
         headers = {"X-Study-Id": store.session.study_id}
         # Without a timeout a stalled connection is indistinguishable from a model
@@ -123,6 +132,16 @@ class Loop:
         on the page while the person typed "whats going on?". Set here so the caller
         can stop asking; cleared by any turn that completes and by the user speaking.
         """
+        self.pending_model: Any | None = None
+        """A model or provider switch the person asked for (`/model`), already checked,
+        waiting for the next `run` to start (`switch.apply`). Applied there and nowhere
+        else, so a turn is never half one model and half another."""
+        self.refresh_due = False
+        """The pending switch's window cannot hold this thread, so it is refreshed on
+        the current model first; `pending_model` waits until that is done."""
+        self.running = False
+        """Whether a `run` is in flight -- what tells the person a switch applies now
+        or when the current turn ends."""
 
     @property
     def client(self) -> Any:
@@ -165,6 +184,46 @@ class Loop:
             self.messages.append({"role": "user", "content": _as_operator_text(text)})
         self._record("event", text)
 
+    def tell(self, text: str) -> None:
+        """`inform`, from wherever it is safe to be.
+
+        Between a turn's tool calls the next message must be their results, so a fact
+        said then waits and rides in that message as a marked text block. Anywhere
+        else it is an ordinary `inform`."""
+        if self._mid_turn:
+            self._notes.append(text)
+            self._record("event", text)
+        else:
+            self.inform(text)
+
+    def _take_notes(self) -> list[dict[str, Any]]:
+        notes = [{"type": "text", "text": _as_operator_text(note)} for note in self._notes]
+        self._notes = []
+        return notes
+
+    def set_mode(self, mode: str) -> str | None:
+        """Switch how much the person is consulted. Returns the mode, or None if the
+        name is not one.
+
+        Takes effect at the next tool call: `_consult` reads `ctx.mode` every time.
+        Entering structured mode starts it afresh, so a plan has to be approved in it
+        before compute is spent. The model is told in the harness's voice, because the
+        tool list and what gets held both change under it."""
+        canonical = modes.normalize(mode)
+        if canonical is None:
+            return None
+        previous = self.ctx.mode
+        self.ctx.mode = canonical
+        self.cfg.mode = canonical
+        if canonical == modes.STRUCTURED and previous != modes.STRUCTURED:
+            self.ctx.plan_approved = False
+        self.store.session.mode = canonical
+        self.store.save()
+        self.view.mode(canonical)
+        if canonical != previous:
+            self.tell(modes.switched(canonical))
+        return canonical
+
     @staticmethod
     def _fold_system(message: dict[str, Any]) -> dict[str, Any]:
         """A `system` turn as a marked user turn; anything else passed straight through.
@@ -179,6 +238,19 @@ class Loop:
 
     def run(self) -> Turn:
         """Stream turns and dispatch tools until the model ends its turn."""
+        if self.pending_model is not None and not self.refresh_due:
+            # Every earlier assistant turn is complete here, so this is the one place a
+            # switch cannot split a turn between two models.
+            from . import switch
+
+            switch.apply(self)
+        self.running = True
+        try:
+            return self._turns()
+        finally:
+            self.running = False
+
+    def _turns(self) -> Turn:
         step = 0
         while True:
             step += 1
@@ -208,26 +280,47 @@ class Loop:
                 return response
 
             results: list[Any] = []
-            for block in tool_uses:
-                results.append(self._run_tool(block))
+            typed: list[str] = []
+            self._mid_turn = True
+            try:
+                for block in tool_uses:
+                    # What was typed so far is read before each call, not only after the
+                    # batch. Two things depend on it: a `/mode` typed while an earlier
+                    # call ran governs this one (a switch applies from the next tool
+                    # call), and a line typed before a question exists is an
+                    # interjection, never the answer to a question the person has not
+                    # seen yet (`Approver.ask` reads only what arrives after this).
+                    self._gather(typed)
+                    results.append(self._run_tool(block))
 
-            # One round of think-then-act is over. Marking where each ends is what
-            # makes the loop legible: without it the activity pane is an undivided
-            # column of tool calls, and there is no telling a turn that took three
-            # rounds from one that took thirty.
-            self.view.step(step, time.monotonic() - started, len(tool_uses))
+                # One round of think-then-act is over. Marking where each ends is what
+                # makes the loop legible: without it the activity pane is an undivided
+                # column of tool calls, and there is no telling a turn that took three
+                # rounds from one that took thirty.
+                self.view.step(step, time.monotonic() - started, len(tool_uses))
 
-            # Tool results have to come first in this message, but a text block may
-            # follow them. That is how something typed while the model is working
-            # reaches it at the next turn instead of sitting unread until the whole
-            # turn ends -- the difference between being heard and being ignored.
-            said = self.interject() if self.interject else None
-            if said:
-                results.append({"type": "text", "text": said})
-                self.view.interjection(said)
-                self._record("user", said)
+                # Tool results have to come first in this message, but a text block may
+                # follow them. That is how something typed while the model is working
+                # reaches it at the next turn instead of sitting unread until the whole
+                # turn ends -- the difference between being heard and being ignored.
+                self._gather(typed)
+                said = "\n".join(typed) or None
+                if said:
+                    results.append({"type": "text", "text": said})
+                    self.view.interjection(said)
+                    self._record("user", said)
+                results.extend(self._take_notes())
+            finally:
+                self._mid_turn = False
 
             self.messages.append({"role": "user", "content": results})
+
+    def _gather(self, into: list[str]) -> None:
+        """Drain what has been typed (`interject`): commands are answered on the spot,
+        and words for the model are kept in `into` to ride with this batch's results."""
+        said = self.interject() if self.interject else None
+        if said:
+            into.append(said)
 
     def _send(self) -> Turn:
         """One streamed request, printing as it arrives."""
@@ -341,9 +434,56 @@ class Loop:
         self._account(response)
         return response
 
+    def _consult(self, name: str, tool_input: dict[str, Any]) -> str | None:
+        """None when this call may run; otherwise the tool result saying why it did not.
+
+        The only place a tool call is ever held, and it holds only what the person
+        chose to have held (`modes.py`). In auto this returns None without looking.
+
+        The mesh desk runs its own bash loop on its own model client; the gate is on
+        the outer `mesh` call, which is enough -- approving that call is approving the
+        mesh desk's work, and nothing it does inside spends a job."""
+        mode = self.ctx.mode
+        if not modes.gated(mode, name):
+            return None
+        if mode == modes.STRUCTURED:
+            return None if self.ctx.plan_approved else modes.held(name)
+        if self.approver is None:
+            return (f"This {name} call did not run: the session is in ask-before-compute "
+                    "mode and nobody is here to answer.")
+        title, detail = _question(name, tool_input, self.ctx.home)
+        self._busy("waiting")
+        try:
+            decision = self.approver.ask("job" if name == "job_start" else "mesh", title, detail)
+        finally:
+            self._unbusy()
+        if decision.approved:
+            if decision.all:
+                self.set_mode(modes.AUTO)
+            return None
+        if decision.note:
+            return f"This {name} call did not run: the person declined it. What they said: {decision.note}"
+        return f"This {name} call did not run: the person declined it and gave no reason."
+
     def _run_tool(self, block: Any) -> dict[str, Any]:
         self.view.tool(block.name, _summarize(block.input))
         tool_input = dict(block.input)
+        refused = self._consult(block.name, tool_input)
+        if refused is not None:
+            content, is_error = refused, True
+        elif block.name == modes.CHECKPOINT:
+            # A question to a person: no mirror gate held while they think, and no
+            # "still running" ticks for a wait that is theirs.
+            self._busy("waiting")
+            try:
+                content, is_error = dispatch(self.ctx, block.name, tool_input, call_id=block.id)
+            finally:
+                self._unbusy()
+        else:
+            content, is_error = self._dispatch(block, tool_input)
+        return self._result(block, content, is_error)
+
+    def _dispatch(self, block: Any, tool_input: dict[str, Any]) -> tuple[Any, bool]:
         self._busy(
             "tool",
             block.name,
@@ -352,10 +492,11 @@ class Loop:
         )
         try:
             with _holding(self.gate), _ticking(self.view, block.name):
-                content, is_error = dispatch(
-                    self.ctx, block.name, tool_input, call_id=block.id)
+                return dispatch(self.ctx, block.name, tool_input, call_id=block.id)
         finally:
             self._unbusy()
+
+    def _result(self, block: Any, content: Any, is_error: bool) -> dict[str, Any]:
         # A tool result can be content blocks rather than text -- an image, for one --
         # and those go to the model as they are. What gets written down is a
         # description: a megabyte of base64 in the message log helps nobody read it.
@@ -410,6 +551,8 @@ class Loop:
         self.messages = []
         self.context_tokens = 0
         self.brief(blurb)
+        # A switch that was waiting for a smaller thread can go ahead at the next run.
+        self.refresh_due = False
 
     def settle(self) -> None:
         """Answer any tool call left dangling by an interrupted turn.
@@ -435,7 +578,9 @@ class Loop:
                         "is_error": True,
                     }
                     for block in pending
-                ],
+                ]
+                # A fact said during the interrupted turn still belongs in the thread.
+                + self._take_notes(),
             }
         )
 
@@ -572,6 +717,16 @@ def _summarize(tool_input: Any, width: int = 100) -> str:
         text = str(tool_input)
     text = " ".join(text.split())
     return text if len(text) <= width else text[: width - 3] + "..."
+
+
+def _question(name: str, tool_input: dict[str, Any], home: str) -> tuple[str, str]:
+    """The title and detail a gated call is put to the person with: what would run."""
+    if name == "job_start":
+        cmd = str(tool_input.get("cmd") or "")
+        label = tool_input.get("name") or (cmd.splitlines()[0][:60] if cmd else "")
+        return f"Start a job: {label}", f"cmd: {cmd}\ncwd: {tool_input.get('cwd') or home}"
+    request = str(tool_input.get("request") or "")
+    return "Build a mesh", f"{request}\ncase: {tool_input.get('case') or 'mesh'}"
 
 
 ToolFactory = Callable[[], ToolContext]

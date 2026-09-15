@@ -72,6 +72,7 @@ _CONFIG_KEYS = (
     "desk_model",
     "effort",
     "context_window",
+    "mode",
 )
 
 
@@ -161,6 +162,13 @@ class Config:
     mesher_max_seconds: float = 0.0
     """Wall clock for one call; 0 takes the default (900 s).
     `OPENREYNOLDS_MESHER_MAX_SECONDS`."""
+    mode: str = "auto"
+    """How much the person wants to be consulted: `auto`, `partial` or `structured`
+    (`modes.py`). `OPENREYNOLDS_MODE` or the config file's `mode`; `--mode` for one
+    session. A value that is not a mode is ignored: a bad `OPENREYNOLDS_MODE` falls
+    through to the config file's, and a bad config-file value to `auto`. `openreynolds`
+    warns about a bad `OPENREYNOLDS_MODE` only. A resumed study keeps its stored mode
+    unless a valid one is given (`cli.session`)."""
     studies_dir: Path = field(default_factory=lambda: Path.cwd() / "studies")
     preferences: str = ""
     """The standing note from `preferences_path()`, or empty when there is none."""
@@ -230,8 +238,15 @@ class Config:
         def switched_off(env: str) -> bool:
             return (os.environ.get(env) or "").strip().lower() in ("0", "false", "no", "off")
 
+        from .modes import normalize as normal_mode
+
         return cls(
             preferences=preferences,
+            # Each source is checked on its own, so a bad OPENREYNOLDS_MODE falls through
+            # to the config file's mode rather than hiding it.
+            mode=normal_mode(os.environ.get("OPENREYNOLDS_MODE") or "")
+            or normal_mode(str(stored.get("mode") or ""))
+            or "auto",
             capture=not switched_off("OPENREYNOLDS_CAPTURE"),
             desk=not switched_off("OPENREYNOLDS_DESK"),
             desk_model=pick(
@@ -266,7 +281,13 @@ class Config:
         """Write the credential fields back, readable only by this user."""
         path = config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {key: getattr(self, key) for key in _CONFIG_KEYS if getattr(self, key)}
+        # `mode` is written only when it is not the default, so a config file saved by
+        # someone who never chose a mode says nothing about modes.
+        payload = {
+            key: getattr(self, key)
+            for key in _CONFIG_KEYS
+            if getattr(self, key) and not (key == "mode" and self.mode == "auto")
+        }
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         if os.name != "nt":
             path.chmod(stat.S_IRUSR | stat.S_IWUSR)

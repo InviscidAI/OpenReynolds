@@ -86,9 +86,14 @@ class Concierge:
         self.store = store
         self.view = view
         self.tracker = tracker
+        self.cfg = cfg
         self.model = cfg.desk_model or "claude-haiku-4-5"
         # Short calls, but a stalled one must not wedge the desk thread forever.
         self._provider = make_provider(cfg, timeout=min(60.0, cfg.llm_timeout_s or 60.0))
+        self._endpoint = _endpoint(cfg)
+        """Which provider, key and endpoint `_provider` was built for. The config is the
+        session's own object, so a mid-study `/model` to another provider shows up here
+        and the desk follows it rather than calling a vendor the session has left."""
         self._system = DESK_SYSTEM
         self._q: queue.Queue[tuple[str, str] | None] = queue.Queue()
         self._busy = threading.Event()
@@ -175,7 +180,18 @@ class Concierge:
 
     # -- talking to the model --------------------------------------------------
 
+    def _follow(self) -> None:
+        """Rebuild the client when the session has moved to another provider, and take
+        that provider's desk model (`switch.apply` sets `cfg.desk_model` to it)."""
+        endpoint = _endpoint(self.cfg)
+        if endpoint == self._endpoint:
+            return
+        self._endpoint = endpoint
+        self._provider = make_provider(self.cfg, timeout=min(60.0, self.cfg.llm_timeout_s or 60.0))
+        self.model = self.cfg.desk_model or self.model
+
     def _call(self, system: str, prompt: str, max_tokens: int) -> str:
+        self._follow()
         try:
             return self._provider.complete(
                 model=self.model, system=system, prompt=prompt, max_tokens=max_tokens
@@ -244,6 +260,10 @@ def _render(content: Any) -> str:
     if isinstance(content, list):
         return " ".join(_render(item) for item in content if _render(item))[:400]
     return ""
+
+
+def _endpoint(cfg: Any) -> tuple:
+    return (cfg.provider, cfg.llm_api_key, cfg.llm_base_url)
 
 
 def _one_line(text: str) -> str:

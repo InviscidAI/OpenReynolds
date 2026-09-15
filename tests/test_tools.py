@@ -28,6 +28,42 @@ def test_tool_list_is_deterministic():
         assert tool["description"]
 
 
+def test_the_checkpoint_tool_is_offered_only_in_structured_mode(ctx):
+    """Eight tools in every mode; a ninth, `checkpoint`, only when the person chose
+    structured mode. Still sorted, so a mode's tool list is always the same bytes."""
+    from openreynolds.tools import tools_for
+
+    ctx.mesher = object()
+    for mode in ("auto", "partial"):
+        ctx.mode = mode
+        assert "checkpoint" not in [tool["name"] for tool in tools_for(ctx)]
+    ctx.mode = "structured"
+    names = [tool["name"] for tool in tools_for(ctx)]
+    assert names == sorted(names)
+    assert names == sorted([tool["name"] for tool in TOOLS] + ["checkpoint"])
+    assert tools_for(ctx) == tools_for(ctx)
+
+
+def test_a_checkpoint_outside_structured_mode_asks_nobody(ctx):
+    asked = []
+    ctx.approver = type("A", (), {"ask": lambda self, *a: asked.append(a)})()
+    content, is_error = dispatch(ctx, "checkpoint", {"stage": "plan", "summary": "s", "next": "n"})
+    assert not asked and "not put to the person" in content
+
+
+def test_a_checkpoint_approved_with_all_switches_to_full_auto(ctx):
+    from openreynolds.approval import Decision
+
+    switched = []
+    ctx.mode = "structured"
+    ctx.on_mode = switched.append
+    ctx.approver = type("A", (), {"ask": lambda self, *a: Decision(True, all=True)})()
+    content, is_error = dispatch(ctx, "checkpoint", {"stage": "mesh", "summary": "s", "next": "solve"})
+    assert not is_error and ctx.plan_approved
+    assert switched == ["auto"]
+    assert "solve" in content and "full auto" in content
+
+
 def test_the_mesh_tool_says_what_comes_back_and_what_does_not():
     """The description says what the tool returns and, just as importantly, what it
     does not: a result read as "the case is ready to solve" is the failure this tool

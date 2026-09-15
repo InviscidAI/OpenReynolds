@@ -43,6 +43,9 @@ class Session:
     remote_study_id: str = ""
     """Id assigned by the capture plane, when capture is on."""
     model: str = ""
+    mode: str = ""
+    """How much the person chose to be consulted (`modes.py`). Empty on studies made
+    before modes existed, which a resume reads as whatever the configuration says."""
     home: str = ""
     """This study's own directory in the workspace.
 

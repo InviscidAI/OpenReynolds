@@ -56,6 +56,8 @@ def every_shape_of_briefing(backend, store):
     # A resume re-reads every running job's status, so the backend has to know it too.
     backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
     yield "resumed with a job running", brief_for(backend, store, resuming=True)
+    yield "ask before compute", brief_for(backend, store, mode="partial")
+    yield "structured", brief_for(backend, store, mode="structured")
 
 
 @pytest.mark.parametrize("pattern", IMPERATIVE_PATTERNS)
@@ -147,6 +149,24 @@ def test_a_standing_note_is_relayed_verbatim_in_the_users_voice(backend, store):
 
     assert "In their own words:" in brief
     assert "When meshing, render the mesh and look at it." in brief
+
+
+def test_full_auto_leaves_the_briefing_exactly_as_it_was(backend, store):
+    """The contract holds unchanged in auto, down to the bytes of the briefing."""
+    a_workspace(backend)
+    store.session.home = "/work/mine"
+    assert brief_for(backend, store, mode="auto") == brief_for(backend, store)
+    assert "mode" not in brief_for(backend, store)
+
+
+def test_a_mode_the_person_chose_is_relayed_in_one_statement(backend, store):
+    a_workspace(backend)
+    store.session.home = "/work/mine"
+    partial = brief_for(backend, store, mode="partial")
+    structured = brief_for(backend, store, mode="structured")
+    assert "asked before compute" in partial and "job_start" in partial
+    assert "structured mode" in structured and "checkpoint" in structured
+    assert len(structured) - len(brief_for(backend, store)) < 500
 
 
 def test_no_note_means_no_mention_of_one(backend, store):

@@ -6,7 +6,52 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Three modes: full auto, ask before compute, structured.** `--mode`,
+  `OPENREYNOLDS_MODE`, the config file's `mode`, or `/mode <name>` mid-session
+  (`openreynolds/modes.py`). `auto` is the default and is today's behaviour byte for
+  byte: the briefing is unchanged and no tool call is ever held. `partial` puts every
+  `job_start` and `mesh` call to the person before it runs (`/yes`, `/no [reason]`,
+  `/all`), and a declined call goes back to the model as an error result carrying the
+  person's reason verbatim. `structured` offers a `checkpoint` tool that shows the
+  person a summary and what comes next and waits for their answer, and holds
+  `job_start` and `mesh` until a checkpoint has been approved since the mode began.
+  Its stage names are the guided pipeline's own phases (`toolbox/study_state.py`).
+  The question and its answer live in `openreynolds/approval.py`; the one place a call
+  is held is `Loop._consult`. A resumed study keeps its mode unless one is given.
+  `-p` with a non-auto mode is a usage error (exit `2`), because nobody is there to
+  answer.
+- **Change the model or effort mid-study.** `/model` shows the provider, model, effort,
+  mode and the models this provider is known to have; `/model <model>`,
+  `/model <provider>:<model>` and `/model <provider>` switch
+  (`openreynolds/switch.py`). A candidate is probed, image included, before it is
+  accepted, and applied only between turns. Earlier thinking blocks are dropped when
+  the model changes, and a thread too big for the new model's window (known per model
+  where it differs from the preset's, as for `claude-haiku-4-5`) is refreshed on the
+  current model first. `/effort low|medium|high` applies from the next request, and
+  `--effort` sets it at the start. The mesh desk and the front desk follow the switch.
+- **`/help` with topics.** `/help commands`, `/help modes`, `/help model`,
+  `/help tools` and `/help keys`. Every command lives in one registry,
+  `commands.COMMANDS`, which the parser, the help text, the terminal's completion and
+  the hosted app's suggestion list are all read from.
+- **Completion in the interface.** Typing `/` in the prompt opens a list of matching
+  commands above it with a grey completion in the prompt itself; Up and Down move,
+  Tab takes the suggestion, Esc closes the list. After `/mode `, `/model `, `/effort `
+  and `/help ` the list offers that command's choices. The session bar shows model,
+  effort, provider and mode.
+- **New stream events.** `approval`, `approval_done`, `model` and `mode` on
+  `--output-format stream-json`. A question is answered by sending `/yes`, `/no ...` or
+  `/all` as an ordinary `user` line.
+
+### Changed
+
+- **The free-will contract is amended, not dropped.** `docs/design.md` section 1, the
+  system prompt and the README's Security section now say what is true: no approvals
+  and no enforced ordering in the default mode, and exactly what the person chose to
+  have gated in the other two.
+- **`fetch` is described correctly in the README.** It copies files from the workspace
+  to your machine; the README had said it read the open web.
 
 ## [0.2.0] - 2026-09-12
 
