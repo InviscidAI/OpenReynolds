@@ -1,0 +1,1170 @@
+# -- cell 1 (9.6s, exit 1)
+import numpy as np
+import build123d as bd
+
+# --- parameters (metres) ---
+L = 0.900                      # duct length, axis = z, z=0 fan exit, z=L nozzle
+Z_STATIONS = [0.0, L/2, L]
+R_OUT = [0.450, 0.430, 0.410]  # outer cowl inner surface
+R_CORE = [0.280, 0.310, 0.250] # core cowl outer surface
+
+# smooth blends: quadratic through the three stations (outer one is linear, a degenerate quadratic)
+co_out  = np.polyfit(Z_STATIONS, R_OUT, 2)
+co_core = np.polyfit(Z_STATIONS, R_CORE, 2)
+r_out  = lambda z: np.polyval(co_out, z)
+r_core = lambda z: np.polyval(co_core, z)
+print("outer poly coeffs:", co_out, " core poly coeffs:", co_core)
+
+def revolved_solid(rfun, name):
+    """Solid of revolution about z: region 0<=r<=rfun(z), 0<=z<=L."""
+    zs = np.linspace(0, L, 25)
+    prof = [bd.Vector(rfun(z), 0, z) for z in zs]          # outer profile curve
+    wire = bd.Wire.make_wire([
+        bd.Spline(prof),                                   # profile (exact-ish, interpolating)
+        bd.Line(prof[-1], bd.Vector(0, 0, L)),             # top to axis
+        bd.Line(bd.Vector(0, 0, L), bd.Vector(0, 0, 0)),   # down the axis
+        bd.Line(bd.Vector(0, 0, 0), prof[0]),              # axis back out
+    ])
+    face = bd.Face.make_from_wires(wire)
+    return bd.revolve(face, axis=bd.Axis.Z, revolution_arc=360)
+
+outer_solid = revolved_solid(r_out, "outer")
+core_solid  = revolved_solid(r_core, "core")
+fluid = outer_solid - core_solid
+print("fluid volume: %.6f m^3" % fluid.volume)
+# analytic volume for sanity
+import scipy.integrate as si  # may not exist; fall back
+# -- output
+outer poly coeffs: [ 4.22680798e-16 -4.44444444e-02  4.50000000e-01]  core poly coeffs: [-0.22222222  0.16666667  0.28      ]
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 30[39m
+[32m     26[39m     ])
+[32m     27[39m     face = bd.Face.make_from_wires(wire)
+[32m     28[39m     [38;5;28;01mreturn[39;00m bd.revolve(face, axis=bd.Axis.Z, revolution_arc=[32m360[39m)
+[32m     29[39m 
+[32m---> [39m[32m30[39m outer_solid = revolved_solid(r_out, [33m"outer"[39m)
+[32m     31[39m core_solid  = revolved_solid(r_core, [33m"core"[39m)
+[32m     32[39m fluid = outer_solid - core_solid
+[32m     33[39m print([33m"fluid volume: %.6f m^3"[39m % fluid.volume)
+
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 21[39m, in [36mrevolved_solid[39m[34m(rfun, name)[39m
+[32m     17[39m [38;5;28;01mdef[39;00m revolved_solid(rfun, name):
+[32m     18[39m     [33m"""Solid of revolution about z: region 0<=r<=rfun(z), 0<=z<=L."""[39m
+[32m     19[39m     zs = np.linspace([32m0[39m, L, [32m25[39m)
+[32m     20[39m     prof = [bd.Vector(rfun(z), [32m0[39m, z) [38;5;28;01mfor[39;00m z [38;5;28;01min[39;00m zs]          [38;5;66;03m# outer profile curve[39;00m
+[32m---> [39m[32m21[39m     wire = bd.Wire.make_wire([
+[32m     22[39m         bd.Spline(prof),                                   [38;5;66;03m# profile (exact-ish, interpolating)[39;00m
+[32m     23[39m         bd.Line(prof[-[32m1[39m], bd.Vector([32m0[39m, [32m0[39m, L)),             [38;5;66;03m# top to axis[39;00m
+[32m     24[39m         bd.Line(bd.Vector([32m0[39m, [32m0[39m, L), bd.Vector([32m0[39m, [32m0[39m, [32m0[39m)),   [38;5;66;03m# down the axis[39;00m
+
+[31mAttributeError[39m: type object 'Wire' has no attribute 'make_wire'
+
+# -- cell 2 (0.1s, exit 0)
+import inspect, subprocess
+print(subprocess.run(["grep","-n","Wire",".reference/b123d_api.md"],capture_output=True,text=True).stdout[:2000])
+print([m for m in dir(bd.Wire) if not m.startswith('_')])
+# -- output
+355:- `Wire(*args, **kwargs)`
+
+['ancestors', 'anchestors', 'area', 'bounding_box', 'cast', 'center', 'chamfer_2d', 'children', 'clean', 'close', 'closest_points', 'color', 'combine', 'combined_center', 'common_plane', 'composite_factories', 'compound', 'compounds', 'compute_mass', 'copy_attributes_to', 'curvature_comb', 'cut', 'depth', 'derivative_at', 'descendants', 'distance', 'distance_to', 'distance_to_with_closest_points', 'distances', 'downcast_LUT', 'edge', 'edges', 'end_point', 'entities', 'extrude', 'face', 'faces', 'faces_intersected_by_axis', 'fillet_2d', 'fix', 'fix_degenerate_edges', 'fuse', 'geom_LUT_EDGE', 'geom_LUT_FACE', 'geom_adaptor', 'geom_equal', 'geom_type', 'get_shape_list', 'get_single_shape', 'get_top_level_shapes', 'global_location', 'height', 'intersect', 'inverse_shape_LUT', 'is_closed', 'is_equal', 'is_forward', 'is_interior', 'is_leaf', 'is_manifold', 'is_null', 'is_planar_face', 'is_root', 'is_same', 'is_valid', 'iter_path_reverse', 'leaves', 'length', 'locate', 'located', 'location', 'location_at', 'locations', 'make_circle', 'make_composite', 'make_convex_hull', 'make_ellipse', 'make_polygon', 'make_rect', 'matrix_of_inertia', 'mesh', 'mirror', 'move', 'moved', 'normal', 'offset_2d', 'order', 'order_chamfer_edges', 'order_edges', 'orientation', 'oriented_bounding_box', 'param_at', 'param_at_point', 'parent', 'path', 'perpendicular_line', 'position', 'position_at', 'positions', 'principal_properties', 'project', 'project_faces', 'project_to_shape', 'project_to_viewport', 'radius', 'radius_of_gyration', 'register_composite_factory', 'relocate', 'root', 'rotate', 'scale', 'separator', 'shape_LUT', 'shape_properties_LUT', 'shape_type', 'shell', 'shells', 'show_topology', 'siblings', 'size', 'solid', 'solids', 'split', 'split_by_perimeter', 'start_point', 'static_moments', 'stitch', 'tangent_angle_at', 'tangent_at', 'tessellate', 'to_splines', 'to_wire', 'touch', 'transform_geometry', 'transform_shape', 'transformed', 'translate', 'trim', 'vertex', 'vertices', 'volume', 'wire', 'wires', 'wrapped']
+
+# -- cell 3 (0.1s, exit 1)
+import numpy as np
+import build123d as bd
+
+# --- parameters (metres; request gave mm, converted once here) ---
+L = 0.900                      # duct length, axis = z, z=0 fan exit (inlet), z=L nozzle (outlet)
+Z_STATIONS = [0.0, L/2, L]
+R_OUT = [0.450, 0.430, 0.410]  # outer cowl inner-surface radii
+R_CORE = [0.280, 0.310, 0.250] # core cowl outer-surface radii
+
+# smooth blends: quadratic through the three stations (outer set is collinear -> linear taper)
+co_out  = np.polyfit(Z_STATIONS, R_OUT, 2)
+co_core = np.polyfit(Z_STATIONS, R_CORE, 2)
+r_out  = lambda z: float(np.polyval(co_out, z))
+r_core = lambda z: float(np.polyval(co_core, z))
+print("outer poly:", co_out, "\ncore poly:", co_core)
+
+def revolved_solid(rfun):
+    """Solid of revolution about z: 0 <= r <= rfun(z), 0 <= z <= L."""
+    zs = np.linspace(0, L, 25)
+    prof = [bd.Vector(rfun(z), 0, z) for z in zs]
+    edges = [
+        bd.Spline(prof),                                    # profile curve
+        bd.Line(prof[-1], bd.Vector(0, 0, L)),              # top: profile to axis
+        bd.Line(bd.Vector(0, 0, L), bd.Vector(0, 0, 0)),    # down the axis
+        bd.Line(bd.Vector(0, 0, 0), prof[0]),               # axis back out to profile start
+    ]
+    wire = bd.Wire(edges)
+    face = bd.Face.make_from_wires(wire)
+    return bd.revolve(face, axis=bd.Axis.Z, revolution_arc=360)
+
+print("has make_from_wires:", hasattr(bd.Face, "make_from_wires"))
+outer_solid = revolved_solid(r_out)
+core_solid  = revolved_solid(r_core)
+fluid = outer_solid - core_solid
+
+# analytic volume of the annulus: pi * integral (rout^2 - rcore^2) dz
+zs = np.linspace(0, L, 2001)
+vol_analytic = np.pi * np.trapezoid([r_out(z)**2 - r_core(z)**2 for z in zs], zs)
+print("fluid volume: %.6f m^3  (analytic %.6f, diff %.2e)" % (fluid.volume, vol_analytic, fluid.volume - vol_analytic))
+print("n faces:", len(fluid.faces()))
+# -- output
+outer poly: [ 4.22680798e-16 -4.44444444e-02  4.50000000e-01] 
+core poly: [-0.22222222  0.16666667  0.28      ]
+has make_from_wires: False
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 32[39m
+[32m     28[39m     face = bd.Face.make_from_wires(wire)
+[32m     29[39m     [38;5;28;01mreturn[39;00m bd.revolve(face, axis=bd.Axis.Z, revolution_arc=[32m360[39m)
+[32m     30[39m 
+[32m     31[39m print([33m"has make_from_wires:"[39m, hasattr(bd.Face, [33m"make_from_wires"[39m))
+[32m---> [39m[32m32[39m outer_solid = revolved_solid(r_out)
+[32m     33[39m core_solid  = revolved_solid(r_core)
+[32m     34[39m fluid = outer_solid - core_solid
+[32m     35[39m 
+
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 28[39m, in [36mrevolved_solid[39m[34m(rfun)[39m
+[32m     24[39m         bd.Line(bd.Vector([32m0[39m, [32m0[39m, L), bd.Vector([32m0[39m, [32m0[39m, [32m0[39m)),    [38;5;66;03m# down the axis[39;00m
+[32m     25[39m         bd.Line(bd.Vector([32m0[39m, [32m0[39m, [32m0[39m), prof[[32m0[39m]),               [38;5;66;03m# axis back out to profile start[39;00m
+[32m     26[39m     ]
+[32m     27[39m     wire = bd.Wire(edges)
+[32m---> [39m[32m28[39m     face = bd.Face.make_from_wires(wire)
+[32m     29[39m     [38;5;28;01mreturn[39;00m bd.revolve(face, axis=bd.Axis.Z, revolution_arc=[32m360[39m)
+
+[31mAttributeError[39m: type object 'Face' has no attribute 'make_from_wires'
+
+# -- cell 4 (0.1s, exit 0)
+import build123d as bd, inspect
+print(inspect.signature(bd.Face.__init__) if hasattr(bd.Face,'__init__') else '')
+print([m for m in dir(bd.Face) if 'make' in m or 'from' in m])
+print(inspect.signature(bd.revolve))
+print(inspect.signature(bd.Wire.__init__))
+# -- output
+(self, *args: 'Any', **kwargs: 'Any')
+['make_bezier_surface', 'make_composite', 'make_gordon_surface', 'make_holes', 'make_plane', 'make_rect', 'make_surface', 'make_surface_from_array_of_points', 'make_surface_from_curves', 'make_surface_patch']
+(profiles: 'Face | Iterable[Face] | None' = None, axis: 'Axis' = Axis((0, 0, 0), (0, 0, 1)), revolution_arc: 'float' = 360.0, clean: 'bool' = True, mode: 'Mode' = <Mode.ADD>) -> 'Part'
+(self, *args, **kwargs)
+
+# -- cell 5 (0.1s, exit 0)
+import numpy as np
+import build123d as bd
+
+# --- parameters (metres; request gave mm, converted once here) ---
+L = 0.900                      # duct length, axis = z, z=0 fan exit (inlet), z=L nozzle (outlet)
+Z_STATIONS = [0.0, L/2, L]
+R_OUT = [0.450, 0.430, 0.410]  # outer cowl inner-surface radii
+R_CORE = [0.280, 0.310, 0.250] # core cowl outer-surface radii
+
+# smooth blends: quadratic through the three stations (outer set is collinear -> linear taper)
+co_out  = np.polyfit(Z_STATIONS, R_OUT, 2)
+co_core = np.polyfit(Z_STATIONS, R_CORE, 2)
+r_out  = lambda z: float(np.polyval(co_out, z))
+r_core = lambda z: float(np.polyval(co_core, z))
+print("outer poly:", co_out, "\ncore poly:", co_core)
+
+def revolved_solid(rfun):
+    """Solid of revolution about z: 0 <= r <= rfun(z), 0 <= z <= L."""
+    zs = np.linspace(0, L, 25)
+    prof = [bd.Vector(rfun(z), 0, z) for z in zs]
+    edges = [
+        bd.Spline(prof),                                    # profile curve
+        bd.Line(prof[-1], bd.Vector(0, 0, L)),              # top: profile to axis
+        bd.Line(bd.Vector(0, 0, L), bd.Vector(0, 0, 0)),    # down the axis
+        bd.Line(bd.Vector(0, 0, 0), prof[0]),               # axis back out to profile start
+    ]
+    wire = bd.Wire(edges)
+    face = bd.Face(wire)
+    return bd.revolve(face, axis=bd.Axis.Z, revolution_arc=360)
+
+outer_solid = revolved_solid(r_out)
+core_solid  = revolved_solid(r_core)
+fluid = outer_solid - core_solid
+
+# analytic volume of the annulus: pi * integral (rout^2 - rcore^2) dz
+zs = np.linspace(0, L, 2001)
+vol_analytic = np.pi * np.trapezoid([r_out(z)**2 - r_core(z)**2 for z in zs], zs)
+print("fluid volume: %.6f m^3  (analytic %.6f, diff %.2e)" % (fluid.volume, vol_analytic, fluid.volume - vol_analytic))
+print("n faces:", len(fluid.faces()))
+for i, f in enumerate(fluid.faces()):
+    c = f.center()
+    print(i, f.geom_type, "area %.4f" % f.area, "center (r=%.4f, z=%.4f)" % (np.hypot(c.X, c.Y), c.Z))
+# -- output
+outer poly: [ 4.22680798e-16 -4.44444444e-02  4.50000000e-01] 
+core poly: [-0.22222222  0.16666667  0.28      ]
+fluid volume: 0.276391 m^3  (analytic 0.276391, diff -9.50e-09)
+n faces: 4
+0 GeomType.REVOLUTION area 2.4340 center (r=0.4300, z=0.4500)
+1 GeomType.PLANE area 0.3899 center (r=0.0000, z=0.0000)
+2 GeomType.PLANE area 0.3318 center (r=0.0000, z=0.9000)
+3 GeomType.REVOLUTION area 1.6795 center (r=0.3100, z=0.4515)
+
+# -- cell 6 (12.1s, exit 0)
+import os, numpy as np
+os.makedirs("constant/triSurface", exist_ok=True)
+
+# --- identify the four faces by what they were built from, then tag them ---
+patches = {}          # name -> Face
+for f in fluid.faces():
+    c = f.center()
+    r_c, z_c = np.hypot(c.X, c.Y), c.Z
+    if f.geom_type == bd.GeomType.PLANE:
+        patches["inlet" if abs(z_c - 0.0) < 1e-9 else "outlet"] = f
+    elif abs(r_c - r_out(z_c)) < abs(r_c - r_core(z_c)):
+        patches["outer_cowl"] = f
+    else:
+        patches["core_cowl"] = f
+print({k: round(v.area, 4) for k, v in patches.items()})
+
+# --- measure the surfaces: tessellate each revolved face, compare r(z) to the requested profile ---
+for name, rfun in [("outer_cowl", r_out), ("core_cowl", r_core)]:
+    pts, _ = patches[name].tessellate(1e-4)   # tolerance in metres
+    pts = np.array([[p.X, p.Y, p.Z] for p in pts])
+    rad = np.hypot(pts[:, 0], pts[:, 1])
+    expected = np.array([rfun(z) for z in pts[:, 2]])
+    err = np.abs(rad - expected)
+    print("%s: %d pts, max |r_meas - r_profile| = %.2e m; stations r(z=0,.45,.9) = %.4f %.4f %.4f"
+          % (name, len(pts), err.max(), rfun(0), rfun(L/2), rfun(L)))
+# check monotonic annular gap stays positive
+gap = [r_out(z) - r_core(z) for z in np.linspace(0, L, 91)]
+print("annular gap: min %.4f m at z=%.3f" % (min(gap), np.linspace(0, L, 91)[np.argmin(gap)]))
+
+# --- export one STL per patch ---
+for name, f in patches.items():
+    bd.export_stl(f, f"constant/triSurface/{name}.stl", tolerance=1e-4, angular_tolerance=0.15)
+print(sorted(os.listdir("constant/triSurface")))
+# -- output
+{'outer_cowl': 2.434, 'inlet': 0.3899, 'outlet': 0.3318, 'core_cowl': 1.6795}
+outer_cowl: 16294 pts, max |r_meas - r_profile| = 2.22e-16 m; stations r(z=0,.45,.9) = 0.4500 0.4300 0.4100
+core_cowl: 26010 pts, max |r_meas - r_profile| = 2.33e-08 m; stations r(z=0,.45,.9) = 0.2800 0.3100 0.2500
+annular gap: min 0.1199 m at z=0.470
+['core_cowl.stl', 'inlet.stl', 'outer_cowl.stl', 'outlet.stl']
+
+# -- cell 7 (0.9s, exit 0)
+import pyvista as pv
+pv.OFF_SCREEN = True
+pl = pv.Plotter()
+colors = {"outer_cowl": "lightblue", "core_cowl": "tan", "inlet": "lime", "outlet": "tomato"}
+for name, col in colors.items():
+    m = pv.read(f"constant/triSurface/{name}.stl")
+    pl.add_mesh(m, color=col, opacity=0.6 if "cowl" in name else 1.0, show_edges=False)
+pl.add_axes()
+pl.camera_position = [(2.2, 0.4, 0.45), (0, 0, 0.45), (0, 0, 1)]
+pl.show(screenshot="geometry_overview.png")
+pl.close()
+import matplotlib.pyplot as plt
+img = plt.imread("geometry_overview.png")
+plt.figure(figsize=(10, 8)); plt.imshow(img); plt.axis("off"); plt.title("green=inlet, red=outlet, blue=outer cowl, tan=core cowl"); plt.show()
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-15 08:05:36.925 (   0.248s) [    7735C654C780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-15 08:05:36.926 (   0.249s) [    7735C654C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 08:05:36.938 (   0.261s) [    7735C654C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_640249/464062104.py:10: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot="geometry_overview.png")
+
+# -- cell 8 (0.1s, exit 0)
+import os
+os.makedirs("system", exist_ok=True)
+
+open("system/controlDict","w").write("""FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      controlDict;
+}
+application     snappyHexMesh;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         1;
+deltaT          1;
+writeControl    timeStep;
+writeInterval   1;
+purgeWrite      0;
+writeFormat     ascii;
+writePrecision  8;
+writeCompression off;
+timeFormat      general;
+timePrecision   6;
+runTimeModifiable true;
+""")
+
+# background box: 1.0 x 1.0 x 1.0 m, 20^3 cells -> 50 mm base cells
+open("system/blockMeshDict","w").write("""FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}
+scale 1;
+vertices
+(
+    (-0.5 -0.5 -0.05)
+    ( 0.5 -0.5 -0.05)
+    ( 0.5  0.5 -0.05)
+    (-0.5  0.5 -0.05)
+    (-0.5 -0.5  0.95)
+    ( 0.5 -0.5  0.95)
+    ( 0.5  0.5  0.95)
+    (-0.5  0.5  0.95)
+);
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) (20 20 20) simpleGrading (1 1 1)
+);
+boundary
+(
+    background
+    {
+        type patch;
+        faces
+        (
+            (0 4 7 3) (1 2 6 5) (0 1 5 4) (3 7 6 2) (0 3 2 1) (4 5 6 7)
+        );
+    }
+);
+""")
+
+open("system/snappyHexMeshDict","w").write("""FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      snappyHexMeshDict;
+}
+castellatedMesh true;
+snap            true;
+addLayers       false;
+
+geometry
+{
+    outer_cowl  { type triSurfaceMesh; file "outer_cowl.stl"; }
+    core_cowl   { type triSurfaceMesh; file "core_cowl.stl"; }
+    inlet       { type triSurfaceMesh; file "inlet.stl"; }
+    outlet      { type triSurfaceMesh; file "outlet.stl"; }
+}
+
+castellatedMeshControls
+{
+    maxLocalCells       1000000;
+    maxGlobalCells      3000000;
+    minRefinementCells  10;
+    maxLoadUnbalance    0.10;
+    nCellsBetweenLevels 2;
+    features
+    (
+        { file "outer_cowl.eMesh"; level 2; }
+        { file "core_cowl.eMesh";  level 2; }
+        { file "inlet.eMesh";      level 2; }
+        { file "outlet.eMesh";     level 2; }
+    );
+    refinementSurfaces
+    {
+        outer_cowl  { level (2 2); }
+        core_cowl   { level (2 2); }
+        inlet       { level (2 2); }
+        outlet      { level (2 2); }
+    }
+    resolveFeatureAngle 30;
+    refinementRegions   {}
+    locationInMesh      (0.36 0.0 0.45);
+    allowFreeStandingZoneFaces true;
+}
+
+snapControls
+{
+    nSmoothPatch    3;
+    tolerance       2.0;
+    nSolveIter      100;
+    nRelaxIter      5;
+    nFeatureSnapIter 10;
+    implicitFeatureSnap false;
+    explicitFeatureSnap true;
+    multiRegionFeatureSnap false;
+}
+
+addLayersControls
+{
+    relativeSizes true;
+    layers {}
+    expansionRatio 1.0;
+    finalLayerThickness 0.3;
+    minThickness 0.1;
+    nGrow 0;
+    featureAngle 60;
+    nRelaxIter 3;
+    nSmoothSurfaceNormals 1;
+    nSmoothNormals 3;
+    nSmoothThickness 10;
+    maxFaceThicknessRatio 0.5;
+    maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle 90;
+    nBufferCellsNoExtrude 0;
+    nLayerIter 50;
+}
+
+meshQualityControls
+{
+    maxNonOrtho         65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave          80;
+    minVol              1e-13;
+    minTetQuality       1e-15;
+    minArea             -1;
+    minTwist            0.02;
+    minDeterminant      0.001;
+    minFaceWeight       0.05;
+    minVolRatio         0.01;
+    minTriangleTwist    -1;
+    nSmoothScale        4;
+    errorReduction      0.75;
+}
+
+mergeTolerance 1e-6;
+""")
+
+open("system/surfaceFeaturesDict","w").write("""FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      surfaceFeaturesDict;
+}
+surfaces ("outer_cowl.stl" "core_cowl.stl" "inlet.stl" "outlet.stl");
+includedAngle 150;
+writeObj yes;
+""")
+print("dicts written:", sorted(os.listdir("system")))
+# -- output
+dicts written: ['blockMeshDict', 'controlDict', 'snappyHexMeshDict', 'surfaceFeaturesDict']
+
+# -- cell 9 (0.4s, exit 1)
+import subprocess
+for cmd in (["blockMesh"], ["surfaceFeatureExtract"]):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    print("=".join(["", cmd[0], ""]), "rc=", r.returncode)
+    print("\n".join((r.stdout + r.stderr).splitlines()[-6:]))
+    assert r.returncode == 0
+r = subprocess.Popen(["snappyHexMesh", "-overwrite"], stdout=open("log.snappyHexMesh","w"), stderr=subprocess.STDOUT)
+print("snappy started, pid", r.pid)
+# -- output
+=blockMesh= rc= 0
+Patches
+----------------
+  patch 0 (start: 22800 size: 2400) name: background
+
+End
+
+=surfaceFeatureExtract= rc= 1
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mAssertionError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 6[39m
+[32m      2[39m [38;5;28;01mfor[39;00m cmd [38;5;28;01min[39;00m ([[33m"blockMesh"[39m], [[33m"surfaceFeatureExtract"[39m]):
+[32m      3[39m     r = subprocess.run(cmd, capture_output=[38;5;28;01mTrue[39;00m, text=[38;5;28;01mTrue[39;00m)
+[32m      4[39m     print([33m"="[39m.join([[33m""[39m, cmd[[32m0[39m], [33m""[39m]), [33m"rc="[39m, r.returncode)
+[32m      5[39m     print([33m"\n"[39m.join((r.stdout + r.stderr).splitlines()[-[32m6[39m:]))
+[32m----> [39m[32m6[39m     [38;5;28;01massert[39;00m r.returncode == [32m0[39m
+[32m      7[39m r = subprocess.Popen([[33m"snappyHexMesh"[39m, [33m"-overwrite"[39m], stdout=open([33m"log.snappyHexMesh"[39m,[33m"w"[39m), stderr=subprocess.STDOUT)
+[32m      8[39m print([33m"snappy started, pid"[39m, r.pid)
+
+[31mAssertionError[39m:
+
+# -- cell 10 (0.2s, exit 0)
+import subprocess
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print(r.stdout[-1500:]); print("STDERR:", r.stderr[-1500:])
+# -- output
+/  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : surfaceFeatureExtract
+Date   : Sep 15 2026
+Time   : 08:07:00
+Host   : yc-demo
+PID    : 645733
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+Note: Feature line extraction only valid on closed manifold surfaces
+
+Reading surfaceFeatureExtractDict
+
+
+STDERR: 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16/system/surfaceFeatureExtractDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 11 (0.2s, exit 0)
+import shutil, subprocess
+shutil.copy("system/surfaceFeaturesDict", "system/surfaceFeatureExtractDict")
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print("rc=", r.returncode)
+print("\n".join((r.stdout + r.stderr).splitlines()[-12:]))
+# -- output
+rc= 0
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+Note: Feature line extraction only valid on closed manifold surfaces
+
+Reading surfaceFeatureExtractDict
+
+ExecutionTime = 0 s  ClockTime = 0 s
+
+End
+
+# -- cell 12 (0.3s, exit 0)
+import subprocess
+p = subprocess.Popen(["snappyHexMesh", "-overwrite"], stdout=open("log.snappyHexMesh","w"), stderr=subprocess.STDOUT)
+rc = p.wait()
+print("snappy rc=", rc)
+print("\n".join(open("log.snappyHexMesh").read().splitlines()[-25:]))
+# -- output
+snappy rc= 1
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 13 (0.8s, exit 0)
+import subprocess
+open("system/fvSchemes","w").write("""FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSchemes;
+}
+ddtSchemes      {}
+gradSchemes     {}
+divSchemes      {}
+laplacianSchemes {}
+interpolationSchemes {}
+snGradSchemes   {}
+""")
+open("system/fvSolution","w").write("""FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}
+solvers {}
+""")
+p = subprocess.Popen(["snappyHexMesh", "-overwrite"], stdout=open("log.snappyHexMesh","w"), stderr=subprocess.STDOUT)
+rc = p.wait()
+print("snappy rc=", rc)
+print("\n".join(open("log.snappyHexMesh").read().splitlines()[-20:]))
+# -- output
+snappy rc= 1
+Setting refinement level of surface to be consistent with shells.
+For geometry outer_cowl detected 0 uncached triangles out of 31969
+For geometry core_cowl detected 0 uncached triangles out of 51441
+For geometry inlet detected 0 uncached triangles out of 563
+For geometry outlet detected 0 uncached triangles out of 561
+Checked shell refinement in = 0.29 s
+
+Reading features.
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Could not open "/home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16/constant/triSurface/outer_cowl.eMesh"
+
+file: system/snappyHexMeshDict/castellatedMeshControls/features at line 29.
+
+    From void Foam::refinementFeatures::read(const Foam::objectRegistry&, const Foam::PtrList<Foam::dictionary>&)
+    in file refinementFeatures/refinementFeatures.C at line 118.
+
+FOAM exiting
+
+# -- cell 14 (0.1s, exit 0)
+import subprocess
+print(subprocess.run(["find","constant","-name","*eMesh*","-o","-name","*.obj"],capture_output=True,text=True).stdout)
+print(subprocess.run(["ls","-R","constant"],capture_output=True,text=True).stdout)
+# -- output
+constant:
+polyMesh
+triSurface
+
+constant/polyMesh:
+boundary
+faces
+neighbour
+owner
+points
+
+constant/triSurface:
+core_cowl.stl
+inlet.stl
+outer_cowl.stl
+outlet.stl
+
+# -- cell 15 (1.0s, exit 0)
+import subprocess
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print(r.stdout)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : surfaceFeatureExtract
+Date   : Sep 15 2026
+Time   : 08:08:19
+Host   : yc-demo
+PID    : 649814
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+Note: Feature line extraction only valid on closed manifold surfaces
+
+Reading surfaceFeatureExtractDict
+
+ExecutionTime = 0 s  ClockTime = 0 s
+
+End
+
+# -- cell 16 (0.2s, exit 0)
+import subprocess, os
+print(subprocess.run(["bash","-c",'find $FOAM_TUTORIALS -name "surfaceFeatureExtractDict" | head -5'],capture_output=True,text=True).stdout)
+print(subprocess.run(["bash","-c",'find $FOAM_TUTORIALS -name "surfaceFeatureExtractDict" | head -1 | xargs cat'],capture_output=True,text=True).stdout)
+# -- output
+/usr/lib/openfoam/openfoam2512/tutorials/lagrangian/reactingParcelFoam/airRecirculationRoom/steady/system/surfaceFeatureExtractDict
+/usr/lib/openfoam/openfoam2512/tutorials/compressible/rhoSimpleFoam/gasMixing/injectorPipe/system/surfaceFeatureExtractDict
+/usr/lib/openfoam/openfoam2512/tutorials/compressible/rhoPimpleFoam/RAS/annularThermalMixer/system/surfaceFeatureExtractDict
+/usr/lib/openfoam/openfoam2512/tutorials/preProcessing/createZeroDirectory/motorBike/system/surfaceFeatureExtractDict
+/usr/lib/openfoam/openfoam2512/tutorials/preProcessing/createZeroDirectory/snappyMultiRegionHeater/system/surfaceFeatureExtractDict
+
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2512                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      surfaceFeatureExtractDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+roomRecirculation.stl
+{
+    extractionMethod    extractFromSurface;
+    writeObj            yes;
+
+    extractFromSurfaceCoeffs
+    {
+        includedAngle   150;
+    }
+}
+
+
+// ************************************************************************* //
+
+# -- cell 17 (1.1s, exit 0)
+import subprocess
+surfs = ["outer_cowl.stl", "core_cowl.stl", "inlet.stl", "outlet.stl"]
+body = "".join(f"""{s}
+{{
+    extractionMethod    extractFromSurface;
+    writeObj            yes;
+    extractFromSurfaceCoeffs
+    {{
+        includedAngle   150;
+    }}
+}}
+
+""" for s in surfs)
+open("system/surfaceFeatureExtractDict","w").write("""FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      surfaceFeatureExtractDict;
+}
+""" + body)
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print("rc=", r.returncode)
+print("\n".join(r.stdout.splitlines()[-10:]))
+print(subprocess.run(["ls","constant/triSurface"],capture_output=True,text=True).stdout)
+# -- output
+rc= 0
+Writing 561 open edges to "/home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16/constant/extendedFeatureEdgeMesh/outlet_openEdges.obj"
+Writing 0 multiple edges to "/home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16/constant/extendedFeatureEdgeMesh/outlet_multipleEdges.obj"
+Writing 561 region edges to "/home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16/constant/extendedFeatureEdgeMesh/outlet_regionEdges.obj"
+Writing 561 edge directions to "/home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16/constant/extendedFeatureEdgeMesh/outlet_edgeDirections.obj"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T16-20260915-080109-6746/t16/constant/triSurface/outlet.eMesh"
+ExecutionTime = 0.13 s  ClockTime = 0 s
+
+End
+
+core_cowl.eMesh
+core_cowl.stl
+inlet.eMesh
+inlet.stl
+outer_cowl.eMesh
+outer_cowl.stl
+outlet.eMesh
+outlet.stl
+
+# -- cell 18 (24.6s, exit 0)
+import subprocess
+p = subprocess.Popen(["snappyHexMesh", "-overwrite"], stdout=open("log.snappyHexMesh","w"), stderr=subprocess.STDOUT)
+rc = p.wait()
+print("snappy rc=", rc)
+lines = open("log.snappyHexMesh").read().splitlines()
+import re
+for l in lines:
+    if re.search(r"cells:|Layer mesh|Finished|patch.*faces|Final", l):
+        print(l)
+print("\n".join(lines[-12:]))
+# -- output
+snappy rc= 0
+Initial mesh : cells:8000  faces:25200  points:9261
+After refinement feature refinement iteration 0 : cells:10100  faces:33060  points:13141
+After refinement feature refinement iteration 1 : cells:15371  faces:52467  points:22438
+After refinement feature refinement iteration 2 : cells:16085  faces:54837  points:23373
+After refinement surface refinement iteration 0 : cells:49433  faces:163941  points:65367
+After refinement surface refinement iteration 1 : cells:137066  faces:447366  points:173151
+After refinement surface refinement iteration 2 : cells:137150  faces:447618  points:173235
+After refinement shell refinement iteration 0 : cells:126514  faces:416265  points:163420
+After introducing baffles : cells:126514  faces:456028  points:163420
+After introducing baffles : cells:126514  faces:528838  points:163420
+After subsetting : cells:79361  faces:271340  points:112722
+After introducing baffles : cells:79361  faces:271340  points:112722
+After introducing baffles : cells:79361  faces:271340  points:112722
+After subsetting : cells:79361  faces:271340  points:112722
+Refined mesh : cells:79361  faces:271340  points:112722
+--> FOAM Warning : Displacement (-4.1065356e-06 2.0822646e-06 -4.0518144e-06) at mesh point 11887 coord (-0.037351973 -0.44809853 0.049953826) points through the surrounding patch faces
+--> FOAM Warning : Displacement (-2.560252e-06 5.7774605e-05 -1.5663963e-05) at mesh point 11887 coord (-0.037356079 -0.44809645 0.049949774) points through the surrounding patch faces
+--> FOAM Warning : Displacement (1.6957754e-05 0.00010303899 -4.0525194e-05) at mesh point 164 coord (-0.048709839 -0.44718652 0.049580097) points through the surrounding patch faces
+--> FOAM Warning : Displacement (-2.3739493e-05 4.9466123e-05 -0.00038982009) at mesh point 7204 coord (0.061077552 -0.44680769 0.013101224) points through the surrounding patch faces
+--> FOAM Warning : Displacement (-1.6355906e-06 0.00010095901 -0.00044561599) at mesh point 7200 coord (-0.037596406 -0.44859485 0.013180676) points through the surrounding patch faces
+--> FOAM Warning : Displacement (1.6976777e-05 0.00030938448 -0.00050637061) at mesh point 7200 coord (-0.037598042 -0.44849389 0.01273506) points through the surrounding patch faces
+--> FOAM Warning : Displacement (2.1403596e-05 0.00030845947 -0.00044745107) at mesh point 7200 coord (-0.037581065 -0.44818451 0.012228689) points through the surrounding patch faces
+--> FOAM Warning : Displacement (1.0014857e-05 0.0001295507 -0.00028303499) at mesh point 7200 coord (-0.037559661 -0.44787605 0.011781238) points through the surrounding patch faces
+--> FOAM Warning : Displacement (-1.3666679e-06 2.0588275e-05 -0.00011450117) at mesh point 7204 coord (0.060845878 -0.44531994 0.010929804) points through the surrounding patch faces
+--> FOAM Warning : Displacement (0.00010288514 0.00022208118 -1.0857497e-05) at mesh point 7234 coord (-0.19211982 -0.40661729 0.011635893) points through the surrounding patch faces
+Repatching faces according to nearest surface ...
+Repatched 8 faces in = 0.1 s
+Snapped mesh : cells:79361  faces:259866  points:102682
+Finished meshing without any errors
+Finished meshing in = 17.3 s.
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 17.3 s.
+End
+
+# -- cell 19 (0.8s, exit 0)
+import subprocess
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+out = r.stdout
+print("rc=", r.returncode)
+# print mesh stats + patch table + verdict lines
+import re
+keep = []
+capture = False
+for l in out.splitlines():
+    if l.startswith("Mesh stats") or l.startswith("Checking patch") or re.match(r"\s+(cells|faces|points|cells per cell|boundary faces)", l):
+        capture = True
+    if "Mesh stats" in l or "Overall" in l or "boundary" in l.lower() and "faces" in l.lower():
+        pass
+print("\n".join([l for l in out.splitlines() if re.search(r"(points:|faces:|cells:|Mesh stats|OK\.|FAILED|patch\s|^\s+\w+\s+\d+\s+\d+$|Max aspect|non-orthogonality|skewness)", l)]))
+print("---- boundary file ----")
+print(open("constant/polyMesh/boundary").read())
+# -- output
+rc= 0
+Mesh stats 
+    points:           102682
+    faces:            259866
+    internal faces:   231706
+    cells:            79361
+    Breakdown of polyhedra by number of faces:
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+Checking patch topology for multiply connected surfaces...
+    Boundary openness (3.9393154e-16 -9.0444523e-17 -1.0611477e-16) OK.
+    Max cell openness = 3.1097898e-16 OK.
+    Max aspect ratio = 4.6159789 OK.
+    Minimum face area = 4.6982965e-05. Maximum face area = 0.00072930613.  Face area magnitudes OK.
+    Min volume = 3.2792986e-07. Max volume = 1.8220125e-05.  Total volume = 0.27634812.  Cell volumes OK.
+    Mesh non-orthogonality Max: 41.443972 average: 11.031228
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.81867261 OK.
+    Coupled point location match (average 0) OK.
+Mesh OK.
+---- boundary file ----
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+4
+(
+    outer_cowl
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          13856;
+        startFace       231706;
+    }
+    core_cowl
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          9768;
+        startFace       245562;
+    }
+    inlet
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          2436;
+        startFace       255330;
+    }
+    outlet
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          2100;
+        startFace       257766;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 20 (1.9s, exit 1)
+import subprocess, glob
+r = subprocess.run(["foamToVTK","-latestTime"], capture_output=True, text=True)
+print("foamToVTK rc=", r.returncode)
+import pyvista as pv
+pv.OFF_SCREEN = True
+grid = pv.read(glob.glob("VTK/*/*.vtk")[0] if glob.glob("VTK/*/*.vtk") else glob.glob("VTK/*.vtk")[0])
+# slice through the axis plane y=0
+sl = grid.slice(normal=(0,1,0), origin=(0,0,0))
+pl = pv.Plotter()
+pl.add_mesh(sl, show_edges=True, color="white", lighting=False)
+pl.view_vector((0,-1,0), viewup=(0,0,1))
+pl.camera.zoom(1.0)
+pl.show(screenshot="mesh_slice.png")
+pl.close()
+import matplotlib.pyplot as plt
+plt.figure(figsize=(8,9)); plt.imshow(plt.imread("mesh_slice.png")); plt.axis("off"); plt.title("mesh slice at y=0 (annulus, z vertical)"); plt.show()
+# -- output
+foamToVTK rc= 0
+[31m---------------------------------------------------------------------------[39m
+[31mIndexError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[20][39m[32m, line 6[39m
+[32m      2[39m r = subprocess.run([[33m"foamToVTK"[39m,[33m"-latestTime"[39m], capture_output=[38;5;28;01mTrue[39;00m, text=[38;5;28;01mTrue[39;00m)
+[32m      3[39m print([33m"foamToVTK rc="[39m, r.returncode)
+[32m      4[39m [38;5;28;01mimport[39;00m pyvista [38;5;28;01mas[39;00m pv
+[32m      5[39m pv.OFF_SCREEN = [38;5;28;01mTrue[39;00m
+[32m----> [39m[32m6[39m grid = pv.read(glob.glob([33m"VTK/*/*.vtk"[39m)[[32m0[39m] [38;5;28;01mif[39;00m glob.glob([33m"VTK/*/*.vtk"[39m) [38;5;28;01melse[39;00m glob.glob([33m"VTK/*.vtk"[39m)[[32m0[39m])
+[32m      7[39m [38;5;66;03m# slice through the axis plane y=0[39;00m
+[32m      8[39m sl = grid.slice(normal=([32m0[39m,[32m1[39m,[32m0[39m), origin=([32m0[39m,[32m0[39m,[32m0[39m))
+[32m      9[39m pl = pv.Plotter()
+
+[31mIndexError[39m: list index out of range
+
+# -- cell 21 (0.1s, exit 0)
+import subprocess
+print(subprocess.run(["find","VTK","-type","f"],capture_output=True,text=True).stdout[:800])
+# -- output
+VTK/t16.vtm.series
+VTK/t16_0.vtm
+VTK/t16_0/boundary.vtm
+VTK/t16_0/internal.vtu
+VTK/t16_0/boundary/inlet.vtp
+VTK/t16_0/boundary/outlet.vtp
+VTK/t16_0/boundary/outer_cowl.vtp
+VTK/t16_0/boundary/core_cowl.vtp
+
+# -- cell 22 (2.0s, exit 0)
+import pyvista as pv, matplotlib.pyplot as plt
+pv.OFF_SCREEN = True
+grid = pv.read("VTK/t16_0/internal.vtu")
+sl = grid.slice(normal=(0,1,0), origin=(0,0,0))
+pl = pv.Plotter()
+pl.add_mesh(sl, show_edges=True, color="white", lighting=False)
+pl.view_vector((0,-1,0), viewup=(0,0,1))
+pl.show(screenshot="mesh_slice.png")
+pl.close()
+
+# 3D view of boundary patches from the mesh itself
+pl2 = pv.Plotter()
+for name, col in [("outer_cowl","lightblue"),("core_cowl","tan"),("inlet","lime"),("outlet","tomato")]:
+    pl2.add_mesh(pv.read(f"VTK/t16_0/boundary/{name}.vtp"), color=col, show_edges=False,
+                 opacity=0.55 if "cowl" in name else 1.0)
+pl2.camera_position = [(2.0, 0.5, 0.45), (0, 0, 0.45), (0, 0, 1)]
+pl2.show(screenshot="mesh_patches.png")
+pl2.close()
+
+fig, ax = plt.subplots(1, 2, figsize=(15, 7))
+ax[0].imshow(plt.imread("mesh_slice.png")); ax[0].axis("off"); ax[0].set_title("mesh slice at y=0")
+ax[1].imshow(plt.imread("mesh_patches.png")); ax[1].axis("off"); ax[1].set_title("mesh boundary patches")
+plt.show()
+# -- output
+[0m[33m2026-09-15 08:10:47.700 ( 311.023s) [    7735C654C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 08:10:47.702 ( 311.024s) [    7735C654C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_640249/2415411888.py:8: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot="mesh_slice.png")
+[0m[33m2026-09-15 08:10:47.982 ( 311.305s) [    7735C654C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 08:10:47.987 ( 311.310s) [    7735C654C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_640249/2415411888.py:17: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl2.show(screenshot="mesh_patches.png")
+
+# -- cell 23 (3.8s, exit 0)
+import subprocess, re
+d = open("system/snappyHexMeshDict").read()
+d = d.replace("level 2;", "level 3;").replace("level (2 2);", "level (3 3);")
+d = d.replace("maxGlobalCells      3000000;", "maxGlobalCells      6000000;")
+open("system/snappyHexMeshDict","w").write(d)
+p = subprocess.Popen(["snappyHexMesh", "-overwrite"], stdout=open("log.snappyHexMesh","w"), stderr=subprocess.STDOUT)
+rc = p.wait()
+print("snappy rc=", rc)
+lines = open("log.snappyHexMesh").read().splitlines()
+for l in lines:
+    if re.search(r"Refined mesh|Snapped mesh|Finished meshing|Layer mesh", l):
+        print(l)
+# -- output
+snappy rc= 1
+
+# -- cell 24 (0.1s, exit 0)
+print("\n".join(open("log.snappyHexMesh").read().splitlines()[-15:]))
+# -- output
+Refinement phase
+----------------
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+Point (0.36 0 0.45) is not inside the mesh or on a face or edge.
+Bounding box of the mesh:(-0.44997761 -0.44998309 0) (0.44999998 0.44998309 0.89999998)
+
+    From static Foam::labelList Foam::refinementParameters::findCells(bool, const Foam::polyMesh&, const Foam::pointField&)
+    in file snappyHexMeshDriver/refinementParameters/refinementParameters.C at line 249.
+
+FOAM exiting
+
+# -- cell 25 (240.0s, exit 0)
+import subprocess, re
+r = subprocess.run(["blockMesh"], capture_output=True, text=True); assert r.returncode == 0
+p = subprocess.Popen(["snappyHexMesh", "-overwrite"], stdout=open("log.snappyHexMesh","w"), stderr=subprocess.STDOUT)
+rc = p.wait()
+print("snappy rc=", rc)
+for l in open("log.snappyHexMesh").read().splitlines():
+    if re.search(r"Refined mesh|Snapped mesh|Finished meshing|FATAL", l):
+        print(l)
+# -- output
+
+
+# -- cell 26 (59.7s, exit 0)
+import re
+lines = open("log.snappyHexMesh").read().splitlines()
+print("lines so far:", len(lines))
+print("\n".join(lines[-8:]))
+# -- output
+lines so far: 1446
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 161.14 s.
+End
+
+# -- cell 27 (6.6s, exit 0)
+import subprocess, re
+print("log tail:")
+print("\n".join(open("log.snappyHexMesh").read().splitlines()[-3:]))
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print("checkMesh rc=", r.returncode)
+for l in r.stdout.splitlines():
+    if re.search(r"(cells:|Max aspect|Total volume|non-orthogonality Max|Max skewness|Mesh OK|FAILED)", l):
+        print(l)
+# -- output
+log tail:
+Finished meshing in = 161.14 s.
+End
+
+checkMesh rc= 0
+    cells:            362135
+    Max aspect ratio = 4.6480593 OK.
+    Min volume = 4.196188e-08. Max volume = 1.6926737e-05.  Total volume = 0.27634697.  Cell volumes OK.
+    Mesh non-orthogonality Max: 41.679944 average: 11.472873
+    Max skewness = 0.92522712 OK.
+Mesh OK.
+
+# -- cell 28 (8.9s, exit 0)
+import subprocess, re, glob, shutil, os
+# confirm final patch table
+b = open("constant/polyMesh/boundary").read()
+print(re.findall(r"\n    (\w+)\n    \{\n        type\s+(\w+);\n        inGroups.*\n        nFaces\s+(\d+);", b))
+
+# refresh VTK for a look at the refined mesh
+shutil.rmtree("VTK", ignore_errors=True)
+r = subprocess.run(["foamToVTK","-latestTime"], capture_output=True, text=True); print("foamToVTK rc=", r.returncode)
+import pyvista as pv, matplotlib.pyplot as plt
+pv.OFF_SCREEN = True
+grid = pv.read("VTK/t16_0/internal.vtu")
+sl = grid.slice(normal=(0,1,0), origin=(0,0,0))
+pl = pv.Plotter(); pl.add_mesh(sl, show_edges=True, color="white", lighting=False)
+pl.view_vector((0,-1,0), viewup=(0,0,1)); pl.show(screenshot="mesh_slice_final.png"); pl.close()
+plt.figure(figsize=(7,8)); plt.imshow(plt.imread("mesh_slice_final.png")); plt.axis("off")
+plt.title("refined mesh slice at y=0"); plt.show()
+# -- output
+[('outer_cowl', 'wall', '55755'), ('core_cowl', 'wall', '38752'), ('inlet', 'wall', '9884'), ('outlet', 'wall', '8436')]
+foamToVTK rc= 0
+
+[0m[33m2026-09-15 08:18:05.242 ( 748.565s) [    7735C654C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 08:18:05.244 ( 748.566s) [    7735C654C780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_640249/3361793983.py:14: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.view_vector((0,-1,0), viewup=(0,0,1)); pl.show(screenshot="mesh_slice_final.png"); pl.close()
+
+# -- cell 29 (23.4s, exit 0)
+import numpy as np, build123d as bd, inspect
+print(inspect.signature(bd.Shape.tessellate))
+# force one consistent BRepMesh over the whole solid, then per-face triangulations share seam nodes
+_ = fluid.tessellate(1e-4, angular_tolerance=0.15)
+for name, f in patches.items():
+    bd.export_stl(f, f"constant/triSurface/{name}.stl", tolerance=1e-4, angular_tolerance=0.15)
+
+# weld-check the union in python: count edges used exactly once
+import pyvista as pv
+all_pts, all_tris, off = [], [], 0
+for name in ["outer_cowl","core_cowl","inlet","outlet"]:
+    m = pv.read(f"constant/triSurface/{name}.stl")
+    all_pts.append(m.points)
+    all_tris.append(m.faces.reshape(-1,4)[:,1:] + off)
+    off += m.n_points
+pts = np.vstack(all_pts); tris = np.vstack(all_tris)
+key = np.round(pts / 1e-7).astype(np.int64)
+uniq, inv = np.unique(key, axis=0, return_inverse=True)
+edges = {}
+for t in inv[tris]:
+    for a,b in ((t[0],t[1]),(t[1],t[2]),(t[2],t[0])):
+        e = (min(a,b), max(a,b))
+        edges[e] = edges.get(e,0)+1
+free = [e for e,c in edges.items() if c==1]
+print("welded vertices: %d -> %d unique" % (len(pts), len(uniq)))
+print("free edges in welded union:", len(free))
+# -- output
+(self, tolerance: 'float', angular_tolerance: 'float' = 0.1) -> 'tuple[list[Vector], list[tuple[int, int, int]]]'
+welded vertices: 28459 -> 27335 unique
+free edges in welded union: 0
+

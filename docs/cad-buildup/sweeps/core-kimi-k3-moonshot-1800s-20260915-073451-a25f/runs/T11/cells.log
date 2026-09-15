@@ -1,0 +1,1342 @@
+# -- cell 1 (3.7s, exit 1)
+import numpy as np
+import build123d as bd
+
+# ---- Request dimensions (metres) ----
+W       = 0.080          # duct / plate square section
+T       = 0.020          # honeycomb thickness in flow direction
+Z_UP    = -0.040         # inlet plane (40 mm upstream of plate)
+Z_DN    =  0.100         # outlet plane (80 mm downstream of plate)
+F_CELL  = 0.008          # hex cell opening, across the flats
+T_WALL  = 0.001          # honeycomb wall thickness
+
+# ---- Hexagonal lattice: openings F_CELL on a flat-to-flat pitch F_CELL+T_WALL
+#      => every gap between adjacent openings is exactly T_WALL ----
+F_LAT = F_CELL + T_WALL          # lattice across-flats
+S_LAT = F_LAT / np.sqrt(3.0)     # lattice hexagon side
+PX    = 1.5 * S_LAT              # column pitch (x)
+PY    = F_LAT                    # row pitch within a column (y)
+DY    = F_LAT / 2.0              # alternate-column offset
+R_CH  = F_CELL / np.sqrt(3.0)    # channel opening circumradius
+
+# one channel prism, z in [0, T]
+hex_face = bd.Plane.XY * bd.RegularPolygon(radius=R_CH, side_count=6)
+ch0 = bd.extrude(hex_face, amount=T)
+
+# lattice centres covering the plate, incl. margin for partial edge cells
+centres = []
+nx = int(np.ceil((W/2 + R_CH) / PX)) + 1
+ny = int(np.ceil((W/2 + R_CH + DY) / PY)) + 1
+for i in range(-nx, nx + 1):
+    x = i * PX
+    off = DY if (i % 2) else 0.0
+    for j in range(-ny, ny + 1):
+        y = j * PY + off
+        if abs(x) <= W/2 + R_CH and abs(y) <= W/2 + R_CH:
+            centres.append((x, y))
+prisms = [ch0.located(bd.Pos(x, y, 0.0).location) for x, y in centres]
+
+duct  = bd.Box(W, W, Z_DN - Z_UP).located(bd.Pos(0, 0, (Z_UP + Z_DN)/2).location)
+plate = bd.Box(W, W, T).located(bd.Pos(0, 0, T/2).location)
+
+# honeycomb wall lattice = plate minus channel array; air = duct minus walls
+walls = plate - bd.Compound(children=prisms)
+air   = duct - walls
+
+# ---- verification numbers ----
+bb_ch = ch0.bounding_box()
+print(f"channel opening across flats (y size): {bb_ch.size.y*1e3:.4f} mm   (asked 8)")
+print(f"channel opening across vertices (x size): {bb_ch.size.x*1e3:.4f} mm (expect {2*R_CH*1e3:.4f})")
+print(f"number of channel prisms in lattice: {len(prisms)}")
+
+# gap between two neighbouring channels = wall thickness
+d = prisms[0].distance(prisms[1]) if hasattr(prisms[0], "distance") else None
+print("centre[0], centre[1]:", centres[0], centres[1], " gap:", None if d is None else d*1e3, "mm (asked 1)")
+
+open_area = np.sqrt(3)/2 * F_CELL**2          # one hex opening
+pitch_area = PX * PY                          # lattice cell area
+n_equiv = W*W / pitch_area
+est_air = (W*W*(Z_DN-Z_UP) - W*W*T) + n_equiv*open_area*T
+print(f"air volume: {air.volume:.6e} m^3   estimate: {est_air:.6e} m^3")
+print(f"air bbox: x [{air.bounding_box().min.X:.4f},{air.bounding_box().max.X:.4f}]"
+      f" y [{air.bounding_box().min.Y:.4f},{air.bounding_box().max.Y:.4f}]"
+      f" z [{air.bounding_box().min.Z:.4f},{air.bounding_box().max.Z:.4f}]")
+print(f"plate porosity (open fraction): {open_area/pitch_area*100:.1f} %")
+print(f"air faces: {len(air.faces())},  solids: {len(air.solids())}")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 36[39m
+[32m     32[39m     [38;5;28;01mfor[39;00m j [38;5;28;01min[39;00m range(-ny, ny + [32m1[39m):
+[32m     33[39m         y = j * PY + off
+[32m     34[39m         [38;5;28;01mif[39;00m abs(x) <= W/[32m2[39m + R_CH [38;5;28;01mand[39;00m abs(y) <= W/[32m2[39m + R_CH:
+[32m     35[39m             centres.append((x, y))
+[32m---> [39m[32m36[39m prisms = [ch0.located(bd.Pos(x, y, [32m0.0[39m).location) [38;5;28;01mfor[39;00m x, y [38;5;28;01min[39;00m centres]
+[32m     37[39m 
+[32m     38[39m duct  = bd.Box(W, W, Z_DN - Z_UP).located(bd.Pos([32m0[39m, [32m0[39m, (Z_UP + Z_DN)/[32m2[39m).location)
+[32m     39[39m plate = bd.Box(W, W, T).located(bd.Pos([32m0[39m, [32m0[39m, T/[32m2[39m).location)
+
+[31mAttributeError[39m: 'Pos' object has no attribute 'location'
+
+# -- cell 2 (0.6s, exit 0)
+import build123d as bd
+print(type(bd.Pos(1,2,3)), bd.Pos.__mro__[:3])
+print(hasattr(bd.Pos(1,2,3), "position"))
+# check algebra-mode relocate returns a new shape
+b = bd.Box(1,1,1)
+b2 = bd.Pos(5,0,0) * b
+print("moved bbox min x:", b2.bounding_box().min.X, " original:", b.bounding_box().min.X)
+# -- output
+<class 'build123d.geometry.Pos'> (<class 'build123d.geometry.Pos'>, <class 'build123d.geometry.Location'>, <class 'object'>)
+True
+moved bbox min x: 4.5  original: -0.5
+
+# -- cell 3 (2.2s, exit 1)
+import numpy as np
+import build123d as bd
+
+# ---- Request dimensions (metres) ----
+W       = 0.080          # duct / plate square section
+T       = 0.020          # honeycomb thickness in flow direction
+Z_UP    = -0.040         # inlet plane (40 mm upstream of plate)
+Z_DN    =  0.100         # outlet plane (80 mm downstream of plate)
+F_CELL  = 0.008          # hex cell opening, across the flats
+T_WALL  = 0.001          # honeycomb wall thickness
+
+# ---- Hexagonal lattice: openings F_CELL on flat-to-flat pitch F_CELL+T_WALL
+#      => every gap between adjacent openings is exactly T_WALL ----
+F_LAT = F_CELL + T_WALL          # lattice across-flats
+S_LAT = F_LAT / np.sqrt(3.0)     # lattice hexagon side
+PX    = 1.5 * S_LAT              # column pitch (x)
+PY    = F_LAT                    # row pitch within a column (y)
+DY    = F_LAT / 2.0              # alternate-column offset
+R_CH  = F_CELL / np.sqrt(3.0)    # channel opening circumradius
+
+# one channel prism, z in [0, T]
+hex_face = bd.Plane.XY * bd.RegularPolygon(radius=R_CH, side_count=6)
+ch0 = bd.extrude(hex_face, amount=T)
+
+# lattice centres covering the plate, incl. margin for partial edge cells
+centres = []
+nx = int(np.ceil((W/2 + R_CH) / PX)) + 1
+ny = int(np.ceil((W/2 + R_CH + DY) / PY)) + 1
+for i in range(-nx, nx + 1):
+    x = i * PX
+    off = DY if (i % 2) else 0.0
+    for j in range(-ny, ny + 1):
+        y = j * PY + off
+        if abs(x) <= W/2 + R_CH and abs(y) <= W/2 + R_CH:
+            centres.append((x, y))
+prisms = [bd.Pos(x, y, 0.0) * ch0 for x, y in centres]
+
+duct  = bd.Pos(0, 0, (Z_UP + Z_DN)/2) * bd.Box(W, W, Z_DN - Z_UP)
+plate = bd.Pos(0, 0, T/2) * bd.Box(W, W, T)
+
+# honeycomb wall lattice = plate minus channel array; air = duct minus walls
+walls = plate - bd.Compound(children=prisms)
+air   = duct - walls
+
+# ---- verification numbers ----
+bb_ch = ch0.bounding_box()
+print(f"channel opening across flats (y size): {bb_ch.size.y*1e3:.4f} mm   (asked 8)")
+print(f"channel opening across vertices (x size): {bb_ch.size.x*1e3:.4f} mm (expect {2*R_CH*1e3:.4f})")
+print(f"number of channel prisms in lattice: {len(prisms)}")
+
+# gap between two adjacent channel openings = wall thickness
+import math
+# nearest pair of centres: distance F_LAT; wall = F_LAT - F_CELL by construction.
+# measure directly: minimum distance between two neighbouring prism solids
+i0 = 0
+dmin = min(prisms[i0].distance(p) for k, p in enumerate(prisms) if k != i0)
+print(f"min gap from channel {i0} to any other: {dmin*1e3:.4f} mm (asked 1)")
+
+open_area  = np.sqrt(3)/2 * F_CELL**2
+pitch_area = PX * PY
+n_equiv    = W*W / pitch_area
+est_air    = (W*W*(Z_DN-Z_UP) - W*W*T) + n_equiv*open_area*T
+print(f"air volume: {air.volume:.6e} m^3   estimate: {est_air:.6e} m^3")
+bb = air.bounding_box()
+print(f"air bbox: x [{bb.min.X:.4f},{bb.max.X:.4f}] y [{bb.min.Y:.4f},{bb.max.Y:.4f}] z [{bb.min.Z:.4f},{bb.max.Z:.4f}]")
+print(f"plate porosity (open fraction): {open_area/pitch_area*100:.1f} %")
+print(f"air faces: {len(air.faces())},  solids: {len(air.solids())}")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 47[39m
+[32m     43[39m air   = duct - walls
+[32m     44[39m 
+[32m     45[39m [38;5;66;03m# ---- verification numbers ----[39;00m
+[32m     46[39m bb_ch = ch0.bounding_box()
+[32m---> [39m[32m47[39m print(f"channel opening across flats (y size): {bb_ch.size.y*[32m1e3[39m:.4f} mm   (asked 8)")
+[32m     48[39m print(f"channel opening across vertices (x size): {bb_ch.size.x*[32m1e3[39m:.4f} mm (expect {[32m2[39m*R_CH*[32m1e3[39m:.4f})")
+[32m     49[39m print(f"number of channel prisms in lattice: {len(prisms)}")
+[32m     50[39m 
+
+[31mAttributeError[39m: 'Vector' object has no attribute 'y'
+
+# -- cell 4 (2.5s, exit 0)
+import numpy as np
+import build123d as bd
+
+# ---- Request dimensions (metres) ----
+W       = 0.080          # duct / plate square section
+T       = 0.020          # honeycomb thickness in flow direction
+Z_UP    = -0.040         # inlet plane (40 mm upstream of plate)
+Z_DN    =  0.100         # outlet plane (80 mm downstream of plate)
+F_CELL  = 0.008          # hex cell opening, across the flats
+T_WALL  = 0.001          # honeycomb wall thickness
+
+# ---- Hexagonal lattice: openings F_CELL on flat-to-flat pitch F_CELL+T_WALL ----
+F_LAT = F_CELL + T_WALL
+S_LAT = F_LAT / np.sqrt(3.0)
+PX    = 1.5 * S_LAT              # column pitch (x)
+PY    = F_LAT                    # row pitch within a column (y)
+DY    = F_LAT / 2.0              # alternate-column offset
+R_CH  = F_CELL / np.sqrt(3.0)    # channel opening circumradius
+
+hex_face = bd.Plane.XY * bd.RegularPolygon(radius=R_CH, side_count=6)
+ch0 = bd.extrude(hex_face, amount=T)
+
+centres = []
+nx = int(np.ceil((W/2 + R_CH) / PX)) + 1
+ny = int(np.ceil((W/2 + R_CH + DY) / PY)) + 1
+for i in range(-nx, nx + 1):
+    x = i * PX
+    off = DY if (i % 2) else 0.0
+    for j in range(-ny, ny + 1):
+        y = j * PY + off
+        if abs(x) <= W/2 + R_CH and abs(y) <= W/2 + R_CH:
+            centres.append((x, y))
+prisms = [bd.Pos(x, y, 0.0) * ch0 for x, y in centres]
+
+duct  = bd.Pos(0, 0, (Z_UP + Z_DN)/2) * bd.Box(W, W, Z_DN - Z_UP)
+plate = bd.Pos(0, 0, T/2) * bd.Box(W, W, T)
+
+walls = plate - bd.Compound(children=prisms)
+air   = duct - walls
+
+# ---- verification numbers ----
+bb_ch = ch0.bounding_box()
+print(f"channel opening across flats (y size): {bb_ch.size.Y*1e3:.4f} mm   (asked 8)")
+print(f"channel opening across vertices (x size): {bb_ch.size.X*1e3:.4f} mm (expect {2*R_CH*1e3:.4f})")
+print(f"number of channel prisms in lattice: {len(prisms)}")
+
+dmin = min(prisms[0].distance(p) for k, p in enumerate(prisms) if k != 0)
+print(f"min gap from channel 0 to any other: {dmin*1e3:.4f} mm (asked 1)")
+
+open_area  = np.sqrt(3)/2 * F_CELL**2
+pitch_area = PX * PY
+n_equiv    = W*W / pitch_area
+est_air    = (W*W*(Z_DN-Z_UP) - W*W*T) + n_equiv*open_area*T
+print(f"air volume: {air.volume:.6e} m^3   estimate: {est_air:.6e} m^3")
+bb = air.bounding_box()
+print(f"air bbox: x [{bb.min.X:.4f},{bb.max.X:.4f}] y [{bb.min.Y:.4f},{bb.max.Y:.4f}] z [{bb.min.Z:.4f},{bb.max.Z:.4f}]")
+print(f"plate porosity (open fraction): {open_area/pitch_area*100:.1f} %")
+print(f"air faces: {len(air.faces())},  solids: {len(air.solids())}")
+# -- output
+channel opening across flats (y size): 8.0000 mm   (asked 8)
+channel opening across vertices (x size): 9.2376 mm (expect 9.2376)
+number of channel prisms in lattice: 105
+min gap from channel 0 to any other: 1.0000 mm (asked 1)
+air volume: 8.697932e-04 m^3   estimate: 8.691358e-04 m^3
+air bbox: x [-0.0400,0.0400] y [-0.0400,0.0400] z [-0.0400,0.1000]
+plate porosity (open fraction): 79.0 %
+air faces: 556,  solids: 1
+
+# -- cell 5 (1.8s, exit 0)
+import pyvista as pv
+import numpy as np
+
+# tessellate the air solid and the walls solid for display
+def to_pv(shape, tol=2e-4):
+    verts, tris = shape.tessellate(tol)
+    v = np.array([(p.X, p.Y, p.Z) for p in verts])
+    f = np.hstack([np.full((len(tris),1),3), np.array(tris)]).astype(np.int64)
+    return pv.PolyData(v, f)
+
+pv_air   = to_pv(air)
+pv_walls = to_pv(walls)
+
+pv.global_theme.jupyter_backend = 'static'
+pl = pv.Plotter(shape=(1,2), window_size=(1400,650))
+pl.subplot(0,0)
+pl.add_text("air volume (honeycomb walls = holes)", font_size=10)
+pl.add_mesh(pv_air, color="lightblue", show_edges=False)
+pl.add_mesh(pv_walls, color="orange", opacity=0.35)
+pl.view_isometric(); 
+pl.subplot(0,1)
+pl.add_text("cross-section at z = 10 mm (mid-plate)", font_size=10)
+sl_a = pv_air.slice(normal=(0,0,1), origin=(0,0,0.01))
+sl_w = pv_walls.slice(normal=(0,0,1), origin=(0,0,0.01))
+# clip both solids at the plane for a filled section view
+sec_a = pv_air.clip(normal=(0,0,-1), origin=(0,0,0.0101))
+sec_w = pv_walls.clip(normal=(0,0,-1), origin=(0,0,0.0101))
+pl.add_mesh(sec_a, color="lightblue", show_edges=False)
+pl.add_mesh(sec_w, color="orange", show_edges=False)
+pl.view_xy(); pl.camera.zoom(1.4)
+pl.show()
+print("air triangles:", pv_air.n_cells, " walls triangles:", pv_walls.n_cells)
+# -- output
+air triangles: 2772  walls triangles: 2608
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-15 07:48:30.769 (   1.246s) [    7E002CA7A780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-15 07:48:30.770 (   1.247s) [    7E002CA7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 07:48:30.789 (   1.266s) [    7E002CA7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 6 (0.7s, exit 0)
+pl = pv.Plotter(shape=(1,2), window_size=(1400,650))
+pl.subplot(0,0)
+pl.add_text("honeycomb walls alone (plate with hex holes)", font_size=10)
+pl.add_mesh(pv_walls, color="orange", show_edges=False)
+pl.view_isometric()
+pl.subplot(0,1)
+pl.add_text("air volume, quadrant x>0,y>0 clipped away", font_size=10)
+clip_air = pv_air.clip_box(pv.Box(bounds=(0, 0.05, 0, 0.05, -0.045, 0.105)), invert=True)
+pl.add_mesh(clip_air, color="lightblue", show_edges=False)
+pl.add_mesh(pv_walls.clip_box(pv.Box(bounds=(0, 0.05, 0, 0.05, -0.045, 0.105)), invert=True),
+            color="orange", opacity=0.5)
+pl.view_isometric()
+pl.show()
+# -- output
+[0m[33m2026-09-15 07:49:33.428 (  63.904s) [    7E002CA7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 07:49:33.429 (  63.906s) [    7E002CA7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 7 (0.9s, exit 0)
+import os
+
+# classify faces of the air solid by the exact construction planes of this
+# straight duct: z=Z_UP (inlet), z=Z_DN (outlet), x/y=+-W/2 (duct walls),
+# everything else belongs to the honeycomb lattice (channel walls + web faces
+# at z=0 and z=T)
+tol = 1e-7
+groups = {"inlet": [], "outlet": [], "duct_walls": [], "honeycomb_walls": []}
+for f in air.faces():
+    c = f.center()
+    n = f.normal_at()
+    if abs(n.Z) > 0.999 and abs(c.Z - Z_UP) < 1e-6:
+        groups["inlet"].append(f)
+    elif abs(n.Z) > 0.999 and abs(c.Z - Z_DN) < 1e-6:
+        groups["outlet"].append(f)
+    elif abs(abs(c.X) - W/2) < 1e-6 or abs(abs(c.Y) - W/2) < 1e-6:
+        groups["duct_walls"].append(f)
+    else:
+        groups["honeycomb_walls"].append(f)
+
+for name, fl in groups.items():
+    area = sum(f.area for f in fl)
+    print(f"{name:16s} faces={len(fl):4d}  area={area:.6e} m^2")
+
+# sanity: total air surface area
+print("total area:", sum(f.area for f in air.faces()))
+
+# export one STL per patch
+os.makedirs("constant/triSurface", exist_ok=True)
+patch_shapes = {}
+for name, fl in groups.items():
+    comp = bd.Compound(children=fl)
+    patch_shapes[name] = comp
+    bd.export_stl(comp, f"constant/triSurface/{name}.stl", tolerance=1e-5)
+    print("wrote", name, os.path.getsize(f"constant/triSurface/{name}.stl"), "bytes")
+# -- output
+inlet            faces=   1  area=6.400000e-03 m^2
+outlet           faces=   1  area=6.400000e-03 m^2
+duct_walls       faces=   4  area=4.397812e-02 m^2
+honeycomb_walls  faces= 550  area=5.208982e-02 m^2
+total area: 0.10886794072212971
+wrote inlet 184 bytes
+wrote outlet 184 bytes
+wrote duct_walls 11884 bytes
+wrote honeycomb_walls 126684 bytes
+
+# -- cell 8 (0.6s, exit 0)
+import subprocess, os, textwrap
+
+os.makedirs("system", exist_ok=True)
+
+def w(path, txt):
+    with open(path, "w") as f: f.write(textwrap.dedent(txt))
+    print("wrote", path)
+
+HDR = """\
+/*--------------------------------*- C++ -*----------------------------------*\\
+| =========                 |                                                 |
+| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\\\    /   O peration     | Version:  2512                                  |
+|   \\\\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\\\/     M anipulation  |                                                 |
+\\*---------------------------------------------------------------------------*/
+"""
+
+w("system/controlDict", HDR + """
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      controlDict;
+}
+application     snappyHexMesh;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         1;
+deltaT          1;
+writeControl    timeStep;
+writeInterval   1;
+purgeWrite      0;
+writeFormat     ascii;
+writePrecision  6;
+writeCompression off;
+timeFormat      general;
+timePrecision   6;
+runTimeModifiable true;
+""")
+
+# background block: 4 mm cells, extends 1 cell beyond the duct on every side
+w("system/blockMeshDict", HDR + """
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}
+scale   1;
+
+vertices
+(
+    (-0.042 -0.042 -0.042)
+    ( 0.042 -0.042 -0.042)
+    ( 0.042  0.042 -0.042)
+    (-0.042  0.042 -0.042)
+    (-0.042 -0.042  0.102)
+    ( 0.042 -0.042  0.102)
+    ( 0.042  0.042  0.102)
+    (-0.042  0.042  0.102)
+);
+
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) (21 21 36) simpleGrading (1 1 1)
+);
+
+boundary
+(
+    outer
+    {
+        type patch;
+        faces
+        (
+            (0 4 7 3)
+            (1 2 6 5)
+            (0 1 5 4)
+            (3 7 6 2)
+            (0 3 2 1)
+            (4 5 6 7)
+        );
+    }
+);
+""")
+
+w("system/snappyHexMeshDict", HDR + """
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      snappyHexMeshDict;
+}
+castellatedMesh true;
+snap            true;
+addLayers       false;
+
+geometry
+{
+    inlet           { type triSurfaceMesh; file "inlet.stl"; }
+    outlet          { type triSurfaceMesh; file "outlet.stl"; }
+    duct_walls      { type triSurfaceMesh; file "duct_walls.stl"; }
+    honeycomb_walls { type triSurfaceMesh; file "honeycomb_walls.stl"; }
+}
+
+castellatedMeshControls
+{
+    maxLocalCells       5000000;
+    maxGlobalCells      10000000;
+    minRefinementCells  10;
+    nCellsBetweenLevels 2;
+
+    features    ();
+
+    refinementSurfaces
+    {
+        honeycomb_walls { level (1 1); }
+        duct_walls      { level (0 0); }
+        inlet           { level (0 0); }
+        outlet          { level (0 0); }
+    }
+
+    resolveFeatureAngle 30;
+
+    refinementRegions   {}
+
+    locationInMesh      (0 0 -0.02);
+
+    allowFreeStandingZoneFaces true;
+}
+
+snapControls
+{
+    nSmoothPatch    3;
+    tolerance       2.0;
+    nSolveIter      30;
+    nRelaxIter      5;
+    nFeatureSnapIter 10;
+    implicitFeatureSnap true;
+    explicitFeatureSnap false;
+    multiRegionFeatureSnap false;
+}
+
+addLayersControls
+{
+    relativeSizes   true;
+    layers          {}
+    expansionRatio  1.0;
+    finalLayerThickness 0.3;
+    minThickness    0.1;
+    nGrow           0;
+    featureAngle    60;
+    nRelaxIter      3;
+    nSmoothSurfaceNormals 1;
+    nSmoothNormals  3;
+    nSmoothThickness 10;
+    maxFaceThicknessRatio 0.5;
+    maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle 90;
+    nBufferCellsNoExtrude 0;
+    nLayerIter      50;
+}
+
+meshQualityControls
+{
+    maxNonOrtho         65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave          80;
+    minVol              1e-13;
+    minTetQuality       1e-15;
+    minArea             -1;
+    minTwist            0.02;
+    minDeterminant      0.001;
+    minFaceWeight       0.05;
+    minVolRatio         0.01;
+    minTriangleTwist    -1;
+    nSmoothScale        4;
+    errorReduction      0.75;
+}
+
+mergeTolerance 1e-6;
+""")
+
+for cmd in (["blockMesh"], ["snappyHexMesh", "-overwrite"]):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    print(" ".join(cmd), "-> rc", r.returncode)
+    print("\n".join((r.stdout + r.stderr).splitlines()[-12:]))
+# -- output
+wrote system/controlDict
+wrote system/blockMeshDict
+wrote system/snappyHexMeshDict
+blockMesh -> rc 0
+  boundingBox: (-0.042 -0.042 -0.042) (0.042 0.042 0.102)
+  nPoints: 17908
+  nCells: 15876
+  nFaces: 49581
+  nInternalFaces: 45675
+----------------
+Patches
+----------------
+  patch 0 (start: 45675 size: 3906) name: outer
+
+End
+
+snappyHexMesh -overwrite -> rc 1
+
+Create mesh for time = 0
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T11-20260915-074049-adaa/t11/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 9 (13.6s, exit 0)
+w("system/fvSchemes", HDR + """
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSchemes;
+}
+ddtSchemes      { default steadyState; }
+gradSchemes     { default Gauss linear; }
+divSchemes      { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes   { default corrected; }
+""")
+
+w("system/fvSolution", HDR + """
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}
+solvers {}
+PIMPLE {}
+""")
+
+r = subprocess.run(["snappyHexMesh", "-overwrite"], capture_output=True, text=True)
+print("rc", r.returncode)
+print("\n".join((r.stdout + r.stderr).splitlines()[-25:]))
+# -- output
+wrote system/fvSchemes
+wrote system/fvSolution
+rc 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:30487  faces:100311  points:40028
+Cells per refinement level:
+    0	9919
+    1	20568
+Writing mesh to time constant
+Wrote mesh in = 0.09 s.
+Mesh snapped in = 5.84 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 8.24 s.
+End
+
+# -- cell 10 (0.5s, exit 0)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print("\n".join(r.stdout.splitlines()[-45:]))
+print("---- boundary file ----")
+print(open("constant/polyMesh/boundary").read())
+# -- output
+Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet      361      400  ok (non-closed singly connected)
+                  outlet      361      400  ok (non-closed singly connected)
+              duct_walls     4294     4866  ok (non-closed singly connected)
+         honeycomb_walls    12042    12577  ok (non-closed singly connected)
+                    ".*"    17058    17259      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.0400047 -0.0400183 -0.04) (0.0400048 0.0400182 0.1)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.9136e-16 -2.09683e-17 -4.42358e-17) OK.
+    Max cell openness = 3.178e-16 OK.
+    Max aspect ratio = 10.0827 OK.
+    Minimum face area = 6.37115e-08. Maximum face area = 3.83003e-05.  Face area magnitudes OK.
+    Min volume = 1.27397e-09. Max volume = 1.57598e-07.  Total volume = 0.00087284.  Cell volumes OK.
+    Mesh non-orthogonality Max: 53.4187 average: 11.7218
+    Non-orthogonality check OK.
+    Face pyramids OK.
+ ***Max skewness = 12.9006, 47 highly skew faces detected which may impair the quality of the results
+  <<Writing 47 skew faces to set skewFaces
+    Coupled point location match (average 0) OK.
+
+Failed 1 mesh checks.
+
+End
+
+---- boundary file ----
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+4
+(
+    inlet
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          361;
+        startFace       83253;
+    }
+    outlet
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          361;
+        startFace       83614;
+    }
+    duct_walls
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          4294;
+        startFace       83975;
+    }
+    honeycomb_walls
+    {
+        type            wall;
+        inGroups        1(wall);
+        nFaces          12042;
+        startFace       88269;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 11 (0.5s, exit 1)
+r = subprocess.run(["foamToVTK", "-ascii", "-latestTime"], capture_output=True, text=True)
+print("foamToVTK rc", r.returncode)
+import glob, pyvista as pv
+vtk = sorted(glob.glob("VTK/*.vtk"))
+print(vtk)
+grid = pv.read(vtk[-1])
+print(grid.n_cells, "cells")
+sl = grid.slice(normal=(0,0,1), origin=(0,0,0.01))
+pl = pv.Plotter(shape=(1,2), window_size=(1400,650))
+pl.subplot(0,0); pl.add_text("coarse mesh, section z=10 mm (mid honeycomb)", font_size=10)
+pl.add_mesh(sl, show_edges=True, color="lightblue"); pl.view_xy(); pl.camera.zoom(1.3)
+pl.subplot(0,1); pl.add_text("section z=-20 mm (upstream duct)", font_size=10)
+sl2 = grid.slice(normal=(0,0,1), origin=(0,0,-0.02))
+pl.add_mesh(sl2, show_edges=True, color="lightgreen"); pl.view_xy(); pl.camera.zoom(1.3)
+pl.show()
+# -- output
+foamToVTK rc 0
+[]
+[31m---------------------------------------------------------------------------[39m
+[31mIndexError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[11][39m[32m, line 6[39m
+[32m      2[39m print([33m"foamToVTK rc"[39m, r.returncode)
+[32m      3[39m [38;5;28;01mimport[39;00m glob, pyvista [38;5;28;01mas[39;00m pv
+[32m      4[39m vtk = sorted(glob.glob([33m"VTK/*.vtk"[39m))
+[32m      5[39m print(vtk)
+[32m----> [39m[32m6[39m grid = pv.read(vtk[-[32m1[39m])
+[32m      7[39m print(grid.n_cells, [33m"cells"[39m)
+[32m      8[39m sl = grid.slice(normal=([32m0[39m,[32m0[39m,[32m1[39m), origin=([32m0[39m,[32m0[39m,[32m0.01[39m))
+[32m      9[39m pl = pv.Plotter(shape=([32m1[39m,[32m2[39m), window_size=([32m1400[39m,[32m650[39m))
+
+[31mIndexError[39m: list index out of range
+
+# -- cell 12 (0.1s, exit 0)
+print("\n".join(r.stdout.splitlines()[-8:]))
+import glob
+print(glob.glob("VTK/**/*", recursive=True)[:20])
+# -- output
+Boundary  : "VTK/t11_0/boundary/inlet.vtp"
+    Boundary  : "VTK/t11_0/boundary/outlet.vtp"
+    Boundary  : "VTK/t11_0/boundary/duct_walls.vtp"
+    Boundary  : "VTK/t11_0/boundary/honeycomb_walls.vtp"
+Wrote in 0.13 s, 250916 kB
+
+End: 0.23 s, 285784 kB (peak)
+
+['VTK/t11_0.vtm', 'VTK/t11_0', 'VTK/t11.vtm.series', 'VTK/t11_0/boundary.vtm', 'VTK/t11_0/internal.vtu', 'VTK/t11_0/boundary', 'VTK/t11_0/boundary/honeycomb_walls.vtp', 'VTK/t11_0/boundary/inlet.vtp', 'VTK/t11_0/boundary/duct_walls.vtp', 'VTK/t11_0/boundary/outlet.vtp']
+
+# -- cell 13 (0.4s, exit 0)
+import pyvista as pv
+grid = pv.read("VTK/t11_0/internal.vtu")
+print(grid.n_cells, "cells")
+hc = pv.read("VTK/t11_0/boundary/honeycomb_walls.vtp")
+
+pl = pv.Plotter(shape=(1,2), window_size=(1400,650))
+pl.subplot(0,0); pl.add_text("coarse mesh section z=10 mm + honeycomb_walls patch", font_size=10)
+sl = grid.slice(normal=(0,0,1), origin=(0,0,0.01))
+pl.add_mesh(sl, show_edges=True, color="lightblue")
+pl.add_mesh(hc, color="orange", opacity=0.9)
+pl.view_xy(); pl.camera.zoom(1.3)
+pl.subplot(0,1); pl.add_text("honeycomb_walls patch (coarse)", font_size=10)
+pl.add_mesh(hc, color="orange", show_edges=False)
+pl.view_isometric()
+pl.show()
+# -- output
+30487 cells
+
+[0m[33m2026-09-15 07:55:08.084 ( 398.561s) [    7E002CA7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 07:55:08.085 ( 398.561s) [    7E002CA7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 14 (0.9s, exit 0)
+# finer background block: 2 mm cells
+w("system/blockMeshDict", HDR + """
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}
+scale   1;
+
+vertices
+(
+    (-0.042 -0.042 -0.042)
+    ( 0.042 -0.042 -0.042)
+    ( 0.042  0.042 -0.042)
+    (-0.042  0.042 -0.042)
+    (-0.042 -0.042  0.102)
+    ( 0.042 -0.042  0.102)
+    ( 0.042  0.042  0.102)
+    (-0.042  0.042  0.102)
+);
+
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) (42 42 72) simpleGrading (1 1 1)
+);
+
+boundary
+(
+    outer
+    {
+        type patch;
+        faces
+        (
+            (0 4 7 3)
+            (1 2 6 5)
+            (0 1 5 4)
+            (3 7 6 2)
+            (0 3 2 1)
+            (4 5 6 7)
+        );
+    }
+);
+""")
+
+# final snappy settings: honeycomb surface cells 0.5 mm (level 2 on 2 mm base),
+# plate volume held at 1 mm via a refinement box, duct walls at 1 mm
+w("system/snappyHexMeshDict", HDR + """
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      snappyHexMeshDict;
+}
+castellatedMesh true;
+snap            true;
+addLayers       false;
+
+geometry
+{
+    inlet           { type triSurfaceMesh; file "inlet.stl"; }
+    outlet          { type triSurfaceMesh; file "outlet.stl"; }
+    duct_walls      { type triSurfaceMesh; file "duct_walls.stl"; }
+    honeycomb_walls { type triSurfaceMesh; file "honeycomb_walls.stl"; }
+    plateZone
+    {
+        type        searchableBox;
+        min         (-0.041 -0.041 -0.004);
+        max         ( 0.041  0.041  0.024);
+    }
+}
+
+castellatedMeshControls
+{
+    maxLocalCells       10000000;
+    maxGlobalCells      20000000;
+    minRefinementCells  10;
+    nCellsBetweenLevels 2;
+
+    features    ();
+
+    refinementSurfaces
+    {
+        honeycomb_walls { level (2 2); }
+        duct_walls      { level (1 1); }
+        inlet           { level (1 1); }
+        outlet          { level (1 1); }
+    }
+
+    resolveFeatureAngle 30;
+
+    refinementRegions
+    {
+        plateZone
+        {
+            mode    inside;
+            levels  ((1E15 1));
+        }
+    }
+
+    locationInMesh      (0 0 -0.02);
+
+    allowFreeStandingZoneFaces true;
+}
+
+snapControls
+{
+    nSmoothPatch    3;
+    tolerance       2.0;
+    nSolveIter      50;
+    nRelaxIter      5;
+    nFeatureSnapIter 10;
+    implicitFeatureSnap true;
+    explicitFeatureSnap false;
+    multiRegionFeatureSnap false;
+}
+
+addLayersControls
+{
+    relativeSizes   true;
+    layers          {}
+    expansionRatio  1.0;
+    finalLayerThickness 0.3;
+    minThickness    0.1;
+    nGrow           0;
+    featureAngle    60;
+    nRelaxIter      3;
+    nSmoothSurfaceNormals 1;
+    nSmoothNormals  3;
+    nSmoothThickness 10;
+    maxFaceThicknessRatio 0.5;
+    maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle 90;
+    nBufferCellsNoExtrude 0;
+    nLayerIter      50;
+}
+
+meshQualityControls
+{
+    maxNonOrtho         65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave          80;
+    minVol              1e-13;
+    minTetQuality       1e-15;
+    minArea             -1;
+    minTwist            0.02;
+    minDeterminant      0.001;
+    minFaceWeight       0.05;
+    minVolRatio         0.01;
+    minTriangleTwist    -1;
+    nSmoothScale        4;
+    errorReduction      0.75;
+}
+
+mergeTolerance 1e-6;
+""")
+
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print("blockMesh rc", r.returncode, r.stdout.splitlines()[-8:])
+
+# launch snappyHexMesh in background, poll from later cells
+proc = subprocess.Popen(["snappyHexMesh", "-overwrite"],
+                        stdout=open("log.snappyHexMesh", "w"),
+                        stderr=subprocess.STDOUT)
+print("snappyHexMesh started, pid", proc.pid)
+# -- output
+wrote system/blockMeshDict
+wrote system/snappyHexMeshDict
+blockMesh rc 0 ['  nInternalFaces: 373212', '----------------', 'Patches', '----------------', '  patch 0 (start: 373212 size: 15624) name: outer', '', 'End', '']
+snappyHexMesh started, pid 625139
+
+# -- cell 15 (90.0s, exit 0)
+import time, subprocess
+time.sleep(90)
+rc = proc.poll()
+print("running" if rc is None else f"done rc={rc}")
+print("\n".join(open("log.snappyHexMesh").read().splitlines()[-15:]))
+# -- output
+running
+
+Attraction:
+    linear   : max:(-0.000433907 0 0) avg:(-5.45147e-08 9.53574e-09 -1.64568e-07)
+    feature  : max:(-0.000433907 -0.000572758 0.00057276) avg:(6.37021e-08 -1.12969e-08 1.9298e-07)
+Feature analysis : total master points :319942 of which attracted to :
+    feature point   : 1180
+    feature edge    : 35182
+    nearest surface : 283580
+    rest            : 0
+
+--> FOAM Warning : Displacement (8.56429e-06 4.94459e-06 -9.23e-06) at mesh point 640336 coord (-0.0194024 -0.03946 0.000102556) points through the surrounding patch faces
+Smoothing displacement ...
+Iteration 0
+Iteration 10
+Iteration 20
+
+# -- cell 16 (120.0s, exit 0)
+time.sleep(120)
+rc = proc.poll()
+print("running" if rc is None else f"done rc={rc}")
+out = open("log.snappyHexMesh").read()
+print("\n".join(out.splitlines()[-20:]))
+# -- output
+running
+Detecting near surfaces ...
+Overriding nearest with intersection of close gaps at 0 out of 319942 points.
+Overriding displacement on features :
+   implicit features    : true
+   explicit features    : false
+   multi-patch features : false
+
+Attraction:
+    linear   : max:(-6.31385e-05 -3.6453e-05 0) avg:(-2.38865e-08 4.13227e-09 -7.35397e-08)
+    feature  : max:(-0.000186139 -0.000282165 -5.12644e-05) avg:(-1.60792e-08 2.56018e-09 -4.94435e-08)
+Feature analysis : total master points :319942 of which attracted to :
+    feature point   : 1180
+    feature edge    : 35182
+    nearest surface : 283580
+    rest            : 0
+
+--> FOAM Warning : Displacement (1.91173e-06 1.61765e-06 1.47175e-05) at mesh point 251411 coord (-0.0390074 -0.0390085 -0.0400249) points through the surrounding patch faces
+Smoothing displacement ...
+Iteration 0
+Iteration 10
+
+# -- cell 17 (150.1s, exit 0)
+time.sleep(150)
+rc = proc.poll()
+print("running" if rc is None else f"done rc={rc}")
+out = open("log.snappyHexMesh").read()
+print("\n".join(out.splitlines()[-25:]))
+# -- output
+running
+Removing 59428 straight edge points ...
+
+Edge intersection testing:
+    Number of edges             : 2409104
+    Number of edges to retest   : 241252
+    Number of intersected edges : 258080
+
+Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:735312  faces:2409104  points:940967
+Cells per refinement level:
+    0	77976
+    1	187000
+    2	470336
+Writing mesh to time constant
+
+# -- cell 18 (30.0s, exit 0)
+time.sleep(30)
+rc = proc.poll()
+print("running" if rc is None else f"done rc={rc}")
+out = open("log.snappyHexMesh").read()
+print("\n".join(out.splitlines()[-14:]))
+# -- output
+done rc=0
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-15      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 196.47 s.
+End
+
+# -- cell 19 (6.2s, exit 0)
+import re
+bp = "constant/polyMesh/boundary"
+txt = open(bp).read()
+# inlet/outlet are openings for the flow -> type patch (not wall)
+for name in ("inlet", "outlet"):
+    pat = re.compile(r"(\n\s*" + name + r"\s*\{\s*\n\s*)type\s+wall;\s*\n\s*inGroups\s+1\(wall\);\s*\n")
+    txt2 = pat.sub(r"\1type            patch;\n", txt)
+    assert txt2 != txt, name
+    txt = txt2
+open(bp, "w").write(txt)
+r = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print("\n".join(r.stdout.splitlines()[-42:]))
+# -- output
+Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                   inlet     6400     6561  ok (non-closed singly connected)
+                  outlet     6400     6561  ok (non-closed singly connected)
+              duct_walls    53608    56630  ok (non-closed singly connected)
+         honeycomb_walls   191680   194666  ok (non-closed singly connected)
+                    ".*"   258088   260514      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.04 -0.0400099 -0.04) (0.04 0.0400099 0.1)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (5.15139e-16 9.19255e-16 4.36299e-16) OK.
+    Max cell openness = 4.18552e-16 OK.
+    Max aspect ratio = 3.26588 OK.
+    Minimum face area = 1.28369e-08. Maximum face area = 4.2695e-06.  Face area magnitudes OK.
+    Min volume = 4.0473e-11. Max volume = 8.88584e-09.  Total volume = 0.000869793.  Cell volumes OK.
+    Mesh non-orthogonality Max: 45.3335 average: 9.82606
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.99289 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 20 (9.3s, exit 0)
+import shutil
+shutil.rmtree("VTK", ignore_errors=True)
+r = subprocess.run(["foamToVTK", "-ascii", "-latestTime"], capture_output=True, text=True)
+print("foamToVTK rc", r.returncode)
+grid = pv.read("VTK/t11_0/internal.vtu")
+hc   = pv.read("VTK/t11_0/boundary/honeycomb_walls.vtp")
+dw   = pv.read("VTK/t11_0/boundary/duct_walls.vtp")
+print(f"cells {grid.n_cells}, honeycomb patch faces {hc.n_cells}, duct_walls faces {dw.n_cells}")
+
+pl = pv.Plotter(shape=(1,2), window_size=(1400,650))
+pl.subplot(0,0); pl.add_text("final mesh, section z=10 mm (mid honeycomb)", font_size=10)
+sl = grid.slice(normal=(0,0,1), origin=(0,0,0.01))
+pl.add_mesh(sl, show_edges=False, color="lightblue")
+pl.add_mesh(hc, color="orange")
+pl.view_xy(); pl.camera.zoom(1.25)
+pl.subplot(0,1); pl.add_text("final mesh, section y=0 (side view, flow up)", font_size=10)
+sl2 = grid.slice(normal=(0,1,0), origin=(0,0.0005,0))
+pl.add_mesh(sl2, show_edges=False, color="lightgreen")
+pl.add_mesh(hc, color="orange", opacity=0.6)
+pl.view_xz(); pl.camera.zoom(0.9)
+pl.show()
+# -- output
+foamToVTK rc 0
+cells 735312, honeycomb patch faces 191680, duct_walls faces 53608
+
+[0m[33m2026-09-15 08:05:08.462 ( 998.938s) [    7E002CA7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-15 08:05:08.463 ( 998.939s) [    7E002CA7A780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 21 (0.3s, exit 0)
+import shutil, glob, os
+shutil.rmtree("VTK", ignore_errors=True)
+shutil.rmtree("constant/polyMesh/sets", ignore_errors=True)   # stale skewFaces set from coarse check
+
+import pyvista as pv
+parts = {n: pv.read(f"constant/triSurface/{n}.stl")
+         for n in ("inlet", "outlet", "duct_walls", "honeycomb_walls")}
+union = pv.merge([p for p in parts.values()])
+print("union points (raw):", union.n_points)
+free = union.extract_feature_edges(boundary_edges=True, non_manifold_edges=False,
+                                   feature_edges=False, manifold_edges=False)
+print("free (boundary) edges in welded union:", free.n_cells)
+nm = union.extract_feature_edges(boundary_edges=False, non_manifold_edges=True,
+                                 feature_edges=False, manifold_edges=False)
+print("non-manifold edges:", nm.n_cells)
+
+# final directory listing
+for root, dirs, files in os.walk("."):
+    if "polyMesh" in root and root.count(os.sep) > 2: continue
+    for f in sorted(files):
+        p = os.path.join(root, f)
+        print(f"{os.path.getsize(p):>12d}  {p}")
+# -- output
+union points (raw): 1190
+free (boundary) edges in welded union: 40
+non-manifold edges: 0
+       58115  ./log.snappyHexMesh
+       11884  ./constant/triSurface/duct_walls.stl
+      126684  ./constant/triSurface/honeycomb_walls.stl
+         184  ./constant/triSurface/inlet.stl
+         184  ./constant/triSurface/outlet.stl
+        1471  ./constant/polyMesh/boundary
+     1471549  ./constant/polyMesh/cellLevel
+         918  ./constant/polyMesh/cellZones
+         918  ./constant/polyMesh/faceZones
+    73982573  ./constant/polyMesh/faces
+         991  ./constant/polyMesh/level0Edge
+    14823459  ./constant/polyMesh/neighbour
+    16370415  ./constant/polyMesh/owner
+     1882860  ./constant/polyMesh/pointLevel
+        1069  ./constant/polyMesh/pointZones
+    29564553  ./constant/polyMesh/points
+     6970161  ./constant/polyMesh/surfaceIndex
+        1215  ./system/blockMeshDict
+        1011  ./system/controlDict
+         923  ./system/fvSchemes
+         695  ./system/fvSolution
+        2921  ./system/snappyHexMeshDict
+       19313  ./.reference/b123d_api.md
+
+# -- cell 22 (0.1s, exit 0)
+import numpy as np
+fe_pts = free.points
+print("free-edge vertices (mm):")
+print(np.round(fe_pts*1e3, 3))
+# histogram of z and x/y locations
+zs = np.round(fe_pts[:,2]*1e3, 2)
+xs = np.round(fe_pts[:,0]*1e3, 2)
+ys = np.round(fe_pts[:,1]*1e3, 2)
+print("z values:", sorted(set(zs)))
+print("x values:", sorted(set(xs)))
+print("y values:", sorted(set(ys)))
+# -- output
+free-edge vertices (mm):
+[[-33.486  -4.      0.   ]
+ [-35.796   0.      0.   ]
+ [-33.486   4.      0.   ]
+ [-17.898  -4.      0.   ]
+ [-20.207   0.      0.   ]
+ [-17.898   4.      0.   ]
+ [ -2.309  -4.      0.   ]
+ [ -4.619   0.      0.   ]
+ [ -2.309   4.      0.   ]
+ [ 13.279  -4.      0.   ]
+ [ 10.97    0.      0.   ]
+ [ 13.279   4.      0.   ]
+ [ 28.868  -4.      0.   ]
+ [ 26.558   0.      0.   ]
+ [ 28.868   4.      0.   ]
+ [-35.796   0.     20.   ]
+ [-33.486  -4.     20.   ]
+ [-33.486   4.     20.   ]
+ [-20.207   0.     20.   ]
+ [-17.898  -4.     20.   ]
+ [-17.898   4.     20.   ]
+ [ -4.619   0.     20.   ]
+ [ -2.309  -4.     20.   ]
+ [ -2.309   4.     20.   ]
+ [ 10.97    0.     20.   ]
+ [ 13.279  -4.     20.   ]
+ [ 13.279   4.     20.   ]
+ [ 26.558   0.     20.   ]
+ [ 28.868  -4.     20.   ]
+ [ 28.868   4.     20.   ]
+ [-35.796   0.      0.   ]
+ [-35.796   0.     20.   ]
+ [-20.207   0.      0.   ]
+ [-20.207   0.     20.   ]
+ [ -4.619   0.      0.   ]
+ [ -4.619   0.     20.   ]
+ [ 10.97    0.      0.   ]
+ [ 10.97    0.     20.   ]
+ [ 26.558   0.      0.   ]
+ [ 26.558   0.     20.   ]]
+z values: [np.float32(0.0), np.float32(20.0)]
+x values: [np.float32(-35.8), np.float32(-33.49), np.float32(-20.21), np.float32(-17.9), np.float32(-4.62), np.float32(-2.31), np.float32(10.97), np.float32(13.28), np.float32(26.56), np.float32(28.87)]
+y values: [np.float32(-4.0), np.float32(0.0), np.float32(4.0)]
+
+# -- cell 23 (0.1s, exit 0)
+# inspect individual free-edge segments
+lines = free.lines.reshape(-1, 3)[:, 1:]
+for a, b in lines[:12]:
+    pa, pb = free.points[a]*1e3, free.points[b]*1e3
+    print(np.round(pa,3), "->", np.round(pb,3))
+print("total segments:", len(lines))
+# -- output
+[-33.486  -4.      0.   ] -> [-35.796   0.      0.   ]
+[-35.796   0.      0.   ] -> [-33.486   4.      0.   ]
+[-17.898  -4.      0.   ] -> [-20.207   0.      0.   ]
+[-20.207   0.      0.   ] -> [-17.898   4.      0.   ]
+[-2.309 -4.     0.   ] -> [-4.619  0.     0.   ]
+[-4.619  0.     0.   ] -> [-2.309  4.     0.   ]
+[13.279 -4.     0.   ] -> [10.97  0.    0.  ]
+[10.97  0.    0.  ] -> [13.279  4.     0.   ]
+[28.868 -4.     0.   ] -> [26.558  0.     0.   ]
+[26.558  0.     0.   ] -> [28.868  4.     0.   ]
+[-35.796   0.     20.   ] -> [-33.486  -4.     20.   ]
+[-33.486   4.     20.   ] -> [-35.796   0.     20.   ]
+total segments: 40
+
+# -- cell 24 (0.1s, exit 0)
+hc_stl = parts["honeycomb_walls"]
+target = np.array([-35.796e-3, 0.0, 0.0])
+d = np.linalg.norm(hc_stl.points - target, axis=1)
+near = np.argsort(d)[:12]
+for i in near:
+    print(i, np.round(hc_stl.points[i]*1e3, 6), " dist mm:", round(d[i]*1e3, 6))
+# -- output
+95 [-35.79572   0.        0.     ]  dist mm: 0.000282
+1172 [-35.79572   0.        0.     ]  dist mm: 0.000282
+94 [-36.66174  -0.5       0.     ]  dist mm: 0.999753
+91 [-36.66174   0.5       0.     ]  dist mm: 0.999753
+93 [-40.   -0.5   0. ]  dist mm: 4.233628
+92 [-40.    0.5   0. ]  dist mm: 4.233628
+89 [-33.486313  -4.         0.      ]  dist mm: 4.618945
+121 [-33.486313   4.         0.      ]  dist mm: 4.618945
+122 [-34.35234   4.5       0.     ]  dist mm: 4.725902
+85 [-34.35234  -4.5       0.     ]  dist mm: 4.725902
+128 [-33.486313   5.         0.      ]  dist mm: 5.50769
+84 [-33.486313  -5.         0.      ]  dist mm: 5.50769
+
+# -- cell 25 (0.1s, exit 0)
+import inspect
+print(inspect.signature(bd.Shape.tessellate))
+help(bd.Shape.tessellate)
+# -- output
+(self, tolerance: 'float', angular_tolerance: 'float' = 0.1) -> 'tuple[list[Vector], list[tuple[int, int, int]]]'
+Help on function tessellate in module build123d.topology.shape_core:
+
+tessellate(self, tolerance: 'float', angular_tolerance: 'float' = 0.1) -> 'tuple[list[Vector], list[tuple[int, int, int]]]'
+    General triangulated approximation
+
