@@ -43,7 +43,7 @@ check found nothing missing, and a `checkMesh`-clean mesh of the right shape:
 Four failing runs, four correct meshes, all with their named patches populated. Whatever
 kimi-k3 is failing at, it is not the geometry and it is not the mesh.
 
-## 3. What it is failing at: closing the run
+## 3. What it is failing at: an export that does not weld closed
 
 `declares` splits the four failures in two:
 
@@ -86,10 +86,31 @@ meshed"* -- it knew -- and then spent its last three cells writing a
 `surfaceFeatureExtractDict`, hunting for `*.eMesh` files, and reading
 `surfaceFeatureExtract -help`. The run ended mid-lookup.
 
-So all four failures are one failure. The exported STL has free edges, `union_closure`
-warns, and the desk treats an advisory warning as a defect it must repair: two declare and
-cannot answer it, two never declare because they are still fixing it. The waiver is the
-sentence that ends either, on a mesh that was correct to within 0.4% the whole time.
+**Correction: chasing the free edges was correct, and this section first said otherwise.**
+An earlier draft read the repair as over-conscientiousness about a warning the brief lets
+the desk waive. It is not. Compare `union_closure` at declare time across the arms on these
+same four cases:
+
+| arm | T11 | T16 | T18 | T22 |
+|---|---|---|---|---|
+| Opus 5 | clean | clean | clean | clean |
+| gpt-5.6-sol | clean | (never declared) | clean | clean |
+| kimi-k3 | (never declared) | **warned, 1,096 free edges** | **warned, 24,039** | (never declared) |
+
+Opus 5 and gpt-5.6-sol exported a closed patch set on the first declare, every time. So
+closure is achievable on these cases and expected of them: the free edges are a real defect
+in the export, the waiver would have been a false statement about the geometry, and
+repairing them is the right response. The desk was right and the report was wrong.
+
+It also succeeded. The end-of-run probes read **0 free edges on all four** -- including
+T16, which ended the 900 s arm with 1,549 still open. The extra budget bought the repair;
+it did not buy the declare that had to come after it.
+
+So the failure is not in the closing protocol. It is upstream, in the export: kimi-k3
+writes a patch set that does not weld closed where the other two write one that does, and
+then pays the detect-declare-refuse-repair cycle out of the budget it needed to finish.
+T11's last cell is the tell -- `inspect.signature(bd.Shape.tessellate)` -- tessellation
+tolerance is exactly where per-patch STL exports stop sharing vertices along a seam.
 
 **This failure is already in the corpus**, from the Opus chain:
 `warning_chased_until_the_step_budget_ran_out`. It is not new, and it is not
