@@ -69,6 +69,40 @@ surface nor said why it did not matter, on either attempt, at either budget.
 Opus 5 shows the working shape on the same corpus: T14 has `declares: 2` -- refused once,
 resolved, passed.
 
+### What the desk is doing instead, in its own cells
+
+The two that never declared were not idle and were not lost. They were repairing the
+surface.
+
+**T11** (died on the clock at 1,896 s) spent its whole endgame on the free edges:
+
+    cell 22  print("free-edge vertices (mm):")  -> [[-33.486 -4. 0.] [-35.796 0. 0.] ...
+    cell 23  # inspect individual free-edge segments
+    cell 24  nearest STL point to a free-edge vertex -> dist mm: 0.000282
+    cell 25  inspect.signature(bd.Shape.tessellate)
+
+**T22** (died on the step cap) said at turn 27, in plain text, *"All 36 passages are
+meshed"* -- it knew -- and then spent its last three cells writing a
+`surfaceFeatureExtractDict`, hunting for `*.eMesh` files, and reading
+`surfaceFeatureExtract -help`. The run ended mid-lookup.
+
+So all four failures are one failure. The exported STL has free edges, `union_closure`
+warns, and the desk treats an advisory warning as a defect it must repair: two declare and
+cannot answer it, two never declare because they are still fixing it. The waiver is the
+sentence that ends either, on a mesh that was correct to within 0.4% the whole time.
+
+**This failure is already in the corpus**, from the Opus chain:
+`warning_chased_until_the_step_budget_ran_out`. It is not new, and it is not
+kimi-k3-specific. What is kimi-k3-specific is the rate -- Opus hits it once in these
+seven, kimi-k3 hits it four times in four.
+
+It also explains why time does not help. More clock buys more free-edge chasing: T11 spent
+1,896 s of it.
+
+One detail beside it: T22's cell 27, the patch-area comparison that would have answered a
+named property, **exited 1**. The property measurement was failing too, which is consistent
+with no arm on this corpus printing its named properties.
+
 ## 4. Where that leaves the investigation
 
 Across four arms on these cases the explanation has narrowed each time and ended somewhere
