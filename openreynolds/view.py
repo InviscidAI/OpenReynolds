@@ -130,9 +130,16 @@ lines this actually prints."""
 
 
 def plain_console(file: Any = None) -> Console:
-    """A console that does not fold its output when nobody is looking at a terminal."""
+    """A console that does not fold its output when nobody is looking at a terminal.
+
+    Width alone was not enough: a wider console still folds a line longer than itself,
+    and a workspace path under a CI runner's temp directory is longer than 160 columns,
+    so "3 frames" reached the reader as "3\\nframes". `soft_wrap` stops rich inserting
+    newlines at all, which is what a pipe or an agent reading the output wants."""
     console = Console(file=file)
-    return console if console.is_terminal else Console(file=file, width=PIPED_WIDTH)
+    if console.is_terminal:
+        return console
+    return Console(file=file, width=PIPED_WIDTH, soft_wrap=True)
 
 
 class ConsoleView(View):

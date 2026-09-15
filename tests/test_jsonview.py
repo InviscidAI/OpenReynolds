@@ -586,6 +586,20 @@ def test_a_console_nobody_is_looking_at_is_not_folded_at_eighty_columns():
     assert plain_console().width == PIPED_WIDTH
 
 
+def test_a_piped_line_longer_than_the_console_is_not_folded():
+    """Windows CI failed `openreynolds video` on "3\\nframes": the runner's temp path made
+    the line longer than PIPED_WIDTH, and rich folded it at the width it was given."""
+    import io
+
+    from openreynolds.view import PIPED_WIDTH, plain_console
+
+    buffer = io.StringIO()
+    line = "C:\\" + "deep\\" * (PIPED_WIDTH // 4) + "sweep.mp4  (3 frames at 10 fps, via ffmpeg)"
+    plain_console(buffer).print(line)
+
+    assert buffer.getvalue() == line + "\n"
+
+
 @pytest.fixture
 def console_sink():
     from rich.console import Console
