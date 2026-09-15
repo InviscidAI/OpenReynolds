@@ -1,0 +1,446 @@
+# -- cell 1 (2.3s, exit 0)
+import numpy as np, build123d as bd
+import inspect
+# mm model; scale to metres at export time
+R0_IN, R_OUT = 16.0, 58.0          # blade inlet / outlet radius, mm
+H_BLADE, T_BLADE = 14.0, 3.0       # blade height, thickness, mm
+SWEEP_DEG = 30.0                   # total backward sweep
+N_BLADES = 7
+# log-spiral centreline, total sweep 30 deg against rotation (negative theta)
+r = np.linspace(R0_IN, R_OUT, 121)
+th = np.radians(-SWEEP_DEG) * np.log(r / R0_IN) / np.log(R_OUT / R0_IN)
+pts = np.column_stack([r*np.cos(th), r*np.sin(th)])
+# measure: angle between radial line through leading edge and line to trailing edge
+sweep_meas = -np.degrees(np.arctan2(pts[-1,1], pts[-1,0]))
+print("sweep requested:", SWEEP_DEG, "sweep measured:", round(sweep_meas,3))
+# outward normal in XY for thickening
+d = np.gradient(pts, axis=0); d /= np.linalg.norm(d, axis=1)[:pt_envs if False else ...] if False else np.linalg.norm(d, axis=1)[:,None]
+n = np.column_stack([-d[:,1], d[:,0]])
+left  = pts + n*(T_BLADE/2)
+right = pts - n*(T_BLADE/2)
+spl_l = bd.Spline([bd.Vector(*p,0) for p in left])
+spl_r = bd.Spline([bd.Vector(*p,0) for p in right[::-1]])
+cap0  = bd.Line(bd.Vector(*left[0],0),  bd.Vector(*right[0],0))
+cap1  = bd.Line(bd.Vector(*left[-1],0), bd.Vector(*right[-1],0))
+foot = bd.Face(bd.Wire([spl_l, cap1, spl_r, cap0]))
+blade0 = bd.extrude(foot, H_BLADE)   # blade at leading edge on theta=0
+print("blade solid volume mm^3:", round(blade0.volume,1))
+# -- output
+sweep requested: 30.0 sweep measured: 30.0
+blade solid volume mm^3: 1904.2
+
+# -- cell 2 (0.1s, exit 0)
+import numpy as np, build123d as bd
+# mm model; scaled to metres at export time
+R0_IN, R_OUT = 16.0, 58.0          # blade inlet / outlet radius, mm
+H_BLADE, T_BLADE = 14.0, 3.0       # blade height, thickness, mm
+SWEEP_DEG = 30.0                   # total backward sweep of trailing edge
+N_BLADES = 7
+r = np.linspace(R0_IN, R_OUT, 121)
+th = np.radians(-SWEEP_DEG) * np.log(r / R0_IN) / np.log(R_OUT / R0_IN)
+pts = np.column_stack([r*np.cos(th), r*np.sin(th)])
+sweep_meas = -np.degrees(np.arctan2(pts[-1,1], pts[-1,0]))
+print("sweep requested:", SWEEP_DEG, "sweep measured:", round(sweep_meas,3))
+d = np.gradient(pts, axis=0); d = d / np.linalg.norm(d, axis=1)[:, None]
+n = np.column_stack([-d[:,1], d[:,0]])
+left  = pts + n*(T_BLADE/2)
+right = pts - n*(T_BLADE/2)
+spl_l = bd.Spline([bd.Vector(*p,0) for p in left])
+spl_r = bd.Spline([bd.Vector(*p,0) for p in right[::-1]])
+cap0  = bd.Line(bd.Vector(*left[0],0),  bd.Vector(*right[0],0))
+cap1  = bd.Line(bd.Vector(*left[-1],0), bd.Vector(*right[-1],0))
+foot  = bd.Face(bd.Wire([spl_l, cap1, spl_r, cap0]))
+blade0 = bd.extrude(foot, H_BLADE)
+print("blade volume mm^3:", round(blade0.volume,1))
+# -- output
+sweep requested: 30.0 sweep measured: 30.0
+The history saving thread hit an unexpected error (OperationalError('attempt to write a readonly database')).History will not be written to the database.
+blade volume mm^3: 1904.2
+
+# -- cell 3 (0.2s, exit 1)
+R_HUB = 12.0          # hub radius, mm
+half = np.degrees(np.pi / N_BLADES)   # half passage angle, deg (180/7)
+arc_in  = bd.Edge.make_circle(R_HUB).arc if False else None
+# annular-sector wedge face: arcs at r=12 and r=58, radial lines at +-half
+a_in  = bd.PolarLine(0, 0, R_OUT, -half, length=R_OUT-R_HUB, angle_offset=0) if False else None
+w_in  = bd.Edge.make_arc(bd.Vector(R_HUB,0,0), bd.Vector(R_HUB*np.cos(np.radians(-half)), R_HUB*np.sin(np.radians(-half)),0), bd.Vector(R_HUB*np.cos(np.radians(half)), R_HUB*np.sin(np.radians(half)),0)),
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 6[39m
+[32m      2[39m half = np.degrees(np.pi / N_BLADES)   [38;5;66;03m# half passage angle, deg (180/7)[39;00m
+[32m      3[39m arc_in  = bd.Edge.make_circle(R_HUB).arc [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m      4[39m [38;5;66;03m# annular-sector wedge face: arcs at r=12 and r=58, radial lines at +-half[39;00m
+[32m      5[39m a_in  = bd.PolarLine([32m0[39m, [32m0[39m, R_OUT, -half, length=R_OUT-R_HUB, angle_offset=[32m0[39m) [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m----> [39m[32m6[39m w_in  = bd.Edge.make_arc(bd.Vector(R_HUB,[32m0[39m,[32m0[39m), bd.Vector(R_HUB*np.cos(np.radians(-half)), R_HUB*np.sin(np.radians(-half)),[32m0[39m), bd.Vector(R_HUB*np.cos(np.radians(half)), R_HUB*np.sin(np.radians(half)),[32m0[39m)),
+
+[31mAttributeError[39m: type object 'Edge' has no attribute 'make_arc'
+
+# -- cell 4 (0.1s, exit 0)
+R_HUB = 12.0
+half_rad = np.pi / N_BLADES
+def ring_pts(rr, n=80):
+    a = np.linspace(-half_rad, half_rad, n)
+    return [bd.Vector(rr*np.cos(t), rr*np.sin(t), 0) for t in a]
+outer = bd.Spline(ring_pts(R_OUT))                 # -half -> +half at r=58
+inner = bd.Spline(ring_pts(R_HUB)[::-1])           # reversed
+l1 = bd.Line(bd.Vector(R_OUT,0,0).rotate(bd.Axis.Z, -np.degrees(half_rad)), bd.Vector(R_HUB,0,0).rotate(bd.Axis.Z, -np.degrees(half_rad)))
+l2 = bd.Line(bd.Vector(R_HUB,0,0).rotate(bd.Axis.Z, np.degrees(half_rad)), bd.Vector(R_OUT,0,0).rotate(bd.Axis.Z, np.degrees(half_rad)))
+wedge_face = bd.Face(bd.Wire([outer, l2, inner, l1]))
+wedge = bd.extrude(wedge_face, H_BLADE)
+print("wedge volume mm^3:", round(wedge.volume,1), " passage half-angle deg:", np.degrees(half_rad))
+# -- output
+wedge volume mm^3: 20231.9  passage half-angle deg: 25.714285714285715
+
+# -- cell 5 (0.3s, exit 0)
+half_deg = np.degrees(half_rad)
+blade_hi = bd.Pos(0,0,0) * blade0 if False else blade0
+hi = (bd.Rotation(0,0,half_deg) * blade0) & wedge
+lo = (bd.Rotation(0,0,-half_deg) * blade0) & wedge
+fluid = wedge - hi - lo
+print("fluid volume mm^3:", round(fluid.volume,1), " expected ~ wedge - 2 halves:", round(wedge.volume - (hi.volume+lo.volume),1))
+# measure minimum passage width between blades near mid-radius (numerically via sampled angular gap)
+for rr in (16.0, 37.0, 58.0):
+    # angular thickness of blade at radius rr from centreline deflection
+    print(rr, "blade angular half-width deg ~", np.degrees((T_BLADE/2)/rr))
+# -- output
+fluid volume mm^3: 20231.9  expected ~ wedge - 2 halves: 20231.9
+16.0 blade angular half-width deg ~ 5.371479329351468
+37.0 blade angular half-width deg ~ 2.3228018721519863
+58.0 blade angular half-width deg ~ 1.4817874012004049
+
+# -- cell 6 (0.2s, exit 0)
+b2 = bd.Rotation(0,0,half_deg) * blade0
+print("rotated blade volume:", round(b2.volume,1))
+print("intersection volume:", round((b2 & wedge).volume,1))
+print("blade0 bbox:", blade0.bounding_box().min, blade0.bounding_box().max)
+print("wedge bbox:", wedge.bounding_box().min, wedge.bounding_box().max)
+# -- output
+rotated blade volume: 1904.2
+intersection volume: 0
+blade0 bbox: Vector: (X=15.4289, Y=-29.9224, Z=-14) Vector: (X=51.4124, Y=1.38704, Z=0)
+wedge bbox: Vector: (X=10.8116, Y=-25.1653, Z=0) Vector: (X=58, Y=25.1653, Z=14)
+
+# -- cell 7 (0.1s, exit 1)
+blade0 = bd.extrude(foot, -H_BLADE)   # face normal points -Z; negative extrusion goes up
+print("blade z-range:", blade0.bounding_box().min.z, blade0.bounding_box().max.z)
+hi = (bd.Rotation(0,0,half_deg) * blade0) & wedge
+lo = (bd.Rotation(0,0,-half_deg) * blade0) & wedge
+print("clipped halves:", round(hi.volume,1), round(lo.volume,1))
+fluid = wedge - hi - lo
+print("fluid volume mm^3:", round(fluid.volume,1))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[7][39m[32m, line 2[39m
+[32m      1[39m blade0 = bd.extrude(foot, -H_BLADE)   [38;5;66;03m# face normal points -Z; negative extrusion goes up[39;00m
+[32m----> [39m[32m2[39m print([33m"blade z-range:"[39m, blade0.bounding_box().min.z, blade0.bounding_box().max.z)
+[32m      3[39m hi = (bd.Rotation([32m0[39m,[32m0[39m,half_deg) * blade0) & wedge
+[32m      4[39m lo = (bd.Rotation([32m0[39m,[32m0[39m,-half_deg) * blade0) & wedge
+[32m      5[39m print([33m"clipped halves:"[39m, round(hi.volume,[32m1[39m), round(lo.volume,[32m1[39m))
+
+[31mAttributeError[39m: 'Vector' object has no attribute 'z'
+
+# -- cell 8 (0.7s, exit 0)
+blade0 = bd.extrude(foot, -H_BLADE)
+bb = blade0.bounding_box()
+print("blade z-range:", bb.min.Z, bb.max.Z)
+hi = (bd.Rotation(0,0,half_deg) * blade0) & wedge
+lo = (bd.Rotation(0,0,-half_deg) * blade0) & wedge
+print("clipped halves:", round(hi.volume,1), round(lo.volume,1))
+fluid = wedge - hi - lo
+print("fluid volume mm^3:", round(fluid.volume,1))
+# -- output
+blade z-range: -1e-07 14.0000001
+clipped halves: 1861.2 36.4
+fluid volume mm^3: 18334.2
+
+# -- cell 9 (0.1s, exit 0)
+t = bd.Rotation(0,0,half_deg) * blade0
+print([tuple(round(v,3) for v in (t.bounding_box().min.to_tuple() if hasattr(t.bounding_box().min,'to_tuple') else []))], end=" ") if False else None
+print("rot+half bbox min", tuple(round(v,2) for v in t.bounding_box().min.to_tuple()), "max", tuple(round(v,2) for v in t.bounding_box().max.to_tuple()))
+print("help:", bd.Rotation.__doc__)
+# -- output
+rot+half bbox min (14.33, -5.68, -0.0) max (58.5, 8.53, 14.0)
+help: Subclass of Location used only for object rotation
+
+Attributes:
+    X (float): rotation in degrees about X axis
+    Y (float): rotation in degrees about Y axis
+    Z (float): rotation in degrees about Z axis
+    optionally specify rotation ordering with Intrinsic or Extrinsic enums,
+        defaults to Intrinsic.XYZ
+
+
+
+/tmp/ipykernel_261574/3340943163.py:3: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  print("rot+half bbox min", tuple(round(v,2) for v in t.bounding_box().min.to_tuple()), "max", tuple(round(v,2) for v in t.bounding_box().max.to_tuple()))
+
+# -- cell 10 (0.5s, exit 0)
+v1 = (t & wedge).volume
+# analytical outside fraction: fraction of centreline points with theta > half
+ang = np.arctan2(pts[:,1], pts[:,0]) + half_rad
+frac = np.mean((ang > half_rad) | (ang < -half_rad) )
+print("clip volume:", round(v1,1), "of", round(blade0.volume,1), " sample flag:", frac)
+# check lower blade
+tlo = bd.Rotation(0,0,-half_deg) * blade0
+print("lo clip:", round((tlo & wedge).volume,1))
+# -- output
+clip volume: 1861.2 of 1904.2  sample flag: 0.0
+lo clip: 36.4
+
+# -- cell 11 (0.4s, exit 0)
+import numpy as np
+angles = [bd.Rotation(0,0,k*360.0/N_BLADES) for k in range(N_BLADES)]
+base = bd.Cylinder(R_OUT, H_BLADE) - bd.Cylinder(R_HUB, H_BLADE)
+blades_all = bd.Compound([a*blade0 for a in angles])
+fluid = base - blades_all
+print("fluid volume mm^3:", round(fluid.volume,1), " = annulus", round(base.volume,1), "- blades", round(blades_all.volume,1))
+bb = fluid.bounding_box()
+print("bbox:", tuple(bb.min), tuple(bb.max))
+# -- output
+fluid volume mm^3: 134981.2  = annulus 141623.0 - blades 13329.5
+bbox: (-58.0000001, -58.0000001, -7.0000001) (58.0000001, 58.0000001, 7.000000100000001)
+
+# -- cell 12 (2.8s, exit 1)
+base = bd.Pos(0,0,H_BLADE/2) * bd.Cylinder(R_OUT, H_BLADE) - bd.Pos(0,0,H_BLADE/2) * bd.Cylinder(R_HUB, H_BLADE)
+fluid = base - blades_all
+bb = fluid.bounding_box()
+print("bbox z:", bb.min.Z, bb.max.Z, " volume:", round(fluid.volume,1))
+# quick picture
+import pyvista as pv
+pv.set_plot_theme('dark')
+m = pv.read('') if False else None
+pl = pv.Plotter(off_screen=True)
+pl.add_mesh(pv.UnstructuredGrid() if False else pv.wrap(__import__("build123d").exporters.__dict__.get("x",None)) if False else None)
+# -- output
+bbox z: -1.0000000017954986e-07 14.0000001  volume: 128339.3
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 15:02:07.054 (   0.255s) [    7696DBF54780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 15:02:07.054 (   0.256s) [    7696DBF54780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 15:02:07.067 (   0.269s) [    7696DBF54780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[12][39m[32m, line 10[39m
+[32m      6[39m [38;5;28;01mimport[39;00m pyvista [38;5;28;01mas[39;00m pv
+[32m      7[39m pv.set_plot_theme([33m'dark'[39m)
+[32m      8[39m m = pv.read([33m''[39m) [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m      9[39m pl = pv.Plotter(off_screen=[38;5;28;01mTrue[39;00m)
+[32m---> [39m[32m10[39m pl.add_mesh(pv.UnstructuredGrid() [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m pv.wrap(__import__([33m"build123d"[39m).exporters.__dict__.get([33m"x"[39m,[38;5;28;01mNone[39;00m)) [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243[39m, in [36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f[39m[34m(*args, **kwargs)[39m
+[32m    239[39m             warn_external(msg, PyVistaDeprecationWarning)
+[32m    241[39m         warn_positional_args()
+[32m--> [39m[32m243[39m [38;5;28;01mreturn[39;00m [30;43mf[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43margs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/plotter.py:3850[39m, in [36mBasePlotter.add_mesh[39m[34m(self, mesh, color, style, scalars, clim, show_edges, edge_color, point_size, line_width, opacity, flip_scalars, lighting, n_colors, interpolate_before_map, cmap, label, reset_camera, scalar_bar_args, show_scalar_bar, multi_colors, name, texture, render_points_as_spheres, point_shape, render_lines_as_tubes, smooth_shading, split_sharp_edges, ambient, diffuse, specular, specular_power, nan_color, nan_opacity, culling, rgb, categories, silhouette, use_transparency, below_color, above_color, annotations, pickable, preference, log_scale, pbr, metallic, roughness, render, user_matrix, component, emissive, copy_mesh, backface_params, show_vertices, edge_opacity, remove_existing_actor, force_opaque, **kwargs)[39m
+[32m   3848[39m     [38;5;28;01mif[39;00m [38;5;129;01mnot[39;00m is_pyvista_dataset(mesh):
+[32m   3849[39m         msg = [33mf[39m[33m'[39m[33mObject type ([39m[38;5;132;01m{[39;00m[38;5;28mtype[39m(mesh)[38;5;132;01m}[39;00m[33m) not supported for plotting in PyVista.[39m[33m'[39m
+[32m-> [39m[32m3850[39m         [38;5;28;01mraise[39;00m [38;5;167;01mTypeError[39;00m(msg)
+[32m   3851[39m [38;5;28;01mif[39;00m [38;5;28misinstance[39m(mesh, pv.PointSet):
+[32m   3852[39m     [38;5;66;03m# cast to PointSet to PolyData[39;00m
+[32m   3853[39m     [38;5;28;01mif[39;00m algo [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m:
+
+[31mTypeError[39m: Object type (<class 'NoneType'>) not supported for plotting in PyVista.
+
+# -- cell 13 (5.8s, exit 0)
+import numpy as np, os, subprocess as sp
+groups = {'inlet':[], 'shroud':[], 'backplate':[], 'hub':[], 'outlet':[], 'blades':[]}
+for f in fluid.faces():
+    c = f.center(); rr = (c.X**2+c.Y**2)**0.5
+    n = f.normal_at()
+    if abs(n.Z) > 0.999:   # planar top/bottom
+        at_top = bb.max.Z - 1e-6
+        if abs(c.Z) < 1e-6:
+            groups['backplate'].append(f)
+        elif abs(c.Z - at_top) < 1e-4:
+            groups['inlet' if rr < 16.5 else 'shroud'].append(f)
+        else:
+            groups['blades'].append(f)
+    elif abs(rr - 12) < 1e-4:
+        groups['hub'].append(f)
+    elif abs(rr - 58) < 1e-4:
+        groups['outlet'].append(f)
+    else:
+        groups['blades'].append(f)
+os.makedirs('triSurface', exist_ok=True)
+for name, fs in groups.items():
+    solid = bd.Compound(fs)
+    bd.export_stl(solid, f'triSurface/{name}.stl', tolerance=1e-4, angular_tolerance=0.35)
+    sp.run(['surfaceTransformPoints','-scale','0.001', f'triSurface/{name}.stl', f'triSurface/{name}.stl'], capture_output=True)
+    print(name, len(fs))
+# -- output
+inlet 1
+shroud 0
+backplate 1
+hub 1
+outlet 7
+blades 28
+
+# -- cell 14 (10.0s, exit 0)
+# redo classification; identify the top face and split it with a r=16 disk
+groups = {'inlet':[], 'shroud':[], 'backplate':[], 'hub':[], 'outlet':[], 'blades':[]}
+top_faces = [f for f in fluid.faces() if abs(f.normal_at().Z) > 0.99 and abs(f.center().Z - bb.max.Z) < 0.25]
+disk = bd.Pos(0,0,H_BLADE-1) * bd.Cylinder(16.0, 2)
+for f in top_faces:
+    ins = (f & disk).faces()
+    outs = (f - disk).faces()
+    print("top face r-range inside 16:", [round((fc.center().X**2+fc.center().Y**2)**0.5,2) for fc in ins])
+    groups['inlet'] += ins
+    groups['shroud'] += outs
+for f in fluid.faces():
+    c = f.center(); rr = (c.X**2+c.Y**2)**0.5
+    n = f.normal_at()
+    if abs(n.Z) > 0.999 and abs(c.Z) < 1e-6: groups['backplate'].append(f)
+    elif abs(n.Z) > 0.999 and abs(c.Z - bb.max.Z) < 0.25: pass
+    elif abs(rr - R_HUB) < 1e-4: groups['hub'].append(f)
+    elif abs(rr - R_OUT) < 1e-4: groups['outlet'].append(f)
+    elif f not in top_faces: groups['blades'].append(f)
+import subprocess as sp, os
+for name, fs in groups.items():
+    if not fs: print('EMPTY', name)
+    solid = bd.Compound(fs)
+    bd.export_stl(solid, f'triSurface/{name}.stl', tolerance=1e-4, angular_tolerance=0.35)
+    sp.run(['surfaceTransformPoints','-scale','0.001', f'triSurface/{name}.stl', f'triSurface/{name}.stl'], capture_output=True)
+    print(name, len(fs))
+# -- output
+top face r-range inside 16: [0.0]
+inlet 1
+shroud 7
+backplate 1
+hub 1
+outlet 7
+blades 28
+
+# -- cell 15 (1.0s, exit 0)
+import os, subprocess as sp
+os.makedirs('system', exist_ok=True); os.makedirs('constant', exist_ok=True)
+sp.run(['foamSetup'], capture_output=True) if False else None
+# minimal dicts
+def w(p, s):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    open(p,'w').write(s.replace('\n','\n'))
+w('system/controlDict', """FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application snappyHexMesh; endTime 1; deltaT 1;""")
+
+w('system/blockMeshDict', """FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }
+scale 1;
+vertices ( (-0.07 -0.07 -0.005) (0.07 -0.07 -0.005) (0.07 0.07 -0.005) (-0.07 0.07 -0.005)
+           (-0.07 -0.07  0.017) (0.07 -0.07  0.017) (0.07 0.07  0.017) (-0.07 0.07  0.017) );
+block ( hex (0 1 2 3 4 5 6 7) (30 30 10) simpleGrading (1 1 1) );
+""")
+# fix: proper blockMeshDict syntax
+w('system/blockMeshDict', """FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }
+scale 1;
+vertices ( (-0.07 -0.07 -0.005) (0.07 -0.07 -0.005) (0.07 0.07 -0.005) (-0.07 0.07 -0.005)
+           (-0.07 -0.07  0.017) (0.07 -0.07  0.017) (0.07 0.07  0.017) (-0.07 0.07  0.017) );
+blocks ( hex (0 1 2 3 4 5 6 7) (30 30 10) simpleGrading (1 1 1) );
+edges ( ); faces ( ); patches ( );
+""")
+geo = " ".join(f"{n}.stl" for n in ['inlet','shroud','backplate','hub','outlet','blades'])
+w('system/snappyHexMeshDict', f"""FoamFile {{ version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }}
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+  {geo}
+}}
+castellatedMeshControls {{
+  maxLocalCells 400000; maxGlobalCells 2000000; minRefinementCells 10; maxLoadUnbalance 10;
+  nCellsBetweenLevels 2; allowFreeStandingZoneFaces false;
+  refinementSurfaces {{
+    {{"}}""", end='\n') if False else None
+print(gt if False else "ok")
+r1 = sp.run(['blockMesh'], capture_output=True, text=True)
+print(r1.returncode, r1.stdout[-200:], r1.stderr[-300:])
+# -- output
+ok
+1 kew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+ 260914-145041-6dcc/t12/system/controlDict"
+
+
+file: system/controlDict at line 2.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 16 (0.2s, exit 0)
+import os, subprocess as sp
+names = ['inlet','shroud','backplate','hub','outlet','blades']
+geo_entries = "\n".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in names)
+w = lambda p,s: open(p,'w').write(s)
+w('system/blockMeshDict', """FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }
+scale 1;
+vertices ( (-0.07 -0.07 -0.005) (0.07 -0.07 -0.005) (0.07 0.07 -0.005) (-0.07 0.07 -0.005)
+           (-0.07 -0.07  0.017) (0.07 -0.07  0.017) (0.07 0.07  0.017) (-0.07 0.07  0.017) );
+blocks ( hex (0 1 2 3 4 5 6 7) (30 30 10) simpleGrading (1 1 1) );
+edges ( ); faces ( ); boundary ( );
+""")
+w('system/snappyHexMeshDict', """FoamFile { version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }
+castellatedMesh true; snap true; addLayers false;
+geometry { GEOENTRIES }REPLACE_GE
+castellatedMeshControls {
+  maxLocalCells 4000000; maxGlobalCells 5000000; minRefinementCells 10; maxLoadUnbalance 0.2;
+  nCellsBetweenLevels 2; allowFreeStandingZoneFaces true;
+  locationInMesh (0.030 0.002 0.007);   // inside fluid between two blade passages, r~30mm
+  refinementSurfaces { SURFENTRIES }REPLACE_SU
+  resolveFeatureAngle 30; planarTolerance 0.001;
+}
+snapControls {
+  nSmoothPatch 3; tolerance 2.0; nSolveTolerance 20; nRelaxIter 5;
+  nFeatureSnapIter 15; implicitFeatureSnapshot false; explicitFeatureSnapshot true;
+  multiRegionFeatureSnapshot false;
+}
+addLayersControls { layers ( ); relativeSizes false; }
+meshQualityControls {
+  maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02;
+  minDeterminant 0.001; minFaceWeight 0.05; minVolRatio 0.01; minTriangleTwist -0.999;
+  nSmoothScale 4; errorReduction 0.75;
+}
+mergeTolerance 1e-06;
+""")
+s = open('system/snappyHexMeshDict').read()
+s = s.replace('GEOENTRIES', geo_entries).replace('SURFENTRIES', "\n".join(
+  f'  {n} {{ level (1 1); }}' for n in names))
+open('system/snappyHexMeshDict','w').write(s.replace('}REPLACE_GE','}').replace('}REPLACE_SU','}'))
+r1 = sp.run(['blockMesh'], capture_output=True, text=True)
+print('blockMesh', r1.returncode, r1.stdout[-150:], r1.stderr[-200:])
+# -- output
+blockMesh 1 rations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+ ::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 17 (0.2s, exit 0)
+print(open('system/controlDict').read())
+r = sp.run(['blockMesh'], capture_output=True, text=True)
+print(r.stderr)
+# -- output
+FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application snappyHexMesh; endTime 1; deltaT 1;
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'writeFrequency' not found in dictionary "/home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/system/controlDict"
+
+
+file: system/controlDict at line 2.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+

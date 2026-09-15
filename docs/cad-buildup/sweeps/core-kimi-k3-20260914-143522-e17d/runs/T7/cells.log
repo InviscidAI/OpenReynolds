@@ -1,0 +1,619 @@
+# -- cell 1 (0.2s, exit 0)
+import subprocess, os
+os.chdir("/home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7")
+dict_txt = r"""
+vertices
+(
+    (0    0    0)
+    (0.1  0    0)
+    (0.1  0.06 0)
+    (0    0.06 0)
+    (0    0    0.04)
+    (0.1  0    0.04)
+    (0.1  0.06 0.04)
+    (0    0.06 0.04)
+);
+blocks ( hex (0 1 2 3 4 5 6 7) (25 15 10) simpleGrading (1 1 1) );
+boundary ( allWalls { type wall; faces ((0 3 7 4)); } );
+""".replace("allWalls { type wall; faces ((0 3 7 4)); }",
+            "allWalls { type wall; faces ((0 3 7 4) (1 2 6 5) (0 1 5 4) (3 2 6 7) (4 5 6 7) (0 1 2 3)); }")
+import pathlib; pathlib.Path("system").mkdir(exist_ok=True)
+pathlib.Path("system/blockMeshDict").write_text("convertToMeters 1;\n" + dict_txt)
+pathlib.Path("system/controlDict").write_text("// minimal")
+print(subprocess.run(["blockMesh"], capture_output=True, text=True).returncode)
+# -- output
+1
+
+# -- cell 2 (0.8s, exit 0)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stdout[-1500:], r.stderr[-500:])
+# -- output
+rapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From bool Foam::IOobject::readHeader(Foam::dictionary&, Foam::Istream&)
+    in file db/IOobject/IOobjectReadHeader.C at line 118
+    Reading "system/controlDict" at line 2
+    First token could not be read or is not 'FoamFile'
+
+Check header is of the form:
+
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       dictionary;
+    location    "system";
+    object      controlDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+ 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+problem while reading header for object controlDict
+
+file: system/controlDict at line 2.
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 650.
+
+FOAM exiting
+
+# -- cell 3 (1.8s, exit 0)
+hdr = """FoamFile
+{
+    version 2.0; format ascii; class dictionary;
+}
+"""
+ctrl = hdr + """application blockMesh; startTime 0; verbose 2;
+"""
+import pathlib
+pathlib.Path("system/controlDict").write_text(ctrl)
+bd = hdr + """
+vertices
+(
+    (0 0 0) (0.1 0 0) (0.1 0.06 0) (0 0.06 0)
+    (0 0 0.04) (0.1 0 0.04) (0.1 0.06 0.04) (0 0.06 0.04)
+);
+blocks ( hex (0 1 2 3 4 5 6 7) (25 15 10) simpleGrading (1 1 1) );
+boundary ( allWalls { type wall; faces ( (0 3 7 4) (1 2 6 5) (0 1 5 4) (3 2 6 7) (4 5 6 7) (0 1 2 3) ); } );
+"""
+pathlib.Path("system/blockMeshDict").write_text(bd)
+topo = hdr + """
+actions
+(
+  { name heater; type cellSet; action new; source boxToCell;
+    sourceInfo { box (0.01 0.02 0) (0.03 0.04 0.02); } }
+  { name heater; type cellZoneSet; action new; source setToCellZone;
+    sourceInfo { set heater; } }
+  { name cooler; type cellSet; action new; source boxToCell;
+    sourceInfo { box (0.07 0.02 0.02) (0.09 0.04 0.04); } }
+  { name cooler; type cellZoneSet; action new; source setToCellZone;
+    sourceInfo { set cooler; } }
+);
+"""
+pathlib.Path("system/topoSetDict").write_text(topo)
+r1 = subprocess.run(["blockMesh"], capture_output=True, text=True); print("blockMesh", r1.returncode, r1.stdout[-300:])
+r2 = subprocess.run(["topoSet"], capture_output=True, text=True); print("topoSet", r2.returncode, r2.stdout[-500:])
+# -- output
+blockMesh 1 leModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+topoSet 1 sical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+# -- cell 4 (0.2s, exit 0)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stdout[-2500:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 14 2026
+Time   : 16:56:42
+Host   : yc-demo
+PID    : 302810
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+# -- cell 5 (0.2s, exit 0)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print("rc", r.returncode); print(r.stderr[-2000:])
+# -- output
+rc 1
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'object' not found in dictionary 
+
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = Foam::word]
+    in file lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 6 (2.4s, exit 1)
+def hdr(obj): return f"""FoamFile
+{{
+    version 2.0; format ascii; class dictionary; object "{obj}";
+}}
+"""
+pathlib.Path("system/controlDict").write_text(hdr("controlDict") + "application blockMesh;\nstartTime 0;\n")
+pathlib.Path("system/blockMeshDict").write_text(hdr("blockMeshDict") + bd.replace(hdr, "").strip())
+pathlib.Path("system/topoSetDict").write_text(hdr("topoSetDict") + topo.replace(hdr, "").strip())
+r1 = subprocess.run(["blockMesh"], capture_output=True, text=True); print("blockMesh", r1.returncode, r1.stderr[-200:])
+r2 = subprocess.run(["topoSet"], capture_output=True, text=True); print("topoSet", r2.returncode, r2.stdout[-400:], r2.stderr[-200:])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 7[39m
+[32m      3[39m     version [32m2.0[39m; format ascii; [38;5;28;01mclass[39;00m dictionary; object [33m"{obj}"[39m;
+[32m      4[39m }}
+[32m      5[39m """
+[32m      6[39m pathlib.Path([33m"system/controlDict"[39m).write_text(hdr([33m"controlDict"[39m) + [33m"application blockMesh;\nstartTime 0;\n"[39m)
+[32m----> [39m[32m7[39m pathlib.Path([33m"system/blockMeshDict"[39m).write_text(hdr([33m"blockMeshDict"[39m) + bd.replace(hdr, [33m""[39m).strip())
+[32m      8[39m pathlib.Path([33m"system/topoSetDict"[39m).write_text(hdr([33m"topoSetDict"[39m) + topo.replace(hdr, [33m""[39m).strip())
+[32m      9[39m r1 = subprocess.run([[33m"blockMesh"[39m], capture_output=[38;5;28;01mTrue[39;00m, text=[38;5;28;01mTrue[39;00m); print([33m"blockMesh"[39m, r1.returncode, r1.stderr[-[32m200[39m:])
+[32m     10[39m r2 = subprocess.run([[33m"topoSet"[39m], capture_output=[38;5;28;01mTrue[39;00m, text=[38;5;28;01mTrue[39;00m); print([33m"topoSet"[39m, r2.returncode, r2.stdout[-[32m400[39m:], r2.stderr[-[32m200[39m:])
+
+[31mTypeError[39m: replace() argument 1 must be str, not function
+
+# -- cell 7 (1.7s, exit 0)
+import re
+def header(obj): return 'FoamFile\n{\n    version 2.0; format ascii; class dictionary; object "%s";\n}\n' % obj
+bd_body = re.sub(r'F^|FoamFile.*\}', '', bd, flags=re.S)  # not reliable; just rebuild
+bd_body = """
+vertices
+(
+    (0 0 0) (0.1 0 0) (0.1 0.06 0) (0 0.06 0)
+    (0 0 0.04) (0.1 0 0.04) (0.1 0.06 0.04) (0 0.06 0.04)
+);
+blocks ( hex (0 1 2 3 4 5 6 7) (25 15 10) simpleGrading (1 1 1) );
+boundary ( allWalls { type wall; faces ( (0 3 7 4) (1 2 6 5) (0 1 5 4) (3 2 6 7) (4 5 6 7) (0 1 2 3) ); } );
+"""
+topo_body = """
+actions
+(
+  { name heater; type cellSet; action new; source boxToCell;
+    sourceInfo { box (0.01 0.02 0) (0.03 0.04 0.02); } }
+  { name heater; type cellZoneSet; action new; source setToCellZone;
+    sourceInfo { set heater; } }
+  { name cooler; type cellSet; action new; source boxToCell;
+    sourceInfo { box (0.07 0.02 0.02) (0.09 0.04 0.04); } }
+  { name cooler; type cellZoneSet; action new; source setToCellZone;
+    sourceInfo { set cooler; } }
+);
+"""
+pathlib.Path("system/controlDict").write_text(header("controlDict") + "application blockMesh;\n")
+pathlib.Path("system/blockMeshDict").write_text(header("blockMeshDict") + bd_body)
+pathlib.Path("system/topoSetDict").write_text(header("topoSetDict") + topo_body)
+r1 = subprocess.run(["blockMesh"], capture_output=True, text=True)
+r2 = subprocess.run(["topoSet"], capture_output=True, text=True)
+print("blockMesh", r1.returncode, "topoSet", r2.returncode)
+print(r2.stdout[-600:])
+# -- output
+blockMesh 1 topoSet 1
+::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+# -- cell 8 (0.2s, exit 0)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stderr[-800:]); print("---"); print(r.stdout[-800:])
+# -- output
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'deltaT' not found in dictionary "/home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/system/controlDict"
+
+
+file: system/controlDict at line 5.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+
+---
+FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+# -- cell 9 (3.1s, exit 0)
+cd_txt = """application blockMesh;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 1;
+deltaT 1;
+writeControl timeStep;
+writeInterval 1;
+runTimeModifiable true;
+"""
+pathlib.Path("system/controlDict").write_text(header("controlDict") + cd_txt)
+r1 = subprocess.run(["blockMesh"], capture_output=True, text=True)
+r2 = subprocess.run(["topoSet"], capture_output=True, text=True)
+print("blockMesh", r1.returncode, "| topoSet", r2.returncode)
+print(r1.stdout[-200:], r2.stdout[-600:])
+# -- output
+blockMesh 0 | topoSet 0
+gBox: (0 0 0) (0.1 0.06 0.04)
+  nPoints: 4576
+  nCells: 3750
+  nFaces: 12025
+  nInternalFaces: 10475
+----------------
+Patches
+----------------
+  patch 0 (start: 10475 size: 1550) name: allWalls
+
+End
+
+ ter
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.01 0.02 0) (0.03 0.04 0.02))
+    cellSet heater now size 132
+Created cellZoneSet heater
+    Applying source setToCellZone
+    Adding all cells from cell set: heater ...
+    cellZoneSet heater now size 132
+Created cellSet cooler
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.07 0.02 0.02) (0.09 0.04 0.04))
+    cellSet cooler now size 127
+Created cellZoneSet cooler
+    Applying source setToCellZone
+    Adding all cells from cell set: cooler ...
+    cellZoneSet cooler now size 127
+
+End
+
+# -- cell 10 (1.0s, exit 0)
+cm = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(cm.returncode)
+print("\n".join([l for l in (cm.stdout+cm.stderr).splitlines() if re.search(r"Mesh OK|FAIL|error|heater|cooler|allWalls|zones", l, re.I)][:20]))
+# -- output
+1
+--> FOAM FATAL ERROR: (openfoam-2512)
+
+# -- cell 11 (0.8s, exit 0)
+print((cm.stdout+cm.stderr)[-1200:])
+# -- output
+erting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 12 (0.2s, exit 0)
+pathlib.Path("system/fvSchemes").write_text(header("fvSchemes"))
+pathlib.Path("system/fvSolution").write_text(header("fvSolution"))
+cm = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(cm.returncode)
+print("\n".join([l for l in (cm.stdout+cm.stderr).splitlines() if re.search(r"Mesh OK|FAILED|error|heater|cooler|allWalls|zone", l, re.I)]))
+# -- output
+1
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+
+# -- cell 13 (0.1s, exit 0)
+print((cm.stdout+cm.stderr)[-1000:])
+# -- output
+up/work/T7-20260914-165512-f021/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+# -- cell 14 (1.0s, exit 0)
+fvs = """ddtSchemes { default Euler; }
+gradSchemes { default Gauss linear; }
+divSchemes { default Gauss linear; }
+laplacianSchemes { default Gauss linear orthogonal; }
+interpolationSchemes { default linear; }
+snGradSchemes { default orthogonal; }
+wallDist { method meshWave; }
+"""
+pathlib.Path("system/fvSchemes").write_text(header("fvSchemes") + fvs)
+pathlib.Path("system/fvSolution").write_text(header("fvSolution") + "solvers { p_rgh { solver GAMG; tolerance 1e-7; relTol 0.01; smoother GaussSeidel; } }\nrelaxationFactors { fields { p_rgh 0.7; } }\n")
+cm = subprocess.run(["checkMesh"], capture_output=True, text=True)
+txt = cm.stdout + cm.stderr
+print(cm.returncode)
+print("\n".join([l for l in txt.splitlines() if re.search(r"Mesh OK|FAILED|heater|cooler|allWalls|zone", l, re.I)]))
+# -- output
+0
+    point zones:      0
+    face zones:       0
+    cell zones:       2
+    allWalls            1550     1552     ok (closed singly connected)      
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    heater              132          242          8.448e-06    (0.008 0.02 0) (0.032 0.04 0.02)
+    cooler              127          231          8.128e-06    (0.068 0.02 0.02) (0.092 0.04 0.04)
+Checking basic pointZone addressing...
+    No pointZones found.
+Mesh OK.
+
+# -- cell 15 (3.5s, exit 0)
+topo_body = """
+actions
+(
+  { name heater; type cellSet; action new; source boxToCell;
+    sourceInfo { box (0.008 0.02 0) (0.032 0.04 0.02); } }
+  { name heater; type cellZoneSet; action new; source setToCellZone;
+    sourceInfo { set heater; } }
+  { name cooler; type cellSet; action new; source boxToCell;
+    sourceInfo { box (0.068 0.02 0.02) (0.092 0.04 0.04); } }
+  { name cooler; type cellZoneSet; action new; source setToCellZone;
+    sourceInfo { set cooler; } }
+);
+"""
+pathlib.Path("system/topoSetDict").write_text(header("topoSetDict") + topo_body)
+r = subprocess.run(["topoSet"], capture_output=True, text=True)
+cm = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(cm.returncode)
+print([l for l in cm.stdout.splitlines() if re.search(r"heater|cooler|Mesh OK", l)])
+# -- output
+0
+['    heater              150          252          9.6e-06      (0.008 0.02 0) (0.032 0.04 0.02)', '    cooler              150          252          9.6e-06      (0.068 0.02 0.02) (0.092 0.04 0.04)', 'Mesh OK.']
+
+# -- cell 16 (6.2s, exit 0)
+topo_body = topo_body.replace("(0.008 0.02 0) (0.032 0.04 0.02)", "(0.008 0.02 0) (0.028 0.04 0.02)")
+topo_body = topo_body.replace("(0.068 0.02 0.02) (0.092 0.04 0.04)", "(0.068 0.02 0.02) (0.088 0.04 0.04)")
+pathlib.Path("system/topoSetDict").write_text(header("topoSetDict") + topo_body)
+subprocess.run(["topoSet"], capture_output=True)
+cm = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print([l for l in cm.stdout.splitlines() if re.search(r"heater|cooler|Mesh OK", l)])
+# -- output
+['    heater              125          216          8e-06        (0.008 0.02 0) (0.028 0.04 0.02)', '    cooler              125          216          8e-06        (0.068 0.02 0.02) (0.088 0.04 0.04)', 'Mesh OK.']
+
+# -- cell 17 (0.8s, exit 0)
+import numpy as np, matplotlib.pyplot as plt
+from pyvista import PVMeshReader?
+# -- output
+Object `PVMeshReader` not found.
+[no picture came back from this cell, and it looks like it drew one. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 18 (0.1s, exit 1)
+import pyvista as pv, pathlib, numpy as np, matplotlib.pyplot as plt
+pathlib.Path("t7.foam").write_text("")
+reader = pv.OpenFOAMReader(pathlib.Path("t7.foam").as_posix())
+reader.set_time_value(0)
+mesh = reader.read()
+blk = mesh[0]
+blk["zone"] = np.zeros(blk.n_cells, dtype=int)
+zid = {n: i+1 for i, n in enumerate(blk.cell_data.get("cellZoneID", []) if False)}  # fallback
+# use cellTypes? simpler: recompute via box membership
+c = blk.cell_centers().points
+zone = np.zeros(len(c), dtype=int)
+zone[(c[:,0]>0.008)&(c[:,0]<0.028)&(c[:,1]>0.02)&(c[:,1]<0.04)&(c[:,2]<0.02)] = 1
+zone[(c[:,0]>0.068)&(c[:,0]<0.088)&(c[:,1]>0.02)&(c[:,1]<0.04)&(c[:,2]>0.02)] = 2
+blk["zone"] = zone
+fig = pv.Plotter(window_size=[900, 400]).show(screenshot="plot.png")
+p = pv.Plotter(shape=(1, 2), window_size=[900, 400])
+sl = blk.slice(normal=[0, 1, 0], origin=(0.05, 0.03, 0.02))
+p.subplot(0, 0)
+p.add_mesh(sl, scalars="zone", cmap=["gray", "red", "blue"], clim=[0, 2], show_scalar_bar=False)
+p.view_xz(); p.add_text("y-slice x-z")
+p.subplot(0, 1)
+sl2 = blk.slice(normal=[1, 0, 0], origin=(0.05, 0.03, 0.02))
+p.add_mesh(sl2, scalars="zone", cmap=["gray", "red", "blue"], clim=[0, 2], show_scalar_bar=False)
+p.view_yz(); p.add_text("x-slice y-z")
+p.show(screenshot="plot.png")
+from IPython.display import Image
+Image("plot.png")
+# -- output
+[36mCell[39m[36m [39m[32mIn[18][39m[32m, line 8[39m
+[31m    [39m[31mzid = {n: i+1 for i, n in enumerate(blk.cell_data.get("cellZoneID", []) if False)}  # fallback[39m
+                                        ^
+[31mSyntaxError[39m[31m:[39m expected 'else' after 'if' expression
+
+# -- cell 19 (0.2s, exit 1)
+import pyvista as pv, numpy as np
+import pathlib
+pathlib.Path("t7.foam").write_text("")
+reader = pv.OpenFOAMReader("t7.foam")
+reader.set_time_value(0)
+blk = reader.read()[0]
+c = blk.cell_centers().points
+zone = np.zeros(len(c), dtype=int)
+zone[(c[:, 0] > 0.008) & (c[:, 0] < 0.028) & (c[:, 1] > 0.02) & (c[:, 1] < 0.04) & (c[:, 2] < 0.02)] = 1
+zone[(c[:, 0] > 0.068) & (c[:, 0] < 0.088) & (c[:, 1] > 0.02) & (c[:, 1] < 0.04) & (c[:, 2] > 0.02)] = 2
+blk["zone"] = zone
+p = pv.Plotter(shape=(1, 2), window_size=[900, 400])
+sl = blk.slice(normal=[0, 1, 0], origin=(0.05, 0.03, 0.02))
+p.subplot(0, 0)
+p.add_mesh(sl, scalars="zone", cmap=["gray", "red", "blue"], clim=[0, 2])
+p.view_xz(); p.add_text("x-z slice")
+p.subplot(0, 1)
+sl2 = blk.slice(main=[0, 1, 0], axis=2, origin=(0.05, 0.03, 0.02), normal=[1, 0, 0])
+p.add_mesh(sl2, scalars="zone", cmap=["gray", "red", "blue"], clim=[0, 2])
+p.view_yz()
+p.show(screenshot="plot.png")
+from IPython.display import Image
+Image("plot.png")
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[19][39m[32m, line 5[39m
+[32m      1[39m [38;5;28;01mimport[39;00m pyvista [38;5;28;01mas[39;00m pv, numpy [38;5;28;01mas[39;00m np
+[32m      2[39m [38;5;28;01mimport[39;00m pathlib
+[32m      3[39m pathlib.Path([33m"t7.foam"[39m).write_text([33m""[39m)
+[32m      4[39m reader = pv.OpenFOAMReader([33m"t7.foam"[39m)
+[32m----> [39m[32m5[39m reader.set_time_value([32m0[39m)
+[32m      6[39m blk = reader.read()[[32m0[39m]
+[32m      7[39m c = blk.cell_centers().points
+[32m      8[39m zone = np.zeros(len(c), dtype=int)
+
+[31mAttributeError[39m: 'OpenFOAMReader' object has no attribute 'set_time_value'
+
+# -- cell 20 (1.3s, exit 0)
+import pyvista as pv, numpy as np
+import pathlib
+pathlib.Path("t7.foam").write_text("")
+reader = pv.OpenFOAMReader("t7.foam")
+m = reader.read()
+blk = m[0]
+c = blk.cell_centers().points
+zone = np.zeros(len(c), dtype=int)
+zone[(c[:, 0] > 0.008) & (c[:, 0] < 0.028) & (c[:, 1] > 0.02) & (c[:, 1] < 0.04) & (c[:, 2] < 0.02)] = 1
+zone[(c[:, 0] > 0.068) & (c[:, 0] < 0.088) & (c[:, 1] > 0.02) & (c[:, 1] < 0.04) & (c[:, 2] > 0.02)] = 2
+blk["zone"] = zone
+p = pv.Plotter(shape=(1, 2), window_size=[900, 400])
+sl = blk.slice(normal=[0, 1, 0], origin=(0.05, 0.03, 0.02))
+p.subplot(0, 0)
+p.add_mesh(sl, scalars="zone", cmap=["gray", "red", "blue"], clim=[0, 2], show_scalar_bar=False)
+p.view_xz()
+p.subplot(0, 1)
+sl2 = blk.slice(normal=[1, 0, 0], origin=(0.05, 0.03, 0.02))
+p.add_mesh(sl2, scalars="zone", cmap=["gray", "red", "blue"], clim=[0, 2], show_scalar_bar=False)
+p.view_yz()
+p.show(screenshot="plot.png")
+from IPython.display import Image
+Image("plot.png")
+# -- output
+[0m[33m2026-09-14 17:01:33.123 (  22.551s) [    72AD26BE3780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 17:01:33.123 (  22.552s) [    72AD26BE3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 17:01:33.136 (  22.564s) [    72AD26BE3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_302598/947503259.py:21: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.show(screenshot="plot.png")
+
+# -- cell 21 (4.1s, exit 0)
+bd_body = """
+vertices
+(
+    (0 0 0) (0.1 0 0) (0.1 0.06 0) (0 0.06 0)
+    (0 0 0.04) (0.1 0 0.04) (0.1 0.06 0.04) (0 0.06 0.04)
+);
+blocks ( hex (0 1 2 3 4 5 6 7) (50 30 20) simpleGrading (1 1 1) );
+boundary ( allWalls { type wall; faces ( (0 3 7 4) (1 2 6 5) (0 1 5 4) (3 2 6 7) (4 5 6 7) (0 1 2 3) ); } );
+"""
+pathlib.Path("system/blockMeshDict").write_text(header("blockMeshDict") + bd_body)
+subprocess.run(["blockMesh"], capture_output=True)
+subprocess.run(["topoSet"], capture_output=True)
+cm = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(cm.returncode)
+print([l for l in cm.stdout.splitlines() if re.search(r"heater|cooler|Mesh OK|cells", l)])
+# -- output
+0
+['    cells:            30000', 'Overall number of cells of each type:', '    heater              1000         1331         8e-06        (0.008 0.02 0) (0.028 0.04 0.02)', '    cooler              1000         1331         8e-06        (0.068 0.02 0.02) (0.088 0.04 0.04)', 'Mesh OK.']
+

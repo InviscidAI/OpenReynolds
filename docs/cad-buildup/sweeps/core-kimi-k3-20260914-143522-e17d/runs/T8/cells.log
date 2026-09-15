@@ -1,0 +1,808 @@
+# -- cell 1 (2.8s, exit 0)
+import build123d as bd
+# SI metres
+duct_L, duct_W, duct_H = 0.2, 0.03, 0.03
+blk_L, blk_W, blk_H = 0.04, 0.03, 0.01
+x0 = (duct_L - blk_L)/2.0  # 0.08
+solid = bd.Pos(x0, 0, 0) * bd.Box(blk_L, blk_W, blk_H)  # on floor z=0..blk_H
+duct = bd.Pos(-duct_L/2, -duct_W/2, -duct_H/2) * bd.Box(duct_L, duct_W, duct_H)
+fluid = duct - solid
+print("solid bbox:", solid.bounding_box().min, solid.bounding_box().max)
+print("fluid vol:", fluid.volume, "solid vol:", solid.volume)
+import matplotlib.pyplot as plt
+fig = plt.figure(); ax = fig.add_subplot(projection='3d')
+from build123d import export_stl
+export_stl(fluid, "fluid_visu.stl"); export_stl(solid, "solid_visu.stl")
+import pyvista as pv
+pv.set_plot_theme("document")
+p = pv.Plotter(off_screen=True)
+p.add_mesh(pv.read("fluid_visu.stl"), opacity=0.4, color="lightblue")
+p.add_mesh(pv.read("solid_visu.stl"), color="brown")
+p.show()
+# -- output
+solid bbox: Vector: (X=0.06, Y=-0.015, Z=-0.005) Vector: (X=0.1, Y=0.015, Z=0.005)
+fluid vol: 0.00017999999999999998 solid vol: 1.2e-05
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 17:03:15.192 (   0.251s) [    7ACC4F85B780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 17:03:15.192 (   0.251s) [    7ACC4F85B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 17:03:15.206 (   0.264s) [    7ACC4F85B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_305051/1007186242.py:20: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.show()
+
+# -- cell 2 (0.1s, exit 1)
+xs=[0,0.08,0.12,0.2]; ys=[0,0.03]; zsn=[0,0.01,0.03]
+vids={}; verts=[]; blocks=[]
+def V(x,y,z):
+    key=(x,y,z)
+    if key not in vids: vids[key]=len(verts); verts.append(key)
+    return vids[key]
+def hexb(x0,x1,y0,y1,z0,z1,nx,ny,nz):
+    v=(V(x0,y0,z0),V(x1,y0,z0),V(x1,y1,z0),V(x0,y1,z0),
+       V(x0,y0,z1),V(x1,y0,z1),V(x1,y1,z1),V(x0,y1,z1))
+    blocks.append((v,(nx,ny,nz)))
+NU, NB, ZS, ZO, NY = 53, 27, 5, 10, 20
+hexb(0,0.08,0,0.03,0,0.01,NU,NY,ZS)
+hexb(0.08,0.12,0,0.03,0,0.01,NB,NY,ZS)
+hexb(0.12,0.2,0,0.03,0,0.01,NU,NY,ZS)
+hexb(0,0.08,0,0.03,0.01,0.03,NU,NY,ZO)
+hexb(0.08,0.12,0,0.03,0.01,0.03,NB,NY,ZO)
+hexb(0.12,0.2,0,0.03,0.01,0.03,NU,NY,ZO)
+# quad face helper: two vertices consecutive share? define faces manually
+def quad(a,b,c,d,same=True):\n
+    return [a,b,c,d]
+eps=1e-12
+inlet=[]; outlet=[]; wall=[]
+for (v,n) in blocks:
+    a,b,c,d,e,f,g,h = v
+    coords=[verts[i] for i in v]
+    faces=[(a,b,c,d),(e,h,g,f),(b,f,g,c),(a,e,h,d),(d,c,g,h),(a,b,f,e)]  # z-, z+, x+, x-, y-, y+
+    idx=[(v[0],v[1],v[2],v[3]),(v[4],v[7],v[6],v[5]),(v[1],v[5],v[6],v[2]),
+         (v[0],v[4],v[7],v[3]),(v[3],v[2],v[6],v[7]),(v[0],v[1],v[5],v[4])]
+    for face in idx:
+        P=[verts[i] for i in face]
+        xs_=[p[0] for p in P]; ys_=[p[1] for p in P]; zs_=[p[2] for p in P]
+        if max(xs_)-min(xs_)<eps:
+            x=min(xs_)
+            if x==0: inlet.append(face)
+            elif x==0.2: outlet.append(face)
+            else: 
+                # internal if aligned with region boundary 0.08/0.12
+                if abs(x-0.08)<eps or abs(x-0.12)<eps:
+                    pass
+                else: wall.append(face)
+        elif max(ys_)-min(ys_)<eps: wall.append(face)
+        elif max(zs_)-min(zs_)<eps:
+            z=min(zs_)
+            # internal interface faces at z=0.01 adjacent on both sides handled by both blocks
+            wall.append(face)
+    # end per block
+print("verts",len(verts),"blocks",len(blocks),"in",len(inlet),"out",len(outlet),"wall",len(wall))
+# -- output
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 19[39m
+[31m    [39m[31mdef quad(a,b,c,d,same=True):\n[39m
+                                 ^
+[31mSyntaxError[39m[31m:[39m unexpected character after line continuation character
+
+# -- cell 3 (0.2s, exit 1)
+from collections import Counter
+face_defs=[((0,1,2,3),'z-'),((4,7,6,5),'z+'),((1,5,6,2),'x+'),((0,4,7,3),'x-'),((3,2,6,7),'y-'),((0,1,5,4),'y+')]
+cnt=Counter(); refs={}
+for (v,n) in blocks:
+    for fd,k in face_defs:
+        f=tuple(v[t] for t in fd)
+        key=tuple(sorted(f))
+        cnt[key]+=1; refs[key]=f
+patches={'inlet':[], 'outlet':[], 'walls':[]}
+eps=1e-9
+for key,f in refs.items():
+    if cnt[key]==2: continue
+    P=[verts[i] for i in f]
+    if max(p[0] for p in P)-min(p[0] for p in P)<eps:
+        x=P[0][0]
+        patches['inlet' if x==0 else 'outlet'].append(f)
+    else:
+        patches['walls'].append(f)
+print({k:len(v) for k,v in patches.items()})
+def dicttext():
+    s="FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }\nscale 1; vertices (\n"
+    s+="\n".join(f"  ({p[0]} {p[1]} {p[2]})" for p in verts)+"\n);\nblocks (\n"
+    s+="\n".join(f"  hex ({' '.join(map(str,b))}) ({n[0]} {n[1]} {n[2]}) simpleGrading (1 1 1)" for b,n in blocks)+"\n);\npatches (\n"
+    for name,ftype in [('inlet','patch'),('outlet','patch'),('walls','wall')]:
+        if patches[name]:
+            s+=f"  {name} {ftype} (\n"+"\n".join("    ("+" ".join(map(str,faces))+")" for faces in patches[name])+"\n  );\n"
+    s+=");\nmergePatchPairs ();\n"
+    return s
+os.makedirs("system/constant", exist_ok=True)
+open("system/blockMeshDict","w").write(dicttext())
+import subprocess,os
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print(r.stdout[-600:]); print(r.returncode)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mNameError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 4[39m
+[32m      1[39m [38;5;28;01mfrom[39;00m collections [38;5;28;01mimport[39;00m Counter
+[32m      2[39m face_defs=[(([32m0[39m,[32m1[39m,[32m2[39m,[32m3[39m),[33m'z-'[39m),(([32m4[39m,[32m7[39m,[32m6[39m,[32m5[39m),[33m'z+'[39m),(([32m1[39m,[32m5[39m,[32m6[39m,[32m2[39m),[33m'x+'[39m),(([32m0[39m,[32m4[39m,[32m7[39m,[32m3[39m),[33m'x-'[39m),(([32m3[39m,[32m2[39m,[32m6[39m,[32m7[39m),[33m'y-'[39m),(([32m0[39m,[32m1[39m,[32m5[39m,[32m4[39m),[33m'y+'[39m)]
+[32m      3[39m cnt=Counter(); refs={}
+[32m----> [39m[32m4[39m [38;5;28;01mfor[39;00m (v,n) [38;5;28;01min[39;00m blocks:
+[32m      5[39m     [38;5;28;01mfor[39;00m fd,k [38;5;28;01min[39;00m face_defs:
+[32m      6[39m         f=tuple(v[t] [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m fd)
+[32m      7[39m         key=tuple(sorted(f))
+
+[31mNameError[39m: name 'blocks' is not defined
+
+# -- cell 4 (0.2s, exit 0)
+import os, subprocess
+from collections import Counter
+xs=[0,0.08,0.12,0.2]; Y=0.03; Zs=[0,0.01,0.03]
+verts={}; vlist=[]; blocks=[]
+def V(x,y,z):
+    k=(x,y,z)
+    if k not in verts: verts[k]=len(vlist); vlist.append(k)
+    return verts[k]
+def hexb(x0,x1,y0,y1,z0,z1,nx,ny,nz):
+    v=(V(x0,y0,z0),V(x1,y0,z0),V(x1,y1,z0),V(x0,y1,z0),V(x0,y0,z1),V(x1,y0,z1),V(x1,y1,z1),V(x0,y1,z1))
+    blocks.append((v,(nx,ny,nz)))
+NU,NB,ZS,ZO,NY=53,27,5,10,20
+hexb(0,0.08,0,Y,0,0.01,NU,NY,ZS); hexb(0.08,0.12,0,Y,0,0.01,NB,NY,ZS); hexb(0.12,0.2,0,Y,0,0.01,NU,NY,ZS)
+hexb(0,0.08,0,Y,0.01,0.03,NU,NY,ZO); hexb(0.08,0.12,0,Y,0.01,0.03,NB,NY,ZO); hexb(0.12,0.2,0,Y,0.01,0.03,NU,NY,ZO)
+fd=[(0,1,2,3),(4,7,6,5),(1,5,6,2),(0,4,7,3),(3,2,6,7),(0,1,5,4)]
+cnt=Counter(); refs={}
+for v,n in blocks:
+    for f in fd:
+        t=tuple(v[i] for i in f); key=tuple(sorted(t))
+        cnt[key]+=1; refs[key]=t
+patches={'inlet':[],'outlet':[],'walls':[]}
+eps=1e-9
+for key,t in refs.items():
+    if cnt[key]==2: continue
+    P=[vlist[i] for i in t]
+    if max(p[0] for p in P)-min(p[0] for p in P)<eps:
+        patches['inlet' if P[0][0]==0 else 'outlet'].append(t)
+    else: patches['walls'].append(t)
+print({k:len(v) for k,v in patches.items()},"verts",len(vlist))
+s="FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }\nscale 1;\nvertices (\n"
+s+="\n".join(f" ({p[0]} {p[1]} {p[2]})" for p in vlist)+"\n);\nblocks (\n"
+s+="\n".join(" hex ("+" ".join(map(str,b))+") "+" ".join(map(str,n))+" simpleGrading (1 1 1)" for b,n in blocks)+"\n);\npatches (\n"
+for name in ['inlet','outlet','walls']:
+    ftype='wall' if name=='walls' else 'patch'
+    s+=f" {name} {ftype} (\n"+"\n".join("  ("+" ".join(map(str,f))+")" for f in patches[name])+"\n );\n"
+s+=");\nmergePatchPairs ();\n"
+os.makedirs("system/constant",exist_ok=True)
+open("system/blockMeshDict","w").write(s)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print((r.stdout+r.stderr)[-800:])
+# -- output
+{'inlet': 2, 'outlet': 2, 'walls': 18} verts 24
+n trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 5 (0.2s, exit 0)
+import subprocess, os
+open("system/controlDict","w").write("""FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application chtMultiRegionFoam;
+startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1;
+writeControl timeStep; writeInterval 1000; purgeWrite 0;
+writeFormat ascii; writePrecision 8; writeCompression off;
+timeFormat general; timePrecision 8; runTimeModifiable false;
+""")
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print((r.stdout+r.stderr)[-400:])
+# -- output
+5
+    Encountered old-style specification of mesh divisions
+
+Creating topology patches - from patches section
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Wrong token type - expected word, found on line 41: punctuation ';'
+
+file: system/blockMeshDict/patches at line 41.
+
+    From Foam::Istream& Foam::operator>>(Istream&, word&)
+    in file primitives/strings/word/wordIO.C at line 71.
+
+FOAM exiting
+
+# -- cell 6 (0.2s, exit 0)
+import subprocess
+from collections import Counter
+def build_dict():
+    global blocks,vlist
+    verts={}; vlist=[]; blocks=[]
+    def V(x,y,z):
+        k=(x,y,z)
+        if k not in verts: verts[k]=len(vlist); vlist.append(k)
+        return verts[k]
+    def hexb(x0,x1,y0,y1,z0,z1,nx,ny,nz):
+        v=(V(x0,y0,z0),V(x1,y0,z0),V(x1,y1,z0),V(x0,y1,z0),
+           V(x0,y0,z1),V(x1,y0,z1),V(x1,y1,z1),V(x0,y1,z1))
+        blocks.append((v,(nx,ny,nz)))
+    NU,NB,ZS,ZO,NY=53,27,5,10,20
+    hexb(0.0,0.08,0,0.03,0,0.01,NU,NY,ZS); hexb(0.08,0.12,0,0.03,0,0.01,NB,NY,ZS); hexb(0.12,0.2,0,0.03,0,0.01,NU,NY,ZS)
+    hexb(0.0,0.08,0,0.03,0.01,0.03,NU,NY,ZO); hexb(0.08,0.12,0,0.03,0.01,0.03,NB,NY,ZO); hexb(0.12,0.2,0,0.03,0.01,0.03,NU,NY,ZO)
+    fd=[(0,1,2,3),(4,7,6,5),(1,5,6,2),(0,4,7,3),(3,2,6,7),(0,1,5,4)]
+    cnt=Counter(); refs={}
+    for v,n in blocks:
+        for f in fd:
+            t=tuple(v[i] for i in f); key=tuple(sorted(t)); cnt[key]+=1; refs[key]=t
+    patches={'inlet':[],'outlet':[],'walls':[]}
+    for key,t in refs.items():
+        if cnt[key]==2: continue
+        P=[vlist[i] for i in t]
+        if max(p[0] for p in P)-min(p[0] for p in P)<1e-9:
+            patches['inlet' if abs(P[0][0])<1e-9 else 'outlet'].append(t)
+        else: patches['walls'].append(t)
+    s="FoamFile{ version 2.0; format ascii; class dictionary; object blockMeshDict; }\nscale 1;\nvertices(\n"
+    s+="\n".join(f" ({p[0]} {p[1]} {p[2]})" for p in vlist)+"\n);\nblocks(\n"
+    s+="\n".join(" hex("+" ".join(map(str,b))+") "+" ".join(map(str,n))+" simpleGrading(1 1 1)" for b,n in blocks)+"\n);\nboundary(\n"
+    for name in ['inlet','outlet','walls']:
+        ftype='wall' if name=='walls' else 'patch'
+        s+=f" {name}{{ type {ftype}; faces(\n"
+        s+="\n".join("  ("+" ".join(map(str,f))+")" for f in patches[name]); s+="\n);}\n"
+    s+=");\nmergePatchPairs();\n"
+    return s
+open("system/blockMeshDict","w").write(build_dict())
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print((r.stdout+r.stderr)[-400:])
+# -- output
+blockMeshDict" at line 68
+    Imbalanced brackets
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+ill defined primitiveEntry starting at keyword 'vertices(' on line 4 and ending at line 68
+
+file: system/blockMeshDict at line 68.
+
+    From void Foam::primitiveEntry::readEntry(const Foam::dictionary&, Foam::Istream&)
+    in file db/dictionary/primitiveEntry/primitiveEntryIO.C at line 243.
+
+FOAM exiting
+
+# -- cell 7 (1.0s, exit 0)
+import subprocess
+s = build_dict()
+s = s.replace("vertices(", "vertices (").replace("blocks(", "blocks (").replace("boundary(", "boundary (")
+s = s.replace(" hex(", " hex (").replace("faces(", "faces (").replace("mergePatchPairs!", "x")  # no-op guard
+# brace entries "{ type patch; faces (...)" are fine
+open("system/blockMeshDict","w").write(s)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print((r.stdout+r.stderr)[-300:])
+# -- output
+efined primitiveEntry starting at keyword 'blocks' on line 29 and ending at line 68
+
+file: system/blockMeshDict at line 68.
+
+    From void Foam::primitiveEntry::readEntry(const Foam::dictionary&, Foam::Istream&)
+    in file db/dictionary/primitiveEntry/primitiveEntryIO.C at line 243.
+
+FOAM exiting
+
+# -- cell 8 (1.8s, exit 0)
+import subprocess
+s = build_dict()
+for a,b in [("vertices(","vertices ("),("blocks(","blocks ("),("boundary(","boundary ("),(" hex("," hex ("),("faces(","faces ("),("simpleGrading(","simpleGrading (")]:
+    s=s.replace(a,b)
+open("system/blockMeshDict","w").write(s)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print((r.stdout+r.stderr)[-200:])
+# -- output
+14745
+----------------
+Patches
+----------------
+  patch 0 (start: 114745 size: 300) name: inlet
+  patch 1 (start: 115045 size: 300) name: outlet
+  patch 2 (start: 115345 size: 9310) name: walls
+
+End
+
+# -- cell 9 (0.6s, exit 0)
+import subprocess
+topo = """FoamFile { version 2.0; format ascii; class dictionary; object topoSetDict; }
+actions (
+ { name fluid; type cellZone; action new;
+   sources (
+     boxToCell { action add; box ((0 0 0) (0.2 0.03 0.03)); }
+     boxToCell { action remove; box ((0.08 0 0) (0.12 0.03 0.01)); }
+   );
+ }
+ { name solid; type cellZone; action new;
+   sources (
+     boxToCell { action add; box ((0.08 0 0) (0.12 0.03 0.01)); }
+   );
+ }
+);
+"""
+open("system/topoSetDict","w").write(topo)
+for cmd in ["topoSet","splitMeshRegions"]:
+    r=subprocess.run([cmd],capture_output=True,text=True)
+    print("\n==",cmd,r.returncode,"\n",(r.stdout+r.stderr)[-500:])
+# -- output
+== topoSet 1 
+  * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+Unknown set type cellZone
+
+Valid set types :
+6(cellSet cellZoneSet faceSet faceZoneSet pointSet pointZoneSet)
+
+
+    From static Foam::autoPtr<Foam::topoSet> Foam::topoSet::New(const Foam::word&, const Foam::polyMesh&, const Foam::word&, Foam::label, Foam::IOobjectOption::writeOption)
+    in file topoSet/topoSets/topoSet.C at line 93.
+
+FOAM exiting
+
+
+
+== splitMeshRegions 1 
+  * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 10 (0.6s, exit 0)
+import subprocess
+open("system/topoSetDict","w").write(open("system/topoSetDict").read().replace("type cellZone;","type cellZoneSet;"))
+open("system/fvSchemes","w").write("FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }\n")
+open("system/fvSolution","w").write("FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }\n")
+for cmd in ["topoSet","splitMeshRegions"]:
+    r=subprocess.run([cmd],capture_output=True,text=True)
+    print("\n==",cmd,r.returncode,"\n",(r.stdout+r.stderr)[-700:])
+# -- output
+== topoSet 1 
+ ----------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       dictionary;
+    location    "system";
+    object      topoSetDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+problem while reading header for object topoSetDict
+
+file: system/topoSetDict at line 1.
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 650.
+
+FOAM exiting
+
+
+
+== splitMeshRegions 1 
+ ception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+# -- cell 11 (0.1s, exit 0)
+print(open("system/topoSetDict").read()[:200])
+# -- output
+
+
+# -- cell 12 (0.8s, exit 0)
+import subprocess
+tt=open("system/topoSetDict").read()
+print(repr(tt[:250]))
+# -- output
+''
+
+# -- cell 13 (1.9s, exit 0)
+import subprocess
+open("system/topoSetDict","w").write("""FoamFile { version 2.0; format ascii; class dictionary; object topoSetDict; }
+actions (
+ { name fluid; type cellZoneSet; action new;
+   sources (
+   boxToCell { action add; box ((0 0 0) (0.2 0.03 0.03)); }
+   boxToCell { action remove; box ((0.08 0 0) (0.12 0.03 0.01)); }
+   );
+ }
+ { name solid; type cellZoneSet; action new;
+   sources ( boxToCell { action add; box ((0.08 0 0) (0.12 0.03 0.01)); } );
+ }
+);
+""")
+open("system/fvSchemes","w").write("""FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }
+ddtSchemes {} gradSchemes {} divSchemes {} laplacianSchemes {} interpolationSchemes {} snGradSchemes {}
+""")
+open("system/fvSolution","w").write("""FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }
+solvers {}
+""")
+for cmd in ["topoSet","splitMeshRegions"]:
+    r=subprocess.run([cmd],capture_output=True,text=True)
+    print("\n==",cmd,r.returncode,"\n",(r.stdout+r.stderr)[-700:])
+# -- output
+== topoSet 1 
+ axFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellZoneSet fluid
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'source' not found in dictionary "system/topoSetDict/actions"
+
+
+file: system/topoSetDict/actions at line 3 to 6.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = Foam::word]
+    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+
+
+== splitMeshRegions 0 
+ //
+Create time
+
+Create mesh for time = 0
+
+Creating single patch per inter-region interface.
+
+Trying to match regions to existing cell zones.
+
+
+Number of regions:1
+
+Writing region per cell file (for manual decomposition) to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/constant/cellToRegion"
+
+Writing region per cell as volScalarField to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/0/cellToRegion"
+
+Region	Cells
+------	-----
+0	39900
+
+Region	Zone	Name
+------	----	----
+0	()	domain0
+
+Sizes of interfaces between regions:
+
+Interface	Region	Region	Faces
+---------	------	------	-----
+
+Reading volScalarField: cellToRegion
+
+Only one region. Doing nothing.
+End
+
+# -- cell 14 (3.2s, exit 0)
+import subprocess
+open("system/topoSetDict","w").write("""FoamFile { version 2.0; format ascii; class dictionary; object topoSetDict; }
+actions (
+ { name fluid; type cellSet; action new;
+   source ( boxToCell ); sourceInfo { box ((0 0 0) (0.2 0.03 0.03)); } }
+ { name fluid; type cellSet; action remove;
+   source ( boxToCell ); sourceInfo { box ((0.08 0 0) (0.12 0.03 0.01)); } }
+ { name fluid; type cellZoneSet; action new; source ( cellToCell ); sourceInfo { set fluid; } }
+ { name solid; type cellSet; action new;
+   source ( boxToCell ); sourceInfo { box ((0.08 0 0) (0.12 0.03 0.01)); } }
+ { name solid; type cellZoneSet; action new; source ( cellToCell ); sourceInfo { set solid; } }
+);
+""")
+r=subprocess.run(["topoSet"],capture_output=True,text=True); print(r.returncode,(r.stdout+r.stderr)[-600:])
+r2=subprocess.run(["splitMeshRegions","-overwrite"],capture_output=True,text=True)
+print("\n",r2.returncode,(r2.stdout+r2.stderr)[-800:])
+# -- output
+1 onSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet fluid
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Wrong token type - expected word, found on line 4: punctuation '('
+
+file: system/topoSetDict/actions/source at line 4.
+
+    From Foam::Istream& Foam::operator>>(Istream&, word&)
+    in file primitives/strings/word/wordIO.C at line 71.
+
+FOAM exiting
+
+
+
+ 0 ystem call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Creating single patch per inter-region interface.
+
+Trying to match regions to existing cell zones.
+
+
+Number of regions:1
+
+Writing region per cell file (for manual decomposition) to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/constant/cellToRegion"
+
+Writing region per cell as volScalarField to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/0/cellToRegion"
+
+Region	Cells
+------	-----
+0	39900
+
+Region	Zone	Name
+------	----	----
+0	()	domain0
+
+Sizes of interfaces between regions:
+
+Interface	Region	Region	Faces
+---------	------	------	-----
+
+Reading volScalarField: cellToRegion
+
+Only one region. Doing nothing.
+End
+
+# -- cell 15 (3.1s, exit 0)
+import subprocess
+t = open("system/topoSetDict").read()
+t = t.replace("source ( boxToCell );","source boxToCell;").replace("source ( cellToCell );","source cellToCell;")
+open("system/topoSetDict","w").write(t)
+r=subprocess.run(["topoSet"],capture_output=True,text=True)
+r2=subprocess.run(["splitMeshRegions","-overwrite"],capture_output=True,text=True)
+print(r.returncode, r2.returncode,(r2.stdout+r2.stderr)[-500:])
+# -- output
+1 0 nual decomposition) to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/constant/cellToRegion"
+
+Writing region per cell as volScalarField to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/0/cellToRegion"
+
+Region	Cells
+------	-----
+0	39900
+
+Region	Zone	Name
+------	----	----
+0	()	domain0
+
+Sizes of interfaces between regions:
+
+Interface	Region	Region	Faces
+---------	------	------	-----
+
+Reading volScalarField: cellToRegion
+
+Only one region. Doing nothing.
+End
+
+# -- cell 16 (0.3s, exit 0)
+import subprocess
+r=subprocess.run(["topoSet"],capture_output=True,text=True)
+print((r.stdout+r.stderr)[-1200:])
+# -- output
+From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet fluid
+    Applying source boxToCell
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Wrong token type - expected scalar value, found on line 4: punctuation '('
+
+file: sourceInfo/box at line 4.
+
+    From Foam::Istream& Foam::operator>>(Istream&, doubleScalar&)
+    in file lnInclude/scalarImpl.txx at line 174.
+
+FOAM exiting
+
+# -- cell 17 (0.7s, exit 0)
+import subprocess
+t=open("system/topoSetDict").read()
+t=t.replace("box ((0 0 0) (0.2 0.03 0.03));","box (0 0 0) (0.2 0.03 0.03);")
+t=t.replace("box ((0.08 0 0) (0.12 0.03 0.01));","box (0.08 0 0) (0.12 0.03 0.01);")
+open("system/topoSetDict","w").write(t)
+r=subprocess.run(["topoSet"],capture_output=True,text=True)
+print(r.returncode,(r.stdout+r.stderr)[-400:])
+r2=subprocess.run(["splitMeshRegions","-overwrite"],capture_output=True,text=True)
+print(r2.returncode,(r2.stdout+r2.stderr)[-600:])
+# -- output
+1  find file "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/constant/polyMesh/sets/fluid"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+0 to match regions to existing cell zones.
+
+
+Number of regions:1
+
+Writing region per cell file (for manual decomposition) to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/constant/cellToRegion"
+
+Writing region per cell as volScalarField to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/0/cellToRegion"
+
+Region	Cells
+------	-----
+0	39900
+
+Region	Zone	Name
+------	----	----
+0	()	domain0
+
+Sizes of interfaces between regions:
+
+Interface	Region	Region	Faces
+---------	------	------	-----
+
+Reading volScalarField: cellToRegion
+
+Only one region. Doing nothing.
+End
+
+# -- cell 18 (8.5s, exit 0)
+import subprocess
+t="""FoamFile { version 2.0; format ascii; class dictionary; object topoSetDict; }
+actions (
+ { name fluid; type cellSet; action new;
+   source boxToCell; sourceInfo { box (0 0 0) (0.08 0.03 0.03); } }
+ { name fluid; type cellSet; action add;
+   source boxToCell; sourceInfo { box (0.12 0 0) (0.2 0.03 0.03); } }
+ { name fluid; type cellSet; action add;
+   source boxToCell; sourceInfo { box (0.08 0 0.01) (0.12 0.03 0.03); } }
+ { name fluid; type cellZoneSet; action new; source cellToCell; sourceInfo { set fluid; } }
+ { name solid; type cellSet; action new;
+   source boxToCell; sourceInfo { box (0.08 0 0) (0.12 0.03 0.01); } }
+ { name solid; type cellZoneSet; action new; source cellToCell; sourceInfo { set solid; } }
+);
+"""
+open("system/topoSetDict","w").write(t)
+r=subprocess.run(["topoSet"],capture_output=True,text=True)
+r2=subprocess.run(["splitMeshRegions","-overwrite"],capture_output=True,text=True)
+print(r.returncode,(r.stdout+r.stderr)[-200:]); print(r2.returncode,(r2.stdout+r2.stderr)[-700:])
+# -- output
+0 0 0) (0.12 0.03 0.01))
+    cellSet solid now size 2700
+Created cellZoneSet solid
+    Applying source cellToCell
+    Adding all elements of cell sets: (solid)
+    cellZoneSet solid now size 2700
+
+End
+
+
+0 //
+Create time
+
+Create mesh for time = 0
+
+Creating single patch per inter-region interface.
+
+Trying to match regions to existing cell zones.
+
+
+Number of regions:1
+
+Writing region per cell file (for manual decomposition) to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/constant/cellToRegion"
+
+Writing region per cell as volScalarField to "/home/qiuzi/.openreynolds-buildup/work/T8-20260914-170216-e474/t8/0/cellToRegion"
+
+Region	Cells
+------	-----
+0	39900
+
+Region	Zone	Name
+------	----	----
+0	()	domain0
+
+Sizes of interfaces between regions:
+
+Interface	Region	Region	Faces
+---------	------	------	-----
+
+Reading volScalarField: cellToRegion
+
+Only one region. Doing nothing.
+End
+

@@ -1,0 +1,693 @@
+# -- cell 1 (2.3s, exit 0)
+import build123d as bd
+Lx, Ly, Hz, wall = 160.0, 100.0, 40.0, 3.0   # mm internals
+d, soh, hr, hd = 10.0, 25.0, 4.0/2, 12.0     # standoff dia, height, hole radius, depth
+inset = 15.0
+vent_w, vent_h, vent_z0 = 30.0, 20.0, 10.0   # vent in short wall (y=0 side)
+# build interior air volume (inner box) as a Part of solids: full unit, then cut standoffs
+box = bd.Box(Lx, Ly, Hz, align=bd.Align.CENTER)   # centered
+stand = []
+for sx in (-(Lx/2 - inset), (Lx/2 - inset)):
+    for sy in (-(Ly/2 - inset), (Ly/2 - inset)):
+        c = bd.Cylinder(radius=d/2, height=soh)
+        hole = bd.Cylinder(radius=hr, height=hd)
+        stand.append(c - hole)
+        # move solids individually
+solid_lists = []
+air = box
+for xsign in (1,):
+    pass
+# position each standoff then subtract, and cut vent through wall
+positions = [bd.Pos(-(Lx/2-inset), -(Ly/2-inset), soh/2),
+             bd.Pos(Lx/2-inset, -(Ly/2-inset), soh/2),
+             bd.Pos(-(Lx/2-inset), Ly/2-inset, soh/2),
+             bd.Pos(Lx/2-inset, Ly/2-inset, soh/2)]
+solids = []
+for i, p in enumerate(positions):
+    c = bd.Cylinder(radius=d/2, height=soh)
+    hole = bd.Cylinder(radius=hr, height=hd)
+    solids.append(p * (c - hole))
+    print("rebuilt solid", i)
+# rebuild each time because Cylinder class? collect solids in list is fine
+for i, s in enumerate(solids):
+    air = air - s  # done
+# vent cut: through y-min wall
+vent_cut = bd.Box(Lx, Ly+2*wall, vent_h, align=bd.Align.CENTER)
+air = air - bd.Pos(0, -Ly/2, vent_z0 + vent_h/2) * bd.Box(vent_w, Ly+2*wall, vent_h, align=bd.Align.CENTER)
+print("air volume mm^3:", air.solids()[0].volume)
+# verify dimensions
+print("bbox:", air.solids()[0].bounding_box() if 1 else None)
+# -- output
+rebuilt solid 0
+rebuilt solid 1
+rebuilt solid 2
+rebuilt solid 3
+air volume mm^3: 617816.8146928204
+bbox: bbox: -80.0 <= x <= 80.0, -50.0 <= y <= 50.0, -20.0 <= z <= 20.0
+
+# -- cell 2 (0.1s, exit 0)
+import math
+exp = Lx*Ly*Hz - 4*(math.pi*(d/2)**2*soh - math.pi*(hr)**2*hd) - vent_w*Ly*vent_h
+print(f"expected {exp:.0f}, got {air.solids()[0].volume:.0f}")
+# -- output
+expected 572749, got 617817
+
+# -- cell 3 (0.1s, exit 0)
+a2 = (
+bd.Cylinder(radius=d/2, height=soh) - bd.Cylinder(radius=hr, height=hd))
+print("standoff vol:", a2.solids()[0].volume, "hat:", math.pi*25*25-math.pi*4*12)
+# redo air subtraction carefully
+t = box - a2
+print("cut one:", t.volume, "box:", box.volume)
+# -- output
+standoff vol: 1812.6989611213105 hat: 1812.6989611213107
+cut one: 638187.3010388787 box: 639999.9999999999
+
+# -- cell 4 (0.9s, exit 0)
+air2 = box
+for p in positions:
+    s = p * (bd.Cylinder(radius=d/2, height=soh) - bd.Cylinder(radius=hr, height=hd))
+    air2 = air2 - s
+print("after standoffs:", air2.volume, "expected:", 640000-4*1812.699)
+air2 = air2 - bd.Pos(0, -Ly/2, vent_z0 + vent_h/2) * bd.Box(vent_w, Ly+2*wall, vent_h, align=bd.Align.CENTER)
+print("after vent:", air2.volume, "expected:", 640000-4*1812.699 - vent_w*Ly*vent_h)
+# -- output
+after standoffs: 634320.0004823097 expected: 632749.204
+after vent: 618420.0004823096 expected: 572749.204
+
+# -- cell 5 (0.8s, exit 0)
+import math, build123d as bd
+# clean rebuild, avoiding stale class names
+m = bd.Cylinder(radius=5.0, height=25.0) - bd.Cylinder(radius=2.0, height=12.0)
+stands = bd.Pos(-65,-35, 12.5)*m + bd.Pos(65,-35,12.5)*m + bd.Pos(-65,35,12.5)*m + bd.Pos(65,35,12.5)*m
+print("stands vol:", stands.solids()[0].volume, "expect", 4*(math.pi*625-math.pi*48))
+# -- output
+stands vol: 1812.6989611213107 expect 7250.795844485243
+
+# -- cell 6 (0.1s, exit 0)
+air = bd.Box(160,100,40, align=bd.Align.CENTER) - stands
+vent_cutter = bd.Pos(0,-50,20.0) * bd.Box(30, 112, 20, align=bd.Align.CENTER)
+air = air - vent_cutter
+print("air volume:", air.volume, "; expect", 640000-7250.7958-30*100*20)
+print("solids:", len(air.solids()))
+# -- output
+air volume: 617520.0004823098 ; expect 572749.2042
+solids: 5
+
+# -- cell 7 (0.1s, exit 0)
+vent_cutter = bd.Pos(0, -52.0, 20.0) * bd.Box(30, 6, 20, align=bd.Align.CENTER)  # crosses the y=-50 wall plane
+air = bd.Box(160,100,40, align=bd.Align.CENTER) - stands - vent_cutter
+print("air volume:", air.volume, "expect", 640000-7250.8-30*3*20)  # cutter y-clip within box negligible
+print("solids:", len(air.solids()))
+# -- output
+air volume: 634020.0004823097 expect 630949.2
+solids: 5
+
+# -- cell 8 (0.1s, exit 0)
+air = bd.Box(160,100,40, align=bd.Align.CENTER)
+for pos in [(-65,-35),(65,-35),(-65,35),(65,35)]:
+    m = bd.Cylinder(radius=5.0, height=25.0) - bd.Cylinder(radius=2.0, height=12.0)
+    air = air - bd.Pos(pos[0],pos[1],12.5)*m
+print("after each:", air.volume)
+# move one and check overlap of position
+# -- output
+after each: 634320.0004823097
+
+# -- cell 9 (0.1s, exit 0)
+m1 = bd.Cylinder(radius=5.0, height=25.0) - bd.Cylinder(radius=2.0, height=12.0)
+pm1 = bd.Pos(-65,-35,12.5)*m1
+print("m1 vol:", m1.volume, "pm1 vol:", pm1.volume)
+# try explicitly
+import build123d
+# -- output
+m1 vol: 1812.6989611213105 pm1 vol: 1812.6989611213107
+
+# -- cell 10 (0.1s, exit 0)
+b = bd.Box(160,100,40, align=bd.Align.CENTER)
+b2 = b - pm1
+print("b-b:", b2.volume, "diff:", b.volume)
+print(b2.volume)
+# -- output
+b-b: 638580.0001205774 diff: 639999.9999999999
+638580.0001205774
+
+# -- cell 11 (0.1s, exit 0)
+air_ok = bd.Box(160,100,40, align=bd.Align.CENTER) 
+big = bd.Cylinder(radius=5.0,height=25)
+hole = bd.Cylinder(radius=2.0,height=12)
+# subtract big cylinder, add back the hole cylinder (air inside blind holes)
+# -- output
+
+
+# -- cell 12 (0.8s, exit 0)
+import build123d as bd
+pos_xy = [(-65,-35),(65,-35),(-65,35),(65,35)]
+air = bd.Box(160,100,40, align=bd.Align.CENTER)
+for px,py in pos_xy:
+    big = bd.Cylinder(radius=5.0, height=25.0)
+    air = air - bd.Pos(px,py,12.5)*big
+for px,py in pos_xy:
+    hole = bd.Cylinder(radius=2.0, height=12.0)
+    air = air + bd.Pos(px,py,6.0)*hole
+air = air - bd.Pos(0,-52.0,20.0)*bd.Box(30, 6, 20, align=bd.Align.CENTER)
+print("vol:", air.volume, "expect", 640000-4*(math.pi*625-math.pi*48)-1800)
+print("solids:", len(air.solids()))
+# -- output
+vol: 634020.0004823096 expect 630949.2041555147
+solids: 1
+
+# -- cell 13 (0.2s, exit 1)
+import build123d as bd, os
+from build123d import Plane
+faces = air.faces()
+os.makedirs("constant/triSurface", exist_ok=True)
+os.makedirs("geometry/proto", exist_ok=True)
+patches = {"open_top":[], "vent":[], "standoffs":[], "blind_holes":[], "enclosure":[]}
+for f in faces:
+    geo = bd.GeomType
+    if isinstance(f.geometry, bd.geom.Plane):
+        n, origin = f.geometry.to_location()  # ? simpler: use bbox/center
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[13][39m[32m, line 9[39m
+[32m      5[39m os.makedirs([33m"geometry/proto"[39m, exist_ok=[38;5;28;01mTrue[39;00m)
+[32m      6[39m patches = {[33m"open_top"[39m:[], [33m"vent"[39m:[], [33m"standoffs"[39m:[], [33m"blind_holes"[39m:[], [33m"enclosure"[39m:[]}
+[32m      7[39m [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m faces:
+[32m      8[39m     geo = bd.GeomType
+[32m----> [39m[32m9[39m     [38;5;28;01mif[39;00m isinstance(f.geometry, bd.geom.Plane):
+[32m     10[39m         n, origin = f.geometry.to_location()  [38;5;66;03m# ? simpler: use bbox/center[39;00m
+
+[31mAttributeError[39m: module 'build123d' has no attribute 'geom'
+
+# -- cell 14 (0.1s, exit 1)
+from build123d.geom import Plane, Cylinder
+def classify(f):
+    g = f.geometry
+    if isinstance(g, Cylinder):
+        r = g.radius
+        return "blind_holes" if abs(r-2.0)<1e-6 else "standoffs"
+    elif isinstance(g, Plane):
+        c = f.center()
+        n = f.normal_at()
+        # planar faces
+        if abs(c.z - 20.0) < 1e-6 and abs(n.z) > 0.9:
+            return "open_top"
+        if abs(c.y + 50.0) < 1.5:  # vent cut face lives near y=-50 plane
+            return "vent"
+        return "enclosure"
+    return "enclosure"
+for f in faces:
+    patches[classify(f)].append(f)
+for k,v in patches.items(): print(k, len(v))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mModuleNotFoundError[39m                       Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[14][39m[32m, line 1[39m
+[32m----> [39m[32m1[39m [38;5;28;01mfrom[39;00m build123d.geom [38;5;28;01mimport[39;00m Plane, Cylinder
+[32m      2[39m [38;5;28;01mdef[39;00m classify(f):
+[32m      3[39m     g = f.geometry
+[32m      4[39m     [38;5;28;01mif[39;00m isinstance(g, Cylinder):
+
+[31mModuleNotFoundError[39m: No module named 'build123d.geom'
+
+# -- cell 15 (0.1s, exit 0)
+import inspect
+types = {}
+for f in air.faces():
+    t = type(f.geometry).__name__
+    types.setdefault(t, []).append(f)
+print(types.keys())
+sample = {k: types[k][0] for k in types}
+# -- output
+dict_keys(['str', 'NoneType'])
+
+# -- cell 16 (0.1s, exit 0)
+from collections import Counter
+print(Counter([f.geom_type for f in air.faces()]))
+# -- output
+Counter({<GeomType.PLANE>: 18, <GeomType.CYLINDER>: 8})
+
+# -- cell 17 (0.1s, exit 1)
+import math
+patches = {"open_top":[], "vent":[], "standoffs":[], "blind_holes":[], "enclosure":[]}
+for f in air.faces():
+    if f.geom_type == bd.GeomType.CYLINDER:
+        patches["blind_holes" if f.area < 500 else "standoffs"].append(f)
+    else:
+        c = f.center(); n = f.normal_at()
+        if abs(n.z) > 0.9 and c.z > 19.9: patches["open_top"].append(f)
+        elif abs(n.y) > 0.9 and c.y < -49.0: patches["vent"].append(f)
+        else: patches["enclosure"].append(f)
+for k,v in patches.items(): print(k, len(v), round(sum(x.area for x in v),1))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[17][39m[32m, line 8[39m
+[32m      4[39m     [38;5;28;01mif[39;00m f.geom_type == bd.GeomType.CYLINDER:
+[32m      5[39m         patches[[33m"blind_holes"[39m [38;5;28;01mif[39;00m f.area < [32m500[39m [38;5;28;01melse[39;00m [33m"standoffs"[39m].append(f)
+[32m      6[39m     [38;5;28;01melse[39;00m:
+[32m      7[39m         c = f.center(); n = f.normal_at()
+[32m----> [39m[32m8[39m         [38;5;28;01mif[39;00m abs(n.z) > [32m0.9[39m [38;5;28;01mand[39;00m c.z > [32m19.9[39m: patches[[33m"open_top"[39m].append(f)
+[32m      9[39m         [38;5;28;01melif[39;00m abs(n.y) > [32m0.9[39m [38;5;28;01mand[39;00m c.y < -[32m49.0[39m: patches[[33m"vent"[39m].append(f)
+[32m     10[39m         [38;5;28;01melse[39;00m: patches[[33m"enclosure"[39m].append(f)
+[32m     11[39m [38;5;28;01mfor[39;00m k,v [38;5;28;01min[39;00m patches.items(): print(k, len(v), round(sum(x.area [38;5;28;01mfor[39;00m x [38;5;28;01min[39;00m v),[32m1[39m))
+
+[31mAttributeError[39m: 'Vector' object has no attribute 'z'
+
+# -- cell 18 (0.1s, exit 0)
+for f in air.faces():
+    if f.geom_type == bd.GeomType.CYLINDER:
+        patches["blind_holes" if f.area < 500 else "standoffs"].append(f)
+    else:
+        c = f.center(); n = f.normal_at()
+        if abs(n.Z) > 0.9 and c.Z > 19.9: patches["open_top"].append(f)
+        elif abs(n.Y) > 0.9 and c.Y < -49.0: patches["vent"].append(f)
+        else: patches["enclosure"].append(f)
+for k,v in patches.items(): print(k, len(v), round(sum(x.area for x in v),1))
+# -- output
+open_top 1 15655.8
+vent 1 6100.0
+standoffs 4 2513.3
+blind_holes 4 603.2
+enclosure 16 31064.2
+
+# -- cell 19 (0.1s, exit 0)
+air = bd.Box(160,100,40, align=bd.Align.CENTER)
+for px,py in pos_xy:
+    air = air - bd.Pos(px,py,12.5)*bd.Cylinder(radius=5.0, height=25.0)
+for px,py in pos_xy:
+    air = air + bd.Pos(px,py,6.0)*bd.Cylinder(radius=2.0, height=12.0)
+air = air - bd.Pos(0,-50.0,20.0)*bd.Box(30, 1.0, 20, align=bd.Align.CENTER)
+patches = {"open_top":[], "vent":[], "standoffs":[], "blind_holes":[], "enclosure":[]}
+for f in air.faces():
+    if f.geom_type == bd.GeomType.CYLINDER:
+        patches["blind_holes" if f.area < 500 else "standoffs"].append(f)
+        continue
+    bb = f.bounding_box(); c = f.center()
+    if c.Z > 19.9 and bb.size.Z < 1e-6:
+        patches["open_top"].append(f)
+    elif bb.min.Y > -50.6 and bb.max.Y < -49.3:  # vent lips, 1 mm thick in y
+        patches["vent"].append(f)
+    else:
+        patches["enclosure"].append(f)
+for k,v in patches.items(): print(k, len(v), round(sum(x.area for x in v),1))
+# -- output
+open_top 1 15670.8
+vent 5 6425.0
+standoffs 4 2513.3
+blind_holes 4 603.2
+enclosure 12 30714.2
+
+# -- cell 20 (0.1s, exit 0)
+patches = {"open_top":[], "vent":[], "standoffs":[], "blind_holes":[], "enclosure":[]}
+for f in air.faces():
+    if f.geom_type == bd.GeomType.CYLINDER:
+        patches["blind_holes" if f.area < 500 else "standoffs"].append(f)
+        continue
+    bb = f.bounding_box(); c = f.center(); n = f.normal_at()
+    if abs(n.Z) > 0.9 and c.Z > 19.9:
+        patches["open_top"].append(f)
+    elif bb.min.Y > -50.6 and bb.max.Y < -49.3 and abs(n.Y) < 0.5:
+        patches["vent"].append(f)
+    else:
+        patches["enclosure"].append(f)
+for k,v in patches.items(): print(k, len(v), round(sum(x.area for x in v),1))
+# -- output
+open_top 1 15670.8
+vent 3 25.0
+standoffs 4 2513.3
+blind_holes 4 603.2
+enclosure 14 37114.2
+
+# -- cell 21 (0.1s, exit 0)
+import subprocess, os
+os.makedirs("constant/triSurface", exist_ok=True)
+for name, flist in patches.items():
+    compound = bd.Compound(children=list(flist)) if flist else None
+    if compound is None: continue
+    bd.export_stl(compound, f"constant/triSurface/{name}.stl")
+    print(name, "written")
+print(subprocess.run(["ls","-la","constant/triSurface"], capture_output=True, text=True).stdout)
+# -- output
+open_top written
+vent written
+standoffs written
+blind_holes written
+enclosure written
+total 220
+drwxrwxr-x 2 qiuzi qiuzi  4096 Sep 14 16:05 .
+drwxrwxr-x 3 qiuzi qiuzi  4096 Sep 14 16:03 ..
+-rw-rw-r-- 1 qiuzi qiuzi 50484 Sep 14 16:05 blind_holes.stl
+-rw-rw-r-- 1 qiuzi qiuzi 76084 Sep 14 16:05 enclosure.stl
+-rw-rw-r-- 1 qiuzi qiuzi 25984 Sep 14 16:05 open_top.stl
+-rw-rw-r-- 1 qiuzi qiuzi 50484 Sep 14 16:05 standoffs.stl
+-rw-rw-r-- 1 qiuzi qiuzi   384 Sep 14 16:05 vent.stl
+
+# -- cell 22 (2.7s, exit 0)
+# rescale each patch STL from mm to m by re-exporting scaled compounds
+for name in ["open_top","vent","enclosure","standoffs","blind_holes"]:
+    flist = patches[name]
+    comp = bd.Compound(list(flist)).scale(0.001)
+    bd.export_stl(comp, f"constant/triSurface/{name}.stl")
+# blockMesh: domain aligned with air bbox (mm->m 0.001), ~5mm cells
+domain = bd.Compound(air.faces())  # not needed
+import subprocess
+dict_txt = """FoamFile { } \n"""
+bdtxt = '''
+convertToMeters 1;
+vertices (
+( -0.0805 -0.0505 -0.0205 )( 0.0805 -0.0505 -0.0205 )
+(  0.0805  0.0505 -0.0205 )(-0.0805  0.0505 -0.0205 )
+( -0.0805 -0.0505  0.0205 )( 0.0805 -0.0505  0.0205 )
+(  0.0805  0.0505  0.0205 )(-0.0805  0.0505  0.0205 ));
+blocks ( hex ( 0 1 2 3 4 5 6 7 ) (30 20 8) simpleGrading (1 1 1) );
+edges ( );
+boundary ( );
+'''
+open("system/blockMeshDict","w") if False else None
+import os
+os.makedirs("system", exist_ok=True)
+with open("system/blockMeshDict","w") as f:
+    f.write("FoamFile { format ascii; class dictionary; object blockMeshDict; }\n"+bdtxt)
+print(subprocess.run(["blockMesh"], capture_output=True, text=True).stdout.splitlines()[-5:])
+# -- output
+['allowSystemOperations : Allowing user-supplied system call operations', '', '// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //', 'Create time', '']
+
+# -- cell 23 (0.1s, exit 0)
+dict_s = """FoamFile { format ascii; class dictionary; object snappyHexMeshDict; }
+castellatedMesh true; snap true; addLayers false;
+geometry { }
+"""
+geo_in = ""
+for nm in ["open_top","vent","enclosure","standoffs","blind_holes"]:
+    geo_in += f"    {nm} {{ type triSurfaceMesh; file \"{nm}.stl\"; }}\n"
+# refine regions slightly
+ref_in = "".join(f'            {nm} {{ level (2 2); patchInfo {{ type patch; }} }}\n' for nm in ["open_top","vent"])
+ref_in += "".join(f'            {nm} {{ level (2 2); patchInfo {{ type wall; }} }}\n' for nm in ["enclosure","standoffs","blind_holes"])
+smart = f"""FoamFile {{ format ascii; class dictionary; object snappyHexMeshDict; }}
+castellatedMesh true; snap true; addLayers false;
+geometry {{
+{geo_in} }}
+castellatedMeshControls {{
+    locationInMesh (0.001 0.005 0.005);
+    maxLocalCells 1000000; maxGlobalCells 2000000;
+    minRefinementCells 5; nCellsBetweenLevels 2; allowFreeStandingZoneFaces true;
+    resolveFeatureAngle 30;
+}}
+snapControls {{
+    nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5;
+    nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap true;
+}}
+refinementSurfaces {{
+{ref_in}}}
+refinementFeatures {{ }}
+addLayersControls {{
+    relativeSizes true; layers (( dummy {{ nSurfaceLayers 1; }} ));
+    expansionRatio 1.0; finalLayerThickness 0.5; minThickness 0.1; nGrow 0;
+    featureAngle 30; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3;
+    slipFeatureAngle 30; maxFaceToFaceAngle 90; maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50;
+}}
+meshQualityControls {{
+    maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4;
+    maxConcave 80; minVol 1e-13; minTetQuality 1e-30; minArea -1; minTwist -1;
+    minDeterminant 0.001; minFaceWeight 0.05; minVolRatio 0.01; minTriangleTwist -1;
+    nSmoothScale 4; errorReduction 0.75;
+}}
+mergeTolerance 1e-6;
+"""
+open("system/snappyHexMeshDict","w").write(smart)
+print("written")
+# -- output
+written
+
+# -- cell 24 (0.2s, exit 0)
+import subprocess
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True, timeout=800)
+print(r.stdout[-3000:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 14 2026
+Time   : 16:06:56
+Host   : yc-demo
+PID    : 287615
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T21-20260914-155942-e2d7/t21
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+# -- cell 25 (0.3s, exit 0)
+r2 = subprocess.run(["grep","Cells", "log.snappyHexMesh"], capture_output=True, text=True)
+import os
+print(os.listdir("."))
+# rerun capturing full
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True, timeout=600)
+import re
+txt = r.stdout
+m = re.findall(r"(\d+) cells", txt) 
+print("len:", len(txt)); print(txt[-1500:])
+# -- output
+['constant', 'system', '.reference', 'geometry']
+len: 1561
+----------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 14 2026
+Time   : 16:07:06
+Host   : yc-demo
+PID    : 288217
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T21-20260914-155942-e2d7/t21
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+# -- cell 26 (0.1s, exit 0)
+print(r.stderr[-2000:] if r.stderr else "no stderr")
+print([d for d in os.listdir("system")])
+# -- output
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T21-20260914-155942-e2d7/t21/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+['blockMeshDict', 'snappyHexMeshDict']
+
+# -- cell 27 (0.3s, exit 0)
+ctl = """FoamFile { format ascii; class dictionary; object controlDict; }
+application treb; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;
+writePrecision 6; writeCompression off; timeFormat general; timePrecision 6;
+runTimeModifiable true;
+"""
+open("system/controlDict","w").write(ctl)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True, timeout=600)
+print(r.stdout[-2500:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 14 2026
+Time   : 16:07:28
+Host   : yc-demo
+PID    : 288907
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T21-20260914-155942-e2d7/t21
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+# -- cell 28 (0.1s, exit 0)
+print(r.stderr[-1500:])
+# -- output
+--> FOAM FATAL ERROR: (openfoam-2512)
+Cannot find file "points" in directory "polyMesh" in times "0" down to constant
+
+    From virtual Foam::IOobject Foam::fileOperation::findInstance(const Foam::IOobject&, Foam::scalar, const Foam::word&, bool) const
+    in file global/fileOperations/fileOperation/fileOperation.C at line 1221.
+
+FOAM exiting
+
+# -- cell 29 (0.5s, exit 0)
+subprocess.run(["blockMesh"], capture_output=True, text=True)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True, timeout=900)
+print(r.stdout[-2000:])
+print("ERR:", r.stderr[-500:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 14 2026
+Time   : 16:07:46
+Host   : yc-demo
+PID    : 288989
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T21-20260914-155942-e2d7/t21
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+ERR: 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T21-20260914-155942-e2d7/t21/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 30 (0.5s, exit 0)
+open("system/fvSchemes","w").write('FoamFile{format ascii;class dictionary;object fvSchemes;}ddtSchemes{default none;}gradSchemes{default none;}divSchemes{default none;}laplacianSchemes{default none;}interpolationSchemes{default none;}snGradSchemes{default none;}')
+open("system/fvSolution","w").write('FoamFile{format ascii;class dictionary;object fvSolution;}solvers{}relaxationFactors{}')
+subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True, timeout=900)
+print("run", subprocess.run(["ls"])
+) if False else None
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True, timeout=900)
+print(r.stdout[-1800:]); print("ERR:", r.stderr[-300:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 14 2026
+Time   : 16:07:58
+Host   : yc-demo
+PID    : 289007
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T21-20260914-155942-e2d7/t21
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.02 s
+
+Overall mesh bounding box  : (-0.0805 -0.0505 -0.0205) (0.0805 0.0505 0.0205)
+Relative tolerance         : 1e-06
+Absolute matching distance : 1.9443e-07
+
+Reading refinement surfaces.
+
+ERR: ntrols"
+
+
+file: system/snappyHexMeshDict/castellatedMeshControls at line 11 to 14.
+
+    From static const Foam::dictionary& Foam::meshRefinement::subDict(const Foam::dictionary&, const Foam::word&, bool, Foam::keyType::option)
+    in file meshRefinement/meshRefinement.C at line 3864.
+
+FOAM exiting
+

@@ -1,0 +1,1410 @@
+# -- cell 1 (0.5s, exit 0)
+import gmsh
+gmsh.initialize()
+gmsh.option.setNumber("General.Terminal", 1)
+D = 0.04
+sph = gmsh.model.occ.addSphere(0, 0, 0, D/2)
+box = gmsh.model.occ.addBox(-5*D, -5*D, -5*D, 20*D, 10*D, 10*D)
+fluid, _ = gmsh.model.occ.cut([(3, box)], [(3, sph)])
+gmsh.model.occ.synchronize()
+surfs = gmsh.model.getBoundary(fluid)
+print("fluid:", fluid)
+print("surfaces:", surfs)
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference - Performing intersection of shapes                                                                                Info    : [ 80%] Difference                                                                                  Info    : [ 90%] Difference - Adding holes                                                                                                                                                                fluid: [(3, 2)]
+surfaces: [(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7)]
+
+# -- cell 2 (0.8s, exit 0)
+tags = {"inlet": [], "outlet": [], "farfield": [], "sphere": []}
+for dim, s in surfs:
+    cx, cy, cz = gmsh.model.occ.getCenterOfMass(dim, s)
+    if abs(cx - (-5*D)) < 1e-9:
+        tags["inlet"].append(s)
+    elif abs(cx - 15*D) < 1e-9:
+        tags["outlet"].append(s)
+    elif abs(abs(cy) - 5*D) < 1e-2 or abs(abs(cz) - 5*D) < 1e-2:
+        tags["farfield"].append(s)
+    else:
+        tags["sphere"].append(s)
+for name, ss in tags.items():
+    gmsh.model.addPhysicalGroup(2, ss, name=name)
+    print(name, ss)
+gmsh.model.addPhysicalGroup(3, [fluid[0][1]], name="internal")
+os = __import__("os")
+os.makedirs("geo", exist_ok=True)
+gmsh.write("geo/fluid.geo_unrolled")
+print({k:(gmsh.model.occ.getBoundingBox(*surfs[-1]))[0:3] for k in ["last_surf"]})
+# -- output
+inlet [2]
+outlet [7]
+farfield [3, 4, 5, 6]
+sphere [1]
+Info    : Writing 'geo/fluid.geo_unrolled'...
+Info    : Done writing 'geo/fluid.geo_unrolled'
+{'last_surf': (0.5999999000000001, -0.20000010000000001, -0.20000010000000001)}
+
+# -- cell 3 (0.1s, exit 0)
+import time
+gmsh.option.setNumber("Mesh.MeshSizeMax", 0.02)  # 0.5 D far field
+phs = gmsh.model.getEntitiesForPhysicalName("sphere")
+sph_surf = tags["sphere"][0]
+# Boundary layer field
+bl = gmsh.model.mesh.field.add("BoundaryLayer")
+gmsh.model.mesh.field.setNumbers(bl, "CurvesList", [1,2,3,4])  # placeholder; use EdgeList? try surface-level via GeometryCurves
+gmsh.model.mesh.field.setNumber(bl, "Size", 1)
+print("fields api:" , [x for x in dir(gmsh.model.mesh.field)][:5])
+# -- output
+fields api: ['__class__', '__delattr__', '__dict__', '__dir__', '__doc__']
+
+# -- cell 4 (0.1s, exit 1)
+gmsh.model.mesh.field.remove(bl)
+# get curves bounding sphere surface
+curves = [c for d, c in gmsh.model.getBoundary([(2, sph_surf)]) if d == 1]
+print("sphere boundary curves:", curves)
+bl = gmsh.model.mesh.field.add("BoundaryLayer")
+gmsh.model.mesh.field.setNumbers(bl, "CurvesList", [c for d, c in curves if d == 1])
+gmsh.model.mesh.field.setNumber(bl, "Size", 0.0005)   # first layer 0.5 mm
+gmsh.model.mesh.field.setNumber(bl, "Ratio", 1.3)
+gmsh.model.mesh.field.setNumber(bl, "Thickness", 0.004)  # total 4 mm
+gmsh.model.mesh.field.setAsBackgroundMesh(bl)
+print("OK")
+# -- output
+sphere boundary curves: [1, 3]
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 6[39m
+[32m      2[39m [38;5;66;03m# get curves bounding sphere surface[39;00m
+[32m      3[39m curves = [c [38;5;28;01mfor[39;00m d, c [38;5;28;01min[39;00m gmsh.model.getBoundary([([32m2[39m, sph_surf)]) [38;5;28;01mif[39;00m d == [32m1[39m]
+[32m      4[39m print([33m"sphere boundary curves:"[39m, curves)
+[32m      5[39m bl = gmsh.model.mesh.field.add([33m"BoundaryLayer"[39m)
+[32m----> [39m[32m6[39m gmsh.model.mesh.field.setNumbers(bl, [33m"CurvesList"[39m, [c [38;5;28;01mfor[39;00m d, c [38;5;28;01min[39;00m curves [38;5;28;01mif[39;00m d == [32m1[39m])
+[32m      7[39m gmsh.model.mesh.field.setNumber(bl, [33m"Size"[39m, [32m0.0005[39m)   [38;5;66;03m# first layer 0.5 mm[39;00m
+[32m      8[39m gmsh.model.mesh.field.setNumber(bl, [33m"Ratio"[39m, [32m1.3[39m)
+[32m      9[39m gmsh.model.mesh.field.setNumber(bl, [33m"Thickness"[39m, [32m0.004[39m)  [38;5;66;03m# total 4 mm[39;00m
+
+[31mTypeError[39m: cannot unpack non-iterable int object
+
+# -- cell 5 (1.7s, exit 0)
+curves = gmsh.model.getBoundary([(2, sph_surf)])
+edge_ids = [c for d, c in curves if d == 1]
+bl = gmsh.model.mesh.field.add("BoundaryLayer")
+gmsh.model.mesh.field.setNumbers(bl, "CurvesList", edge_ids)
+gmsh.model.mesh.field.setNumber(bl, "Size", 0.0005)    # first layer 0.5 mm
+gmsh.model.mesh.field.setNumber(bl, "Ratio", 1.3)
+gmsh.model.mesh.field.setNumber(bl, "Thickness", 0.004)  # ~4 mm total
+gmsh.model.mesh.field.setAsBackgroundMesh(bl)
+gmsh.model.mesh.generate(3)
+gmsh.write("fluid.msh")
+print("nodes", len(gmsh.model.mesh.getNodes()[0]),
+      "elems", len(gmsh.model.mesh.getElementsByType(4)[-1]) if True else 0)
+# -- output
+Info    : Meshing 1D...
+Info    : [ 10%] Meshing curve 2 (Circle)
+Info    : [ 30%] Meshing curve 4 (Line)
+Info    : [ 30%] Meshing curve 5 (Line)
+Info    : [ 40%] Meshing curve 6 (Line)
+Info    : [ 50%] Meshing curve 7 (Line)
+Info    : [ 50%] Meshing curve 8 (Line)
+Info    : [ 60%] Meshing curve 9 (Line)
+Info    : [ 70%] Meshing curve 10 (Line)
+Info    : [ 70%] Meshing curve 11 (Line)
+Info    : [ 80%] Meshing curve 12 (Line)
+Info    : [ 90%] Meshing curve 13 (Line)
+Info    : [ 90%] Meshing curve 14 (Line)
+Info    : [100%] Meshing curve 15 (Line)
+Info    : Done meshing 1D (Wall 0.00074262s, CPU 0.00136s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Sphere, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 2 (Plane, Frontal-Delaunay)
+Info    : [ 30%] Meshing surface 3 (Plane, Frontal-Delaunay)
+Info    : [ 50%] Meshing surface 4 (Plane, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 5 (Plane, Frontal-Delaunay)
+Info    : [ 80%] Meshing surface 6 (Plane, Frontal-Delaunay)
+Info    : [ 90%] Meshing surface 7 (Plane, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 0.105009s, CPU 0.102116s)
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 4692 nodes...
+Info    : Done tetrahedrizing 4700 nodes (Wall 0.0514798s, CPU 0.048627s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    :  - Added 1 Steiner point
+Info    : Done reconstructing mesh (Wall 0.119655s, CPU 0.109217s)
+Info    : Found volume 2
+Info    : Found void region
+Info    : It. 0 - 0 nodes created - worst tet radius 10.6313 (nodes removed 0 0)
+Info    : It. 500 - 500 nodes created - worst tet radius 2.457 (nodes removed 0 0)
+Info    : It. 1000 - 1000 nodes created - worst tet radius 2.0125 (nodes removed 0 0)
+Info    : It. 1500 - 1500 nodes created - worst tet radius 1.78676 (nodes removed 0 0)
+Info    : It. 2000 - 2000 nodes created - worst tet radius 1.63275 (nodes removed 0 0)
+Info    : It. 2500 - 2498 nodes created - worst tet radius 1.52939 (nodes removed 0 2)
+Info    : It. 3000 - 2998 nodes created - worst tet radius 1.44668 (nodes removed 0 2)
+Info    : It. 3500 - 3498 nodes created - worst tet radius 1.3798 (nodes removed 0 2)
+Info    : It. 4000 - 3998 nodes created - worst tet radius 1.32594 (nodes removed 0 2)
+Info    : It. 4500 - 4498 nodes created - worst tet radius 1.27982 (nodes removed 0 2)
+Info    : It. 5000 - 4998 nodes created - worst tet radius 1.23911 (nodes removed 0 2)
+Info    : It. 5500 - 5498 nodes created - worst tet radius 1.20202 (nodes removed 0 2)
+Info    : It. 6000 - 5998 nodes created - worst tet radius 1.17094 (nodes removed 0 2)
+Info    : It. 6500 - 6498 nodes created - worst tet radius 1.142 (nodes removed 0 2)
+Info    : It. 7000 - 6998 nodes created - worst tet radius 1.1149 (nodes removed 0 2)
+Info    : It. 7500 - 7498 nodes created - worst tet radius 1.09136 (nodes removed 0 2)
+Info    : It. 8000 - 7998 nodes created - worst tet radius 1.06928 (nodes removed 0 2)
+Info    : It. 8500 - 8498 nodes created - worst tet radius 1.04974 (nodes removed 0 2)
+Info    : It. 9000 - 8998 nodes created - worst tet radius 1.03209 (nodes removed 0 2)
+Info    : It. 9500 - 9497 nodes created - worst tet radius 1.01433 (nodes removed 0 3)
+Info    : 3D refinement terminated (14623 nodes total):
+Info    :  - 0 Delaunay cavities modified for star shapeness
+Info    :  - 3 nodes could not be inserted
+Info    :  - 77698 tetrahedra created in 0.387284 sec. (200622 tets/s)
+Info    : 1 node relocations
+Info    : Done meshing 3D (Wall 0.646512s, CPU 0.634203s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 2
+Info    : Optimization starts (volume = 0.127974) with worst = 0.00872319 / average = 0.783885:
+Info    : 0.00 < quality < 0.10 :       174 elements
+Info    : 0.10 < quality < 0.20 :       521 elements
+Info    : 0.20 < quality < 0.30 :       794 elements
+Info    : 0.30 < quality < 0.40 :      1294 elements
+Info    : 0.40 < quality < 0.50 :      2028 elements
+Info    : 0.50 < quality < 0.60 :      3346 elements
+Info    : 0.60 < quality < 0.70 :      7404 elements
+Info    : 0.70 < quality < 0.80 :     17446 elements
+Info    : 0.80 < quality < 0.90 :     29543 elements
+Info    : 0.90 < quality < 1.00 :     15146 elements
+Info    : 1472 edge swaps, 50 node relocations (volume = 0.127974): worst = 0.0977398 / average = 0.795888 (Wall 0.0314608s, CPU 0.03136s)
+Info    : 1484 edge swaps, 50 node relocations (volume = 0.127974): worst = 0.0977398 / average = 0.795997 (Wall 0.0376031s, CPU 0.037475s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         1 elements
+Info    : 0.10 < quality < 0.20 :         1 elements
+Info    : 0.20 < quality < 0.30 :         1 elements
+Info    : 0.30 < quality < 0.40 :      1283 elements
+Info    : 0.40 < quality < 0.50 :      1966 elements
+Info    : 0.50 < quality < 0.60 :      3214 elements
+Info    : 0.60 < quality < 0.70 :      7348 elements
+Info    : 0.70 < quality < 0.80 :     17722 elements
+Info    : 0.80 < quality < 0.90 :     29762 elements
+Info    : 0.90 < quality < 1.00 :     15072 elements
+Info    : Done optimizing mesh (Wall 0.11329s, CPU 0.107222s)
+Info    : 14623 nodes 86087 elements
+Info    : Writing 'fluid.msh'...
+Info    : Done writing 'fluid.msh'
+nodes 14623 elems 305508
+
+# -- cell 6 (0.4s, exit 0)
+import subprocess
+r = subprocess.run(["gmshToFoam", "fluid.msh"], capture_output=True, text=True)
+print(r.stdout[-1500:], r.stderr[-800:])
+r2 = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r2.stdout[-2500:], r2.stderr)
+# -- output
+----------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : gmshToFoam fluid.msh
+Date   : Sep 14 2026
+Time   : 15:48:47
+Host   : yc-demo
+PID    : 282576
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T2-20260914-154616-21b1/t2
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+ 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T2-20260914-154616-21b1/t2/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 14 2026
+Time   : 15:48:47
+Host   : yc-demo
+PID    : 282578
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T2-20260914-154616-21b1/t2
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+ 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T2-20260914-154616-21b1/t2/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 7 (0.6s, exit 0)
+import os
+os.makedirs("system", exist_ok=True)
+open("system/controlDict","w").write("""
+FoamFile
+{
+    version 2.0; format ascii; class dictionary; object controlDict;
+}
+application none;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 1;
+deltaT 1;
+writeControl timeStep;
+writeInterval 1;
+runTimeModifiable yes;
+""")
+r = subprocess.run(["gmshToFoam", "fluid.msh"], capture_output=True, text=True)
+print(r.stdout[-2000:], r.stderr)
+# -- output
+: uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T2-20260914-154616-21b1/t2
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 4.1  ascii 0
+
+Starting to read physical names at line 5
+Physical names:5
+    Surface 1	inlet
+    Surface 2	outlet
+    Surface 3	farfield
+    Surface 4	sphere
+    Volume 5	internal
+
+Starting to read points at line 49
+Vertices to be read: 14623
+Vertices read: 14623
+
+Starting to read cells at line 29329
+Cells to be read:85753
+
+Mapping region 4 to Foam patch 0
+Mapping region 1 to Foam patch 1
+Mapping region 3 to Foam patch 2
+Mapping region 2 to Foam patch 3
+Mapping region 5 to Foam cellZone 0
+Cells:
+    total: 76377
+    hex  : 0
+    prism: 0
+    pyr  : 0
+    tet  : 76377
+
+CellZones:
+Zone	Size
+    0	76377
+
+Patch 0 gets name sphere
+Patch 1 gets name inlet
+Patch 2 gets name farfield
+Patch 3 gets name outlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 9376 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+# -- cell 8 (0.3s, exit 0)
+r2 = subprocess.run(["checkMesh"], capture_output=True, text=True)
+print(r2.stdout[-3500:], r2.stderr)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 14 2026
+Time   : 15:49:10
+Host   : yc-demo
+PID    : 282598
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T2-20260914-154616-21b1/t2
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+ 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T2-20260914-154616-21b1/t2/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 9 (1.1s, exit 0)
+open("system/fvSchemes","w").write("""
+ddtSchemes { default( steadyState ); }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+""")
+open("system/fvSolution","w").write("""
+solvers { p { solver GAMG; tolerance 1e-6; relTol 0.1; smoother DICGaussSeidel; } }
+SIMPLE { residualControl { p 1e-4; } }
+relaxationFactors {}
+""")
+r3 = subprocess.run(["checkMesh"], capture_output=True, text=True)
+txt = (r3.stdout[-6000:]+r3.stderr)
+idx = txt.find("Create mesh")
+print(txt[idx:])
+# -- output
+Create mesh for time = constant
+--> FOAM Warning : 
+    From bool Foam::IOobject::readHeader(Foam::dictionary&, Foam::Istream&)
+    in file db/IOobject/IOobjectReadHeader.C at line 118
+    Reading "system/fvSchemes" at line 2
+    First token could not be read or is not 'FoamFile'
+
+Check header is of the form:
+
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       dictionary;
+    location    "system";
+    object      fvSchemes;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+problem while reading header for object fvSchemes
+
+file: system/fvSchemes at line 2.
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 650.
+
+FOAM exiting
+
+# -- cell 10 (0.4s, exit 0)
+def foamify(path, obj):
+    s = open(path).read()
+    header = '''FoamFile
+{
+    version 2.0;
+    format ascii;
+    class dictionary;
+    location "system";
+    object %s;
+}
+// ******************************************************************* //
+''' % obj
+    open(path, "w").write(header + s)
+foamify("system/fvSchemes", "fvSchemes")
+foamify("system/fvSolution", "fvSolution")
+r4 = subprocess.run(["checkMesh"], capture_output=True, text=True)
+txt = r4.stdout + r4.stderr
+i = txt.find("Create mesh")
+print(txt[i:])
+# -- output
+Create mesh for time = constant
+--> FOAM Warning : 
+    From virtual Foam::Istream& Foam::ISstream::read(Foam::word&)
+    in file db/IOstreams/Sstreams/ISstream.C at line 967
+    Reading "system/fvSchemes" at line 11
+    Missing 1 closing ')' while parsing
+
+default(
+
+--> FOAM Warning :
+    Reading "system/fvSchemes" at line 11
+    Too many closing ')' ... was a ';' forgotten?
+--> FOAM Warning :
+    Reading "system/fvSchemes" at line 11
+    Too many closing '}' ... was a ';' forgotten?
+--> FOAM Warning :
+    Reading "system/fvSchemes" at line 12
+    Too many closing '}' ... was a ';' forgotten?
+--> FOAM Warning :
+    Reading "system/fvSchemes" at line 13
+    Too many closing '}' ... was a ';' forgotten?
+--> FOAM Warning :
+    Reading "system/fvSchemes" at line 14
+    Too many closing '}' ... was a ';' forgotten?
+--> FOAM Warning :
+    Reading "system/fvSchemes" at line 15
+    Too many closing '}' ... was a ';' forgotten?
+--> FOAM Warning :
+    Reading "system/fvSchemes" at line 16
+    Too many closing '}' ... was a ';' forgotten?
+--> FOAM Warning :
+    Reading "system/fvSchemes" at line 17
+    Imbalanced brackets
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+ill defined primitiveEntry starting at keyword 'default(' on line 11 and ending at line 17
+
+file: system/fvSchemes at line 17.
+
+    From void Foam::primitiveEntry::readEntry(const Foam::dictionary&, Foam::Istream&)
+    in file db/dictionary/primitiveEntry/primitiveEntryIO.C at line 243.
+
+FOAM exiting
+
+# -- cell 11 (1.7s, exit 0)
+open("system/fvSchemes","w").write("""FoamFile { version 2.0; format ascii; class dictionary; location "system"; object fvSchemes; }
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+""")
+open("system/fvSolution","w").write("""FoamFile { version 2.0; format ascii; class dictionary; location "system"; object fvSolution; }
+solvers { p { solver GAMG; tolerance 1e-6; relTol 0.1; smoother DICGaussSeidel; } }
+SIMPLE { residualControl { p 1e-4; } }
+""")
+r5 = subprocess.run(["checkMesh"], capture_output=True, text=True)
+txt = r5.stdout + r5.stderr
+i = txt.find("Create mesh")
+print(txt[i:])
+# -- output
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           14623
+    faces:            157442
+    internal faces:   148066
+    cells:            76377
+    faces per cell:   4
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    76377
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    sphere              50       27       ok (closed singly connected)      
+    inlet               938      510      ok (non-closed singly connected)  
+    farfield            7454     3807     ok (non-closed singly connected)  
+    outlet              934      508      ok (non-closed singly connected)  
+    ".*"                9376     4692     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    internal            76377        14623        0.127974     (-0.2 -0.2 -0.2) (0.6 0.2 0.2)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.2 -0.2 -0.2) (0.6 0.2 0.2)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.37342e-16 1.87353e-17 3.10847e-18) OK.
+    Max cell openness = 4.04417e-16 OK.
+    Max aspect ratio = 10.014 OK.
+    Minimum face area = 5.32357e-05. Maximum face area = 0.00055046.  Face area magnitudes OK.
+    Min volume = 8.36748e-08. Max volume = 4.19834e-06.  Total volume = 0.127974.  Cell volumes OK.
+    Mesh non-orthogonality Max: 71.2973 average: 20.7166
+   *Number of severely non-orthogonal (> 70 degrees) faces: 1.
+    Non-orthogonality check OK.
+  <<Writing 1 non-orthogonal faces to set nonOrthoFaces
+    Face pyramids OK.
+    Max skewness = 0.842284 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 12 (2.5s, exit 0)
+# Test without BL field to isolate the tagging issue
+gmsh.model.mesh.field.remove(bl)
+gmsh.model.mesh.generate(3)
+gmsh.write("fluid.msh")
+r = subprocess.run(["gmshToFoam", "fluid.msh"], capture_output=True, text=True)
+print(r.stdout[-700:])
+r6 = subprocess.run(["checkMesh"], capture_output=True, text=True)
+txt = r6.stdout + r6.stderr
+i = txt.find("Checking patch topology")
+print(txt[i:i+500])
+# -- output
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 4692 nodes...
+Info    : Done tetrahedrizing 4700 nodes (Wall 0.0490097s, CPU 0.045035s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    :  - Added 2 Steiner points
+Info    : Done reconstructing mesh (Wall 0.111537s, CPU 0.105859s)
+Info    : Found volume 2
+Info    : Found void region
+Info    : It. 0 - 0 nodes created - worst tet radius 20.3022 (nodes removed 0 0)
+Info    : It. 500 - 484 nodes created - worst tet radius 2.48032 (nodes removed 0 16)
+Info    : It. 1000 - 984 nodes created - worst tet radius 2.02181 (nodes removed 0 16)
+Info    : It. 1500 - 1484 nodes created - worst tet radius 1.79211 (nodes removed 0 16)
+Info    : It. 2000 - 1984 nodes created - worst tet radius 1.63699 (nodes removed 0 16)
+Info    : It. 2500 - 2484 nodes created - worst tet radius 1.53221 (nodes removed 0 16)
+Info    : It. 3000 - 2984 nodes created - worst tet radius 1.448 (nodes removed 0 16)
+Info    : It. 3500 - 3484 nodes created - worst tet radius 1.38094 (nodes removed 0 16)
+Info    : It. 4000 - 3984 nodes created - worst tet radius 1.32706 (nodes removed 0 16)
+Info    : It. 4500 - 4484 nodes created - worst tet radius 1.28078 (nodes removed 0 16)
+Info    : It. 5000 - 4984 nodes created - worst tet radius 1.24009 (nodes removed 0 16)
+Info    : It. 5500 - 5484 nodes created - worst tet radius 1.2024 (nodes removed 0 16)
+Info    : It. 6000 - 5984 nodes created - worst tet radius 1.17161 (nodes removed 0 16)
+Info    : It. 6500 - 6484 nodes created - worst tet radius 1.14262 (nodes removed 0 16)
+Info    : It. 7000 - 6984 nodes created - worst tet radius 1.11535 (nodes removed 0 16)
+Info    : It. 7500 - 7484 nodes created - worst tet radius 1.09179 (nodes removed 0 16)
+Info    : It. 8000 - 7984 nodes created - worst tet radius 1.07042 (nodes removed 0 16)
+Info    : It. 8500 - 8484 nodes created - worst tet radius 1.05043 (nodes removed 0 16)
+Info    : It. 9000 - 8984 nodes created - worst tet radius 1.03256 (nodes removed 0 16)
+Info    : It. 9500 - 9483 nodes created - worst tet radius 1.01479 (nodes removed 0 17)
+Info    : 3D refinement terminated (14623 nodes total):
+Info    :  - 3 Delaunay cavities modified for star shapeness
+Info    :  - 17 nodes could not be inserted
+Info    :  - 77725 tetrahedra created in 0.385984 sec. (201368 tets/s)
+Info    : 0 node relocations
+Info    : Done meshing 3D (Wall 0.642844s, CPU 0.638379s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 2
+Info    : Optimization starts (volume = 0.127974) with worst = 0.00872319 / average = 0.783495:
+Info    : 0.00 < quality < 0.10 :       176 elements
+Info    : 0.10 < quality < 0.20 :       533 elements
+Info    : 0.20 < quality < 0.30 :       792 elements
+Info    : 0.30 < quality < 0.40 :      1300 elements
+Info    : 0.40 < quality < 0.50 :      2047 elements
+Info    : 0.50 < quality < 0.60 :      3349 elements
+Info    : 0.60 < quality < 0.70 :      7427 elements
+Info    : 0.70 < quality < 0.80 :     17439 elements
+Info    : 0.80 < quality < 0.90 :     29575 elements
+Info    : 0.90 < quality < 1.00 :     15085 elements
+Info    : 1481 edge swaps, 49 node relocations (volume = 0.127974): worst = 0.0977398 / average = 0.795642 (Wall 0.0320094s, CPU 0.032284s)
+Info    : 1491 edge swaps, 49 node relocations (volume = 0.127974): worst = 0.0977398 / average = 0.795734 (Wall 0.0381179s, CPU 0.038433s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         1 elements
+Info    : 0.10 < quality < 0.20 :         1 elements
+Info    : 0.20 < quality < 0.30 :         1 elements
+Info    : 0.30 < quality < 0.40 :      1287 elements
+Info    : 0.40 < quality < 0.50 :      1980 elements
+Info    : 0.50 < quality < 0.60 :      3215 elements
+Info    : 0.60 < quality < 0.70 :      7377 elements
+Info    : 0.70 < quality < 0.80 :     17697 elements
+Info    : 0.80 < quality < 0.90 :     29819 elements
+Info    : 0.90 < quality < 1.00 :     15007 elements
+Info    : Done optimizing mesh (Wall 0.112567s, CPU 0.106105s)
+Info    : 14621 nodes 86101 elements
+Info    : Writing 'fluid.msh'...
+Info    : Done writing 'fluid.msh'
+ze
+    0	76391
+
+Patch 0 gets name sphere
+Patch 1 gets name inlet
+Patch 2 gets name farfield
+Patch 3 gets name outlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 9376 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone internal and cellSet
+End
+
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    sphere              50       27       ok (closed singly connected)      
+    inlet               938      510      ok (non-closed singly connected)  
+    farfield            7454     3807     ok (non-closed singly connected)  
+    outlet              934      508      ok (non-closed singly connected)  
+    ".*"                9376     4692     ok (closed singly connected)
+
+# -- cell 13 (0.1s, exit 1)
+for pg in gmsh.model.listPhysicalGroups(2):
+    d,t,g,n = pg
+    print(d, t, g, n, gmsh.model.getEntitiesForPhysicalName(n))
+    # count elements on entities
+    for s in gmsh.model.getEntitiesForPhysicalName(n):
+        ts,es,_ = gmsh.model.mesh.getElements(2, s)
+        print("  surf", s, sum(len(e) for e in es))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[13][39m[32m, line 1[39m
+[32m----> [39m[32m1[39m [38;5;28;01mfor[39;00m pg [38;5;28;01min[39;00m gmsh.model.listPhysicalGroups([32m2[39m):
+[32m      2[39m     d,t,g,n = pg
+[32m      3[39m     print(d, t, g, n, gmsh.model.getEntitiesForPhysicalName(n))
+[32m      4[39m     [38;5;66;03m# count elements on entities[39;00m
+
+[31mAttributeError[39m: type object 'model' has no attribute 'listPhysicalGroups'
+
+# -- cell 14 (0.1s, exit 1)
+gmsh.model.??  # no
+import gmsh as g
+for name in ["inlet","outlet","farfield","sphere","internal"]:
+    try:
+        ent = gmsh.model.getEntitiesForPhysicalName(name)
+        print(name, ent)
+        for s in ent:
+            ts, es, _ = gmsh.model.mesh.getElements(2, s)
+            print("   surf", s, sum(len(e) for e in es))
+    except Exception as ex:
+        print(name, ex)
+# also raw physical groups via gmsh/model.getPhysicalGroups(d)
+pg2 = gmsh.model.getPhysicalGroups(2)
+print("physical groups dim2:", pg2)
+pg3 = gmsh.model.getPhysicalGroups(3)
+print(pg3)
+# -- output
+[36mCell[39m[36m [39m[32mIn[14][39m[32m, line 1[39m
+[31m    [39m[31mgmsh.model.??  # no[39m
+               ^
+[31mSyntaxError[39m[31m:[39m invalid syntax
+
+# -- cell 15 (0.1s, exit 0)
+pg2 = gmsh.model.getPhysicalGroups(2)
+pg3 = gmsh.model.getPhysicalGroups(3)
+print(pg2, pg3)
+for dim, tag in pg2 + pg3:
+    name = gmsh.model.getPhysicalName(dim, tag)
+    ent = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
+    print(name, ent)
+    for s in ent:
+        ts, es, _ = gmsh.model.mesh.getElements(dim, s)
+        print("   entity", s, sum(len(e) for e in es))
+# -- output
+[(2, 1), (2, 2), (2, 3), (2, 4)] [(3, 5)]
+inlet [2]
+   entity 2 938
+outlet [7]
+   entity 7 934
+farfield [3 4 5 6]
+   entity 3 1862
+   entity 4 1860
+   entity 5 1866
+   entity 6 1866
+sphere [1]
+   entity 1 50
+internal [2]
+   entity 2 76391
+
+# -- cell 16 (0.1s, exit 0)
+allsurf = gmsh.model.getEntities(2)
+print(allsurf)
+for d, s in allsurf:
+    ts, es, _ = gmsh.model.mesh.getElements(2, s)
+    n = sum(len(e) for e in es)
+    print("surface", s, "elements", n)
+# also check: surface element counts might be misleading; use getBoundary with recursive?
+# -- output
+[(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7)]
+surface 1 elements 50
+surface 2 elements 938
+surface 3 elements 1862
+surface 4 elements 1860
+surface 5 elements 1866
+surface 6 elements 1866
+surface 7 elements 934
+
+# -- cell 17 (0.8s, exit 0)
+for d, s in allsurf:
+    bb = gmsh.model.occ.getBoundingBox(d, s)
+    print("surf", s, bb)
+# -- output
+surf 1 (-0.0200001, -0.0200001, -0.0200001, 0.0200001, 0.0200001, 0.0200001)
+surf 2 (-0.20000010000000001, -0.20000010000000001, -0.20000010000000001, -0.1999999, 0.20000010000000001, 0.20000010000000001)
+surf 3 (-0.20000010000000001, -0.20000010000000001, -0.20000010000000001, 0.6000001, -0.1999999, 0.20000010000000001)
+surf 4 (-0.20000010000000001, -0.20000010000000001, 0.1999999, 0.6000001, 0.20000010000000001, 0.20000010000000001)
+surf 5 (-0.20000010000000001, 0.1999999, -0.20000010000000001, 0.6000001, 0.20000010000000001, 0.20000010000000001)
+surf 6 (-0.20000010000000001, -0.20000010000000001, -0.20000010000000001, 0.6000001, 0.20000010000000001, -0.1999999)
+surf 7 (0.5999999000000001, -0.20000010000000001, -0.20000010000000001, 0.6000001, 0.20000010000000001, 0.20000010000000001)
+
+# -- cell 18 (0.1s, exit 0)
+ts, es, ns = gmsh.model.mesh.getElements(2, 1)
+print(ts)
+for t, e, n in zip(ts, es, ns):
+    print("type", t, "nels", len(e))
+# -- output
+[2]
+type 2 nels 50
+
+# -- cell 19 (0.1s, exit 0)
+vols = gmsh.model.getEntities(3)
+print(vols)
+for d, v in vols:
+    bnd = gmsh.model.getBoundary([(d, v)])
+    print("vol", v, "surfaces", [s for dd, s in bnd])
+    ts,es,ns = gmsh.model.mesh.getElements(3, v)
+    print("  vol elements", sum(len(e) for e in es))
+# -- output
+[(3, 2)]
+vol 2 surfaces [1, 2, 3, 4, 5, 6, 7]
+  vol elements 76391
+
+# -- cell 20 (0.5s, exit 0)
+gmsh.model.mesh.clear()
+gmsh.finalize()
+pyvista_script = '''
+import pyvista as pv
+sph = pv.Sphere(center=(0,0,0), radius=0.02, theta_resolution=64, phi_resolution=48)
+import os
+os.makedirs("constant/triSurface", exist_ok=True)
+sph.save("constant/triSurface/sphere.stl")
+print("written")
+'''
+r = subprocess.run(["python3", "-c", pyvista_script], capture_output=True, text=True)
+print(r.stdout, r.stderr)
+# -- output
+written
+
+# -- cell 21 (0.5s, exit 0)
+bm = """FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }
+vertices
+(
+    (-0.2 -0.2 -0.2)
+    ( 0.6 -0.2 -0.2)
+    ( 0.6  0.2 -0.2)
+    (-0.2  0.2 -0.2)
+    (-0.2 -0.2  0.2)
+    ( 0.6 -0.2  0.2)
+    ( 0.6  0.2  0.2)
+    (-0.2  0.2  0.2)
+);
+blocks ( hex (0 1 2 3 4 5 6 7) (80 25 25) simpleGrading (1 1 1) );
+boundary
+(
+    inlet   { type patch; faces ( (0 4 7 3) ); }
+    farfield
+    {
+        type patch;
+        faces ( (0 1 5 4) (3 2 6 7) (0 3 7 4) (1 2 6 5) );
+    }
+    outlet  { type patch; faces ( (1 2 6 5) wait }
+);
+"""
+# correct faces: z-:(0 3 7 4)? order around face. Use proper vertices: z- face (0 1 2 3), z+ (4 5 6 7)
+bm = """FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }
+ vertices
+ (
+    (-0.2 -0.2 -0.2) //0
+    ( 0.6 -0.2 -0.2) //1
+    ( 0.6  0.2 -0.2) //2
+    (-0.2  0.2 -0.2) //3
+    (-0.2 -0.2  0.2) //4
+    ( 0.6 -0.2  0.2) //5
+    ( 0.6  0.2  0.2) //6
+    (-0.2  0.2  0.2) //7
+ );
+ blocks ( hex (0 1 2 3 4 5 6 7) (80 25 25) simpleGrading (1 1 1) );
+ boundary
+ (
+     inlet   { type patch; faces ( (0 4 7 3) ); }
+     outlet  { type patch; faces ( (1 5 6 2) ); }
+     farfield
+     {
+         type patch;
+         faces ( (0 1 5 4) (3 2 6 7) (0 3 7 4) (1 5 6 2) );
+     }
+     sphere { type wall; faces (); }
+ );
+"""
+# outlet duplicated; fix: far = y- (0 1 5 4), y+ (3 2 6 7)? no z faces. sides: z-(0 3 7 4)->y... Let's just compute: y- face=(0 1 5 4); y+= (3 2 6 7); z-= (0 1 2 3); z+=(4 5 6 7)
+bm = """FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }
+vertices
+(
+    (-0.2 -0.2 -0.2)
+    ( 0.6 -0.2 -0.2)
+    ( 0.6  0.2 -0.2)
+    (-0.2  0.2 -0.2)
+    (-0.2 -0.2  0.2)
+    ( 0.6 -0.2  0.2)
+    ( 0.6  0.2  0.2)
+    (-0.2  0.2  0.2)
+);
+blocks ( hex (0 1 2 3 4 5 6 7) (80 25 25) simpleGrading (1 1 1) );
+boundary
+(
+    inlet   { type patch; faces ( (0 4 7 3) ); }
+    outlet  { type patch; faces ( (1 5 6 2) ); }
+    farfield
+    {
+        type patch;
+        faces ( (0 1 5 4) (3 2 6 7) (0 1 2 3) (4 5 6 7) );
+    }
+);
+"""
+open("system/blockMeshDict", "w").write(bm)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stdout[-400:], r.stderr)
+# -- output
+ting polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.2 -0.2 -0.2) (0.6 0.2 0.2)
+  nPoints: 54756
+  nCells: 50000
+  nFaces: 154625
+  nInternalFaces: 145375
+----------------
+Patches
+----------------
+  patch 0 (start: 145375 size: 625) name: inlet
+  patch 1 (start: 146000 size: 625) name: outlet
+  patch 2 (start: 146625 size: 8000) name: farfield
+
+End
+
+# -- cell 22 (0.4s, exit 0)
+shm = """FoamFile { version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }
+castellatedMesh true;
+snap            true;
+addLayers       true;
+geometry
+{
+    sphere.stl { type triSurfaceMesh; name sphere; }
+    box { type searchableBox; min (-0.1 -0.1 -0.1); max (0.1 0.1 0.1); }
+}
+castellatedMeshControls
+{
+    maxLocalCells 1000000;
+    maxGlobalCells 2000000;
+    minRefinementCells 10;
+    maxLoadUnbalance 0.1;
+    nCellsBetweenLevels 2;
+    features ();
+    refinementSurfaces
+    {
+        sphere { level (2 3);  }
+    }
+    resolveFeatureAngle 30;
+    locationInsideMesh (0.5 0 0);
+    allowFreeStandingZoneFaces true;
+}
+snapControls
+{
+    nSmoothPatch 3;
+    tolerance 2.0;
+    nSolveIter 50;
+    nRelaxIter 5;
+    nFeatureSnapIter 10;
+    implicitFeatureSnap false;
+    explicitFeatureSnap true;
+    multiRegionFeatureSnap false;
+}
+addLayersControls
+{
+    relativeSizes true;
+    layers
+    {
+        sphere { nSurfaceLayers 4; }
+    }
+    expansionRatio 1.3;
+    finalLayerThickness 0.5;
+    minThickness 0.02;
+    nGrow 0;
+    featureAngle 60;
+    slipFeatureAngle 30;
+    slipConcaveFeatureAngle 30;
+    nRelaxIter 5;
+    nSmoothSurfaceNormals 1;
+    nSmoothNormals 3;
+    nSmoothThickness 10;
+    maxFaceThicknessRatio 0.5;
+    maxThicknessToMedialRatio 0.3;
+    minMedialAxisAngle 90;
+    preventExtrusion false;
+    nBufferCellsNoExtrude 0;
+    nLayerIter 50;
+    nRelaxedIter 20;
+    nAdditionalRatio 1;
+}
+meshQualityControls
+{
+    maxNonOrtho 65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave 80;
+    minVol 1e-13;
+    minTetQuality 1e-30;
+    minArea -1;
+    minTwist 0.02;
+    minDeterminant 0.001;
+    minFaceWeight 0.02;
+    minVolRatio 0.01;
+    minTriangleTwist -1;
+    maxFlatRatio 0.5;
+    maxFaceAspectRatio 4;
+}
+mergeTolerance 1e-6;
+"""
+open("system/snappyHexMeshDict", "w").write(shm)
+r = subprocess.run(["snappyHexMesh"], capture_output=True, text=True)
+print(r.stdout[-1200:], r.stderr)
+# -- output
+LSB;label=32;scalar=64"
+Exec   : snappyHexMesh
+Date   : Sep 14 2026
+Time   : 15:54:38
+Host   : yc-demo
+PID    : 283581
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T2-20260914-154616-21b1/t2
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.14 s
+
+Overall mesh bounding box  : (-0.2 -0.2 -0.2) (0.6 0.2 0.2)
+Relative tolerance         : 1e-06
+Absolute matching distance : 9.79796e-07
+
+Reading refinement surfaces.
+Read refinement surfaces in = 0 s
+
+Reading refinement shells.
+ 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'refinementRegions' not found (or not a dictionary) in dictionary "system/snappyHexMeshDict/castellatedMeshControls"
+
+
+file: system/snappyHexMeshDict/castellatedMeshControls at line 12 to 24.
+
+    From static const Foam::dictionary& Foam::meshRefinement::subDict(const Foam::dictionary&, const Foam::word&, bool, Foam::keyType::option)
+    in file meshRefinement/meshRefinement.C at line 3864.
+
+FOAM exiting
+
+# -- cell 23 (2.0s, exit 0)
+s = open("system/snappyHexMeshDict").read()
+s = s.replace("""    resolveFeatureAngle 30;""", """resolveFeatureAngle 30;
+    refinementRegions { box { mode inside; levels ((1E15 2)); } }""")
+open("system/snappyHexMeshDict","w").write(s)
+r = subprocess.run(["snappyHexMesh"], capture_output=True, text=True)
+print(r.stdout[-1500:], r.stderr)
+# -- output
+Number of edges to retest   : 0
+    Number of intersected edges : 0
+Split mesh in = 0.02 s
+
+
+After subsetting : cells:0  faces:0  points:0
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+ 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+No points or no cells in mesh
+bad size -2147483647
+
+    From Foam::List<T>::List(Foam::label, Foam::zero) [with T = int; Foam::label = int]
+    in file ./src/OpenFOAM/lnInclude/List.C at line 147.
+
+FOAM aborting
+
+[stack trace]
+=============
+#1  Foam::error::simpleExit(int, bool) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libOpenFOAM.so
+#2  Foam::meshRefinement::printMeshInfo(bool, Foam::string const&, bool) const in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#3  Foam::meshRefinement::baffleAndSplitMesh(bool, Foam::snapParameters const&, bool, bool, Foam::Field<double> const&, int, Foam::dictionary const&, Foam::Time&, Foam::List<int> const&, Foam::List<int> const&, Foam::Field<Foam::Vector<double> > const&, Foam::List<Foam::word> const&, Foam::Field<Foam::Vector<double> > const&, bool, Foam::refPtr<Foam::coordSetWriter> const&, Foam::refPtr<Foam::surfaceWriter>&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#4  Foam::snappyRefineDriver::baffleAndSplitMesh(Foam::refinementParameters const&, Foam::snapParameters const&, bool, Foam::dictionary const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#5  Foam::snappyRefineDriver::doRefine(Foam::dictionary const&, Foam::refinementParameters const&, Foam::snapParameters const&, bool, Foam::meshRefinement::FaceMergeType, Foam::dictionary const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#6  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+#7  ? in /lib/x86_64-linux-gnu/libc.so.6
+#8  __libc_start_main in /lib/x86_64-linux-gnu/libc.so.6
+#9  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+=============
+
+# -- cell 24 (0.4s, exit 1)
+import pyvista as pv
+m = pv.read("constant/triSurface/sphere.stl")
+m.compute_normals(inplace=True)
+# dot normal vs vector from origin at sample face
+c = m.center_of_mass()
+n = m.face_normals[0]
+pt = m.centerpoints[0]
+print("dot:", n @ (pt))
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[24][39m[32m, line 7[39m
+[32m      3[39m m.compute_normals(inplace=[38;5;28;01mTrue[39;00m)
+[32m      4[39m [38;5;66;03m# dot normal vs vector from origin at sample face[39;00m
+[32m      5[39m c = m.center_of_mass()
+[32m      6[39m n = m.face_normals[[32m0[39m]
+[32m----> [39m[32m7[39m pt = m.centerpoints[[32m0[39m]
+[32m      8[39m print([33m"dot:"[39m, n @ (pt))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/dataset.py:155[39m, in [36mDataSet.__getattr__[39m[34m(self, item)[39m
+[32m    153[39m [38;5;28;01mif[39;00m _resolve_pending_accessor(item):
+[32m    154[39m     [38;5;28;01mreturn[39;00m [38;5;28mobject[39m.[34m__getattribute__[39m([38;5;28mself[39m, item)
+[32m--> [39m[32m155[39m [38;5;28;01mreturn[39;00m [30;43msuper[39;49m[30;43m([39;49m[30;43m)[39;49m[30;43m.[39;49m[30;43m__getattribute__[39;49m[30;43m([39;49m[30;43mitem[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_vtk_utilities.py:146[39m, in [36mDisableVtkSnakeCase.__getattribute__[39m[34m(self, item)[39m
+[32m    144[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__getattribute__[39m([38;5;28mself[39m, item):
+[32m    145[39m     DisableVtkSnakeCase.check_attribute([38;5;28mself[39m, item)
+[32m--> [39m[32m146[39m     [38;5;28;01mreturn[39;00m [30;43mobject[39;49m[30;43m.[39;49m[30;43m__getattribute__[39;49m[30;43m([39;49m[30;43mself[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mitem[39;49m[30;43m)[39;49m
+
+[31mAttributeError[39m: 'PolyData' object has no attribute 'centerpoints'
+
+# -- cell 25 (0.1s, exit 0)
+import pyvista as pv
+m = pv.read("constant/triSurface/sphere.stl")
+m.compute_normals(inplace=True)
+pt = m.cell_centers().points[0]
+n = m.face_normals[0]
+print("dot:", n @ pt)
+# -- output
+dot: 0.01998880341672904
+
+# -- cell 26 (1.2s, exit 0)
+import subprocess
+r = subprocess.run(["rm","-rf","0"], capture_output=True, text=True)
+r = subprocess.run(["snappyHexMesh"], capture_output=True, text=True)
+txt = r.stdout + r.stderr
+lines = [l for l in txt.splitlines() if "cells" in l.lower() or "Faces" in l or "refine" in l.lower() or "Split" in l]
+for l in lines: print(l[:140])
+# -- output
+Reading refinement surfaces.
+Read refinement surfaces in = 0 s
+Reading refinement shells.
+Refinement level 2 for all cells inside box
+Read refinement shells in = 0 s
+Setting refinement level of surface to be consistent with shells.
+Checked shell refinement in = 0.01 s
+Initial mesh : cells:50000  faces:154625  points:54756
+Cells per refinement level:
+    From Foam::refinementParameters::refinementParameters(const Foam::dictionary&, bool)
+    in file snappyHexMeshDriver/refinementParameters/refinementParameters.C at line 141
+Setting refinement level of surface to be consistent with curvature.
+Checked curvature refinement in = 0 s
+Refinement phase
+Surface refinement iteration 0
+Marked for refinement due to surface intersection          : 36 cells.
+Marked for refinement due to curvature/regions             : 0 cells.
+Determined cells to refine in = 0.03 s
+Selected for refinement : 36 cells (out of 50000)
+Refined mesh in = 0.08 s
+After refinement surface refinement iteration 0 : cells:50252  faces:155543  points:55182
+Cells per refinement level:
+Surface refinement iteration 1
+Marked for refinement due to surface intersection          : 184 cells.
+Marked for refinement due to curvature/regions             : 0 cells.
+Determined cells to refine in = 0.01 s
+Selected for refinement : 218 cells (out of 50252)
+Refined mesh in = 0.1 s
+After refinement surface refinement iteration 1 : cells:51778  faces:160646  points:57249
+Cells per refinement level:
+Surface refinement iteration 2
+Marked for refinement due to surface intersection          : 8 cells.
+Marked for refinement due to curvature/regions             : 40 cells.
+Determined cells to refine in = 0 s
+Selected for refinement : 48 cells (out of 51778)
+Refined mesh in = 0.09 s
+After refinement surface refinement iteration 2 : cells:52114  faces:161978  points:58005
+Cells per refinement level:
+Surface refinement iteration 3
+Marked for refinement due to surface intersection          : 8 cells.
+Marked for refinement due to curvature/regions             : 8 cells.
+Determined cells to refine in = 0 s
+Selected for refinement : 24 cells (out of 52114)
+Refined mesh in = 0.09 s
+After refinement surface refinement iteration 3 : cells:52282  faces:162518  points:58201
+Cells per refinement level:
+Surface refinement iteration 4
+Marked for refinement due to surface intersection          : 0 cells.
+Marked for refinement due to curvature/regions             : 0 cells.
+Determined cells to refine in = 0 s
+Selected for refinement : 0 cells (out of 52282)
+Stopping refining since too few cells selected.
+    From void Foam::meshRefinement::nearestFace(const Foam::labelUList&, const Foam::bitSet&, Foam::autoPtr<Foam::mapDistribute>&, Foam::lab
+    in file meshRefinement/meshRefinement.C at line 526
+Keeping all cells containing inside points
+Selected for keeping : 1024 cells.
+Shell refinement iteration 0
+Marked for refinement due to distance to explicit features : 0 cells.
+Marked for refinement due to refinement shells             : 0 cells.
+Determined cells to refine in = 0.06 s
+Selected for internal refinement : 152 cells (out of 1024)
+Refined mesh in = 0.01 s
+After refinement shell refinement iteration 0 : cells:2088  faces:8028  points:3966
+Cells per refinement level:
+Shell refinement iteration 1
+Marked for refinement due to distance to explicit features : 0 cells.
+Marked for refinement due to refinement shells             : 0 cells.
+Determined cells to refine in = 0 s
+Selected for internal refinement : 128 cells (out of 2088)
+Refined mesh in = 0.01 s
+After refinement shell refinement iteration 1 : cells:2984  faces:11040  points:5142
+Cells per refinement level:
+Shell refinement iteration 2
+Marked for refinement due to distance to explicit features : 0 cells.
+Marked for refinement due to refinement shells             : 0 cells.
+Determined cells to refine in = 0 s
+Selected for internal refinement : 0 cells (out of 2984)
+Stopping refining since too few cells selected.
+Dangling coarse cells refinement iteration 0
+Determined cells to refine in = 0 s
+Selected for refinement : 0 cells (out of 2984)
+Stopping refining since too few cells selected.
+Dangling coarse cells refinement iteration 0
+Determined cells to refine in = 0 s
+Selected for refinement : 0 cells (out of 2984)
+Stopping refining since too few cells selected.
+Refinement transition refinement iteration 0
+Determined cells to refine in = 0 s
+Selected for refinement : 0 cells (out of 2984)
+Stopping refining since too few cells selected.
+Splitting mesh at surface intersections
+After introducing baffles : cells:2984  faces:12824  points:5142
+Cells per refinement level:
+Introducing baffles to block off problem cells
+markFacesOnProblemCells : marked 4458 additional internal faces to be converted into baffles.
+Analyzed problem cells in = 0.01 s
+Introducing baffles to delete problem cells.
+After introducing baffles : cells:2984  faces:17282  points:5142
+Cells per refinement level:
+Keeping all cells containing points 0()
+Selected for keeping : 0 cells.
+Split mesh in = 0.02 s
+After subsetting : cells:0  faces:0  points:0
+No points or no cells in mesh
+#2  Foam::meshRefinement::printMeshInfo(bool, Foam::string const&, bool) const in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32
+#3  Foam::meshRefinement::baffleAndSplitMesh(bool, Foam::snapParameters const&, bool, bool, Foam::Field<double> const&, int, Foam::dictionar
+#4  Foam::snappyRefineDriver::baffleAndSplitMesh(Foam::refinementParameters const&, Foam::snapParameters const&, bool, Foam::dictionary cons
+#5  Foam::snappyRefineDriver::doRefine(Foam::dictionary const&, Foam::refinementParameters const&, Foam::snapParameters const&, bool, Foam::
+
+# -- cell 27 (2.0s, exit 0)
+s = open("system/snappyHexMeshDict").read()
+s = s.replace("locationInsideMesh (0.5 0 0);", "locationInsideMesh ((0.5 0 0));")
+open("system/snappyHexMeshDict","w").write(s)
+subprocess.run(["rm","-rf","0"], capture_output=True)
+r = subprocess.run(["snappyHexMesh"], capture_output=True, text=True)
+txt = r.stdout + r.stderr
+lines = [l for l in txt.splitlines() if "After" in l or "keeping" in l.lower() or "Selected" in l]
+print("\n".join(l[:150] for l in lines[-8:]))
+print("finish?", "End" in txt)
+# -- output
+Selected for refinement : 0 cells (out of 2984)
+Selected for refinement : 0 cells (out of 2984)
+Selected for refinement : 0 cells (out of 2984)
+After introducing baffles : cells:2984  faces:12824  points:5142
+After introducing baffles : cells:2984  faces:17282  points:5142
+Keeping all cells containing points 0()
+Selected for keeping : 0 cells.
+After subsetting : cells:0  faces:0  points:0
+finish? False
+
+# -- cell 28 (3.2s, exit 0)
+r = subprocess.run(["grep","-rn","insidePoint","/usr/lib/openfoam/openfoam2512/bin","2>/devnull"], capture_output=True, text=True)
+print(r.stdout[:500], r.stderr)
+s = open("system/snappyHexMeshDict").read()
+s = s.replace("locationInsideMesh ((0.5 0 0));", "locationInsideMesh ((0.5 0 0));\n")
+open("system/snappyHexMeshDict","w").write(s)
+subprocess.run(["grep","-n","locationInsideMesh","system/snappyHexMeshDict"])
+# -- output
+grep: 2>/devnull: No such file or directory
+
+24:    locationInsideMesh ((0.5 0 0));
+CompletedProcess(args=['grep', '-n', 'locationInsideMesh', 'system/snappyHexMeshDict'], returncode=0)
+
+# -- cell 29 (1.6s, exit 0)
+r1 = subprocess.run(["blockMesh"], capture_output=True, text=True)
+r = subprocess.run(["snappyHexMesh"], capture_output=True, text=True)
+txt = r.stdout + r.stderr
+print([l[:150] for l in txt.splitlines() if "keeping" in l.lower()][-3:])
+print("success:", "End" in txt)
+# -- output
+['Selected for keeping : 1024 cells.', 'Keeping all cells containing points 0()', 'Selected for keeping : 0 cells.']
+success: False
+

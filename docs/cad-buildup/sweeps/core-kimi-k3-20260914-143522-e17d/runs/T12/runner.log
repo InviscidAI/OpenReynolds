@@ -1,0 +1,6 @@
+T12: run 20260914-145041-6dcc
+  workspace /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc clean (0 entries, 39 house names, no toolbox)
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/.reference/b123d_api.md
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-kimi-k3-20260914-143522-e17d/runs/T12
+  time in 905.8s, 17 cells, $0.26, checkMesh not ok, failed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-kimi-k3-20260914-143522-e17d/runs/T12 --case /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12

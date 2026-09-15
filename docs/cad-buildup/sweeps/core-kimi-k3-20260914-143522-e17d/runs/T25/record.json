@@ -1,0 +1,166 @@
+{
+  "run_id": "20260914-162220-c9d0",
+  "case": "T25",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T25-20260914-162220-c9d0",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T25-20260914-162220-c9d0/t25",
+  "started_at": "2026-09-14T16:22:21",
+  "ended_at": "2026-09-14T16:38:42",
+  "seconds": 978.3,
+  "n_turns": 4,
+  "n_steps": 3,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0.1061,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 24964,
+    "cache_read": 0,
+    "cache_write": 0,
+    "output": 3498
+  },
+  "stopped": "time",
+  "expects": "refused",
+  "passed": false,
+  "why": "nothing in the case directory has been meshed yet",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd\nfrom build123d import *\nimport numpy as np\n\n# Dimensions (metres), CFM56-class turbofan\nR_FAN   = 1.00\nR_NAC_O = 1.15\nR_HUB   = 0.32\nR_SPLIT = 0.55\nZ_FAN   = 0.0\nZ_TE    = 2.6      # nacelle trailing edge / bypass outlet\nT_DISC  = 0.06\n\ndef revolve_section(pts):\n    # pts: closed polyline in (z,r) plane, revolved about Z\n    l = Polyline([(z, r) for z, r in pts] + [pts[0]])\n    f = make_face(l)\n    return revolve(f, Axis.Z)\n\n# Nacelle ring (closed shell section)\nnacelle_pts = []\n# outer profile\nfor z,r in [(-0.5,1.05),(-0.2,1.12),(0.6,1.15),(1.5,1.10),(2.6,0.95)]:\n    nacelle_pts.append((z,r))\n# inner profile back\nfor z,r in [(2.6,0.98),(1.5,1.05),(0.6,1.08),(-0.15,1.02),(-0.5,1.00)]:\n    nacelle_pts.append((z,r))\nnacelle = revolve_section(nacelle_pts)\n\n# Hub + splitter + plug as one revolved axisymmetric body (core cowl)\ncore_pts = [( -0.45,0.02),(-0.30,0.20),(0.0,0.28),(0.6,0.32),(1.3,0.30),\n            (1.5,0.34),(2.0,0.30),(2.6,0.12),(3.0,0.0)]\ns1 = Polyline(core_pts + [(2.999,0.0),(-0.45,0.0)], close=True)\ncore = revolve(make_face(s1), Axis.Z)\n\n# Splitter lip ring at z=0.3 -> separates core duct from bypass\nsplit_pts = [(0.3,R_HUB),(0.3,R_SPLIT),(0.35,R_SPLIT+0.03),(0.45,R_SPLIT+0.03),(0.5,R_HUB+0.02)]\nsplitter = revolve_section(split_pts)\n\ndef disc(z, r1, r2, t=T_DISC):\n    return Pos(0,0,z) * (Cylinder(r2, t) - Cylinder(r1, t+0.01))\n\nfan   = disc(Z_FAN, R_HUB+0.02, R_FAN)\ncomp  = [disc(z, R_HUB+0.02, R_SPLIT+0.03) for z in (0.4,0.7,1.0)]\nturb  = [disc(z, R_HUB+0.02, R_SPLIT+0.03) for z in (1.55,1.85)]\nogv   = disc(2.2, 0.28, R_FAN)\n\nparts = {\"nacelle\":nacelle, \"core\":core, \"splitter\":splitter, \"fan\":fan,\n         \"compressor\":Pos(0,0,0)*comp[0]+comp[1]+comp[2] if False else comp,\n         \"turbine\":turb, \"ogv\":ogv}\n# flatten\nparts = {\"nacelle\":[nacelle], \"core\":[core], \"splitter\":[splitter], \"fan\":[fan],\n         \"compressor\":comp, \"turbine\":turb, \"ogv\":[ogv]}\n\nimport os\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nimport pyvista as pv\nallpv=[]\nfor name, solids in parts.items():\n    mesh=None\n    for s in solids:\n        bb = s.bounding_box()\n        print(name, np.round([bb.min.Z,bb.max.Z,bb.max.Y],3))\n        t = s.to_vtk(vtk_grid_type=None) if hasattr(s,'to_vtk') else None\n        import trimesh\n    from build123d import Mesher\n    units = Mesher.Unit.MM\n    m = Mesher(unit=units)\n    m.add_shape(solids)\n    m.write(f\"constant/triSurface/{name}.stl\")\n    print(name, \"written\")\nprint(\"bbox ok\")",
+      "exit_code": 1,
+      "seconds": 3.160071941001661,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mStdFail_NotDone\u001b[39m                           Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[1]\u001b[39m\u001b[32m, line 34\u001b[39m\n\u001b[32m     30\u001b[39m \u001b[38;5;66;03m# Hub + splitter + plug as one revolved axisymmetric body (core cowl)\u001b[39;00m\n\u001b[32m     31\u001b[39m core_pts = [( -0.45,0.02),(-0.30,0.20),(0.0,0.28),(0.6,0.32),(1.3,0.30),\n\u001b[32m     32\u001b[39m             (\u001b[32m1.5\u001b[39m,\u001b[32m0.34\u001b[39m),(\u001b[32m2.0\u001b[39m,\u001b[32m0.30\u001b[39m),(\u001b[32m2.6\u001b[39m,\u001b[32m0.12\u001b[39m),(\u001b[32m3.0\u001b[39m,\u001b[32m0.0\u001b[39m)]\n\u001b[32m     33\u001b[39m s1 = Polyline(core_pts + [(\u001b[32m2.999\u001b[39m,\u001b[32m0.0\u001b[39m),(-\u001b[32m0.45\u001b[39m,\u001b[32m0.0\u001b[39m)], close=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m---> \u001b[39m\u001b[32m34\u001b[39m core = revolve(make_face(s1), Axis.Z)\n\u001b[32m     35\u001b[39m \n\u001b[32m     36\u001b[39m \u001b[38;5;66;03m# Splitter lip ring at z=0.3 -> separates core duct from bypass\u001b[39;00m\n\u001b[32m     37\u001b[39m split_pts = [(\u001b[32m0.3\u001b[39m,R_HUB),(\u001b[32m0.3\u001b[39m,R_SPLIT),(\u001b[32m0.35\u001b[39m,R_SPLIT+\u001b[32m0.03\u001b[39m),(\u001b[32m0.45\u001b[39m,R_SPLIT+\u001b[32m0.03\u001b[39m),(\u001b[32m0.5\u001b[39m,R_HUB+\u001b[32m0.02\u001b[39m)]\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:557\u001b[39m, in \u001b[36mrevolve\u001b[39m\u001b[34m(profiles, axis, revolution_arc, clean, mode)\u001b[39m\n\u001b[32m    554\u001b[39m \u001b[38;5;28;01melse\u001b[39;00m:\n\u001b[32m    555\u001b[39m     profile_faces = profile_list.faces()\n\u001b[32m--> \u001b[39m\u001b[32m557\u001b[39m new_solids = [\u001b[30;43mSolid\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mrevolve\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mprofile\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mangle\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43maxis\u001b[39;49m\u001b[30;43m)\u001b[39;49m \u001b[38;5;28;01mfor\u001b[39;00m profile \u001b[38;5;129;01min\u001b[39;00m profile_faces]\n\u001b[32m    559\u001b[39m new_solid = Compound(new_solids)\n\u001b[32m    560\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m context \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m:\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1585\u001b[39m, in \u001b[36mSolid.revolve\u001b[39m\u001b[34m(cls, section, angle, axis, inner_wires)\u001b[39m\n\u001b[32m   1576\u001b[39m     section_face = section\n\u001b[32m   1578\u001b[39m revol_builder = BRepPrimAPI_MakeRevol(\n\u001b[32m   1579\u001b[39m     section_face.wrapped,\n\u001b[32m   1580\u001b[39m     axis.wrapped,\n\u001b[32m   1581\u001b[39m     angle * DEG2RAD,\n\u001b[32m   1582\u001b[39m     \u001b[38;5;28;01mTrue\u001b[39;00m,\n\u001b[32m   1583\u001b[39m )\n\u001b[32m-> \u001b[39m\u001b[32m1585\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[38;5;28mcls\u001b[39m(TopoDS.Solid(\u001b[30;43mrevol_builder\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mShape\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m)\u001b[39;49m))\n\n\u001b[31mStdFail_NotDone\u001b[39m: BRep_API: command not done",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nfrom build123d import *\nimport numpy as np, os\n\nR_FAN=1.00; R_NAC_O=1.15; R_HUB=0.32; R_SPLIT=0.55; Z_FAN=0.0; Z_TE=2.6; T_DISC=0.06\n\ndef revolve_section(pts_rz):\n    # pts: (r,z) closed polyline in XZ plane (r>=0), revolved about Z\n    pts = [Vector(r,0,z) for r,z in pts_rz]\n    l = Polyline(pts + [pts[0]])\n    return revolve(make_face(l), Axis.Z)\n\nnacelle_pts = ([(1.05,-0.5),(1.12,-0.2),(1.15,0.6),(1.10,1.5),(0.95,2.6)] +\n               [(0.98,2.6),(1.05,1.5),(1.08,0.6),(1.02,-0.15),(1.00,-0.5)])\nnacelle = revolve_section(nacelle_pts)\n\ncore_pts = [(0.02,-0.45),(0.20,-0.30),(0.28,0.0),(0.32,0.6),(0.30,1.3),\n            (0.34,1.5),(0.30,2.0),(0.12,2.6),(0.0,3.0),(0.0,-0.45)]\ncore = revolve_section(core_pts)\n\nsplit_pts = [(R_HUB,0.3),(R_SPLIT,0.3),(R_SPLIT+0.03,0.35),(R_SPLIT+0.03,0.45),(R_HUB+0.02,0.5)]\nsplitter = revolve_section(split_pts)\n\ndef disc(z, r1, r2, t=T_DISC):\n    return Pos(0,0,z) * (Cylinder(r2, t) - Cylinder(r1, t+0.01))\n\nfan   = disc(Z_FAN, R_HUB+0.02, R_FAN)\ncomp  = [disc(z, R_HUB+0.02, R_SPLIT+0.03) for z in (0.4,0.7,1.0)]\nturb  = [disc(z, R_HUB+0.02, R_SPLIT+0.03) for z in (1.55,1.85)]\nogv   = disc(2.2, 0.28, R_FAN)\n\nparts = {\"nacelle\":[nacelle], \"core\":[core], \"splitter\":[splitter], \"fan\":[fan],\n         \"compressor\":comp, \"turbine\":turb, \"ogv\":[ogv]}\n\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nfrom build123d import Mesher\nfor name, solids in parts.items():\n    for s in solids:\n        bb = s.bounding_box()\n        print(name, \"z,rmax:\", round(bb.min.Z,3), round(bb.max.Z,3), round(bb.max.Y,3))\n    m = Mesher(unit=Mesher.Unit.M)\n    m.add_shape(solids)\n    m.write(f\"constant/triSurface/{name}.stl\")\nprint(\"STLs written\")",
+      "exit_code": 0,
+      "seconds": 240.0129043650013,
+      "output": "",
+      "image": ""
+    },
+    {
+      "cmd": "print(\"poll\"); import os; print(os.listdir(\"constant/triSurface\"))",
+      "exit_code": 0,
+      "seconds": 240.01970999100013,
+      "output": "",
+      "image": ""
+    },
+    {
+      "cmd": "print(\"waiting\")",
+      "exit_code": 0,
+      "seconds": 240.04975036900214,
+      "output": "",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 2306,
+      "fenced": true,
+      "text_chars": 308,
+      "thinking_chars": 4749,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789403066.025984
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 968,
+      "fenced": true,
+      "text_chars": 114,
+      "thinking_chars": 714,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789403112.8248599
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 74,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 33,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789403363.502082
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 150,
+      "fenced": true,
+      "text_chars": 112,
+      "thinking_chars": 335,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789403618.7046278
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T25-20260914-162220-c9d0/t25/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T25-20260914-162220-c9d0/t25/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T25-20260914-162220-c9d0/t25/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T25-20260914-162220-c9d0/t25/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T25-20260914-162220-c9d0/t25/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T25-20260914-162220-c9d0/t25/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 4,
+    "steps": 3,
+    "seconds": 980.3,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

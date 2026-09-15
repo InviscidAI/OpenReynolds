@@ -1,0 +1,562 @@
+{
+  "run_id": "20260914-165512-f021",
+  "case": "T7",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7",
+  "started_at": "2026-09-14T16:55:13",
+  "ended_at": "2026-09-14T17:02:15",
+  "seconds": 419.4,
+  "n_turns": 22,
+  "n_steps": 21,
+  "first_mesh_step": 8,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.1699,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 14407,
+    "cache_read": 185728,
+    "cache_write": 0,
+    "output": 6994
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import subprocess, os\nos.chdir(\"/home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7\")\ndict_txt = r\"\"\"\nvertices\n(\n    (0    0    0)\n    (0.1  0    0)\n    (0.1  0.06 0)\n    (0    0.06 0)\n    (0    0    0.04)\n    (0.1  0    0.04)\n    (0.1  0.06 0.04)\n    (0    0.06 0.04)\n);\nblocks ( hex (0 1 2 3 4 5 6 7) (25 15 10) simpleGrading (1 1 1) );\nboundary ( allWalls { type wall; faces ((0 3 7 4)); } );\n\"\"\".replace(\"allWalls { type wall; faces ((0 3 7 4)); }\",\n            \"allWalls { type wall; faces ((0 3 7 4) (1 2 6 5) (0 1 5 4) (3 2 6 7) (4 5 6 7) (0 1 2 3)); }\")\nimport pathlib; pathlib.Path(\"system\").mkdir(exist_ok=True)\npathlib.Path(\"system/blockMeshDict\").write_text(\"convertToMeters 1;\\n\" + dict_txt)\npathlib.Path(\"system/controlDict\").write_text(\"// minimal\")\nprint(subprocess.run([\"blockMesh\"], capture_output=True, text=True).returncode)",
+      "exit_code": 0,
+      "seconds": 0.2010971760028042,
+      "output": "1",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.stdout[-1500:], r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.8026326729996072,
+      "output": "rapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From bool Foam::IOobject::readHeader(Foam::dictionary&, Foam::Istream&)\n    in file db/IOobject/IOobjectReadHeader.C at line 118\n    Reading \"system/controlDict\" at line 2\n    First token could not be read or is not 'FoamFile'\n\nCheck header is of the form:\n\n/*--------------------------------*- C++ -*----------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       dictionary;\n    location    \"system\";\n    object      controlDict;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n \n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nproblem while reading header for object controlDict\n\nfile: system/controlDict at line 2.\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 650.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "hdr = \"\"\"FoamFile\n{\n    version 2.0; format ascii; class dictionary;\n}\n\"\"\"\nctrl = hdr + \"\"\"application blockMesh; startTime 0; verbose 2;\n\"\"\"\nimport pathlib\npathlib.Path(\"system/controlDict\").write_text(ctrl)\nbd = hdr + \"\"\"\nvertices\n(\n    (0 0 0) (0.1 0 0) (0.1 0.06 0) (0 0.06 0)\n    (0 0 0.04) (0.1 0 0.04) (0.1 0.06 0.04) (0 0.06 0.04)\n);\nblocks ( hex (0 1 2 3 4 5 6 7) (25 15 10) simpleGrading (1 1 1) );\nboundary ( allWalls { type wall; faces ( (0 3 7 4) (1 2 6 5) (0 1 5 4) (3 2 6 7) (4 5 6 7) (0 1 2 3) ); } );\n\"\"\"\npathlib.Path(\"system/blockMeshDict\").write_text(bd)\ntopo = hdr + \"\"\"\nactions\n(\n  { name heater; type cellSet; action new; source boxToCell;\n    sourceInfo { box (0.01 0.02 0) (0.03 0.04 0.02); } }\n  { name heater; type cellZoneSet; action new; source setToCellZone;\n    sourceInfo { set heater; } }\n  { name cooler; type cellSet; action new; source boxToCell;\n    sourceInfo { box (0.07 0.02 0.02) (0.09 0.04 0.04); } }\n  { name cooler; type cellZoneSet; action new; source setToCellZone;\n    sourceInfo { set cooler; } }\n);\n\"\"\"\npathlib.Path(\"system/topoSetDict\").write_text(topo)\nr1 = subprocess.run([\"blockMesh\"], capture_output=True, text=True); print(\"blockMesh\", r1.returncode, r1.stdout[-300:])\nr2 = subprocess.run([\"topoSet\"], capture_output=True, text=True); print(\"topoSet\", r2.returncode, r2.stdout[-500:])",
+      "exit_code": 0,
+      "seconds": 1.7548652240002411,
+      "output": "blockMesh 1 leModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n\ntopoSet 1 sical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.stdout[-2500:])",
+      "exit_code": 0,
+      "seconds": 0.20106131600186927,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : blockMesh\nDate   : Sep 14 2026\nTime   : 16:56:42\nHost   : yc-demo\nPID    : 302810\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(\"rc\", r.returncode); print(r.stderr[-2000:])",
+      "exit_code": 0,
+      "seconds": 0.20104551600161358,
+      "output": "rc 1\n\n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'object' not found in dictionary \n\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = Foam::word]\n    in file lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "def hdr(obj): return f\"\"\"FoamFile\n{{\n    version 2.0; format ascii; class dictionary; object \"{obj}\";\n}}\n\"\"\"\npathlib.Path(\"system/controlDict\").write_text(hdr(\"controlDict\") + \"application blockMesh;\\nstartTime 0;\\n\")\npathlib.Path(\"system/blockMeshDict\").write_text(hdr(\"blockMeshDict\") + bd.replace(hdr, \"\").strip())\npathlib.Path(\"system/topoSetDict\").write_text(hdr(\"topoSetDict\") + topo.replace(hdr, \"\").strip())\nr1 = subprocess.run([\"blockMesh\"], capture_output=True, text=True); print(\"blockMesh\", r1.returncode, r1.stderr[-200:])\nr2 = subprocess.run([\"topoSet\"], capture_output=True, text=True); print(\"topoSet\", r2.returncode, r2.stdout[-400:], r2.stderr[-200:])",
+      "exit_code": 1,
+      "seconds": 2.3576814309999463,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[6]\u001b[39m\u001b[32m, line 7\u001b[39m\n\u001b[32m      3\u001b[39m     version \u001b[32m2.0\u001b[39m; format ascii; \u001b[38;5;28;01mclass\u001b[39;00m dictionary; object \u001b[33m\"{obj}\"\u001b[39m;\n\u001b[32m      4\u001b[39m }}\n\u001b[32m      5\u001b[39m \"\"\"\n\u001b[32m      6\u001b[39m pathlib.Path(\u001b[33m\"system/controlDict\"\u001b[39m).write_text(hdr(\u001b[33m\"controlDict\"\u001b[39m) + \u001b[33m\"application blockMesh;\\nstartTime 0;\\n\"\u001b[39m)\n\u001b[32m----> \u001b[39m\u001b[32m7\u001b[39m pathlib.Path(\u001b[33m\"system/blockMeshDict\"\u001b[39m).write_text(hdr(\u001b[33m\"blockMeshDict\"\u001b[39m) + bd.replace(hdr, \u001b[33m\"\"\u001b[39m).strip())\n\u001b[32m      8\u001b[39m pathlib.Path(\u001b[33m\"system/topoSetDict\"\u001b[39m).write_text(hdr(\u001b[33m\"topoSetDict\"\u001b[39m) + topo.replace(hdr, \u001b[33m\"\"\u001b[39m).strip())\n\u001b[32m      9\u001b[39m r1 = subprocess.run([\u001b[33m\"blockMesh\"\u001b[39m], capture_output=\u001b[38;5;28;01mTrue\u001b[39;00m, text=\u001b[38;5;28;01mTrue\u001b[39;00m); print(\u001b[33m\"blockMesh\"\u001b[39m, r1.returncode, r1.stderr[-\u001b[32m200\u001b[39m:])\n\u001b[32m     10\u001b[39m r2 = subprocess.run([\u001b[33m\"topoSet\"\u001b[39m], capture_output=\u001b[38;5;28;01mTrue\u001b[39;00m, text=\u001b[38;5;28;01mTrue\u001b[39;00m); print(\u001b[33m\"topoSet\"\u001b[39m, r2.returncode, r2.stdout[-\u001b[32m400\u001b[39m:], r2.stderr[-\u001b[32m200\u001b[39m:])\n\n\u001b[31mTypeError\u001b[39m: replace() argument 1 must be str, not function",
+      "image": ""
+    },
+    {
+      "cmd": "import re\ndef header(obj): return 'FoamFile\\n{\\n    version 2.0; format ascii; class dictionary; object \"%s\";\\n}\\n' % obj\nbd_body = re.sub(r'F^|FoamFile.*\\}', '', bd, flags=re.S)  # not reliable; just rebuild\nbd_body = \"\"\"\nvertices\n(\n    (0 0 0) (0.1 0 0) (0.1 0.06 0) (0 0.06 0)\n    (0 0 0.04) (0.1 0 0.04) (0.1 0.06 0.04) (0 0.06 0.04)\n);\nblocks ( hex (0 1 2 3 4 5 6 7) (25 15 10) simpleGrading (1 1 1) );\nboundary ( allWalls { type wall; faces ( (0 3 7 4) (1 2 6 5) (0 1 5 4) (3 2 6 7) (4 5 6 7) (0 1 2 3) ); } );\n\"\"\"\ntopo_body = \"\"\"\nactions\n(\n  { name heater; type cellSet; action new; source boxToCell;\n    sourceInfo { box (0.01 0.02 0) (0.03 0.04 0.02); } }\n  { name heater; type cellZoneSet; action new; source setToCellZone;\n    sourceInfo { set heater; } }\n  { name cooler; type cellSet; action new; source boxToCell;\n    sourceInfo { box (0.07 0.02 0.02) (0.09 0.04 0.04); } }\n  { name cooler; type cellZoneSet; action new; source setToCellZone;\n    sourceInfo { set cooler; } }\n);\n\"\"\"\npathlib.Path(\"system/controlDict\").write_text(header(\"controlDict\") + \"application blockMesh;\\n\")\npathlib.Path(\"system/blockMeshDict\").write_text(header(\"blockMeshDict\") + bd_body)\npathlib.Path(\"system/topoSetDict\").write_text(header(\"topoSetDict\") + topo_body)\nr1 = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nr2 = subprocess.run([\"topoSet\"], capture_output=True, text=True)\nprint(\"blockMesh\", r1.returncode, \"topoSet\", r2.returncode)\nprint(r2.stdout[-600:])",
+      "exit_code": 0,
+      "seconds": 1.7047676379988843,
+      "output": "blockMesh 1 topoSet 1\n::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.stderr[-800:]); print(\"---\"); print(r.stdout[-800:])",
+      "exit_code": 0,
+      "seconds": 0.20136231599826715,
+      "output": "--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'deltaT' not found in dictionary \"/home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/system/controlDict\"\n\n\nfile: system/controlDict at line 5.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting\n\n\n---\nFOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time",
+      "image": ""
+    },
+    {
+      "cmd": "cd_txt = \"\"\"application blockMesh;\nstartFrom startTime;\nstartTime 0;\nstopAt endTime;\nendTime 1;\ndeltaT 1;\nwriteControl timeStep;\nwriteInterval 1;\nrunTimeModifiable true;\n\"\"\"\npathlib.Path(\"system/controlDict\").write_text(header(\"controlDict\") + cd_txt)\nr1 = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nr2 = subprocess.run([\"topoSet\"], capture_output=True, text=True)\nprint(\"blockMesh\", r1.returncode, \"| topoSet\", r2.returncode)\nprint(r1.stdout[-200:], r2.stdout[-600:])",
+      "exit_code": 0,
+      "seconds": 3.10794894799983,
+      "output": "blockMesh 0 | topoSet 0\ngBox: (0 0 0) (0.1 0.06 0.04)\n  nPoints: 4576\n  nCells: 3750\n  nFaces: 12025\n  nInternalFaces: 10475\n----------------\nPatches\n----------------\n  patch 0 (start: 10475 size: 1550) name: allWalls\n\nEnd\n\n ter\n    Applying source boxToCell\n    Adding cells with centre within boxes 1((0.01 0.02 0) (0.03 0.04 0.02))\n    cellSet heater now size 132\nCreated cellZoneSet heater\n    Applying source setToCellZone\n    Adding all cells from cell set: heater ...\n    cellZoneSet heater now size 132\nCreated cellSet cooler\n    Applying source boxToCell\n    Adding cells with centre within boxes 1((0.07 0.02 0.02) (0.09 0.04 0.04))\n    cellSet cooler now size 127\nCreated cellZoneSet cooler\n    Applying source setToCellZone\n    Adding all cells from cell set: cooler ...\n    cellZoneSet cooler now size 127\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "cm = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(cm.returncode)\nprint(\"\\n\".join([l for l in (cm.stdout+cm.stderr).splitlines() if re.search(r\"Mesh OK|FAIL|error|heater|cooler|allWalls|zones\", l, re.I)][:20]))",
+      "exit_code": 0,
+      "seconds": 1.0031012979998195,
+      "output": "1\n--> FOAM FATAL ERROR: (openfoam-2512)",
+      "image": ""
+    },
+    {
+      "cmd": "print((cm.stdout+cm.stderr)[-1200:])",
+      "exit_code": 0,
+      "seconds": 0.8024765629998001,
+      "output": "erting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "pathlib.Path(\"system/fvSchemes\").write_text(header(\"fvSchemes\"))\npathlib.Path(\"system/fvSolution\").write_text(header(\"fvSolution\"))\ncm = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(cm.returncode)\nprint(\"\\n\".join([l for l in (cm.stdout+cm.stderr).splitlines() if re.search(r\"Mesh OK|FAILED|error|heater|cooler|allWalls|zone\", l, re.I)]))",
+      "exit_code": 0,
+      "seconds": 0.20103589499922236,
+      "output": "1\n--> FOAM FATAL IO ERROR: (openfoam-2512)",
+      "image": ""
+    },
+    {
+      "cmd": "print((cm.stdout+cm.stderr)[-1000:])",
+      "exit_code": 0,
+      "seconds": 0.050920746001793304,
+      "output": "up/work/T7-20260914-165512-f021/t7\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'divSchemes' not found in dictionary \"system/fvSchemes\"\n\n\nfile: system/fvSchemes\n\n    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const\n    in file db/dictionary/dictionary.C at line 457.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "fvs = \"\"\"ddtSchemes { default Euler; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default Gauss linear; }\nlaplacianSchemes { default Gauss linear orthogonal; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default orthogonal; }\nwallDist { method meshWave; }\n\"\"\"\npathlib.Path(\"system/fvSchemes\").write_text(header(\"fvSchemes\") + fvs)\npathlib.Path(\"system/fvSolution\").write_text(header(\"fvSolution\") + \"solvers { p_rgh { solver GAMG; tolerance 1e-7; relTol 0.01; smoother GaussSeidel; } }\\nrelaxationFactors { fields { p_rgh 0.7; } }\\n\")\ncm = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\ntxt = cm.stdout + cm.stderr\nprint(cm.returncode)\nprint(\"\\n\".join([l for l in txt.splitlines() if re.search(r\"Mesh OK|FAILED|heater|cooler|allWalls|zone\", l, re.I)]))",
+      "exit_code": 0,
+      "seconds": 1.0031226680002874,
+      "output": "0\n    point zones:      0\n    face zones:       0\n    cell zones:       2\n    allWalls            1550     1552     ok (closed singly connected)      \nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    heater              132          242          8.448e-06    (0.008 0.02 0) (0.032 0.04 0.02)\n    cooler              127          231          8.128e-06    (0.068 0.02 0.02) (0.092 0.04 0.04)\nChecking basic pointZone addressing...\n    No pointZones found.\nMesh OK.",
+      "image": ""
+    },
+    {
+      "cmd": "topo_body = \"\"\"\nactions\n(\n  { name heater; type cellSet; action new; source boxToCell;\n    sourceInfo { box (0.008 0.02 0) (0.032 0.04 0.02); } }\n  { name heater; type cellZoneSet; action new; source setToCellZone;\n    sourceInfo { set heater; } }\n  { name cooler; type cellSet; action new; source boxToCell;\n    sourceInfo { box (0.068 0.02 0.02) (0.092 0.04 0.04); } }\n  { name cooler; type cellZoneSet; action new; source setToCellZone;\n    sourceInfo { set cooler; } }\n);\n\"\"\"\npathlib.Path(\"system/topoSetDict\").write_text(header(\"topoSetDict\") + topo_body)\nr = subprocess.run([\"topoSet\"], capture_output=True, text=True)\ncm = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(cm.returncode)\nprint([l for l in cm.stdout.splitlines() if re.search(r\"heater|cooler|Mesh OK\", l)])",
+      "exit_code": 0,
+      "seconds": 3.460046432999661,
+      "output": "0\n['    heater              150          252          9.6e-06      (0.008 0.02 0) (0.032 0.04 0.02)', '    cooler              150          252          9.6e-06      (0.068 0.02 0.02) (0.092 0.04 0.04)', 'Mesh OK.']",
+      "image": ""
+    },
+    {
+      "cmd": "topo_body = topo_body.replace(\"(0.008 0.02 0) (0.032 0.04 0.02)\", \"(0.008 0.02 0) (0.028 0.04 0.02)\")\ntopo_body = topo_body.replace(\"(0.068 0.02 0.02) (0.092 0.04 0.04)\", \"(0.068 0.02 0.02) (0.088 0.04 0.04)\")\npathlib.Path(\"system/topoSetDict\").write_text(header(\"topoSetDict\") + topo_body)\nsubprocess.run([\"topoSet\"], capture_output=True)\ncm = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint([l for l in cm.stdout.splitlines() if re.search(r\"heater|cooler|Mesh OK\", l)])",
+      "exit_code": 0,
+      "seconds": 6.167547989000013,
+      "output": "['    heater              125          216          8e-06        (0.008 0.02 0) (0.028 0.04 0.02)', '    cooler              125          216          8e-06        (0.068 0.02 0.02) (0.088 0.04 0.04)', 'Mesh OK.']",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np, matplotlib.pyplot as plt\nfrom pyvista import PVMeshReader?",
+      "exit_code": 0,
+      "seconds": 0.802474563002761,
+      "output": "Object `PVMeshReader` not found.\n[no picture came back from this cell, and it looks like it drew one. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv, pathlib, numpy as np, matplotlib.pyplot as plt\npathlib.Path(\"t7.foam\").write_text(\"\")\nreader = pv.OpenFOAMReader(pathlib.Path(\"t7.foam\").as_posix())\nreader.set_time_value(0)\nmesh = reader.read()\nblk = mesh[0]\nblk[\"zone\"] = np.zeros(blk.n_cells, dtype=int)\nzid = {n: i+1 for i, n in enumerate(blk.cell_data.get(\"cellZoneID\", []) if False)}  # fallback\n# use cellTypes? simpler: recompute via box membership\nc = blk.cell_centers().points\nzone = np.zeros(len(c), dtype=int)\nzone[(c[:,0]>0.008)&(c[:,0]<0.028)&(c[:,1]>0.02)&(c[:,1]<0.04)&(c[:,2]<0.02)] = 1\nzone[(c[:,0]>0.068)&(c[:,0]<0.088)&(c[:,1]>0.02)&(c[:,1]<0.04)&(c[:,2]>0.02)] = 2\nblk[\"zone\"] = zone\nfig = pv.Plotter(window_size=[900, 400]).show(screenshot=\"plot.png\")\np = pv.Plotter(shape=(1, 2), window_size=[900, 400])\nsl = blk.slice(normal=[0, 1, 0], origin=(0.05, 0.03, 0.02))\np.subplot(0, 0)\np.add_mesh(sl, scalars=\"zone\", cmap=[\"gray\", \"red\", \"blue\"], clim=[0, 2], show_scalar_bar=False)\np.view_xz(); p.add_text(\"y-slice x-z\")\np.subplot(0, 1)\nsl2 = blk.slice(normal=[1, 0, 0], origin=(0.05, 0.03, 0.02))\np.add_mesh(sl2, scalars=\"zone\", cmap=[\"gray\", \"red\", \"blue\"], clim=[0, 2], show_scalar_bar=False)\np.view_yz(); p.add_text(\"x-slice y-z\")\np.show(screenshot=\"plot.png\")\nfrom IPython.display import Image\nImage(\"plot.png\")",
+      "exit_code": 1,
+      "seconds": 0.05066138700203737,
+      "output": "\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[18]\u001b[39m\u001b[32m, line 8\u001b[39m\n\u001b[31m    \u001b[39m\u001b[31mzid = {n: i+1 for i, n in enumerate(blk.cell_data.get(\"cellZoneID\", []) if False)}  # fallback\u001b[39m\n                                        ^\n\u001b[31mSyntaxError\u001b[39m\u001b[31m:\u001b[39m expected 'else' after 'if' expression",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv, numpy as np\nimport pathlib\npathlib.Path(\"t7.foam\").write_text(\"\")\nreader = pv.OpenFOAMReader(\"t7.foam\")\nreader.set_time_value(0)\nblk = reader.read()[0]\nc = blk.cell_centers().points\nzone = np.zeros(len(c), dtype=int)\nzone[(c[:, 0] > 0.008) & (c[:, 0] < 0.028) & (c[:, 1] > 0.02) & (c[:, 1] < 0.04) & (c[:, 2] < 0.02)] = 1\nzone[(c[:, 0] > 0.068) & (c[:, 0] < 0.088) & (c[:, 1] > 0.02) & (c[:, 1] < 0.04) & (c[:, 2] > 0.02)] = 2\nblk[\"zone\"] = zone\np = pv.Plotter(shape=(1, 2), window_size=[900, 400])\nsl = blk.slice(normal=[0, 1, 0], origin=(0.05, 0.03, 0.02))\np.subplot(0, 0)\np.add_mesh(sl, scalars=\"zone\", cmap=[\"gray\", \"red\", \"blue\"], clim=[0, 2])\np.view_xz(); p.add_text(\"x-z slice\")\np.subplot(0, 1)\nsl2 = blk.slice(main=[0, 1, 0], axis=2, origin=(0.05, 0.03, 0.02), normal=[1, 0, 0])\np.add_mesh(sl2, scalars=\"zone\", cmap=[\"gray\", \"red\", \"blue\"], clim=[0, 2])\np.view_yz()\np.show(screenshot=\"plot.png\")\nfrom IPython.display import Image\nImage(\"plot.png\")",
+      "exit_code": 1,
+      "seconds": 0.2011196450002899,
+      "output": "/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[19]\u001b[39m\u001b[32m, line 5\u001b[39m\n\u001b[32m      1\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m pyvista \u001b[38;5;28;01mas\u001b[39;00m pv, numpy \u001b[38;5;28;01mas\u001b[39;00m np\n\u001b[32m      2\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m pathlib\n\u001b[32m      3\u001b[39m pathlib.Path(\u001b[33m\"t7.foam\"\u001b[39m).write_text(\u001b[33m\"\"\u001b[39m)\n\u001b[32m      4\u001b[39m reader = pv.OpenFOAMReader(\u001b[33m\"t7.foam\"\u001b[39m)\n\u001b[32m----> \u001b[39m\u001b[32m5\u001b[39m reader.set_time_value(\u001b[32m0\u001b[39m)\n\u001b[32m      6\u001b[39m blk = reader.read()[\u001b[32m0\u001b[39m]\n\u001b[32m      7\u001b[39m c = blk.cell_centers().points\n\u001b[32m      8\u001b[39m zone = np.zeros(len(c), dtype=int)\n\n\u001b[31mAttributeError\u001b[39m: 'OpenFOAMReader' object has no attribute 'set_time_value'",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv, numpy as np\nimport pathlib\npathlib.Path(\"t7.foam\").write_text(\"\")\nreader = pv.OpenFOAMReader(\"t7.foam\")\nm = reader.read()\nblk = m[0]\nc = blk.cell_centers().points\nzone = np.zeros(len(c), dtype=int)\nzone[(c[:, 0] > 0.008) & (c[:, 0] < 0.028) & (c[:, 1] > 0.02) & (c[:, 1] < 0.04) & (c[:, 2] < 0.02)] = 1\nzone[(c[:, 0] > 0.068) & (c[:, 0] < 0.088) & (c[:, 1] > 0.02) & (c[:, 1] < 0.04) & (c[:, 2] > 0.02)] = 2\nblk[\"zone\"] = zone\np = pv.Plotter(shape=(1, 2), window_size=[900, 400])\nsl = blk.slice(normal=[0, 1, 0], origin=(0.05, 0.03, 0.02))\np.subplot(0, 0)\np.add_mesh(sl, scalars=\"zone\", cmap=[\"gray\", \"red\", \"blue\"], clim=[0, 2], show_scalar_bar=False)\np.view_xz()\np.subplot(0, 1)\nsl2 = blk.slice(normal=[1, 0, 0], origin=(0.05, 0.03, 0.02))\np.add_mesh(sl2, scalars=\"zone\", cmap=[\"gray\", \"red\", \"blue\"], clim=[0, 2], show_scalar_bar=False)\np.view_yz()\np.show(screenshot=\"plot.png\")\nfrom IPython.display import Image\nImage(\"plot.png\")",
+      "exit_code": 0,
+      "seconds": 1.304061296999862,
+      "output": "\u001b[0m\u001b[33m2026-09-14 17:01:33.123 (  22.551s) [    72AD26BE3780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 17:01:33.123 (  22.552s) [    72AD26BE3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 17:01:33.136 (  22.564s) [    72AD26BE3780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_302598/947503259.py:21: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  p.show(screenshot=\"plot.png\")",
+      "image": "2 pictures"
+    },
+    {
+      "cmd": "bd_body = \"\"\"\nvertices\n(\n    (0 0 0) (0.1 0 0) (0.1 0.06 0) (0 0.06 0)\n    (0 0 0.04) (0.1 0 0.04) (0.1 0.06 0.04) (0 0.06 0.04)\n);\nblocks ( hex (0 1 2 3 4 5 6 7) (50 30 20) simpleGrading (1 1 1) );\nboundary ( allWalls { type wall; faces ( (0 3 7 4) (1 2 6 5) (0 1 5 4) (3 2 6 7) (4 5 6 7) (0 1 2 3) ); } );\n\"\"\"\npathlib.Path(\"system/blockMeshDict\").write_text(header(\"blockMeshDict\") + bd_body)\nsubprocess.run([\"blockMesh\"], capture_output=True)\nsubprocess.run([\"topoSet\"], capture_output=True)\ncm = subprocess.run([\"checkMesh\"], capture_output=True, text=True)\nprint(cm.returncode)\nprint([l for l in cm.stdout.splitlines() if re.search(r\"heater|cooler|Mesh OK|cells\", l)])",
+      "exit_code": 0,
+      "seconds": 4.060563679999177,
+      "output": "0\n['    cells:            30000', 'Overall number of cells of each type:', '    heater              1000         1331         8e-06        (0.008 0.02 0) (0.028 0.04 0.02)', '    cooler              1000         1331         8e-06        (0.068 0.02 0.02) (0.088 0.04 0.04)', 'Mesh OK.']",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 667,
+      "fenced": true,
+      "text_chars": 253,
+      "thinking_chars": 610,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404958.7592347
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 84,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 33,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404967.6735687
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 584,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 93,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404993.0021098
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 71,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405002.2267838
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 85,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 26,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405024.6284437
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 250,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 72,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405049.747699
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 606,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405076.5569613
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 81,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405087.6423404
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 183,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405094.1939173
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 268,
+      "fenced": true,
+      "text_chars": 215,
+      "thinking_chars": 454,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405111.366578
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 61,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405119.8706555
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 161,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 36,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405131.7187333
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 61,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405139.7082877
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 283,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405155.2355173
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 645,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 996,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405180.9422145
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 402,
+      "fenced": true,
+      "text_chars": 80,
+      "thinking_chars": 304,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405198.1375492
+    },
+    {
+      "turn": 17,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 221,
+      "fenced": true,
+      "text_chars": 114,
+      "thinking_chars": 399,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405217.4529
+    },
+    {
+      "turn": 18,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 628,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 323,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405244.3517647
+    },
+    {
+      "turn": 19,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 485,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 60,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405265.4856288
+    },
+    {
+      "turn": 20,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 457,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405287.3656034
+    },
+    {
+      "turn": 21,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 555,
+      "fenced": true,
+      "text_chars": 157,
+      "thinking_chars": 590,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405311.4737742
+    },
+    {
+      "turn": 22,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 156,
+      "fenced": false,
+      "text_chars": 0,
+      "thinking_chars": 364,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789405326.3860743
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "cavity dimensions, 100 x 60 x 40 mm",
+      "measured": null
+    },
+    {
+      "property": "both cell zones present by name, with their cell counts and their centroids",
+      "measured": null
+    },
+    {
+      "property": "zone size, 20 mm cube each, and their positions relative to floor and ceiling",
+      "measured": null
+    },
+    {
+      "property": "the boundary is a single named patch covering the whole cavity",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "n/a",
+          "concern": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/t",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/t",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T7-20260914-165512-f021/t7/constant/t",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 22,
+    "steps": 21,
+    "seconds": 421.9,
+    "killed": false,
+    "first_mesh_step": 8,
+    "first_mesh_turn": 9
+  }
+}

@@ -1,0 +1,351 @@
+{
+  "run_id": "20260914-163843-4f6e",
+  "case": "T3",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T3-20260914-163843-4f6e",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T3-20260914-163843-4f6e/t3",
+  "started_at": "2026-09-14T16:38:44",
+  "ended_at": "2026-09-14T16:55:11",
+  "seconds": 981.8,
+  "n_turns": 13,
+  "n_steps": 11,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0.218,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 12662,
+    "cache_read": 185856,
+    "cache_write": 0,
+    "output": 11187
+  },
+  "stopped": "time",
+  "expects": "done",
+  "passed": false,
+  "why": "nothing in the case directory has been meshed yet",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import numpy as np\nfrom build123d import *\nimport matplotlib.pyplot as plt\n\n# --- parameters (metres) ---\nW = 0.006      # channel width\nL = 0.120      # overall length\nT = 0.003      # extrusion thickness (plane-2D slab)\nNLOOPS = 4\nALPHA = np.deg2rad(55)   # branch leave angle\nNPTS = 240               # centerline samples per loop\nLOOP_PITCH = 0.024\nX0 = 0.012               # first loop station\nL1 = 0.014               # leave connector length\nR_LOOP = 0.006           # loop arc radius\nGAMMA = np.deg2rad(200)  # loop turn angle (clockwise)\n\n# main channel box (x from 0..L, y -W/2..W/2)\nmain = Pos(L/2, 0, T/2) * Box(L, W, T)\n\ndef loop_wire(xs):\n    \"\"\"centerline of one teardrop loop leaving top wall at (xs, W/2)\"\"\"\n    a = np.array([xs, W/2])\n    d1 = np.array([np.cos(ALPHA), np.sin(ALPHA)])\n    p1 = a + L1*d1\n    n0 = np.array([np.sin(ALPHA), -np.cos(ALPHA)])  # right normal (clockwise turn)\n    center = p1 + R_LOOP*n0\n    pts = [tuple(a), tuple(p1)]\n    for i in range(1, 60):  # arc samples (clockwise)\n        th = GAMMA*i/60\n        ang = np.arctan2(p1[1]-center[1], p1[0]-center[0]) - th\n        pts.append((center[0]+R_LOOP*np.cos(ang), center[1]+R_LOOP*np.sin(ang)))\n    d_end = np.array([np.cos(ALPHA-GAMMA), np.sin(ALPHA-GAMMA)])\n    p_end = pts[-1]\n    # extend return connector so it penetrates the main channel\n    l2 = (p_end[1] + W) / abs(d_end[1])\n    pts.append((p_end[0] + l2*d_end[0], p_end[1] + l2*d_end[1]))\n    return Wire(Edge.make_spline([Vector(*p, 0) for p in pts]))\n\nloops = []\nfor k in range(NLOOPS):\n    xs = X0 + k*LOOP_PITCH\n    w = loop_wire(xs)\n    a = w.position_at(0)\n    d = w.tangent_at(0)\n    pln = Plane(origin=a, x_dir=(0,0,1), z_dir=Vector(*d,0))\n    sec = Rectangle(T, W).locate(Location(pln))  # width T along z, height W in-plane\n    loops.append(sweep(sec, path=w, transition=Transition.ROUND))\n\nfluid = main\nfor lp in loops:\n    fluid = fluid + lp\n\nprint(\"volume (m^3):\", fluid.volume)\nprint(\"bbox:\", fluid.bounding_box().min, fluid.bounding_box().max)\nprint(\"expected union volume approx box+loops:\",\n      L*W*T, \"+\", sum(lp.volume for lp in loops))\n\n# 2D outline of the top face for a visual check\ntop = fluid.faces().filter_by(Plane.ZY.reference) if False else None\nf = max(fluid.faces(), key=lambda ff: ff.center().Z)\nxs_, ys_ = [], []\nfor w_ in [Wire(f.edges()[0])]:\n    pass\n# gather boundary sampled points of all horizontal-ish top edges\npts2 = []\ntopface = [fc for fc in fluid.faces() if abs(fc.normal_at().Z) > 0.999]\nbig = max(topface, key=lambda fc: fc.area)\nfor e in big.edges():\n    try:\n        pts2.append([Vector(*p) for p in e.sample(20)])\n    except Exception as ex:\n        print(\"edge sample fail\", ex)\nfig, ax = plt.subplots(figsize=(16,4))\nfor seg in pts2:\n    pts2a = np.array(seg)\n    ax.plot(pts2a[:,0], pts2a[:,1], 'b.-', ms=2)\nax.set_aspect('equal'); ax.grid(True)\nplt.savefig(\"outline.png\", dpi=120); plt.show()",
+      "exit_code": 0,
+      "seconds": 2.7589112519999617,
+      "output": "volume (m^3): 4.332264279603368e-06\nbbox: Vector: (X=0.007911, Y=-0.006421, Z=-0.0015) Vector: (X=0.105952, Y=0.020038, Z=0.0015)\nexpected union volume approx box+loops: 2.1599999999999996e-06 + 4.332307433547259e-06\nedge sample fail 'Edge' object has no attribute 'sample'\nedge sample fail 'Edge' object has no attribute 'sample'\nedge sample fail 'Edge' object has no attribute 'sample'\nedge sample fail 'Edge' object has no attribute 'sample'",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "print(\"main vol:\", main.volume, \"bbox:\", main.bounding_box())\nfor i, lp in enumerate(loops):\n    bb = lp.bounding_box()\n    print(i, \"loop vol\", round(lp.volume,12), \"bbox y\", round(bb.min.Y,5), round(bb.max.Y,5))",
+      "exit_code": 0,
+      "seconds": 0.10082438300014473,
+      "output": "main vol: 2.1599999999999996e-06 bbox: bbox: 0.0 <= x <= 0.12, -0.003 <= y <= 0.003, 0.0 <= z <= 0.003\n0 loop vol 1.083077e-06 bbox y -0.00642 0.02004\n1 loop vol 1.083077e-06 bbox y -0.00642 0.02004\n2 loop vol 1.083077e-06 bbox y -0.00642 0.02004\n3 loop vol 1.083077e-06 bbox y -0.00642 0.02004",
+      "image": ""
+    },
+    {
+      "cmd": "# union attempt with explicit target: connectors stop at mid-channel depth (y=0)\ndef loop_wire2(xs):\n    a = np.array([xs, W/2]); d1 = np.array([np.cos(ALPHA), np.sin(ALPHA)])\n    p1 = a + L1*d1\n    n0 = np.array([np.sin(ALPHA), -np.cos(ALPHA)])\n    center = p1 + R_LOOP*n0\n    pts = [tuple(a), tuple(p1)]\n    thg = np.linspace(GAMMA/60, GAMMA, 60)\n    base = np.arctan2(p1[1]-center[1], p1[0]-center[0])\n    arcs = [(center[0]+R_LOOP*np.cos(base-t), center[1]+R_LOOP*np.sin(base-t)) for t in thg]\n    pts.extend(arcs)\n    d_end = np.array([np.cos(ALPHA-GAMMA), np.sin(ALPHA-GAMMA)])\n    l2 = pts[-1][1]/abs(d_end[1])   # stop at y=0\n    pts.append((pts[-1][0]+l2*d_end[0], pts[-1][1]+l2*d_end[1]))\n    return Wire(Edge.make_spline([Vector(*p,0) for p in pts]))\n\ntest = loop_wire2(X0)\npln = Plane(origin=test.position_at(0), x_dir=(0,0,1), z_dir=Vector(*test.tangent_at(0),0))\nsec = Rectangle(T, W).locate(Location(pln))\nlp0 = sweep(sec, path=test, transition=Transition.ROUND)\nu = main + lp0\nbb = u.bounding_box()\nprint(\"lp0 vol:\", lp0.volume, \"u vol:\", u.volume, \"bbox:\", bb)\nprint(\"sum vols:\", main.volume + lp0.volume)",
+      "exit_code": 0,
+      "seconds": 0.15136884000094142,
+      "output": "lp0 vol: 8.464643986406812e-07 u vol: 8.464711552022306e-07 bbox: bbox: 0.011694304054992721 <= x <= 0.03396224105282336, -0.0007659186937377978 <= y <= 0.020038470476670088, -0.0015001000000000088 <= z <= 0.0015001000000000088\nsum vols: 3.006464398640681e-06",
+      "image": ""
+    },
+    {
+      "cmd": "print(type(main), type(main).__class__, main.__class__)\nprint(\"is Part?\", isinstance(main, Part), type(lp0))\nu2 = fuse(main, lp0) if hasattr(main,'fuse') else None\ntry:\n    from build123d import fuse as _f\nexcept ImportError:\n    print(\"no fuse fn\")\nc = Compound([main, lp0])\nbb2 = c.bounding_box(); print(\"compound bbox:\", bb2)\nb1 = main + Pos(0.05,0,0.0015)*Box(0.01,0.01,0.001)\nprint(\"box+box vol:\", b1.volume, main.volume+0.01*0.01*0.001)",
+      "exit_code": 1,
+      "seconds": 0.20098244499968132,
+      "output": "<class 'build123d.objects_part.Box'> <class 'type'> <class 'build123d.objects_part.Box'>\nis Part? True <class 'build123d.topology.composite.Part'>\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mNameError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[4]\u001b[39m\u001b[32m, line 3\u001b[39m\n\u001b[32m      1\u001b[39m print(type(main), type(main).__class__, main.__class__)\n\u001b[32m      2\u001b[39m print(\u001b[33m\"is Part?\"\u001b[39m, isinstance(main, Part), type(lp0))\n\u001b[32m----> \u001b[39m\u001b[32m3\u001b[39m u2 = fuse(main, lp0) \u001b[38;5;28;01mif\u001b[39;00m hasattr(main,\u001b[33m'fuse'\u001b[39m) \u001b[38;5;28;01melse\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m\n\u001b[32m      4\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m      5\u001b[39m     \u001b[38;5;28;01mfrom\u001b[39;00m build123d \u001b[38;5;28;01mimport\u001b[39;00m fuse \u001b[38;5;28;01mas\u001b[39;00m _f\n\u001b[32m      6\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m ImportError:\n\n\u001b[31mNameError\u001b[39m: name 'fuse' is not defined",
+      "image": ""
+    },
+    {
+      "cmd": "b1 = main + Pos(0.05,0,0.0015)*Box(0.01,0.01,0.001)\nprint(\"box+box vol:\", b1.volume, main.volume+0.01*0.01*0.001)\nlp0s = lp0.solid() if hasattr(lp0, 'solid') else None\nprint(\"solid vol:\", lp0s.volume if lp0s else None)\nu3 = main + lp0s\nprint(\"main+solid:\", u3.volume, \"vs sum\", main.volume + lp0s.volume)\nu4 = Part(main) + lp0 if isinstance(lp0, Part) else None\nprint(\"part+part:\", u4.volume if u4 else 'n/a')",
+      "exit_code": 0,
+      "seconds": 0.2010844360011106,
+      "output": "box+box vol: 2.200000000000001e-06 2.2599999999999995e-06\nsolid vol: 8.464643986406812e-07\nmain+solid: 8.464711552022306e-07 vs sum 3.006464398640681e-06\npart+part: 8.464711552022306e-07",
+      "image": ""
+    },
+    {
+      "cmd": "print(\"lp0s valid:\", lp0s.is_valid())\nu3b = main + lp0s\nprint(\"u3 bbox:\", u3.bounding_box())\nprint(\"u3 solids:\", len(u3.solids()) if hasattr(u3,'solids') else '?')\n# sub-part separation: put loop out at a copy translated away and union\nlp_far = lp0s.moved(Location((0.0, 1.0, 0)))\nu5 = main + lp_far\nprint(\"disjoint union vol:\", u5.volume, \"expected:\", main.volume+lp_far.volume)",
+      "exit_code": 1,
+      "seconds": 0.0506226469988178,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[6]\u001b[39m\u001b[32m, line 1\u001b[39m\n\u001b[32m----> \u001b[39m\u001b[32m1\u001b[39m print(\u001b[33m\"lp0s valid:\"\u001b[39m, lp0s.is_valid())\n\u001b[32m      2\u001b[39m u3b = main + lp0s\n\u001b[32m      3\u001b[39m print(\u001b[33m\"u3 bbox:\"\u001b[39m, u3.bounding_box())\n\u001b[32m      4\u001b[39m print(\u001b[33m\"u3 solids:\"\u001b[39m, len(u3.solids()) \u001b[38;5;28;01mif\u001b[39;00m hasattr(u3,\u001b[33m'solids'\u001b[39m) \u001b[38;5;28;01melse\u001b[39;00m \u001b[33m'?'\u001b[39m)\n\n\u001b[31mTypeError\u001b[39m: 'bool' object is not callable",
+      "image": ""
+    },
+    {
+      "cmd": "print(\"lp0s type:\", type(lp0s), \"valid:\", lp0s.is_valid)\nlp_far = lp0s.moved(Location((0.0, 1.0, 0)))\nu5 = main + lp_far\nprint(\"disjoint union vol:\", u5.volume, \"expected:\", main.volume+lp_far.volume)\nprint(\"u5 bbox:\", u5.bounding_box())",
+      "exit_code": 0,
+      "seconds": 0.05083470699901227,
+      "output": "lp0s type: <class 'build123d.topology.three_d.Solid'> valid: False\ndisjoint union vol: 3.0064643986406806e-06 expected: 3.0064643986406806e-06\nu5 bbox: bbox: 0.0 <= x <= 0.12, -0.003 <= y <= 1.0200384704766599, -0.0015001000000000088 <= z <= 0.003",
+      "image": ""
+    },
+    {
+      "cmd": "import inspect\nprint(inspect.signature(Edge.make_circle))\nfrom build123d import Ring\nprint(inspect.signature(Ring.__init__))",
+      "exit_code": 1,
+      "seconds": 0.05064304600091418,
+      "output": "(radius: 'float', plane: 'Plane' = Plane((0, 0, 0), (1, 0, 0), (0, 0, 1)), start_angle: 'float' = 360.0, end_angle: 'float' = 360, angular_direction: 'AngularDirection' = <AngularDirection.COUNTER_CLOCKWISE>) -> 'Edge'\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mImportError\u001b[39m                               Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[8]\u001b[39m\u001b[32m, line 3\u001b[39m\n\u001b[32m      1\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m inspect\n\u001b[32m      2\u001b[39m print(inspect.signature(Edge.make_circle))\n\u001b[32m----> \u001b[39m\u001b[32m3\u001b[39m \u001b[38;5;28;01mfrom\u001b[39;00m build123d \u001b[38;5;28;01mimport\u001b[39;00m Ring\n\u001b[32m      4\u001b[39m print(inspect.signature(Ring.__init__))\n\n\u001b[31mImportError\u001b[39m: cannot import name 'Ring' from 'build123d' (/home/qiuzi/miniforge3/lib/python3.13/site-packages/build123d/__init__.py)",
+      "image": ""
+    },
+    {
+      "cmd": "from build123d import Edge, Face, Wire, Plane, Vector, Rectangle, extrude, Location, AngularDirection\nimport numpy as np\n\ndeg = np.degrees\ndef sector_face(center, theta0, gamma_deg, r_in, r_out):\n    \"\"\"annular sector swept from theta0 (deg) clockwise by gamma>0, between radii\"\"\"\n    c2 = (center[0], center[1], 0)\n    t0, t1 = deg(theta0), deg(theta0)-abs(gamma_deg)\n    mk = lambda r,a0,a1,dir_: Edge.make_circle(r, plane=Plane(c2, (1,0,0),(0,0,1)),\n        start_angle=a0, end_angle=a1, angular_direction=dir_)\n    AD = AngularDirection\n    outer = mk(r_out, t0, t1, AD.CLOCKWISE)\n    inner = mk(r_in,  t0, t1, AD.CLOCKWISE)\n    def pt(r, th): return np.array(center)+r*np.array([np.cos(np.deg2rad(th)), np.sin(np.deg2rad(th))])\n    e_out0 = pt(r_out, t0); e_in0 = pt(r_in, t0)\n    e_out1 = pt(r_out, t1); e_in1 = pt(r_in, t1)\n    l0 = Edge.make_line(Vector(*e_out0,0), Vector(*e_in0,0))\n    l1 = Edge.make_line(Vector(*e_out1,0), Vector(*e_in1,0))\n    return Face(Wire([outer, l1, reversed(inner) if False else inner.reversed(), l0.reversed()])) if False else \\\n           Face(Wire([outer, l1, inner.reversed(), l0.reversed()]))\n\ndef rect_face(a, direc, length, width, pad=0.002):\n    \"\"\"rectangle from a along direc (unit), width across in-plane, with pads on both ends\"\"\"\n    na = np.array([direc[1], -direc[0]])  # in-plane normal\n    pln = Plane((a[0], a[1], 0), x_dir=tuple(na)+ (0,), z_dir=(0,0,1))\n    return Rectangle(width, length + 2*pad).locate(Location(pln, (direc[0],direc[1],0)*(length/2)))\n\ndef loop_face(xs):\n    a = np.array([xs, W/2]); d1 = np.array([np.cos(ALPHA), np.sin(ALPHA)])\n    p1 = a + L1*d1\n    n0 = np.array([np.sin(ALPHA), -np.cos(ALPHA)])     # right normal\n    center = p1 + R_LOOP*n0\n    th0 = np.arctan2(p1[1]-center[1], p1[0]-center[0])\n    sec = sector_face(center, deg(th0), deg(GAMMA), R_LOOP-W/2, R_LOOP+W/2)\n    dl = np.deg2rad(th0)\n    th1 = th0 - GAMMA\n    d_end = np.array([np.cos(ALPHA-GAMMA), np.sin(ALPHA-GAMMA)])\n    p_end = center + (R_LOOP)*np.array([np.cos(th1), np.sin(th1)])\n    l2 = p_end[1]/abs(d_end[1])  # reach mid channel\n    r1 = rect_face(a, d1, L1, W, pad=0.002)\n    r2 = rect_face(p_end - d_end*0, d_end, l2, W, pad=0.002)\n    return sec + r1 + r2\n\nloopfaces = [loop_face(X0 + k*LOOP_PITCH) for k in range(NLOOPS)]\nmainface = Rectangle(L, W).locate(Location((L/2, 0, 0)))\nregion2d = mainface\nfor lf in loopfaces: region2d = region2d + lf\nprint(\"2d area:\", region2d.area)\n\n# plot\nimport matplotlib.pyplot as plt\nfig, ax = plt.subplots(figsize=(16,4))\nfor e in region2d.edges():\n    n = 30\n    ts = np.linspace(0,1,n)\n    q = [e.point_at(t) for t in ts]\n    q = np.array([(p.X,p.Y) for p in q])\n    ax.plot(q[:,0], q[:,1], 'b-')\nax.set_aspect('equal'); ax.grid(True)\nplt.savefig('outline.png', dpi=120); plt.show()",
+      "exit_code": 1,
+      "seconds": 0.10073632299827295,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[9]\u001b[39m\u001b[32m, line 44\u001b[39m\n\u001b[32m     40\u001b[39m     r1 = rect_face(a, d1, L1, W, pad=\u001b[32m0.002\u001b[39m)\n\u001b[32m     41\u001b[39m     r2 = rect_face(p_end - d_end*\u001b[32m0\u001b[39m, d_end, l2, W, pad=\u001b[32m0.002\u001b[39m)\n\u001b[32m     42\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m sec + r1 + r2\n\u001b[32m     43\u001b[39m \n\u001b[32m---> \u001b[39m\u001b[32m44\u001b[39m loopfaces = [loop_face(X0 + k*LOOP_PITCH) \u001b[38;5;28;01mfor\u001b[39;00m k \u001b[38;5;28;01min\u001b[39;00m range(NLOOPS)]\n\u001b[32m     45\u001b[39m mainface = Rectangle(L, W).locate(Location((L/\u001b[32m2\u001b[39m, \u001b[32m0\u001b[39m, \u001b[32m0\u001b[39m)))\n\u001b[32m     46\u001b[39m region2d = mainface\n\u001b[32m     47\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m lf \u001b[38;5;28;01min\u001b[39;00m loopfaces: region2d = region2d + lf\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[9]\u001b[39m\u001b[32m, line 40\u001b[39m, in \u001b[36mloop_face\u001b[39m\u001b[34m(xs)\u001b[39m\n\u001b[32m     36\u001b[39m     th1 = th0 - GAMMA\n\u001b[32m     37\u001b[39m     d_end = np.array([np.cos(ALPHA-GAMMA), np.sin(ALPHA-GAMMA)])\n\u001b[32m     38\u001b[39m     p_end = center + (R_LOOP)*np.array([np.cos(th1), np.sin(th1)])\n\u001b[32m     39\u001b[39m     l2 = p_end[\u001b[32m1\u001b[39m]/abs(d_end[\u001b[32m1\u001b[39m])  \u001b[38;5;66;03m# reach mid channel\u001b[39;00m\n\u001b[32m---> \u001b[39m\u001b[32m40\u001b[39m     r1 = rect_face(a, d1, L1, W, pad=\u001b[32m0.002\u001b[39m)\n\u001b[32m     41\u001b[39m     r2 = rect_face(p_end - d_end*\u001b[32m0\u001b[39m, d_end, l2, W, pad=\u001b[32m0.002\u001b[39m)\n\u001b[32m     42\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m sec + r1 + r2\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[9]\u001b[39m\u001b[32m, line 26\u001b[39m, in \u001b[36mrect_face\u001b[39m\u001b[34m(a, direc, length, width, pad)\u001b[39m\n\u001b[32m     22\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m rect_face(a, direc, length, width, pad=\u001b[32m0.002\u001b[39m):\n\u001b[32m     23\u001b[39m     \u001b[33m\"\"\"rectangle from a along direc (unit), width across in-plane, with pads on both ends\"\"\"\u001b[39m\n\u001b[32m     24\u001b[39m     na = np.array([direc[\u001b[32m1\u001b[39m], -direc[\u001b[32m0\u001b[39m]])  \u001b[38;5;66;03m# in-plane normal\u001b[39;00m\n\u001b[32m     25\u001b[39m     pln = Plane((a[\u001b[32m0\u001b[39m], a[\u001b[32m1\u001b[39m], \u001b[32m0\u001b[39m), x_dir=tuple(na)+ (\u001b[32m0\u001b[39m,), z_dir=(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m1\u001b[39m))\n\u001b[32m---> \u001b[39m\u001b[32m26\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m Rectangle(width, length + \u001b[32m2\u001b[39m*pad).locate(Location(pln, (direc[\u001b[32m0\u001b[39m],direc[\u001b[32m1\u001b[39m],\u001b[32m0\u001b[39m)*(length/\u001b[32m2\u001b[39m)))\n\n\u001b[31mTypeError\u001b[39m: can't multiply sequence by non-int of type 'float'",
+      "image": ""
+    },
+    {
+      "cmd": "def rect_face(a, direc, length, width, pad=0.002):\n    na = np.array([direc[1], -direc[0]])\n    pln = Plane((a[0], a[1], 0), x_dir=(na[0], na[1], 0), z_dir=(0,0,1))\n    cen = (direc[0]*length/2, direc[1]*length/2, 0)\n    return Rectangle(width, length + 2*pad).locate(Location(pln, cen))\n\ndef loop_face(xs):\n    a = np.array([xs, W/2]); d1 = np.array([np.cos(ALPHA), np.sin(ALPHA)])\n    p1 = a + L1*d1\n    n0 = np.array([np.sin(ALPHA), -np.cos(ALPHA)])\n    center = p1 + R_LOOP*n0\n    th0 = np.arctan2(p1[1]-center[1], p1[0]-center[0])\n    sec = sector_face(center, deg(th0), deg(GAMMA), R_LOOP-W/2, R_LOOP+W/2)\n    th1 = th0 - GAMMA\n    d_end = np.array([np.cos(ALPHA-GAMMA), np.sin(ALPHA-GAMMA)])\n    p_end = center + R_LOOP*np.array([np.cos(th1), np.sin(th1)])\n    l2 = p_end[1]/abs(d_end[1])\n    r1 = rect_face(a, d1, L1, W)\n    r2 = rect_face(p_end, d_end, l2, W)\n    return sec + r1 + r2\n\nloopfaces = [loop_face(X0 + k*LOOP_PITCH) for k in range(NLOOPS)]\nmainface = Rectangle(L, W).locate(Location((L/2, 0, 0)))\nregion2d = mainface\nfor lf in loopfaces: region2d = region2d + lf\nprint(\"2d area (m^2):\", region2d.area)\nprint(\"rough expect main+4 loops:\", L*W, end=' ')\nimport matplotlib.pyplot as plt\nfig, ax = plt.subplots(figsize=(16,4))\nfor e in region2d.edges():\n    ts = np.linspace(0,1,30)\n    q = [e.point_at(t) for t in ts]\n    q = np.array([(p.X,p.Y) for p in q])\n    ax.plot(q[:,0], q[:,1], 'b.-', ms=2)\nax.set_aspect('equal'); ax.grid(True)\nplt.savefig('outline.png', dpi=120); plt.show()",
+      "exit_code": 1,
+      "seconds": 0.2452732029996696,
+      "output": "2d area (m^2): 0.001457395984115562\nrough expect main+4 loops: 0.0007199999999999999\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[10]\u001b[39m\u001b[32m, line 32\u001b[39m\n\u001b[32m     28\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m matplotlib.pyplot \u001b[38;5;28;01mas\u001b[39;00m plt\n\u001b[32m     29\u001b[39m fig, ax = plt.subplots(figsize=(\u001b[32m16\u001b[39m,\u001b[32m4\u001b[39m))\n\u001b[32m     30\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m e \u001b[38;5;28;01min\u001b[39;00m region2d.edges():\n\u001b[32m     31\u001b[39m     ts = np.linspace(\u001b[32m0\u001b[39m,\u001b[32m1\u001b[39m,\u001b[32m30\u001b[39m)\n\u001b[32m---> \u001b[39m\u001b[32m32\u001b[39m     q = [e.point_at(t) \u001b[38;5;28;01mfor\u001b[39;00m t \u001b[38;5;28;01min\u001b[39;00m ts]\n\u001b[32m     33\u001b[39m     q = np.array([(p.X,p.Y) \u001b[38;5;28;01mfor\u001b[39;00m p \u001b[38;5;28;01min\u001b[39;00m q])\n\u001b[32m     34\u001b[39m     ax.plot(q[:,\u001b[32m0\u001b[39m], q[:,\u001b[32m1\u001b[39m], \u001b[33m'b.-'\u001b[39m, ms=\u001b[32m2\u001b[39m)\n\u001b[32m     35\u001b[39m ax.set_aspect(\u001b[33m'equal'\u001b[39m); ax.grid(\u001b[38;5;28;01mTrue\u001b[39;00m)\n\n\u001b[31mAttributeError\u001b[39m: 'Edge' object has no attribute 'point_at'",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "e0 = region2d.edges()[0]\nprint([m for m in dir(e0) if 'position' in m or 'sample' in m or 'discret' in m])",
+      "exit_code": 0,
+      "seconds": 0.050628647000849014,
+      "output": "['position', 'position_at', 'positions']",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\nfrom build123d import *\nimport matplotlib.pyplot as plt\n\nW = 0.006; L = 0.120; T = 0.003; NLOOPS = 4\nALPHA = np.deg2rad(55); LOOP_PITCH = 0.024; X0 = 0.012\nL1 = 0.014; R_LOOP = 0.006; GAMMA = np.deg2rad(200)\ndeg = np.degrees\n\ndef sector_face(center, theta0, gamma_deg, r_in, r_out):\n    c2 = (center[0], center[1], 0)\n    t0, t1 = deg(theta0), deg(theta0)-abs(gamma_deg)\n    AD = AngularDirection\n    mk = lambda r,a0,a1,d: Edge.make_circle(r, plane=Plane(c2,(1,0,0),(0,0,1)),\n        start_angle=a0, end_angle=a1, angular_direction=d)\n    outer = mk(r_out, t0, t1, AD.CLOCKWISE)\n    inner = mk(r_in,  t0, t1, AD.CLOCKWISE)\n    pt = lambda r,th: np.array(center)+r*np.array([np.cos(np.deg2rad(th)),np.sin(np.deg2rad(th))])\n    l0 = Edge.make_line(Vector(*pt(r_out,t0),0), Vector(*pt(r_in,t0),0))\n    l1 = Edge.make_line(Vector(*pt(r_out,t1),0), Vector(*pt(r_in,t1),0))\n    return Face(Wire([outer, l1, inner.reversed(), l0.reversed()]))\n\ndef rect_face(a, direc, length, width, pad=0.002):\n    na = (direc[1], -direc[0])\n    pln = Plane((a[0], a[1], 0), x_dir=na, z_dir=(0,0,1))\n    cen = (direc[0]*length/2, direc[1]*length/2, 0)\n    return Rectangle(width, length + 2*pad).locate(Location(pln, cen))\n\ndef loop_face(xs):\n    a = np.array([xs, W/2]); d1 = np.array([np.cos(ALPHA), np.sin(ALPHA)])\n    p1 = a + L1*d1\n    n0 = np.array([np.sin(ALPHA), -np.cos(ALPHA)])\n    center = p1 + R_LOOP*n0\n    th0 = np.arctan2(p1[1]-center[1], p1[0]-center[0])\n    sec = sector_face(center, deg(th0), deg(GAMMA), R_LOOP-W/2, R_LOOP+W/2)\n    th1 = th0 - GAMMA\n    d_end = np.array([np.cos(ALPHA-GAMMA), np.sin(ALPHA-GAMMA)])\n    p_end = center + R_LOOP*np.array([np.cos(th1), np.sin(th1)])\n    l2 = p_end[1]/abs(d_end[1])\n    return sec + rect_face(a, d1, L1, W) + rect_face(p_end, d_end, l2, W)\n\nloopfaces = [loop_face(X0 + k*LOOP_PITCH) for k in range(NLOOPS)]\nmainface = Rectangle(L, W).locate(Location((L/2, 0, 0)))\nregion2d = mainface\nfor lf in loopfaces: region2d = region2d + lf\nprint(\"2d area (m^2):\", region2d.area, \" main only:\", L*W)\n\nfig, ax = plt.subplots(figsize=(16,4))\nfor e in region2d.edges():\n    ts = np.linspace(0,1,25)\n    q = np.array([(e.position_at(t).X, e.position_at(t).Y) for t in ts])\n    ax.plot(q[:,0], q[:,1], 'b.-', ms=2)\nax.set_aspect('equal'); ax.grid(True)\nplt.savefig('outline.png', dpi=120); plt.show()",
+      "exit_code": 0,
+      "seconds": 1.4792477640003199,
+      "output": "2d area (m^2): 0.0014573959841155612  main only: 0.0007199999999999999",
+      "image": "1 picture"
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 0,
+      "fenced": false,
+      "text_chars": 0,
+      "thinking_chars": 19357,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404234.730609
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 3316,
+      "fenced": true,
+      "text_chars": 226,
+      "thinking_chars": 7913,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404468.4573739
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 1369,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 4179,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404540.5789373
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 916,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 1779,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404603.164467
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 385,
+      "fenced": true,
+      "text_chars": 69,
+      "thinking_chars": 684,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404624.2238166
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 285,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 284,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404641.3566444
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 581,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 1198,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404669.5733378
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 166,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 119,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404679.9412746
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 1033,
+      "fenced": true,
+      "text_chars": 111,
+      "thinking_chars": 3619,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404721.53541
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 1107,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 276,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404766.8695445
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 684,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 180,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404795.3085716
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 311,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 794,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404811.480162
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 1034,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 404,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789404899.635723
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T3-20260914-163843-4f6e/t3/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T3-20260914-163843-4f6e/t3/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T3-20260914-163843-4f6e/t3/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T3-20260914-163843-4f6e/t3/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T3-20260914-163843-4f6e/t3/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T3-20260914-163843-4f6e/t3/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "number of bypass loops, 4",
+      "measured": null
+    },
+    {
+      "property": "channel width, 6 mm, in the main channel and in a loop",
+      "measured": null
+    },
+    {
+      "property": "overall length, ~120 mm",
+      "measured": null
+    },
+    {
+      "property": "**every loop both branches from and rejoins the main channel** \u2014 the fluid domain is one connected region with no isolated pocket and no loop that dead-ends",
+      "measured": null
+    },
+    {
+      "property": "the mesh is one cell thick with both side patches `empty`",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 13,
+    "steps": 11,
+    "seconds": 986.2,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

@@ -1,0 +1,10 @@
+T1: run 20260914-143522-54a2
+  workspace /home/qiuzi/.openreynolds-buildup/work/T1-20260914-143522-54a2 clean (0 entries, 39 house names, no toolbox)
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T1-20260914-143522-54a2/t1/.reference/b123d_api.md
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-kimi-k3-20260914-143522-e17d/runs/T1
+<unknown>:3: SyntaxWarning: invalid escape sequence '\*'
+<unknown>:3: SyntaxWarning: invalid escape sequence '\*'
+<unknown>:3: SyntaxWarning: invalid escape sequence '\*'
+<unknown>:3: SyntaxWarning: invalid escape sequence '\*'
+  time in 916.1s, 10 cells, $0.28, checkMesh not ok, failed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-kimi-k3-20260914-143522-e17d/runs/T1 --case /home/qiuzi/.openreynolds-buildup/work/T1-20260914-143522-54a2/t1

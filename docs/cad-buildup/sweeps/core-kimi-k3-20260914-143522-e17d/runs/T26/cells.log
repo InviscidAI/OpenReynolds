@@ -1,0 +1,855 @@
+# -- cell 1 (2.5s, exit 0)
+import build123d as bd
+import numpy as np
+
+# Parameters (metres)
+R_shaft, H_shaft = 1.2, 3.0
+R_col = 0.1
+N_tread = 20
+tread_L, tread_D, tread_T = 1.1, 0.25, 0.04   # radial length, tangential depth, thickness
+rise, ang = 0.15, 18.0
+
+shaft = bd.Cylinder(R_shaft, H_shaft)                      # axis Z, base at z=0
+column = bd.Cylinder(R_col, H_shaft)
+
+def tread(k):
+    b = bd.Box(tread_L, tread_D, tread_T, align=(bd.Align.MIN, bd.Align.CENTER, bd.Align.MIN))
+    b = bd.Pos(bd.Align.MIN if False else R_col, 0, rise*k) * b  # x from R_col outward
+    return bd.Rot(0, 0, ang*k) * b
+
+treads = [tread(k) for k in range(N_tread)]
+air = shaft - column - sum(treads[1:], treads[0])
+print("air volume m^3:", air.volume)
+print("faces:", len(air.faces()))
+# -- output
+air volume m^3: 13.367649852377863
+faces: 64
+
+# -- cell 2 (0.2s, exit 1)
+import collections
+groups = collections.defaultdict(list)
+for f in air.faces():
+    c = f.center()
+    # cylindrical faces have constant normal direction == radial
+    n = f.normal_at()
+    if abs(n.z) < 1e-6 and f.geom_type == bd.GeomType.CYLINDER:
+        r = np.hypot(c.x, c.y)
+        groups["shaftWall" if r > 0.5 else "column"].append(f)
+    elif f.geom_type == bd.GeomType.PLANE and abs(abs(n.z) - 1) < 1e-6:
+        if abs(c.z) < 1e-9: groups["floor"].append(f)
+        elif abs(c.z - H_shaft) < 1e-9: groups["topOpening"].append(f)
+        else: groups["treads"].append(f)
+    else:
+        groups["treads"].append(f)
+print({k: len(v) for k, v in groups.items()})
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 7[39m
+[32m      3[39m [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m air.faces():
+[32m      4[39m     c = f.center()
+[32m      5[39m     [38;5;66;03m# cylindrical faces have constant normal direction == radial[39;00m
+[32m      6[39m     n = f.normal_at()
+[32m----> [39m[32m7[39m     [38;5;28;01mif[39;00m abs(n.z) < [32m1e-6[39m [38;5;28;01mand[39;00m f.geom_type == bd.GeomType.CYLINDER:
+[32m      8[39m         r = np.hypot(c.x, c.y)
+[32m      9[39m         groups[[33m"shaftWall"[39m [38;5;28;01mif[39;00m r > [32m0.5[39m [38;5;28;01melse[39;00m [33m"column"[39m].append(f)
+[32m     10[39m     [38;5;28;01melif[39;00m f.geom_type == bd.GeomType.PLANE [38;5;28;01mand[39;00m abs(abs(n.z) - [32m1[39m) < [32m1e-6[39m:
+
+[31mAttributeError[39m: 'Vector' object has no attribute 'z'
+
+# -- cell 3 (0.1s, exit 0)
+import collections
+groups = collections.defaultdict(list)
+for f in air.faces():
+    c = f.center().to_tuple()
+    gt = str(f.geom_type)
+    if gt == "GeomType.CYLINDER" or "CYLINDER" in gt:
+        r = np.hypot(c[0], c[1])
+        groups["shaftWall" if r > 0.5 else "column"].append(f)
+    else:
+        n = f.normal_at().to_tuple()
+        if gt == "GeomType.PLANE" and abs(abs(n[2]) - 1) < 1e-6 and (abs(c[2]) < 1e-9 or abs(c[2]-H_shaft) < 1e-9):
+            groups["floor" if c[2] < 1e-9 else "topOpening"].append(f)
+        else:
+            groups["treads"].append(f)
+print({k: len(v) for k, v in groups.items()})
+# -- output
+{'shaftWall': 1, 'treads': 61, 'column': 1, 'floor': 1}
+
+/tmp/ipykernel_294997/1291156512.py:4: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  c = f.center().to_tuple()
+/tmp/ipykernel_294997/1291156512.py:10: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  n = f.normal_at().to_tuple()
+
+# -- cell 4 (0.1s, exit 0)
+for f in air.faces():
+    gt = str(f.geom_type)
+    if "CYLINDER" not in gt:
+        n = f.normal_at().to_tuple()
+        c = f.center().to_tuple()
+        if abs(abs(n[2])-1) < 1e-6 and (c[2] < 1e-9 or abs(c[2]-H_shaft) < 1e-9 or c[2]==0):
+            print(gt, n[2], c[2], f.area)
+        elif abs(abs(n[2])-1) < 1e-6 and abs(c[2]) > 2.9:
+            print("cand:", gt, n[2], c[2], f.area)
+# -- output
+GeomType.PLANE -1.0 -1.5 4.492477494633404
+GeomType.PLANE 1.0 0.0 0.27445657880587293
+
+/tmp/ipykernel_294997/3074257661.py:4: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  n = f.normal_at().to_tuple()
+/tmp/ipykernel_294997/3074257661.py:5: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  c = f.center().to_tuple()
+
+# -- cell 5 (0.4s, exit 0)
+shaft  = bd.Pos(0, 0, H_shaft/2) * bd.Cylinder(R_shaft, H_shaft)
+column = bd.Pos(0, 0, H_shaft/2) * bd.Cylinder(R_col,   H_shaft)
+air = shaft - column - sum(treads[1:], treads[0])
+air = bd.ShapeList([air])[0]
+print("air volume m^3:", air.volume)
+
+groups = collections.defaultdict(list)
+for f in air.faces():
+    c = tuple(f.center())
+    gt = str(f.geom_type)
+    if "CYLINDER" in gt:
+        groups["shaftWall" if np.hypot(c[0], c[1]) > 0.5 else "column"].append(f)
+    elif "PLANE" in gt:
+        n = tuple(f.normal_at())
+        if abs(abs(n[2]) - 1) < 1e-6 and abs(c[2]) < 1e-9: groups["floor"].append(f)
+        elif abs(abs(n[2]) - 1) < 1e-6 and abs(c[2] - H_shaft) < 1e-9: groups["topOpening"].append(f)
+        else: groups["treads"].append(f)
+    else:
+        groups["treads"].append(f)
+print({k: len(v) for k, v in groups.items()})
+# -- output
+air volume m^3: 13.257867220855566
+{'shaftWall': 1, 'treads': 119, 'floor': 1, 'column': 1, 'topOpening': 1}
+
+# -- cell 6 (0.1s, exit 1)
+import os
+os.makedirs("constant/triSurface", exist_ok=True)
+for name, faces in groups.items():
+    bd.export_stl(bd.Compound.make_compound([f for f in faces]), f"constant/triSurface/{name}.stl", angular_tolerance=0.15, linear_tolerance=0.01)
+print(sorted(os.listdir("constant/triSurface")))
+
+import pyvista as pv
+p = pv.Plotter(off_screen=True)
+for name in groups:
+    p.add_mesh(pv.read(f"constant/triSurface/{name}.stl"), color=None, label=name, show_edges=True, opacity=0.7)
+p.camera_position = [(5,-8,5),(0,0,1.5),(0,0,1)]
+p.show(screenshot="view.png")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 4[39m
+[32m      1[39m [38;5;28;01mimport[39;00m os
+[32m      2[39m os.makedirs([33m"constant/triSurface"[39m, exist_ok=[38;5;28;01mTrue[39;00m)
+[32m      3[39m [38;5;28;01mfor[39;00m name, faces [38;5;28;01min[39;00m groups.items():
+[32m----> [39m[32m4[39m     bd.export_stl(bd.Compound.make_compound([f [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m faces]), f"constant/triSurface/{name}.stl", angular_tolerance=[32m0.15[39m, linear_tolerance=[32m0.01[39m)
+[32m      5[39m print(sorted(os.listdir([33m"constant/triSurface"[39m)))
+[32m      6[39m 
+[32m      7[39m [38;5;28;01mimport[39;00m pyvista [38;5;28;01mas[39;00m pv
+
+[31mAttributeError[39m: type object 'Compound' has no attribute 'make_compound'
+
+# -- cell 7 (0.1s, exit 0)
+import inspect
+print(inspect.signature(bd.export_stl))
+import build123d
+print([m for m in dir(bd.Compound) if 'comp' in m.lower()])
+# -- output
+(to_export: build123d.topology.shape_core.Shape, file_path: os.PathLike | str | bytes, tolerance: float = 0.001, angular_tolerance: float = 0.1, ascii_format: bool = False) -> bool
+['composite_factories', 'compound', 'compounds', 'compute_mass', 'make_composite', 'register_composite_factory']
+
+# -- cell 8 (0.6s, exit 0)
+import os
+os.makedirs("constant/triSurface", exist_ok=True)
+for name, faces in groups.items():
+    comp = bd.Compound(children=faces)
+    bd.export_stl(comp, f"constant/triSurface/{name}.stl", angular_tolerance=0.15, tolerance=0.008)
+print(sorted(os.listdir("constant/triSurface")))
+
+import pyvista as pv
+p = pv.Plotter(off_screen=True)
+colors = {"shaftWall":"tan","column":"brown","treads":"gray","floor":"green","topOpening":"cyan"}
+for name in groups:
+    p.add_mesh(pv.read(f"constant/triSurface/{name}.stl"), color=colors[name], show_edges=False, opacity=0.8)
+p.camera_position = [(6,-9,6),(0,0,1.5),(0,0,1)]
+p.show(screenshot="view.png")
+# -- output
+['column.stl', 'floor.stl', 'shaftWall.stl', 'topOpening.stl', 'treads.stl']
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 16:29:05.924 (   0.250s) [    79366CABB780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 16:29:05.925 (   0.251s) [    79366CABB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 16:29:05.938 (   0.264s) [    79366CABB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_294997/1891404811.py:14: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.show(screenshot="view.png")
+
+# -- cell 9 (0.1s, exit 0)
+import textwrap, os
+os.makedirs("system", exist_ok=True)
+
+open("system/blockMeshDict","w").write(textwrap.dedent("""
+FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }
+vertices
+(
+    (-1.5 -1.5 -0.2)
+    ( 1.5 -1.5 -0.2)
+    ( 1.5  1.5 -0.2)
+    (-1.5  1.5 -0.2)
+    (-1.5 -1.5  3.2)
+    ( 1.5 -1.5  3.2)
+    ( 1.5  1.5  3.2)
+    (-1.5  1.5  3.2)
+);
+blocks ( hex (0 1 2 3 4 5 6 7) (15 15 17) simpleGrading (1 1 1) );
+boundary ();
+"""))
+
+open("system/meshQualityDict","w").write(textwrap.dedent("""
+FoamFile { version 2.0; format ascii; class dictionary; object meshQualityDict; }
+maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4;
+maxConcave 80; minVol 1e-13; minTetQuality 1e-9; minArea -1;
+minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.05;
+minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4;
+errorReduction 0.75;
+"""))
+
+open("system/snappyHexMeshDict","w").write(textwrap.dedent("""
+FoamFile { version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }
+castellatedMesh true; snap true; addLayers false;
+geometry
+{
+    shaftWall.stl  { type triSurfaceMesh; name shaftWall; }
+    column.stl     { type triSurfaceMesh; name column; }
+    treads.stl     { type triSurfaceMesh; name treads; }
+    floor.stl      { type triSurfaceMesh; name floor; }
+    topOpening.stl { type triSurfaceMesh; name topOpening; }
+}
+castellatedMeshControls
+{
+    maxLocalCells 100000; maxGlobalCells 2000000; minRefinementCells 10; maxLoadUnbalance 0.10;
+    nCellsBetweenLevels 2;
+    features ();
+    refinementSurfaces
+    {
+        shaftWall  { level (1 1); }
+        column     { level (2 2); }
+        treads     { level (2 2); }
+        floor      { level (1 1); }
+        topOpening { level (1 1); }
+    }
+    resolveFeatureAngle 30;
+    refinementRegions {}
+    locationInMesh (0.3 0.3 1.5);
+    allowFreeStandingZoneFaces true;
+}
+snapControls
+{
+    nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5;
+    nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false;
+}
+addLayersControls { };
+meshQualityControls #include "meshQualityDict";
+mergeTolerance 1e-6;
+"""))
+
+open("system/controlDict","w").write(textwrap.dedent("""
+FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;
+writePrecision 6; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;
+"""))
+print("case files written")
+# -- output
+case files written
+
+# -- cell 10 (0.5s, exit 0)
+import subprocess
+r1 = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r1.stdout[-600:], r1.stderr[-300:])
+r2 = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print(r2.stdout[-800:])
+# -- output
+stency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.2 .. 0.2
+        j : 0.2 .. 0.2
+        k : 0.2 .. 0.2
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-1.5 -1.5 -0.2) (1.5 1.5 3.2)
+  nPoints: 4608
+  nCells: 3825
+  nFaces: 12210
+  nInternalFaces: 10740
+----------------
+Patches
+----------------
+  patch 0 (start: 10740 size: 1470) name: defaultFaces
+
+End
+
+ 
+am::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T26-20260914-162448-4980/t26
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+# -- cell 11 (0.1s, exit 0)
+r2_stdout = r2.stdout
+print(r2_stdout[r2_stdout.rfind("Successfully added"):][:400] if "Successfully" in r2_stdout else r2_stdout[-1200:])
+print("rc:", r2.returncode, os.path.exists("1/polyMesh/boundary"))
+# -- output
+|
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 14 2026
+Time   : 16:30:33
+Host   : yc-demo
+PID    : 295459
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T26-20260914-162448-4980/t26
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+rc: 1 False
+
+# -- cell 12 (0.1s, exit 0)
+print(r2.stderr[-1500:])
+# -- output
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T26-20260914-162448-4980/t26/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 13 (1.6s, exit 0)
+open("system/fvSchemes","w").write("FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }\n")
+open("system/fvSolution","w").write("FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }\n")
+# no feature snapping without eMesh files
+s = open("system/snappyHexMeshDict").read()
+s = s.replace("explicitFeatureSnap true", "explicitFeatureSnap false").replace("implicitFeatureSnap false", "implicitFeatureSnap true")
+open("system/snappyHexMeshDict","w").write(s)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print("rc:", r.returncode, "err:", r.stderr[-400:], os.path.exists("1/polyMesh/boundary"))
+# -- output
+rc: 1 err: 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+ False
+
+# -- cell 14 (1.6s, exit 0)
+open("system/fvSchemes","w").write(textwrap.dedent("""
+FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; div(phi,U) Gauss linear; }
+laplacianSchemes { default none; laplacian((1|A(U)),p) Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+"""))
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print("rc:", r.returncode)
+print(r.stdout[-1500:], r.stderr[-300:])
+# -- output
+rc: 1
+                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 14 2026
+Time   : 16:31:50
+Host   : yc-demo
+PID    : 295816
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T26-20260914-162448-4980/t26
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.01 s
+ onary "system/snappyHexMeshDict"
+
+
+file: system/snappyHexMeshDict at line 3 to 37.
+
+    From static const Foam::dictionary& Foam::meshRefinement::subDict(const Foam::dictionary&, const Foam::word&, bool, Foam::keyType::option)
+    in file meshRefinement/meshRefinement.C at line 3864.
+
+FOAM exiting
+
+# -- cell 15 (0.1s, exit 0)
+print(r.stderr[-1200:])
+# -- output
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'meshQualityControls' not found (or not a dictionary) in dictionary "system/snappyHexMeshDict"
+
+
+file: system/snappyHexMeshDict at line 3 to 37.
+
+    From static const Foam::dictionary& Foam::meshRefinement::subDict(const Foam::dictionary&, const Foam::word&, bool, Foam::keyType::option)
+    in file meshRefinement/meshRefinement.C at line 3864.
+
+FOAM exiting
+
+# -- cell 16 (16.7s, exit 0)
+s = open("system/snappyHexMeshDict").read()
+s = s.replace('meshQualityControls #include "meshQualityDict";',
+              'meshQualityControls { #include "meshQualityDict"; }')
+open("system/snappyHexMeshDict","w").write(s)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print("rc:", r.returncode)
+print(r.stdout[-900:], r.stderr[-300:])
+# -- output
+rc: 0
+             : 0
+Snapped mesh : cells:24527  faces:81983  points:32943
+Cells per refinement level:
+    0	456
+    1	7333
+    2	16738
+Writing mesh to time constant
+Wrote mesh in = 0.06 s.
+Mesh snapped in = 5.25 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 65  degrees                        : 0
+    faces with face pyramid volume < 1e-13                 : 0
+    faces with face-decomposition tet quality < 1e-09      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 7.41 s.
+End
+
+# -- cell 17 (0.4s, exit 0)
+import re
+print(open("constant/polyMesh/boundary").read()[:600])
+rc = subprocess.run(["checkMesh","-time","constant"], capture_output=True, text=True, check=False)
+print(rc.stdout[-900:])
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    form
+sing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-1.20254 -1.20214 -5.3236e-05) (1.2001 1.20217 3.00046)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-3.76653e-17 4.73085e-18 -6.22309e-17) OK.
+    Max cell openness = 3.05942e-16 OK.
+    Max aspect ratio = 4.43707 OK.
+    Minimum face area = 9.3559e-05. Maximum face area = 0.0452635.  Face area magnitudes OK.
+    Min volume = 1.81826e-05. Max volume = 0.00931932.  Total volume = 13.2228.  Cell volumes OK.
+    Mesh non-orthogonality Max: 50.1623 average: 12.0185
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.59468 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 18 (0.1s, exit 0)
+b = open("constant/polyMesh/boundary").read()
+names = re.findall(r"\b(shaftWall|column|treads|floor|topOpening|defaultFaces)\b\s*\{[^}]*?nFaces\s+(\d+)", b, re.S)
+print(names)
+# visual slice
+mesh = pv.read("foamdummy.foam") if os.path.exists("foamdummy.foam") else None
+print("done")
+# -- output
+[('shaftWall', '2840'), ('column', '739'), ('treads', '5279'), ('floor', '576'), ('topOpening', '651')]
+done
+
+# -- cell 19 (0.5s, exit 1)
+open("case.foam","w").write("")
+mesh = pv.read("case.foam")
+print(mesh.n_cells, mesh.n_points)
+s = mesh.slice(normal=[0,0,1], origin=[0,0,1.2])
+p = pv.Plotter(off_screen=True)
+p.add_mesh(s, show_edges=True)
+p.view_xy()
+p.show(screenshot="slice.png")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[19][39m[32m, line 3[39m
+[32m      1[39m open([33m"case.foam"[39m,[33m"w"[39m).write([33m""[39m)
+[32m      2[39m mesh = pv.read([33m"case.foam"[39m)
+[32m----> [39m[32m3[39m print(mesh.n_cells, mesh.n_points)
+[32m      4[39m s = mesh.slice(normal=[[32m0[39m,[32m0[39m,[32m1[39m], origin=[[32m0[39m,[32m0[39m,[32m1.2[39m])
+[32m      5[39m p = pv.Plotter(off_screen=[38;5;28;01mTrue[39;00m)
+[32m      6[39m p.add_mesh(s, show_edges=[38;5;28;01mTrue[39;00m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/dataobject.py:123[39m, in [36mDataObject.__getattr__[39m[34m(self, item)[39m
+[32m    121[39m [38;5;28;01mif[39;00m _resolve_pending_accessor(item):
+[32m    122[39m     [38;5;28;01mreturn[39;00m [38;5;28mobject[39m.[34m__getattribute__[39m([38;5;28mself[39m, item)
+[32m--> [39m[32m123[39m [38;5;28;01mreturn[39;00m [30;43msuper[39;49m[30;43m([39;49m[30;43m)[39;49m[30;43m.[39;49m[30;43m__getattribute__[39;49m[30;43m([39;49m[30;43mitem[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_vtk_utilities.py:146[39m, in [36mDisableVtkSnakeCase.__getattribute__[39m[34m(self, item)[39m
+[32m    144[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__getattribute__[39m([38;5;28mself[39m, item):
+[32m    145[39m     DisableVtkSnakeCase.check_attribute([38;5;28mself[39m, item)
+[32m--> [39m[32m146[39m     [38;5;28;01mreturn[39;00m [30;43mobject[39;49m[30;43m.[39;49m[30;43m__getattribute__[39;49m[30;43m([39;49m[30;43mself[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mitem[39;49m[30;43m)[39;49m
+
+[31mAttributeError[39m: 'MultiBlock' object has no attribute 'n_cells'
+
+# -- cell 20 (0.2s, exit 0)
+mb = mesh.combine()
+s = mb.slice(normal=[0,0,1], origin=[0,0,1.2])
+p = pv.Plotter(off_screen=True)
+p.add_mesh(s, show_edges=True)
+p.view_xy()
+p.show(screenshot="slice.png")
+# -- output
+[0m[33m2026-09-14 16:33:50.607 ( 284.933s) [    79366CABB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 16:33:50.608 ( 284.934s) [    79366CABB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_294997/2379132722.py:6: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.show(screenshot="slice.png")
+
+# -- cell 21 (5.4s, exit 0)
+def tread2(k):
+    b = bd.Box(tread_L-0.002, tread_D, tread_T, align=(bd.Align.MIN, bd.Align.CENTER, bd.Align.MIN))
+    b = bd.Pos(R_col, 0, 0.01 + rise*k) * b
+    return bd.Rot(0, 0, ang*k) * b
+
+treads = [tread2(k) for k in range(N_tread)]
+air = shaft - column - sum(treads[1:], treads[0])
+air = bd.ShapeList([air])[0]
+print("air volume m^3:", air.volume)
+
+groups = collections.defaultdict(list)
+for f in air.faces():
+    c = tuple(f.center()); gt = str(f.geom_type)
+    if "CYLINDER" in gt:
+        groups["shaftWall" if np.hypot(c[0], c[1]) > 0.5 else "column"].append(f)
+    elif "PLANE" in gt:
+        n = tuple(f.normal_at())
+        if abs(abs(n[2])-1) < 1e-6 and abs(c[2]) < 1e-9: groups["floor"].append(f)
+        elif abs(abs(n[2])-1) < 1e-6 and abs(c[2]-H_shaft) < 1e-9: groups["topOpening"].append(f)
+        else: groups["treads"].append(f)
+    else: groups["treads"].append(f)
+print({k: len(v) for k, v in groups.items()})
+for name, faces in groups.items():
+    bd.export_stl(bd.Compound(children=faces), f"constant/triSurface/{name}.stl", angular_tolerance=0.15, tolerance=0.008)
+print("re-exported")
+# -- output
+air volume m^3: 13.258014985568506
+{'shaftWall': 1, 'floor': 1, 'topOpening': 1, 'treads': 140, 'column': 1}
+re-exported
+
+# -- cell 22 (1.8s, exit 0)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print("rc:", r.returncode, r.stdout[-300:])
+rc = subprocess.run(["checkMesh","-time","constant"], capture_output=True, text=True)
+print(rc.stdout[-400:])
+# -- output
+rc: -6 > FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+
+.
+    Minimum face area = 9.3559e-05. Maximum face area = 0.0452635.  Face area magnitudes OK.
+    Min volume = 1.81826e-05. Max volume = 0.00931932.  Total volume = 13.2228.  Cell volumes OK.
+    Mesh non-orthogonality Max: 50.1623 average: 12.0185
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.59468 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 23 (0.1s, exit 0)
+print(r.stderr[-2000:]); print(r.stdout[-600:])
+# -- output
+--> FOAM FATAL ERROR: (openfoam-2512)
+cell 2709 of level 1 does not seem to have 8 points of equal or lower level
+cellPoints:10(13709 28569 2084 31406 7216 3520 3537 229 7403 29036)
+pointLevels:10(2 2 1 2 1 1 1 0 1 2)
+
+
+    From Foam::labelListList Foam::hexRef8::setRefinement(const Foam::labelList&, Foam::polyTopoChange&)
+    in file polyTopoChange/polyTopoChange/hexRef8/hexRef8.C at line 3787.
+
+FOAM aborting
+
+[stack trace]
+=============
+#1  Foam::error::simpleExit(int, bool) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libOpenFOAM.so
+#2  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libdynamicMesh.so
+#3  Foam::hexRef8::setRefinement(Foam::List<int> const&, Foam::polyTopoChange&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libdynamicMesh.so
+#4  Foam::meshRefinement::refine(Foam::List<int> const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#5  Foam::meshRefinement::refineAndBalance(Foam::string const&, Foam::decompositionMethod&, Foam::fvMeshDistribute&, Foam::List<int> const&, double, int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#6  Foam::snappyRefineDriver::shellRefine(Foam::refinementParameters const&, int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#7  Foam::snappyRefineDriver::doRefine(Foam::dictionary const&, Foam::refinementParameters const&, Foam::snapParameters const&, bool, Foam::meshRefinement::FaceMergeType, Foam::dictionary const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/libsnappyHexMesh.so
+#8  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+#9  ? in /lib/x86_64-linux-gnu/libc.so.6
+#10  __libc_start_main in /lib/x86_64-linux-gnu/libc.so.6
+#11  ? in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/snappyHexMesh
+=============
+
+FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+
+# -- cell 24 (13.0s, exit 0)
+import shutil
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+subprocess.run(["blockMesh"], capture_output=True, check=True)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print("rc:", r.returncode, r.stdout[-400:])
+# -- output
+rc: 0           : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.05        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 7.76 s.
+End
+
+# -- cell 25 (0.4s, exit 0)
+rc = subprocess.run(["checkMesh","-time","constant"], capture_output=True, text=True)
+print(rc.stdout[-600:])
+b = open("constant/polyMesh/boundary").read()
+print(re.findall(r"\b(shaftWall|column|treads|floor|topOpening|defaultFaces)\b\s*\{[^}]*?nFaces\s+(\d+)", b, re.S))
+# -- output
+Max cell openness = 2.70702e-16 OK.
+    Max aspect ratio = 4.65049 OK.
+    Minimum face area = 4.81129e-05. Maximum face area = 0.0452675.  Face area magnitudes OK.
+    Min volume = 1.95845e-05. Max volume = 0.00928635.  Total volume = 13.2259.  Cell volumes OK.
+    Mesh non-orthogonality Max: 50.1369 average: 12.1011
+    Non-orthogonality check OK.
+    Face pyramids OK.
+ ***Max skewness = 12.6324, 7 highly skew faces detected which may impair the quality of the results
+  <<Writing 7 skew faces to set skewFaces
+    Coupled point location match (average 0) OK.
+
+Failed 1 mesh checks.
+
+End
+
+
+[('shaftWall', '2829'), ('column', '736'), ('treads', '5325'), ('floor', '576'), ('topOpening', '659')]
+
+# -- cell 26 (18.2s, exit 0)
+mq = open("system/meshQualityDict").read()
+mq = mq.replace("maxInternalSkewness 4;", "maxInternalSkewness 8;")
+mq = mq.replace("maxBoundarySkewness 20;", "maxBoundarySkewness 20;")
+open("system/meshQualityDict","w").write(mq)
+shutil.rmtree("constant/polyMesh", ignore_errors=True)
+subprocess.run(["blockMesh"], capture_output=True, check=True)
+r = subprocess.run(["snappyHexMesh","-overwrite"], capture_output=True, text=True)
+print("rc:", r.returncode)
+rc = subprocess.run(["checkMesh","-time","constant"], capture_output=True, text=True)
+print(rc.stdout[-350:])
+# -- output
+rc: 0
+ Cell volumes OK.
+    Mesh non-orthogonality Max: 50.1369 average: 12.1011
+    Non-orthogonality check OK.
+    Face pyramids OK.
+ ***Max skewness = 12.6324, 7 highly skew faces detected which may impair the quality of the results
+  <<Writing 7 skew faces to set skewFaces
+    Coupled point location match (average 0) OK.
+
+Failed 1 mesh checks.
+
+End
+
+# -- cell 27 (1.6s, exit 1)
+rc = subprocess.run(["topoSet"], capture_output=True, text=True)  # no dict -> just try? skip
+# inspect skew faces via vtk
+from vtk import vtkFoamReader  # not available; use pyvista reader instead
+mb = pv.read("case.foam").combine()
+# compute cell skewness via reading face sets is complex; instead use checkMesh -faceSet output
+r2 = subprocess.run(["checkMesh","-time","constant","-allGeometry"], capture_output=True, text=True)
+print(r2.stdout[-800:])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mImportError[39m                               Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[27][39m[32m, line 3[39m
+[32m      1[39m rc = subprocess.run([[33m"topoSet"[39m], capture_output=[38;5;28;01mTrue[39;00m, text=[38;5;28;01mTrue[39;00m)  [38;5;66;03m# no dict -> just try? skip[39;00m
+[32m      2[39m [38;5;66;03m# inspect skew faces via vtk[39;00m
+[32m----> [39m[32m3[39m [38;5;28;01mfrom[39;00m vtk [38;5;28;01mimport[39;00m vtkFoamReader  [38;5;66;03m# not available; use pyvista reader instead[39;00m
+[32m      4[39m mb = pv.read([33m"case.foam"[39m).combine()
+[32m      5[39m [38;5;66;03m# compute cell skewness via reading face sets is complex; instead use checkMesh -faceSet output[39;00m
+[32m      6[39m r2 = subprocess.run([[33m"checkMesh"[39m,[33m"-time"[39m,[33m"constant"[39m,[33m"-allGeometry"[39m], capture_output=[38;5;28;01mTrue[39;00m, text=[38;5;28;01mTrue[39;00m)
+
+[31mImportError[39m: cannot import name 'vtkFoamReader' from 'vtk' (/home/qiuzi/miniforge3/lib/python3.13/site-packages/vtk.py)
+
+# -- cell 28 (0.4s, exit 1)
+open("system/topoSetDict","w").write("""
+FoamFile { version 2.0; format ascii; class dictionary; object topoSetDict; }
+actions
+(
+    { name skewCells; type cellSet; action new; source faceToCell; sourceInfo { set skewFaces; option master; } }
+);
+""")
+subprocess.run(["topoSet"], capture_output=True, check=True)
+mb = pv.read("case.foam")
+print(mb.block_names)
+grid = mb
+print([ (n, grid[n].n_cells) for n in mb.block_names ])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mCalledProcessError[39m                        Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[28][39m[32m, line 8[39m
+[32m      4[39m (
+[32m      5[39m     { name skewCells; type cellSet; action new; source faceToCell; sourceInfo { set skewFaces; option master; } }
+[32m      6[39m );
+[32m      7[39m """)
+[32m----> [39m[32m8[39m subprocess.run([[33m"topoSet"[39m], capture_output=[38;5;28;01mTrue[39;00m, check=[38;5;28;01mTrue[39;00m)
+[32m      9[39m mb = pv.read([33m"case.foam"[39m)
+[32m     10[39m print(mb.block_names)
+[32m     11[39m grid = mb
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/subprocess.py:577[39m, in [36mrun[39m[34m(input, capture_output, timeout, check, *popenargs, **kwargs)[39m
+[32m    575[39m     retcode = process.poll()
+[32m    576[39m     [38;5;28;01mif[39;00m check [38;5;129;01mand[39;00m retcode:
+[32m--> [39m[32m577[39m         [38;5;28;01mraise[39;00m CalledProcessError(retcode, process.args,
+[32m    578[39m                                  output=stdout, stderr=stderr)
+[32m    579[39m [38;5;28;01mreturn[39;00m CompletedProcess(process.args, retcode, stdout, stderr)
+
+[31mCalledProcessError[39m: Command '['topoSet']' returned non-zero exit status 1.
+
+# -- cell 29 (0.2s, exit 0)
+open("system/surfaceFeatureExtractDict","w").write(textwrap.dedent("""
+FoamFile { version 2.0; format ascii; class dictionary; object surfaceFeatureExtractDict; }
+column.stl  { extractionMethod extractFromSurface; extractFromSurfaceCoeffs { includedAngle 120; } writeObj yes; }
+treads.stl  { extractionMethod extractFromSurface; extractFromSurfaceCoeffs { includedAngle 120; } writeObj yes; }
+"""))
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print("rc:", r.returncode, r.stdout[-300:], r.stderr[-200:])
+print([f for f in os.listdir("constant/triSurface") if f.endswith("eMesh")])
+# -- output
+rc: 0 /qiuzi/.openreynolds-buildup/work/T26-20260914-162448-4980/t26/constant/extendedFeatureEdgeMesh/treads_edgeDirections.obj"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T26-20260914-162448-4980/t26/constant/triSurface/treads.eMesh"
+ExecutionTime = 0.01 s  ClockTime = 0 s
+
+End
+
+ 
+['treads.eMesh', 'column.eMesh']
+

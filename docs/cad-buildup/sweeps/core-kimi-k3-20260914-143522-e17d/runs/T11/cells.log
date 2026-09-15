@@ -1,0 +1,927 @@
+# -- cell 1 (2.2s, exit 0)
+import numpy as np, math
+from build123d import *
+from build123d import RegularPolygon, Box, Pos, extrude
+
+F = 8.0      # mm, flat-to-flat cell width
+t = 1.0      # mm wall
+Fi = F - t   # 7 mm opening flat-to-flat
+T = 20.0     # mm core thickness
+S = 80.0     # mm duct section
+up, down = 40.0, 80.0  # mm upstream / downstream
+
+def hex_prism(cx, cy, fi, h):
+    p = RegularPolygon(fi/math.sqrt(3), 6)  # radius = flat-to-flat/sqrt(3)
+    return Pos(cx, cy, -h/2) * extrude(p, h)
+
+# hex lattice: flat-to-flat pitch F in y (flat-top orientation), sqrt(3)/2*F in x
+dx = F*math.sqrt(3)/2
+dy = F
+pts = []
+iy = 0
+y = -S/2 + dy
+while y < S/2:
+    xoff = (dx/2) if (iy % 2) else 0.0
+    x = -S/2 + dx + xoff
+    while x < S/2:
+        pts.append((x, y)); x += dx
+    y += dy/2 if False else dy*0.0  # placeholder fixed below
+    # proper row pitch: rows spaced sqrt(3)/2 * F ... use staggered grid:
+    y += dy*math.sqrt(3)/2 if False else 0  # fallback
+    break
+print("rework")
+# -- output
+rework
+
+# -- cell 2 (7.2s, exit 0)
+import numpy as np, math
+from build123d import *
+from build123d import RegularPolygon, Box, Pos, extrude, Location
+
+F=8.0; t=1.0; Fi=F-t; T=20.0; S=80.0; up=40.0; down=80.0  # mm
+
+R = Fi/math.sqrt(3)
+dx = 1.5*R          # horizontal pitch = sqrt3/2*F
+dy = math.sqrt(3)*R # vertical pitch = F
+pts=[]
+ix=0; x=-S/2+R/2
+while x < S/2 - R/2 + 1e-6:
+    yoff = dy/2 if ix%2 else 0.0
+    y=-S/2+dy/2 + yoff
+    while y < S/2 - dy/2 + 1e-6:
+        pts.append((x,y)); y += dy
+    ix+=1; x += dx
+
+hex_profile = RegularPolygon(R, 6)  # flat-to-flat 2*R*sqrt3/2 = 7mm
+template = Pos(0,0,-T/2) * extrude(hex_profile, T)
+
+holes = template
+for cx,cy in pts:
+    if (cx,cy)==(pts[0][0],pts[0][1]): holes = Pos(cx,cy,0)*template
+    else: holes += Pos(cx,cy,0)*template
+holes = holes.combine() if hasattr(holes,'combine') else holes
+print("cells:", len(pts))
+core = Pos(0,0,0)*Box(S,S,T) - holes
+print("core volume mm^3:", core.volume, "solid fraction:", core.volume/(S*S*T))
+# -- output
+cells: 137
+core volume mm^3: 13283.388263367246 solid fraction: 0.1037764708075566
+
+# -- cell 3 (0.9s, exit 0)
+Rout = F/math.sqrt(3); Rin = Fi/math.sqrt(3)
+dx = 1.5*Rout; dy = math.sqrt(3)*Rout
+pts=[]
+ix=0; x=-S/2+Rout
+while x <= S/2-Rout+1e-6:
+    yoff = dy/2 if ix%2 else 0.0
+    y=-S/2+dy/2 if ix%2==0 else -S/2+dy
+    # recompute cleanly below
+    y = -S/2 + (dy/2 if ix%2 else dy)
+    while y <= S/2 - dy/2 + 1e-6:
+        pts.append((x,y)); y += dy
+    ix+=1; x += dx
+cells=[]
+for cx,cy in pts:
+    cells.append(Pos(cx,cy,-T/2) * extrude(RegularPolygon(Rin,6), T))
+from build123d import Compound
+holes = Compound(children=cells)
+core = Box(S,S,T) - holes
+print("cells:",len(pts),"solid frac:", core.volume/(S*S*T))
+# -- output
+cells: 104 solid frac: 0.31042727223664107
+
+# -- cell 4 (0.3s, exit 0)
+import matplotlib.pyplot as plt
+# top view: draw hole positions and verify geometry analytically
+fig,ax=plt.subplots(figsize=(6,6)); ax.set_aspect('equal')
+ax.add_patch(plt.Rectangle((-40,-40),80,80,fill=False))
+for cx,cy in pts:
+    ang=np.linspace(0,2*np.pi,7)+0
+    ax.plot(cx+Rin*np.cos(ang), cy+Rin*np.sin(ang),'-')
+plt.savefig('layout.png',dpi=100); plt.show()
+# analytic: single cell solid fraction
+nh = len(pts)
+solid_each = (3*math.sqrt(3)/2)*(Rout**2-Rin**2)
+print("cell solid area mm^2:", solid_each, "-> fraction if full tiling:", solid_each/(dx*dy))
+# -- output
+cell solid area mm^2: 12.990381056766589 -> fraction if full tiling: 0.2343750000000001
+
+# -- cell 5 (0.4s, exit 0)
+duct = Pos(0,0,(-up+down)/2) * Box(S,S,up+down+T)   # z from -40 to 100
+fluid = duct - core
+print("fluid volume mm^3:", fluid.volume)
+# classify faces (mm)
+inlet=[]; outlet=[]; ductwalls=[]; honwalls=[]
+for f in fluid.faces():
+    c = f.center(); z=c.Z
+    if abs(z+up)<1e-6: inlet.append(f)
+    elif abs(z-(down+T))<1e-6: outlet.append(f)
+    elif abs(abs(c.X)-S/2)<1e-6 or abs(abs(c.Y)-S/2)<1e-6: ductwalls.append(f)
+    else: honwalls.append(f)
+print("inlet faces:",len(inlet),"outlet:",len(outlet),"ductwalls:",len(ductwalls),"honeycomb faces:",len(honwalls))
+# -- output
+fluid volume mm^3: 856265.309153711
+inlet faces: 0 outlet: 0 ductwalls: 8 honeycomb faces: 628
+
+# -- cell 6 (0.2s, exit 0)
+zs = sorted(set(round(f.center().Z,6) for f in fluid.faces()))
+print("distinct face-center z:", zs[:6], "...", zs[-6:])
+big = [f for f in fluid.faces() if f.area>1500]
+print("big faces:", [(round(f.area,1), round(f.center().X,2),round(f.center().Y,2),round(f.center().Z,2)) for f in big])
+# -- output
+distinct face-center z: [-50.0, -30.0, -10.0, 0.0, 10.0, 50.0] ... [-30.0, -10.0, 0.0, 10.0, 50.0, 90.0]
+big faces: [(3200.0, -40.0, 0.0, -30.0), (3200.0, 0.0, -40.0, -30.0), (1986.7, 1.64, -0.0, -10.0), (3200.0, 0.0, 40.0, -30.0), (6400.0, 0.0, 0.0, -50.0), (3200.0, 40.0, 0.0, -30.0), (1986.7, 1.64, -0.0, 10.0), (6400.0, -40.0, 0.0, 50.0), (6400.0, 0.0, 40.0, 50.0), (6400.0, 0.0, -40.0, 50.0), (6400.0, 40.0, 0.0, 50.0), (6400.0, 0.0, 0.0, 90.0)]
+
+# -- cell 7 (1.6s, exit 0)
+core = Pos(0,0,T/2) * (Box(S,S,T) - holes)
+duct = Pos(0,0,(down-up)/2) * Box(S,S,up+down+T)  # z=-40..100
+fluid = duct - core
+faces = {k: [] for k in ("inlet","outlet","ductWalls","honeycombWalls")}
+for f in fluid.faces():
+    c=f.center()
+    if abs(c.Z+up)<0.5: faces["inlet"].append(f)
+    elif abs(c.Z-(down+T))<0.5: faces["outlet"].append(f)
+    elif abs(c.Z-10)<9.99 and abs(abs(c.X)-S/2)<0.5 or (abs(abs(c.Y)-S/2)<0.5 and abs(c.Z-10)<9.99):
+        faces["honeycombWalls"].append(f)  # would double count; decide below
+    else: faces["ductWalls"].append(f)
+# redo cleanly:
+faces = {k: [] for k in ("inlet","outlet","ductWalls","honeycombWalls")}
+for f in fluid.faces():
+    c=f.center()
+    if abs(c.Z+up)<1e-4: faces["inlet"].append(f)
+    elif abs(c.Z-(down+T))<1e-4: faces["outlet"].append(f)
+    elif abs(c.Z-10)>9.9999: faces["ductWalls"].append(f)
+    else: faces["honeycombWalls"].append(f)
+for k,v in faces.items(): print(k, len(v), "area mm^2:", round(sum(f.area for f in v),1))
+# -- output
+inlet 0 area mm^2: 0
+outlet 0 area mm^2: 0
+ductWalls 12 area mm^2: 55173.5
+honeycombWalls 624 area mm^2: 50437.3
+
+# -- cell 8 (0.8s, exit 0)
+import math as m
+res={k:[] for k in faces}
+for f in fluid.faces():
+    n=f.normal_at(); bb=f.bounding_box()
+    if abs(n.Z)>0.99:
+        if bb.min.Z < -up+1e-3: res["inlet"].append(f)
+        elif bb.max.Z > down+T-1e-3: res["outlet"].append(f)
+        elif n.Z!=0: res["honeycombWalls"].append(f)
+    else:
+        if bb.min.Z < 0 or bb.max.Z > T: res["ductWalls"].append(f)
+        else: res["honeycombWalls"].append(f)
+for k,v in res.items(): print(k,len(v),round(sum(f.area for f in v),1))
+# -- output
+inlet 1 6400.0
+outlet 0 0
+ductWalls 8 38400.0
+honeycombWalls 627 60810.8
+
+# -- cell 9 (0.1s, exit 0)
+zf=[f for f in fluid.faces() if abs(f.normal_at().Z)>0.99]
+print([(round(f.area,2), round(f.bounding_box().min.Z,4), round(f.bounding_box().max.Z,4)) for f in zf][:10], "... total", len(zf))
+# -- output
+[(1986.73, 0.0, 0.0), (6400.0, -50.0, -50.0), (1986.73, 20.0, 20.0), (6400.0, 90.0, 90.0)] ... total 4
+
+# -- cell 10 (0.6s, exit 0)
+duct = Pos(0,0,(T+down-up)/2) * Box(S,S,up+down+T)  # z=-40..100
+fluid = duct - core
+res={k:[] for k in ("inlet","outlet","ductWalls","honeycombWalls")}
+for f in fluid.faces():
+    n=f.normal_at(); bb=f.bounding_box()
+    if abs(n.Z)>0.99:
+        if bb.min.Z < -up+1e-3: res["inlet"].append(f)
+        elif bb.min.Z > T+down-1e-3: res["outlet"].append(f)
+        else: res["honeycombWalls"].append(f)
+    else:
+        if bb.min.Z < -1e-6 or bb.max.Z > T+1e-6: res["ductWalls"].append(f)
+        else: res["honeycombWalls"].append(f)
+for k,v in res.items(): print(k,len(v),round(sum(f.area for f in v),1))
+print("volume mm^3:", fluid.volume)
+# -- output
+inlet 1 6400.0
+outlet 1 6400.0
+ductWalls 8 38400.0
+honeycombWalls 626 54410.8
+volume mm^3: 856265.309153711
+
+# -- cell 11 (1.2s, exit 0)
+fluid_m = fluid.scale(0.001)
+export_step(fluid_m, "fluid.step")
+import gmsh
+gmsh.initialize()
+gmsh.model.add("t11")
+ents = gmsh.model.occ.importShapes("fluid.step")
+gmsh.model.occ.synchronize()
+vols = gmsh.model.getEntities(3)
+surfs = gmsh.model.getEntities(2)
+print("volumes:", vols, "surfaces:", len(surfs))
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+volumes: [(3, 1)] surfaces: 636
+
+# -- cell 12 (5.0s, exit 0)
+groups={"inlet":[], "outlet":[], "ductWalls":[], "honeycombWalls":[]}
+for (d,t) in surfs:
+    cm = gmsh.model.occ.getCenterOfMass(d,t)
+    xmin,ymin,zmin,xmax,ymax,zmax = gmsh.model.getBoundingBox(d,t)
+    zspan = (zmax-zmin)
+    eps=1e-9
+    if zspan<1e-7 and zmin < -0.039: groups["inlet"].append(t)
+    elif zspan<1e-7 and zmax > 0.099: groups["outlet"].append(t)
+    elif zmin > -1e-7 and zmax < 0.0200001: groups["honeycombWalls"].append(t)
+    else: groups["ductWalls"].append(t)
+for name,ts in groups.items():
+    pid = gmsh.model.addPhysicalGroup(2, ts)
+    gmsh.model.setPhysicalName(2, pid, name)
+    print(name, len(ts))
+pid = gmsh.model.addPhysicalGroup(3,[1]); gmsh.model.setPhysicalName(3,pid,"fluid")
+gmsh.option.setNumber("Mesh.MeshSizeMin", 0.0008)
+gmsh.option.setNumber("Mesh.MeshSizeMax", 0.003)
+gmsh.model.mesh.generate(3)
+gmsh.write("t11.msh")
+print("nodes:", len(gmsh.model.mesh.getNodes()[0]))
+# -- output
+inlet 0
+outlet 0
+ductWalls 636
+honeycombWalls 0
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Line)
+Info    : [ 10%] Meshing curve 5 (Line)
+Info    : [ 10%] Meshing curve 6 (Line)
+Info    : [ 10%] Meshing curve 7 (Line)
+Info    : [ 10%] Meshing curve 8 (Line)
+Info    : [ 10%] Meshing curve 9 (Line)
+Info    : [ 10%] Meshing curve 10 (Line)
+Info    : [ 10%] Meshing curve 11 (Line)
+Info    : [ 10%] Meshing curve 12 (Line)
+Info    : [ 10%] Meshing curve 13 (Line)
+Info    : [ 10%] Meshing curve 14 (Line)
+Info    : [ 10%] Meshing curve 15 (Line)
+Info    : [ 10%] Meshing curve 16 (Line)
+Info    : [ 10%] Meshing curve 17 (Line)
+Info    : [ 10%] Meshing curve 18 (Line)
+Info    : [ 10%] Meshing curve 19 (Line)
+Info    : [ 10%] Meshing curve 20 (Line)
+Info    : [ 10%] Meshing curve 21 (Line)
+Info    : [ 10%] Meshing curve 22 (Line)
+Info    : [ 10%] Meshing curve 23 (Line)
+Info    : [ 10%] Meshing curve 24 (Line)
+Info    : [ 10%] Meshing curve 25 (Line)
+Info    : [ 10%] Meshing curve 26 (Line)
+Info    : [ 10%] Meshing curve 27 (Line)
+Info    : [ 10%] Meshing curve 28 (Line)
+Info    : [ 10%] Meshing curve 29 (Line)
+Info    : [ 10%] Meshing curve 30 (Line)
+Info    : [ 10%] Meshing curve 31 (Line)
+Info    : [ 10%] Meshing curve 32 (Line)
+Info    : [ 10%] Meshing curve 33 (Line)
+Info    : [ 10%] Meshing curve 34 (Line)
+Info    : [ 10%] Meshing curve 35 (Line)
+Info    : [ 10%] Meshing curve 36 (Line)
+Info    : [ 10%] Meshing curve 37 (Line)
+Info    : [ 10%] Meshing curve 38 (Line)
+Info    : [ 10%] Meshing curve 39 (Line)
+Info    : [ 10%] Meshing curve 40 (Line)
+Info    : [ 10%] Meshing curve 41 (Line)
+Info    : [ 10%] Meshing curve 42 (Line)
+Info    : [ 10%] Meshing curve 43 (Line)
+Info    : [ 10%] Meshing curve 44 (Line)
+Info    : [ 10%] Meshing curve 45 (Line)
+Info    : [ 10%] Meshing curve 46 (Line)
+Info    : [ 10%] Meshing curve 47 (Line)
+Info    : 
+... 122066 characters cut ...
+. 17000 - 16988 nodes created - worst tet radius 1.1627 (nodes removed 0 12)
+Info    : It. 17500 - 17488 nodes created - worst tet radius 1.15229 (nodes removed 0 12)
+Info    : It. 18000 - 17988 nodes created - worst tet radius 1.14172 (nodes removed 0 12)
+Info    : It. 18500 - 18488 nodes created - worst tet radius 1.13186 (nodes removed 0 12)
+Info    : It. 19000 - 18988 nodes created - worst tet radius 1.12273 (nodes removed 0 12)
+Info    : It. 19500 - 19488 nodes created - worst tet radius 1.1135 (nodes removed 0 12)
+Info    : It. 20000 - 19988 nodes created - worst tet radius 1.10439 (nodes removed 0 12)
+Info    : It. 20500 - 20488 nodes created - worst tet radius 1.09591 (nodes removed 0 12)
+Info    : It. 21000 - 20987 nodes created - worst tet radius 1.0875 (nodes removed 1 12)
+Info    : It. 21500 - 21487 nodes created - worst tet radius 1.08008 (nodes removed 1 12)
+Info    : It. 22000 - 21986 nodes created - worst tet radius 1.07272 (nodes removed 2 12)
+Info    : It. 22500 - 22486 nodes created - worst tet radius 1.06502 (nodes removed 2 12)
+Info    : It. 23000 - 22986 nodes created - worst tet radius 1.05882 (nodes removed 2 12)
+Info    : It. 23500 - 23486 nodes created - worst tet radius 1.05195 (nodes removed 2 12)
+Info    : It. 24000 - 23985 nodes created - worst tet radius 1.04475 (nodes removed 3 12)
+Info    : It. 24500 - 24485 nodes created - worst tet radius 1.03875 (nodes removed 3 12)
+Info    : It. 25000 - 24980 nodes created - worst tet radius 1.03227 (nodes removed 8 12)
+Info    : It. 25500 - 25477 nodes created - worst tet radius 1.02599 (nodes removed 11 12)
+Info    : It. 26000 - 25972 nodes created - worst tet radius 1.01946 (nodes removed 14 14)
+Info    : It. 26500 - 26462 nodes created - worst tet radius 1.01325 (nodes removed 20 18)
+Info    : It. 27000 - 26947 nodes created - worst tet radius 1.0077 (nodes removed 30 23)
+Info    : It. 27500 - 27433 nodes created - worst tet radius 1.00203 (nodes removed 36 31)
+Info    : 3D refinement terminated (46674 nodes total):
+Info    :  - 6 Delaunay cavities modified for star shapeness
+Info    :  - 74 nodes could not be inserted
+Info    :  - 234393 tetrahedra created in 1.48058 sec. (158311 tets/s)
+Info    : 17 node relocations
+Info    : Done meshing 3D (Wall 2.78711s, CPU 2.7541s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 0.000856265) with worst = 0 / average = 0.764324:
+Info    : 0.00 < quality < 0.10 :       657 elements
+Info    : 0.10 < quality < 0.20 :      2330 elements
+Info    : 0.20 < quality < 0.30 :      2874 elements
+Info    : 0.30 < quality < 0.40 :      5321 elements
+Info    : 0.40 < quality < 0.50 :      8169 elements
+Info    : 0.50 < quality < 0.60 :     12880 elements
+Info    : 0.60 < quality < 0.70 :     25885 elements
+Info    : 0.70 < quality < 0.80 :     54692 elements
+Info    : 0.80 < quality < 0.90 :     80065 elements
+Info    : 0.90 < quality < 1.00 :     41516 elements
+Info    : 5542 edge swaps, 212 node relocations (volume = 0.000856265): worst = 0.034654 / average = 0.778279 (Wall 0.149214s, CPU 0.148577s)
+Info    : 5619 edge swaps, 234 node relocations (volume = 0.000856265): worst = 0.034654 / average = 0.778386 (Wall 0.187972s, CPU 0.18741s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         1 elements
+Info    : 0.10 < quality < 0.20 :         5 elements
+Info    : 0.20 < quality < 0.30 :       100 elements
+Info    : 0.30 < quality < 0.40 :      5885 elements
+Info    : 0.40 < quality < 0.50 :      8163 elements
+Info    : 0.50 < quality < 0.60 :     12576 elements
+Info    : 0.60 < quality < 0.70 :     24917 elements
+Info    : 0.70 < quality < 0.80 :     55598 elements
+Info    : 0.80 < quality < 0.90 :     80542 elements
+Info    : 0.90 < quality < 1.00 :     41622 elements
+Info    : Done optimizing mesh (Wall 0.514437s, CPU 0.486457s)
+Info    : 46672 nodes 276732 elements
+Info    : Writing 't11.msh'...
+Info    : Done writing 't11.msh'
+nodes: 46672
+
+# -- cell 13 (4.1s, exit 0)
+gmsh.model.removePhysicalGroups()
+groups={"inlet":[], "outlet":[], "ductWalls":[], "honeycombWalls":[]}
+for (d,t) in surfs:
+    cx,cy,cz = gmsh.model.occ.getCenterOfMass(d,t)
+    xmin,ymin,zmin,xmax,ymax,zmax = gmsh.model.getBoundingBox(d,t)
+    if zmax-zmin < 1e-4 and cz < -0.035: groups["inlet"].append(t)
+    elif zmax-zmin < 1e-4 and cz > 0.095: groups["outlet"].append(t)
+    elif zmin > -1e-9 and zmax < 0.020001: groups["honeycombWalls"].append(t)
+    else: groups["ductWalls"].append(t)
+for name,ts in groups.items():
+    pid = gmsh.model.addPhysicalGroup(2, ts)
+    gmsh.model.setPhysicalName(2, pid, name)
+    print(name, len(ts))
+pid = gmsh.model.addPhysicalGroup(3,[1]); gmsh.model.setPhysicalName(3,pid,"fluid")
+gmsh.model.mesh.generate(3)
+gmsh.write("t11.msh")
+import subprocess
+r = subprocess.run(["gmshToFoam","t11.msh"], capture_output=True, text=True)
+print(r.stdout[-600:], r.stderr[-300:])
+# -- output
+inlet 1
+outlet 1
+ductWalls 633
+honeycombWalls 1
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 19053 nodes...
+Info    : Done tetrahedrizing 19061 nodes (Wall 0.287223s, CPU 0.283675s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    :  - Added 2 Steiner points
+Info    : Done reconstructing mesh (Wall 0.581057s, CPU 0.572527s)
+Info    : Found volume 1
+Info    : It. 0 - 0 nodes created - worst tet radius 19.5144 (nodes removed 0 0)
+Info    : It. 500 - 500 nodes created - worst tet radius 3.4187 (nodes removed 0 0)
+Info    : It. 1000 - 1000 nodes created - worst tet radius 2.76198 (nodes removed 0 0)
+Info    : It. 1500 - 1498 nodes created - worst tet radius 2.45295 (nodes removed 0 2)
+Info    : It. 2000 - 1996 nodes created - worst tet radius 2.24745 (nodes removed 0 4)
+Info    : It. 2500 - 2494 nodes created - worst tet radius 2.11128 (nodes removed 0 6)
+Info    : It. 3000 - 2994 nodes created - worst tet radius 2.00425 (nodes removed 0 6)
+Info    : It. 3500 - 3494 nodes created - worst tet radius 1.91177 (nodes removed 0 6)
+Info    : It. 4000 - 3992 nodes created - worst tet radius 1.83176 (nodes removed 0 8)
+Info    : It. 4500 - 4492 nodes created - worst tet radius 1.76409 (nodes removed 0 8)
+Info    : It. 5000 - 4992 nodes created - worst tet radius 1.70478 (nodes removed 0 8)
+Info    : It. 5500 - 5490 nodes created - worst tet radius 1.65381 (nodes removed 0 10)
+Info    : It. 6000 - 5988 nodes created - worst tet radius 1.60897 (nodes removed 0 12)
+Info    : It. 6500 - 6488 nodes created - worst tet radius 1.56903 (nodes removed 0 12)
+Info    : It. 7000 - 6988 nodes created - worst tet radius 1.53309 (nodes removed 0 12)
+Info    : It. 7500 - 7488 nodes created - worst tet radius 1.49819 (nodes removed 0 12)
+Info    : It. 8000 - 7988 nodes created - worst tet radius 1.46736 (nodes removed 0 12)
+Info    : It
+... 2409 characters cut ...
+nfo    : It. 22000 - 21986 nodes created - worst tet radius 1.07272 (nodes removed 2 12)
+Info    : It. 22500 - 22486 nodes created - worst tet radius 1.06502 (nodes removed 2 12)
+Info    : It. 23000 - 22986 nodes created - worst tet radius 1.05882 (nodes removed 2 12)
+Info    : It. 23500 - 23486 nodes created - worst tet radius 1.05195 (nodes removed 2 12)
+Info    : It. 24000 - 23985 nodes created - worst tet radius 1.04475 (nodes removed 3 12)
+Info    : It. 24500 - 24485 nodes created - worst tet radius 1.03875 (nodes removed 3 12)
+Info    : It. 25000 - 24980 nodes created - worst tet radius 1.03227 (nodes removed 8 12)
+Info    : It. 25500 - 25477 nodes created - worst tet radius 1.02599 (nodes removed 11 12)
+Info    : It. 26000 - 25972 nodes created - worst tet radius 1.01946 (nodes removed 14 14)
+Info    : It. 26500 - 26462 nodes created - worst tet radius 1.01325 (nodes removed 20 18)
+Info    : It. 27000 - 26947 nodes created - worst tet radius 1.0077 (nodes removed 30 23)
+Info    : It. 27500 - 27433 nodes created - worst tet radius 1.00203 (nodes removed 36 31)
+Info    : 3D refinement terminated (46674 nodes total):
+Info    :  - 6 Delaunay cavities modified for star shapeness
+Info    :  - 74 nodes could not be inserted
+Info    :  - 234393 tetrahedra created in 1.48277 sec. (158077 tets/s)
+Info    : 17 node relocations
+Info    : Done meshing 3D (Wall 2.79757s, CPU 2.7946s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 0.000856265) with worst = 0 / average = 0.764324:
+Info    : 0.00 < quality < 0.10 :       657 elements
+Info    : 0.10 < quality < 0.20 :      2330 elements
+Info    : 0.20 < quality < 0.30 :      2874 elements
+Info    : 0.30 < quality < 0.40 :      5321 elements
+Info    : 0.40 < quality < 0.50 :      8169 elements
+Info    : 0.50 < quality < 0.60 :     12880 elements
+Info    : 0.60 < quality < 0.70 :     25885 elements
+Info    : 0.70 < quality < 0.80 :     54692 elements
+Info    : 0.80 < quality < 0.90 :     80065 elements
+Info    : 0.90 < quality < 1.00 :     41516 elements
+Info    : 5542 edge swaps, 212 node relocations (volume = 0.000856265): worst = 0.034654 / average = 0.778279 (Wall 0.154331s, CPU 0.1546s)
+Info    : 5619 edge swaps, 234 node relocations (volume = 0.000856265): worst = 0.034654 / average = 0.778386 (Wall 0.193368s, CPU 0.193704s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         1 elements
+Info    : 0.10 < quality < 0.20 :         5 elements
+Info    : 0.20 < quality < 0.30 :       100 elements
+Info    : 0.30 < quality < 0.40 :      5885 elements
+Info    : 0.40 < quality < 0.50 :      8163 elements
+Info    : 0.50 < quality < 0.60 :     12576 elements
+Info    : 0.60 < quality < 0.70 :     24917 elements
+Info    : 0.70 < quality < 0.80 :     55598 elements
+Info    : 0.80 < quality < 0.90 :     80542 elements
+Info    : 0.90 < quality < 1.00 :     41622 elements
+Info    : Done optimizing mesh (Wall 0.516948s, CPU 0.489774s)
+Info    : 46672 nodes 276732 elements
+Info    : Writing 't11.msh'...
+Info    : Done writing 't11.msh'
+fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T11-20260914-143915-76e9/t11
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+ olDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 14 (0.1s, exit 0)
+import collections
+cnt = collections.Counter()
+for (d,t) in surfs:
+    zmin, zmax = gmsh.model.getBoundingBox(d,t)[2], gmsh.model.getBoundingBox(d,t)[5]
+    cnt[(round(zmin,3), round(zmax,3))] += 1
+for k,v in sorted(cnt.items()): print(k, v)
+# -- output
+(-0.04, -0.04) 1
+(-0.04, 0.0) 4
+(-0.0, 0.0) 1
+(-0.0, 0.02) 624
+(0.02, 0.02) 1
+(0.02, 0.1) 4
+(0.1, 0.1) 1
+
+# -- cell 15 (5.0s, exit 0)
+groups={"inlet":[], "outlet":[], "ductWalls":[], "honeycombWalls":[]}
+for (d,t) in surfs:
+    xmin,ymin,zmin,xmax,ymax,zmax = gmsh.model.getBoundingBox(d,t)
+    if zmax<=-0.0399: groups["inlet"].append(t)
+    elif zmin>=0.0999: groups["outlet"].append(t)
+    elif zmax<=0.0201 and zmin>=-0.021e-3: groups["honeycombWalls"].append(t)
+    else: groups["ductWalls"].append(t)
+for name,ts in groups.items():
+    pid=gmsh.model.addPhysicalGroup(2,ts); gmsh.model.setPhysicalName(2,pid,name)
+    print(name,len(ts))
+gmsh.model.mesh.generate(3); gmsh.write("t11.msh")
+import subprocess, os
+os.makedirs("system",exist_ok=True); os.makedirs("constant",exist_ok=True)
+open("system/controlDict","w").write("FoamFile{version 2.0; format ascii; class dictionary; object controlDict;}\napplication x; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;")
+r=subprocess.run(["gmshToFoam","t11.msh"],capture_output=True,text=True)
+print(r.stdout[-400:] or r.stderr[-400:])
+# -- output
+inlet 1
+outlet 1
+ductWalls 8
+honeycombWalls 626
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 19053 nodes...
+Info    : Done tetrahedrizing 19061 nodes (Wall 0.285297s, CPU 0.282068s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    :  - Added 2 Steiner points
+Info    : Done reconstructing mesh (Wall 0.567461s, CPU 0.563637s)
+Info    : Found volume 1
+Info    : It. 0 - 0 nodes created - worst tet radius 19.5144 (nodes removed 0 0)
+Info    : It. 500 - 500 nodes created - worst tet radius 3.4187 (nodes removed 0 0)
+Info    : It. 1000 - 1000 nodes created - worst tet radius 2.76198 (nodes removed 0 0)
+Info    : It. 1500 - 1498 nodes created - worst tet radius 2.45295 (nodes removed 0 2)
+Info    : It. 2000 - 1996 nodes created - worst tet radius 2.24745 (nodes removed 0 4)
+Info    : It. 2500 - 2494 nodes created - worst tet radius 2.11128 (nodes removed 0 6)
+Info    : It. 3000 - 2994 nodes created - worst tet radius 2.00425 (nodes removed 0 6)
+Info    : It. 3500 - 3494 nodes created - worst tet radius 1.91177 (nodes removed 0 6)
+Info    : It. 4000 - 3992 nodes created - worst tet radius 1.83176 (nodes removed 0 8)
+Info    : It. 4500 - 4492 nodes created - worst tet radius 1.76409 (nodes removed 0 8)
+Info    : It. 5000 - 4992 nodes created - worst tet radius 1.70478 (nodes removed 0 8)
+Info    : It. 5500 - 5490 nodes created - worst tet radius 1.65381 (nodes removed 0 10)
+Info    : It. 6000 - 5988 nodes created - worst tet radius 1.60897 (nodes removed 0 12)
+Info    : It. 6500 - 6488 nodes created - worst tet radius 1.56903 (nodes removed 0 12)
+Info    : It. 7000 - 6988 nodes created - worst tet radius 1.53309 (nodes removed 0 12)
+Info    : It. 7500 - 7488 nodes created - worst tet radius 1.49819 (nodes removed 0 12)
+Info    : It. 8000 - 7988 nodes created - worst tet radius 1.46736 (nodes removed 0 12)
+Info    : It
+... 1911 characters cut ...
+ - worst tet radius 1.12273 (nodes removed 0 12)
+Info    : It. 19500 - 19488 nodes created - worst tet radius 1.1135 (nodes removed 0 12)
+Info    : It. 20000 - 19988 nodes created - worst tet radius 1.10439 (nodes removed 0 12)
+Info    : It. 20500 - 20488 nodes created - worst tet radius 1.09591 (nodes removed 0 12)
+Info    : It. 21000 - 20987 nodes created - worst tet radius 1.0875 (nodes removed 1 12)
+Info    : It. 21500 - 21487 nodes created - worst tet radius 1.08008 (nodes removed 1 12)
+Info    : It. 22000 - 21986 nodes created - worst tet radius 1.07272 (nodes removed 2 12)
+Info    : It. 22500 - 22486 nodes created - worst tet radius 1.06502 (nodes removed 2 12)
+Info    : It. 23000 - 22986 nodes created - worst tet radius 1.05882 (nodes removed 2 12)
+Info    : It. 23500 - 23486 nodes created - worst tet radius 1.05195 (nodes removed 2 12)
+Info    : It. 24000 - 23985 nodes created - worst tet radius 1.04475 (nodes removed 3 12)
+Info    : It. 24500 - 24485 nodes created - worst tet radius 1.03875 (nodes removed 3 12)
+Info    : It. 25000 - 24980 nodes created - worst tet radius 1.03227 (nodes removed 8 12)
+Info    : It. 25500 - 25477 nodes created - worst tet radius 1.02599 (nodes removed 11 12)
+Info    : It. 26000 - 25972 nodes created - worst tet radius 1.01946 (nodes removed 14 14)
+Info    : It. 26500 - 26462 nodes created - worst tet radius 1.01325 (nodes removed 20 18)
+Info    : It. 27000 - 26947 nodes created - worst tet radius 1.0077 (nodes removed 30 23)
+Info    : It. 27500 - 27433 nodes created - worst tet radius 1.00203 (nodes removed 36 31)
+Info    : 3D refinement terminated (46674 nodes total):
+Info    :  - 6 Delaunay cavities modified for star shapeness
+Info    :  - 74 nodes could not be inserted
+Info    :  - 234393 tetrahedra created in 1.47176 sec. (159260 tets/s)
+Info    : 17 node relocations
+Info    : Done meshing 3D (Wall 2.77389s, CPU 2.77506s)
+Info    : Optimizing mesh...
+Info    : Optimizing volume 1
+Info    : Optimization starts (volume = 0.000856265) with worst = 0 / average = 0.764324:
+Info    : 0.00 < quality < 0.10 :       657 elements
+Info    : 0.10 < quality < 0.20 :      2330 elements
+Info    : 0.20 < quality < 0.30 :      2874 elements
+Info    : 0.30 < quality < 0.40 :      5321 elements
+Info    : 0.40 < quality < 0.50 :      8169 elements
+Info    : 0.50 < quality < 0.60 :     12880 elements
+Info    : 0.60 < quality < 0.70 :     25885 elements
+Info    : 0.70 < quality < 0.80 :     54692 elements
+Info    : 0.80 < quality < 0.90 :     80065 elements
+Info    : 0.90 < quality < 1.00 :     41516 elements
+Info    : 5542 edge swaps, 212 node relocations (volume = 0.000856265): worst = 0.034654 / average = 0.778279 (Wall 0.151851s, CPU 0.152109s)
+Info    : 5619 edge swaps, 234 node relocations (volume = 0.000856265): worst = 0.034654 / average = 0.778386 (Wall 0.193035s, CPU 0.193377s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         1 elements
+Info    : 0.10 < quality < 0.20 :         5 elements
+Info    : 0.20 < quality < 0.30 :       100 elements
+Info    : 0.30 < quality < 0.40 :      5885 elements
+Info    : 0.40 < quality < 0.50 :      8163 elements
+Info    : 0.50 < quality < 0.60 :     12576 elements
+Info    : 0.60 < quality < 0.70 :     24917 elements
+Info    : 0.70 < quality < 0.80 :     55598 elements
+Info    : 0.80 < quality < 0.90 :     80542 elements
+Info    : 0.90 < quality < 1.00 :     41622 elements
+Info    : Done optimizing mesh (Wall 0.553341s, CPU 0.534421s)
+Info    : 46672 nodes 276732 elements
+Info    : Writing 't11.msh'...
+Info    : Done writing 't11.msh'
+mOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 4.1  ascii 0
+
+Starting to read physical names at line 5
+Physical names:5
+    Surface 1	inlet
+    Surface 2	outlet
+    Surface 3	ductWalls
+    Surface 4	honeycombWalls
+    Volume 5	fluid
+
+# -- cell 16 (0.2s, exit 0)
+print(r.stdout[r.stdout.find("foamBoundary"):][:300] if "foamBoundary" in r.stdout else r.stdout[-300:])
+rc=subprocess.run(["checkMesh"],capture_output=True,text=True)
+print(rc.stdout[-1500:])
+# -- output
+* * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 4.1  ascii 0
+
+Starting to read physical names at line 5
+Physical names:5
+    Surface 1	inlet
+    Surface 2	outlet
+    Surface 3	ductWalls
+    Surface 4	honeycombWalls
+    Volume 5	fluid
+
+
+                   |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 14 2026
+Time   : 14:50:27
+Host   : yc-demo
+PID    : 260237
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T11-20260914-143915-76e9/t11
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+# -- cell 17 (0.1s, exit 0)
+tail = rc.stdout[rc.stdout.find("Create mesh"):]
+print(tail[-2200:])
+# -- output
+Create mesh for time = constant
+
+# -- cell 18 (0.1s, exit 0)
+print(subprocess.run(["find",".","-maxdepth","3"],capture_output=True,text=True).stdout)
+print(rc.stderr[-800:])
+# -- output
+.
+./constant
+./system
+./system/controlDict
+./.reference
+./.reference/b123d_api.md
+./t11.msh
+./layout.png
+./fluid.step
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+Cannot find file "points" in directory "polyMesh" in times "constant" down to constant
+
+    From virtual Foam::IOobject Foam::fileOperation::findInstance(const Foam::IOobject&, Foam::scalar, const Foam::word&, bool) const
+    in file global/fileOperations/fileOperation/fileOperation.C at line 1221.
+
+FOAM exiting
+
+# -- cell 19 (4.3s, exit 0)
+gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+gmsh.write("t11.msh")
+r=subprocess.run(["gmshToFoam","t11.msh"],capture_output=True,text=True)
+print(r.stdout[-500:], r.stderr[-200:])
+rc=subprocess.run(["checkMesh"],capture_output=True,text=True)
+print((rc.stdout+rc.stderr)[-2000:])
+# -- output
+Info    : Writing 't11.msh'...
+Info    : Done writing 't11.msh'
+::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 38514 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+Finding faces of patch 5
+Finding faces of patch 6
+Finding faces of patch 7
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone cellZone_0 and cellSet
+End
+
+ 
+   |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 14 2026
+Time   : 14:51:05
+Host   : yc-demo
+PID    : 261817
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T11-20260914-143915-76e9/t11
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T11-20260914-143915-76e9/t11/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 20 (1.1s, exit 0)
+open("system/fvSchemes","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSchemes;}\nddtSchemes{}gradSchemes{}divSchemes{}laplacianSchemes{}interpolationSchemes{}snGradSchemes{}")
+open("system/fvSolution","w").write("FoamFile{version 2.0;format ascii;class dictionary;object fvSolution;}\nsolvers{}")
+rc=subprocess.run(["checkMesh"],capture_output=True,text=True)
+out=rc.stdout+rc.stderr
+print(out[out.find("Mesh stats"):out.find("Mesh stats")+1500])
+# -- output
+Mesh stats 
+    points:           46672
+    faces:            478245
+    internal faces:   439731
+    cells:            229494
+    faces per cell:   4
+    boundary patches: 8
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    229494
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    patch0              0        0        ok (empty)                        
+    patch1              10438    5435     ok (non-closed singly connected)  
+    patch2              21668    11409    ok (non-closed singly connected)  
+    patch3              0        0        ok (empty)                        
+    patch4              1730     920      ok (non-closed singly connected)  
+    patch5              2948     2049     ok (non-closed singly connected)  
+    patch6              0        0        ok (empty)                        
+    patch7              1730     920      ok (non-closed singly connected)  
+    ".*"                38514    19053    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surface
+
+# -- cell 21 (0.1s, exit 0)
+print(open("constant/polyMesh/boundary").read()[:2500])
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+8
+(
+    patch0
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          0;
+        startFace       439731;
+    }
+    patch1
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          10438;
+        startFace       439731;
+    }
+    patch2
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          21668;
+        startFace       450169;
+    }
+    patch3
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          0;
+        startFace       471837;
+    }
+    patch4
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1730;
+        startFace       471837;
+    }
+    patch5
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          2948;
+        startFace       473567;
+    }
+    patch6
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          0;
+        startFace       476515;
+    }
+    patch7
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1730;
+        startFace       476515;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 22 (0.5s, exit 0)
+import re
+txt=open("t11.msh").read()
+els=re.findall(r'\n(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',txt[txt.find("$Elements"):])
+import collections
+c=collections.Counter()
+for e in els:
+    typ,ntags,phys,elem = int(e[1]),int(e[2]),int(e[3]),int(e[4])
+    if typ==2: c[(phys)] += 1
+print("triangle count by physical id:", c)
+# -- output
+triangle count by physical id: Counter({8: 32105, 14: 24616, 13: 10438, 9: 2948, 6: 1730, 11: 1730, 7: 1730, 12: 1730})
+

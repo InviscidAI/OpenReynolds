@@ -1,0 +1,657 @@
+# -- cell 1 (0.9s, exit 1)
+import gmsh, math, numpy as np
+
+# ---- parameters (mm) ----
+R_MAJOR = 20.0      # neck OD 40 mm
+R_MINOR = 19.0      # thread depth 1 mm
+PITCH = 2.0
+HEIGHT = 12.0
+GAP = 0.2
+# trapezoid ridge profile (r, z), root halfwidth 0.7, crest halfwidth 0.45
+T_IN = [(R_MINOR,-0.7),(R_MINOR,0.7),(R_MAJOR,0.45),(R_MAJOR,-0.45)]
+
+def poly_offset(poly, d):
+    n = len(poly); out=[]
+    P=[np.array(p) for p in poly]
+    for i in range(n):
+        a,b = P[i], P[(i+1)%n]
+        e = b-a; nrm = np.array([e[1],-e[0]])/np.linalg.norm(e)
+        # signed offsets intersection
+        pass
+    # simple: shift every edge outward by d, intersect consecutive shifted edges
+    shifted=[]
+    for i in range(n):
+        a,b = P[i], P[(i+1)%n]
+        e=b-a; nrm=np.array([e[1],-e[0]]); nrm/=np.linalg.norm(nrm)
+        shifted.append((a+nrm*d, b+nrm*d))
+    res=[]
+    for i in range(n):
+        (a1,b1)=shifted[i]; (a2,b2)=shifted[(i+1)%n]
+        # intersect lines
+        d1=b1-a1; d2=b2-a2
+        t = np.cross(a2-a1, d2)/np.cross(d1,d2)
+        res.append(tuple(a1+t*d1))
+    return res
+
+T_OUT = poly_offset(T_IN, GAP)
+print("T_IN:", T_IN); print("T_OUT:", T_OUT)
+
+gmsh.initialize(); gmsh.option.setNumber("General.Terminal",0)
+gmsh.model.add("gap")
+occ = gmsh.model.occ
+
+# helix wire, radius at mid-profile
+Rc = (R_MAJOR+R_MINOR)/2
+NTURNS = HEIGHT/PITCH
+NPPT = 24  # points per turn
+pts=[]
+total = int(NTURNS*NPPT)
+for i in range(total+1):
+    th = 2*math.pi*i/NPPT*(1)
+    t  = th/(2*math.pi)*PITCH  # z height
+    pts.append(occ.addPoint(Rc*math.cos(th), Rc*math.sin(th), t))
+wire = occ.addBSpline(pts)
+occ.synchronize()
+# annular trapezoid face in x-z plane at start point (Rc,0,0)
+def face_from(poly):
+    ps=[occ.addPoint(p[0],0,p[1]) for p in poly]
+    ls=[occ.addLine(ps[i],ps[(i+1)%len(ps)]) for i in range(len(ps))]
+    cl=occ.addCurveLoop(ls)
+    return occ.addWire(ls), ls, occ.addPlaneSurface([occ.addCurveLoop(ls)])
+# face with hole: outer minus inner
+ps_o=[occ.addPoint(p[0],0,p[1]) for p in T_OUT]
+ls_o=[occ.addLine(ps_o[i],ps_o[(i+1)%len(ps_o)]) for i in range(4)]
+cl_o=occ.addCurveLoop(ls_o)
+ps_i=[occ.addPoint(p[0],0,p[1]) for p in T_IN]
+ls_i=[occ.addLine(ps_i[i],ps_i[(i+1)%len(ps_i)]) for i in range(4)]
+cl_i=occ.addCurveLoop(ls_i)
+f = occ.addPlaneSurface([cl_o, cl_i])
+occ.synchronize()
+pipe = occ.addPipe([(2,f)], [(1,wire)])
+occ.synchronize()
+gmsh.model.mesh.generate(3)
+gmsh.write("gap_mm.stl")
+vols = gmsh.model.getEntities(3); print("vols",vols)
+bnd = gmsh.model.getBoundary(vols, combined=False)
+print("boundary surfaces:", bnd)
+for dim,tag in bnd:
+    bb = gmsh.model.getBoundingBox(dim,tag)
+    print(tag, [round(v,2) for v in bb])
+gmsh.finalize()
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 35[39m
+[32m     31[39m         t = np.cross(a2-a1, d2)/np.cross(d1,d2)
+[32m     32[39m         res.append(tuple(a1+t*d1))
+[32m     33[39m     [38;5;28;01mreturn[39;00m res
+[32m     34[39m 
+[32m---> [39m[32m35[39m T_OUT = poly_offset(T_IN, GAP)
+[32m     36[39m print([33m"T_IN:"[39m, T_IN); print([33m"T_OUT:"[39m, T_OUT)
+[32m     37[39m 
+[32m     38[39m gmsh.initialize(); gmsh.option.setNumber([33m"General.Terminal"[39m,[32m0[39m)
+
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 31[39m, in [36mpoly_offset[39m[34m(poly, d)[39m
+[32m     27[39m     [38;5;28;01mfor[39;00m i [38;5;28;01min[39;00m range(n):
+[32m     28[39m         (a1,b1)=shifted[i]; (a2,b2)=shifted[(i+[32m1[39m)%n]
+[32m     29[39m         [38;5;66;03m# intersect lines[39;00m
+[32m     30[39m         d1=b1-a1; d2=b2-a2
+[32m---> [39m[32m31[39m         t = np.cross(a2-a1, d2)/np.cross(d1,d2)
+[32m     32[39m         res.append(tuple(a1+t*d1))
+[32m     33[39m     [38;5;28;01mreturn[39;00m res
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/numpy/_core/numeric.py:1680[39m, in [36mcross[39m[34m(a, b, axisa, axisb, axisc, axis)[39m
+[32m   1678[39m b = moveaxis(b, axisb, -[32m1[39m)
+[32m   1679[39m [38;5;28;01mif[39;00m a.shape[-[32m1[39m] != [32m3[39m [38;5;129;01mor[39;00m b.shape[-[32m1[39m] != [32m3[39m:
+[32m-> [39m[32m1680[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m(
+[32m   1681[39m         [33mf[39m[33m"[39m[33mBoth input arrays must be (arrays of) 3-dimensional vectors, [39m[33m"[39m
+[32m   1682[39m         [33mf[39m[33m"[39m[33mbut they are [39m[38;5;132;01m{[39;00ma.shape[-[32m1[39m][38;5;132;01m}[39;00m[33m and [39m[38;5;132;01m{[39;00mb.shape[-[32m1[39m][38;5;132;01m}[39;00m[33m dimensional instead.[39m[33m"[39m
+[32m   1683[39m     )
+[32m   1685[39m [38;5;66;03m# Create the output array[39;00m
+[32m   1686[39m shape = *broadcast(a[..., [32m0[39m], b[..., [32m0[39m]).shape, [32m3[39m
+
+[31mValueError[39m: Both input arrays must be (arrays of) 3-dimensional vectors, but they are 2 and 2 dimensional instead.
+
+# -- cell 2 (1.5s, exit 1)
+import gmsh, math, numpy as np
+
+R_MAJOR = 20.0; R_MINOR = 19.0; PITCH = 2.0; HEIGHT = 12.0; GAP = 0.2
+T_IN = [(R_MINOR,-0.7),(R_MINOR,0.7),(R_MAJOR,0.45),(R_MAJOR,-0.45)]
+c2 = lambda a,b: a[0]*b[1]-a[1]*b[0]
+
+def poly_offset(poly, d):
+    n=len(poly); P=[np.array(p,float) for p in poly]
+    shifted=[]
+    for i in range(n):
+        a,b=P[i],P[(i+1)%n]; e=b-a; nrm=np.array([e[1],-e[0]]); nrm/=np.linalg.norm(nrm)
+        shifted.append((a+nrm*d, b+nrm*d))
+    res=[]
+    for i in range(n):
+        (a1,b1)=shifted[i]; (a2,b2)=shifted[(i+1)%n]
+        d1=b1-a1; d2=b2-a2
+        t=c2(a2-a1,d2)/c2(d1,d2)
+        res.append(tuple(a1+t*d1))
+    return res
+
+T_OUT = poly_offset(T_IN, GAP)
+print("T_OUT:", [(round(a,3),round(b,3)) for a,b in T_OUT])
+
+gmsh.initialize(); gmsh.option.setNumber("General.Terminal",0)
+gmsh.model.add("gap"); occ = gmsh.model.occ
+Rc=(R_MAJOR+R_MINOR)/2; NPPT=32
+NTURNS=HEIGHT/PITCH; total=int(NTURNS*NPPT)
+pts=[]
+for i in range(total+1):
+    th=2*math.pi*i/NPPT; z=th/(2*math.pi)*PITCH
+    pts.append(occ.addPoint(Rc*math.cos(th), Rc*math.sin(th), z))
+wire=occ.addBSpline(pts)
+def loop(poly):
+    ps=[occ.addPoint(p[0],0.0,p[1]) for p in poly]
+    ls=[occ.addLine(ps[i],ps[(i+1)%len(ps)]) for i in range(len(ps))]
+    return occ.addCurveLoop(ls)
+cl_o=loop(T_OUT); cl_i=loop(T_IN)
+f=occ.addPlaneSurface([cl_o,cl_i])
+occ.synchronize()
+pipe=occ.addPipe([(2,f)],[(1,wire)])
+occ.synchronize()
+gmsh.model.mesh.setSize(gmsh.model.getEntities(0),1.5)
+gmsh.model.mesh.generate(3)
+gmsh.write("gap_mm.stl")
+vols=gmsh.model.getEntities(3); print("vols",vols)
+bnd=gmsh.model.getBoundary(vols,combined=False)
+for dim,tag in bnd:
+    bb=gmsh.model.getBoundingBox(dim,tag)
+    print("surf",tag,[round(v,2) for v in bb])
+# -- output
+T_OUT: [(np.float64(19.2), np.float64(0.444)), (np.float64(19.8), np.float64(0.294)), (np.float64(19.8), np.float64(-0.294)), (np.float64(19.2), np.float64(-0.444))]
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 40[39m
+[32m     36[39m     [38;5;28;01mreturn[39;00m occ.addCurveLoop(ls)
+[32m     37[39m cl_o=loop(T_OUT); cl_i=loop(T_IN)
+[32m     38[39m f=occ.addPlaneSurface([cl_o,cl_i])
+[32m     39[39m occ.synchronize()
+[32m---> [39m[32m40[39m pipe=occ.addPipe([([32m2[39m,f)],[([32m1[39m,wire)])
+[32m     41[39m occ.synchronize()
+[32m     42[39m gmsh.model.mesh.setSize(gmsh.model.getEntities([32m0[39m),[32m1.5[39m)
+[32m     43[39m gmsh.model.mesh.generate([32m3[39m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/gmsh.py:8122[39m, in [36mmodel.occ.addPipe[39m[34m(dimTags, wireTag, trihedron)[39m
+[32m   8118[39m             api_outDimTags_, api_outDimTags_n_ = POINTER(c_int)(), c_size_t()
+[32m   8119[39m             ierr = c_int()
+[32m   8120[39m             lib.gmshModelOccAddPipe(
+[32m   8121[39m                 api_dimTags_, api_dimTags_n_,
+[32m-> [39m[32m8122[39m                 c_int(wireTag),
+[32m   8123[39m                 byref(api_outDimTags_), byref(api_outDimTags_n_),
+[32m   8124[39m                 c_char_p(trihedron.encode()),
+[32m   8125[39m                 byref(ierr))
+
+[31mTypeError[39m: 'list' object cannot be interpreted as an integer
+
+# -- cell 3 (0.9s, exit 1)
+import importlib; print(importlib.import_module("shapely").__version__)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mModuleNotFoundError[39m                       Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 1[39m
+[32m----> [39m[32m1[39m [38;5;28;01mimport[39;00m importlib; print(importlib.import_module([33m"shapely"[39m).__version__)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/importlib/__init__.py:88[39m, in [36mimport_module[39m[34m(name, package)[39m
+[32m     86[39m             [38;5;28;01mbreak[39;00m
+[32m     87[39m         level += [32m1[39m
+[32m---> [39m[32m88[39m [38;5;28;01mreturn[39;00m [30;43m_bootstrap[39;49m[30;43m.[39;49m[30;43m_gcd_import[39;49m[30;43m([39;49m[30;43mname[39;49m[30;43m[[39;49m[30;43mlevel[39;49m[30;43m:[39;49m[30;43m][39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mpackage[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mlevel[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m<frozen importlib._bootstrap>:1387[39m, in [36m_gcd_import[39m[34m(name, package, level)[39m
+
+[36mFile [39m[32m<frozen importlib._bootstrap>:1360[39m, in [36m_find_and_load[39m[34m(name, import_)[39m
+
+[36mFile [39m[32m<frozen importlib._bootstrap>:1324[39m, in [36m_find_and_load_unlocked[39m[34m(name, import_)[39m
+
+[31mModuleNotFoundError[39m: No module named 'shapely'
+
+# -- cell 4 (2.2s, exit 0)
+import inspect, build123d as bd
+print([n for n in dir(bd) if n.lower() in ("sweep","helix","offset","face","polyline","solid")])
+print(inspect.signature(bd.sweep))
+print(inspect.signature(bd.offset))
+print(inspect.signature(bd.Helix.__init__))
+# -- output
+['Face', 'Helix', 'Polyline', 'Solid', 'face', 'offset', 'solid', 'sweep']
+(sections: build123d.topology.composite.Compound | build123d.topology.one_d.Edge | build123d.topology.one_d.Wire | build123d.topology.two_d.Face | build123d.topology.three_d.Solid | collections.abc.Iterable[build123d.topology.composite.Compound | build123d.topology.one_d.Edge | build123d.topology.one_d.Wire | build123d.topology.two_d.Face | build123d.topology.three_d.Solid] | None = None, path: build123d.topology.composite.Curve | build123d.topology.one_d.Edge | build123d.topology.one_d.Wire | collections.abc.Iterable[build123d.topology.one_d.Edge] | None = None, multisection: bool = False, is_frenet: bool = False, transition: build123d.build_enums.Transition = <Transition.TRANSFORMED>, normal: build123d.geometry.Vector | tuple[float, float] | tuple[float, float, float] | collections.abc.Sequence[float] | None = None, binormal: build123d.topology.one_d.Edge | build123d.topology.one_d.Wire | None = None, clean: bool = True, mode: build123d.build_enums.Mode = <Mode.ADD>) -> build123d.topology.composite.Part | build123d.topology.composite.Sketch
+(objects: build123d.topology.one_d.Edge | build123d.topology.two_d.Face | build123d.topology.three_d.Solid | build123d.topology.composite.Compound | collections.abc.Iterable[build123d.topology.one_d.Edge | build123d.topology.two_d.Face | build123d.topology.three_d.Solid | build123d.topology.composite.Compound] | None = None, amount: float = 0, openings: build123d.topology.two_d.Face | list[build123d.topology.two_d.Face] | None = None, kind: build123d.build_enums.Kind = <Kind.ARC>, side: build123d.build_enums.Side = <Side.BOTH>, closed: bool = True, min_edge_length: float | None = None, mode: build123d.build_enums.Mode = <Mode.REPLACE>) -> build123d.topology.composite.Curve | build123d.topology.composite.Sketch | build123d.topology.composite.Part | build123d.topology.composite.Compound
+(self, pitch: 'float', height: 'float', radius: 'float', center: 'VectorLike' = (0, 0, 0), direction: 'VectorLike' = (0, 0, 1), cone_angle: 'float' = 0, lefthand: 'bool' = False, mode: 'Mode' = <Mode.ADD>)
+
+# -- cell 5 (5.6s, exit 0)
+import numpy as np, build123d as bd, math
+R_MAJOR,R_MINOR,PITCH,HEIGHT,GAP = 20.0,19.0,2.0,12.0,0.2
+Rc=(R_MAJOR+R_MINOR)/2
+prof=[(R_MINOR,-0.7),(R_MINOR,0.7),(R_MAJOR,0.45),(R_MAJOR,-0.45)]  # (x=r, y=z) on Plane.XZ
+face_in = bd.Face(bd.Polyline(*[bd.Vector(x,0,y) for x,y in prof], close=True))
+face_out = bd.offset(face_in, GAP).face()
+hx = bd.Helix(pitch=PITCH, height=HEIGHT, radius=Rc)
+ridge = bd.sweep(face_in, path=hx)
+big   = bd.sweep(face_out, path=hx)
+gap   = big - ridge
+gap = gap.clean()
+print("gap volume mm^3:", gap.volume, "faces:", len(gap.faces()))
+# classify
+neck, lid, inner, outer = [],[],[],[]
+for f in gap.faces():
+    c = f.center(); n = f.normal_at()
+    if abs(c.Z) < 0.35 and len(f.vertices())<=6: inner.append(f); continue
+    if abs(c.Z-HEIGHT) < 0.35 and len(f.vertices())<=6: outer.append(f); continue
+    probe = bd.Vector(*c.to_tuple()) - n*1e-3
+    inside = ridge.is_inside(probe)
+    (neck if inside else lid).append(f)
+print("neck",len(neck),"lid",len(lid),"inner",len(inner),"outer",len(outer))
+# -- output
+gap volume mm^3: 731.5447899007909 faces: 14
+neck 2 lid 12 inner 0 outer 0
+
+/tmp/ipykernel_264541/1550095243.py:19: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  probe = bd.Vector(*c.to_tuple()) - n*1e-3
+
+# -- cell 6 (0.2s, exit 0)
+for i,f in enumerate(gap.faces()):
+    c=f.center()
+    print(i, "nv",len(f.vertices()), "c=[%.2f %.2f %.2f]"%(c.X,c.Y,c.Z), "R=%.2f"%(math.hypot(c.X,c.Y)), "area=%.2f"%f.area)
+# -- output
+0 nv 4 c=[19.18 0.00 4.99] R=19.18 area=262.84
+1 nv 4 c=[19.79 -0.00 5.29] R=19.79 area=768.97
+2 nv 12 c=[19.44 0.00 0.00] R=19.44 area=1.00
+3 nv 4 c=[18.84 0.00 5.78] R=18.84 area=994.79
+4 nv 12 c=[19.45 0.00 11.96] R=19.45 area=1.00
+5 nv 4 c=[20.31 -0.00 5.67] R=20.31 area=202.72
+6 nv 4 c=[18.64 0.00 6.61] R=18.64 area=255.66
+7 nv 4 c=[19.30 0.00 6.74] R=19.30 area=750.25
+8 nv 4 c=[20.16 -0.00 6.22] R=20.16 area=683.73
+9 nv 4 c=[19.94 -0.00 6.75] R=19.94 area=199.19
+10 nv 4 c=[19.03 0.00 5.84] R=19.03 area=1004.62
+11 nv 4 c=[19.32 0.00 6.54] R=19.32 area=750.85
+12 nv 4 c=[19.97 -0.00 6.16] R=19.97 area=677.41
+13 nv 4 c=[19.68 -0.00 5.46] R=19.68 area=764.85
+
+# -- cell 7 (14.6s, exit 0)
+neck,lid,inner,outer=[],[],[],[]
+V=lambda c: bd.Vector(c.X,c.Y,c.Z)
+for i,f in enumerate(gap.faces()):
+    c=f.center(); n=f.normal_at()
+    if i in (2,4):
+        (inner if c.Z<6 else outer).append(f); continue
+    ins = ridge.is_inside(V(c)+n*1e-3) or ridge.is_inside(V(c)-n*1e-3)
+    (neck if ins else lid).append(f)
+print("neck",len(neck),"lid",len(lid),"inner",len(inner),"outer",len(outer))
+import os
+os.makedirs("constant/triSurface",exist_ok=True)
+names={"neckFlank":neck,"lidFlank":lid,"innerEnd":inner,"outerEnd":outer}
+for nm,fl in names.items():
+    bd.export_stl(bd.Compound(fl),f"constant/triSurface/{nm}.stl")
+    print(nm, sum(f.area for f in fl))
+# -- output
+neck 4 lid 8 inner 1 outer 1
+neckFlank 3197.733334799369
+lidFlank 4118.15030149396
+innerEnd 0.9979742687053759
+outerEnd 0.9979742687053454
+
+# -- cell 8 (2.1s, exit 0)
+import pyvista as pv
+pv.set_jupyter_backend("static")
+pl=pv.Plotter(off_screen=True)
+cols={"neckFlank":"red","lidFlank":"green","innerEnd":"blue","outerEnd":"orange"}
+for nm in cols:
+    m=pv.read(f"constant/triSurface/{nm}.stl")
+    pl.add_mesh(m,color=cols[nm],opacity=1.0)
+pl.add_axes(); pl.view_xy()
+img=pl.screenshot(return_img=True)
+import matplotlib.pyplot as plt
+plt.figure(figsize=(8,8)); plt.imshow(img); plt.axis("off"); plt.show()
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 15:05:40.067 (   0.273s) [    77F0E1EFC780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 15:05:40.067 (   0.274s) [    77F0E1EFC780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 15:05:40.080 (   0.286s) [    77F0E1EFC780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 9 (1.4s, exit 0)
+pl=pv.Plotter(off_screen=True)
+for nm,c in cols.items():
+    pl.add_mesh(pv.read(f"constant/triSurface/{nm}.stl"),color=c)
+pl.view_xz()
+import matplotlib.pyplot as plt
+plt.figure(figsize=(8,8)); plt.imshow(pl.screenshot(return_img=True)); plt.axis("off"); plt.show()
+# -- output
+[0m[33m2026-09-14 15:05:52.838 (  13.044s) [    77F0E1EFC780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 15:05:52.838 (  13.045s) [    77F0E1EFC780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 10 (27.5s, exit 0)
+import subprocess, os, glob
+os.makedirs("system",exist_ok=True)
+for f in glob.glob("constant/triSurface/*.stl"):
+    subprocess.run(["surfaceTransformPoints","-scale","0.001",f,f],check=True)
+# blockMesh: box around geometry at 2e-4 m cells → 250x250x70
+bm="""convertToMeters 1; vertices ( (-0.025 -0.025 -0.001) (0.025 -0.025 -0.001) (0.025 0.025 -0.001) (-0.025 0.025 -0.001) (-0.025 -0.025 0.013) (0.025 -0.025 0.013) (0.025 0.025 0.013) (-0.025 0.025 0.013) );
+blocks ( hex (0 1 2 3 4 5 6 7) (250 250 70) simpleGrading (1 1 1) );
+edges (); boundary ();"""
+open("system/blockMeshDict","w").write(bm)
+open("system/controlDict","w").write('application snappyHexMesh;\n')
+snp="""castellatedMesh true; snap true; addLayers false;
+geometry { neckFlank.stl { type triSurfaceMesh; name neckFlank; }
+  lidFlank.stl { type triSurfaceMesh; name lidFlank; }
+  innerEnd.stl { type triSurfaceMesh; name innerEnd; }
+  outerEnd.stl { type triSurfaceMesh; name outerEnd; } }
+castellatedMeshControls { maxLocalCells 100000; maxGlobalCells 4000000; minRefinementCells 5; maxLoadBalanceTolerance 0.1;
+  nCellsBetweenLevels 2; features (); refinementSurfaces ((neckFlank lidFlank innerEnd outerEnd) { level (2 2); });
+  resolveFeatureAngle 30; refinementRegions (); locationInMesh (0.01944 0 1e-4); allowFreeStandingZoneFaces false; }
+snapControls { nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5; nFeatureSnapIter 10;
+  implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false; }
+addLayersControls { relativeSizes true; layers (); expansionRatio 1; finalLayerThickness 0.5;
+  minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 5; nSmoothSurfaceNormals 1; nSmoothNormals 3;
+  nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; nMedialAxisIter 90;
+  nBufferCellsNoExtrude 0; nLayerIter 50; }
+meshQualityControls { maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
+  minFlatness -1; minVol 1e-21; minTetQuality 1e-9; minArea -1; minTwist 0.05; minDeterminant 0.001;
+  minFaceWeight 0.05; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4;
+  errorReduction 0.75; relaxed { maxNonOrtho 75; } }
+mergeTolerance 1e-6; debug 0; writeFlags ();"""
+open("system/snappyHexMeshDict","w").write(snp)
+print("ready")
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : surfaceTransformPoints -write-scale 0.001 constant/triSurface/lidFlank.stl constant/triSurface/lidFlank.stl
+Date   : Sep 14 2026
+Time   : 15:06:40
+Host   : yc-demo
+PID    : 270686
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260914-145429-4609/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Reading surf from "constant/triSurface/lidFlank.stl" ...
+Writing surf to "constant/triSurface/lidFlank.stl" ...
+Scaling points uniformly by 0.001
+End
+
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CF
+... 1137 characters cut ...
+ationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Reading surf from "constant/triSurface/neckFlank.stl" ...
+Writing surf to "constant/triSurface/neckFlank.stl" ...
+Scaling points uniformly by 0.001
+End
+
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : surfaceTransformPoints -write-scale 0.001 constant/triSurface/outerEnd.stl constant/triSurface/outerEnd.stl
+Date   : Sep 14 2026
+Time   : 15:07:06
+Host   : yc-demo
+PID    : 270736
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260914-145429-4609/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Reading surf from "constant/triSurface/outerEnd.stl" ...
+Writing surf to "constant/triSurface/outerEnd.stl" ...
+Scaling points uniformly by 0.001
+End
+
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : surfaceTransformPoints -write-scale 0.001 constant/triSurface/innerEnd.stl constant/triSurface/innerEnd.stl
+Date   : Sep 14 2026
+Time   : 15:07:07
+Host   : yc-demo
+PID    : 270738
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260914-145429-4609/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Reading surf from "constant/triSurface/innerEnd.stl" ...
+Writing surf to "constant/triSurface/innerEnd.stl" ...
+Scaling points uniformly by 0.001
+End
+
+ready
+
+# -- cell 11 (0.2s, exit 0)
+import subprocess
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print(r.returncode); print(r.stdout[-300:])
+# -- output
+1
+----------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       dictionary;
+    location    "system";
+    object      controlDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+# -- cell 12 (1.6s, exit 0)
+HDR="""FoamFile { version 2.0; format ascii; class dictionary; object %s; }
+"""
+ctrl=HDR%"controlDict"+ "application snappyHexMesh;\nstartFrom latestTime;\n"
+open("system/controlDict","w").write(ctrl)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-200:] or r.stderr[-500:])
+# -- output
+1 kew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+# -- cell 13 (1.0s, exit 0)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print("rc",r.returncode)
+print(r.stdout[-800:]); print("ERR",r.stderr[-800:])
+# -- output
+rc 1
+AM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260914-145429-4609/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+ERR 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'deltaT' not found in dictionary "/home/qiuzi/.openreynolds-buildup/work/T13-20260914-145429-4609/t13/system/controlDict"
+
+
+file: system/controlDict at line 2 to 3.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 14 (1.6s, exit 0)
+ctrl="""FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii;
+writePrecision 6; writeCompression off; timeFormat general; timePrecision 6;
+runTimeModifiable true;
+"""
+open("system/controlDict","w").write(ctrl)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print("blockMesh rc",r.returncode)
+import subprocess as sp
+sn=sp.Popen(["snappyHexMesh","-overwrite"],stdout=open("log.snappy","w"),stderr=sp.STDOUT)
+print("snappy pid",sn.pid)
+# -- output
+blockMesh rc 1
+snappy pid 271134
+
+# -- cell 15 (0.2s, exit 0)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print(r.stdout[-500:]); print(r.stderr[-500:])
+# -- output
+\\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       IOobject;
+    location    "system";
+    object      blockMeshDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+"/home/qiuzi/.openreynolds-buildup/work/T13-20260914-145429-4609/t13/system/blockMeshDict"
+
+
+    From int main(int, char**)
+    in file findBlockMeshDict.H at line 81.
+
+FOAM exiting
+
+# -- cell 16 (21.5s, exit 0)
+bm="""FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }
+scale 1;
+vertices
+(
+    (-0.025 -0.025 -0.001)
+    ( 0.025 -0.025 -0.001)
+    ( 0.025  0.025 -0.001)
+    (-0.025  0.025 -0.001)
+    (-0.025 -0.025  0.013)
+    ( 0.025 -0.025  0.013)
+    ( 0.025  0.025  0.013)
+    (-0.025  0.025  0.013)
+);
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) (250 250 70) simpleGrading (1 1 1)
+);
+edges ();
+boundary
+(
+    def { type patch; faces (); }
+);
+"""
+open("system/blockMeshDict","w").write(bm)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print(r.returncode, r.stdout[-150:])
+# -- output
+0 ------------
+Patches
+----------------
+  patch 0 (start: 13027500 size: 0) name: def
+  patch 1 (start: 13027500 size: 195000) name: defaultFaces
+
+End
+
+# -- cell 17 (0.8s, exit 0)
+import subprocess as sp
+sn=sp.Popen(["snappyHexMesh","-overwrite"],stdout=open("log.snappy","w"),stderr=sp.STDOUT)
+print("pid",sn.pid)
+# -- output
+pid 271198
+
+# -- cell 18 (0.1s, exit 0)
+import time
+print(sn.poll())  # None = still running
+print(open("log.snappy").read()[-400:])
+# -- output
+1
+12)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T13-20260914-145429-4609/t13/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+

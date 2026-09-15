@@ -1,0 +1,4 @@
+T23: run 20260914-160807-9ba1
+  workspace /home/qiuzi/.openreynolds-buildup/work/T23-20260914-160807-9ba1 clean (0 entries, 39 house names, no toolbox)
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T23-20260914-160807-9ba1/t23/.reference/b123d_api.md
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-kimi-k3-20260914-143522-e17d/runs/T23

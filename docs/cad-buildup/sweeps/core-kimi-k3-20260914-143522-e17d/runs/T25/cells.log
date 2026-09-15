@@ -1,0 +1,163 @@
+# -- cell 1 (3.2s, exit 1)
+import build123d as bd
+from build123d import *
+import numpy as np
+
+# Dimensions (metres), CFM56-class turbofan
+R_FAN   = 1.00
+R_NAC_O = 1.15
+R_HUB   = 0.32
+R_SPLIT = 0.55
+Z_FAN   = 0.0
+Z_TE    = 2.6      # nacelle trailing edge / bypass outlet
+T_DISC  = 0.06
+
+def revolve_section(pts):
+    # pts: closed polyline in (z,r) plane, revolved about Z
+    l = Polyline([(z, r) for z, r in pts] + [pts[0]])
+    f = make_face(l)
+    return revolve(f, Axis.Z)
+
+# Nacelle ring (closed shell section)
+nacelle_pts = []
+# outer profile
+for z,r in [(-0.5,1.05),(-0.2,1.12),(0.6,1.15),(1.5,1.10),(2.6,0.95)]:
+    nacelle_pts.append((z,r))
+# inner profile back
+for z,r in [(2.6,0.98),(1.5,1.05),(0.6,1.08),(-0.15,1.02),(-0.5,1.00)]:
+    nacelle_pts.append((z,r))
+nacelle = revolve_section(nacelle_pts)
+
+# Hub + splitter + plug as one revolved axisymmetric body (core cowl)
+core_pts = [( -0.45,0.02),(-0.30,0.20),(0.0,0.28),(0.6,0.32),(1.3,0.30),
+            (1.5,0.34),(2.0,0.30),(2.6,0.12),(3.0,0.0)]
+s1 = Polyline(core_pts + [(2.999,0.0),(-0.45,0.0)], close=True)
+core = revolve(make_face(s1), Axis.Z)
+
+# Splitter lip ring at z=0.3 -> separates core duct from bypass
+split_pts = [(0.3,R_HUB),(0.3,R_SPLIT),(0.35,R_SPLIT+0.03),(0.45,R_SPLIT+0.03),(0.5,R_HUB+0.02)]
+splitter = revolve_section(split_pts)
+
+def disc(z, r1, r2, t=T_DISC):
+    return Pos(0,0,z) * (Cylinder(r2, t) - Cylinder(r1, t+0.01))
+
+fan   = disc(Z_FAN, R_HUB+0.02, R_FAN)
+comp  = [disc(z, R_HUB+0.02, R_SPLIT+0.03) for z in (0.4,0.7,1.0)]
+turb  = [disc(z, R_HUB+0.02, R_SPLIT+0.03) for z in (1.55,1.85)]
+ogv   = disc(2.2, 0.28, R_FAN)
+
+parts = {"nacelle":nacelle, "core":core, "splitter":splitter, "fan":fan,
+         "compressor":Pos(0,0,0)*comp[0]+comp[1]+comp[2] if False else comp,
+         "turbine":turb, "ogv":ogv}
+# flatten
+parts = {"nacelle":[nacelle], "core":[core], "splitter":[splitter], "fan":[fan],
+         "compressor":comp, "turbine":turb, "ogv":[ogv]}
+
+import os
+os.makedirs("constant/triSurface", exist_ok=True)
+import pyvista as pv
+allpv=[]
+for name, solids in parts.items():
+    mesh=None
+    for s in solids:
+        bb = s.bounding_box()
+        print(name, np.round([bb.min.Z,bb.max.Z,bb.max.Y],3))
+        t = s.to_vtk(vtk_grid_type=None) if hasattr(s,'to_vtk') else None
+        import trimesh
+    from build123d import Mesher
+    units = Mesher.Unit.MM
+    m = Mesher(unit=units)
+    m.add_shape(solids)
+    m.write(f"constant/triSurface/{name}.stl")
+    print(name, "written")
+print("bbox ok")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mStdFail_NotDone[39m                           Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 34[39m
+[32m     30[39m [38;5;66;03m# Hub + splitter + plug as one revolved axisymmetric body (core cowl)[39;00m
+[32m     31[39m core_pts = [( -0.45,0.02),(-0.30,0.20),(0.0,0.28),(0.6,0.32),(1.3,0.30),
+[32m     32[39m             ([32m1.5[39m,[32m0.34[39m),([32m2.0[39m,[32m0.30[39m),([32m2.6[39m,[32m0.12[39m),([32m3.0[39m,[32m0.0[39m)]
+[32m     33[39m s1 = Polyline(core_pts + [([32m2.999[39m,[32m0.0[39m),(-[32m0.45[39m,[32m0.0[39m)], close=[38;5;28;01mTrue[39;00m)
+[32m---> [39m[32m34[39m core = revolve(make_face(s1), Axis.Z)
+[32m     35[39m 
+[32m     36[39m [38;5;66;03m# Splitter lip ring at z=0.3 -> separates core duct from bypass[39;00m
+[32m     37[39m split_pts = [([32m0.3[39m,R_HUB),([32m0.3[39m,R_SPLIT),([32m0.35[39m,R_SPLIT+[32m0.03[39m),([32m0.45[39m,R_SPLIT+[32m0.03[39m),([32m0.5[39m,R_HUB+[32m0.02[39m)]
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:557[39m, in [36mrevolve[39m[34m(profiles, axis, revolution_arc, clean, mode)[39m
+[32m    554[39m [38;5;28;01melse[39;00m:
+[32m    555[39m     profile_faces = profile_list.faces()
+[32m--> [39m[32m557[39m new_solids = [[30;43mSolid[39;49m[30;43m.[39;49m[30;43mrevolve[39;49m[30;43m([39;49m[30;43mprofile[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mangle[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43maxis[39;49m[30;43m)[39;49m [38;5;28;01mfor[39;00m profile [38;5;129;01min[39;00m profile_faces]
+[32m    559[39m new_solid = Compound(new_solids)
+[32m    560[39m [38;5;28;01mif[39;00m context [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m:
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1585[39m, in [36mSolid.revolve[39m[34m(cls, section, angle, axis, inner_wires)[39m
+[32m   1576[39m     section_face = section
+[32m   1578[39m revol_builder = BRepPrimAPI_MakeRevol(
+[32m   1579[39m     section_face.wrapped,
+[32m   1580[39m     axis.wrapped,
+[32m   1581[39m     angle * DEG2RAD,
+[32m   1582[39m     [38;5;28;01mTrue[39;00m,
+[32m   1583[39m )
+[32m-> [39m[32m1585[39m [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43mrevol_builder[39;49m[30;43m.[39;49m[30;43mShape[39;49m[30;43m([39;49m[30;43m)[39;49m))
+
+[31mStdFail_NotDone[39m: BRep_API: command not done
+
+# -- cell 2 (240.0s, exit 0)
+import build123d as bd
+from build123d import *
+import numpy as np, os
+
+R_FAN=1.00; R_NAC_O=1.15; R_HUB=0.32; R_SPLIT=0.55; Z_FAN=0.0; Z_TE=2.6; T_DISC=0.06
+
+def revolve_section(pts_rz):
+    # pts: (r,z) closed polyline in XZ plane (r>=0), revolved about Z
+    pts = [Vector(r,0,z) for r,z in pts_rz]
+    l = Polyline(pts + [pts[0]])
+    return revolve(make_face(l), Axis.Z)
+
+nacelle_pts = ([(1.05,-0.5),(1.12,-0.2),(1.15,0.6),(1.10,1.5),(0.95,2.6)] +
+               [(0.98,2.6),(1.05,1.5),(1.08,0.6),(1.02,-0.15),(1.00,-0.5)])
+nacelle = revolve_section(nacelle_pts)
+
+core_pts = [(0.02,-0.45),(0.20,-0.30),(0.28,0.0),(0.32,0.6),(0.30,1.3),
+            (0.34,1.5),(0.30,2.0),(0.12,2.6),(0.0,3.0),(0.0,-0.45)]
+core = revolve_section(core_pts)
+
+split_pts = [(R_HUB,0.3),(R_SPLIT,0.3),(R_SPLIT+0.03,0.35),(R_SPLIT+0.03,0.45),(R_HUB+0.02,0.5)]
+splitter = revolve_section(split_pts)
+
+def disc(z, r1, r2, t=T_DISC):
+    return Pos(0,0,z) * (Cylinder(r2, t) - Cylinder(r1, t+0.01))
+
+fan   = disc(Z_FAN, R_HUB+0.02, R_FAN)
+comp  = [disc(z, R_HUB+0.02, R_SPLIT+0.03) for z in (0.4,0.7,1.0)]
+turb  = [disc(z, R_HUB+0.02, R_SPLIT+0.03) for z in (1.55,1.85)]
+ogv   = disc(2.2, 0.28, R_FAN)
+
+parts = {"nacelle":[nacelle], "core":[core], "splitter":[splitter], "fan":[fan],
+         "compressor":comp, "turbine":turb, "ogv":[ogv]}
+
+os.makedirs("constant/triSurface", exist_ok=True)
+from build123d import Mesher
+for name, solids in parts.items():
+    for s in solids:
+        bb = s.bounding_box()
+        print(name, "z,rmax:", round(bb.min.Z,3), round(bb.max.Z,3), round(bb.max.Y,3))
+    m = Mesher(unit=Mesher.Unit.M)
+    m.add_shape(solids)
+    m.write(f"constant/triSurface/{name}.stl")
+print("STLs written")
+# -- output
+
+
+# -- cell 3 (240.0s, exit 0)
+print("poll"); import os; print(os.listdir("constant/triSurface"))
+# -- output
+
+
+# -- cell 4 (240.0s, exit 0)
+print("waiting")
+# -- output
+
+

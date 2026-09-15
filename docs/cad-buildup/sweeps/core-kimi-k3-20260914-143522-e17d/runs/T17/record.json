@@ -1,0 +1,683 @@
+{
+  "run_id": "20260914-152632-163d",
+  "case": "T17",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17",
+  "started_at": "2026-09-14T15:26:33",
+  "ended_at": "2026-09-14T15:43:03",
+  "seconds": 982.8,
+  "n_turns": 29,
+  "n_steps": 27,
+  "first_mesh_step": 20,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.4575,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 64249,
+    "cache_read": 512512,
+    "cache_write": 0,
+    "output": 13501
+  },
+  "stopped": "time",
+  "expects": "done",
+  "passed": false,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd\nimport numpy as np\n\n# Dimensions in mm (converted to m only at STL export -> actually keep geometry in mm, scale STL on export)\nPL_L, PL_W, PL_H = 300., 120., 80.   # plenum internal size (y, x, z)\nR_THROTTLE = 35.                       # 70 dia throttle inlet\nR_RUN = 19.                            # 38 dia runner\nR_BEND = 60.                           # elbow centreline radius\nPORT_X = 90.                           # port face distance from plenum wall\nGROUND_VERT = 60.                      # vertical drop after bend (assumption)\nINLET_LEN = 40.                        # throttle pipe length (assumption)\n\nys = [-112.5, -37.5, 37.5, 112.5]      # runner stations (assumption: even spacing)\n\ndef runner(side, y):\n    # centreline: horizontal out of wall (+x or -x), 30mm straight, R60 90-deg arc, then vertical down\n    s = side  # +1 right, -1 left\n    ls = bd.Line(bd.Vector(0, 0, 0), bd.Vector(30*s, 0, 0))\n    arc = bd.RadiusArc(bd.Vector(30*s, 0, 0), bd.Vector(0, 0, -R_BEND), radius=..., )  # placeholder\n    return ls\n\nprint(\"placeholder, testing API\")\nimport inspect\nprint(inspect.signature(bd.Line))\nprint(inspect.signature(bd.RadiusArc))",
+      "exit_code": 0,
+      "seconds": 2.2074728539992066,
+      "output": "placeholder, testing API\n(*pts: 'VectorLike | Iterable[VectorLike]', mode: 'Mode' = <Mode.ADD>)\n(start_point: 'VectorLike', end_point: 'VectorLike', radius: 'float', short_sagitta: 'bool' = True, mode: 'Mode' = <Mode.ADD>)",
+      "image": ""
+    },
+    {
+      "cmd": "def runner_wire():\n    # centreline in x-z plane, y=0, for +x side\n    p1 = bd.Line((0,0,0), (30,0,0))\n    a1 = bd.RadiusArc((30,0,0), (90,0,-60), radius=R_BEND)\n    v1 = bd.Line((90,0,-60), (90,0,-60-GROUND_VERT))\n    w = bd.Wire([p1, a1, v1])\n    return w\n\ndef runner_solid(side, y):\n    # face normal must be along wire start tangent\n    w = runner_wire()\n    profile = bd.Pos(0,0,0) * bd.Circle(R_RUN)  # circle plane normal +X? check\n    return bd.sweep(profile, path=w)\n\n# test: circle normal is +Z normally; need normal along +X\ncirc = bd.Circle(R_RUN)\nprint(circ.faces()[0].normal_at().to_tuple())\n# rotate into proper plane\ndef sweep_tube(side, y):\n    w = bd.Pos(side, 0 if side<0 else 0) * bd.Wire([])  # placeholder\n    return None",
+      "exit_code": 0,
+      "seconds": 0.8731094579998171,
+      "output": "(0.0, 0.0, 1.0)\n\n/tmp/ipykernel_276231/2795500461.py:17: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.\n  print(circ.faces()[0].normal_at().to_tuple())",
+      "image": ""
+    },
+    {
+      "cmd": "def make_tube(side):\n    \"\"\"Runner tube solid starting at plenum wall x=0.., extends to x=side*90..\"\"\"\n    w = runner_wire()\n    prof = bd.Rot(0, -90, 0) * bd.Plane(bd.Vector(0,0,0), z_dir=(1,0,0)) * bd.Circle(R_RUN)\n    # simpler: face with normal +X centered origin\n    prof = bd.Face.make_plane(bd.Vector(0,0,0),(1,0,0))  # wrong\n    prof = bd.Pos(0,0,0) * bd.Rot(0,90,0) * bd.Circle(R_RUN)\n    tube = bd.sweep(prof, path=w)\n    return tube\n\nt = make_tube(1)\nprint(t.volume, t.bounding_box().size.to_tuple() if hasattr(t.bounding_box(),'size') else t.bounding_box())\nimport matplotlib.pyplot as plt\nbd.show(t) if False else None\nfig = plt.figure()\nax = fig.add_subplot(111, projection='3d')\nimport build123d\nfrom build123d import Shape\nmesh = t.tessellate(0.5)  # returns (vertices, triangles)?\nprint(type(mesh))",
+      "exit_code": 1,
+      "seconds": 0.90712554700076,
+      "output": "/tmp/ipykernel_276231/3158712318.py:6: DeprecationWarning: The 'make_plane' method is deprecated and will be removed in a future version.\n  prof = bd.Face.make_plane(bd.Vector(0,0,0),(1,0,0))  # wrong\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 11\u001b[39m\n\u001b[32m      7\u001b[39m     prof = bd.Pos(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m) * bd.Rot(\u001b[32m0\u001b[39m,\u001b[32m90\u001b[39m,\u001b[32m0\u001b[39m) * bd.Circle(R_RUN)\n\u001b[32m      8\u001b[39m     tube = bd.sweep(prof, path=w)\n\u001b[32m      9\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m tube\n\u001b[32m     10\u001b[39m \n\u001b[32m---> \u001b[39m\u001b[32m11\u001b[39m t = make_tube(\u001b[32m1\u001b[39m)\n\u001b[32m     12\u001b[39m print(t.volume, t.bounding_box().size.to_tuple() \u001b[38;5;28;01mif\u001b[39;00m hasattr(t.bounding_box(),\u001b[33m'size'\u001b[39m) \u001b[38;5;28;01melse\u001b[39;00m t.bounding_box())\n\u001b[32m     13\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m matplotlib.pyplot \u001b[38;5;28;01mas\u001b[39;00m plt\n\u001b[32m     14\u001b[39m bd.show(t) \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28;01mFalse\u001b[39;00m \u001b[38;5;28;01melse\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 6\u001b[39m, in \u001b[36mmake_tube\u001b[39m\u001b[34m(side)\u001b[39m\n\u001b[32m      2\u001b[39m     \u001b[33m\"\"\"Runner tube solid starting at plenum wall x=0.., extends to x=side*90..\"\"\"\u001b[39m\n\u001b[32m      3\u001b[39m     w = runner_wire()\n\u001b[32m      4\u001b[39m     prof = bd.Rot(\u001b[32m0\u001b[39m, -\u001b[32m90\u001b[39m, \u001b[32m0\u001b[39m) * bd.Plane(bd.Vector(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m), z_dir=(\u001b[32m1\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m)) * bd.Circle(R_RUN)\n\u001b[32m      5\u001b[39m     \u001b[38;5;66;03m# simpler: face with normal +X centered origin\u001b[39;00m\n\u001b[32m----> \u001b[39m\u001b[32m6\u001b[39m     prof = bd.Face.make_plane(bd.Vector(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m),(\u001b[32m1\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m))  \u001b[38;5;66;03m# wrong\u001b[39;00m\n\u001b[32m      7\u001b[39m     prof = bd.Pos(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m) * bd.Rot(\u001b[32m0\u001b[39m,\u001b[32m90\u001b[39m,\u001b[32m0\u001b[39m) * bd.Circle(R_RUN)\n\u001b[32m      8\u001b[39m     tube = bd.sweep(prof, path=w)\n\u001b[32m      9\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m tube\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/warnings.py:637\u001b[39m, in \u001b[36mdeprecated.__call__.<locals>.wrapper\u001b[39m\u001b[34m(*args, **kwargs)\u001b[39m\n\u001b[32m    634\u001b[39m \u001b[38;5;129m@functools\u001b[39m.wraps(arg)\n\u001b[32m    635\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mwrapper\u001b[39m(*args, **kwargs):\n\u001b[32m    636\u001b[39m     warn(msg, category=category, stacklevel=stacklevel + \u001b[32m1\u001b[39m)\n\u001b[32m--> \u001b[39m\u001b[32m637\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43marg\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43margs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43mkwargs\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[31mTypeError\u001b[39m: Face.make_plane() takes from 1 to 2 positional arguments but 3 were given",
+      "image": ""
+    },
+    {
+      "cmd": "def make_tube(side):\n    w = runner_wire()\n    prof = bd.Pos(0,0,0) * bd.Rot(0,90/side if side<0 else 90,0) * bd.Circle(R_RUN)\n    tube = bd.sweep(prof, path=w)\n    return tube\n\nt = make_tube(1)\nprint(\"volume mm3:\", t.volume)\nbb = t.bounding_box()\nprint(\"bbox:\", bb.min.to_tuple() if hasattr(bb,'min') else bb)",
+      "exit_code": 0,
+      "seconds": 0.050901136000902625,
+      "output": "volume mm3: 3737.55101421558\nbbox: (0.0, -19.000000099999998, -129.78649631911654)\n\n/tmp/ipykernel_276231/502485378.py:10: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.\n  print(\"bbox:\", bb.min.to_tuple() if hasattr(bb,'min') else bb)",
+      "image": ""
+    },
+    {
+      "cmd": "bb = t.bounding_box()\nprint(tuple(bb.min), tuple(bb.max))\nprint(\"n faces\", len(t.faces()))\nfor f in t.faces():\n    print(f.geom_type, f.area)",
+      "exit_code": 0,
+      "seconds": 0.632363364999037,
+      "output": "(0.0, -19.000000099999998, -129.78649631911654) (107.16665025517405, 31.076493250144978, 19.000000099999998)\nn faces 5\nGeomType.CYLINDER 3581.415625092364\nGeomType.REVOLUTION 7760.2930027577295\nGeomType.EXTRUSION 6661.04313199902\nGeomType.PLANE 1134.1149479459152\nGeomType.PLANE 1134.1149479459161",
+      "image": ""
+    },
+    {
+      "cmd": "# view to confirm shape\nimport pyvista as pv\nimport numpy as np\nmesh = bd.Vector([])\n# tessellate\nverts, tris = t.to_polyhedron() if False else (None,None)\nfrom build123d import Shape\nimport numpy as np\nm = t.tessellate(0.5)\nv, f = m\nprint(len(v), len(f))\nimport pyvista\nfaces = np.hstack([np.insert(f, 0, len(f)) for f in f]).astype(int)\n# f is likely array of faces; build properly\nv = np.asarray(v); \nfidx = np.asarray(f)\nflat = np.column_stack([np.full(len(fidx),3), fidx]).astype(np.int64)\nmesh = pyvista.PolyData(v, flat)\npl = pyvista.Plotter(off_screen=True)\npl.add_mesh(mesh, show_edges=True)\npl.view_isometric(); pl.set_scale(1)\npl.screenshot(\"tube.png\")\npl.close()\nfrom PIL import Image\nImage.open(\"tube.png\")",
+      "exit_code": 1,
+      "seconds": 1.1035557619979954,
+      "output": "3265 5450\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[6]\u001b[39m\u001b[32m, line 18\u001b[39m\n\u001b[32m     14\u001b[39m \u001b[38;5;66;03m# f is likely array of faces; build properly\u001b[39;00m\n\u001b[32m     15\u001b[39m v = np.asarray(v);\n\u001b[32m     16\u001b[39m fidx = np.asarray(f)\n\u001b[32m     17\u001b[39m flat = np.column_stack([np.full(len(fidx),\u001b[32m3\u001b[39m), fidx]).astype(np.int64)\n\u001b[32m---> \u001b[39m\u001b[32m18\u001b[39m mesh = pyvista.PolyData(v, flat)\n\u001b[32m     19\u001b[39m pl = pyvista.Plotter(off_screen=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m     20\u001b[39m pl.add_mesh(mesh, show_edges=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m     21\u001b[39m pl.view_isometric(); pl.set_scale(\u001b[32m1\u001b[39m)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/misc.py:442\u001b[39m, in \u001b[36m_AutoFreezeMeta.__call__\u001b[39m\u001b[34m(cls, *args, **kwargs)\u001b[39m\n\u001b[32m    441\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34m__call__\u001b[39m(\u001b[38;5;28mcls\u001b[39m: \u001b[38;5;28mtype\u001b[39m[_T], *args, **kwargs) -> _T:\n\u001b[32m--> \u001b[39m\u001b[32m442\u001b[39m     obj = \u001b[30;43msuper\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m)\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43m__call__\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43margs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43mkwargs\u001b[39;49m\u001b[30;43m)\u001b[39;49m  \u001b[38;5;66;03m# type: ignore[misc]\u001b[39;00m\n\u001b[32m    443\u001b[39m     obj._no_new_attributes(\u001b[38;5;28mcls\u001b[39m)\n\u001b[32m    444\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m obj\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243\u001b[39m, in \u001b[36m_deprecate_positional_args.<locals>._inner_deprecate_positional_arg\n... 2333 characters cut ...\n\u001b[33;03m\"\"\"Convert numpy array or array-like to a :vtk:`vtkPoints` object.\u001b[39;00m\n\u001b[32m     32\u001b[39m \n\u001b[32m     33\u001b[39m \u001b[33;03mParameters\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m     68\u001b[39m \n\u001b[32m     69\u001b[39m \u001b[33;03m\"\"\"\u001b[39;00m\n\u001b[32m     70\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m---> \u001b[39m\u001b[32m71\u001b[39m     points_ = \u001b[30;43m_validation\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mvalidate_arrayNx3\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mpoints\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mname\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43m'\u001b[39;49m\u001b[30;43mpoints\u001b[39;49m\u001b[30;43m'\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m     72\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m \u001b[38;5;28;01mas\u001b[39;00m e:\n\u001b[32m     73\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m \u001b[33m'\u001b[39m\u001b[33mpoints has shape (0,)\u001b[39m\u001b[33m'\u001b[39m \u001b[38;5;129;01min\u001b[39;00m \u001b[38;5;28mrepr\u001b[39m(e) \u001b[38;5;129;01mand\u001b[39;00m allow_empty:\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_validation/validate.py:925\u001b[39m, in \u001b[36mvalidate_arrayNx3\u001b[39m\u001b[34m(arr, reshape, **kwargs)\u001b[39m\n\u001b[32m    922\u001b[39m     shape = (-\u001b[32m1\u001b[39m, \u001b[32m3\u001b[39m)  \u001b[38;5;66;03m# type: ignore[assignment]\u001b[39;00m\n\u001b[32m    923\u001b[39m _set_default_kwarg_mandatory(kwargs, \u001b[33m'\u001b[39m\u001b[33mmust_have_shape\u001b[39m\u001b[33m'\u001b[39m, shape)\n\u001b[32m--> \u001b[39m\u001b[32m925\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mvalidate_array\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43marr\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43mkwargs\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_validation/validate.py:294\u001b[39m, in \u001b[36mvalidate_array\u001b[39m\u001b[34m(arr, must_have_shape, must_have_ndim, must_have_dtype, must_have_length, must_have_min_length, must_have_max_length, must_be_nonnegative, must_be_finite, must_be_real, must_be_integer, must_be_sorted, must_be_in_range, strict_lower_bound, strict_upper_bound, reshape_to, broadcast_to, dtype_out, as_any, copy, to_list, to_tuple, name)\u001b[39m\n\u001b[32m     60\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mvalidate_array\u001b[39m(\n\u001b[32m     61\u001b[39m     arr: \u001b[38;5;28mfloat\u001b[39m | ArrayLike[\u001b[38;5;28mfloat\u001b[39m],\n\u001b[32m     62\u001b[39m     /,\n\u001b[32m   (...)\u001b[39m\u001b[32m     85\u001b[39m     name: \u001b[38;5;28mstr\u001b[39m = \u001b[33m'\u001b[39m\u001b[33mArray\u001b[39m\u001b[33m'\u001b[39m,\n\u001b[32m     86\u001b[39m ):\n\u001b[32m     87\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"Check and validate a numeric array meets specific requirements.\u001b[39;00m\n\u001b[32m     88\u001b[39m \n\u001b[32m     89\u001b[39m \u001b[33;03m    Validate an array to ensure it is numeric, has a specific shape,\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m    292\u001b[39m \n\u001b[32m    293\u001b[39m \u001b[33;03m    \"\"\"\u001b[39;00m\n\u001b[32m--> \u001b[39m\u001b[32m294\u001b[39m     arr_out = \u001b[30;43m_cast_to_numpy\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43marr\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mas_any\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mas_any\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mcopy\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mcopy\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m    296\u001b[39m     \u001b[38;5;66;03m# Check type\u001b[39;00m\n\u001b[32m    297\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m must_be_real:\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_validation/_cast_array.py:133\u001b[39m, in \u001b[36m_cast_to_numpy\u001b[39m\u001b[34m(arr, as_any, dtype, copy, must_be_real)\u001b[39m\n\u001b[32m    131\u001b[39m \u001b[38;5;28;01melif\u001b[39;00m out.dtype.name == \u001b[33m'\u001b[39m\u001b[33mobject\u001b[39m\u001b[33m'\u001b[39m:\n\u001b[32m    132\u001b[39m     msg = \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33mObject arrays are not supported. Got \u001b[39m\u001b[38;5;132;01m{\u001b[39;00marr\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m when casting to a NumPy array.\u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m--> \u001b[39m\u001b[32m133\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mTypeError\u001b[39;00m(msg)\n\u001b[32m    134\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m out\n\n\u001b[31mTypeError\u001b[39m: Object arrays are not supported. Got [Vector(0, 0, -19) Vector(30, 0, -19) Vector(30, 0, -19) ...\n Vector(92.9406790075, -17.31744619453, -127.2428215686)\n Vector(93.78006213599, -17.01555366395, -127.5618822893)\n Vector(94.61004743443, -16.67135778595, -127.8621429792)] when casting to a NumPy array.",
+      "image": ""
+    },
+    {
+      "cmd": "m = t.tessellate(0.5)\nv, f = m\nv = np.array([tuple(p) for p in v], dtype=float)\nfidx = np.asarray(f)\nflat = np.concatenate([np.full((len(fidx),1),3), fidx], axis=1)\nmesh = pyvista.PolyData(v, flat)\npl = pyvista.Plotter(off_screen=True)\npl.add_mesh(mesh, show_edges=True)\npl.view_isometric()\npl.screenshot(\"tube.png\")\npl.close()\nfrom IPython.display import Image\nImage(\"tube.png\")",
+      "exit_code": 0,
+      "seconds": 0.5541997709988209,
+      "output": "\u001b[0m\u001b[33m2026-09-14 15:30:43.214 (  12.447s) [    71A0287E5780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 15:30:43.214 (  12.448s) [    71A0287E5780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 15:30:43.230 (  12.464s) [    71A0287E5780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "plenum = bd.Pos(0, 0, 0) * bd.Box(PL_W, PL_L, PL_H)   # x width, y length, z height\ninlet_pipe = bd.Pos(0, PL_L/2 + INLET_LEN/2, 0) * bd.Rot(90,0,0) * bd.Cylinder(R_THROTTLE, INLET_LEN)\n\nsolids = [plenum, inlet_pipe]\nfor side in (1, -1):\n    for y0 in ys:\n        tb = make_tube(side)\n        tb = tb.located(bd.Location((side*PL_W/2, y0, PL_H/2)))  # positioned high on wall\n        # tube is built for +x; rotate 180 about Z for left side\n        if side == -1:\n            tb = bd.Pos(0,0,0) * bd.Rot(0,0,180) * tb\n        solids.append(tb)\n\nair = solids[0]\nfor s in solids[1:]:\n    air = bd.fuse(air, s)\nprint(\"fused solids:\", len(solids), \"volume:\", air.volume)\nfor f in air.faces():\n    print(f.geom_type, round(f.area,1))",
+      "exit_code": 1,
+      "seconds": 0.10072745300203678,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[8]\u001b[39m\u001b[32m, line 16\u001b[39m\n\u001b[32m     12\u001b[39m         solids.append(tb)\n\u001b[32m     13\u001b[39m \n\u001b[32m     14\u001b[39m air = solids[\u001b[32m0\u001b[39m]\n\u001b[32m     15\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m s \u001b[38;5;28;01min\u001b[39;00m solids[\u001b[32m1\u001b[39m:]:\n\u001b[32m---> \u001b[39m\u001b[32m16\u001b[39m     air = bd.fuse(air, s)\n\u001b[32m     17\u001b[39m print(\u001b[33m\"fused solids:\"\u001b[39m, len(solids), \u001b[33m\"volume:\"\u001b[39m, air.volume)\n\u001b[32m     18\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m air.faces():\n\u001b[32m     19\u001b[39m     print(f.geom_type, round(f.area,\u001b[32m1\u001b[39m))\n\n\u001b[31mAttributeError\u001b[39m: module 'build123d' has no attribute 'fuse'",
+      "image": ""
+    },
+    {
+      "cmd": "plenum = bd.Pos(0, 0, 0) * bd.Box(PL_W, PL_L, PL_H)\ninlet_pipe = bd.Pos(0, PL_L/2 + INLET_LEN/2, 0) * bd.Rot(90,0,0) * bd.Cylinder(R_THROTTLE, INLET_LEN)\n\nsolids = [plenum, inlet_pipe]\nfor side in (1, -1):\n    for y0 in ys:\n        tb = make_tube(side)\n        if side == -1:\n            tb = bd.Rot(0,0,180) * tb\n        tb = tb.moved(bd.Location((side*PL_W/2, y0 if side==1 else -y0 if False else y0, PL_H/2)))\n        solids.append(tb)\n\nair = solids[0]\nfor s in solids[1:]:\n    air = air + s\nprint(\"volume:\", air.volume, \" faces:\", len(air.faces()))\nimport pyvista\nv,f = air.tessellate(1.0)\nv = np.array([tuple(p) for p in v],float)\nfidx = np.asarray(f)\nflat = np.concatenate([np.full((len(fidx),1),3), fidx], axis=1)\nmesh = pyvista.PolyData(v, flat)\npl = pyvista.Plotter(off_screen=True)\npl.add_mesh(mesh)\npl.view_isometric()\npl.screenshot(\"manifold.png\"); pl.close()\nfrom IPython.display import Image\nImage(\"manifold.png\")",
+      "exit_code": 0,
+      "seconds": 0.6525944439999876,
+      "output": "volume: 3063838.448139623  faces: 48\n\n\u001b[0m\u001b[33m2026-09-14 15:32:27.064 ( 116.297s) [    71A0287E5780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 15:32:27.064 ( 116.298s) [    71A0287E5780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import math\npatches = {}   # name -> list of faces\nport_faces = []\nrunnerWalls = []\nplenumWalls = []\ninlet = []\nTOL = 0.5\nfor f in air.faces():\n    c = tuple(f.center())\n    gt = f.geom_type\n    if gt == bd.GeomType.PLANE and abs(abs(c[0]) - (60+PORT_X)) < TOL and abs(f.area - math.pi*R_RUN**2) < 200:\n        port_faces.append(f); continue\n    nrm = tuple(f.normal_at())\n    if gt == bd.GeomType.PLANE and abs(abs(nrm[1])-1) < 1e-4 and abs(f.area - math.pi*R_THROTTLE**2) < 500:\n        inlet = [f]; continue\n    if gt == bd.GeomType.PLANE:\n        plenumWalls.append(f)\n    else:\n        runnerWalls.append(f)\n# classify port faces into 8 by side and y\npatches[\"inlet\"] = inlet\npatches[\"plenumWalls\"] = plenumWalls\n# separate runner inlet cylindrical wall (throttle) vs runner walls\nthrottleCyl = [f for f in runnerWalls if f.geom_type==bd.GeomType.CYLINDER and abs(f.radius - R_THROTTLE) < TOL]\nrunW = [f for f in runnerWalls if f not in throttleCyl]\npatches[\"runnerWalls\"] = runW\nport_faces.sort(key=lambda f: (1 if f.center()[0]>0 else -1, f.center()[1]))\nfor i, f in enumerate(port_faces):\n    sideways = 'R' if f.center()[0]>0 else 'L'\n    yi = ys.index(min(ys, key=lambda y: abs(y-f.center()[1])))\n    patches[f\"port_{sideways}{yi+1}\"] = [f]\n    print(f\"port_{sideways}{yi+1}\", tuple(round(v,1) for v in f.center()), round(f.area,1))\nprint({k: len(v) for k,v in patches.items()})\nprint(\"total faces:\", sum(len(v) for v in patches.values()), \"of\", len(air.faces()))",
+      "exit_code": 1,
+      "seconds": 0.8024929630009865,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[10]\u001b[39m\u001b[32m, line 24\u001b[39m\n\u001b[32m     20\u001b[39m \u001b[38;5;66;03m# classify port faces into 8 by side and y\u001b[39;00m\n\u001b[32m     21\u001b[39m patches[\u001b[33m\"inlet\"\u001b[39m] = inlet\n\u001b[32m     22\u001b[39m patches[\u001b[33m\"plenumWalls\"\u001b[39m] = plenumWalls\n\u001b[32m     23\u001b[39m \u001b[38;5;66;03m# separate runner inlet cylindrical wall (throttle) vs runner walls\u001b[39;00m\n\u001b[32m---> \u001b[39m\u001b[32m24\u001b[39m throttleCyl = [f \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m runnerWalls \u001b[38;5;28;01mif\u001b[39;00m f.geom_type==bd.GeomType.CYLINDER \u001b[38;5;28;01mand\u001b[39;00m abs(f.radius - R_THROTTLE) < TOL]\n\u001b[32m     25\u001b[39m runW = [f \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m runnerWalls \u001b[38;5;28;01mif\u001b[39;00m f \u001b[38;5;28;01mnot\u001b[39;00m \u001b[38;5;28;01min\u001b[39;00m throttleCyl]\n\u001b[32m     26\u001b[39m patches[\u001b[33m\"runnerWalls\"\u001b[39m] = runW\n\u001b[32m     27\u001b[39m port_faces.sort(key=\u001b[38;5;28;01mlambda\u001b[39;00m f: (\u001b[32m1\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m f.center()[\u001b[32m0\u001b[39m]>\u001b[32m0\u001b[39m \u001b[38;5;28;01melse\u001b[39;00m -\u001b[32m1\u001b[39m, f.center()[\u001b[32m1\u001b[39m]))\n\n\u001b[31mTypeError\u001b[39m: unsupported operand type(s) for -: 'NoneType' and 'float'",
+      "image": ""
+    },
+    {
+      "cmd": "throttleCyl = [f for f in runnerWalls if f.geom_type==bd.GeomType.CYLINDER and abs(f.central_axis.direction[1]) > 0.99]\nrunW = [f for f in runnerWalls if f not in throttleCyl]\npatches = {\"inlet\": inlet, \"plenumWalls\": plenumWalls, \"runnerWalls\": runW}\nport_faces.sort(key=lambda f: (1 if f.center()[0]>0 else -1, f.center()[1]))\nfor i, f in enumerate(port_faces):\n    sideways = 'R' if f.center()[0]>0 else 'L'\n    yi = ys.index(min(ys, key=lambda y: abs(y-f.center()[1])))\n    patches[f\"port_{sideways}{yi+1}\"] = [f]\nprint({k: len(v) for k,v in patches.items()})\nprint(\"total faces:\", sum(len(v) for v in patches.values()), \"of\", len(air.faces()))",
+      "exit_code": 1,
+      "seconds": 0.050722346000839025,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[11]\u001b[39m\u001b[32m, line 1\u001b[39m\n\u001b[32m----> \u001b[39m\u001b[32m1\u001b[39m throttleCyl = [f \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m runnerWalls \u001b[38;5;28;01mif\u001b[39;00m f.geom_type==bd.GeomType.CYLINDER \u001b[38;5;28;01mand\u001b[39;00m abs(f.central_axis.direction[\u001b[32m1\u001b[39m]) > \u001b[32m0.99\u001b[39m]\n\u001b[32m      2\u001b[39m runW = [f \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m runnerWalls \u001b[38;5;28;01mif\u001b[39;00m f \u001b[38;5;28;01mnot\u001b[39;00m \u001b[38;5;28;01min\u001b[39;00m throttleCyl]\n\u001b[32m      3\u001b[39m patches = {\u001b[33m\"inlet\"\u001b[39m: inlet, \u001b[33m\"plenumWalls\"\u001b[39m: plenumWalls, \u001b[33m\"runnerWalls\"\u001b[39m: runW}\n\u001b[32m      4\u001b[39m port_faces.sort(key=\u001b[38;5;28;01mlambda\u001b[39;00m f: (\u001b[32m1\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m f.center()[\u001b[32m0\u001b[39m]>\u001b[32m0\u001b[39m \u001b[38;5;28;01melse\u001b[39;00m -\u001b[32m1\u001b[39m, f.center()[\u001b[32m1\u001b[39m]))\n\n\u001b[31mAttributeError\u001b[39m: 'Face' object has no attribute 'central_axis'",
+      "image": ""
+    },
+    {
+      "cmd": "cyl = [f for f in runnerWalls if f.geom_type==bd.GeomType.CYLINDER]\nprint(len(cyl))\nf0 = cyl[0]\nprint([a for a in dir(f0) if 'rad' in a.lower() or 'cyl' in a.lower() or 'axis' in a.lower()])\nnrm = tuple(f0.normal_at(bd.Vector(1)))\nprint(\"normal:\", nrm)",
+      "exit_code": 1,
+      "seconds": 0.9529750520014204,
+      "output": "9\n['axis_of_rotation', 'faces_intersected_by_axis', 'radii', 'radius', 'radius_of_gyration']\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mStdFail_NotDone\u001b[39m                           Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[12]\u001b[39m\u001b[32m, line 5\u001b[39m\n\u001b[32m      1\u001b[39m cyl = [f \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m runnerWalls \u001b[38;5;28;01mif\u001b[39;00m f.geom_type==bd.GeomType.CYLINDER]\n\u001b[32m      2\u001b[39m print(len(cyl))\n\u001b[32m      3\u001b[39m f0 = cyl[\u001b[32m0\u001b[39m]\n\u001b[32m      4\u001b[39m print([a \u001b[38;5;28;01mfor\u001b[39;00m a \u001b[38;5;28;01min\u001b[39;00m dir(f0) \u001b[38;5;28;01mif\u001b[39;00m \u001b[33m'rad'\u001b[39m \u001b[38;5;28;01min\u001b[39;00m a.lower() \u001b[38;5;28;01mor\u001b[39;00m \u001b[33m'cyl'\u001b[39m \u001b[38;5;28;01min\u001b[39;00m a.lower() \u001b[38;5;28;01mor\u001b[39;00m \u001b[33m'axis'\u001b[39m \u001b[38;5;28;01min\u001b[39;00m a.lower()])\n\u001b[32m----> \u001b[39m\u001b[32m5\u001b[39m nrm = tuple(f0.normal_at(bd.Vector(\u001b[32m1\u001b[39m)))\n\u001b[32m      6\u001b[39m print(\u001b[33m\"normal:\"\u001b[39m, nrm)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/two_d.py:2356\u001b[39m, in \u001b[36mFace.normal_at\u001b[39m\u001b[34m(self, *args, **kwargs)\u001b[39m\n\u001b[32m   2350\u001b[39m \u001b[38;5;28;01melse\u001b[39;00m:\n\u001b[32m   2351\u001b[39m     \u001b[38;5;66;03m# project point on surface\u001b[39;00m\n\u001b[32m   2352\u001b[39m     projector = GeomAPI_ProjectPointOnSurf(\n\u001b[32m   2353\u001b[39m         Vector(surface_point).to_pnt(), surface\n\u001b[32m   2354\u001b[39m     )\n\u001b[32m-> \u001b[39m\u001b[32m2356\u001b[39m     u_val, v_val = \u001b[30;43mprojector\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mLowerDistanceParameters\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m   2358\u001b[39m gp_pnt = gp_Pnt()\n\u001b[32m   2359\u001b[39m normal = gp_Vec()\n\n\u001b[31mStdFail_NotDone\u001b[39m: GeomAPI_ProjectPointOnSurf::LowerDistanceParameters",
+      "image": ""
+    },
+    {
+      "cmd": "throttleCyl = [f for f in runnerWalls if f.geom_type==bd.GeomType.CYLINDER and f.radius and abs(f.radius - R_THROTTLE) < TOL]\nrunW = [f for f in runnerWalls if not any(f is g for g in throttleCyl)]\npatches = {\"inlet\": inlet, \"plenumWalls\": plenumWalls, \"runnerWalls\": runW}\nfor f in port_faces:\n    sideways = 'R' if f.center()[0]>0 else 'L'\n    yi = ys.index(min(ys, key=lambda y: abs(y-f.center()[1])))\n    patches[f\"port_{sideways}{yi+1}\"] = [f]\nprint({k: len(v) for k,v in patches.items()}, \" total:\", sum(len(v) for v in patches.values()), \"of\", len(air.faces()))\n\nimport os\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nfrom build123d import ShapeList\nfor name, faces in patches.items():\n    fl = ShapeList(faces)\n    bd.export_stl(bd.Compound(children=list(faces)), f\"constant/triSurface/{name}.stl\")\nprint(os.listdir(\"constant/triSurface\"))",
+      "exit_code": 1,
+      "seconds": 0.05059396700016805,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[13]\u001b[39m\u001b[32m, line 5\u001b[39m\n\u001b[32m      1\u001b[39m throttleCyl = [f \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m runnerWalls \u001b[38;5;28;01mif\u001b[39;00m f.geom_type==bd.GeomType.CYLINDER \u001b[38;5;28;01mand\u001b[39;00m f.radius \u001b[38;5;28;01mand\u001b[39;00m abs(f.radius - R_THROTTLE) < TOL]\n\u001b[32m      2\u001b[39m runW = [f \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m runnerWalls \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28;01mnot\u001b[39;00m any(f \u001b[38;5;28;01mis\u001b[39;00m g \u001b[38;5;28;01mfor\u001b[39;00m g \u001b[38;5;28;01min\u001b[39;00m throttleCyl)]\n\u001b[32m      3\u001b[39m patches = {\u001b[33m\"inlet\"\u001b[39m: inlet, \u001b[33m\"plenumWalls\"\u001b[39m: plenumWalls, \u001b[33m\"runnerWalls\"\u001b[39m: runW}\n\u001b[32m      4\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m port_faces:\n\u001b[32m----> \u001b[39m\u001b[32m5\u001b[39m     sideways = \u001b[33m'R'\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m f.center()[\u001b[32m0\u001b[39m]>\u001b[32m0\u001b[39m \u001b[38;5;28;01melse\u001b[39;00m \u001b[33m'L'\u001b[39m\n\u001b[32m      6\u001b[39m     yi = ys.index(min(ys, key=\u001b[38;5;28;01mlambda\u001b[39;00m y: abs(y-f.center()[\u001b[32m1\u001b[39m])))\n\u001b[32m      7\u001b[39m     patches[f\"port_{sideways}{yi+\u001b[32m1\u001b[39m}\"] = [f]\n\u001b[32m      8\u001b[39m print({k: len(v) \u001b[38;5;28;01mfor\u001b[39;00m k,v \u001b[38;5;28;01min\u001b[39;00m patches.items()}, \u001b[33m\" total:\"\u001b[39m, sum(len(v) \u001b[38;5;28;01mfor\u001b[39;00m v \u001b[38;5;28;01min\u001b[39;00m patches.values()), \u001b[33m\"of\"\u001b[39m, len(air.faces()))\n\n\u001b[31mTypeError\u001b[39m: 'Vector' object is not subscriptable",
+      "image": ""
+    },
+    {
+      "cmd": "patches = {\"inlet\": inlet, \"plenumWalls\": plenumWalls, \"runnerWalls\": runW}\nfor f in port_faces:\n    cx, cy, cz = tuple(f.center())\n    sideways = 'R' if cx > 0 else 'L'\n    yi = ys.index(min(ys, key=lambda y: abs(y-cy)))\n    patches[f\"port_{sideways}{yi+1}\"] = [f]\nprint({k: len(v) for k,v in patches.items()}, \"total:\", sum(len(v) for v in patches.values()), \"of\", len(air.faces()))\n\nimport os, glob\nfor old in glob.glob(\"constant/triSurface/*.stl\"): os.remove(old)\nos.makedirs(\"constant/triSurface\", exist_ok=True)\n# STL export is in mm; scale by 1e-3 via meshio? build123d export_stl keeps units of model (mm). OpenFOAM wants m -> scale on export\nM2M = 0.001\nfor name, faces in patches.items():\n    comp = bd.Scale(utils=...)  # no\n# instead: scale faces by copy and translate: use Vertex-scaled assembly of triangles manually later in write API. Simplest: export then rewrite STL scaled.\nfor name, faces in patches.items():\n    comp = bd.Compound(children=list(faces))\n    bd.export_stl(comp, f\"constant/triSurface/{name}.stl\", tolerance=0.05, angular_tolerance=0.05) if False else bd.export_stl(comp, f\"constant/triSurface/{name}.stl\", tolerance=0.05)\nprint(sorted(os.listdir(\"constant/triSurface\")))",
+      "exit_code": 1,
+      "seconds": 0.050896936998469755,
+      "output": "{'inlet': 1, 'plenumWalls': 14, 'runnerWalls': 24, 'port_L1': 1, 'port_L2': 1, 'port_L3': 1, 'port_L4': 1, 'port_R1': 1, 'port_R2': 1, 'port_R3': 1, 'port_R4': 1} total: 47 of 48\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[14]\u001b[39m\u001b[32m, line 15\u001b[39m\n\u001b[32m     11\u001b[39m os.makedirs(\u001b[33m\"constant/triSurface\"\u001b[39m, exist_ok=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m     12\u001b[39m \u001b[38;5;66;03m# STL export is in mm; scale by 1e-3 via meshio? build123d export_stl keeps units of model (mm). OpenFOAM wants m -> scale on export\u001b[39;00m\n\u001b[32m     13\u001b[39m M2M = \u001b[32m0.001\u001b[39m\n\u001b[32m     14\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m name, faces \u001b[38;5;28;01min\u001b[39;00m patches.items():\n\u001b[32m---> \u001b[39m\u001b[32m15\u001b[39m     comp = bd.Scale(utils=...)  \u001b[38;5;66;03m# no\u001b[39;00m\n\u001b[32m     16\u001b[39m \u001b[38;5;66;03m# instead: scale faces by copy and translate: use Vertex-scaled assembly of triangles manually later in write API. Simplest: export then rewrite STL scaled.\u001b[39;00m\n\u001b[32m     17\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m name, faces \u001b[38;5;28;01min\u001b[39;00m patches.items():\n\u001b[32m     18\u001b[39m     comp = bd.Compound(children=list(faces))\n\n\u001b[31mAttributeError\u001b[39m: module 'build123d' has no attribute 'Scale'",
+      "image": ""
+    },
+    {
+      "cmd": "# find the unclassified face\nclassified = set()\nfor k,v in patches.items():\n    for f in v: classified.add(f.wrapped)\nfor f in air.faces():\n    if f.wrapped not in classified:\n        print(\"missed:\", f.geom_type, round(f.area,1), tuple(round(x,1) for x in f.center()), tuple(f.normal_at()))\n# export STLs (mm), then rescale coordinates to metres\nimport struct, glob\nfor old in glob.glob(\"constant/triSurface/*.stl\"): os.remove(old)\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nfor name, faces in patches.items():\n    comp = bd.Compound(children=list(faces))\n    bd.export_stl(comp, f\"constant/triSurface/{name}.stl\", tolerance=0.05)\n\ndef scale_stl(path, fctr=0.001):\n    with open(path,'rb') as fh:\n        head = fh.read(80); n = struct.unpack('<I', fh.read(4))[0]\n        rec = fh.read()\n    out = bytearray(rec)\n    for i in range(n):\n        off = 12*i + i*38\n        for j in range(15):  # normal(3)+vertices(9)+? per record: 3 normal + 9 verts + count\n            pass\n    # records: 50 bytes each: 12 floats + 2 attr\n    import io\n    for i in range(n):\n        base = i*50\n        vals = list(struct.unpack_from('<12fH', rec, base)[:12])\n        vals = [v*fctr for v in vals]\n        struct.pack_into('<12fH', out, base, *vals, 0)\n    with open(path,'wb') as fh:\n        fh.write(head); fh.write(struct.pack('<I', n)); fh.write(out)\n\nfor p in glob.glob(\"constant/triSurface/*.stl\"):\n    scale_stl(p)\nprint(sorted(os.listdir(\"constant/triSurface\")))",
+      "exit_code": 0,
+      "seconds": 4.564872287999606,
+      "output": "missed: GeomType.PLANE 21731.8 (-60.0, 0.0, -3.3) (-1.0, -0.0, 0.0)\nmissed: GeomType.PLANE 36000.0 (-0.0, -0.0, 40.0) (0.0, 0.0, 1.0)\nmissed: GeomType.CYLINDER 3581.4 (-75.0, -112.5, 21.0) (1.4997597826618576e-32, 1.2246467991473532e-16, -1.0)\nmissed: GeomType.CYLINDER 3581.4 (-75.0, -37.5, 21.0) (1.4997597826618576e-32, 1.2246467991473532e-16, -1.0)\nmissed: GeomType.CYLINDER 3581.4 (-75.0, 37.5, 21.0) (1.4997597826618576e-32, 1.2246467991473532e-16, -1.0)\nmissed: GeomType.CYLINDER 3581.4 (-75.0, 112.5, 21.0) (1.4997597826618576e-32, 1.2246467991473532e-16, -1.0)\nmissed: GeomType.PLANE 5751.5 (-0.0, 150.0, 0.0) (-0.0, 1.0, 0.0)\nmissed: GeomType.PLANE 36000.0 (0.0, 0.0, -40.0) (-0.0, -0.0, -1.0)\nmissed: GeomType.PLANE 9600.0 (-0.0, -150.0, 0.0) (0.0, -1.0, -0.0)\nmissed: GeomType.PLANE 567.1 (-60.0, -112.5, 48.1) (1.0, -1.2246467991473532e-16, -0.0)\nmissed: GeomType.PLANE 567.1 (-60.0, -37.5, 48.1) (1.0, -1.2246467991473532e-16, -0.0)\nmissed: GeomType.PLANE 567.1 (-60.0, 37.5, 48.1) (1.0, -1.2246467991473532e-16, -0.0)\nmissed: GeomType.PLANE 567.1 (-60.0, 112.5, 48.1) (1.0, -1.2246467991473532e-16, -0.0)\nmissed: GeomType.PLANE 21731.8 (60.0, -0.0, -3.3) (1.0, 0.0, -0.0)\nmissed: GeomType.PLANE 567.1 (60.0, -112.5, 48.1) (-1.0, -0.0, -0.0)\nmissed: GeomType.PLANE 567.1 (60.0, -37.5, 48.1) (-1.0, -0.0, -0.0)\nmissed: GeomType.PLANE 567.1 (60.0, 37.5, 48.1) (-1.0, -0.0, -0.0)\nmissed: GeomType.PLANE 567.1 (60.0, 112.5, 48.1) (-1.0, -0.0, -0.0)\nmissed: GeomType.REVOLUTION 7768.1 (-119.2, -116.7, -12.4) (0.5935334010767418, -0.04086794771891506, -0.8037710573636745)\nmissed: GeomType.REVOLUTION 7768.1 (-119.2, -41.7, -12.4) (0.5935334010767418, -0.04086794771891506, -0.8037710573636745)\nmissed: GeomType.REVOLUTION 7768.1 (-119.2, 33.3, -12.4) (0.5935334010767418, -0.04086794771891506, -0.8037710573636745)\nmissed: GeomType.REVOLUTION 7768.1 (-119.2, 108.3, -12.4) (0.5935334010767418, -0.04086794771891506, -0.8037710573636745)\nmissed: GeomType.CYLINDER 8796.5 (-35.0, 170.0, 0.0) (-1.0, 2.719262146893782e-32, 1.2246467991473532e-16)\nmissed: GeomType.CYLINDER 3581.4 (75.0, -112.5, 59.0) (-0.0, 1.2246467991473532e-16, 1.0)\nmissed: GeomType.CYLINDER 3581.4 (75.0, -37.5, 59.0) (-0.0, 1.2246467991473532e-16, 1.0)\nmissed: GeomType.CYLINDER 3581.4 (75.0, 37.5, 59.0) (-0.0, 1.2246467991473532e-16, 1.0)\nmissed: GeomType.CYLINDER 3581.4 (75.0, 112.5, 59.0) (-0.0, 1.2246467991473532e-16, 1.0)\nmissed: GeomType.EXTRUSION 6661.0 (-155.4, -96.2, -58.1) (0.4472135954999577, -0.894427190999916, -0.0)\nmissed: GeomType.EXTRUSION 6661.0 (-155.4, -21.2, -58.1) (0.4472135954999577, -0.894427190999916, -0.0)\nmissed: GeomType.EXTRUSION 6661.0 (-155.4, 53.8, -58.1) (0.4472135954999577, -0.894427190999916, -0.0)\nmissed: GeomType.EXTRUSION 6661.0 (-155.4, 128.8, -58.1) (0.4472135954999577, -0.894427190999916, -0.0)\nmissed: GeomType.PLANE 3848.5 (0.0, 190.0, -0.0) (-0.0, 1.0, -2.220446049250313e-16)\nmissed: GeomType.REVOLUTION 7760.3 (107.9, -90.9, 19.5) (0.7951171188585647, -0.23869194789816445, 0.557507776902381)\nmissed: GeomType.REVOLUTION 7760.3 (107.9, -15.9, 19.5) (0.7951171188585647, -0.23869194789816445, 0.557507776902381)\nmissed: GeomType.REVOLUTION 7760.3 (107.9, 59.1, 19.5) (0.7951171188585647, -0.23869194789816445, 0.557507776902381)\nmissed: GeomType.REVOLUTION 7760.3 (107.9, 134.1, 19.5) (0.7951171188585647, -0.23869194789816445, 0.557507776902381)\nmissed: GeomType.PLANE 1134.1 (-150.0, -112.5, -80.0) (-0.4285714285714285, 0.28571428571428614, 0.8571428571428571)\nmissed: GeomType.PLANE 1134.1 (-150.0, -37.5, -80.0) (-0.4285714285714285, 0.28571428571428614, 0.8571428571428571)\nmissed: GeomType.PLANE 1134.1 (-150.0, 37.5, -80.0) (-0.4285714285714285, 0.28571428571428614, 0.8571428571428571)\nmissed: GeomType.PLANE 1134.1 (-150.0, 112.5, -80.0) (-0.4285714285714285, 0.28571428571428614, 0.8571428571428571)\nmissed: GeomType.EXTRUSION 6661.0 (144.6, -96.2, -41.9) (0.4472135954999576, -0.894427190999916, 0.0)\nmissed: GeomType.EXTRUSION 6661.0 (144.6, -21.2, -41.9) (0.4472135954999576, -0.894427190999916, 0.0)\nmissed: GeomType.EXTRUSION 6661.0 (144.6, 53.8, -41.9) (0.4472135954999576, -0.894427190999916, 0.0)\nmissed: GeomType.EXTRUSION 6661.0 (144.6, 128.8, -41.9) (0.4472135954999576, -0.894427190999916, 0.0)\nmissed: GeomType.PLANE 1134.1 (150.0, -112.5, -80.0) (0.42857142857142844, -0.2857142857142856, 0.8571428571428573)\nmissed: GeomType.PLANE 1134.1 (150.0, -37.5, -80.0) (0.42857142857142844, -0.2857142857142856, 0.8571428571428573)\nmissed: GeomType.PLANE 1134.1 (150.0, 37.5, -80.0) (0.42857142857142844, -0.2857142857142856, 0.8571428571428573)\nmissed: GeomType.PLANE 1134.1 (150.0, 112.5, -80.0) (0.42857142857142844, -0.2857142857142856, 0.8571428571428573)\n['inlet.stl', 'plenumWalls.stl', 'port_L1.stl', 'port_L2.stl', 'port_L3.stl', 'port_L4.stl', 'port_R1.stl', 'port_R2.stl', 'port_R3.stl', 'port_R4.stl', 'runnerWalls.stl']",
+      "image": ""
+    },
+    {
+      "cmd": "import os, glob, struct, math\nimport build123d as bd\nimport pyvista\n\nfaces = list(air.faces())\ndef assign(f):\n    gt = f.geom_type\n    c = tuple(f.center()); area = f.area\n    if gt == bd.GeomType.PLANE and abs(area - math.pi*R_THROTTLE**2) < 500:\n        return \"inlet\"\n    if gt == bd.GeomType.CYLINDER and f.radius and abs(f.radius - R_THROTTLE) < TOL:\n        return \"inletWall\"\n    if gt == bd.GeomType.PLANE and abs(area - math.pi*R_RUN**2) < 150:\n        cx, cy, cz = c\n        sideways = 'R' if cx > 0 else 'L'\n        yi = ys.index(min(ys, key=lambda y: abs(y-cy)))\n        return f\"port_{sideways}{yi+1}\"\n    if gt == bd.GeomType.PLANE:\n        return \"plenumWalls\"\n    return \"runnerWalls\"\n\npatches = {}\nfor f in faces:\n    patches.setdefault(assign(f), []).append(f)\nassert sum(len(v) for v in patches.values()) == len(faces)\nprint({k: len(v) for k,v in patches.items()})\n# sanity: port face planes and positions\nfor name in sorted(patches):\n    if name.startswith(\"port\"):\n        f = patches[name][0]\n        print(name, \"centre\", tuple(round(x,1) for x in f.center()), \"| port distance from wall:\", abs(f.center()[0]) - PL_W/2)\n\nfor old in glob.glob(\"constant/triSurface/*.stl\"): os.remove(old)\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nfor name, fl in patches.items():\n    bd.export_stl(bd.Compound(children=list(fl)), f\"constant/triSurface/{name}.stl\", tolerance=0.05)\n\ndef scale_stl(path, fctr=0.001):\n    data = open(path,'rb').read()\n    n = struct.unpack_from('<I', data, 80)[0]\n    b = bytearray(data)\n    for i in range(n):\n        base = 84 + i*50\n        vals = struct.unpack_from('<12fH', data, base)\n        vals = tuple(v*fctr for v in vals[:12]) + (vals[12],)\n        struct.pack_into('<12fH', b, base, *vals)\n    open(path,'wb').write(b)\n\nfor p in glob.glob(\"constant/triSurface/*.stl\"): scale_stl(p)\nprint(sorted(os.listdir(\"constant/triSurface\")))",
+      "exit_code": 1,
+      "seconds": 0.8025617169987527,
+      "output": "{'plenumWalls': 14, 'runnerWalls': 24, 'inletWall': 1, 'inlet': 1, 'port_L1': 1, 'port_L2': 1, 'port_L3': 1, 'port_L4': 1, 'port_R1': 1, 'port_R2': 1, 'port_R3': 1, 'port_R4': 1}\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[16]\u001b[39m\u001b[32m, line 31\u001b[39m\n\u001b[32m     27\u001b[39m \u001b[38;5;66;03m# sanity: port face planes and positions\u001b[39;00m\n\u001b[32m     28\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m name \u001b[38;5;28;01min\u001b[39;00m sorted(patches):\n\u001b[32m     29\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m name.startswith(\u001b[33m\"port\"\u001b[39m):\n\u001b[32m     30\u001b[39m         f = patches[name][\u001b[32m0\u001b[39m]\n\u001b[32m---> \u001b[39m\u001b[32m31\u001b[39m         print(name, \u001b[33m\"centre\"\u001b[39m, tuple(round(x,\u001b[32m1\u001b[39m) \u001b[38;5;28;01mfor\u001b[39;00m x \u001b[38;5;28;01min\u001b[39;00m f.center()), \u001b[33m\"| port distance from wall:\"\u001b[39m, abs(f.center()[\u001b[32m0\u001b[39m]) - PL_W/\u001b[32m2\u001b[39m)\n\u001b[32m     32\u001b[39m \n\u001b[32m     33\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m old \u001b[38;5;28;01min\u001b[39;00m glob.glob(\u001b[33m\"constant/triSurface/*.stl\"\u001b[39m): os.remove(old)\n\u001b[32m     34\u001b[39m os.makedirs(\u001b[33m\"constant/triSurface\"\u001b[39m, exist_ok=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\n\u001b[31mTypeError\u001b[39m: 'Vector' object is not subscriptable",
+      "image": ""
+    },
+    {
+      "cmd": "# sanity-check port faces, then export all\nfor name in sorted(patches):\n    if name.startswith(\"port\"):\n        cc = tuple(patches[name][0].center())\n        print(name, \"centre\", tuple(round(x,1) for x in cc), \"| distance from wall:\", round(abs(cc[0]) - PL_W/2, 1))\n\nfor old in glob.glob(\"constant/triSurface/*.stl\"): os.remove(old)\nfor name, fl in patches.items():\n    bd.export_stl(bd.Compound(children=list(fl)), f\"constant/triSurface/{name}.stl\", tolerance=0.05)\nfor p in glob.glob(\"constant/triSurface/*.stl\"): scale_stl(p)\nprint(sorted(os.listdir(\"constant/triSurface\")))\nprint(\"STLs exported:\", len(patches))",
+      "exit_code": 0,
+      "seconds": 5.117586781001592,
+      "output": "port_L1 centre (-150.0, -112.5, -80.0) | distance from wall: 90.0\nport_L2 centre (-150.0, -37.5, -80.0) | distance from wall: 90.0\nport_L3 centre (-150.0, 37.5, -80.0) | distance from wall: 90.0\nport_L4 centre (-150.0, 112.5, -80.0) | distance from wall: 90.0\nport_R1 centre (150.0, -112.5, -80.0) | distance from wall: 90.0\nport_R2 centre (150.0, -37.5, -80.0) | distance from wall: 90.0\nport_R3 centre (150.0, 37.5, -80.0) | distance from wall: 90.0\nport_R4 centre (150.0, 112.5, -80.0) | distance from wall: 90.0\n['inlet.stl', 'inletWall.stl', 'plenumWalls.stl', 'port_L1.stl', 'port_L2.stl', 'port_L3.stl', 'port_L4.stl', 'port_R1.stl', 'port_R2.stl', 'port_R3.stl', 'port_R4.stl', 'runnerWalls.stl']\nSTLs exported: 12",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd, numpy as np, math, os, glob, struct\nPL_L, PL_W, PL_H = 300., 120., 80.\nR_THROTTLE = 35.; R_RUN = 19.; R_BEND = 60.; PORT_X = 90.; GROUND_VERT = 60.; INLET_LEN = 40.\nys = [-112.5, -37.5, 37.5, 112.5]\nTOL = 0.5\ndef runner_wire():\n    w = bd.Wire([bd.Line((0,0,0),(30,0,0)),\n                 bd.RadiusArc((30,0,0),(90,0,-60),radius=R_BEND),\n                 bd.Line((90,0,-60),(90,0,-60-GROUND_VERT))])\n    return w\ndef make_tube():\n    w = runner_wire()\n    prof = bd.Pos(0,0,0)*bd.Rot(0,90,0)*bd.Circle(R_RUN)\n    return bd.sweep(prof, path=w)\nplenum = bd.Pos(0,0,0)*bd.Box(PL_W, PL_L, PL_H)\ninlet_pipe = bd.BoundedBox if False else bd.Pos(0, PL_L/2+INLET_LEN/2, 0)*bd.Rot(90,0,0)*bd.Cylinder(R_THROTTLE, INLET_LEN)\nsolids = [plenum, inlet_pipe]\nfor side in (1,-1):\n    for y0 in ys:\n        tb = make_tube()\n        if side == -1: tb = bd.Rot(0,0,180)*tb\n        tb = tb.moved(bd.Location((side*PL_W/2, y0, PL_H/2)))\n        solids.append(tb)\nair = solids[0]\nfor s in solids[1:]: air = air + s\n\ndef assign(f):\n    gt, area, c = f.geom_type, f.area, tuple(f.center())\n    if gt==bd.GeomType.PLANE and abs(area-math.pi*R_THROTTLE**2)<500: return \"inlet\"\n    if gt==bd.GeomType.CYLINDER and f.radius and abs(f.radius-R_THROTTLE)<TOL: return \"inletWall\"\n    if gt==bd.GeomType.PLANE and abs(area-math.pi*R_RUN**2)<150:\n        side = 'R' if c[0]>0 else 'L'\n        yi = ys.index(min(ys, key=lambda y: abs(y-c[1])))\n        return f\"port_{side}{yi+1}\"\n    return \"plenumWalls\" if gt==bd.GeomType.PLANE else \"runnerWalls\"\npatches = {}\nfor f in air.faces(): patches.setdefault(assign(f),[]).append(f)\nassert sum(len(v) for v in patches.values())==len(air.faces())\nos.makedirs(\"constant/triSurface\", exist_ok=True)\nfor old in glob.glob(\"constant/triSurface/*.stl\"): os.remove(old)\nfor name,fl in patches.items():\n    bd.export_stl(bd.Compound(children=list(fl)), f\"constant/triSurface/{name}.stl\", tolerance=0.05)\ndef scale_stl(path, fc=0.001):\n    d = open(path,'rb').read(); n = struct.unpack_from('<I',d,80)[0]; b = bytearray(d)\n    for i in range(n):\n        base = 84+i*50; vals = struct.unpack_from('<12fH',d,base)\n        struct.pack_into('<12fH', b, base, *[v*fc for v in vals[:12]], vals[12])\n    open(path,'wb').write(b)\nfor p in glob.glob(\"constant/triSurface/*.stl\"): scale_stl(p)\nprint(\"volume mm3:\", air.volume, \"| faces:\", len(air.faces()), \"| patches:\", {k:len(v) for k,v in patches.items()})",
+      "exit_code": 0,
+      "seconds": 5.357656536001741,
+      "output": "volume mm3: 3063838.4481396223 | faces: 48 | patches: {'plenumWalls': 14, 'runnerWalls': 24, 'inletWall': 1, 'inlet': 1, 'port_L1': 1, 'port_L2': 1, 'port_L3': 1, 'port_L4': 1, 'port_R1': 1, 'port_R2': 1, 'port_R3': 1, 'port_R4': 1}",
+      "image": ""
+    },
+    {
+      "cmd": "import os, json\n# bounding box in metres (from STL extents)\nxs = [-0.30, 0.30]; ys_ = [-0.35, 0.35]; zs = [-0.25, 0.20]\nCELL = 0.015  # 15 mm cells, coarse\nnx = int((xs[1]-xs[0])/CELL); ny = int((ys_[1]-ys_[0])/CELL); nz = int((zs[1]-zs[0])/CELL)\nprint(nx,ny,nz, nx*ny*nz)\n\nblockMeshDict = f\"\"\"/*--------------------------------*- C++ -*----------------------------------*\\\\\nFoamFile\n{{\n    version     2.0;\n    format      ascii;\n    object      blockMeshDict;\n}}\nconvertToMeters 1;\nvertices\n(\n    ({xs[0]} {ys_[0]} {zs[0]}) ({xs[1]} {ys_[0]} {zs[0]})\n    ({xs[1]} {ys_[1]} {zs[0]}) ({xs[0]} {ys_[1]} {zs[0]})\n    ({xs[0]} {ys_[0]} {zs[1]}) ({xs[1]} {ys_[0]} {zs[1]})\n    ({xs[1]} {ys_[1]} {zs[1]}) ({xs[0]} {ys_[1]} {zs[1]})\n);\nblocks ( hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1) );\nedges (); patches (); defaultPatch {{ name walls; type wall; }}\n\"\"\"\nopen(\"system/blockMeshDict\",\"w\").write(blockMeshDict) if os.path.isdir(\"system\") else None\nos.makedirs(\"system\", exist_ok=True)\nopen(\"system/blockMeshDict\",\"w\").write(blockMeshDict)\nprint(\"written\")",
+      "exit_code": 0,
+      "seconds": 0.05082223499994143,
+      "output": "40 46 30 55200\nwritten",
+      "image": ""
+    },
+    {
+      "cmd": "blockMeshDict = f\"\"\"/*--------------------------------*- C++ -*----------------------------------*/\nFoamFile\n{{\n    version     2.0; format ascii; object  blockMeshDict; class dictionary;\n}}\nconvertToMeters 1;\nvertices\n(\n    ({xs[0]} {ys_[0]} {zs[0]}) ({xs[1]} {ys_[0]} {zs[0]})\n    ({xs[1]} {ys_[1]} {zs[0]}) ({xs[0]} {ys_[1]} {zs[0]})\n    ({xs[0]} {ys_[0]} {zs[1]}) ({xs[1]} {ys_[0]} {zs[1]})\n    ({xs[1]} {ys_[1]} {zs[1]}) ({xs[0]} {ys_[1]} {zs[1]})\n);\nblocks ( hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1) );\nedges ();\npatches\n(\n    wall walls ( (0 4 7 3) (2 6 5 1) (1 5 4 0) (3 7 6 2) (0 1 2 3) (4 5 6 7) )\n);\n\"\"\"\nopen(\"system/blockMeshDict\",\"w\").write(blockMeshDict)\n\npatchNames = [\"inlet\",\"inletWall\",\"plenumWalls\",\"runnerWalls\"] + [f\"port_{s}{i+1}\" for s in 'RL' for i in range(4)]\ngeom = \"\\n\".join(f\"        {name}\\n        {{\\n            type triSurfaceMesh;\\n            file \\\"{name}.stl\\\";\\n            regions {{ surface {name}; }}\\n        }}\" for name in patchNames)\nrefRef = \"\\n\".join(f\"            {{\\n                name {name};\\n                level  {{ min 1; max 2; }}\\n            }}\" for name in patchNames)\npatchNames_str = \" \".join(patchNames)\nshm = f\"\"\"FoamFile {{ version 2.0; format ascii; object snappyHexMeshDict; class dictionary; }}\ncastellated true; snap true; addLayers false;\ngeometry\n{{\n{geom}\n}};\ncastellatedMeshControls\n{{\n    maxLocalCells 6000000; maxGlobalCells 12000000; minRefinementCells 10;\n    nCellsBetweenLevels 1; resolveFeatureAngle 30; allowFreeStandingZoneFaces false;\n    locationsInMesh ((0 0 0.04)); planarTolerance 0.5; checkGapLevels ();\n    features ();\n    refinementSurfaces\n    {{\n        manifold {{ level ((0 1)(2 2)); patchInfo {{ type wall; }} }}\n    }}\n    refinementRegions {{ }}\n}}\nsnapControls\n{{\n    nSmoothPatch 3; snapTolerance 4; nSolveIter 30; nRelaxIter 5;\n    nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true;\n    multiRegionFeatureSnap false;\n}}\naddLayersControls\n{{\n    relativeSizes true; expansionRatio 1; finalLayerThickness 0.6; layers ();\n    minThickness 0.1; nGrow 0; featureAngle 60; slipFeatureAngle 30;\n    nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;\n    maxFaceThicknessRatio 0.5; maxThicknessToMedial 0.3; minMedialAngle 90;\n    nBufferCellsNoExtrude 0; nLayerIter 50; nRelaxedIter 20;\n}}\nmeshQualityControls {{ maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80; minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; features {{ surfaceGlen }}; }}\nwriteFlags ();\n\"\"\"\n# group geometry into one geometry 'manifold' hmm simpler: each stl separately with named surface\nopen(\"system/snappyHexMeshDict\",\"w\").write(shm)\nos.makedirs(\"constant\", exist_ok=True)\nopen(\"system/decomposeParDict\",\"w\").write(\"FoamFile {version 2.0; format ascii; object decomposeParDict;} numberOfSubdomains 1; method scotch;\")\nimport subprocess\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.stdout[-500:], r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.9531665319991589,
+      "output": "cal description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n \n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17/system/controlDict\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "ctrl = \"\"\"FoamFile {version 2.0; format ascii; object controlDict; class dictionary;}\napplication snappyHexMesh;\nstartFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1;\nwriteControl timeStep; writeInterval 1; purgeWrite 0;\nwriteFormat ascii; writePrecision 6; writeCompression off;\ntimeFormat general; timePrecision 6; runTimeModifiable true;\n\"\"\"\nopen(\"system/controlDict\",\"w\").write(ctrl)\n\ngeom_entries = \"\\n\".join(f\"    {name}\\n    {{\\n        type triSurfaceMesh;\\n        file \\\"{name}.stl\\\";\\n    }}\" for name in patchNames)\nrefine = \"\\n\".join(f\"        {name} {{ level ((0 1) (2 2)); patchInfo {{ type wall; }} }}\" for name in patchNames)\n# inlet should be patch, ports patch too; walls wall\ndef pinfo(n):\n    return \"patch\" if n in (\"inlet\",) or n.startswith(\"port\") else \"wall\"\nrefine = \"\\n\".join(f\"        {name} {{ level ((0 1) (2 2)); patchInfo {{ type {pinfo(name)}; }} }}\" for name in patchNames)\nshm = \"\"\"FoamFile {version 2.0; format ascii; object snappyHexMeshDict; class dictionary;}\ncastellated true; snap true; addLayers false;\ngeometry\n{\nGEOM\n};\ncastellatedMeshControls\n{\n    maxLocalCells 6000000; maxGlobalCells 12000000; minRefinementCells 10;\n    maxLoadUnbalance 0.1; nCellsBetweenLevels 1; resolveFeatureAngle 30;\n    allowFreeStandingZoneFaces false;\n    locationsInMesh ((0 0 0.04));\n    features ();\n    refinementSurfaces\n    {\nREF\n    }\n    refinementRegions {}\n}\nsnapControls\n{\n    nSmoothPatch 3; snapTolerance 4; nSolveIter 30; nRelaxIter 5;\n    nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap true;\n    multiRegionFeatureSnap false;\n}\naddLayersControls\n{\n    relativeSizes true; expansionRatio 1.0; finalLayerThickness 0.6; layers ();\n    minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3;\n    nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;\n    maxFaceThicknessRatio 0.5; maxThicknessToMedial 0.3; minMedialAngle 90;\n    nBufferCellsNoExtrude 0; nLayerIter 50;\n}\nmeshQualityControls { maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80; minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; }\nwriteFlags ();\n\"\"\".replace(\"GEOM\", geom_entries).replace(\"REF\", refine)\nopen(\"system/snappyHexMeshDict\",\"w\").write(shm)\nimport subprocess\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.returncode, r.stdout[-200:], r.stderr[-300:])",
+      "exit_code": 0,
+      "seconds": 1.2536874510005873,
+      "output": "0 -0.35 -0.25) (0.3 0.35 0.2)\n  nPoints: 59737\n  nCells: 55200\n  nFaces: 170020\n  nInternalFaces: 161180\n----------------\nPatches\n----------------\n  patch 0 (start: 161180 size: 8840) name: walls\n\nEnd\n\n --> FOAM IOWarning :\n    Found [v1012] 'convertToMeters' entry instead of 'scale' in dictionary \"system/blockMeshDict\"\n\n    This keyword is 180 months old.",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"snappyHexMesh\",\"-overwrite\"], capture_output=True, text=True)\nprint(r.returncode)\nprint(r.stdout[-1500:]); print(r.stderr[-1000:])",
+      "exit_code": 0,
+      "seconds": 0.4018312779990083,
+      "output": "1\n=====                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh -overwrite\nDate   : Sep 14 2026\nTime   : 15:39:49\nHost   : yc-demo\nPID    : 279494\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\n\n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "with open(\"system/fvSchemes\",\"w\") as fh: fh.write(\"FoamFile {version 2.0; format ascii; object fvSchemes;}\\n\")\nwith open(\"system/fvSolution\",\"w\") as fh: fh.write(\"FoamFile {version 2.0; format ascii; object fvSolution;}\\n\")\nr = subprocess.run([\"snappyHexMesh\",\"-overwrite\"], capture_output=True, text=True)\nprint(r.returncode)\nprint(r.stdout[-1200:]); print(r.stderr[-800:])",
+      "exit_code": 0,
+      "seconds": 0.4021892890013987,
+      "output": "1\n            |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh -overwrite\nDate   : Sep 14 2026\nTime   : 15:39:58\nHost   : yc-demo\nPID    : 279504\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\n\n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'class' not found in dictionary \n\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = Foam::word]\n    in file lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "open(\"system/fvSchemes\",\"w\").write(\"\"\"FoamFile {version 2.0; format ascii; object fvSchemes; class dictionary;}\nddtSchemes { default none; }\ndivSchemes { default none; }\ngradSchemes { default none; }\nlaplacianSchemes { default none; }\ninterpolationSchemes { default none; }\nsnGradSchemes { default none; }\n\"\"\")\nopen(\"system/fvSolution\",\"w\").write(\"\"\"FoamFile {version 2.0; format ascii; object fvSolution; class dictionary;}\n\"\"\")\nr = subprocess.run([\"snappyHexMesh\",\"-overwrite\"], capture_output=True, text=True)\nprint(r.returncode)\nprint(r.stdout[-1500:]); print(r.stderr[-400:])",
+      "exit_code": 0,
+      "seconds": 1.0531270219980797,
+      "output": "1\n                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh -overwrite\nDate   : Sep 14 2026\nTime   : 15:40:12\nHost   : yc-demo\nPID    : 279518\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nRead mesh in = 0.15 s\n\nfound in dictionary \"/home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17/system/snappyHexMeshDict\"\n\n\nfile: system/snappyHexMeshDict at line 2 to 105.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"snappyHexMesh\",\"-overwrite\"], capture_output=True, text=True)\nprint(r.stderr[-1500:])\nprint(r.stdout[-t] if False else r.stdout[-900:])",
+      "exit_code": 0,
+      "seconds": 0.40163339900027495,
+      "output": "--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'mergeTolerance' not found in dictionary \"/home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17/system/snappyHexMeshDict\"\n\n\nfile: system/snappyHexMeshDict at line 2 to 105.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting\n\n\n  : 15:40:23\nHost   : yc-demo\nPID    : 279533\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nRead mesh in = 0.16 s",
+      "image": ""
+    },
+    {
+      "cmd": "shm_text = open(\"system/snappyHexMeshDict\").read()\nshm_text = shm_text.replace(\"castellated true; snap true; addLayers false;\",\n                            \"castellated true; snap true; addLayers false;\\nmergeTolerance 1e-6;\")\nopen(\"system/snappyHexMeshDict\",\"w\").write(shm_text)\nr = subprocess.run([\"snappyHexMesh\",\"-overwrite\"], capture_output=True, text=True)\nprint(r.returncode, r.stderr[-800:])\nprint(r.stdout[-1500:])",
+      "exit_code": 0,
+      "seconds": 1.1547970409992558,
+      "output": "1 \n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nWrong token type - expected label (int32), found on line 76: punctuation '('\n\nfile: system/snappyHexMeshDict/castellatedMeshControls/refinementSurfaces/inlet/level at line 76.\n\n    From Foam::Istream& Foam::operator>>(Istream&, int32_t&)\n    in file primitives/ints/int32/int32IO.C at line 160.\n\nFOAM exiting\n\n\n 2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh -overwrite\nDate   : Sep 14 2026\nTime   : 15:40:36\nHost   : yc-demo\nPID    : 279544\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nRead mesh in = 0.15 s\n\nOverall mesh bounding box  : (-0.3 -0.35 -0.25) (0.3 0.35 0.2)\nRelative tolerance         : 1e-06\nAbsolute matching distance : 1.02591e-06\n\nReading refinement surfaces.",
+      "image": ""
+    },
+    {
+      "cmd": "shm_text = open(\"system/snappyHexMeshDict\").read()\nshm_text = shm_text.replace(\"level ((0 1)(2 2))\", \"level { min 1; max 2; }\")\nopen(\"system/snappyHexMeshDict\",\"w\").write(shm_text)\nr = subprocess.run([\"snappyHexMesh\",\"-overwrite\"], capture_output=True, text=True)\nprint(r.returncode, r.stderr[-800:])\nprint(r.stdout[-1200:])",
+      "exit_code": 0,
+      "seconds": 1.1544016010011546,
+      "output": "1 \n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nWrong token type - expected label (int32), found on line 76: punctuation '('\n\nfile: system/snappyHexMeshDict/castellatedMeshControls/refinementSurfaces/inlet/level at line 76.\n\n    From Foam::Istream& Foam::operator>>(Istream&, int32_t&)\n    in file primitives/ints/int32/int32IO.C at line 160.\n\nFOAM exiting\n\n\n20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh -overwrite\nDate   : Sep 14 2026\nTime   : 15:40:52\nHost   : yc-demo\nPID    : 279565\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T17-20260914-152632-163d/t17\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nRead mesh in = 0.16 s\n\nOverall mesh bounding box  : (-0.3 -0.35 -0.25) (0.3 0.35 0.2)\nRelative tolerance         : 1e-06\nAbsolute matching distance : 1.02591e-06\n\nReading refinement surfaces.",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\nr = subprocess.run([\"grep\",\"-roh\",\"level .*;\",\"/opt/openfoam\" if False else \"$WM_PROJECT_DIR/tutorials\",\"-H\"], capture_output=True, text=True, env={})\nr = subprocess.run([\"bash\",\"-c\",\"grep -rPo 'level\\s+\\(.*?\\)\\s*;' $WM_PROJECT_DIR/tutorials 2>/dev/null | sort -u | head\"], capture_output=True, text=True)\nprint(r.stdout)\nr = subprocess.run([\"bash\",\"-c\",\"grep -rP -A2 'refinementSurfaces' $WM_PROJECT_DIR/tutorials | grep 'level' | sort -u | head\"], capture_output=True, text=True)\nprint(r.stdout)",
+      "exit_code": 0,
+      "seconds": 105.94788132999747,
+      "output": "/usr/lib/openfoam/openfoam2512/tutorials/combustion/XiDyMFoam/annularCombustorTurbine/system/snappyHexMeshDict:level (1 1);\n/usr/lib/openfoam/openfoam2512/tutorials/combustion/reactingFoam/RAS/membrane/system/snappyHexMeshDict:level (0 0);\n/usr/lib/openfoam/openfoam2512/tutorials/compressible/acousticFoam/obliqueAirJet/main/system/snappyHexMeshDict:level (2 2);\n/usr/lib/openfoam/openfoam2512/tutorials/compressible/acousticFoam/obliqueAirJet/main/system/snappyHexMeshDict:level (3 3);\n/usr/lib/openfoam/openfoam2512/tutorials/compressible/rhoPimpleFoam/RAS/annularThermalMixer/system/snappyHexMeshDict:level           (2 2);\n/usr/lib/openfoam/openfoam2512/tutorials/compressible/rhoPimpleFoam/RAS/annularThermalMixer/system/snappyHexMeshDict:level       (1 1);\n/usr/lib/openfoam/openfoam2512/tutorials/compressible/rhoPimpleFoam/RAS/annularThermalMixer/system/snappyHexMeshDict:level       (2 2);\n/usr/lib/openfoam/openfoam2512/tutorials/compressible/rhoSimpleFoam/gasMixing/injectorPipe/system/snappyHexMeshDict:level (3 3);\n/usr/lib/openfoam/openfoam2512/tutorials/compressible/rhoSimpleFoam/gasMixing/injectorPipe/system/snappyHexMeshDict:level (5 5);\n/usr/lib/openfoam/openfoam2512/tutorials/heatTransfer/buoyantBoussinesqSimpleFoam/iglooWithFridges/system/snappyHexMeshDict:level (1 1);\n\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/airfoilWithLayers/system/snappyHexMeshDict-        //    gapLevel (<numGapCells> <minLevel> <maxlevel>);\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/airfoilWithLayers/system/snappyHexMeshDict-        internalFace { level (0 0); faceZone internalFace; }//faceType baffle;}\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/airfoilWithLayers/system/snappyHexMeshDict-    // refinementRegions; the cell level now specifies the upper limit\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/block_with_curvature/system/snappyHexMeshDict-    // refinementRegions; the cell level now specifies the upper limit\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/block_with_curvature/system/snappyHexMeshDict.orig-    // refinementRegions; the cell level now specifies the upper limit\n\n\n<>:3: SyntaxWarning: invalid escape sequence '\\s'\n<>:3: SyntaxWarning: invalid escape sequence '\\s'\n/tmp/ipykernel_276231/2304080685.py:3: SyntaxWarning: invalid escape sequence '\\s'\n  r = subprocess.run([\"bash\",\"-c\",\"grep -rPo 'level\\s+\\(.*?\\)\\s*;' $WM_PROJECT_DIR/tutorials 2>/dev/null | sort -u | head\"], capture_output=True, text=True)",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 1013,
+      "fenced": false,
+      "text_chars": 273,
+      "thinking_chars": 3954,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399636.5579243
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 398,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 16,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399677.9111786
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 435,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 403,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399701.5939462
+    },
+    {
+      "turn": 4,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 806,
+      "fenced": true,
+      "text_chars": 89,
+      "thinking_chars": 1994,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399787.8443978
+    },
+    {
+      "turn": 5,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 179,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 82,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399800.1704
+    },
+    {
+      "turn": 6,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 142,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 153,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399809.8963244
+    },
+    {
+      "turn": 7,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 332,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 229,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399826.601952
+    },
+    {
+      "turn": 8,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 187,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 59,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399838.4078844
+    },
+    {
+      "turn": 9,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 352,
+      "fenced": true,
+      "text_chars": 48,
+      "thinking_chars": 116,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399855.5110087
+    },
+    {
+      "turn": 10,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 397,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 48,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399942.4058294
+    },
+    {
+      "turn": 11,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 646,
+      "fenced": true,
+      "text_chars": 87,
+      "thinking_chars": 307,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399995.3368747
+    },
+    {
+      "turn": 12,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 343,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 405,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400013.801642
+    },
+    {
+      "turn": 13,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 238,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 417,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400031.0636642
+    },
+    {
+      "turn": 14,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 509,
+      "fenced": true,
+      "text_chars": 86,
+      "thinking_chars": 822,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400082.0787356
+    },
+    {
+      "turn": 15,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 423,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 86,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400101.9850328
+    },
+    {
+      "turn": 16,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 625,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 652,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400132.9506125
+    },
+    {
+      "turn": 17,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 1077,
+      "fenced": true,
+      "text_chars": 256,
+      "thinking_chars": 1668,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400181.235695
+    },
+    {
+      "turn": 18,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 266,
+      "fenced": true,
+      "text_chars": 94,
+      "thinking_chars": 67,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400198.4476476
+    },
+    {
+      "turn": 19,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 985,
+      "fenced": true,
+      "text_chars": 142,
+      "thinking_chars": 199,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400248.3008025
+    },
+    {
+      "turn": 20,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 704,
+      "fenced": true,
+      "text_chars": 115,
+      "thinking_chars": 616,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400286.11027
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 1241,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 625,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400334.9136531
+    },
+    {
+      "turn": 22,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 941,
+      "fenced": true,
+      "text_chars": 78,
+      "thinking_chars": 535,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400374.4676342
+    },
+    {
+      "turn": 23,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 99,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 34,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400385.391567
+    },
+    {
+      "turn": 24,
+      "steps": 22,
+      "stop_reason": "tool_use",
+      "output_tokens": 170,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 33,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400397.0425742
+    },
+    {
+      "turn": 25,
+      "steps": 23,
+      "stop_reason": "tool_use",
+      "output_tokens": 236,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 150,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400408.8751473
+    },
+    {
+      "turn": 26,
+      "steps": 24,
+      "stop_reason": "tool_use",
+      "output_tokens": 101,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 54,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400419.0291188
+    },
+    {
+      "turn": 27,
+      "steps": 25,
+      "stop_reason": "tool_use",
+      "output_tokens": 159,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400430.6496449
+    },
+    {
+      "turn": 28,
+      "steps": 26,
+      "stop_reason": "tool_use",
+      "output_tokens": 227,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 224,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400446.007661
+    },
+    {
+      "turn": 29,
+      "steps": 27,
+      "stop_reason": "tool_use",
+      "output_tokens": 270,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 245,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789400465.1886203
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 54,088 triangles across 12 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "inlet.stl",
+          "inletWall.stl",
+          "plenumWalls.stl",
+          "port_L1.stl",
+          "port_L2.stl",
+          "port_L3.stl",
+          "port_L4.stl",
+          "port_R1.stl",
+          "port_R2.stl",
+          "port_R3.stl",
+          "port_R4.stl",
+          "runnerWalls.stl"
+        ],
+        "triangles": 54088
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the patch set",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 54088
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "1,776 of 4,645 tested triangle pairs cross",
+      "measured": {
+        "pairs": 1776,
+        "triangles": 1784,
+        "pairs_tested": 4645
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the number of runners open to the plenum, established on the mesh",
+      "measured": null
+    },
+    {
+      "property": "each runner's cross-sectional area at its port face, measured, and the spread across the eight",
+      "measured": null
+    },
+    {
+      "property": "the centreline length of each runner from plenum wall to port face, measured",
+      "measured": null
+    },
+    {
+      "property": "the plenum volume and the total runner volume, separately, against the request",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 29,
+    "steps": 27,
+    "seconds": 982.2,
+    "killed": false,
+    "first_mesh_step": 20,
+    "first_mesh_turn": 22
+  }
+}

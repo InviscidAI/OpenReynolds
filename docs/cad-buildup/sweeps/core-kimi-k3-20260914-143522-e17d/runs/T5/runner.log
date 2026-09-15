@@ -1,0 +1,7 @@
+T5: run 20260914-164511-cdec
+  workspace /home/qiuzi/.openreynolds-buildup/work/T5-20260914-164511-cdec clean (0 entries, 39 house names, no toolbox)
+  fixture assembly.step -> /home/qiuzi/.openreynolds-buildup/work/T5-20260914-164511-cdec/geometry/assembly.step
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T5-20260914-164511-cdec/t5/.reference/b123d_api.md
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-kimi-k3-20260914-143522-e17d/runs/T5
+  steps in 559.6s, 30 cells, $0.29, checkMesh not ok, failed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-kimi-k3-20260914-143522-e17d/runs/T5 --case /home/qiuzi/.openreynolds-buildup/work/T5-20260914-164511-cdec/t5

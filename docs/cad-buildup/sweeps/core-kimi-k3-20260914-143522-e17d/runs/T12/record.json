@@ -1,0 +1,438 @@
+{
+  "run_id": "20260914-145041-6dcc",
+  "case": "T12",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12",
+  "started_at": "2026-09-14T14:50:41",
+  "ended_at": "2026-09-14T15:05:53",
+  "seconds": 905.8,
+  "n_turns": 17,
+  "n_steps": 16,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0.264,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 22480,
+    "cache_read": 183168,
+    "cache_write": 0,
+    "output": 12963
+  },
+  "stopped": "time",
+  "expects": "done",
+  "passed": false,
+  "why": "nothing in the case directory has been meshed yet",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import numpy as np, build123d as bd\nimport inspect\n# mm model; scale to metres at export time\nR0_IN, R_OUT = 16.0, 58.0          # blade inlet / outlet radius, mm\nH_BLADE, T_BLADE = 14.0, 3.0       # blade height, thickness, mm\nSWEEP_DEG = 30.0                   # total backward sweep\nN_BLADES = 7\n# log-spiral centreline, total sweep 30 deg against rotation (negative theta)\nr = np.linspace(R0_IN, R_OUT, 121)\nth = np.radians(-SWEEP_DEG) * np.log(r / R0_IN) / np.log(R_OUT / R0_IN)\npts = np.column_stack([r*np.cos(th), r*np.sin(th)])\n# measure: angle between radial line through leading edge and line to trailing edge\nsweep_meas = -np.degrees(np.arctan2(pts[-1,1], pts[-1,0]))\nprint(\"sweep requested:\", SWEEP_DEG, \"sweep measured:\", round(sweep_meas,3))\n# outward normal in XY for thickening\nd = np.gradient(pts, axis=0); d /= np.linalg.norm(d, axis=1)[:pt_envs if False else ...] if False else np.linalg.norm(d, axis=1)[:,None]\nn = np.column_stack([-d[:,1], d[:,0]])\nleft  = pts + n*(T_BLADE/2)\nright = pts - n*(T_BLADE/2)\nspl_l = bd.Spline([bd.Vector(*p,0) for p in left])\nspl_r = bd.Spline([bd.Vector(*p,0) for p in right[::-1]])\ncap0  = bd.Line(bd.Vector(*left[0],0),  bd.Vector(*right[0],0))\ncap1  = bd.Line(bd.Vector(*left[-1],0), bd.Vector(*right[-1],0))\nfoot = bd.Face(bd.Wire([spl_l, cap1, spl_r, cap0]))\nblade0 = bd.extrude(foot, H_BLADE)   # blade at leading edge on theta=0\nprint(\"blade solid volume mm^3:\", round(blade0.volume,1))",
+      "exit_code": 0,
+      "seconds": 2.3068723480027984,
+      "output": "sweep requested: 30.0 sweep measured: 30.0\nblade solid volume mm^3: 1904.2",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np, build123d as bd\n# mm model; scaled to metres at export time\nR0_IN, R_OUT = 16.0, 58.0          # blade inlet / outlet radius, mm\nH_BLADE, T_BLADE = 14.0, 3.0       # blade height, thickness, mm\nSWEEP_DEG = 30.0                   # total backward sweep of trailing edge\nN_BLADES = 7\nr = np.linspace(R0_IN, R_OUT, 121)\nth = np.radians(-SWEEP_DEG) * np.log(r / R0_IN) / np.log(R_OUT / R0_IN)\npts = np.column_stack([r*np.cos(th), r*np.sin(th)])\nsweep_meas = -np.degrees(np.arctan2(pts[-1,1], pts[-1,0]))\nprint(\"sweep requested:\", SWEEP_DEG, \"sweep measured:\", round(sweep_meas,3))\nd = np.gradient(pts, axis=0); d = d / np.linalg.norm(d, axis=1)[:, None]\nn = np.column_stack([-d[:,1], d[:,0]])\nleft  = pts + n*(T_BLADE/2)\nright = pts - n*(T_BLADE/2)\nspl_l = bd.Spline([bd.Vector(*p,0) for p in left])\nspl_r = bd.Spline([bd.Vector(*p,0) for p in right[::-1]])\ncap0  = bd.Line(bd.Vector(*left[0],0),  bd.Vector(*right[0],0))\ncap1  = bd.Line(bd.Vector(*left[-1],0), bd.Vector(*right[-1],0))\nfoot  = bd.Face(bd.Wire([spl_l, cap1, spl_r, cap0]))\nblade0 = bd.extrude(foot, H_BLADE)\nprint(\"blade volume mm^3:\", round(blade0.volume,1))",
+      "exit_code": 0,
+      "seconds": 0.05103968600087683,
+      "output": "sweep requested: 30.0 sweep measured: 30.0\nThe history saving thread hit an unexpected error (OperationalError('attempt to write a readonly database')).History will not be written to the database.\nblade volume mm^3: 1904.2",
+      "image": ""
+    },
+    {
+      "cmd": "R_HUB = 12.0          # hub radius, mm\nhalf = np.degrees(np.pi / N_BLADES)   # half passage angle, deg (180/7)\narc_in  = bd.Edge.make_circle(R_HUB).arc if False else None\n# annular-sector wedge face: arcs at r=12 and r=58, radial lines at +-half\na_in  = bd.PolarLine(0, 0, R_OUT, -half, length=R_OUT-R_HUB, angle_offset=0) if False else None\nw_in  = bd.Edge.make_arc(bd.Vector(R_HUB,0,0), bd.Vector(R_HUB*np.cos(np.radians(-half)), R_HUB*np.sin(np.radians(-half)),0), bd.Vector(R_HUB*np.cos(np.radians(half)), R_HUB*np.sin(np.radians(half)),0)),",
+      "exit_code": 1,
+      "seconds": 0.1509499189996859,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 6\u001b[39m\n\u001b[32m      2\u001b[39m half = np.degrees(np.pi / N_BLADES)   \u001b[38;5;66;03m# half passage angle, deg (180/7)\u001b[39;00m\n\u001b[32m      3\u001b[39m arc_in  = bd.Edge.make_circle(R_HUB).arc \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28;01mFalse\u001b[39;00m \u001b[38;5;28;01melse\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m\n\u001b[32m      4\u001b[39m \u001b[38;5;66;03m# annular-sector wedge face: arcs at r=12 and r=58, radial lines at +-half\u001b[39;00m\n\u001b[32m      5\u001b[39m a_in  = bd.PolarLine(\u001b[32m0\u001b[39m, \u001b[32m0\u001b[39m, R_OUT, -half, length=R_OUT-R_HUB, angle_offset=\u001b[32m0\u001b[39m) \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28;01mFalse\u001b[39;00m \u001b[38;5;28;01melse\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m\n\u001b[32m----> \u001b[39m\u001b[32m6\u001b[39m w_in  = bd.Edge.make_arc(bd.Vector(R_HUB,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m), bd.Vector(R_HUB*np.cos(np.radians(-half)), R_HUB*np.sin(np.radians(-half)),\u001b[32m0\u001b[39m), bd.Vector(R_HUB*np.cos(np.radians(half)), R_HUB*np.sin(np.radians(half)),\u001b[32m0\u001b[39m)),\n\n\u001b[31mAttributeError\u001b[39m: type object 'Edge' has no attribute 'make_arc'",
+      "image": ""
+    },
+    {
+      "cmd": "R_HUB = 12.0\nhalf_rad = np.pi / N_BLADES\ndef ring_pts(rr, n=80):\n    a = np.linspace(-half_rad, half_rad, n)\n    return [bd.Vector(rr*np.cos(t), rr*np.sin(t), 0) for t in a]\nouter = bd.Spline(ring_pts(R_OUT))                 # -half -> +half at r=58\ninner = bd.Spline(ring_pts(R_HUB)[::-1])           # reversed\nl1 = bd.Line(bd.Vector(R_OUT,0,0).rotate(bd.Axis.Z, -np.degrees(half_rad)), bd.Vector(R_HUB,0,0).rotate(bd.Axis.Z, -np.degrees(half_rad)))\nl2 = bd.Line(bd.Vector(R_HUB,0,0).rotate(bd.Axis.Z, np.degrees(half_rad)), bd.Vector(R_OUT,0,0).rotate(bd.Axis.Z, np.degrees(half_rad)))\nwedge_face = bd.Face(bd.Wire([outer, l2, inner, l1]))\nwedge = bd.extrude(wedge_face, H_BLADE)\nprint(\"wedge volume mm^3:\", round(wedge.volume,1), \" passage half-angle deg:\", np.degrees(half_rad))",
+      "exit_code": 0,
+      "seconds": 0.050901875998533797,
+      "output": "wedge volume mm^3: 20231.9  passage half-angle deg: 25.714285714285715",
+      "image": ""
+    },
+    {
+      "cmd": "half_deg = np.degrees(half_rad)\nblade_hi = bd.Pos(0,0,0) * blade0 if False else blade0\nhi = (bd.Rotation(0,0,half_deg) * blade0) & wedge\nlo = (bd.Rotation(0,0,-half_deg) * blade0) & wedge\nfluid = wedge - hi - lo\nprint(\"fluid volume mm^3:\", round(fluid.volume,1), \" expected ~ wedge - 2 halves:\", round(wedge.volume - (hi.volume+lo.volume),1))\n# measure minimum passage width between blades near mid-radius (numerically via sampled angular gap)\nfor rr in (16.0, 37.0, 58.0):\n    # angular thickness of blade at radius rr from centreline deflection\n    print(rr, \"blade angular half-width deg ~\", np.degrees((T_BLADE/2)/rr))",
+      "exit_code": 0,
+      "seconds": 0.25141399199856096,
+      "output": "fluid volume mm^3: 20231.9  expected ~ wedge - 2 halves: 20231.9\n16.0 blade angular half-width deg ~ 5.371479329351468\n37.0 blade angular half-width deg ~ 2.3228018721519863\n58.0 blade angular half-width deg ~ 1.4817874012004049",
+      "image": ""
+    },
+    {
+      "cmd": "b2 = bd.Rotation(0,0,half_deg) * blade0\nprint(\"rotated blade volume:\", round(b2.volume,1))\nprint(\"intersection volume:\", round((b2 & wedge).volume,1))\nprint(\"blade0 bbox:\", blade0.bounding_box().min, blade0.bounding_box().max)\nprint(\"wedge bbox:\", wedge.bounding_box().min, wedge.bounding_box().max)",
+      "exit_code": 0,
+      "seconds": 0.1509789189985895,
+      "output": "rotated blade volume: 1904.2\nintersection volume: 0\nblade0 bbox: Vector: (X=15.4289, Y=-29.9224, Z=-14) Vector: (X=51.4124, Y=1.38704, Z=0)\nwedge bbox: Vector: (X=10.8116, Y=-25.1653, Z=0) Vector: (X=58, Y=25.1653, Z=14)",
+      "image": ""
+    },
+    {
+      "cmd": "blade0 = bd.extrude(foot, -H_BLADE)   # face normal points -Z; negative extrusion goes up\nprint(\"blade z-range:\", blade0.bounding_box().min.z, blade0.bounding_box().max.z)\nhi = (bd.Rotation(0,0,half_deg) * blade0) & wedge\nlo = (bd.Rotation(0,0,-half_deg) * blade0) & wedge\nprint(\"clipped halves:\", round(hi.volume,1), round(lo.volume,1))\nfluid = wedge - hi - lo\nprint(\"fluid volume mm^3:\", round(fluid.volume,1))",
+      "exit_code": 1,
+      "seconds": 0.050568795999424765,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[7]\u001b[39m\u001b[32m, line 2\u001b[39m\n\u001b[32m      1\u001b[39m blade0 = bd.extrude(foot, -H_BLADE)   \u001b[38;5;66;03m# face normal points -Z; negative extrusion goes up\u001b[39;00m\n\u001b[32m----> \u001b[39m\u001b[32m2\u001b[39m print(\u001b[33m\"blade z-range:\"\u001b[39m, blade0.bounding_box().min.z, blade0.bounding_box().max.z)\n\u001b[32m      3\u001b[39m hi = (bd.Rotation(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,half_deg) * blade0) & wedge\n\u001b[32m      4\u001b[39m lo = (bd.Rotation(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,-half_deg) * blade0) & wedge\n\u001b[32m      5\u001b[39m print(\u001b[33m\"clipped halves:\"\u001b[39m, round(hi.volume,\u001b[32m1\u001b[39m), round(lo.volume,\u001b[32m1\u001b[39m))\n\n\u001b[31mAttributeError\u001b[39m: 'Vector' object has no attribute 'z'",
+      "image": ""
+    },
+    {
+      "cmd": "blade0 = bd.extrude(foot, -H_BLADE)\nbb = blade0.bounding_box()\nprint(\"blade z-range:\", bb.min.Z, bb.max.Z)\nhi = (bd.Rotation(0,0,half_deg) * blade0) & wedge\nlo = (bd.Rotation(0,0,-half_deg) * blade0) & wedge\nprint(\"clipped halves:\", round(hi.volume,1), round(lo.volume,1))\nfluid = wedge - hi - lo\nprint(\"fluid volume mm^3:\", round(fluid.volume,1))",
+      "exit_code": 0,
+      "seconds": 0.6524931649983046,
+      "output": "blade z-range: -1e-07 14.0000001\nclipped halves: 1861.2 36.4\nfluid volume mm^3: 18334.2",
+      "image": ""
+    },
+    {
+      "cmd": "t = bd.Rotation(0,0,half_deg) * blade0\nprint([tuple(round(v,3) for v in (t.bounding_box().min.to_tuple() if hasattr(t.bounding_box().min,'to_tuple') else []))], end=\" \") if False else None\nprint(\"rot+half bbox min\", tuple(round(v,2) for v in t.bounding_box().min.to_tuple()), \"max\", tuple(round(v,2) for v in t.bounding_box().max.to_tuple()))\nprint(\"help:\", bd.Rotation.__doc__)",
+      "exit_code": 0,
+      "seconds": 0.05067886599863414,
+      "output": "rot+half bbox min (14.33, -5.68, -0.0) max (58.5, 8.53, 14.0)\nhelp: Subclass of Location used only for object rotation\n\nAttributes:\n    X (float): rotation in degrees about X axis\n    Y (float): rotation in degrees about Y axis\n    Z (float): rotation in degrees about Z axis\n    optionally specify rotation ordering with Intrinsic or Extrinsic enums,\n        defaults to Intrinsic.XYZ\n\n\n\n/tmp/ipykernel_261574/3340943163.py:3: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.\n  print(\"rot+half bbox min\", tuple(round(v,2) for v in t.bounding_box().min.to_tuple()), \"max\", tuple(round(v,2) for v in t.bounding_box().max.to_tuple()))",
+      "image": ""
+    },
+    {
+      "cmd": "v1 = (t & wedge).volume\n# analytical outside fraction: fraction of centreline points with theta > half\nang = np.arctan2(pts[:,1], pts[:,0]) + half_rad\nfrac = np.mean((ang > half_rad) | (ang < -half_rad) )\nprint(\"clip volume:\", round(v1,1), \"of\", round(blade0.volume,1), \" sample flag:\", frac)\n# check lower blade\ntlo = bd.Rotation(0,0,-half_deg) * blade0\nprint(\"lo clip:\", round((tlo & wedge).volume,1))",
+      "exit_code": 0,
+      "seconds": 0.4525299580018327,
+      "output": "clip volume: 1861.2 of 1904.2  sample flag: 0.0\nlo clip: 36.4",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\nangles = [bd.Rotation(0,0,k*360.0/N_BLADES) for k in range(N_BLADES)]\nbase = bd.Cylinder(R_OUT, H_BLADE) - bd.Cylinder(R_HUB, H_BLADE)\nblades_all = bd.Compound([a*blade0 for a in angles])\nfluid = base - blades_all\nprint(\"fluid volume mm^3:\", round(fluid.volume,1), \" = annulus\", round(base.volume,1), \"- blades\", round(blades_all.volume,1))\nbb = fluid.bounding_box()\nprint(\"bbox:\", tuple(bb.min), tuple(bb.max))",
+      "exit_code": 0,
+      "seconds": 0.4017075699994166,
+      "output": "fluid volume mm^3: 134981.2  = annulus 141623.0 - blades 13329.5\nbbox: (-58.0000001, -58.0000001, -7.0000001) (58.0000001, 58.0000001, 7.000000100000001)",
+      "image": ""
+    },
+    {
+      "cmd": "base = bd.Pos(0,0,H_BLADE/2) * bd.Cylinder(R_OUT, H_BLADE) - bd.Pos(0,0,H_BLADE/2) * bd.Cylinder(R_HUB, H_BLADE)\nfluid = base - blades_all\nbb = fluid.bounding_box()\nprint(\"bbox z:\", bb.min.Z, bb.max.Z, \" volume:\", round(fluid.volume,1))\n# quick picture\nimport pyvista as pv\npv.set_plot_theme('dark')\nm = pv.read('') if False else None\npl = pv.Plotter(off_screen=True)\npl.add_mesh(pv.UnstructuredGrid() if False else pv.wrap(__import__(\"build123d\").exporters.__dict__.get(\"x\",None)) if False else None)",
+      "exit_code": 1,
+      "seconds": 2.810734061000403,
+      "output": "bbox z: -1.0000000017954986e-07 14.0000001  volume: 128339.3\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-14 15:02:07.054 (   0.255s) [    7696DBF54780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 15:02:07.054 (   0.256s) [    7696DBF54780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 15:02:07.067 (   0.269s) [    7696DBF54780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[12]\u001b[39m\u001b[32m, line 10\u001b[39m\n\u001b[32m      6\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m pyvista \u001b[38;5;28;01mas\u001b[39;00m pv\n\u001b[32m      7\u001b[39m pv.set_plot_theme(\u001b[33m'dark'\u001b[39m)\n\u001b[32m      8\u001b[39m m = pv.read(\u001b[33m''\u001b[39m) \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28;01mFalse\u001b[39;00m \u001b[38;5;28;01melse\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m\n\u001b[32m      9\u001b[39m pl = pv.Plotter(off_screen=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m---> \u001b[39m\u001b[32m10\u001b[39m pl.add_mesh(pv.UnstructuredGrid() \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28;01mFalse\u001b[39;00m \u001b[38;5;28;01melse\u001b[39;00m pv.wrap(__import__(\u001b[33m\"build123d\"\u001b[39m).exporters.__dict__.get(\u001b[33m\"x\"\u001b[39m,\u001b[38;5;28;01mNone\u001b[39;00m)) \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28;01mFalse\u001b[39;00m \u001b[38;5;28;01melse\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243\u001b[39m, in \u001b[36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f\u001b[39m\u001b[34m(*args, **kwargs)\u001b[39m\n\u001b[32m    239\u001b[39m             warn_external(msg, PyVistaDeprecationWarning)\n\u001b[32m    241\u001b[39m         warn_positional_args()\n\u001b[32m--> \u001b[39m\u001b[32m243\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mf\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43margs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43mkwargs\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/plotter.py:3850\u001b[39m, in \u001b[36mBasePlotter.add_mesh\u001b[39m\u001b[34m(self, mesh, color, style, scalars, clim, show_edges, edge_color, point_size, line_width, opacity, flip_scalars, lighting, n_colors, interpolate_before_map, cmap, label, reset_camera, scalar_bar_args, show_scalar_bar, multi_colors, name, texture, render_points_as_spheres, point_shape, render_lines_as_tubes, smooth_shading, split_sharp_edges, ambient, diffuse, specular, specular_power, nan_color, nan_opacity, culling, rgb, categories, silhouette, use_transparency, below_color, above_color, annotations, pickable, preference, log_scale, pbr, metallic, roughness, render, user_matrix, component, emissive, copy_mesh, backface_params, show_vertices, edge_opacity, remove_existing_actor, force_opaque, **kwargs)\u001b[39m\n\u001b[32m   3848\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m is_pyvista_dataset(mesh):\n\u001b[32m   3849\u001b[39m         msg = \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33mObject type (\u001b[39m\u001b[38;5;132;01m{\u001b[39;00m\u001b[38;5;28mtype\u001b[39m(mesh)\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m) not supported for plotting in PyVista.\u001b[39m\u001b[33m'\u001b[39m\n\u001b[32m-> \u001b[39m\u001b[32m3850\u001b[39m         \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mTypeError\u001b[39;00m(msg)\n\u001b[32m   3851\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(mesh, pv.PointSet):\n\u001b[32m   3852\u001b[39m     \u001b[38;5;66;03m# cast to PointSet to PolyData\u001b[39;00m\n\u001b[32m   3853\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m algo \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m:\n\n\u001b[31mTypeError\u001b[39m: Object type (<class 'NoneType'>) not supported for plotting in PyVista.",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np, os, subprocess as sp\ngroups = {'inlet':[], 'shroud':[], 'backplate':[], 'hub':[], 'outlet':[], 'blades':[]}\nfor f in fluid.faces():\n    c = f.center(); rr = (c.X**2+c.Y**2)**0.5\n    n = f.normal_at()\n    if abs(n.Z) > 0.999:   # planar top/bottom\n        at_top = bb.max.Z - 1e-6\n        if abs(c.Z) < 1e-6:\n            groups['backplate'].append(f)\n        elif abs(c.Z - at_top) < 1e-4:\n            groups['inlet' if rr < 16.5 else 'shroud'].append(f)\n        else:\n            groups['blades'].append(f)\n    elif abs(rr - 12) < 1e-4:\n        groups['hub'].append(f)\n    elif abs(rr - 58) < 1e-4:\n        groups['outlet'].append(f)\n    else:\n        groups['blades'].append(f)\nos.makedirs('triSurface', exist_ok=True)\nfor name, fs in groups.items():\n    solid = bd.Compound(fs)\n    bd.export_stl(solid, f'triSurface/{name}.stl', tolerance=1e-4, angular_tolerance=0.35)\n    sp.run(['surfaceTransformPoints','-scale','0.001', f'triSurface/{name}.stl', f'triSurface/{name}.stl'], capture_output=True)\n    print(name, len(fs))",
+      "exit_code": 0,
+      "seconds": 5.81503950700062,
+      "output": "inlet 1\nshroud 0\nbackplate 1\nhub 1\noutlet 7\nblades 28",
+      "image": ""
+    },
+    {
+      "cmd": "# redo classification; identify the top face and split it with a r=16 disk\ngroups = {'inlet':[], 'shroud':[], 'backplate':[], 'hub':[], 'outlet':[], 'blades':[]}\ntop_faces = [f for f in fluid.faces() if abs(f.normal_at().Z) > 0.99 and abs(f.center().Z - bb.max.Z) < 0.25]\ndisk = bd.Pos(0,0,H_BLADE-1) * bd.Cylinder(16.0, 2)\nfor f in top_faces:\n    ins = (f & disk).faces()\n    outs = (f - disk).faces()\n    print(\"top face r-range inside 16:\", [round((fc.center().X**2+fc.center().Y**2)**0.5,2) for fc in ins])\n    groups['inlet'] += ins\n    groups['shroud'] += outs\nfor f in fluid.faces():\n    c = f.center(); rr = (c.X**2+c.Y**2)**0.5\n    n = f.normal_at()\n    if abs(n.Z) > 0.999 and abs(c.Z) < 1e-6: groups['backplate'].append(f)\n    elif abs(n.Z) > 0.999 and abs(c.Z - bb.max.Z) < 0.25: pass\n    elif abs(rr - R_HUB) < 1e-4: groups['hub'].append(f)\n    elif abs(rr - R_OUT) < 1e-4: groups['outlet'].append(f)\n    elif f not in top_faces: groups['blades'].append(f)\nimport subprocess as sp, os\nfor name, fs in groups.items():\n    if not fs: print('EMPTY', name)\n    solid = bd.Compound(fs)\n    bd.export_stl(solid, f'triSurface/{name}.stl', tolerance=1e-4, angular_tolerance=0.35)\n    sp.run(['surfaceTransformPoints','-scale','0.001', f'triSurface/{name}.stl', f'triSurface/{name}.stl'], capture_output=True)\n    print(name, len(fs))",
+      "exit_code": 0,
+      "seconds": 9.980951047000417,
+      "output": "top face r-range inside 16: [0.0]\ninlet 1\nshroud 7\nbackplate 1\nhub 1\noutlet 7\nblades 28",
+      "image": ""
+    },
+    {
+      "cmd": "import os, subprocess as sp\nos.makedirs('system', exist_ok=True); os.makedirs('constant', exist_ok=True)\nsp.run(['foamSetup'], capture_output=True) if False else None\n# minimal dicts\ndef w(p, s):\n    os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p,'w').write(s.replace('\\n','\\n'))\nw('system/controlDict', \"\"\"FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }\napplication snappyHexMesh; endTime 1; deltaT 1;\"\"\")\n\nw('system/blockMeshDict', \"\"\"FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }\nscale 1;\nvertices ( (-0.07 -0.07 -0.005) (0.07 -0.07 -0.005) (0.07 0.07 -0.005) (-0.07 0.07 -0.005)\n           (-0.07 -0.07  0.017) (0.07 -0.07  0.017) (0.07 0.07  0.017) (-0.07 0.07  0.017) );\nblock ( hex (0 1 2 3 4 5 6 7) (30 30 10) simpleGrading (1 1 1) );\n\"\"\")\n# fix: proper blockMeshDict syntax\nw('system/blockMeshDict', \"\"\"FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }\nscale 1;\nvertices ( (-0.07 -0.07 -0.005) (0.07 -0.07 -0.005) (0.07 0.07 -0.005) (-0.07 0.07 -0.005)\n           (-0.07 -0.07  0.017) (0.07 -0.07  0.017) (0.07 0.07  0.017) (-0.07 0.07  0.017) );\nblocks ( hex (0 1 2 3 4 5 6 7) (30 30 10) simpleGrading (1 1 1) );\nedges ( ); faces ( ); patches ( );\n\"\"\")\ngeo = \" \".join(f\"{n}.stl\" for n in ['inlet','shroud','backplate','hub','outlet','blades'])\nw('system/snappyHexMeshDict', f\"\"\"FoamFile {{ version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }}\ncastellatedMesh true; snap true; addLayers false;\ngeometry {{\n  {geo}\n}}\ncastellatedMeshControls {{\n  maxLocalCells 400000; maxGlobalCells 2000000; minRefinementCells 10; maxLoadUnbalance 10;\n  nCellsBetweenLevels 2; allowFreeStandingZoneFaces false;\n  refinementSurfaces {{\n    {{\"}}\"\"\", end='\\n') if False else None\nprint(gt if False else \"ok\")\nr1 = sp.run(['blockMesh'], capture_output=True, text=True)\nprint(r1.returncode, r1.stdout[-200:], r1.stderr[-300:])",
+      "exit_code": 0,
+      "seconds": 0.9545251790004841,
+      "output": "ok\n1 kew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n 260914-145041-6dcc/t12/system/controlDict\"\n\n\nfile: system/controlDict at line 2.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "import os, subprocess as sp\nnames = ['inlet','shroud','backplate','hub','outlet','blades']\ngeo_entries = \"\\n\".join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in names)\nw = lambda p,s: open(p,'w').write(s)\nw('system/blockMeshDict', \"\"\"FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }\nscale 1;\nvertices ( (-0.07 -0.07 -0.005) (0.07 -0.07 -0.005) (0.07 0.07 -0.005) (-0.07 0.07 -0.005)\n           (-0.07 -0.07  0.017) (0.07 -0.07  0.017) (0.07 0.07  0.017) (-0.07 0.07  0.017) );\nblocks ( hex (0 1 2 3 4 5 6 7) (30 30 10) simpleGrading (1 1 1) );\nedges ( ); faces ( ); boundary ( );\n\"\"\")\nw('system/snappyHexMeshDict', \"\"\"FoamFile { version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }\ncastellatedMesh true; snap true; addLayers false;\ngeometry { GEOENTRIES }REPLACE_GE\ncastellatedMeshControls {\n  maxLocalCells 4000000; maxGlobalCells 5000000; minRefinementCells 10; maxLoadUnbalance 0.2;\n  nCellsBetweenLevels 2; allowFreeStandingZoneFaces true;\n  locationInMesh (0.030 0.002 0.007);   // inside fluid between two blade passages, r~30mm\n  refinementSurfaces { SURFENTRIES }REPLACE_SU\n  resolveFeatureAngle 30; planarTolerance 0.001;\n}\nsnapControls {\n  nSmoothPatch 3; tolerance 2.0; nSolveTolerance 20; nRelaxIter 5;\n  nFeatureSnapIter 15; implicitFeatureSnapshot false; explicitFeatureSnapshot true;\n  multiRegionFeatureSnapshot false;\n}\naddLayersControls { layers ( ); relativeSizes false; }\nmeshQualityControls {\n  maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;\n  minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02;\n  minDeterminant 0.001; minFaceWeight 0.05; minVolRatio 0.01; minTriangleTwist -0.999;\n  nSmoothScale 4; errorReduction 0.75;\n}\nmergeTolerance 1e-06;\n\"\"\")\ns = open('system/snappyHexMeshDict').read()\ns = s.replace('GEOENTRIES', geo_entries).replace('SURFENTRIES', \"\\n\".join(\n  f'  {n} {{ level (1 1); }}' for n in names))\nopen('system/snappyHexMeshDict','w').write(s.replace('}REPLACE_GE','}').replace('}REPLACE_SU','}'))\nr1 = sp.run(['blockMesh'], capture_output=True, text=True)\nprint('blockMesh', r1.returncode, r1.stdout[-150:], r1.stderr[-200:])",
+      "exit_code": 0,
+      "seconds": 0.20156029499776196,
+      "output": "blockMesh 1 rations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n ::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "print(open('system/controlDict').read())\nr = sp.run(['blockMesh'], capture_output=True, text=True)\nprint(r.stderr)",
+      "exit_code": 0,
+      "seconds": 0.2013629850007419,
+      "output": "FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }\napplication snappyHexMesh; endTime 1; deltaT 1;\n\n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'writeFrequency' not found in dictionary \"/home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/system/controlDict\"\n\n\nfile: system/controlDict at line 2.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 3217,
+      "fenced": true,
+      "text_chars": 448,
+      "thinking_chars": 9553,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789397666.216348
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 521,
+      "fenced": true,
+      "text_chars": 84,
+      "thinking_chars": 126,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789397709.833156
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 667,
+      "fenced": true,
+      "text_chars": 44,
+      "thinking_chars": 1577,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789397733.3356543
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 356,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 116,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789397758.4312673
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 267,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 103,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789397793.8329058
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 269,
+      "fenced": true,
+      "text_chars": 63,
+      "thinking_chars": 514,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789397837.014387
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 435,
+      "fenced": true,
+      "text_chars": 78,
+      "thinking_chars": 780,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789397858.2608962
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 170,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789397873.482293
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 1920,
+      "fenced": true,
+      "text_chars": 106,
+      "thinking_chars": 7059,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789397972.0669408
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 482,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 1054,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398017.5268943
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 962,
+      "fenced": true,
+      "text_chars": 255,
+      "thinking_chars": 2874,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398105.7215004
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 262,
+      "fenced": true,
+      "text_chars": 65,
+      "thinking_chars": 89,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398120.6558783
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 507,
+      "fenced": true,
+      "text_chars": 147,
+      "thinking_chars": 266,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398146.9734545
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 1044,
+      "fenced": true,
+      "text_chars": 113,
+      "thinking_chars": 2119,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398233.831291
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 809,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 196,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398294.1234493
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 841,
+      "fenced": true,
+      "text_chars": 61,
+      "thinking_chars": 121,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398326.645045
+    },
+    {
+      "turn": 17,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 234,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 625,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398342.7111382
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T12-20260914-145041-6dcc/t12/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "the number of blade passages meshed, against the 7 the request names",
+      "measured": null
+    },
+    {
+      "property": "the blade thickness and the blade wrap angle, measured on the meshed blade patches",
+      "measured": null
+    },
+    {
+      "property": "the root fillet radius as meshed, or the statement that the fillets were removed and the volume that added",
+      "measured": null
+    },
+    {
+      "property": "the passage width at the inlet radius and at the outlet radius, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the water volume, against the shroud-to-backplate swept volume minus hub and blades",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 17,
+    "steps": 16,
+    "seconds": 910.7,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

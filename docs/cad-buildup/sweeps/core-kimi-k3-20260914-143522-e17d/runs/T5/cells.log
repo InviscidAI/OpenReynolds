@@ -1,0 +1,638 @@
+# -- cell 1 (2.3s, exit 0)
+import build123d as bd
+from build123d import import_step
+import subprocess, os
+
+path = "/home/qiuzi/.openreynolds-buildup/work/T5-20260914-164511-cdec/geometry/assembly.step"
+os.chdir("/home/qiuzi/.openreynolds-buildup/work/T5-20260914-164511-cdec/t5")
+
+# Peek at the file header for units
+out = subprocess.run(["grep","-m","5","-i","SI_UNIT\\|LENGTH_UNIT\\|CONVERSION_BASED_UNIT", path],
+                     capture_output=True, text=True)
+print(out.stdout[:1500])
+
+shape = import_step(path)
+print(type(shape))
+if isinstance(shape, bd.Compound):
+    print("children:", len(shape.children))
+    for c in shape.children:
+        print(c, )
+solids = shape.solids() if hasattr(shape, "solids") else []
+print("solids:", len(solids))
+bb = shape.bounding_box()
+print("bbox:", bb.min, bb.max, "size:", bb.size)
+# -- output
+SI_UNIT($,.STERADIAN.)
+SI_UNIT($,.RADIAN.)
+LENGTH_UNIT()
+SI_UNIT($,.METRE.)
+
+<class 'build123d.topology.composite.Compound'>
+children: 3
+<build123d.topology.three_d.Solid object at 0x75d355b8d2b0>
+<build123d.topology.three_d.Solid object at 0x75d35a140050>
+<build123d.topology.three_d.Solid object at 0x75d355e56710>
+solids: 3
+bbox: Vector: (X=-26.975, Y=-19.419, Z=0) Vector: (X=26.975, Y=26.871, Z=31.3) size: Vector: (X=53.95, Y=46.29, Z=31.3)
+
+# -- cell 2 (0.2s, exit 1)
+for i, s in enumerate(shape.solids()):
+    bb = s.bounding_box()
+    print(f"solid {i}: vol={s.volume:.4f} m3, size={tuple(round(v,3) for v in bb.size)}, "
+          f"center={tuple(round(v,3) for v in s.center())}, valid={s.is_valid()}, faces={len(s.faces())}")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 4[39m
+[32m      1[39m [38;5;28;01mfor[39;00m i, s [38;5;28;01min[39;00m enumerate(shape.solids()):
+[32m      2[39m     bb = s.bounding_box()
+[32m      3[39m     print(f"solid {i}: vol={s.volume:.4f} m3, size={tuple(round(v,3) for v in bb.size)}, "
+[32m----> [39m[32m4[39m           f"center={tuple(round(v,[32m3[39m) [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m s.center())}, valid={s.is_valid()}, faces={len(s.faces())}")
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 3 (0.2s, exit 0)
+for i, s in enumerate(shape.solids()):
+    bb = s.bounding_box()
+    print(f"solid {i}: vol={s.volume:.4f} m3, size={tuple(round(v,3) for v in bb.size)}, "
+          f"valid={s.is_valid}, faces={len(s.faces())}, center={tuple(round(v,3) for v in s.center())}")
+# -- output
+solid 0: vol=2552.2700 m3, size=(53.95, 46.29, 3.5), valid=True, faces=34, center=(-0.0, 0.154, 0.888)
+solid 1: vol=12186.1299 m3, size=(37.608, 37.608, 11.2), valid=True, faces=29, center=(-0.001, -0.097, 25.209)
+solid 2: vol=26455.7393 m3, size=(38.517, 38.517, 18.6), valid=True, faces=15, center=(0.0, -0.034, 10.743)
+
+# -- cell 4 (0.2s, exit 1)
+import pyvista as pv
+pv.OFF_SCREEN = True
+from build123d import to_vtkpolydata
+
+plotter = pv.Plotter(off_screen=True)
+colors = ["red","blue","green"]
+for i, s in enumerate(shape.solids()):
+    plotter.add_mesh(s.to_vtk_polydata(), color=colors[i], opacity=0.7)
+plotter.set_scale(1) if False else None
+plotter.view_isometric()
+plotter.camera.zoom(1.0)
+img = plotter.screenshot()
+plotter.close()
+import matplotlib.pyplot as plt
+plt.figure(figsize=(8,8)); plt.imshow(img); plt.axis("off"); plt.show()
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mImportError[39m                               Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 3[39m
+[32m      1[39m [38;5;28;01mimport[39;00m pyvista [38;5;28;01mas[39;00m pv
+[32m      2[39m pv.OFF_SCREEN = [38;5;28;01mTrue[39;00m
+[32m----> [39m[32m3[39m [38;5;28;01mfrom[39;00m build123d [38;5;28;01mimport[39;00m to_vtkpolydata
+[32m      4[39m 
+[32m      5[39m plotter = pv.Plotter(off_screen=[38;5;28;01mTrue[39;00m)
+[32m      6[39m colors = [[33m"red"[39m,[33m"blue"[39m,[33m"green"[39m]
+
+[31mImportError[39m: cannot import name 'to_vtkpolydata' from 'build123d' (/home/qiuzi/miniforge3/lib/python3.13/site-packages/build123d/__init__.py)
+
+# -- cell 5 (0.3s, exit 1)
+import pyvista as pv
+pv.OFF_SCREEN = True
+plotter = pv.Plotter(off_screen=True)
+colors = ["tomato","steelblue","limegreen"]
+for i, s in enumerate(shape.solids()):
+    plotter.add_mesh(s.to_vtk_polydata(), color=colors[i], opacity=0.65, show_edges=True)
+plotter.view_isometric()
+img = plotter.screenshot()
+plotter.close()
+import matplotlib.pyplot as plt
+plt.figure(figsize=(8,7)); plt.imshow(img); plt.axis("off"); plt.show()
+# -- output
+[0m[33m2026-09-14 16:46:21.557 (  11.702s) [    75D445F94780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 16:46:21.558 (  11.702s) [    75D445F94780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 16:46:21.571 (  11.715s) [    75D445F94780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 6[39m
+[32m      2[39m pv.OFF_SCREEN = [38;5;28;01mTrue[39;00m
+[32m      3[39m plotter = pv.Plotter(off_screen=[38;5;28;01mTrue[39;00m)
+[32m      4[39m colors = [[33m"tomato"[39m,[33m"steelblue"[39m,[33m"limegreen"[39m]
+[32m      5[39m [38;5;28;01mfor[39;00m i, s [38;5;28;01min[39;00m enumerate(shape.solids()):
+[32m----> [39m[32m6[39m     plotter.add_mesh(s.to_vtk_polydata(), color=colors[i], opacity=[32m0.65[39m, show_edges=[38;5;28;01mTrue[39;00m)
+[32m      7[39m plotter.view_isometric()
+[32m      8[39m img = plotter.screenshot()
+[32m      9[39m plotter.close()
+
+[31mAttributeError[39m: 'Solid' object has no attribute 'to_vtk_polydata'
+
+# -- cell 6 (1.3s, exit 1)
+from build123d.mesher import Mesher
+importer = Mesher()
+for i, s in enumerate(shape.solids()):
+    importer.add_shape(s, name=f"part{i}", part_color=(i,2,0) if False else None)
+importer.write("render.3mf")
+print([m for m in dir(bd.Solid) if "vtk" in m.lower() or "tensor" in m.lower()])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 4[39m
+[32m      1[39m [38;5;28;01mfrom[39;00m build123d.mesher [38;5;28;01mimport[39;00m Mesher
+[32m      2[39m importer = Mesher()
+[32m      3[39m [38;5;28;01mfor[39;00m i, s [38;5;28;01min[39;00m enumerate(shape.solids()):
+[32m----> [39m[32m4[39m     importer.add_shape(s, name=f"part{i}", part_color=(i,[32m2[39m,[32m0[39m) [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m)
+[32m      5[39m importer.write([33m"render.3mf"[39m)
+[32m      6[39m print([m [38;5;28;01mfor[39;00m m [38;5;28;01min[39;00m dir(bd.Solid) [38;5;28;01mif[39;00m [33m"vtk"[39m [38;5;28;01min[39;00m m.lower() [38;5;28;01mor[39;00m [33m"tensor"[39m [38;5;28;01min[39;00m m.lower()])
+
+[31mTypeError[39m: Mesher.add_shape() got an unexpected keyword argument 'name'
+
+# -- cell 7 (0.1s, exit 0)
+methods = [m for m in dir(bd.Shape)]
+print(methods)
+import inspect
+print(inspect.signature(bd.Shape.tessellate) if hasattr(bd.Shape,'tessellate') else "no tessellate")
+# -- output
+['_DisplayNode', '_NodeMixin__attach', '_NodeMixin__check_children', '_NodeMixin__check_loop', '_NodeMixin__children_or_empty', '_NodeMixin__detach', '__add__', '__and__', '__annotations__', '__bool__', '__class__', '__class_getitem__', '__copy__', '__deepcopy__', '__delattr__', '__dict__', '__dir__', '__doc__', '__eq__', '__firstlineno__', '__format__', '__ge__', '__getattribute__', '__getstate__', '__gt__', '__hash__', '__init__', '__init_subclass__', '__le__', '__lt__', '__module__', '__ne__', '__new__', '__orig_bases__', '__parameters__', '__reduce__', '__reduce_ex__', '__repr__', '__rmul__', '__setattr__', '__sizeof__', '__static_attributes__', '__str__', '__sub__', '__subclasshook__', '__weakref__', '_apply_transform', '_bool_op', '_bool_op_list', '_build_tree', '_dim', '_intersect', '_ocp_section', '_ordered_shapes', '_path', '_post_attach', '_post_attach_children', '_post_detach', '_post_detach_children', '_pre_attach', '_pre_attach_children', '_pre_detach', '_pre_detach_children', '_repr_html_', '_show_tree', '_transModeDict', 'ancestors', 'anchestors', 'area', 'bounding_box', 'cast', 'children', 'clean', 'closest_points', 'color', 'combined_center', 'composite_factories', 'compound', 'compounds', 'compute_mass', 'copy_attributes_to', 'cut', 'depth', 'descendants', 'distance', 'distance_to', 'distance_to_with_closest_points', 'distances', 'downcast_LUT', 'edge', 'edges', 'entities', 'extrude', 'face', 'faces', 'faces_intersected_by_axis', 'fix', 'fuse', 'geom_LUT_EDGE', 'geom_LUT_FACE', 'geom_type', 'get_shape_list', 'get_single_shape', 'get_top_level_shapes', 'global_location', 'height', 'intersect', 'inverse_shape_LUT', 'is_equal', 'is_leaf', 'is_manifold', 'is_null', 'is_planar_face', 'is_root', 'is_same', 'is_valid', 'iter_path_reverse', 'leaves', 'locate', 'located', 'location', 'make_composite', 'matrix_of_inertia', 'mesh', 'mirror', 'move', 'moved', 'orientation', 'oriented_bounding_box', 'parent', 'path', 'position', 'principal_properties', 'project_faces', 'radius_of_gyration', 'register_composite_factory', 'relocate', 'root', 'rotate', 'scale', 'separator', 'shape_LUT', 'shape_properties_LUT', 'shape_type', 'shell', 'shells', 'show_topology', 'siblings', 'size', 'solid', 'solids', 'split', 'split_by_perimeter', 'static_moments', 'tessellate', 'to_splines', 'touch', 'transform_geometry', 'transform_shape', 'transformed', 'translate', 'vertex', 'vertices', 'wire', 'wires', 'wrapped']
+(self, tolerance: 'float', angular_tolerance: 'float' = 0.1) -> 'tuple[list[Vector], list[tuple[int, int, int]]]'
+
+# -- cell 8 (0.2s, exit 1)
+import pyvista as pv
+import numpy as np
+pv.OFF_SCREEN = True
+
+def to_poly(shape, tol):
+    verts, tris = shape.tessellate(tol)
+    v = np.array([ (p.x,p.y,p.z) for p in verts ])
+    f = np.hstack([np.full((len(tris),1),3), np.array(tris)]).astype(np.int64)
+    return pv.PolyData(v, f)
+
+plotter = pv.Plotter(off_screen=True)
+colors = ["tomato","steelblue","limegreen"]
+for i, s in enumerate(shape.solids()):
+    plotter.add_mesh(to_poly(s, 0.5), color=colors[i], opacity=0.7, show_edges=True)
+plotter.view_isometric()
+img = plotter.screenshot()
+plotter.close()
+import matplotlib.pyplot as plt
+plt.figure(figsize=(8,7)); plt.imshow(img); plt.axis("off"); plt.show()
+# -- output
+[0m[33m2026-09-14 16:47:00.888 (  51.032s) [    75D445F94780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 16:47:00.889 (  51.034s) [    75D445F94780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[8][39m[32m, line 14[39m
+[32m     10[39m 
+[32m     11[39m plotter = pv.Plotter(off_screen=[38;5;28;01mTrue[39;00m)
+[32m     12[39m colors = [[33m"tomato"[39m,[33m"steelblue"[39m,[33m"limegreen"[39m]
+[32m     13[39m [38;5;28;01mfor[39;00m i, s [38;5;28;01min[39;00m enumerate(shape.solids()):
+[32m---> [39m[32m14[39m     plotter.add_mesh(to_poly(s, [32m0.5[39m), color=colors[i], opacity=[32m0.7[39m, show_edges=[38;5;28;01mTrue[39;00m)
+[32m     15[39m plotter.view_isometric()
+[32m     16[39m img = plotter.screenshot()
+[32m     17[39m plotter.close()
+
+[36mCell[39m[36m [39m[32mIn[8][39m[32m, line 7[39m, in [36mto_poly[39m[34m(shape, tol)[39m
+[32m      5[39m [38;5;28;01mdef[39;00m to_poly(shape, tol):
+[32m      6[39m     verts, tris = shape.tessellate(tol)
+[32m----> [39m[32m7[39m     v = np.array([ (p.x,p.y,p.z) [38;5;28;01mfor[39;00m p [38;5;28;01min[39;00m verts ])
+[32m      8[39m     f = np.hstack([np.full((len(tris),[32m1[39m),[32m3[39m), np.array(tris)]).astype(np.int64)
+[32m      9[39m     [38;5;28;01mreturn[39;00m pv.PolyData(v, f)
+
+[31mAttributeError[39m: 'Vector' object has no attribute 'x'
+
+# -- cell 9 (0.3s, exit 0)
+verts, tris = shape.solids()[0].tessellate(0.5)
+print(type(verts[0]), verts[0] if hasattr(verts[0],'to_tuple') else None)
+print(verts[0])
+print(tris[:3])
+# -- output
+<class 'build123d.geometry.Vector'> Vector: (X=-4, Y=19.171, Z=0)
+Vector: (X=-4, Y=19.171, Z=0)
+[(0, 3, 1), (2, 3, 0), (5, 4, 6)]
+
+# -- cell 10 (0.5s, exit 0)
+def to_poly(shape, tol):
+    verts, tris = shape.tessellate(tol)
+    v = np.array([ (p.X,p.Y,p.Z) for p in verts ])
+    f = np.hstack([np.full((len(tris),1),3), np.array(tris, dtype=np.int64)])
+    return pv.PolyData(v, f)
+
+plotter = pv.Plotter(off_screen=True)
+for i, s in enumerate(shape.solids()):
+    plotter.add_mesh(to_poly(s, 0.5), color=["tomato","steelblue","limegreen"][i], opacity=0.7, show_edges=True)
+plotter.view_isometric()
+img = plotter.screenshot()
+plotter.close()
+import matplotlib.pyplot as plt
+plt.figure(figsize=(8,7)); plt.imshow(img); plt.axis("off"); plt.show()
+# -- output
+[0m[33m2026-09-14 16:47:20.174 (  70.318s) [    75D445F94780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 16:47:20.175 (  70.320s) [    75D445F94780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 11 (0.1s, exit 1)
+import build123d as bd
+import pyvista as pv
+import numpy as np
+
+solids = shape.solids()
+for (i, j) in [(0,1),(0,2),(1,2)]:
+    inter = solids[i] & solids[j]
+    vols = [s.volume for s in inter.solids()]
+    print(i, j, "intersection volumes:", vols)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[11][39m[32m, line 8[39m
+[32m      4[39m 
+[32m      5[39m solids = shape.solids()
+[32m      6[39m [38;5;28;01mfor[39;00m (i, j) [38;5;28;01min[39;00m [([32m0[39m,[32m1[39m),([32m0[39m,[32m2[39m),([32m1[39m,[32m2[39m)]:
+[32m      7[39m     inter = solids[i] & solids[j]
+[32m----> [39m[32m8[39m     vols = [s.volume [38;5;28;01mfor[39;00m s [38;5;28;01min[39;00m inter.solids()]
+[32m      9[39m     print(i, j, [33m"intersection volumes:"[39m, vols)
+
+[31mAttributeError[39m: 'NoneType' object has no attribute 'solids'
+
+# -- cell 12 (0.2s, exit 0)
+import build123d as bd
+for (i, j) in [(0,1),(0,2),(1,2)]:
+    inter = shape.solids()[i] & shape.solids()[j]
+    if inter is None:
+        print(i,j,"no overlap", flush=True)
+    else:
+        print(i,j, "vols:", [s.volume for s in inter.solids()], flush=True)
+# -- output
+0 1 no overlap
+0 2 no overlap
+1 2 no overlap
+
+# -- cell 13 (0.2s, exit 1)
+import build123d as bd
+bb = shape.bounding_box()
+margin = 0.01
+ext = bd.Box(bb.min-margin*bd.Vector(1,1,1), bb.max+margin*bd.Vector(1,1,1)) if False else \
+      bd.Box(bb.min-bd.Vector(margin, margin, margin), bb.max+bd.Vector(margin, margin, margin))
+# fused assembly
+try:
+    fused = union(body=shape, clean=True, glue=False) if False else None
+except Exception as e:
+    print("union import issue", e)
+fused = shape
+voids = ext - fused
+inner = voids.solids().sorted_by("volume") if False else None
+print("number of resulting solids:", len(voids.solids()))
+sortedV = sorted(voids.solids(), key=lambda s: s.volume, reverse=True)
+for s in sortedV:
+    print("vol:", s.volume)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[13][39m[32m, line 5[39m
+[32m      1[39m [38;5;28;01mimport[39;00m build123d [38;5;28;01mas[39;00m bd
+[32m      2[39m bb = shape.bounding_box()
+[32m      3[39m margin = [32m0.01[39m
+[32m      4[39m ext = bd.Box(bb.min-margin*bd.Vector(1,1,1), bb.max+margin*bd.Vector(1,1,1)) if False else \
+[32m----> [39m[32m5[39m       bd.Box(bb.min-bd.Vector(margin, margin, margin), bb.max+bd.Vector(margin, margin, margin))
+[32m      6[39m [38;5;66;03m# fused assembly[39;00m
+[32m      7[39m [38;5;28;01mtry[39;00m:
+[32m      8[39m     fused = union(body=shape, clean=[38;5;28;01mTrue[39;00m, glue=[38;5;28;01mFalse[39;00m) [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+
+[31mTypeError[39m: Box.__init__() missing 1 required positional argument: 'height'
+
+# -- cell 14 (0.2s, exit 0)
+import build123d as bd
+bb = shape.bounding_box()
+m = 0.01
+L = tuple(v + 2*m for v in bb.size)
+ext = bd.Pos(bb.min.X - m, bb.min.Y - m, bb.min.Z - m) * bd.Box(L[0], L[1], L[2])
+complement = ext - shape
+sizes = sorted(((s.volume, s) for s in complement.solids()), key=lambda t: t[0], reverse=True)
+print("solids:", [(round(v,1), s.bounding_box().size) for v, s in sizes])
+# -- output
+solids: [(71436.3, Vector(53.9700002, 46.3100001, 31.3200002))]
+
+# -- cell 15 (0.3s, exit 1)
+import build123d as bd
+fused = bd.Compound()
+for i, s in enumerate(shape.solids()):
+    fused = fused + s  if isinstance(fused, bd.Compound) else (fused | s)
+# simpler: fuse via intersection-based union
+fused = shape.solids()[0]
+for s in shape.solids()[1:]:
+    fused = fused | s
+print("fused type:", type(fused), "volume:", sum(s.volume for s in (fused.solids() if hasattr(fused,'solids') else [fused])))
+complement = bd.Pos(bb.min.X - m, bb.min.Y - m, bb.min.Z - m) * bd.Box(*(v + 2*m for v in bb.size)) - fused
+res = sorted(complement.solids(), key=lambda s: s.volume, reverse=True) if hasattr(complement,'solids') else [complement]
+print([(s.volume, tuple(s.bounding_box().size)) for s in res])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAssertionError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[15][39m[32m, line 4[39m
+[32m      1[39m [38;5;28;01mimport[39;00m build123d [38;5;28;01mas[39;00m bd
+[32m      2[39m fused = bd.Compound()
+[32m      3[39m [38;5;28;01mfor[39;00m i, s [38;5;28;01min[39;00m enumerate(shape.solids()):
+[32m----> [39m[32m4[39m     fused = fused + s  [38;5;28;01mif[39;00m isinstance(fused, bd.Compound) [38;5;28;01melse[39;00m (fused | s)
+[32m      5[39m [38;5;66;03m# simpler: fuse via intersection-based union[39;00m
+[32m      6[39m fused = shape.solids()[[32m0[39m]
+[32m      7[39m [38;5;28;01mfor[39;00m s [38;5;28;01min[39;00m shape.solids()[[32m1[39m:]:
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/composite.py:465[39m, in [36mCompound.__add__[39m[34m(self, other)[39m
+[32m    459[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__add__[39m([38;5;28mself[39m, other: [38;5;28;01mNone[39;00m | Shape | Iterable[Shape]) -> Compound | Wire:
+[32m    460[39m [38;5;250m    [39m[33;03m"""Combine other to self `+` operator[39;00m
+[32m    461[39m 
+[32m    462[39m [33;03m    Note that if all of the objects are connected Edges/Wires the result[39;00m
+[32m    463[39m [33;03m    will be a Wire, otherwise a Shape.[39;00m
+[32m    464[39m [33;03m    """[39;00m
+[32m--> [39m[32m465[39m     [38;5;28;01mif[39;00m [30;43mself[39;49m[30;43m.[39;49m[30;43m_dim[39;49m == [32m1[39m:
+[32m    466[39m         curve = Curve() [38;5;28;01mif[39;00m [38;5;28mself[39m._wrapped [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m Curve([38;5;28mself[39m.wrapped)
+[32m    467[39m         sum1d = curve + other
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/composite.py:180[39m, in [36mCompound._dim[39m[34m(self)[39m
+[32m    177[39m [38;5;129m@property[39m
+[32m    178[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m_dim[39m([38;5;28mself[39m) -> [38;5;28mint[39m | [38;5;28;01mNone[39;00m:
+[32m    179[39m [38;5;250m    [39m[33;03m"""The dimension of the shapes within the Compound - None if inconsistent"""[39;00m
+[32m--> [39m[32m180[39m     [38;5;28;01mreturn[39;00m topods_dim([30;43mself[39;49m[30;43m.[39;49m[30;43mwrapped[39;49m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:320[39m, in [36mShape.wrapped[39m[34m(self)[39m
+[32m    317[39m [38;5;129m@property[39m
+[32m    318[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mwrapped[39m([38;5;28mself[39m):
+[32m    319[39m [38;5;250m    [39m[33;03m"""OCP TopoDS object"""[39;00m
+[32m--> [39m[32m320[39m     [38;5;28;01massert[39;00m [38;5;28mself[39m._wrapped
+[32m    321[39m     [38;5;28;01mreturn[39;00m [38;5;28mself[39m._wrapped
+
+[31mAssertionError[39m:
+
+# -- cell 16 (0.1s, exit 1)
+import build123d as bd
+ss = shape.solids()
+fused = ss[0] | ss[1] | ss[2]
+print(type(fused), fused.volume if hasattr(fused,'volume') else sum(s.volume for s in fused.solids()))
+ext_len = tuple(v + 2*m for v in bb.size)
+ext = bd.Pos(bb.min.X - m, bb.min.Y - m, bb.min.Z - m) * bd.Box(ext_len[0], ext_len[1], ext_len[2])
+complement = ext - fused
+res = sorted(complement.solids(), key=lambda s: s.volume, reverse=True)
+print("n solids:", len(res), [(round(s.volume,1), tuple(round(x,3) for x in s.bounding_box().size)) for s in res])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[16][39m[32m, line 3[39m
+[32m      1[39m [38;5;28;01mimport[39;00m build123d [38;5;28;01mas[39;00m bd
+[32m      2[39m ss = shape.solids()
+[32m----> [39m[32m3[39m fused = ss[[32m0[39m] | ss[[32m1[39m] | ss[[32m2[39m]
+[32m      4[39m print(type(fused), fused.volume [38;5;28;01mif[39;00m hasattr(fused,[33m'volume'[39m) [38;5;28;01melse[39;00m sum(s.volume [38;5;28;01mfor[39;00m s [38;5;28;01min[39;00m fused.solids()))
+[32m      5[39m ext_len = tuple(v + [32m2[39m*m [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m bb.size)
+[32m      6[39m ext = bd.Pos(bb.min.X - m, bb.min.Y - m, bb.min.Z - m) * bd.Box(ext_len[[32m0[39m], ext_len[[32m1[39m], ext_len[[32m2[39m])
+
+[31mTypeError[39m: unsupported operand type(s) for |: 'Solid' and 'Solid'
+
+# -- cell 17 (0.1s, exit 0)
+import build123d as bd
+ss = shape.solids()
+print([mm for mm in dir(bd) if 'union' in mm.lower() or mm=='add'])
+# -- output
+['add']
+
+# -- cell 18 (0.1s, exit 1)
+import build123d as bd
+comp = bd.add(ss)
+print(type(comp))
+ext_len = tuple(v + 2*m for v in bb.size)
+ext = bd.Pos(bb.min.X - m, bb.min.Y - m, bb.min.Z - m) * bd.Box(ext_len[0], ext_len[1], ext_len[2])
+complement = ext - comp
+res = sorted(complement.solids(), key=lambda s: s.volume, reverse=True)
+print("n solids:", len(res))
+for s in res:
+    print(round(s.volume,2), tuple(round(x,3) for x in s.bounding_box().size))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[18][39m[32m, line 2[39m
+[32m      1[39m [38;5;28;01mimport[39;00m build123d [38;5;28;01mas[39;00m bd
+[32m----> [39m[32m2[39m comp = bd.add(ss)
+[32m      3[39m print(type(comp))
+[32m      4[39m ext_len = tuple(v + [32m2[39m*m [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m bb.size)
+[32m      5[39m ext = bd.Pos(bb.min.X - m, bb.min.Y - m, bb.min.Z - m) * bd.Box(ext_len[[32m0[39m], ext_len[[32m1[39m], ext_len[[32m2[39m])
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_generic.py:105[39m, in [36madd[39m[34m(objects, rotation, clean, mode)[39m
+[32m    103[39m context: Builder | [38;5;28;01mNone[39;00m = Builder._get_context([38;5;28;01mNone[39;00m)
+[32m    104[39m [38;5;28;01mif[39;00m context [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m:
+[32m--> [39m[32m105[39m     [38;5;28;01mraise[39;00m [38;5;167;01mRuntimeError[39;00m([33m"[39m[33mAdd must have an active builder context[39m[33m"[39m)
+[32m    107[39m [38;5;28;01mif[39;00m [38;5;28misinstance[39m(objects, Iterable) [38;5;129;01mand[39;00m [38;5;129;01mnot[39;00m [38;5;28misinstance[39m(objects, Compound):
+[32m    108[39m     object_list = [38;5;28mlist[39m(objects)
+
+[31mRuntimeError[39m: Add must have an active builder context
+
+# -- cell 19 (0.1s, exit 0)
+import build123d as bd
+comp = bd.Compound(children=shape.solids())
+ext_len = tuple(v + 2*m for v in bb.size)
+ext = bd.Pos(bb.min.X - m, bb.min.Y - m, bb.min.Z - m) * bd.Box(ext_len[0], ext_len[1], ext_len[2])
+complement = ext - comp
+res = sorted(complement.solids(), key=lambda s: s.volume, reverse=True)
+print("n solids:", len(res))
+for s in res:
+    print(round(s.volume,2), tuple(round(x,3) for x in s.bounding_box().size))
+# -- output
+n solids: 1
+71436.3 (53.97, 46.31, 31.32)
+
+# -- cell 20 (0.1s, exit 0)
+import build123d as bd
+ext_len = tuple(v + 2*m for v in bb.size)
+comp = ext
+for s in shape.solids():
+    comp = comp - s
+res = sorted(comp.solids(), key=lambda s: s.volume, reverse=True)
+print("n solids:", len(res))
+for s in res:
+    print(round(s.volume,3), tuple(round(x,3) for x in s.bounding_box().size))
+# -- output
+n solids: 1
+71436.305 (53.97, 46.31, 31.32)
+
+# -- cell 21 (0.1s, exit 0)
+import build123d as bd
+test = ext.copy() if hasattr(ext,'copy') else bd.Pos(bb.min.X - m, bb.min.Y - m, bb.min.Z - m) * bd.Box(*(v + 2*m for v in bb.size))
+t = test - shape.solids()[2]
+print("ext vol:", test.volume, "after minus solid2:", t.volume, "expected:", test.volume - 26455.7)
+# -- output
+ext vol: 78279.66488299012 after minus solid2: 72215.19400428789 expected: 51823.96488299013
+
+# -- cell 22 (0.1s, exit 0)
+import OCP
+import importlib
+names = dir(OCP)
+print([n for n in names if 'Defeature' in n or 'defeat' in n.lower()])
+from OCP import BRepAlgoAPI
+print([n for n in dir(OCP.BRepAlgoAPI) if 'Def' in n or 'Feat' in n])
+# -- output
+[]
+['BRepAlgoAPI_Defeaturing']
+
+# -- cell 23 (0.1s, exit 0)
+import build123d as bd
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+comp = bd.Compound(children=shape.solids())
+ext_box = bd.Pos(bb.min.X - m, bb.min.Y - m, bb.min.Z - m) * bd.Box(*(v + 2*m for v in bb.size))
+op = BRepAlgoAPI_Cut(ext_box.wrapped, comp.wrapped)
+cut = bd.Solid(op.Shape()) if op.IsDone() else None
+if cut is not None:
+    ss = bd.Compound(children=[cut]).solids()
+    print("cut ok; volumes:")
+    for s in sorted(ss, key=lambda s: s.volume, reverse=True):
+        print(round(s.volume,3), tuple(round(x,3) for x in s.bounding_box().size))
+else:
+    print("cut failed")
+# -- output
+cut ok; volumes:
+71436.305 (53.97, 46.31, 31.32)
+
+# -- cell 24 (0.7s, exit 0)
+shells = cut.shells()
+print("n shells:", len(shells))
+for s in shells:
+    print("shell faces:", len(s.faces()), "area:", s.area, "bbox:", tuple(round(x,2) for x in s.bounding_box().size))
+# -- output
+n shells: 1
+shell faces: 27 area: 12378.913140545075 bbox: (53.97, 46.31, 31.32)
+
+# -- cell 25 (0.1s, exit 0)
+import build123d as bd
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+ss = shape.solids()
+for (i,j) in [(0,1),(0,2),(1,2)]:
+    op = BRepAlgoAPI_Common(ss[i].wrapped, ss[j].wrapped)
+    kind = op.Shape().ShapeType().name if op.IsDone() else "FAIL"
+    c = bd.Compound(op.Shape())
+    ivols = [s.volume for s in c.solids()]
+    print(i,j,kind, ivols)
+# -- output
+0 1 TopAbs_COMPOUND []
+0 2 TopAbs_COMPOUND []
+1 2 TopAbs_COMPOUND []
+
+# -- cell 26 (1.3s, exit 0)
+import pyvista as pv
+import numpy as np
+import matplotlib.pyplot as plt
+pv.OFF_SCREEN = True
+def to_poly(shp, tol):
+    verts, tris = shp.tessellate(tol)
+    v = np.array([(p.X,p.Y,p.Z) for p in verts])
+    f = np.hstack([np.full((len(tris),1),3), np.array(tris, dtype=np.int64)])
+    mesh = pv.PolyData(v, f)
+    try:
+        return mesh.reconstruct_surface()
+    except Exception:
+        return mesh
+
+plotter = pv.Plotter(off_screen=True)
+for i, s in enumerate(shape.solids()):
+    plotter.add_mesh(to_poly(s, 0.5), color=["tomato","steelblue","limegreen"][i], opacity=0.6)
+# section plane normal to Y through center
+plotter.add_mesh(to_poly(cut, 0.5), color="cadetblue", opacity=1.0, show_edges=False)
+plotter.view_yz()
+img = plotter.screenshot()
+plotter.close()
+plt.figure(figsize=(8,8)); plt.imshow(img); plt.axis("off"); plt.show()
+# -- output
+[0m[33m2026-09-14 16:52:29.854 ( 379.999s) [    75D445F94780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 16:52:29.855 ( 380.000s) [    75D445F94780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+
+# -- cell 27 (0.1s, exit 0)
+import build123d as bd
+import numpy as np
+for i, s in enumerate(shape.solids()):
+    print(f"--- solid {i}")
+    for f in s.faces():
+        if f.geom_type == "PLANE":
+            n = f.normal_at()
+            c = f.center()
+            print(f"  plane area={f.area:7.2f} normal=({n.X:5.2f},{n.Y:5.2f},{n.Z:5.2f}) center=({c.X:7.2f},{c.Y:7.2f},{c.Z:7.2f})")
+# -- output
+--- solid 0
+--- solid 1
+--- solid 2
+
+# -- cell 28 (0.1s, exit 0)
+from collections import Counter
+for i, s in enumerate(shape.solids()):
+    types = Counter(f.geom_type for f in s.faces())
+    print(i, types)
+# -- output
+0 Counter({<GeomType.PLANE>: 21, <GeomType.CYLINDER>: 13})
+1 Counter({<GeomType.PLANE>: 11, <GeomType.CYLINDER>: 11, <GeomType.BSPLINE>: 4, <GeomType.TORUS>: 2, <GeomType.CONE>: 1})
+2 Counter({<GeomType.PLANE>: 11, <GeomType.CYLINDER>: 4})
+
+# -- cell 29 (0.1s, exit 0)
+import build123d as bd
+from build123d import GeomType
+for i, s in enumerate(shape.solids()):
+    print(f"--- solid {i}")
+    for f in s.faces():
+        if f.geom_type == GeomType.PLANE and f.area > 0.5:
+            n = f.normal_at()
+            c = f.center()
+            print(f"  plane area={f.area:7.2f} n=({n.X:5.2f},{n.Y:5.2f},{n.Z:5.2f}) c=({c.X:7.2f},{c.Y:7.2f},{c.Z:7.2f})")
+# -- output
+--- solid 0
+  plane area=   6.78 n=(-1.00, 0.10, 0.00) c=(  -3.78,  21.40,   0.75)
+  plane area=  15.42 n=(-0.00, 1.00, 0.02) c=(  -9.14,  19.15,   0.75)
+  plane area=  28.17 n=(-1.00, 0.00, 0.02) c=( -19.28,   4.77,   0.75)
+  plane area=   6.75 n=(-0.10, 1.00,-0.00) c=( -21.51,  -4.84,   0.75)
+  plane area=   6.75 n=(-0.10,-1.00, 0.00) c=( -21.51, -12.40,   0.75)
+  plane area=   2.67 n=(-1.00, 0.00, 0.02) c=( -19.28, -13.51,   0.75)
+  plane area=  42.85 n=( 0.00,-1.00, 0.02) c=(  -0.00, -19.40,   0.75)
+  plane area=   2.67 n=( 1.00,-0.00, 0.02) c=(  19.28, -13.51,   0.75)
+  plane area=   6.75 n=( 0.10,-1.00,-0.00) c=(  21.51, -12.40,   0.75)
+  plane area=   6.75 n=( 0.10, 1.00,-0.00) c=(  21.51,  -4.84,   0.75)
+  plane area=  28.17 n=( 1.00,-0.00, 0.02) c=(  19.28,   4.77,   0.75)
+  plane area=  15.42 n=(-0.00, 1.00, 0.02) c=(   9.14,  19.15,   0.75)
+  plane area=   6.78 n=( 1.00, 0.10,-0.00) c=(   3.78,  21.40,   0.75)
+  plane area=1496.41 n=( 0.00, 0.00, 1.00) c=(  -0.00,  -0.10,   1.50)
+  plane area=1573.93 n=(-0.00,-0.00,-1.00) c=(  -0.00,  -0.00,   0.00)
+  plane area=  35.24 n=( 0.00, 0.00, 1.00) c=(   0.00,  23.30,   3.50)
+  plane area=  35.24 n=( 0.00, 0.00, 1.00) c=(  23.40,  -8.62,   3.50)
+  plane area=  35.24 n=( 0.00, 0.00, 1.00) c=( -23.40,  -8.62,   3.50)
+  plane area=  11.00 n=( 0.00, 0.00,-1.00) c=( -23.40,  -8.62,   2.00)
+  plane area=  11.00 n=( 0.00, 0.00,-1.00) c=(  23.40,  -8.62,   2.00)
+  plane area=  11.00 n=( 0.00, 0.00,-1.00) c=(  -0.00,  23.30,   2.00)
+--- solid 1
+  plane area= 293.86 n=( 0.00, 0.00, 1.00) c=(   0.00,  -0.10,  23.60)
+  plane area=  82.97 n=(-0.00, 1.00, 0.02) c=(   0.00,  18.67,  21.60)
+  plane area=  82.97 n=(-1.00, 0.00, 0.02) c=( -18.77,  -0.10,  21.60)
+  plane area=  82.97 n=( 0.00,-1.00, 0.02) c=(   0.00, -18.86,  21.60)
+  plane area=  82.97 n=( 1.00,-0.00, 0.02) c=(  18.77,  -0.10,  21.60)
+  plane area=1392.88 n=(-0.00,-0.00,-1.00) c=(   0.00,  -0.10,  20.10)
+  plane area= 886.98 n=( 0.00, 0.00, 1.00) c=(  -0.06,  -0.10,  31.30)
+  plane area=   2.93 n=( 0.00, 0.00, 1.00) c=(  14.83,  -0.10,  31.10)
+--- solid 2
+  plane area= 481.75 n=( 0.00,-1.00, 0.02) c=(   0.00, -19.12,  11.19)
+  plane area= 522.17 n=(-0.00, 1.00, 0.02) c=(   0.00,  18.94,  10.75)
+  plane area= 522.17 n=(-1.00, 0.00, 0.02) c=( -19.03,  -0.10,  10.75)
+  plane area= 522.17 n=( 1.00,-0.00, 0.02) c=(  19.03,  -0.10,  10.75)
+  plane area=1392.88 n=( 0.00, 0.00, 1.00) c=(   0.00,  -0.10,  20.10)
+  plane area=1462.09 n=(-0.00,-0.00,-1.00) c=(   0.00,  -0.10,   1.50)
+  plane area=  21.62 n=( 0.00,-0.02,-1.00) c=(   0.00, -18.06,   7.57)
+  plane area=   9.89 n=( 1.00,-0.00,-0.00) c=(  -4.70, -18.11,   5.42)
+  plane area=  21.62 n=(-0.00, 0.02, 1.00) c=(   0.00, -18.16,   3.27)
+  plane area=   9.89 n=(-1.00, 0.00, 0.00) c=(   4.70, -18.11,   5.42)
+  plane area=  40.42 n=( 0.00,-1.00, 0.02) c=(   0.00, -16.96,   5.39)
+
+# -- cell 30 (0.4s, exit 0)
+import pyvista as pv, numpy as np
+import matplotlib.pyplot as plt
+pv.OFF_SCREEN = True
+def to_mesh(shp, tol=0.2):
+    verts, tris = shp.tessellate(tol)
+    v = np.array([(p.X,p.Y,p.Z) for p in verts])
+    f = np.hstack([np.full((len(tris),1),3), np.array(tris, dtype=np.int64)])
+    return pv.PolyData(v, f)
+
+img_plot = pv.Plotter(off_screen=True)
+m = to_mesh(cut, 0.3)
+img_plot.add_mesh(m.clip(normal='x', origin=(0,0,15)), color="cadetblue")
+for i, s in enumerate(shape.solids()):
+    img_plot.add_mesh(to_mesh(s,0.2), color="indianred", opacity=0.4)
+img_plot.view_yz()
+img1 = img_plot.screenshot()
+img_plot.close()
+plt.figure(figsize=(9,9)); plt.imshow(img1); plt.axis("off"); plt.show()
+# -- output
+[0m[33m2026-09-14 16:54:31.107 ( 501.251s) [    75D445F94780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 16:54:31.108 ( 501.253s) [    75D445F94780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+

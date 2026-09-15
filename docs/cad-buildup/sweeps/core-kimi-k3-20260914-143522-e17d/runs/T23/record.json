@@ -1,0 +1,129 @@
+{
+  "run_id": "20260914-160807-9ba1",
+  "case": "T23",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T23-20260914-160807-9ba1",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T23-20260914-160807-9ba1/t23",
+  "started_at": "2026-09-14T16:08:08",
+  "ended_at": "2026-09-14T16:09:25",
+  "seconds": 73.7,
+  "n_turns": 3,
+  "n_steps": 0,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0.0317,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 2807,
+    "cache_read": 9216,
+    "cache_write": 0,
+    "output": 1791
+  },
+  "stopped": "no-progress",
+  "expects": "done",
+  "passed": false,
+  "why": "3 turns to 3 with the step count flat at 0",
+  "contaminated": false,
+  "completed": true,
+  "trace": [],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 1055,
+      "fenced": false,
+      "text_chars": 1508,
+      "thinking_chars": 2121,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402131.4229658
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 442,
+      "fenced": false,
+      "text_chars": 950,
+      "thinking_chars": 253,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402149.9246182
+    },
+    {
+      "turn": 3,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 294,
+      "fenced": false,
+      "text_chars": 600,
+      "thinking_chars": 41,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402159.321145
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T23-20260914-160807-9ba1/t23/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T23-20260914-160807-9ba1/t23/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T23-20260914-160807-9ba1/t23/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T23-20260914-160807-9ba1/t23/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T23-20260914-160807-9ba1/t23/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T23-20260914-160807-9ba1/t23/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [],
+  "declares": [],
+  "watch": {
+    "alarm": {
+      "alarm": "no-progress",
+      "why": "3 turns to 3 with the step count flat at 0",
+      "turn": 3
+    },
+    "turns": 3,
+    "steps": 0,
+    "seconds": 75.7,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

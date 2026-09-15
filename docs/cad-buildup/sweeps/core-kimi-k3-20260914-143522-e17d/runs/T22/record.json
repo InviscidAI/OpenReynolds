@@ -1,0 +1,616 @@
+{
+  "run_id": "20260914-160711-7173",
+  "case": "T22",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22",
+  "started_at": "2026-09-14T16:07:12",
+  "ended_at": "2026-09-14T16:22:19",
+  "seconds": 903.4,
+  "n_turns": 25,
+  "n_steps": 24,
+  "first_mesh_step": 14,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.3349,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 48290,
+    "cache_read": 386432,
+    "cache_write": 0,
+    "output": 9407
+  },
+  "stopped": "time",
+  "expects": "done",
+  "passed": false,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd\nimport numpy as np\n\n# request dimensions (mm) -> metres\nOD, ID, GAP, NVANE, VWID = 320, 190, 12, 36, 8\nR_o, R_i, gap, W = OD/2000, ID/2000, GAP/1000, VWID/1000\n\nannulus = bd.Cylinder(R_o, gap) - bd.Cylinder(R_i, gap)\none_vane = bd.Pos(0, (R_i+R_o)/2, 0) * bd.Box(W, R_o-R_i, gap)\nvanes = bd.Compound([bd.Rot(0,0,a) * one_vane for a in np.linspace(0,360,NVANE,endpoint=False)])\n\nfluid = ((annulus - vanes))\nprint(fluid.volume(), \"m^3\")\nfluid_solids = bd.Compound([fluid])\nimport matplotlib.pyplot as plt\nfrom build123d import exporters\nexporters.Drawing(fluid_solids, title=\"fluid solid\").save(\"fr1.png\")",
+      "exit_code": 1,
+      "seconds": 2.8084033800005272,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[1]\u001b[39m\u001b[32m, line 13\u001b[39m\n\u001b[32m      9\u001b[39m one_vane = bd.Pos(\u001b[32m0\u001b[39m, (R_i+R_o)/\u001b[32m2\u001b[39m, \u001b[32m0\u001b[39m) * bd.Box(W, R_o-R_i, gap)\n\u001b[32m     10\u001b[39m vanes = bd.Compound([bd.Rot(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,a) * one_vane \u001b[38;5;28;01mfor\u001b[39;00m a \u001b[38;5;28;01min\u001b[39;00m np.linspace(\u001b[32m0\u001b[39m,\u001b[32m360\u001b[39m,NVANE,endpoint=\u001b[38;5;28;01mFalse\u001b[39;00m)])\n\u001b[32m     11\u001b[39m \n\u001b[32m     12\u001b[39m fluid = ((annulus - vanes))\n\u001b[32m---> \u001b[39m\u001b[32m13\u001b[39m print(fluid.volume(), \u001b[33m\"m^3\"\u001b[39m)\n\u001b[32m     14\u001b[39m fluid_solids = bd.Compound([fluid])\n\u001b[32m     15\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m matplotlib.pyplot \u001b[38;5;28;01mas\u001b[39;00m plt\n\u001b[32m     16\u001b[39m \u001b[38;5;28;01mfrom\u001b[39;00m build123d \u001b[38;5;28;01mimport\u001b[39;00m exporters\n\n\u001b[31mTypeError\u001b[39m: 'float' object is not callable",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np\n\nOD, ID, GAP, NVANE, VWID = 320, 190, 12, 36, 8\nR_o, R_i, gap, W = OD/2000, ID/2000, GAP/1000, VWID/1000\n\nannulus = bd.Cylinder(R_o, gap) - bd.Cylinder(R_i, gap)\none_vane = bd.Pos(0, (R_i+R_o)/2, 0) * bd.Box(W, R_o-R_i, gap)\nvanes = bd.Compound([bd.Rot(0,0,a) * one_vane for a in np.linspace(0,360,NVANE,endpoint=False)])\n\nfluid = annulus - vanes\nprint(\"volume m^3:\", fluid.volume)\n\nimport pyvista as pv\nmesh = fluid.tessellate(0.01)\npv_mesh = pv.PolyData(mesh[0], np.hstack([np.full((len(mesh[1]),1),3), mesh[1]]))\npl = pv.Plotter(off_screen=True)\npl.add_mesh(pv_mesh)\npl.view_isometric()\npl.show(screenshot=\"shape.png\")\nprint(\"n faces:\", len(fluid.faces()))",
+      "exit_code": 1,
+      "seconds": 1.5561747290012136,
+      "output": "volume m^3: 0.00040028038420021454\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[2]\u001b[39m\u001b[32m, line 16\u001b[39m\n\u001b[32m     12\u001b[39m print(\u001b[33m\"volume m^3:\"\u001b[39m, fluid.volume)\n\u001b[32m     13\u001b[39m \n\u001b[32m     14\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m pyvista \u001b[38;5;28;01mas\u001b[39;00m pv\n\u001b[32m     15\u001b[39m mesh = fluid.tessellate(\u001b[32m0.01\u001b[39m)\n\u001b[32m---> \u001b[39m\u001b[32m16\u001b[39m pv_mesh = pv.PolyData(mesh[\u001b[32m0\u001b[39m], np.hstack([np.full((len(mesh[\u001b[32m1\u001b[39m]),\u001b[32m1\u001b[39m),\u001b[32m3\u001b[39m), mesh[\u001b[32m1\u001b[39m]]))\n\u001b[32m     17\u001b[39m pl = pv.Plotter(off_screen=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m     18\u001b[39m pl.add_mesh(pv_mesh)\n\u001b[32m     19\u001b[39m pl.view_isometric()\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/misc.py:442\u001b[39m, in \u001b[36m_AutoFreezeMeta.__call__\u001b[39m\u001b[34m(cls, *args, **kwargs)\u001b[39m\n\u001b[32m    441\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34m__call__\u001b[39m(\u001b[38;5;28mcls\u001b[39m: \u001b[38;5;28mtype\u001b[39m[_T], *args, **kwargs) -> _T:\n\u001b[32m--> \u001b[39m\u001b[32m442\u001b[39m     obj = \u001b[30;43msuper\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m)\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43m__call__\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43margs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43mkwargs\u001b[39;49m\u001b[30;43m)\u001b[39;49m  \u001b[38;5;66;03m# type: ignore[misc]\u001b[39;00m\n\u001b[32m    443\u001b[39m     obj._no_new_attributes(\u001b[38;5;28mcls\u001b[39m)\n\u001b[32m    444\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m obj\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243\u001b[39m, in \u001b[36m_deprecate_positional_args.<locals>._inner_depr\n... 100879 characters cut ...\nor(-0.1590674230184, -0.0172497807023, -0.006), Vector(-0.1582145851088, -0.0238357936487, -0.006), Vector(-0.095, -0.004, -0.006), Vector(-0.095, 0, -0.006), Vector(-0.095, -0.004, 0.006), Vector(-0.095, 0, 0.006), Vector(-0.0935567360363, -0.0164965797133, 0.006), Vector(-0.0942513292468, -0.0125573458663, 0.006), Vector(-0.095, 0, 0.006), Vector(-0.0949095810189, -0.0041438425187, 0.006), Vector(-0.0946384961933, -0.0082797969949, 0.006), Vector(-0.0941872615487, -0.0123999904014, 0.006), Vector(-0.095, -0.004, 0.006), Vector(-0.1599499921851, -0.004, 0.006), Vector(-0.1596462244243, -0.0106340503599, 0.006), Vector(-0.1590674230184, -0.0172497807023, 0.006), Vector(-0.1582145851088, -0.0238357936487, 0.006), Vector(-0.0942513292468, -0.0125573458663, 0.006), Vector(-0.1582145851088, -0.0238357936487, 0.006), Vector(-0.0942513292468, -0.0125573458663, -0.006), Vector(-0.1582145851088, -0.0238357936487, -0.006), Vector(-0.1582145851088, -0.0238357936487, -0.006), Vector(-0.1582145851088, -0.0238357936487, 0.006), Vector(-0.1599499921851, -0.004, 0.006), Vector(-0.1596462244243, -0.0106340503599, 0.006), Vector(-0.1590674230184, -0.0172497807023, 0.006), Vector(-0.1599499921851, -0.004, -0.006), Vector(-0.1596462244243, -0.0106340503599, -0.006), Vector(-0.1590674230184, -0.0172497807023, -0.006), Vector(-0.095, -0.004, 0.006), Vector(-0.1599499921851, -0.004, 0.006), Vector(-0.095, -0.004, -0.006), Vector(-0.1599499921851, -0.004, -0.006), Vector(-0.0935567360363, 0.0164965797133, 0.006), Vector(-0.0941872615487, 0.0123999904014, 0.006), Vector(-0.0946384961933, 0.0082797969949, 0.006), Vector(-0.0949095810189, 0.0041438425187, 0.006), Vector(-0.095, 0, 0.006), Vector(-0.0935567360363, 0.0164965797133, -0.006), Vector(-0.0941872615487, 0.0123999904014, -0.006), Vector(-0.0946384961933, 0.0082797969949, -0.006), Vector(-0.0949095810189, 0.0041438425187, -0.006), Vector(-0.095, 0, -0.006), Vector(-0.0935567360363, 0.0164965797133, 0.006), Vector(-0.0941872615487, 0.0123999904014, 0.006), Vector(-0.0946384961933, 0.0082797969949, 0.006), Vector(-0.0949095810189, 0.0041438425187, 0.006), Vector(-0.095, 0, 0.006), Vector(-0.0942513292468, 0.0125573458663, 0.006), Vector(-0.1582145851088, 0.0238357936487, 0.006), Vector(-0.1590674230184, 0.0172497807023, 0.006), Vector(-0.1596462244243, 0.0106340503599, 0.006), Vector(-0.1599499921851, 0.004, 0.006), Vector(-0.095, 0.004, 0.006), Vector(-0.095, 0, -0.006), Vector(-0.095, 0.004, -0.006), Vector(-0.095, 0, 0.006), Vector(-0.095, 0.004, 0.006), Vector(-0.0935567360363, 0.0164965797133, -0.006), Vector(-0.0941872615487, 0.0123999904014, -0.006), Vector(-0.0946384961933, 0.0082797969949, -0.006), Vector(-0.0949095810189, 0.0041438425187, -0.006), Vector(-0.095, 0, -0.006), Vector(-0.0942513292468, 0.0125573458663, -0.006), Vector(-0.1582145851088, 0.0238357936487, -0.006), Vector(-0.1590674230184, 0.0172497807023, -0.006), Vector(-0.1596462244243, 0.0106340503599, -0.006), Vector(-0.1599499921851, 0.004, -0.006), Vector(-0.095, 0.004, -0.006), Vector(-0.0942513292468, 0.0125573458663, -0.006), Vector(-0.0935567360363, 0.0164965797133, -0.006), Vector(-0.0942513292468, 0.0125573458663, 0.006), Vector(-0.0935567360363, 0.0164965797133, 0.006), Vector(-0.095, 0.004, 0.006), Vector(-0.1599499921851, 0.004, 0.006), Vector(-0.095, 0.004, -0.006), Vector(-0.1599499921851, 0.004, -0.006), Vector(-0.1582145851088, 0.0238357936487, 0.006), Vector(-0.1590674230184, 0.0172497807023, 0.006), Vector(-0.1596462244243, 0.0106340503599, 0.006), Vector(-0.1599499921851, 0.004, 0.006), Vector(-0.1582145851088, 0.0238357936487, -0.006), Vector(-0.1590674230184, 0.0172497807023, -0.006), Vector(-0.1596462244243, 0.0106340503599, -0.006), Vector(-0.1599499921851, 0.004, -0.006), Vector(-0.0942513292468, 0.0125573458663, 0.006), Vector(-0.1582145851088, 0.0238357936487, 0.006), Vector(-0.0942513292468, 0.0125573458663, -0.006), Vector(-0.1582145851088, 0.0238357936487, -0.006)] when casting to a NumPy array.",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np\n\nOD, ID, GAP, NVANE, VWID = 320, 190, 12, 36, 8\nR_o, R_i, gap, W = OD/2000, ID/2000, GAP/1000, VWID/1000\n\nannulus = bd.Cylinder(R_o, gap) - bd.Cylinder(R_i, gap)\none_vane = bd.Pos(0, (R_i+R_o)/2, 0) * bd.Box(W, R_o-R_i, gap)\nvanes = bd.Compound([bd.Rot(0,0,a) * one_vane for a in np.linspace(0,360,NVANE,endpoint=False)])\nfluid = annulus - vanes\nprint(\"volume m^3:\", fluid.volume)\n\ngroups = {\"inlet\":[], \"outlet\":[], \"friction\":[], \"vanes\":[]}\nfor f in fluid.faces():\n    n = f.normal_at()\n    if abs(n.Z) > 0.9:\n        groups[\"friction\"].append(f)\n    else:\n        import math\n        surfkind = bd.geom_type(f)  # e.g. 'CYLINDER','PLANE'\n        r = math.hypot(f.center().X, f.center().Y)\n        if abs(r - R_i) < 2e-4: groups[\"inlet\"].append(f)\n        elif abs(r - R_o) < 2e-4: groups[\"outlet\"].append(f)\n        else: groups[\"vanes\"].append(f)\nfor k,v in groups.items():\n    tot=sum(f.area for f in v)\n    print(k, len(v), tot)",
+      "exit_code": 1,
+      "seconds": 0.5527657710008498,
+      "output": "volume m^3: 0.00040028038420021454\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 20\u001b[39m\n\u001b[32m     16\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m abs(n.Z) > \u001b[32m0.9\u001b[39m:\n\u001b[32m     17\u001b[39m         groups[\u001b[33m\"friction\"\u001b[39m].append(f)\n\u001b[32m     18\u001b[39m     \u001b[38;5;28;01melse\u001b[39;00m:\n\u001b[32m     19\u001b[39m         \u001b[38;5;28;01mimport\u001b[39;00m math\n\u001b[32m---> \u001b[39m\u001b[32m20\u001b[39m         surfkind = bd.geom_type(f)  \u001b[38;5;66;03m# e.g. 'CYLINDER','PLANE'\u001b[39;00m\n\u001b[32m     21\u001b[39m         r = math.hypot(f.center().X, f.center().Y)\n\u001b[32m     22\u001b[39m         \u001b[38;5;28;01mif\u001b[39;00m abs(r - R_i) < \u001b[32m2e-4\u001b[39m: groups[\u001b[33m\"inlet\"\u001b[39m].append(f)\n\u001b[32m     23\u001b[39m         \u001b[38;5;28;01melif\u001b[39;00m abs(r - R_o) < \u001b[32m2e-4\u001b[39m: groups[\u001b[33m\"outlet\"\u001b[39m].append(f)\n\n\u001b[31mAttributeError\u001b[39m: module 'build123d' has no attribute 'geom_type'",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd\nimport numpy as np, math\n\nOD, ID, GAP, NVANE, VWID = 320, 190, 12, 36, 8\nR_o, R_i, gap, W = OD/2000, ID/2000, GAP/1000, VWID/1000\n\nannulus = bd.Cylinder(R_o, gap) - bd.Cylinder(R_i, gap)\none_vane = bd.Pos(0, (R_i+R_o)/2, 0) * bd.Box(W, R_o-R_i, gap)\nvanes = bd.Compound([bd.Rot(0,0,a) * one_vane for a in np.linspace(0,360,NVANE,endpoint=False)])\nfluid = annulus - vanes\nprint(\"volume m^3:\", fluid.volume)\n\ngroups = {\"inlet\":[], \"outlet\":[], \"friction\":[], \"vanes\":[]}\nprint(\"geom_type available:\", [c for c in fluid.faces()[:2]] )\nsamples=[]\nfor f in fluid.faces():\n    n = f.normal_at()\n    gt = f.geom_type\n    samples.append((str(n), gt))\n    if abs(n.Z) > 0.9:\n        groups[\"friction\"].append(f)\n    else:\n        r = math.hypot(f.center().X, f.center().Y)\n        cyl = gt != bd.GeomType.PLANE\n        if cyl and abs(r - R_i) < 2e-4: groups[\"inlet\"].append(f)\n        elif cyl and abs(r - R_o) < 2e-4: groups[\"outlet\"].append(f)\n        elif not cyl: groups[\"vanes\"].append(f)\n\nfor k,v in groups.items():\n    print(k, len(v), sum(f.area for f in v))",
+      "exit_code": 0,
+      "seconds": 0.6033399970001483,
+      "output": "volume m^3: 0.00040028038420021454\ngeom_type available: [<build123d.topology.two_d.Face object at 0x7ca5f96d3250>, <build123d.topology.two_d.Face object at 0x7ca5f96d2d50>]\ninlet 36 0.0071628312501847285\noutlet 36 0.008607355688497121\nfriction 72 0.06671339736670204\nvanes 144 0.05957279324788981",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd, math, os\nfrom pathlib import Path\ntri = Path(\"constant/triSurface\"); tri.mkdir(parents=True, exist_ok=True)\n\nf_top = [f for f in groups[\"friction\"] if f.center().Z > 0]\nf_bot = [f for f in groups[\"friction\"] if f.center().Z < 0]\nprint(len(f_top), len(f_bot))\n\npatches = {\n    \"friction_top\": bd.Compound(children=f_top),\n    \"friction_bottom\": bd.Compound(children=f_bot),\n    \"inlet\": bd.Compound(children=groups[\"inlet\"]),\n    \"outlet\": bd.Compound(children=groups[\"outlet\"]),\n    \"vanes\": bd.Compound(children=groups[\"vanes\"]),\n}\nfor name, comp in patches.items():\n    bd.export_stl(comp, str(tri / (name + \".stl\")))\nprint(sorted(os.listdir(tri)))",
+      "exit_code": 0,
+      "seconds": 0.8529174690011132,
+      "output": "36 36\n['friction_bottom.stl', 'friction_top.stl', 'inlet.stl', 'outlet.stl', 'vanes.stl']",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npl = pv.Plotter(off_screen=True)\nfor name in patches:\n    m = pv.read(f\"constant/triSurface/{name}.stl\")\n    pl.add_mesh(m, color=name)\n    pl.enable_anti_aliasing()\n# set colors manually? pv.read ok\npl.view_xy(); pl.show(screenshot=\"view.png\")\nprint(\"done\")",
+      "exit_code": 1,
+      "seconds": 1.3049042969978473,
+      "output": "\u001b[0m\u001b[33m2026-09-14 16:09:32.945 (  89.503s) [    7CA764FCA780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 16:09:32.945 (  89.504s) [    7CA764FCA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 16:09:32.959 (  89.518s) [    7CA764FCA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/colors.py:1761\u001b[39m, in \u001b[36mColor.__init__\u001b[39m\u001b[34m(self, color, opacity, default_color, default_opacity)\u001b[39m\n\u001b[32m   1759\u001b[39m \u001b[38;5;28;01melif\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(color, \u001b[38;5;28mstr\u001b[39m):\n\u001b[32m   1760\u001b[39m     \u001b[38;5;66;03m# From named color or hex string\u001b[39;00m\n\u001b[32m-> \u001b[39m\u001b[32m1761\u001b[39m     \u001b[30;43mself\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43m_from_str\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mcolor\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m   1762\u001b[39m \u001b[38;5;28;01melif\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(color, \u001b[38;5;28mdict\u001b[39m):\n\u001b[32m   1763\u001b[39m     \u001b[38;5;66;03m# From dictionary\u001b[39;00m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/colors.py:1925\u001b[39m, in \u001b[36mColor._from_str\u001b[39m\u001b[34m(self, n)\u001b[39m\n\u001b[32m   1924\u001b[39m msg = \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[33mInvalid color name or hex string: \u001b[39m\u001b[38;5;132;01m{\u001b[39;00marg\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m'\u001b[39m\n\u001b[32m-> \u001b[39m\u001b[32m1925\u001b[39m \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(msg) \u001b[38;5;28;01mfrom\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[38;5;28;01mNone\u001b[39;00m\n\n\u001b[31mValueError\u001b[39m: Invalid color name or hex string: friction_top\n\nThe above exception was the direct cause of the following exception:\n\n\u001b[31mValueError\u001b[39m \n... 5117 characters cut ...\n key, value)\u001b[39m\n\u001b[32m    529\u001b[39m \u001b[38;5;250m\u001b[39m\u001b[33;03m\"\"\"Prevent adding new attributes to classes using \"normal\" methods.\"\"\"\u001b[39;00m\n\u001b[32m    530\u001b[39m \u001b[38;5;28mself\u001b[39m._check_new_attribute(key)\n\u001b[32m--> \u001b[39m\u001b[32m531\u001b[39m \u001b[30;43mobject\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43m__setattr__\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mself\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mkey\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mvalue\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/_property.py:356\u001b[39m, in \u001b[36mProperty.color\u001b[39m\u001b[34m(self, value)\u001b[39m\n\u001b[32m    353\u001b[39m \u001b[38;5;129m@color\u001b[39m.setter\n\u001b[32m    354\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mcolor\u001b[39m(\u001b[38;5;28mself\u001b[39m, value):\n\u001b[32m    355\u001b[39m     \u001b[38;5;28mself\u001b[39m._color_set = value \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m\n\u001b[32m--> \u001b[39m\u001b[32m356\u001b[39m     rgb_color = \u001b[30;43mColor\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mvalue\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mdefault_color\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mself\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43m_theme\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mcolor\u001b[39;49m\u001b[30;43m)\u001b[39;49m  \u001b[38;5;66;03m# type: ignore[union-attr]\u001b[39;00m\n\u001b[32m    357\u001b[39m     \u001b[38;5;28mself\u001b[39m.SetColor(rgb_color.float_rgb)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/misc.py:442\u001b[39m, in \u001b[36m_AutoFreezeMeta.__call__\u001b[39m\u001b[34m(cls, *args, **kwargs)\u001b[39m\n\u001b[32m    441\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34m__call__\u001b[39m(\u001b[38;5;28mcls\u001b[39m: \u001b[38;5;28mtype\u001b[39m[_T], *args, **kwargs) -> _T:\n\u001b[32m--> \u001b[39m\u001b[32m442\u001b[39m     obj = \u001b[30;43msuper\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m)\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43m__call__\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43margs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43mkwargs\u001b[39;49m\u001b[30;43m)\u001b[39;49m  \u001b[38;5;66;03m# type: ignore[misc]\u001b[39;00m\n\u001b[32m    443\u001b[39m     obj._no_new_attributes(\u001b[38;5;28mcls\u001b[39m)\n\u001b[32m    444\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m obj\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243\u001b[39m, in \u001b[36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f\u001b[39m\u001b[34m(*args, **kwargs)\u001b[39m\n\u001b[32m    239\u001b[39m             warn_external(msg, PyVistaDeprecationWarning)\n\u001b[32m    241\u001b[39m         warn_positional_args()\n\u001b[32m--> \u001b[39m\u001b[32m243\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mf\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43margs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43m*\u001b[39;49m\u001b[30;43mkwargs\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/colors.py:1786\u001b[39m, in \u001b[36mColor.__init__\u001b[39m\u001b[34m(self, color, opacity, default_color, default_opacity)\u001b[39m\n\u001b[32m   1775\u001b[39m \u001b[38;5;28;01mexcept\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m \u001b[38;5;28;01mas\u001b[39;00m e:\n\u001b[32m   1776\u001b[39m     msg = (\n\u001b[32m   1777\u001b[39m         \u001b[33m'\u001b[39m\u001b[38;5;130;01m\\n\u001b[39;00m\u001b[33m'\u001b[39m\n\u001b[32m   1778\u001b[39m         \u001b[33mf\u001b[39m\u001b[33m'\u001b[39m\u001b[38;5;130;01m\\t\u001b[39;00m\u001b[33mInvalid color input: (\u001b[39m\u001b[38;5;132;01m{\u001b[39;00mcolor\u001b[38;5;132;01m}\u001b[39;00m\u001b[33m)\u001b[39m\u001b[38;5;130;01m\\n\u001b[39;00m\u001b[33m'\u001b[39m\n\u001b[32m   (...)\u001b[39m\u001b[32m   1784\u001b[39m         \u001b[33m\"\u001b[39m\u001b[38;5;130;01m\\t\u001b[39;00m\u001b[38;5;130;01m\\t\u001b[39;00m\u001b[33mcolor=\u001b[39m\u001b[33m'\u001b[39m\u001b[33m#FFFFFF\u001b[39m\u001b[33m'\u001b[39m\u001b[33m\"\u001b[39m\n\u001b[32m   1785\u001b[39m     )\n\u001b[32m-> \u001b[39m\u001b[32m1786\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(msg) \u001b[38;5;28;01mfrom\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34;01me\u001b[39;00m\n\u001b[32m   1788\u001b[39m \u001b[38;5;66;03m# Overwrite opacity if it is provided\u001b[39;00m\n\u001b[32m   1789\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\n\u001b[31mValueError\u001b[39m: \n\tInvalid color input: (friction_top)\n\tMust be a string, rgb(a) sequence, or hex color string.  For example:\n\t\tcolor='white'\n\t\tcolor='w'\n\t\tcolor=[1.0, 1.0, 1.0]\n\t\tcolor=[255, 255, 255]\n\t\tcolor='#FFFFFF'",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\npalette = [\"red\",\"blue\",\"green\",\"orange\",\"purple\"]\npl = pv.Plotter(off_screen=True)\nfor i,(name) in enumerate(patches):\n    m = pv.read(f\"constant/triSurface/{name}.stl\")\n    pl.add_mesh(m, color=palette[i%len(palette)], label=name)\npl.view_xy(); pl.show(screenshot=\"view.png\")\nprint(\"ok\")",
+      "exit_code": 0,
+      "seconds": 0.25167214199973387,
+      "output": "ok\n\n\u001b[0m\u001b[33m2026-09-14 16:09:44.360 ( 100.918s) [    7CA764FCA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 16:09:44.360 ( 100.919s) [    7CA764FCA780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_288837/6980514.py:7: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  pl.view_xy(); pl.show(screenshot=\"view.png\")",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import math, os\nfrom pathlib import Path\nfor d in [\"system\",\"constant\",\"0\"]: os.makedirs(d, exist_ok=True)\n\n# background mesh box slightly larger than disc\nx0,x1 = -0.175, 0.175; y0,y1=-0.175,0.175; z0,z1=-0.02,0.02\nblock = \"\"\"FoamFile {version 2.0; format ascii; class dictionary; object blockMeshDict;}\nconvertToMeters 1;\nvertices ( ($x0 $y0 $z0) ($x1 $y0 $z0) ($x1 $y1 $z0) ($x0 $y1 $z0)\n           ($x0 $y0 $z1) ($x1 $y0 $z1) ($x1 $y1 $z1) ($x0 $y1 $z1) );\nblocks ( hex (0 1 2 3 4 5 6 7) (58 58 4) simpleGrading (1 1 1) );\nboundary ( minor { type patch; } );\n\"\"\"\nblock = block.replace(\"$x0\",str(x0)).replace(\"$x1\",str(x1)).replace(\"$y0\",str(y0)).replace(\"$y1\",str(y1)).replace(\"$z0\",str(z0)).replace(\"$z1\",str(z1))\n# FoamFile as written inline invalid; write fun dict header properly\nheader = \"FoamFile\\n{\\n version 2.0;\\n format ascii;\\n class dictionary;\\n object blockMeshDict;\\n}\\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\\n\"\nblockdict = header + block[block.find(\"convertToMeters\"):]\nPath(\"system/blockMeshDict\").write_text(blockdict)\n\nr = 0.0; # locationInMesh inside a passage: between two adjacent vanes\nang = math.radians(5); rm=0.1275\nloc = (rm*math.sin(ang), rm*math.cos(ang), 0.0)\n\ngeom = \"\\n\".join(f'{n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in patches)\ngeomregions = \"\\n\".join(\"\"\"{n} {{ level (4 4); patchInfo {{ type wall; }} }}\"\"\".format(n=n) for n in [\"vanes\",\"friction_top\",\"friction_bottom\"])\n\nsnappy = \"\"\"FoamFile\n{\n version 2.0; format ascii; class dictionary; object snappyHexMeshDict;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\ncastellatedMesh true; snap true; addLayers false;\n\ngeometry\n{\n $GEOM\n}\n\ncastellatedMeshControls\n{\n maxLocalCells 100000;\n maxGlobalCells 2000000;\n minRefinementCells 10;\n maxLoadUnbalance 0.10;\n nCellsBetweenLevels 2;\n features ();\n refinementSurfaces\n {\n $REGIONS\n }\n resolveFeatureAngle 30;\n refinementRegions { }\n locationInMesh ($LX $LY $LZ);\n allowFreeStandingZoneFaces true;\n}\n\nsnapControls\n{\n nSmoothPatch 3;\n tolerance 2.0;\n nSolveIter 30;\n nRelaxIter 5;\n nFeatureSnapIter 10;\n implicitFeatureSnap false;\n explicitFeatureSnap true;\n multiRegionFeatureSnap false;\n}\n\nmeshQualityControls\n{; maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;\n minFlatness 0.5; minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02;\n minDeterminant 0.001; checkFaceSimpleEdges true; minLengthScale 0.0001;\n minVolRatio 0.01; maxFaceWeightRatio 0.2; maxVolWeightRatio 0.2;\n nSmoothScale 4; errorReduction 0.75; }\n\"\"\"\nsnappy = snappy.replace(\"$GEOM\", geom).replace(\"$REGIONS\", geomregions)\\\n .replace(\"$LX\",str(loc[0])).replace(\"$LY\",str(loc[1])).replace(\"$LZ\",str(loc[2]))\n# inlet/outlet should be patch type\nextra = \"\\n\".join(\"{n} { level (4 4); patchInfo { type patch; } }\".format(n=n) for n in [\"inlet\",\"outlet\"])\nsnappy = snappy.replace(\"$REGIONS\", geomregions)\n# simulate already replaced; fix region substitution order by re-doing:\nsnappy = snappy.replace(\"refinementSurfaces\\n {\\n }\\n\",\"refinementSurfaces { x; }\")\nsnappy = snappy.replace(\"$REGIONS\", geomregions + extra)\nPath(\"system/snappyHexMeshDict\").write_text(snappy)\nprint(snappy.split(\"refinementSurfaces\")[1][:600])",
+      "exit_code": 1,
+      "seconds": 0.05062098599955789,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[8]\u001b[39m\u001b[32m, line 79\u001b[39m\n\u001b[32m     75\u001b[39m \"\"\"\n\u001b[32m     76\u001b[39m snappy = snappy.replace(\"$GEOM\", geom).replace(\"$REGIONS\", geomregions)\\\n\u001b[32m     77\u001b[39m  .replace(\u001b[33m\"$LX\"\u001b[39m,str(loc[\u001b[32m0\u001b[39m])).replace(\u001b[33m\"$LY\"\u001b[39m,str(loc[\u001b[32m1\u001b[39m])).replace(\u001b[33m\"$LZ\"\u001b[39m,str(loc[\u001b[32m2\u001b[39m]))\n\u001b[32m     78\u001b[39m \u001b[38;5;66;03m# inlet/outlet should be patch type\u001b[39;00m\n\u001b[32m---> \u001b[39m\u001b[32m79\u001b[39m extra = \u001b[33m\"\\n\"\u001b[39m.join(\u001b[33m\"{n} { level (4 4); patchInfo { type patch; } }\"\u001b[39m.format(n=n) \u001b[38;5;28;01mfor\u001b[39;00m n \u001b[38;5;28;01min\u001b[39;00m [\u001b[33m\"inlet\"\u001b[39m,\u001b[33m\"outlet\"\u001b[39m])\n\u001b[32m     80\u001b[39m snappy = snappy.replace(\u001b[33m\"$REGIONS\"\u001b[39m, geomregions)\n\u001b[32m     81\u001b[39m \u001b[38;5;66;03m# simulate already replaced; fix region substitution order by re-doing:\u001b[39;00m\n\u001b[32m     82\u001b[39m snappy = snappy.replace(\u001b[33m\"refinementSurfaces\\n {\\n }\\n\"\u001b[39m,\u001b[33m\"refinementSurfaces { x; }\"\u001b[39m)\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[8]\u001b[39m\u001b[32m, line 79\u001b[39m, in \u001b[36m<genexpr>\u001b[39m\u001b[34m(.0)\u001b[39m\n\u001b[32m---> \u001b[39m\u001b[32m79\u001b[39m extra = \u001b[33m\"\\n\"\u001b[39m.join(\u001b[33m\"{n} { level (4 4); patchInfo { type patch; } }\"\u001b[39m.format(n=n) \u001b[38;5;28;01mfor\u001b[39;00m n \u001b[38;5;28;01min\u001b[39;00m [\u001b[33m\"inlet\"\u001b[39m,\u001b[33m\"outlet\"\u001b[39m])\n\n\u001b[31mValueError\u001b[39m: unexpected '{' in field name",
+      "image": ""
+    },
+    {
+      "cmd": "import math, os\nfrom pathlib import Path\nos.makedirs(\"system\", exist_ok=True); os.makedirs(\"constant\", exist_ok=True)\n\nx0,x1,y0,y1,z0,z1 = -0.175,0.175,-0.175,0.175,-0.02,0.02\nheader = \"FoamFile\\n{\\n version 2.0;\\n format ascii;\\n class dictionary;\\n object %s;\\n}\\n\"\nbm_body = f\"\"\"\nconvertToMeters 1;\nvertices ( ({x0} {y0} {z0}) ({x1} {y0} {z0}) ({x1} {y1} {z0}) ({x0} {y1} {z0})\n           ({x0} {y0} {z1}) ({x1} {y0} {z1}) ({x1} {y1} {z1}) ({x0} {y1} {z1}) );\nblocks ( hex (0 1 2 3 4 5 6 7) (58 58 4) simpleGrading (1 1 1) );\nboundary ( dummy {{ type patch; faces (((0 1 2 3))) ;}} );\n\"\"\"\nPath(\"system/blockMeshDict\").write_text(header%\"blockMeshDict\" + bm_body)\n\nang=math.radians(5); rm=0.1275\nlx,ly,lz = rm*math.sin(ang), rm*math.cos(ang), 0.0\n\ndef region(name, ptype):\n    return f'    {name} {{ level (4 4); patchInfo {{ type {ptype}; }} }}\\n'\ngeom = \"\".join(f'    {n}.stl {{ type triSurfaceMesh; name {n}; }}\\n' for n in patches)\nregions = \"\".join(region(n, \"wall\") for n in [\"vanes\",\"friction_top\",\"friction_bottom\"]) + \\\n          \"\".join(region(n, \"patch\") for n in [\"inlet\",\"outlet\"])\n\nsnappy = header%\"snappyHexMeshDict\" + f\"\"\"\ncastellatedMesh true; snap true; addLayers false;\ngeometry\n{{\n{geom} }}\ncastellatedMeshControls\n{{\n maxLocalCells 100000; maxGlobalCells 2000000; minRefinementCells 10;\n maxLoadUnbalance 0.10; nCellsBetweenLevels 2;\n features ();\n refinementSurfaces\n {{\n{regions} }}\n resolveFeatureAngle 30;\n refinementRegions {{ }}\n locationInMesh ({lx} {ly} {lz});\n allowFreeStandingZoneFaces true;\n}}\nsnapControls\n{{\n nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5; nFeatureSnapIter 10;\n implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false;\n}}\nmeshQualityControls\n{{\n maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;\n minFlatness 0.5; minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02;\n minDeterminant 0.001; checkFaceSimpleEdges true; minLengthScale 0.0001;\n minVolRatio 0.01; maxFaceWeightRatio 0.2; maxVolWeightRatio 0.2;\n nSmoothScale 4; errorReduction 0.75;\n}}\n\"\"\"\nPath(\"system/snappyHexMeshDict\").write_text(snappy)\nprint(\"dicts written\")",
+      "exit_code": 0,
+      "seconds": 1.5334495890019753,
+      "output": "dicts written",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\nr1 = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(\"blockMesh rc\", r1.returncode, r1.stdout[-300:], r1.stderr[-300:])\nif r1.returncode==0:\n    r2 = subprocess.run([\"snappyHexMesh\"], capture_output=True, text=True)\n    print(\"snappy rc\", r2.returncode, r2.stdout[-1200:], r2.stderr[-1200:])",
+      "exit_code": 0,
+      "seconds": 0.20106408600258874,
+      "output": "blockMesh rc 1 leModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n olDict\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.stdout[:1500])\nprint(\"---\")\nhead = open(\"system/blockMeshDict\").read()[:500]\nprint(head)",
+      "exit_code": 0,
+      "seconds": 0.9816610289999517,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : blockMesh\nDate   : Sep 14 2026\nTime   : 16:11:34\nHost   : yc-demo\nPID    : 291275\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * \n---\nFoamFile\n{\n version 2.0;\n format ascii;\n class dictionary;\n object blockMeshDict;\n}\n\nconvertToMeters 1;\nvertices ( (-0.175 -0.175 -0.02) (0.175 -0.175 -0.02) (0.175 0.175 -0.02) (-0.175 0.175 -0.02)\n           (-0.175 -0.175 0.02) (0.175 -0.175 0.02) (0.175 0.175 0.02) (-0.175 0.175 0.02) );\nblocks ( hex (0 1 2 3 4 5 6 7) (58 58 4) simpleGrading (1 1 1) );\nboundary ( dummy { type patch; faces (((0 1 2 3))) ;} );",
+      "image": ""
+    },
+    {
+      "cmd": "r = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(r.stdout[-1500:])",
+      "exit_code": 0,
+      "seconds": 0.20106588500129874,
+      "output": "-------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : blockMesh\nDate   : Sep 14 2026\nTime   : 16:11:43\nHost   : yc-demo\nPID    : 291285\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, os\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(\"rc\", r.returncode)\nprint(r.stdout[-800:])\nprint(\"stderr\", r.stderr[-800:])\nprint(os.listdir(\".\"))",
+      "exit_code": 0,
+      "seconds": 0.2013270650022605,
+      "output": "rc 1\nAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n\nstderr \n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22/system/controlDict\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting\n\n\n['constant', 'view.png', 'system', '.reference', '0']",
+      "image": ""
+    },
+    {
+      "cmd": "from pathlib import Path\nheader = \"FoamFile\\n{\\n version 2.0;\\n format ascii;\\n class dictionary;\\n object %s;\\n}\\n\"\ncd = header%\"controlDict\" + \"\"\"\napplication foo;\nstartFrom startTime;\nstartTime 0;\nstopAt endTime;\nendTime 1;\ndeltaT 1;\nwriteControl timeStep;\nwriteInterval 1;\npurgeWrite 0;\nwriteFormat ascii;\nwritePrecision 8;\nwriteCompression off;\ntimeFormat general;\ntimePrecision 6;\nrunTimeModifiable true;\n\"\"\"\nPath(\"system/controlDict\").write_text(cd)\n\nimport subprocess, os\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(\"blockMesh rc\", r.returncode, r.stdout[-200:], r.stderr[-200:])",
+      "exit_code": 0,
+      "seconds": 0.20103652499892632,
+      "output": "blockMesh rc 1 e time\n\nCreating block mesh from \"system/blockMeshDict\"\nNo non-linear block edges defined\nNo non-planar block faces defined\nCreating topology blocks\n\nCreating topology patches - from boundary section\n \n\nfile: dummy/faces at line 13.\n\n    From void Foam::blockMeshTools::read(Foam::Istream&, Foam::label&, const Foam::dictionary&)\n    in file blockMeshTools/blockMeshTools.C at line 83.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "from pathlib import Path\nheader = \"FoamFile\\n{\\n version 2.0;\\n format ascii;\\n class dictionary;\\n object %s;\\n}\\n\"\nx0,x1,y0,y1,z0,z1 = -0.175,0.175,-0.175,0.175,-0.02,0.02\nbm_body = f\"\"\"\nconvertToMeters 1;\nvertices ( ({x0} {y0} {z0}) ({x1} {y0} {z0}) ({x1} {y1} {z0}) ({x0} {y1} {z0})\n           ({x0} {y0} {z1}) ({x1} {y0} {z1}) ({x1} {y1} {z1}) ({x0} {y1} {z1}) );\nblocks ( hex (0 1 2 3 4 5 6 7) (58 58 4) simpleGrading (1 1 1) );\n\"\"\"\nPath(\"system/blockMeshDict\").write_text(header%\"blockMeshDict\" + bm_body)\n\nimport subprocess\nr = subprocess.run([\"blockMesh\"], capture_output=True, text=True)\nprint(\"blockMesh rc\", r.returncode, r.stdout[-300:], r.stderr[-300:])",
+      "exit_code": 0,
+      "seconds": 1.0030948979983805,
+      "output": "blockMesh rc 0 with 0 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (-0.175 -0.175 -0.02) (0.175 0.175 0.02)\n  nPoints: 17405\n  nCells: 13456\n  nFaces: 44196\n  nInternalFaces: 36540\n----------------\nPatches\n----------------\n  patch 0 (start: 36540 size: 7656) name: defaultFaces\n\nEnd\n\n --> FOAM IOWarning :\n    Found [v1012] 'convertToMeters' entry instead of 'scale' in dictionary \"system/blockMeshDict\"\n\n    This keyword is 180 months old.",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\nr = subprocess.run([\"snappyHexMesh\"], capture_output=True, text=True)\nprint(\"rc\", r.returncode)\nprint(r.stdout[-2000:])\nprint(\"ERR\", r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.3013510689997929,
+      "output": "rc 1\n/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh\nDate   : Sep 14 2026\nTime   : 16:12:35\nHost   : yc-demo\nPID    : 291629\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nERR \n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "from pathlib import Path\nheader = \"FoamFile\\n{\\n version 2.0;\\n format ascii;\\n class dictionary;\\n object %s;\\n}\\n\"\nPath(\"system/fvSchemes\").write_text(header%\"fvSchemes\" + \"ddtSchemes {}\\ndivSchemes {}\\ngradSchemes {}\\nlaplacianSchemes {}\\ninterpolationSchemes {}\\nsnGradSchemes {}\\n\")\nPath(\"system/fvSolution\").write_text(header%\"fvSolution\" + \"solvers {}\\n\")\n\nimport subprocess\nr = subprocess.run([\"snappyHexMesh\"], capture_output=True, text=True)\nprint(\"rc\", r.returncode, \"out\", r.stdout[-500:], \"err\", r.stderr[-500:])",
+      "exit_code": 0,
+      "seconds": 0.30134454799917876,
+      "output": "rc 1 out ds-buildup/work/T22-20260914-160711-7173/t22\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nRead mesh in = 0.04 s\n err \n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'addLayersControls' not found (or not a dictionary) in dictionary \"system/snappyHexMeshDict\"\n\n\nfile: system/snappyHexMeshDict at line 9 to 47.\n\n    From static const Foam::dictionary& Foam::meshRefinement::subDict(const Foam::dictionary&, const Foam::word&, bool, Foam::keyType::option)\n    in file meshRefinement/meshRefinement.C at line 3864.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "from pathlib import Path\ns = Path(\"system/snappyHexMeshDict\").read_text()\ns = s.replace(\"snap true; addLayers false;\",\n              \"snap true; addLayers false;\\naddLayersControls { relativeSizes true; layers { } expansionRatio 1.0; finalLayerThickness 0.5; minThickness 0.1; nGrow 0; featureAngle 60; slipFeatureAngle 30; nRelaxIter 5; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; nOptionalLayerIterations 1; }\")\nPath(\"system/snappyHexMeshDict\").write_text(s)\n\nimport subprocess\nr = subprocess.run([\"snappyHexMesh\"], capture_output=True, text=True)\nprint(\"rc\", r.returncode, \"err\", r.stderr[-300:])\nprint(r.stdout[-800:])",
+      "exit_code": 0,
+      "seconds": 1.5545307569991564,
+      "output": "rc 1 err ppyHexMeshDict\"\n\n\nfile: system/snappyHexMeshDict at line 9 to 48.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting\n\n\nL()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nRead mesh in = 0.05 s",
+      "image": ""
+    },
+    {
+      "cmd": "from pathlib import Path\ns = Path(\"system/snappyHexMeshDict\").read_text()\nfor i,l in enumerate(s.splitlines()):\n    if 8 <= i <= 25: print(i+1, l)\nr2 = subprocess.run([\"snappyHexMesh\"], capture_output=True, text=True)\nprint(r2.stderr[:1200])",
+      "exit_code": 0,
+      "seconds": 0.25128732200028026,
+      "output": "9 castellatedMesh true; snap true; addLayers false;\n10 addLayersControls { relativeSizes true; layers { } expansionRatio 1.0; finalLayerThickness 0.5; minThickness 0.1; nGrow 0; featureAngle 60; slipFeatureAngle 30; nRelaxIter 5; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; nOptionalLayerIterations 1; }\n11 geometry\n12 {\n13     friction_top.stl { type triSurfaceMesh; name friction_top; }\n14     friction_bottom.stl { type triSurfaceMesh; name friction_bottom; }\n15     inlet.stl { type triSurfaceMesh; name inlet; }\n16     outlet.stl { type triSurfaceMesh; name outlet; }\n17     vanes.stl { type triSurfaceMesh; name vanes; }\n18  }\n19 castellatedMeshControls\n20 {\n21  maxLocalCells 100000; maxGlobalCells 2000000; minRefinementCells 10;\n22  maxLoadUnbalance 0.10; nCellsBetweenLevels 2;\n23  features ();\n24  refinementSurfaces\n25  {\n26     vanes { level (4 4); patchInfo { type wall; } }\n\n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'mergeTolerance' not found in dictionary \"/home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22/system/snappyHexMeshDict\"\n\n\nfile: system/snappyHexMeshDict at line 9 to 48.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "from pathlib import Path\ns = Path(\"system/snappyHexMeshDict\").read_text()\ns = s.replace(\"implicitFeatureSnap false;\", \"explicitFeatureSnap initialTempted TRUE;\\n implicitFeatureSnap false; mergeTolerance 1e-06;\")\nPath(\"system/snappyHexMeshDict\").write_text(s)\n\nimport subprocess\nr = subprocess.run([\"snappyHexMesh\"], capture_output=True, text=True)\nprint(\"rc\", r.returncode, \"err\", r.stderr[-400:])\nprint(r.stdout[-400:])",
+      "exit_code": 0,
+      "seconds": 1.0534618040001078,
+      "output": "rc 1 err  found in dictionary \"/home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22/system/snappyHexMeshDict\"\n\n\nfile: system/snappyHexMeshDict at line 9 to 49.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting\n\n\nnabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nRead mesh in = 0.06 s",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\nr = subprocess.run([\"snappyHexMesh\"], capture_output=True, text=True)\nprint(r.stderr[:600])",
+      "exit_code": 0,
+      "seconds": 0.25155730199912796,
+      "output": "--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'mergeTolerance' not found in dictionary \"/home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22/system/snappyHexMeshDict\"\n\n\nfile: system/snappyHexMeshDict at line 9 to 49.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "from pathlib import Path\ns = Path(\"system/snappyHexMeshDict\").read_text()\nfor i,l in enumerate(s.splitlines()):\n    if \"snapControls\" in l or 30<=i<=40: print(i+1,l)",
+      "exit_code": 0,
+      "seconds": 0.05108735599787906,
+      "output": "31  }\n32  resolveFeatureAngle 30;\n33  refinementRegions { }\n34  locationInMesh (0.011112357200326417 0.12701482400669756 0.0);\n35  allowFreeStandingZoneFaces true;\n36 }\n37 snapControls\n38 {\n39  nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5; nFeatureSnapIter 10;\n40  explicitFeatureSnap initialTempted TRUE;\n41  implicitFeatureSnap false; mergeTolerance 1e-06; explicitFeatureSnap true; multiRegionFeatureSnap false;",
+      "image": ""
+    },
+    {
+      "cmd": "import math\nfrom pathlib import Path\nheader = \"FoamFile\\n{\\n version 2.0;\\n format ascii;\\n class dictionary;\\n object %s;\\n}\\n\"\nang=math.radians(5); rm=0.1275\nlx,ly,lz = rm*math.sin(ang), rm*math.cos(ang), 0.0\npatches = [\"friction_top\",\"friction_bottom\",\"inlet\",\"outlet\",\"vanes\"]\ngeom = \"\".join(f'    {n}.stl {{ type triSurfaceMesh; name {n}; }}\\n' for n in patches)\ndef region(name, ptype):\n    return f'    {name} {{ level (4 4); patchInfo {{ type {ptype}; }} }}\\n'\nregions = \"\".join(region(n, \"wall\") for n in [\"vanes\",\"friction_top\",\"friction_bottom\"]) + \\\n          \"\".join(region(n, \"patch\") for n in [\"inlet\",\"outlet\"])\n\nsnappy = header%\"snappyHexMeshDict\" + f\"\"\"\nmergeTolerance 1e-06;\ncastellatedMesh true; snap true; addLayers false;\ngeometry\n{{\n{geom} }}\ncastellatedMeshControls\n{{\n maxLocalCells 100000; maxGlobalCells 2000000; minRefinementCells 10;\n maxLoadUnbalance 0.10; nCellsBetweenLevels 2;\n features ();\n refinementSurfaces\n {{\n{regions} }}\n resolveFeatureAngle 30;\n refinementRegions {{ }}\n locationInMesh ({lx} {ly} {lz});\n allowFreeStandingZoneFaces true;\n}}\nsnapControls\n{{\n nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5; nFeatureSnapIter 10;\n implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false;\n}}\naddLayersControls\n{{\n relativeSizes true; layers {{ }} expansionRatio 1.0; finalLayerThickness 0.5;\n minThickness 0.1; nGrow 0; featureAngle 60; slipFeatureAngle 30; nRelaxIter 5;\n nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10;\n maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90;\n nBufferCellsNoExtrude 0; nLayerIter 50; nOptionalLayerIterations 1;\n}}\nmeshQualityControls\n{{\n maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;\n minFlatness 0.5; minVol 1e-13; minTetQuality 1e-15; minArea -1; minTwist 0.02;\n minDeterminant 0.001; checkFaceSimpleEdges true; minLengthScale 0.0001;\n minVolRatio 0.01; maxFaceWeightRatio 0.2; maxVolWeightRatio 0.2;\n nSmoothScale 4; errorReduction 0.75;\n}}\n\"\"\"\nPath(\"system/snappyHexMeshDict\").write_text(snappy)\n\nimport subprocess\nr = subprocess.run([\"snappyHexMesh\"], capture_output=True, text=True)\nprint(\"rc\", r.returncode, \"err\", r.stderr[-300:])\nprint(r.stdout[-400:])",
+      "exit_code": 0,
+      "seconds": 140.9256510089981,
+      "output": "rc 1 err e: system/snappyHexMeshDict/meshQualityControls at line 52 to 56.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]\n    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.\n\nFOAM exiting\n\n\n\n    maxConcave      80;\n    minFlatness     0.5;\n    minVol          1e-13;\n    minTetQuality   1e-15;\n    minArea         -1;\n    minTwist        0.02;\n    minDeterminant  0.001;\n    checkFaceSimpleEdges true;\n    minLengthScale  0.0001;\n    minVolRatio     0.01;\n    maxFaceWeightRatio 0.2;\n    maxVolWeightRatio 0.2;\n    nSmoothScale    4;\n    errorReduction  0.75;\n}\n\n\nChecking initial mesh ...",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\nr = subprocess.run([\"snappyHexMesh\"], capture_output=True, text=True)\nprint(((r.stderr).splitlines())[:4])",
+      "exit_code": 0,
+      "seconds": 144.78551244900154,
+      "output": "['', '', '--> FOAM FATAL IO ERROR: (openfoam-2512)', 'Entry \\'minFaceWeight\\' not found in dictionary \"/home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22/system/snappyHexMeshDict/meshQualityControls\"']",
+      "image": ""
+    },
+    {
+      "cmd": "from pathlib import Path\ns = Path(\"system/snappyHexMeshDict\").read_text()\ns = s.replace(\"maxFaceWeightRatio 0.2; maxVolWeightRatio 0.2;\", \"minFaceWeight 0.2; minVolRatio 0.01;\").replace(\"minVolRatio 0.01;\\n\\n minVolRatio 0.01;\", \"minVolRatio 0.01;\")\n# actually old dict had minVolRatio separately; remove dup\ns = s.replace(\"minVolRatio 0.01;\", \"\")\ns = s.replace(\"minFaceWeight 0.2;\", \"minVolRatio 0.01; minFaceWeight 0.2;\")\nPath(\"system/snappyHexMeshDict\").write_text(s)\n\nimport subprocess\nr = subprocess.run([\"snappyHexMesh\"], capture_output=True, text=True)\nprint(\"rc\", r.returncode, \"stderr:\", r.stderr[:400])\nprint(r.stdout[-600:])",
+      "exit_code": 0,
+      "seconds": 147.15604316799727,
+      "output": "rc 1 stderr: \n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'minTriangleTwist' not found in dictionary \"/home/qiuzi/.openreynolds-buildup/work/T22-20260914-160711-7173/t22/system/snappyHexMeshDict/meshQualityControls\"\n\n\nfile: system/snappyHexMeshDict/meshQualityControls at line 52 to 56.\n\n    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption)\n\n\nDuplicating 0 points on faceZones of type boundary\nSnapping to features in 10 iterations ...\nConstructing mesh displacer ...\nUsing mesh parameters \n{\n    maxNonOrtho     65;\n    maxBoundarySkewness 20;\n    maxInternalSkewness 4;\n    maxConcave      80;\n    minFlatness     0.5;\n    minVol          1e-13;\n    minTetQuality   1e-15;\n    minArea         -1;\n    minTwist        0.02;\n    minDeterminant  0.001;\n    checkFaceSimpleEdges true;\n    minLengthScale  0.0001;\n    minVolRatio     0.01;\n    minFaceWeight   0.2;\n    nSmoothScale    4;\n    errorReduction  0.75;\n}\n\n\nChecking initial mesh ...",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 483,
+      "fenced": true,
+      "text_chars": 225,
+      "thinking_chars": 612,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402059.107905
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 394,
+      "fenced": true,
+      "text_chars": 74,
+      "thinking_chars": 239,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402079.5910926
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 747,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 1388,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402108.7993708
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 592,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 623,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402132.6397889
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 583,
+      "fenced": true,
+      "text_chars": 106,
+      "thinking_chars": 1233,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402155.915804
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 223,
+      "fenced": true,
+      "text_chars": 75,
+      "thinking_chars": 284,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402169.4151475
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 149,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 45,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402180.0009735
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 1641,
+      "fenced": true,
+      "text_chars": 108,
+      "thinking_chars": 1621,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402231.4598324
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 846,
+      "fenced": true,
+      "text_chars": 68,
+      "thinking_chars": 77,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402259.1375964
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 162,
+      "fenced": true,
+      "text_chars": 37,
+      "thinking_chars": 33,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402274.19245
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 148,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 229,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402287.2584689
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 86,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 61,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402298.7792659
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 169,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 337,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402311.1333604
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 245,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 119,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402320.154454
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 444,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 338,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402341.3302052
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 114,
+      "fenced": true,
+      "text_chars": 54,
+      "thinking_chars": 22,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402350.8146355
+    },
+    {
+      "turn": 17,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 216,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 56,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402364.242703
+    },
+    {
+      "turn": 18,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 277,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 30,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402381.852295
+    },
+    {
+      "turn": 19,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 195,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 319,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402396.3923664
+    },
+    {
+      "turn": 20,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 183,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 93,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402405.3036463
+    },
+    {
+      "turn": 21,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 115,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 184,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402417.4494298
+    },
+    {
+      "turn": 22,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 167,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 348,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402427.7638538
+    },
+    {
+      "turn": 23,
+      "steps": 22,
+      "stop_reason": "tool_use",
+      "output_tokens": 843,
+      "fenced": true,
+      "text_chars": 97,
+      "thinking_chars": 269,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402467.6072648
+    },
+    {
+      "turn": 24,
+      "steps": 23,
+      "stop_reason": "tool_use",
+      "output_tokens": 99,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 95,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402620.7737877
+    },
+    {
+      "turn": 25,
+      "steps": 24,
+      "stop_reason": "tool_use",
+      "output_tokens": 286,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 128,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789402781.7818787
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "measured",
+      "why": "the meshing point from system/snappyHexMeshDict is inside the exported surface, 0.006 m clear",
+      "measured": {
+        "point": [
+          0.011112357200326417,
+          0.12701482400669756,
+          0.0
+        ],
+        "source": "system/snappyHexMeshDict",
+        "classification": "inside",
+        "clearance_m": 0.006000000052154063
+      }
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 1,888 triangles across 5 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "friction_bottom.stl",
+          "friction_top.stl",
+          "inlet.stl",
+          "outlet.stl",
+          "vanes.stl"
+        ],
+        "triangles": 1888
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "72 edges walked twice the same way on the welded union of the patch set",
+      "measured": {
+        "flipped_edges": 72,
+        "triangles": 1888
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 136 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 136
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the number of open passages, counted on the mesh, against the 36 the request names",
+      "measured": null
+    },
+    {
+      "property": "one passage's width at the inner diameter and at the outer diameter, measured on the meshed vane patches",
+      "measured": null
+    },
+    {
+      "property": "the vane thickness, measured on the mesh, and the pitch between vane centrelines at the outer diameter",
+      "measured": null
+    },
+    {
+      "property": "the total inlet area at the inner diameter and outlet area at the outer, both measured, and their ratio",
+      "measured": null
+    },
+    {
+      "property": "the air volume, against the annular gap volume minus 36 vanes",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 25,
+    "steps": 24,
+    "seconds": 906.5,
+    "killed": false,
+    "first_mesh_step": 14,
+    "first_mesh_turn": 15
+  }
+}

@@ -1,0 +1,1132 @@
+# -- cell 1 (0.8s, exit 0)
+import numpy as np
+
+def naca2412(n=200):
+    # returns (x, y_lower, y_upper) for unit chord
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2  # cosine spacing 0..1
+    t = 0.12
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1037*x**4)  # closed-ish trailing edge
+    # camber 2% at 40%
+    yc = np.where(x<0.4, 0.02/0.04*(0.8*x - x*x), 0.02/0.36*(1.6 - 2.4*x + 0.8 + 100*np.clip(0.2*x/x,0,0)) )
+    # simpler: piecewise avoid the messy branch
+    m = 0.02; p = 0.4
+    yc = np.where(x<p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p)+2*p*x - x**2))
+    return x, yc-yt, yc+yt
+
+x, yl, yu = naca2412()
+t_max = (yu.max() - yl[np.argmax(yu)])
+print("max thickness (fraction of chord):", t_max, "expect ~0.12")
+# -- output
+max thickness (fraction of chord): 0.11951194414655282 expect ~0.12
+
+/tmp/ipykernel_270612/1104085098.py:9: RuntimeWarning: invalid value encountered in divide
+  yc = np.where(x<0.4, 0.02/0.04*(0.8*x - x*x), 0.02/0.36*(1.6 - 2.4*x + 0.8 + 100*np.clip(0.2*x/x,0,0)) )
+
+# -- cell 2 (2.9s, exit 1)
+import numpy as np
+import build123d as bd
+from build123d import Pos, Plane, loft, Box
+
+def naca2412_sections(chord, n=100):
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2
+    t = 0.12; m = 0.02; p = 0.4
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1037*x**4)
+    yc = np.where(x<p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p)+2*p*x - x**2))
+    return x*chord, yc-yt, yc+yt  # (x, y_lower, y_upper), z along thickness
+
+def section_pts(points):
+    x, yl, yu = points
+    return [(float(xi), float(yu_i)) for xi, yu_i in zip(x, yu)] + \
+           [(float(xi), float(yl_i)) for xi, yl_i in reversed(list(zip(x, yl)))][1:-1]
+
+CR, CT, SPAN = 0.120, 0.080, 0.200  # root/tip chord and span, metres
+r = section_pts(naca2412_sections(CR))
+t = section_pts(naca2412_sections(CT))
+
+build123d_loft = True
+with bd.BuildSketched(bd.Plane.xY):  # span along Z here; will orient later
+    pass
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 22[39m
+[32m     18[39m r = section_pts(naca2412_sections(CR))
+[32m     19[39m t = section_pts(naca2412_sections(CT))
+[32m     20[39m 
+[32m     21[39m build123d_loft = [38;5;28;01mTrue[39;00m
+[32m---> [39m[32m22[39m [38;5;28;01mwith[39;00m bd.BuildSketched(bd.Plane.xY):  [38;5;66;03m# span along Z here; will orient later[39;00m
+[32m     23[39m     [38;5;28;01mpass[39;00m
+
+[31mAttributeError[39m: module 'build123d' has no attribute 'BuildSketched'
+
+# -- cell 3 (1.0s, exit 1)
+import numpy as np
+import build123d as bd
+from build123d import Pos, Plane, loft, Box, Polygon
+
+def naca2412_pts(chord, n=100):
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2
+    t = 0.12; m = 0.02; p = 0.4
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1037*x**4)
+    yc = np.where(x<p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p)+2*p*x - x**2))
+    seq = [(float(xi), float(yu_i)) for xi, yu_i in zip(x, yu)] + \
+          [(float(xi), float(yl_i)) for xi, yl_i in list(zip(x, yl))[1:-1]]
+    return seq
+
+CR, CT, SPAN = 0.120, 0.080, 0.200
+root_pts = naca2412_pts(CR)
+tip_pts  = naca2412_pts(CT)
+
+w_root = bd.Wire.make_polygon([bd.Vector(*p) for p in root_pts])
+w_tip  = bd.Wire.make_polygon([bd.Vector(*p) for p in tip_pts])
+
+# span along Y (root at y=0 on domain wall); section planes normal to Y
+f_root = bd.make_face(w_root)
+f_tip  = bd.make_face(w_tip)
+wing = bd.loft([f_root, f_tip])
+wing = bd.Plane.YZ  # placeholder
+print("sections ok:", len(root_pts), len(tip_pts))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mStdFail_NotDone[39m                           Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 24[39m
+[32m     20[39m 
+[32m     21[39m [38;5;66;03m# span along Y (root at y=0 on domain wall); section planes normal to Y[39;00m
+[32m     22[39m f_root = bd.make_face(w_root)
+[32m     23[39m f_tip  = bd.make_face(w_tip)
+[32m---> [39m[32m24[39m wing = bd.loft([f_root, f_tip])
+[32m     25[39m wing = bd.Plane.YZ  [38;5;66;03m# placeholder[39;00m
+[32m     26[39m print([33m"sections ok:"[39m, len(root_pts), len(tip_pts))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:197[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    193[39m         loft_builder.AddWire(obj.wrapped)
+[32m    195[39m loft_builder.Build()
+[32m--> [39m[32m197[39m [38;5;28;01mreturn[39;00m [30;43mloft_builder[39;49m[30;43m.[39;49m[30;43mShape[39;49m[30;43m([39;49m[30;43m)[39;49m
+
+[31mStdFail_NotDone[39m: BRep_API: command not done
+
+# -- cell 4 (0.1s, exit 1)
+wing = bd.loft([w_root, w_tip], ruled=True)
+print("wing volume:", abs(wing.volume), "bound:", wing.bounding_box().min, wing.bounding_box().max)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 1[39m
+[32m----> [39m[32m1[39m wing = bd.loft([w_root, w_tip], ruled=[38;5;28;01mTrue[39;00m)
+[32m      2[39m print([33m"wing volume:"[39m, abs(wing.volume), [33m"bound:"[39m, wing.bounding_box().min, wing.bounding_box().max)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    157[39m objs = [38;5;28mlist[39m(objs)  [38;5;66;03m# To determine its length[39;00m
+[32m    158[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(objs) < [32m2[39m:
+[32m--> [39m[32m159[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mMore than one wire is required[39m[33m"[39m)
+[32m    160[39m vertices = [obj [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m objs [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj.wrapped, TopoDS_Vertex)]
+[32m    161[39m vertex_count = [38;5;28mlen[39m(vertices)
+
+[31mValueError[39m: More than one wire is required
+
+# -- cell 5 (0.8s, exit 1)
+for w in (w_root, w_tip):
+    print(type(w), w.is_valid(), len(w.edges()) if w.edges() else None, w.closed())
+pts = bd.Polygon.__init__ if hasattr(bd,'Polygon') else None
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 2[39m
+[32m      1[39m [38;5;28;01mfor[39;00m w [38;5;28;01min[39;00m (w_root, w_tip):
+[32m----> [39m[32m2[39m     print(type(w), w.is_valid(), len(w.edges()) [38;5;28;01mif[39;00m w.edges() [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m, w.closed())
+[32m      3[39m pts = bd.Polygon.__init__ [38;5;28;01mif[39;00m hasattr(bd,[33m'Polygon'[39m) [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 6 (0.1s, exit 1)
+for w in (w_root, w_tip):
+    print(type(w), w.is_valid(), len(w.edges()), w.closed)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 2[39m
+[32m      1[39m [38;5;28;01mfor[39;00m w [38;5;28;01min[39;00m (w_root, w_tip):
+[32m----> [39m[32m2[39m     print(type(w), w.is_valid(), len(w.edges()), w.closed)
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 7 (0.1s, exit 0)
+for w in (w_root, w_tip):
+    print(type(w), w.is_valid if hasattr(w,'is_valid') else '?', len(w.edges()), getattr(w,'closed','?'))
+# -- output
+<class 'build123d.topology.one_d.Wire'> True 198 ?
+<class 'build123d.topology.one_d.Wire'> True 198 ?
+
+# -- cell 8 (0.2s, exit 1)
+f_root = bd.make_face(w_root)
+f_tip  = bd.make_face(w_tip)
+wing = bd.loft([f_root, f_tip], ruled=True, mode=bd.Mode.ADD)
+print("wing volume:", wing.volume, "bound:", wing.bounding_box().min, wing.bounding_box().max)
+d = {
+    'box': bd.Box(1,1,1, align=(bd.Align.MIN, bd.Align.MIN, bd.Align.MAX))
+}
+print("ok")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mStdFail_NotDone[39m                           Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[8][39m[32m, line 3[39m
+[32m      1[39m f_root = bd.make_face(w_root)
+[32m      2[39m f_tip  = bd.make_face(w_tip)
+[32m----> [39m[32m3[39m wing = bd.loft([f_root, f_tip], ruled=[38;5;28;01mTrue[39;00m, mode=bd.Mode.ADD)
+[32m      4[39m print([33m"wing volume:"[39m, wing.volume, [33m"bound:"[39m, wing.bounding_box().min, wing.bounding_box().max)
+[32m      5[39m d = {
+[32m      6[39m     [33m'box'[39m: bd.Box([32m1[39m,[32m1[39m,[32m1[39m, align=(bd.Align.MIN, bd.Align.MIN, bd.Align.MAX))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:197[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    193[39m         loft_builder.AddWire(obj.wrapped)
+[32m    195[39m loft_builder.Build()
+[32m--> [39m[32m197[39m [38;5;28;01mreturn[39;00m [30;43mloft_builder[39;49m[30;43m.[39;49m[30;43mShape[39;49m[30;43m([39;49m[30;43m)[39;49m
+
+[31mStdFail_NotDone[39m: BRep_API: command not done
+
+# -- cell 9 (0.1s, exit 1)
+import numpy as np
+import build123d as bd
+
+def naca2412_pts(chord, n=100):
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2
+    t = 0.12; m = 0.02; p = 0.4
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1037*x**4)
+    yc = np.where(x<p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p)+2*p*x - x**2))
+    seq = [(float(xi), float(yu_i)) for xi, yu_i in zip(x, yu)] + \
+          [(float(xi), float(yl_i)) for xi, yl_i in list(zip(x, yl))[1:-1]]
+    return seq
+
+CR, CT, SPAN = 0.120, 0.080, 0.200
+
+def sec_wire(chord, yspan):
+    pts = [bd.Vector(x*1, yspan, th) for x, th in naca2412_pts(1.0)]
+    # scale x and th by chord
+    pts = [bd.Vector(v.X*chord, yspan, v.Y*chord) if False else bd.Vector(v.X*chord, yspan, v.Z*chord) for v in naca2412_pts(chord)]
+    return bd.Wire.make_polygon(pts)
+
+w_root = sec_wire(CR, 0.0)
+w_tip  = sec_wire(CT, SPAN)
+f_root = bd.make_face(w_root)
+f_tip  = bd.make_face(w_tip)
+wing = bd.loft([f_root, f_tip], ruled=True)
+wing = bd.Shape()
+print("wing volume:", 0)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 21[39m
+[32m     17[39m     [38;5;66;03m# scale x and th by chord[39;00m
+[32m     18[39m     pts = [bd.Vector(v.X*chord, yspan, v.Y*chord) [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m bd.Vector(v.X*chord, yspan, v.Z*chord) [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m naca2412_pts(chord)]
+[32m     19[39m     [38;5;28;01mreturn[39;00m bd.Wire.make_polygon(pts)
+[32m     20[39m 
+[32m---> [39m[32m21[39m w_root = sec_wire(CR, [32m0.0[39m)
+[32m     22[39m w_tip  = sec_wire(CT, SPAN)
+[32m     23[39m f_root = bd.make_face(w_root)
+[32m     24[39m f_tip  = bd.make_face(w_tip)
+
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 18[39m, in [36msec_wire[39m[34m(chord, yspan)[39m
+[32m     15[39m [38;5;28;01mdef[39;00m sec_wire(chord, yspan):
+[32m     16[39m     pts = [bd.Vector(x*[32m1[39m, yspan, th) [38;5;28;01mfor[39;00m x, th [38;5;28;01min[39;00m naca2412_pts([32m1.0[39m)]
+[32m     17[39m     [38;5;66;03m# scale x and th by chord[39;00m
+[32m---> [39m[32m18[39m     pts = [bd.Vector(v.X*chord, yspan, v.Y*chord) [38;5;28;01mif[39;00m [38;5;28;01mFalse[39;00m [38;5;28;01melse[39;00m bd.Vector(v.X*chord, yspan, v.Z*chord) [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m naca2412_pts(chord)]
+[32m     19[39m     [38;5;28;01mreturn[39;00m bd.Wire.make_polygon(pts)
+
+[31mAttributeError[39m: 'tuple' object has no attribute 'X'
+
+# -- cell 10 (0.5s, exit 1)
+import numpy as np
+import build123d as bd
+
+def naca2412_pts(chord, n=100):
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2
+    t = 0.12; m = 0.02; p = 0.4
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1037*x**4)
+    yc = np.where(x<p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p)+2*p*x - x**2))
+    seq = [(float(xi*chord), float(yu*chord)) for xi, yu in zip(x, yu)] + \
+          [(float(xi*chord), float(yl*chord)) for xi, yl in list(zip(x, yl))[1:-1]]
+    return seq
+
+CR, CT, SPAN = 0.120, 0.080, 0.200
+
+def sec_wire(chord, yspan):
+    return bd.Wire.make_polygon([bd.Vector(x, yspan, th) for x, th in naca2412_pts(chord)])
+
+w_root = sec_wire(CR, 0.0)
+w_tip  = sec_wire(CT, SPAN)
+f_root = bd.make_face(w_root)
+f_tip  = bd.make_face(w_tip)
+wing = bd.loft([f_root, f_tip], ruled=True)
+print("wing volume:", wing.volume, "bbox:", wing.bounding_box().min, wing.bounding_box().max)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:335[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    334[39m     [38;5;28;01mif[39;00m [38;5;129;01mnot[39;00m new_solid.is_valid:
+[32m--> [39m[32m335[39m         [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mRecovery failed[39m[33m"[39m)
+[32m    336[39m [38;5;28;01mexcept[39;00m [38;5;167;01mException[39;00m [38;5;28;01mas[39;00m e:
+
+[31mValueError[39m: Recovery failed
+
+The above exception was the direct cause of the following exception:
+
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[10][39m[32m, line 22[39m
+[32m     18[39m w_root = sec_wire(CR, [32m0.0[39m)
+[32m     19[39m w_tip  = sec_wire(CT, SPAN)
+[32m     20[39m f_root = bd.make_face(w_root)
+[32m     21[39m f_tip  = bd.make_face(w_tip)
+[32m---> [39m[32m22[39m wing = bd.loft([f_root, f_tip], ruled=[38;5;28;01mTrue[39;00m)
+[32m     23[39m print([33m"wing volume:"[39m, wing.volume, [33m"bbox:"[39m, wing.bounding_box().min, wing.bounding_box().max)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:337[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    335[39m             [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mRecovery failed[39m[33m"[39m)
+[32m    336[39m     [38;5;28;01mexcept[39;00m [38;5;167;01mException[39;00m [38;5;28;01mas[39;00m e:
+[32m--> [39m[32m337[39m         [38;5;28;01mraise[39;00m [38;5;167;01mRuntimeError[39;00m([33m"[39m[33mFailed to create valid loft[39m[33m"[39m) [38;5;28;01mfrom[39;00m[38;5;250m [39m[34;01me[39;00m
+[32m    339[39m [38;5;28;01mif[39;00m context [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m:
+[32m    340[39m     context._add_to_context(new_solid, clean=clean, mode=mode)
+
+[31mRuntimeError[39m: Failed to create valid loft
+
+# -- cell 11 (0.1s, exit 1)
+import numpy as np
+import build123d as bd
+
+def naca2412_pts(chord, n=100):
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2
+    t = 0.12; m = 0.02; p = 0.4
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1037*x**4)
+    yc = np.where(x<p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p)+2*p*x - x**2))
+    seq = [(float(xi*chord), float(yu*chord)) for xi, yu in zip(x, yu)] + \
+          [(float(xi*chord), float(yl*chord)) for xi, yl in list(zip(x, yl))[1:-1]]
+    return seq
+
+CR, CT, SPAN = 0.120, 0.080, 0.200
+
+def sec_wire(chord, yspan):
+    return bd.Wire.make_polygon([bd.Vector(x, yspan, th) for x, th in naca2412_pts(chord)])
+
+w_root = sec_wire(CR, 0.0)
+w_tip  = sec_wire(CT, SPAN)
+wing = bd.loft([w_root, w_tip], ruled=True)
+print("wing volume:", wing.volume, "bbox:", wing.bounding_box().min, wing.bounding_box().max)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[11][39m[32m, line 20[39m
+[32m     16[39m     [38;5;28;01mreturn[39;00m bd.Wire.make_polygon([bd.Vector(x, yspan, th) [38;5;28;01mfor[39;00m x, th [38;5;28;01min[39;00m naca2412_pts(chord)])
+[32m     17[39m 
+[32m     18[39m w_root = sec_wire(CR, [32m0.0[39m)
+[32m     19[39m w_tip  = sec_wire(CT, SPAN)
+[32m---> [39m[32m20[39m wing = bd.loft([w_root, w_tip], ruled=[38;5;28;01mTrue[39;00m)
+[32m     21[39m print([33m"wing volume:"[39m, wing.volume, [33m"bbox:"[39m, wing.bounding_box().min, wing.bounding_box().max)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    157[39m objs = [38;5;28mlist[39m(objs)  [38;5;66;03m# To determine its length[39;00m
+[32m    158[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(objs) < [32m2[39m:
+[32m--> [39m[32m159[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mMore than one wire is required[39m[33m"[39m)
+[32m    160[39m vertices = [obj [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m objs [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj.wrapped, TopoDS_Vertex)]
+[32m    161[39m vertex_count = [38;5;28mlen[39m(vertices)
+
+[31mValueError[39m: More than one wire is required
+
+# -- cell 12 (0.1s, exit 0)
+import numpy as np, build123d as bd
+
+def naca2412_pts(chord, n=100):
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2
+    t = 0.12; m = 0.02; p = 0.4
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1037*x**4)
+    yc = np.where(x<p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p)+2*p*x - x**2))
+    seq = [(float(xi*chord), float(yu*chord)) for xi, yu in zip(x, yu)] + \
+          [(float(xi*chord), float(yl*chord)) for xi, yl in list(zip(x, yl))[1:-1]]
+    return seq
+
+CR, CT, SPAN = 0.120, 0.080, 0.200
+def sec_wire(chord, yspan):
+    return bd.Wire.make_polygon([bd.Vector(x, yspan, th) for x, th in naca2412_pts(chord)])
+
+w_root = sec_wire(CR, 0.0)
+w_tip  = sec_wire(CT, SPAN)
+print(type(w_root), type(w_tip), isinstance(w_root, bd.Wire), isinstance(w_tip, bd.Wire))
+lst = [w_root, w_tip]
+print("len:", len(lst), [getattr(w,'closed','?') for w in lst])
+# -- output
+<class 'build123d.topology.one_d.Wire'> <class 'build123d.topology.one_d.Wire'> True True
+len: 2 ['?', '?']
+
+# -- cell 13 (0.1s, exit 0)
+import numpy as np
+
+def naca2412_pts(chord, n=100):
+    x = (1 - np.cos(np.linspace(0, np.pi, n))) / 2
+    t = 0.12; m = 0.02; p = 0.4
+    yt = 5*t*(0.2969*np.sqrt(x) - 0.1260*x - 0.3516*x**2 + 0.2843*x**3 - 0.1037*x**4)
+    yc = np.where(x<p, m/p**2*(2*p*x - x**2), m/(1-p)**2*((1-2*p)+2*p*x - x**2))
+    seq = [(float(xi), float(yu)) for xi, yu in zip(x, yu)] + \
+          [(float(xi), float(yl)) for xi, yl in list(zip(x, yl))[1:-1]]
+    return np.asarray(seq)  # (N,2) column x, thickness z
+
+CR, CT, SPAN = 0.120, 0.080, 0.200
+root = naca2412_pts(CR); tip = naca2412_pts(CT)
+N = len(root)
+# wing lateral triangles: quad strip between root (y=0) and tip (y=SPAN)
+def tris_wing(r, tp, SPAN):
+    p0 = np.stack([r[:,0], np.zeros(N), r[:,1]], axis=1)      # root y=0
+    p1 = np.stack([tp[:,0], np.full(N, SPAN), tp[:,1]], axis=1) # tip y=SPAN
+    tris = []
+    for i in range(N):
+        j = (i+1) % N
+        a, b, c, d = p0[i], p0[j], p1[j], p1[i]
+        tris += [[a, b, c], [a, c, d]]
+    # caps: fan from centroid
+    def cap(pts, yv, flip):
+        c = [pts[:,0].mean(), yv, pts[:,1].mean()]
+        cent = np.tile(np.array(c), (N,1))
+        for i in range(N):
+            j = (i+1) % N
+            if flip:
+                t = [cent[i], [pts[j,0], yv, pts[j,1]], [pts[i,0], yv, pts[i,1]]]
+            else:
+                t = [cent[i], [pts[i,0], yv, pts[i,1]], [pts[j,0], yv, pts[j,1]]]
+            tris.append(t)
+    cap(tp, SPAN, False)   # tip cap outward +y
+    cap(root, 0.0, True)   # root cap points -y
+    return np.array(tris)
+
+def write_stl(name, tris):
+    with open(name, 'w') as f:
+        f.write('solid ' + name + '\n')
+        for tri in tris:
+            a, b, c = tri
+            nrm = np.cross(b-a, c-a)
+            L = np.linalg.norm(nrm)
+            if L < 1e-15: continue
+            n = nrm / L
+            f.write('facet normal %e %e %e\n' % tuple(n))
+            f.write('  outer loop\n')
+            for v in (a, b, c):
+                f.write('    vertex %e %e %e\n' % tuple(v))
+            f.write('  endloop\nendfacet\n')
+        f.write('endsolid ' + name + '\n')
+
+import os
+os.makedirs('constant/triSurface', exist_ok=True)
+wtris = tris_wing(root, tip, SPAN)
+write_stl('constant/triSurface/wing.stl', wtris)
+print("wing triangles:", len(wtris))
+# -- output
+wing triangles: 792
+
+# -- cell 14 (0.1s, exit 1)
+import numpy as np, os
+CR, CT, SPAN = 0.120, 0.080, 0.200
+X0, X1 = -4*CR, 8*CR           # -0.48 .. 0.96
+Y0, Y1 = 0.0, SPAN + 3*CR      # 0 .. 0.56
+Z0, Z1 = -3*CR, 3*CR           # -0.36 .. 0.36
+
+def face_tris(vmin, vmax):
+    # quad (two tris) from bbox extents on axis with constant coord first index
+    return vmin, vmax
+
+corners = {
+ 'x0': (X0, Y0, Z0);  # placeholder
+}
+def rect(a, b, c, d):
+    return np.array([[a,b,c],[a,c,d]])
+
+# each face fully defined; ensure outward normals via ordering
+patches = {}
+# inlet: x = X0, outward -x   (closedTuple order chosen so normal outward)
+def make_rect(p0, p1, p2, p3):
+    T = rect(p0,p1,p2,p3); return T
+# inlet x=X0 (normal -x): points (-,+y,+z) ccw viewed from -x
+patches['inlet'] = np.array([ [[X0,Y0,Y0*0+Z0],[X0,Y0,Z1],[X0,Y1,Z1]],
+                              [[X0,Y0,Z0],[X0,Y1,Z1],[X0,Y1,Z0]] ])
+# outlet x=X1 (normal +x)
+patches['outlet'] = np.array([ [[X1,Y0,Z1],[X1,Y0,Z0],[X1,Y1,Z0]],
+                               [[X1,Y0,Z1],[X1,Y1,Z0],[X1,Y1,Z1]] ])
+# rootWall y=0 (normal -y)
+patches['rootWall'] = np.array([ [[X0,0,Z0],[X1,0,Z0],[X1,0,Z1]],
+                                 [[X0,0,Z0],[X1,0,Z1],[X0,0,Z1]] ])
+# farField: both z sides + top y face
+ff = []
+# z=Z0 (normal -z)
+ff += [[[X0,Y0,Z0],[X0,Y1,Z0],[X1,Y1,Z0]],
+       [[X0,Y0,Z0],[X1,Y1,Z0],[X1,Y0,Z0]]]
+# z=Z1 (normal +z)
+ff += [[[X0,Y0,Z1],[X1,Y1,Z1],[X0,Y1,Z1]],
+       [[X0,Y0,Z1],[X1,Y0,Z1],[X1,Y1,Z1]]]
+# y=Y1 top (normal +y)
+ff += [[[X0,Y1,Z0],[X1,Y1,Z1],[X1,Y1,Z0]],
+       [[X0,Y1,Z0],[X1,Y1,Z1],[X0,Y1,Z0]]]
+patches['farField'] = np.array(ff)
+
+def write_stl(name, tris):
+    with open(name, 'w') as f:
+        f.write('solid %s\n' % name)
+        for tri in tris:
+            a, b, c = tri
+            n = np.cross(b-a, c-a); L = np.linalg.norm(n)
+            if L < 1e-15: continue
+            f.write('facet normal %e %e %e\n' % tuple(n/L))
+            f.write('  outer loop\n')
+            for v in (a,b,c): f.write('    vertex %e %e %e\n' % tuple(v))
+            f.write('  endloop\nendfacet\n')
+        f.write('endsolid %s\n' % name)
+
+for name, tris in patches.items():
+    write_stl('constant/triSurface/%s.stl' % name, tris)
+print(sorted(os.listdir('constant/triSurface')))
+# -- output
+[36mCell[39m[36m [39m[32mIn[14][39m[32m, line 12[39m
+[31m    [39m[31m'x0': (X0, Y0, Z0);  # placeholder[39m
+                      ^
+[31mSyntaxError[39m[31m:[39m invalid syntax
+
+# -- cell 15 (0.1s, exit 0)
+import numpy as np, os
+CR, CT, SPAN = 0.120, 0.080, 0.200
+X0, X1 = -4*CR, 8*CR
+Y0, Y1 = 0.0, SPAN + 3*CR
+Z0, Z1 = -3*CR, 3*CR
+
+patches = {}
+patches['inlet'] = np.array([ [[X0,Y0,Z0],[X0,Y0,Z1],[X0,Y1,Z1]],
+                              [[X0,Y0,Z0],[X0,Y1,Z1],[X0,Y1,Z0]] ])
+patches['outlet'] = np.array([ [[X1,Y0,Z1],[X1,Y0,Z0],[X1,Y1,Z0]],
+                               [[X1,Y0,Z1],[X1,Y1,Z0],[X1,Y1,Z1]] ])
+patches['rootWall'] = np.array([ [[X0,0,Z0],[X1,0,Z0],[X1,0,Z1]],
+                                 [[X0,0,Z0],[X1,0,Z1],[X0,0,Z1]] ])
+ff = []
+ff += [[[X0,Y0,Z0],[X0,Y1,Z0],[X1,Y1,Z0]],
+       [[X0,Y0,Z0],[X1,Y1,Z0],[X1,Y0,Z0]]]
+ff += [[[X0,Y0,Z1],[X1,Y1,Z1],[X0,Y1,Z1]],
+       [[X0,Y0,Z1],[X1,Y0,Z1],[X1,Y1,Z1]]]
+ff += [[[X0,Y1,Z0],[X1,Y1,Z1],[X1,Y1,Z0]],
+       [[X0,Y1,Z0],[X1,Y1,Z1],[X0,Y1,Z0]]]
+patches['farField'] = np.array(ff)
+
+def write_stl(name, tris):
+    with open(name, 'w') as f:
+        f.write('solid %s\n' % name)
+        for tri in tris:
+            a, b, c = tri
+            n = np.cross(b-a, c-a); L = np.linalg.norm(n)
+            if L < 1e-15: continue
+            f.write('facet normal %e %e %e\n' % tuple(n/L))
+            f.write('  outer loop\n')
+            for v in (a,b,c): f.write('    vertex %e %e %e\n' % tuple(v))
+            f.write('  endloop\nendfacet\n')
+        f.write('endsolid %s\n' % name)
+
+for name, tris in patches.items():
+    write_stl('constant/triSurface/%s.stl' % name, tris)
+print('files:', sorted(os.listdir('constant/triSurface')))
+# -- output
+files: ['farField.stl', 'inlet.stl', 'outlet.stl', 'rootWall.stl', 'wing.stl']
+
+# -- cell 16 (0.1s, exit 0)
+import os
+CR, CT, SPAN = 0.120, 0.080, 0.200
+X0, X1 = -4*CR, 8*CR
+Y0, Y1 = 0.0, SPAN + 3*CR
+Z0, Z1 = -3*CR, 3*CR
+
+os.makedirs('system', exist_ok=True)
+block = f"""
+FoamFile {{ version 2.0; format ascii; class dictionary; object blockMeshDict; }}
+convertToMeters 1;
+vertices
+(
+    ({X0} {Y0} {Z0})
+    ({X1} {Y0} {Z0})
+    ({X1} {Y1} {Z0})
+    ({X0} {Y1} {Z0})
+    ({X0} {Y0} {Z1})
+    ({X1} {Y0} {Z1})
+    ({X1} {Y1} {Z1})
+    ({X0} {Y1} {Z1})
+);
+blocks( hex (0 1 2 3 4 5 6 7) (80 32 40) simpleGrading (1 1 1) );
+edges( );
+boundary( );
+"""
+open('system/blockMeshDict','w').write(block)
+print('blockMeshDict written')
+# -- output
+blockMeshDict written
+
+# -- cell 17 (0.1s, exit 0)
+shmd = """
+FoamFile { version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }
+castellatedMesh true; snap true; addLayers false;
+geometry
+{
+    inlet    { type triSurfaceMesh; file "inlet.stl"; }
+    outlet   { type triSurfaceMesh; file "outlet.stl"; }
+    rootWall { type triSurfaceMesh; file "rootWall.stl"; }
+    farField { type triSurfaceMesh; file "farField.stl"; }
+    wing     { type triSurfaceMesh; file "wing.stl"; }
+}
+castellatedMeshControls
+{
+    maxLocalCells 1000000; maxGlobalCells 2000000; minRefinementCells 10;
+    maxLoadUnbalanceFactor 20; nCellsBetweenLevels 2; allowDomainBoundingBox true;
+    features ();
+    refinementSurfaces
+    {
+        wing
+        {
+            level (2 3);
+            regions
+            {
+                solid { level (2 3); }
+            }
+        }
+    }
+    resolveFeatureAngle 30;
+    locationInMesh (0.6 0.3 0.2);
+}
+snapControls
+{
+    nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5; nFeatureSnapIter 10;
+    implicitFeatureSnap false; explicitFeatureSnap true; multiRegionFeatureSnap false;
+}
+addLayersControls
+{
+    relativeSizes true; layers (); expansionRatio 1.0; finalLayerThickness 0.3;
+    minThickness 0.1; maxThickness 0.5; nGrow 0; nSmoothThickness 10; nSmoothSurfaceNormals 1;
+    nSmoothNormals 3; minMedialAxisAngle 90; featureAngle 40; nRelaxIter 3;
+    maxThicknessToMedian 0.5; bufferZoneFactor 5.0; nFeatureSnapIter 10;
+}
+meshQualityControls
+{
+    maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4;
+    maxConcave 80; minFaceCubicity 0.3; minTetQuality 1e-30; nSmoothScale 4;
+    errorReduction 0.75; minVol 1e-13; minArea -1; minTwist 0.02;
+    minDeterminant 0.001; minFaceWeight 0.05; minVolRatio 0.01;
+}
+algorithm parallel;
+"""
+open('system/snappyHexMeshDict','w').write(shmd)
+print(open('system/snappyHexMeshDict').read()[:200])
+# -- output
+FoamFile { version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }
+castellatedMesh true; snap true; addLayers false;
+geometry
+{
+    inlet    { type triSurfaceMesh; file "inlet.stl";
+
+# -- cell 18 (1.0s, exit 0)
+import subprocess
+s = open('system/snappyHexMeshDict').read()
+s = s.replace("""            regions
+            {
+                solid { level (2 3); }
+            }
+""", "            regions { }\n")
+open('system/snappyHexMeshDict','w').write(s)
+r = subprocess.run(['blockMesh'], capture_output=True, text=True)
+print(r.stdout[-500:], r.stderr[-500:])
+# -- output
+cal description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T14-20260914-150555-9b2d/t14
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+ 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T14-20260914-150555-9b2d/t14/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 19 (1.0s, exit 0)
+import subprocess
+open('system/controlDict','w').write("""
+FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application snappyHexMesh;
+startFrom startTime; startTime 0; stopAt endTime; endTime 0; deltaT 1;
+writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii; writePrecision 10;
+writeCompression false; timeFormat general; timePrecision 6; runTimeModifiable true; adjustTimeStep yes;
+""")
+open('system/fvSchemes','w').write("FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }\n")
+open('system/fvSolution','w').write("FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }\n")
+r = subprocess.run(['blockMesh'], capture_output=True, text=True)
+print(r.stdout[-300:], r.stderr[-200:])
+# -- output
+t line 16
+    Missing 1 closing ')' while parsing
+
+edges(
+
+--> FOAM Warning : 
+    From virtual Foam::Istream& Foam::ISstream::read(Foam::word&)
+    in file db/IOstreams/Sstreams/ISstream.C at line 967
+    Reading "system/blockMeshDict" at line 17
+    Missing 1 closing ')' while parsing
+
+boundary(
+
+ ockMeshDict at line 18.
+
+    From void Foam::primitiveEntry::readEntry(const Foam::dictionary&, Foam::Istream&)
+    in file db/dictionary/primitiveEntry/primitiveEntryIO.C at line 243.
+
+FOAM exiting
+
+# -- cell 20 (1.0s, exit 0)
+import subprocess, re
+b = open('system/blockMeshDict').read()
+b = re.sub(r'edges\(\s*\);', 'edges();', b)
+b = re.sub(r'boundary\(\s*\);', 'boundary();', b)
+open('system/blockMeshDict','w').write(b)
+print(re.findall(r'edges|boundary', b))
+r = subprocess.run(['blockMesh'], capture_output=True, text=True)
+print(r.stdout[-200:], r.stderr[-200:])
+# -- output
+['edges', 'boundary']
+am::Istream& Foam::ISstream::read(Foam::word&)
+    in file db/IOstreams/Sstreams/ISstream.C at line 967
+    Reading "system/blockMeshDict" at line 15
+    Missing 1 closing ')' while parsing
+
+blocks(
+
+ ockMeshDict at line 18.
+
+    From void Foam::primitiveEntry::readEntry(const Foam::dictionary&, Foam::Istream&)
+    in file db/dictionary/primitiveEntry/primitiveEntryIO.C at line 243.
+
+FOAM exiting
+
+# -- cell 21 (0.1s, exit 1)
+import subprocess
+CR, CT, SPAN = 0.120, 0.080, 0.200
+X0, X1 = -4*CR, 8*CR
+Y0, Y1 = 0.0, SPAN + 3*CR
+Z0, Z1 = -3*CR, 3*CR
+txt = """
+FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }
+convertToMeters 1;
+vertices
+(
+    (%g %g %g)
+    (%g %g %g)
+    (%g %g %g)
+    (%g %g %g)
+    (%g %g %g)
+    (%g %g %g)
+    (%g %g %g)
+    (%g %g %g)
+);
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) (80 32 40) simpleGrading (1 1 1)
+);
+edges ();
+boundary ();
+""" % ((X0,Y0,Z0),(X1,Y0,Z0),(X1,Y1,Z0),(X0,Y1,Z0),(X0,Y0,Z1),(X1,Y0,Z1),(X1,Y1,Z1),(X0,Y1,Z1))
+open('system/blockMeshDict','w').write(txt)
+r = subprocess.run(['blockMesh'], capture_output=True, text=True)
+print(r.stdout[-150:].replace('\n',' '), r.stderr[-100:])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[21][39m[32m, line 6[39m
+[32m      2[39m CR, CT, SPAN = [32m0.120[39m, [32m0.080[39m, [32m0.200[39m
+[32m      3[39m X0, X1 = -[32m4[39m*CR, [32m8[39m*CR
+[32m      4[39m Y0, Y1 = [32m0.0[39m, SPAN + [32m3[39m*CR
+[32m      5[39m Z0, Z1 = -[32m3[39m*CR, [32m3[39m*CR
+[32m----> [39m[32m6[39m txt = """
+[32m      7[39m FoamFile { version [32m2.0[39m; format ascii; [38;5;28;01mclass[39;00m dictionary; object blockMeshDict; }
+[32m      8[39m convertToMeters [32m1[39m;
+[32m      9[39m vertices
+
+[31mTypeError[39m: must be real number, not tuple
+
+# -- cell 22 (2.2s, exit 0)
+import subprocess
+CR, CT, SPAN = 0.120, 0.080, 0.200
+X0, X1 = -4*CR, 8*CR
+Y0, Y1 = 0.0, SPAN + 3*CR
+Z0, Z1 = -3*CR, 3*CR
+verts = [(X0,Y0,Z0),(X1,Y0,Z0),(X1,Y1,Z0),(X0,Y1,Z0),(X0,Y0,Z1),(X1,Y0,Z1),(X1,Y1,Z1),(X0,Y1,Z1)]
+vtxt = '\n'.join('    (%g %g %g)' % v for v in verts)
+txt = "FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }\n" \
+"convertToMeters 1;\nvertices\n(\n" + vtxt + "\n);\n" \
+"blocks\n(\n    hex (0 1 2 3 4 5 6 7) (80 32 40) simpleGrading (1 1 1)\n);\n" \
+"edges ();\nboundary ();\n"
+open('system/blockMeshDict','w').write(txt)
+r = subprocess.run(['blockMesh'], capture_output=True, text=True)
+print('rc', r.returncode, r.stdout[-150:].replace('\n',' '), r.stderr[-100:])
+# -- output
+rc 0 00   nFaces: 314240   nInternalFaces: 300160 ---------------- Patches ----------------   patch 0 (start: 300160 size: 14080) name: defaultFaces  End   entry instead of 'scale' in dictionary "system/blockMeshDict"
+
+    This keyword is 180 months old.
+
+# -- cell 23 (1.3s, exit 0)
+import subprocess
+r = subprocess.run(['snappyHexMesh'], capture_output=True, text=True)
+print('rc', r.returncode)
+print(r.stdout[-800:])
+print('ERR', r.stderr[-800:])
+# -- output
+rc 1
+am::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T14-20260914-150555-9b2d/t14
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+ERR 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+# -- cell 24 (2.4s, exit 0)
+import subprocess
+open('system/fvSchemes','w').write("""FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default steady; }
+gradSchemes { default Gauss linear; }
+divSchemes { default Gauss linear; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+""")
+open('system/fvSolution','w').write("""FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }
+solvers { }
+""")
+r = subprocess.run(['snappyHexMesh'], capture_output=True, text=True)
+print('rc', r.returncode)
+print(r.stdout[-600:], 'ERR', r.stderr[-600:])
+# -- output
+rc 1
+ine 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T14-20260914-150555-9b2d/t14
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.3 s
+ ERR 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'mergeTolerance' not found in dictionary "/home/qiuzi/.openreynolds-buildup/work/T14-20260914-150555-9b2d/t14/system/snappyHexMeshDict"
+
+
+file: system/snappyHexMeshDict at line 3 to 47.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 25 (0.6s, exit 0)
+import subprocess
+s = open('system/snappyHexMeshDict').read()
+s = s.replace('implicitFeatureSnap false;', 'mergeTolerance 1.0; implicitFeatureSnap false;')
+open('system/snappyHexMeshDict','w').write(s)
+r = subprocess.run(['snappyHexMesh'], capture_output=True, text=True, timeout=1000)
+print('rc', r.returncode)
+print(r.stdout[-700:], 'ERR', r.stderr[-700:])
+# -- output
+rc 1
+    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T14-20260914-150555-9b2d/t14
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.31 s
+ ERR 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'mergeTolerance' not found in dictionary "/home/qiuzi/.openreynolds-buildup/work/T14-20260914-150555-9b2d/t14/system/snappyHexMeshDict"
+
+
+file: system/snappyHexMeshDict at line 3 to 47.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 26 (0.8s, exit 0)
+import subprocess
+s = open('system/snappyHexMeshDict').read()
+s = s.replace('castellatedMesh true; snap true; addLayers false;',
+              'mergeTolerance 1.0; castellatedMesh true; snap true; addLayers false;')
+open('system/snappyHexMeshDict','w').write(s)
+r = subprocess.run(['snappyHexMesh'], capture_output=True, text=True, timeout=1000)
+print('rc', r.returncode)
+print(r.stdout[-500:], 'ERR', r.stderr[-500:])
+# -- output
+rc 1
+pMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.32 s
+
+Overall mesh bounding box  : (-0.48 0 -0.36) (0.96 0.56 0.36)
+Relative tolerance         : 1
+Absolute matching distance : 1.70458206
+
+Reading refinement surfaces.
+Read refinement surfaces in = 0 s
+
+Reading refinement shells.
+ ERR 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'refinementRegions' not found (or not a dictionary) in dictionary "system/snappyHexMeshDict/castellatedMeshControls"
+
+
+file: system/snappyHexMeshDict/castellatedMeshControls at line 14 to 26.
+
+    From static const Foam::dictionary& Foam::meshRefinement::subDict(const Foam::dictionary&, const Foam::word&, bool, Foam::keyType::option)
+    in file meshRefinement/meshRefinement.C at line 3864.
+
+FOAM exiting
+
+# -- cell 27 (1.5s, exit 0)
+import subprocess
+s = open('system/snappyHexMeshDict').read()
+s = s.replace('resolveFeatureAngle 30;', 'refinementRegions { }\n    resolveFeatureAngle 30;')
+open('system/snappyHexMeshDict','w').write(s)
+r = subprocess.run(['snappyHexMesh'], capture_output=True, text=True, timeout=1000)
+print('rc', r.returncode)
+print(r.stdout[-500:], 'ERR', r.stderr[-500:])
+# -- output
+rc 1
+ial surface intersections
+-----------------------------------------
+
+Edge intersection testing:
+    Number of edges             : 314240
+    Number of edges to retest   : 0
+    Number of intersected edges : 0
+Edge intersection testing:
+    Number of edges             : 314240
+    Number of edges to retest   : 314240
+    Number of intersected edges : 2629
+Calculated surface intersections in = 0.2 s
+
+Initial mesh : cells:102400  faces:314240  points:109593
+Cells per refinement level:
+    0	102400
+ ERR openfoam-2512)
+Entry 'allowFreeStandingZoneFaces' not found in dictionary "/home/qiuzi/.openreynolds-buildup/work/T14-20260914-150555-9b2d/t14/system/snappyHexMeshDict/castellatedMeshControls"
+
+
+file: system/snappyHexMeshDict/castellatedMeshControls at line 14 to 27.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = bool]
+    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 28 (26.0s, exit 0)
+import subprocess
+s = open('system/snappyHexMeshDict').read()
+s = s.replace('refinementRegions { }', 'refinementRegions { }\n    allowFreeStandingZoneFaces false;')
+open('system/snappyHexMeshDict','w').write(s)
+r = subprocess.run(['snappyHexMesh'], capture_output=True, text=True, timeout=1000)
+print('rc', r.returncode)
+print(r.stdout[-400:], 'ERR', r.stderr[-400:])
+# -- output
+rc 1
+         : 1110636
+    Number of edges to retest   : 0
+    Number of intersected edges : 82241
+Detected unsplittable baffles : 0
+
+Merge refined boundary faces
+----------------------------
+
+Merging 474 sets of faces.
+
+Edge intersection testing:
+    Number of edges             : 1110162
+    Number of edges to retest   : 3641
+    Number of intersected edges : 81767
+
+Undo iteration 0
+----------------
+ ERR ynolds-buildup/work/T14-20260914-150555-9b2d/t14/system/snappyHexMeshDict/meshQualityControls"
+
+
+file: system/snappyHexMeshDict/meshQualityControls at line 44 to 47.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 29 (25.1s, exit 0)
+import subprocess
+s = open('system/snappyHexMeshDict').read()
+s = s.replace('minVol 1e-13;', 'minVol 1e-13; minAxisSize 1e-10;')
+open('system/snappyHexMeshDict','w').write(s)
+r = subprocess.run(['snappyHexMesh'], capture_output=True, text=True, timeout=1000)
+print('rc', r.returncode)
+print(r.stdout[-300:], 'ERR', r.stderr[-300:])
+# -- output
+rc 1
+ted unsplittable baffles : 0
+
+Merge refined boundary faces
+----------------------------
+
+Merging 474 sets of faces.
+
+Edge intersection testing:
+    Number of edges             : 1110162
+    Number of edges to retest   : 3641
+    Number of intersected edges : 81767
+
+Undo iteration 0
+----------------
+ ERR e: system/snappyHexMeshDict/meshQualityControls at line 44 to 47.
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = double]
+    in file ./src/OpenFOAM/lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+# -- cell 30 (24.8s, exit 0)
+import subprocess
+r = subprocess.run(['snappyHexMesh'], capture_output=True, text=True, timeout=1000)
+import re
+print(re.findall(r"Entry '(\S+)'", r.stderr))
+# -- output
+['minTriangleTwist']
+

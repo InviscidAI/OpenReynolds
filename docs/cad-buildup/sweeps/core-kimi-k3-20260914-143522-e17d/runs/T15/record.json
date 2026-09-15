@@ -1,0 +1,588 @@
+{
+  "run_id": "20260914-151053-6c56",
+  "case": "T15",
+  "arm": "core",
+  "model": "kimi-k3",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T15-20260914-151053-6c56",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T15-20260914-151053-6c56/t15",
+  "started_at": "2026-09-14T15:10:54",
+  "ended_at": "2026-09-14T15:26:31",
+  "seconds": 910.6,
+  "n_turns": 24,
+  "n_steps": 23,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0.5245,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 105848,
+    "cache_read": 336768,
+    "cache_write": 0,
+    "output": 14059
+  },
+  "stopped": "time",
+  "expects": "done",
+  "passed": false,
+  "why": "nothing in the case directory has been meshed yet",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd, numpy as np, inspect\nprint(bd.__version__)\nprint(inspect.signature(bd.loft))\nprint(hasattr(bd,'Cone'))",
+      "exit_code": 0,
+      "seconds": 2.3242765569993935,
+      "output": "0.11.1\n(sections: 'Face | Sketch | Iterable[Vertex | Face | Sketch] | None' = None, ruled: 'bool' = False, clean: 'bool' = True, mode: 'Mode' = <Mode.ADD>) -> 'Part'\nTrue",
+      "image": ""
+    },
+    {
+      "cmd": "import math\ndef cyl_pt(r, th, z):\n    return (r*math.cos(th), r*math.sin(th), z)\n\ndef bevel_gear(z, m, delta, Rin, Rout, backlash_mm=0.0, add_f=1.0, ded_f=1.25):\n    # blank: cone frustum from Rin..Rout cone distances, axis +Z, apex at origin\n    r_in = Rin*math.sin(delta); r_out = Rout*math.sin(delta)\n    blank = bd.Cone(r_out, r_in, Rout-Rin)  # along Z from z=Rin? Cone apex->? place at Rin..Rout\n    blank = bd.Pos(0,0,Rin)*blank\n    half_tooth = math.pi/(2*z)  # angular half width of one tooth arc (slot + tooth = pi/z)\n    eta = half_tooth/2 + (backlash_mm/2)/(Rout*math.sin(delta))  # widen slot each side for backlash\n    cuts=[]\n    for k in range(z):\n        th = 2*math.pi*k/z\n        wires=[]\n        for s in (Rin-2, Rout+2):\n            r=s*math.sin(delta)\n            r_lo=r-(ded_f+0.3)*m; r_hi=r+(add_f+0.3)*m\n            pts=[cyl_pt(r_lo,th-eta,s),cyl_pt(r_lo,th+eta,s),\n                 cyl_pt(r_hi,th+eta,s),cyl_pt(r_hi,th-eta,s)]\n            wires.append(bd.Wire.make_polygon(pts,close=True))\n        cuts.append(bd.loft(wires,ruled=True))\n    gear=blank\n    for c in cuts:\n        gear=gear-c\n    return gear\n\n# geometry params (mm)\nm=3; z1,z2=20,30\nd1=m*z1; d2=m*z2\ndelta1=math.atan2(z1,z2); delta2=math.pi/2-delta1\nRcone=d1/(2*math.sin(delta1))  # outer cone distance\nb=12.0  # face width (assumption)\nRin=Rcone-b; Rout=Rcone\nprint(\"pitch cones deg:\",math.degrees(delta1),math.degrees(delta2),\"Rcone\",Rcone)\npinion=bevel_gear(z1,m,delta1,Rin,Rout)\nwheel =bevel_gear(z2,m,delta2,Rin,Rout)\nprint(pinion.bounding_box().size, wheel.bounding_box().size,\n      pinion.volume, wheel.volume)",
+      "exit_code": 1,
+      "seconds": 0.30136213800142286,
+      "output": "pitch cones deg: 33.690067525979785 56.309932474020215 Rcone 54.083269131959845\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[2]\u001b[39m\u001b[32m, line 36\u001b[39m\n\u001b[32m     32\u001b[39m Rcone=d1/(\u001b[32m2\u001b[39m*math.sin(delta1))  \u001b[38;5;66;03m# outer cone distance\u001b[39;00m\n\u001b[32m     33\u001b[39m b=\u001b[32m12.0\u001b[39m  \u001b[38;5;66;03m# face width (assumption)\u001b[39;00m\n\u001b[32m     34\u001b[39m Rin=Rcone-b; Rout=Rcone\n\u001b[32m     35\u001b[39m print(\u001b[33m\"pitch cones deg:\"\u001b[39m,math.degrees(delta1),math.degrees(delta2),\u001b[33m\"Rcone\"\u001b[39m,Rcone)\n\u001b[32m---> \u001b[39m\u001b[32m36\u001b[39m pinion=bevel_gear(z1,m,delta1,Rin,Rout)\n\u001b[32m     37\u001b[39m wheel =bevel_gear(z2,m,delta2,Rin,Rout)\n\u001b[32m     38\u001b[39m print(pinion.bounding_box().size, wheel.bounding_box().size,\n\u001b[32m     39\u001b[39m       pinion.volume, wheel.volume)\n\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[2]\u001b[39m\u001b[32m, line 22\u001b[39m, in \u001b[36mbevel_gear\u001b[39m\u001b[34m(z, m, delta, Rin, Rout, backlash_mm, add_f, ded_f)\u001b[39m\n\u001b[32m     18\u001b[39m             r_lo=r-(ded_f+\u001b[32m0.3\u001b[39m)*m; r_hi=r+(add_f+\u001b[32m0.3\u001b[39m)*m\n\u001b[32m     19\u001b[39m             pts=[cyl_pt(r_lo,th-eta,s),cyl_pt(r_lo,th+eta,s),\n\u001b[32m     20\u001b[39m                  cyl_pt(r_hi,th+eta,s),cyl_pt(r_hi,th-eta,s)]\n\u001b[32m     21\u001b[39m             wires.append(bd.Wire.make_polygon(pts,close=\u001b[38;5;28;01mTrue\u001b[39;00m))\n\u001b[32m---> \u001b[39m\u001b[32m22\u001b[39m         cuts.append(bd.loft(wires,ruled=\u001b[38;5;28;01mTrue\u001b[39;00m))\n\u001b[32m     23\u001b[39m     gear=blank\n\u001b[32m     24\u001b[39m     \u001b[38;5;28;01mfor\u001b[39;00m c \u001b[38;5;28;01min\u001b[39;00m cuts:\n\u001b[32m     25\u001b[39m         gear=gear-c\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320\u001b[39m, in \u001b[36mloft\u001b[39m\u001b[34m(sections, ruled, clean, mode)\u001b[39m\n\u001b[32m    317\u001b[39m holes = normalize_list_of_lists(hole_candidates)\n\u001b[32m    319\u001b[39m \u001b[38;5;66;03m# Perform lofts\u001b[39;00m\n\u001b[32m--> \u001b[39m\u001b[32m320\u001b[39m new_solid = \u001b[30;43mSolid\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mmake_loft\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mloft_sections\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mruled\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m    321\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m holes:\n\u001b[32m    322\u001b[39m     \u001b[38;5;66;03m# Since the holes are interior a Solid will be generated here\u001b[39;00m\n\u001b[32m    323\u001b[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434\u001b[39m, in \u001b[36mSolid.make_loft\u001b[39m\u001b[34m(cls, objs, ruled)\u001b[39m\n\u001b[32m   1416\u001b[39m \u001b[38;5;129m@classmethod\u001b[39m\n\u001b[32m   1417\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mmake_loft\u001b[39m(\u001b[38;5;28mcls\u001b[39m, objs: Iterable[Vertex | Wire], ruled: \u001b[38;5;28mbool\u001b[39m = \u001b[38;5;28;01mFalse\u001b[39;00m) -> Solid:\n\u001b[32m   1418\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"make loft\u001b[39;00m\n\u001b[32m   1419\u001b[39m \n\u001b[32m   1420\u001b[39m \u001b[33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m   1432\u001b[39m \u001b[33;03m        Solid: Lofted object\u001b[39;00m\n\u001b[32m   1433\u001b[39m \u001b[33;03m    \"\"\"\u001b[39;00m\n\u001b[32m-> \u001b[39m\u001b[32m1434\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[38;5;28mcls\u001b[39m(TopoDS.Solid(\u001b[30;43m_make_loft\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mobjs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43;01mTrue\u001b[39;49;00m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mruled\u001b[39;49m\u001b[30;43m)\u001b[39;49m))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159\u001b[39m, in \u001b[36m_make_loft\u001b[39m\u001b[34m(objs, filled, ruled)\u001b[39m\n\u001b[32m    157\u001b[39m objs = \u001b[38;5;28mlist\u001b[39m(objs)  \u001b[38;5;66;03m# To determine its length\u001b[39;00m\n\u001b[32m    158\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28mlen\u001b[39m(objs) < \u001b[32m2\u001b[39m:\n\u001b[32m--> \u001b[39m\u001b[32m159\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mMore than one wire is required\u001b[39m\u001b[33m\"\u001b[39m)\n\u001b[32m    160\u001b[39m vertices = [obj \u001b[38;5;28;01mfor\u001b[39;00m obj \u001b[38;5;129;01min\u001b[39;00m objs \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(obj.wrapped, TopoDS_Vertex)]\n\u001b[32m    161\u001b[39m vertex_count = \u001b[38;5;28mlen\u001b[39m(vertices)\n\n\u001b[31mValueError\u001b[39m: More than one wire is required",
+      "image": ""
+    },
+    {
+      "cmd": "import inspect\nprint(inspect.signature(bd.Wire.make_polygon))\nw1=bd.Wire.make_polygon([(0,0,0),(1,0,0),(1,1,0),(0,1,0)],close=True)\nprint(w1.is_valid(), type(w1))",
+      "exit_code": 1,
+      "seconds": 0.05083901599937235,
+      "output": "(vertices: 'Iterable[VectorLike]', close: 'bool' = True) -> 'Wire'\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 4\u001b[39m\n\u001b[32m      1\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m inspect\n\u001b[32m      2\u001b[39m print(inspect.signature(bd.Wire.make_polygon))\n\u001b[32m      3\u001b[39m w1=bd.Wire.make_polygon([(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m),(\u001b[32m1\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m),(\u001b[32m1\u001b[39m,\u001b[32m1\u001b[39m,\u001b[32m0\u001b[39m),(\u001b[32m0\u001b[39m,\u001b[32m1\u001b[39m,\u001b[32m0\u001b[39m)],close=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m----> \u001b[39m\u001b[32m4\u001b[39m print(w1.is_valid(), type(w1))\n\n\u001b[31mTypeError\u001b[39m: 'bool' object is not callable",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np, math\ndef wire_at(s):  # rectangle loop\n    pts=[(0,0,s),(2,0,s),(2,2,s),(0,2,s)]\n    return bd.Wire.make_polygon(pts,close=True)\ntest=bd.loft([wire_at(0),wire_at(3)],ruled=True)\nprint(type(test), test.volume if hasattr(test,'volume') else '?')",
+      "exit_code": 1,
+      "seconds": 0.10101632199803134,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[4]\u001b[39m\u001b[32m, line 5\u001b[39m\n\u001b[32m      1\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m numpy \u001b[38;5;28;01mas\u001b[39;00m np, math\n\u001b[32m      2\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m wire_at(s):  \u001b[38;5;66;03m# rectangle loop\u001b[39;00m\n\u001b[32m      3\u001b[39m     pts=[(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,s),(\u001b[32m2\u001b[39m,\u001b[32m0\u001b[39m,s),(\u001b[32m2\u001b[39m,\u001b[32m2\u001b[39m,s),(\u001b[32m0\u001b[39m,\u001b[32m2\u001b[39m,s)]\n\u001b[32m      4\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m bd.Wire.make_polygon(pts,close=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m----> \u001b[39m\u001b[32m5\u001b[39m test=bd.loft([wire_at(\u001b[32m0\u001b[39m),wire_at(\u001b[32m3\u001b[39m)],ruled=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m      6\u001b[39m print(type(test), test.volume \u001b[38;5;28;01mif\u001b[39;00m hasattr(test,\u001b[33m'volume'\u001b[39m) \u001b[38;5;28;01melse\u001b[39;00m \u001b[33m'?'\u001b[39m)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320\u001b[39m, in \u001b[36mloft\u001b[39m\u001b[34m(sections, ruled, clean, mode)\u001b[39m\n\u001b[32m    317\u001b[39m holes = normalize_list_of_lists(hole_candidates)\n\u001b[32m    319\u001b[39m \u001b[38;5;66;03m# Perform lofts\u001b[39;00m\n\u001b[32m--> \u001b[39m\u001b[32m320\u001b[39m new_solid = \u001b[30;43mSolid\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mmake_loft\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mloft_sections\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mruled\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m    321\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m holes:\n\u001b[32m    322\u001b[39m     \u001b[38;5;66;03m# Since the holes are interior a Solid will be generated here\u001b[39;00m\n\u001b[32m    323\u001b[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434\u001b[39m, in \u001b[36mSolid.make_loft\u001b[39m\u001b[34m(cls, objs, ruled)\u001b[39m\n\u001b[32m   1416\u001b[39m \u001b[38;5;129m@classmethod\u001b[39m\n\u001b[32m   1417\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mmake_loft\u001b[39m(\u001b[38;5;28mcls\u001b[39m, objs: Iterable[Vertex | Wire], ruled: \u001b[38;5;28mbool\u001b[39m = \u001b[38;5;28;01mFalse\u001b[39;00m) -> Solid:\n\u001b[32m   1418\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"make loft\u001b[39;00m\n\u001b[32m   1419\u001b[39m \n\u001b[32m   1420\u001b[39m \u001b[33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m   1432\u001b[39m \u001b[33;03m        Solid: Lofted object\u001b[39;00m\n\u001b[32m   1433\u001b[39m \u001b[33;03m    \"\"\"\u001b[39;00m\n\u001b[32m-> \u001b[39m\u001b[32m1434\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[38;5;28mcls\u001b[39m(TopoDS.Solid(\u001b[30;43m_make_loft\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mobjs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43;01mTrue\u001b[39;49;00m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mruled\u001b[39;49m\u001b[30;43m)\u001b[39;49m))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159\u001b[39m, in \u001b[36m_make_loft\u001b[39m\u001b[34m(objs, filled, ruled)\u001b[39m\n\u001b[32m    157\u001b[39m objs = \u001b[38;5;28mlist\u001b[39m(objs)  \u001b[38;5;66;03m# To determine its length\u001b[39;00m\n\u001b[32m    158\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28mlen\u001b[39m(objs) < \u001b[32m2\u001b[39m:\n\u001b[32m--> \u001b[39m\u001b[32m159\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mMore than one wire is required\u001b[39m\u001b[33m\"\u001b[39m)\n\u001b[32m    160\u001b[39m vertices = [obj \u001b[38;5;28;01mfor\u001b[39;00m obj \u001b[38;5;129;01min\u001b[39;00m objs \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(obj.wrapped, TopoDS_Vertex)]\n\u001b[32m    161\u001b[39m vertex_count = \u001b[38;5;28mlen\u001b[39m(vertices)\n\n\u001b[31mValueError\u001b[39m: More than one wire is required",
+      "image": ""
+    },
+    {
+      "cmd": "w0=wire_at(0); w1=wire_at(3)\nt=bd.Solid.make_loft([w0.wrapped,w1.wrapped],ruled=True)\nprint(t.volume)",
+      "exit_code": 1,
+      "seconds": 0.1007259520010848,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[5]\u001b[39m\u001b[32m, line 2\u001b[39m\n\u001b[32m      1\u001b[39m w0=wire_at(\u001b[32m0\u001b[39m); w1=wire_at(\u001b[32m3\u001b[39m)\n\u001b[32m----> \u001b[39m\u001b[32m2\u001b[39m t=bd.Solid.make_loft([w0.wrapped,w1.wrapped],ruled=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m      3\u001b[39m print(t.volume)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434\u001b[39m, in \u001b[36mSolid.make_loft\u001b[39m\u001b[34m(cls, objs, ruled)\u001b[39m\n\u001b[32m   1416\u001b[39m \u001b[38;5;129m@classmethod\u001b[39m\n\u001b[32m   1417\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mmake_loft\u001b[39m(\u001b[38;5;28mcls\u001b[39m, objs: Iterable[Vertex | Wire], ruled: \u001b[38;5;28mbool\u001b[39m = \u001b[38;5;28;01mFalse\u001b[39;00m) -> Solid:\n\u001b[32m   1418\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"make loft\u001b[39;00m\n\u001b[32m   1419\u001b[39m \n\u001b[32m   1420\u001b[39m \u001b[33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m   1432\u001b[39m \u001b[33;03m        Solid: Lofted object\u001b[39;00m\n\u001b[32m   1433\u001b[39m \u001b[33;03m    \"\"\"\u001b[39;00m\n\u001b[32m-> \u001b[39m\u001b[32m1434\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[38;5;28mcls\u001b[39m(TopoDS.Solid(\u001b[30;43m_make_loft\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mobjs\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43;01mTrue\u001b[39;49;00m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mruled\u001b[39;49m\u001b[30;43m)\u001b[39;49m))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:160\u001b[39m, in \u001b[36m_make_loft\u001b[39m\u001b[34m(objs, filled, ruled)\u001b[39m\n\u001b[32m    158\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28mlen\u001b[39m(objs) < \u001b[32m2\u001b[39m:\n\u001b[32m    159\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mMore than one wire is required\u001b[39m\u001b[33m\"\u001b[39m)\n\u001b[32m--> \u001b[39m\u001b[32m160\u001b[39m vertices = [obj \u001b[38;5;28;01mfor\u001b[39;00m obj \u001b[38;5;129;01min\u001b[39;00m objs \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(\u001b[30;43mobj\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mwrapped\u001b[39;49m, TopoDS_Vertex)]\n\u001b[32m    161\u001b[39m vertex_count = \u001b[38;5;28mlen\u001b[39m(vertices)\n\u001b[32m    163\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m vertex_count > \u001b[32m2\u001b[39m:\n\n\u001b[31mAttributeError\u001b[39m: 'OCP.OCP.TopoDS.TopoDS_Wire' object has no attribute 'wrapped'",
+      "image": ""
+    },
+    {
+      "cmd": "F0=bd.Face(wire_at(0)); F1=bd.Face(wire_at(3))\nt=bd.loft([F0,F1],ruled=True)\nprint(type(t), t.volume)",
+      "exit_code": 0,
+      "seconds": 0.05063759599943296,
+      "output": "<class 'build123d.topology.composite.Part'> 12.0",
+      "image": ""
+    },
+    {
+      "cmd": "import build123d as bd, math\ndef wire_at(s):\n    pts=[(0,0,s),(2,0,s),(2,2,s),(0,2,s)]\n    return bd.Wire.make_polygon(pts,close=True)\nt=bd.loft([bd.Face(wire_at(0)),bd.Face(wire_at(3))],ruled=True)\nprint(type(t), t.volume)",
+      "exit_code": 0,
+      "seconds": 0.050820175998524064,
+      "output": "<class 'build123d.topology.composite.Part'> 12.0",
+      "image": ""
+    },
+    {
+      "cmd": "import math\ndef cyl_pt(r, th, z):\n    return (r*math.cos(th), r*math.sin(th), z)\n\ndef bevel_gear(z, m, delta, Rin, Rout, backlash_mm=0.0, add_f=1.0, ded_f=1.25):\n    r_in = Rin*math.sin(delta); r_out = Rout*math.sin(delta)\n    blank = bd.Pos(0,0,Rin)*bd.Cone(r_out, r_in, Rout-Rin)\n    eta = math.pi/(2*z)/2 + (backlash_mm/2)/(Rout*math.sin(delta))  # half angular slot width\n    cuts=[]\n    for k in range(z):\n        th = 2*math.pi*k/z\n        faces=[]\n        for s in (Rin-2, Rout+2):\n            r=s*math.sin(delta)\n            r_lo=r-(ded_f+0.3)*m; r_hi=r+(add_f+0.3)*m\n            pts=[cyl_pt(r_lo,th-eta,s),cyl_pt(r_lo,th+eta,s),\n                 cyl_pt(r_hi,th+eta,s),cyl_pt(r_hi,th-eta,s)]\n            faces.append(bd.Face(bd.Wire.make_polygon(pts,close=True)))\n        cuts.append(bd.loft(faces,ruled=True))\n    gear=blank\n    for c in cuts:\n        gear=gear-c\n    return gear\n\nm=3; z1,z2=20,30\nd1=m*z1; d2=m*z2\ndelta1=math.atan2(z1,z2); delta2=math.pi/2-delta1\nRcone=d1/(2*math.sin(delta1))\nb=12.0\nRin=Rcone-b; Rout=Rcone\npinion=bevel_gear(z1,m,delta1,Rin,Rout)\nwheel =bevel_gear(z2,m,delta2,Rin,Rout)\nprint(\"d1,d2 mm\",d1,d2,\"| deltas\",180*delta1/math.pi,180*delta2/math.pi,\n      \"| Rcone\",Rcone,\"| vols\",pinion.volume,wheel.volume)\nimport matplotlib_inline; import matplotlib.pyplot as plt\nbd.export_stl(pinion,\"/tmp/pinion.stl\"); bd.export_stl(wheel,\"/tmp/wheel.stl\")\nprint(\"exported test\")",
+      "exit_code": 0,
+      "seconds": 3.8627496930021152,
+      "output": "d1,d2 mm 60 90 | deltas 33.690067525979785 56.309932474020215 | Rcone 54.083269131959845 | vols 25366.19425553704 58223.63505918065\nexported test\n[no picture came back from this cell, and it looks like it drew one. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]",
+      "image": ""
+    },
+    {
+      "cmd": "import pyvista as pv\np=pv.Plotter(off_screen=True)\np.add_mesh(pv.read(\"/tmp/pinion.stl\"),color=\"gold\")\np.add_mesh(pv.read(\"/tmp/wheel.stl\"),color=\"silver\")\np.camera_position='iso'\np.show()",
+      "exit_code": 0,
+      "seconds": 1.25381471700166,
+      "output": "/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-14 15:14:35.093 (   0.250s) [    7E7430C7F780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 15:14:35.093 (   0.250s) [    7E7430C7F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-14 15:14:35.106 (   0.263s) [    7E7430C7F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_272484/4047627625.py:6: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  p.show()",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "def rotZ_to_X():   # maps local +Z axis onto global +X\n    return bd.Rot(0,90,0)\ndef rotZ_to_Y():   # local +Z onto global +Y\n    return bd.Rot(-90,0,0)\n\npin_l = rotZ_to_X() * pinion\nbest=None\nfor ph in np.linspace(0, 2*np.pi/z2, 9):\n    w = rotZ_to_Y() * bd.Rot(0,0,ph*180/np.pi) * wheel\n    ov = (pin_l & w)\n    v = ov.volume if hasattr(ov,'volume') else 0.0\n    if best is None or v<best[0]: best=(v,ph)\nprint(\"min overlap mm^3, phase deg:\",best[0],best[1]*180/np.pi)",
+      "exit_code": 0,
+      "seconds": 0.8024513800010027,
+      "output": "min overlap mm^3, phase deg: 0 0.0",
+      "image": ""
+    },
+    {
+      "cmd": "HX,HY,HZ=80,70,60  # cavity half-extents mm (160x140x120)\ncav = bd.Box(2*HX,2*HY,2*HZ)\npin_g = rotZ_to_X() * pinion\nwhl_g = rotZ_to_Y() * wheel\nrsh1, rsh2 = 8.0, 11.0   # shaft radii (assumption)\nshaftP = bd.Cylinder(rsh1, HX+Rcone+1)\nshaftP = bd.Rot(0,90,0)*shaftP\nshaftP = bd.Pos(-HX+Rcone+1,0,0)*shaftP   # hmm redo:\ndef shaft(axis,r,c0,c1):\n    c=bd.Cylinder(r, c1-c0)\n    if axis=='X': c=bd.Rot(0,90,0)*c\n    if axis=='Y': c=bd.Rot(-90,0,0)*c\n    return bd.Pos(c0,0,0)*c\nshaftP = shaft('X', rsh1, -HX, Rin)\nshaftW = shaft('Y', rsh2, -HY, Rin)\noil = cav - (pin_g | whl_g) - (shaftP | shaftW)\ninter = pin_g & whl_g\nprint(\"gear overlap mm^3:\", inter.volume)\nprint(\"oil volume m^3:\", oil.volume/1e9)\ncl_tip = (pin_g|whl_g|shaftP|shaftW)\nprint(\"ok\", isinstance(oil, bd.Part))",
+      "exit_code": 1,
+      "seconds": 0.8025762610013771,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[11]\u001b[39m\u001b[32m, line 16\u001b[39m\n\u001b[32m     12\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m axis==\u001b[33m'Y'\u001b[39m: c=bd.Rot(-\u001b[32m90\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m)*c\n\u001b[32m     13\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m bd.Pos(c0,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m)*c\n\u001b[32m     14\u001b[39m shaftP = shaft(\u001b[33m'X'\u001b[39m, rsh1, -HX, Rin)\n\u001b[32m     15\u001b[39m shaftW = shaft(\u001b[33m'Y'\u001b[39m, rsh2, -HY, Rin)\n\u001b[32m---> \u001b[39m\u001b[32m16\u001b[39m oil = cav - (pin_g | whl_g) - (shaftP | shaftW)\n\u001b[32m     17\u001b[39m inter = pin_g & whl_g\n\u001b[32m     18\u001b[39m print(\u001b[33m\"gear overlap mm^3:\"\u001b[39m, inter.volume)\n\u001b[32m     19\u001b[39m print(\u001b[33m\"oil volume m^3:\"\u001b[39m, oil.volume/\u001b[32m1e9\u001b[39m)\n\n\u001b[31mTypeError\u001b[39m: unsupported operand type(s) for |: 'Part' and 'Part'",
+      "image": ""
+    },
+    {
+      "cmd": "oil = cav - pin_g - whl_g - shaftP - shaftW\nprint(\"gear overlap mm^3:\", (pin_g & whl_g).volume if hasattr(pin_g & whl_g,'volume') else 'comp')\nprint(\"oil volume m^3:\", oil.volume/1e9)\nprint(isinstance(oil, bd.Part), len(oil.solids()))",
+      "exit_code": 0,
+      "seconds": 1.5543199740022828,
+      "output": "gear overlap mm^3: 0\noil volume m^3: 0.002554233834087549\nTrue 1",
+      "image": ""
+    },
+    {
+      "cmd": "import os\nHX,HY,HZ=80,70,60\ncav = bd.Box(2*HX,2*HY,2*HZ)\npin_g = rotZ_to_X() * pinion\nwhl_g = rotZ_to_Y() * wheel\nrsh1, rsh2 = 8.0, 11.0\ndef shaft(axis,r,c0,c1):\n    c=bd.Cylinder(r, c1-c0)\n    if axis=='X': c=bd.Rot(0,90,0)*c\n    if axis=='Y': c=bd.Rot(-90,0,0)*c\n    return bd.Pos(c0,0,0)*c\nshaftP = shaft('X', rsh1, -HX, Rin)\nshaftW = shaft('Y', rsh2, -HY, Rin)\noil = cav - pin_g - whl_g - shaftP - shaftW\nprint(\"oil vol (m^3):\", oil.volume/1e9, \"solids:\", len(oil.solids()))\n\ngroups={\"pinion\":[], \"wheel\":[], \"cavity_walls\":[], \"shaft_bore_pinion\":[], \"shaft_bore_wheel\":[]}\nsrc=[(\"pinion\",pin_g),(\"wheel\",whl_g),(\"cavity_walls\",cav),(\"shaft_bore_pinion\",shaftP),(\"shaft_bore_wheel\",shaftW)]\nfor f in oil.faces():\n    c=f.center()\n    best=None\n    for name,s in src:\n        d=s.distance(f)\n        if best is None or d<best[0]: best=(d,name)\n    groups[best[1]].append(f)\nfor k,v in groups.items(): print(k, len(v), sum(fi.area for fi in v)/1e4, \"cm2\")\nos.makedirs(\"constant/triSurface\",exist_ok=True)\nfor name,fs in groups.items():\n    comp=bd.Compound(children=fs)\n    comp_m = comp.scale(0.001)\n    bd.export_stl(comp_m, f\"constant/triSurface/{name}.stl\", tolerance=1e-5, angular_tolerance=0.3)\nprint(os.listdir(\"constant/triSurface\"))",
+      "exit_code": 1,
+      "seconds": 46.94678384600047,
+      "output": "oil vol (m^3): 0.002554233834087549 solids: 1\npinion 103 0.894099545240588 cm2\nwheel 153 1.7586790042892368 cm2\ncavity_walls 11 12.289616975063003 cm2\nshaft_bore_pinion 2 0.22964439114390606 cm2\nshaft_bore_wheel 0 0.0 cm2\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[13]\u001b[39m\u001b[32m, line 30\u001b[39m\n\u001b[32m     26\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m k,v \u001b[38;5;28;01min\u001b[39;00m groups.items(): print(k, len(v), sum(fi.area \u001b[38;5;28;01mfor\u001b[39;00m fi \u001b[38;5;28;01min\u001b[39;00m v)/\u001b[32m1e4\u001b[39m, \u001b[33m\"cm2\"\u001b[39m)\n\u001b[32m     27\u001b[39m os.makedirs(\u001b[33m\"constant/triSurface\"\u001b[39m,exist_ok=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m     28\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m name,fs \u001b[38;5;28;01min\u001b[39;00m groups.items():\n\u001b[32m     29\u001b[39m     comp=bd.Compound(children=fs)\n\u001b[32m---> \u001b[39m\u001b[32m30\u001b[39m     comp_m = comp.scale(\u001b[32m0.001\u001b[39m)\n\u001b[32m     31\u001b[39m     bd.export_stl(comp_m, f\"constant/triSurface/{name}.stl\", tolerance=\u001b[32m1e-5\u001b[39m, angular_tolerance=\u001b[32m0.3\u001b[39m)\n\u001b[32m     32\u001b[39m print(os.listdir(\u001b[33m\"constant/triSurface\"\u001b[39m))\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:1877\u001b[39m, in \u001b[36mShape.scale\u001b[39m\u001b[34m(self, factor, about)\u001b[39m\n\u001b[32m   1857\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mscale\u001b[39m(\n\u001b[32m   1858\u001b[39m     \u001b[38;5;28mself\u001b[39m,\n\u001b[32m   1859\u001b[39m     factor: \u001b[38;5;28mfloat\u001b[39m | \u001b[38;5;28mtuple\u001b[39m[\u001b[38;5;28mfloat\u001b[39m, \u001b[38;5;28mfloat\u001b[39m, \u001b[38;5;28mfloat\u001b[39m],\n\u001b[32m   1860\u001b[39m     about: VectorLike | \u001b[38;5;28;01mNone\u001b[39;00m = \u001b[38;5;28;01mNone\u001b[39;00m,\n\u001b[32m   1861\u001b[39m ) -> Self:\n\u001b[32m   1862\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"Scale this shape about a point.\u001b[39;00m\n\u001b[32m   1863\u001b[39m \n\u001b[32m   1864\u001b[39m \u001b[33;03m    Non-uniform scaling may change the underlying geometry type to splines.\u001b[39;00m\n\u001b[32m   (...)\u001b[39m\u001b[32m   1874\u001b[39m \u001b[33;03m        Shape: a copy of the scaled shape.\u001b[39;00m\n\u001b[32m   1875\u001b[39m \u001b[33;03m    \"\"\"\u001b[39;00m\n\u001b[32m-> \u001b[39m\u001b[32m1877\u001b[39m     current_location = \u001b[30;43mself\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mlocation\u001b[39;49m\n\u001b[32m   1878\u001b[39m     \u001b[38;5;28;01massert\u001b[39;00m current_location \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m\n\u001b[32m   1879\u001b[39m     about_point = current_location.position \u001b[38;5;28;01mif\u001b[39;00m about \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m \u001b[38;5;28;01melse\u001b[39;00m Vector(about)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:505\u001b[39m, in \u001b[36mShape.location\u001b[39m\u001b[34m(self)\u001b[39m\n\u001b[32m    503\u001b[39m \u001b[38;5;250m\u001b[39m\u001b[33;03m\"\"\"Get this Shape's Location\"\"\"\u001b[39;00m\n\u001b[32m    504\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28mself\u001b[39m._wrapped \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m:\n\u001b[32m--> \u001b[39m\u001b[32m505\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mCan\u001b[39m\u001b[33m'\u001b[39m\u001b[33mt find the location of an empty shape\u001b[39m\u001b[33m\"\u001b[39m)\n\u001b[32m    506\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m Location(\u001b[38;5;28mself\u001b[39m.wrapped.Location())\n\n\u001b[31mValueError\u001b[39m: Can't find the location of an empty shape",
+      "image": ""
+    },
+    {
+      "cmd": "import os, math\ngroups={\"pinion\":[], \"wheel\":[], \"cavity_walls\":[], \"shaft_bore_pinion\":[], \"shaft_bore_wheel\":[]}\nfaces=list(oil.faces())\ntol=0.5\nfor f in faces:\n    c=f.center()\n    if abs(abs(c.x)-HX)<tol or abs(abs(c.y)-HY)<tol or abs(abs(c.z)-HZ)<tol:\n        groups[\"cavity_walls\"].append(f); continue\n    if abs(math.hypot(c.y,c.z)-rsh1)<tol and c.x<Rin+tol:\n        groups[\"shaft_bore_pinion\"].append(f); continue\n    if abs(math.hypot(c.x,c.z)-rsh2)<tol and c.y<Rin+tol:\n        groups[\"shaft_bore_wheel\"].append(f); continue\n    # gear faces: nearest gear solid\n    dP=pin_g.distance(f); dW=whl_g.distance(f)\n    groups[\"pinion\" if dP<=dW else \"wheel\"].append(f)\nfor k,v in groups.items(): print(k, len(v), round(sum(fi.area for fi in v)/100,2), \"cm2\")\nos.makedirs(\"constant/triSurface\",exist_ok=True)\nfor name,fs in groups.items():\n    if not fs: print(\"EMPTY\",name); continue\n    comp=bd.Compound(children=fs)\n    bd.export_stl(comp.scale(0.001), f\"constant/triSurface/{name}.stl\", tolerance=1e-6, angular_tolerance=0.25)\nprint(os.listdir(\"constant/triSurface\"))",
+      "exit_code": 1,
+      "seconds": 0.05079105599725153,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[14]\u001b[39m\u001b[32m, line 7\u001b[39m\n\u001b[32m      3\u001b[39m faces=list(oil.faces())\n\u001b[32m      4\u001b[39m tol=\u001b[32m0.5\u001b[39m\n\u001b[32m      5\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m faces:\n\u001b[32m      6\u001b[39m     c=f.center()\n\u001b[32m----> \u001b[39m\u001b[32m7\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m abs(abs(c.x)-HX)<tol \u001b[38;5;28;01mor\u001b[39;00m abs(abs(c.y)-HY)<tol \u001b[38;5;28;01mor\u001b[39;00m abs(abs(c.z)-HZ)<tol:\n\u001b[32m      8\u001b[39m         groups[\u001b[33m\"cavity_walls\"\u001b[39m].append(f); \u001b[38;5;28;01mcontinue\u001b[39;00m\n\u001b[32m      9\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m abs(math.hypot(c.y,c.z)-rsh1)<tol \u001b[38;5;28;01mand\u001b[39;00m c.x<Rin+tol:\n\u001b[32m     10\u001b[39m         groups[\u001b[33m\"shaft_bore_pinion\"\u001b[39m].append(f); \u001b[38;5;28;01mcontinue\u001b[39;00m\n\n\u001b[31mAttributeError\u001b[39m: 'Vector' object has no attribute 'x'",
+      "image": ""
+    },
+    {
+      "cmd": "import os, math\ngroups={\"pinion\":[], \"wheel\":[], \"cavity_walls\":[], \"shaft_bore_pinion\":[], \"shaft_bore_wheel\":[]}\ntol=0.5\nfor f in oil.faces():\n    c=f.center()\n    if abs(abs(c[0])-HX)<tol or abs(abs(c[1])-HY)<tol or abs(abs(c[2])-HZ)<tol:\n        groups[\"cavity_walls\"].append(f)\n    elif abs(math.hypot(c[1],c[2])-rsh1)<tol and c[0]<Rin+tol:\n        groups[\"shaft_bore_pinion\"].append(f)\n    elif abs(math.hypot(c[0],c[2])-rsh2)<tol and c[1]<Rin+tol:\n        groups[\"shaft_bore_wheel\"].append(f)\n    else:\n        dP=pin_g.distance(f); dW=whl_g.distance(f)\n        groups[\"pinion\" if dP<=dW else \"wheel\"].append(f)\nfor k,v in groups.items(): print(k, len(v), round(sum(fi.area for fi in v)/100,2), \"cm2\")",
+      "exit_code": 1,
+      "seconds": 0.050614166000741534,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[15]\u001b[39m\u001b[32m, line 6\u001b[39m\n\u001b[32m      2\u001b[39m groups={\u001b[33m\"pinion\"\u001b[39m:[], \u001b[33m\"wheel\"\u001b[39m:[], \u001b[33m\"cavity_walls\"\u001b[39m:[], \u001b[33m\"shaft_bore_pinion\"\u001b[39m:[], \u001b[33m\"shaft_bore_wheel\"\u001b[39m:[]}\n\u001b[32m      3\u001b[39m tol=\u001b[32m0.5\u001b[39m\n\u001b[32m      4\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m oil.faces():\n\u001b[32m      5\u001b[39m     c=f.center()\n\u001b[32m----> \u001b[39m\u001b[32m6\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m abs(abs(c[\u001b[32m0\u001b[39m])-HX)<tol \u001b[38;5;28;01mor\u001b[39;00m abs(abs(c[\u001b[32m1\u001b[39m])-HY)<tol \u001b[38;5;28;01mor\u001b[39;00m abs(abs(c[\u001b[32m2\u001b[39m])-HZ)<tol:\n\u001b[32m      7\u001b[39m         groups[\u001b[33m\"cavity_walls\"\u001b[39m].append(f)\n\u001b[32m      8\u001b[39m     \u001b[38;5;28;01melif\u001b[39;00m abs(math.hypot(c[\u001b[32m1\u001b[39m],c[\u001b[32m2\u001b[39m])-rsh1)<tol \u001b[38;5;28;01mand\u001b[39;00m c[\u001b[32m0\u001b[39m]<Rin+tol:\n\u001b[32m      9\u001b[39m         groups[\u001b[33m\"shaft_bore_pinion\"\u001b[39m].append(f)\n\n\u001b[31mTypeError\u001b[39m: 'Vector' object is not subscriptable",
+      "image": ""
+    },
+    {
+      "cmd": "import os, math\ngroups={\"pinion\":[], \"wheel\":[], \"cavity_walls\":[], \"shaft_bore_pinion\":[], \"shaft_bore_wheel\":[]}\ntol=0.5\nfor f in oil.faces():\n    cx,cy,cz = f.center().to_tuple()\n    if abs(abs(cx)-HX)<tol or abs(abs(cy)-HY)<tol or abs(abs(cz)-HZ)<tol:\n        groups[\"cavity_walls\"].append(f)\n    elif abs(math.hypot(cy,cz)-rsh1)<tol and cx<Rin+tol:\n        groups[\"shaft_bore_pinion\"].append(f)\n    elif abs(math.hypot(cx,cz)-rsh2)<tol and cy<Rin+tol:\n        groups[\"shaft_bore_wheel\"].append(f)\n    else:\n        dP=pin_g.distance(f); dW=whl_g.distance(f)\n        groups[\"pinion\" if dP<=dW else \"wheel\"].append(f)\nfor k,v in groups.items(): print(k, len(v), round(sum(fi.area for fi in v)/100,2), \"cm2\")\nfor name,fs in groups.items():\n    if fs:\n        comp=bd.Compound(children=fs)\n        bd.export_stl(comp.scale(0.001), f\"constant/triSurface/{name}.stl\", tolerance=1e-6, angular_tolerance=0.25)\nimport os as _os\nprint(_os.listdir(\"constant/triSurface\"))",
+      "exit_code": 0,
+      "seconds": 46.43440183400162,
+      "output": "pinion 103 89.41 cm2\nwheel 157 249.29 cm2\ncavity_walls 6 1157.1 cm2\nshaft_bore_pinion 3 21.41 cm2\nshaft_bore_wheel 0 0.0 cm2\n['shaft_bore_pinion.stl', 'wheel.stl', 'pinion.stl', 'cavity_walls.stl']\n\n/tmp/ipykernel_272484/3383199277.py:5: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.\n  cx,cy,cz = f.center().to_tuple()",
+      "image": ""
+    },
+    {
+      "cmd": "import os, math\ndef shaft(axis,r,c0,c1):\n    c=bd.Cylinder(r, c1-c0)\n    if axis=='X': c=bd.Rot(0,90,0)*c\n    if axis=='Y': c=bd.Rot(90,0,0)*c   # Z -> -Y; so axis points +Y? Z->-Y means maps onto +? check\n    return bd.Pos(c0 if axis=='X' else 0, c0 if axis=='Y' else 0, 0)*c\n# verify: for Y, Rot(90,0,0) maps +Z to +Y (right-hand about +X is -90... ). test numerically:\nimport numpy as np\nA=bd.Rot(90,0,0).rotation_matrix\nprint(\"Z->\", A@bd.Vector(0,0,1))",
+      "exit_code": 1,
+      "seconds": 0.050712116000795504,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[17]\u001b[39m\u001b[32m, line 9\u001b[39m\n\u001b[32m      5\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m axis==\u001b[33m'Y'\u001b[39m: c=bd.Rot(\u001b[32m90\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m)*c   \u001b[38;5;66;03m# Z -> -Y; so axis points +Y? Z->-Y means maps onto +? check\u001b[39;00m\n\u001b[32m      6\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m bd.Pos(c0 \u001b[38;5;28;01mif\u001b[39;00m axis==\u001b[33m'X'\u001b[39m \u001b[38;5;28;01melse\u001b[39;00m \u001b[32m0\u001b[39m, c0 \u001b[38;5;28;01mif\u001b[39;00m axis==\u001b[33m'Y'\u001b[39m \u001b[38;5;28;01melse\u001b[39;00m \u001b[32m0\u001b[39m, \u001b[32m0\u001b[39m)*c\n\u001b[32m      7\u001b[39m \u001b[38;5;66;03m# verify: for Y, Rot(90,0,0) maps +Z to +Y (right-hand about +X is -90... ). test numerically:\u001b[39;00m\n\u001b[32m      8\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m numpy \u001b[38;5;28;01mas\u001b[39;00m np\n\u001b[32m----> \u001b[39m\u001b[32m9\u001b[39m A=bd.Rot(\u001b[32m90\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m).rotation_matrix\n\u001b[32m     10\u001b[39m print(\u001b[33m\"Z->\"\u001b[39m, A@bd.Vector(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,\u001b[32m1\u001b[39m))\n\n\u001b[31mAttributeError\u001b[39m: 'Rotation' object has no attribute 'rotation_matrix'",
+      "image": ""
+    },
+    {
+      "cmd": "test=bd.Rot(90,0,0)*bd.Pos(0,0,10)*bd.Cylinder(1,1)\nprint(\"center:\", test.center().to_tuple())\ntest2=bd.Rot(-90,0,0)*bd.Pos(0,0,10)*bd.Cylinder(1,1)\nprint(\"center:\", test2.center().to_tuple())",
+      "exit_code": 0,
+      "seconds": 0.05089992599823745,
+      "output": "center: (1.766974823035287e-16, -10.0, 2.2108969810674454e-15)\ncenter: (5.300924469105861e-17, 10.0, 2.2299951174331808e-15)\n\n/tmp/ipykernel_272484/1930698873.py:2: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.\n  print(\"center:\", test.center().to_tuple())\n/tmp/ipykernel_272484/1930698873.py:4: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.\n  print(\"center:\", test2.center().to_tuple())",
+      "image": ""
+    },
+    {
+      "cmd": "import os, math\ndef shaft(axis,r,c0,c1):\n    c=bd.Cylinder(r, c1-c0)\n    if axis=='X': c=bd.Rot(0,90,0)*c\n    if axis=='Y': c=bd.Rot(-90,0,0)*c\n    return (bd.Pos(c0,0,0) if axis=='X' else bd.Pos(0,c0,0))*c\nshaftP = shaft('X', rsh1, -HX, Rin)\nshaftW = shaft('Y', rsh2, -HY, Rin)\noil = cav - pin_g - whl_g - shaftP - shaftW\ngroups={\"pinion\":[], \"wheel\":[], \"cavity_walls\":[], \"shaft_bore_pinion\":[], \"shaft_bore_wheel\":[]}\ntol=0.5\nfor f in oil.faces():\n    cx,cy,cz = tuple(f.center())\n    if abs(abs(cx)-HX)<tol or abs(abs(cy)-HY)<tol or abs(abs(cz)-HZ)<tol:\n        groups[\"cavity_walls\"].append(f)\n    elif abs(math.hypot(cy,cz)-rsh1)<tol and cx<Rin+tol:\n        groups[\"shaft_bore_pinion\"].append(f)\n    elif abs(math.hypot(cx,cz)-rsh2)<tol and cy<Rin+tol:\n        groups[\"shaft_bore_wheel\"].append(f)\n    else:\n        dP=pin_g.distance(f); dW=whl_g.distance(f)\n        groups[\"pinion\" if dP<=dW else \"wheel\"].append(f)\nfor k,v in groups.items(): print(k, len(v), round(sum(fi.area for fi in v)/100,2), \"cm2\")\nfor name,fs in groups.items():\n    if fs:\n        bd.export_stl(bd.Compound(children=fs).scale(0.001),\n                      f\"constant/triSurface/{name}.stl\", tolerance=1e-6, angular_tolerance=0.25)\nprint(sorted(os.listdir(\"constant/triSurface\")))",
+      "exit_code": 0,
+      "seconds": 45.88444378300119,
+      "output": "pinion 104 93.21 cm2\nwheel 154 177.88 cm2\ncavity_walls 6 1162.19 cm2\nshaft_bore_pinion 1 30.68 cm2\nshaft_bore_wheel 1 38.73 cm2\n['cavity_walls.stl', 'pinion.stl', 'shaft_bore_pinion.stl', 'shaft_bore_wheel.stl', 'wheel.stl']",
+      "image": ""
+    },
+    {
+      "cmd": "HX,HY,HZ=80,70,60\ncav = bd.Box(2*HX,2*HY,2*HZ)\npin_g = rotZ_to_X() * pinion\nwhl_g = rotZ_to_Y() * wheel\nrsh1, rsh2 = 8.0, 11.0\ndef shaft(axis,r,c0,c1):\n    c=bd.Cylinder(r, c1-c0)\n    if axis=='X': c=bd.Rot(0,90,0)*c\n    if axis=='Y': c=bd.Rot(-90,0,0)*c\n    return (bd.Pos(c0,0,0) if axis=='X' else bd.Pos(0,c0,0))*c\nshaftP = shaft('X', rsh1, -HX, Rin)\nshaftW = shaft('Y', rsh2, -HY, Rin)\noil = cav - pin_g - whl_g - shaftP - shaftW\nprint(\"solids:\", len(oil.solids()), \"vol m^3:\", oil.volume/1e9)\nprint(\"gear overlap:\", (pin_g & whl_g).volume)",
+      "exit_code": 0,
+      "seconds": 1.2036848150019068,
+      "output": "solids: 1 vol m^3: 0.002570833763358322\ngear overlap: 0",
+      "image": ""
+    },
+    {
+      "cmd": "import os, math\nos.makedirs(\"constant/triSurface\",exist_ok=True)\ngroups={\"pinion\":[], \"wheel\":[], \"cavity_walls\":[], \"shaft_bore_pinion\":[], \"shaft_bore_wheel\":[]}\ntol=0.5\nfor f in oil.faces():\n    cx,cy,cz = tuple(f.center())\n    if abs(abs(cx)-HX)<tol or abs(abs(cy)-HY)<tol or abs(abs(cz)-HZ)<tol:\n        groups[\"cavity_walls\"].append(f)\n    elif abs(math.hypot(cy,cz)-rsh1)<tol and cx<Rin+tol:\n        groups[\"shaft_bore_pinion\"].append(f)\n    elif abs(math.hypot(cx,cz)-rsh2)<tol and cy<Rin+tol:\n        groups[\"shaft_bore_wheel\"].append(f)\n    else:\n        dP=pin_g.distance(f); dW=whl_g.distance(f)\n        groups[\"pinion\" if dP<=dW else \"wheel\"].append(f)\nfor k,v in groups.items(): print(k, len(v), round(sum(fi.area for fi in v)/100,2), \"cm2\")\nfor name,fs in groups.items():\n    if fs:\n        bd.export_stl(bd.Compound(children=fs).scale(0.001),\n                      f\"constant/triSurface/{name}.stl\", tolerance=1e-6, angular_tolerance=0.25)\nprint(sorted(os.listdir('constant/triSurface')))",
+      "exit_code": 0,
+      "seconds": 48.820001915999455,
+      "output": "pinion 104 93.21 cm2\nwheel 154 177.88 cm2\ncavity_walls 6 1162.19 cm2\nshaft_bore_pinion 1 30.68 cm2\nshaft_bore_wheel 1 38.73 cm2\n['cavity_walls.stl', 'pinion.stl', 'shaft_bore_pinion.stl', 'shaft_bore_wheel.stl', 'wheel.stl']",
+      "image": ""
+    },
+    {
+      "cmd": "import os, textwrap, subprocess\nos.makedirs(\"system\",exist_ok=True)\nblockmesh = \"\"\"\nconvertToMeters 1;\nvertices\n(\n    (-0.085 -0.075 -0.065)\n    ( 0.085 -0.075 -0.065)\n    ( 0.085  0.075 -0.065)\n    (-0.085  0.075 -0.065)\n    (-0.085 -0.075  0.065)\n    ( 0.085 -0.075  0.065)\n    ( 0.085  0.075  0.065)\n    (-0.085  0.075  0.065)\n);\nblocks ( hex (0 1 2 3 4 5 6 7) (26 22 20) simpleGrading (1 1 1) );\nedges (); boundary ( w { type wall; faces ((0 3 7 4)(1 2 6 5)(0 1 5 4)(3 2 6 7)(4 5 6 7)(0 1 2 3)); } );\nmergePatchPairs ();\n\"\"\"\nopen(\"system/blockMeshDict\",\"w\").write(blockmesh)\nprint(subprocess.run([\"blockMesh\"],capture_output=True,text=True).returncode)",
+      "exit_code": 0,
+      "seconds": 0.20103455600110465,
+      "output": "1",
+      "image": ""
+    },
+    {
+      "cmd": "r=subprocess.run([\"blockMesh\"],capture_output=True,text=True)\nprint(r.stderr[-800:] or r.stdout[-800:])",
+      "exit_code": 0,
+      "seconds": 0.20097037500090664,
+      "output": "--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T15-20260914-151053-6c56/t15/system/controlDict\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting",
+      "image": ""
+    },
+    {
+      "cmd": "open(\"system/controlDict\",\"w\").write(\"\"\"FoamFile { class dictionary; }\napplication snappyHexMesh;\nstartFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1;\nwriteControl timeStep; writeInterval 1; writeFormat ascii; writeCompression off;\nrunTimeModifiable true;\n\"\"\")\nopen(\"system/fvSchemes\",\"w\").write(\"FoamFile { class dictionary; }\\nddtSchemes { default steadyState; }\\ngradSchemes { default Gauss linear; }\\ndivSchemes { default none; }\\nlaplacianSchemes { default none; }\\ninterpolationSchemes { default linear; }\\nsnGradSchemes { default corrected; }\\n\")\nopen(\"system/fvSolution\",\"w\").write(\"FoamFile { class dictionary; }\\nsolvers {}\\nSIMPLE {}\\nrelaxationFactors {}\\n\")\nprint(subprocess.run([\"blockMesh\"],capture_output=True,text=True).stdout[-200:])",
+      "exit_code": 0,
+      "seconds": 0.201165245998709,
+      "output": "kew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 1373,
+      "fenced": true,
+      "text_chars": 511,
+      "thinking_chars": 4607,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398709.3916686
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 1861,
+      "fenced": true,
+      "text_chars": 113,
+      "thinking_chars": 4870,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398770.697199
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 242,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 589,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398784.4924514
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 236,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 433,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398797.4039652
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 136,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 203,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398807.8181028
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 328,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 1034,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398823.3232439
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 183,
+      "fenced": true,
+      "text_chars": 72,
+      "thinking_chars": 130,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398835.1557326
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 606,
+      "fenced": true,
+      "text_chars": 55,
+      "thinking_chars": 100,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398855.0279133
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 116,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 42,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398869.0641894
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 1913,
+      "fenced": true,
+      "text_chars": 225,
+      "thinking_chars": 6555,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398925.4926927
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 684,
+      "fenced": true,
+      "text_chars": 157,
+      "thinking_chars": 1035,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398956.3332465
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 144,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 60,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789398969.5382962
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 1090,
+      "fenced": true,
+      "text_chars": 96,
+      "thinking_chars": 2140,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399004.7905235
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 858,
+      "fenced": true,
+      "text_chars": 114,
+      "thinking_chars": 1805,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399082.260149
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 342,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 70,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399098.1153562
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 384,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 58,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399116.153522
+    },
+    {
+      "turn": 17,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 1170,
+      "fenced": true,
+      "text_chars": 153,
+      "thinking_chars": 3063,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399302.296845
+    },
+    {
+      "turn": 18,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 151,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 101,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399310.3836536
+    },
+    {
+      "turn": 19,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 632,
+      "fenced": true,
+      "text_chars": 95,
+      "thinking_chars": 339,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399340.7115192
+    },
+    {
+      "turn": 20,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 499,
+      "fenced": true,
+      "text_chars": 89,
+      "thinking_chars": 729,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399432.854587
+    },
+    {
+      "turn": 21,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 372,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399452.3934438
+    },
+    {
+      "turn": 22,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 397,
+      "fenced": true,
+      "text_chars": 58,
+      "thinking_chars": 188,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399523.6242912
+    },
+    {
+      "turn": 23,
+      "steps": 22,
+      "stop_reason": "tool_use",
+      "output_tokens": 74,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399533.753583
+    },
+    {
+      "turn": 24,
+      "steps": 23,
+      "stop_reason": "tool_use",
+      "output_tokens": 268,
+      "fenced": true,
+      "text_chars": 0,
+      "thinking_chars": 57,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789399558.4696612
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 157,166 triangles across 5 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "cavity_walls.stl",
+          "pinion.stl",
+          "shaft_bore_pinion.stl",
+          "shaft_bore_wheel.stl",
+          "wheel.stl"
+        ],
+        "triangles": 157166
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the patch set",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 157166
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 1,845 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 1845
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the backlash at the pitch line, measured between the two meshed gear patches, at the engaged tooth pair",
+      "measured": null
+    },
+    {
+      "property": "the tip-to-root clearance on both gears, measured the same way",
+      "measured": null
+    },
+    {
+      "property": "the tooth count on each gear, counted on the meshed patch rather than taken from the input",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "the oil volume, against the cavity volume minus both gear volumes",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 24,
+    "steps": 23,
+    "seconds": 913.6,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

@@ -1,0 +1,1148 @@
+# -- cell 1 (2.3s, exit 1)
+import build123d as bd
+src = "/home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/geometry/customer_part.step"
+shape = bd.import_step(src)
+print("solids:", len(shape.solids()))
+print("sol bbox:", shape.bounding_box())
+# validity per OCCT
+print("valid:", shape.is_valid())
+try:
+    print("declared scale/units:", shape.metadata) if hasattr(shape,'metadata') else None
+except Exception as e:
+    print(e)
+# -- output
+solids: 1
+sol bbox: bbox: 0.0 <= x <= 200.0, 0.0 <= y <= 100.0, 0.0 <= z <= 100.0
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 7[39m
+[32m      3[39m shape = bd.import_step(src)
+[32m      4[39m print([33m"solids:"[39m, len(shape.solids()))
+[32m      5[39m print([33m"sol bbox:"[39m, shape.bounding_box())
+[32m      6[39m [38;5;66;03m# validity per OCCT[39;00m
+[32m----> [39m[32m7[39m print([33m"valid:"[39m, shape.is_valid())
+[32m      8[39m [38;5;28;01mtry[39;00m:
+[32m      9[39m     print([33m"declared scale/units:"[39m, shape.metadata) [38;5;28;01mif[39;00m hasattr(shape,[33m'metadata'[39m) [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m
+[32m     10[39m [38;5;28;01mexcept[39;00m Exception [38;5;28;01mas[39;00m e:
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 2 (0.2s, exit 1)
+print("valid:", shape.is_valid)
+import pyvista as pv, matplotlib.pyplot as plt
+mesh = shape.tessellate(2.0)
+import numpy as np, mesh as mesh_mod
+# -- output
+valid: True
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mModuleNotFoundError[39m                       Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 4[39m
+[32m      1[39m print([33m"valid:"[39m, shape.is_valid)
+[32m      2[39m [38;5;28;01mimport[39;00m pyvista [38;5;28;01mas[39;00m pv, matplotlib.pyplot [38;5;28;01mas[39;00m plt
+[32m      3[39m mesh = shape.tessellate([32m2.0[39m)
+[32m----> [39m[32m4[39m [38;5;28;01mimport[39;00m numpy [38;5;28;01mas[39;00m np, mesh [38;5;28;01mas[39;00m mesh_mod
+
+[31mModuleNotFoundError[39m: No module named 'mesh'
+
+# -- cell 3 (0.3s, exit 1)
+import pyvista as pv, numpy as np
+verts, faces = shape.tessellate(2.0)
+verts = np.array(verts); faces = np.array(faces)
+pf = pv.PolyData(verts, np.hstack([np.full((len(faces),1),3), faces]).reshape(-1,4))
+pf.plot(screenshot="/tmp/part.png", cpos="iso")
+print("vertices:", len(verts))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 4[39m
+[32m      1[39m [38;5;28;01mimport[39;00m pyvista [38;5;28;01mas[39;00m pv, numpy [38;5;28;01mas[39;00m np
+[32m      2[39m verts, faces = shape.tessellate([32m2.0[39m)
+[32m      3[39m verts = np.array(verts); faces = np.array(faces)
+[32m----> [39m[32m4[39m pf = pv.PolyData(verts, np.hstack([np.full((len(faces),[32m1[39m),[32m3[39m), faces]).reshape(-[32m1[39m,[32m4[39m))
+[32m      5[39m pf.plot(screenshot=[33m"/tmp/part.png"[39m, cpos=[33m"iso"[39m)
+[32m      6[39m print([33m"vertices:"[39m, len(verts))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/misc.py:442[39m, in [36m_AutoFreezeMeta.__call__[39m[34m(cls, *args, **kwargs)[39m
+[32m    441[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__call__[39m([38;5;28mcls[39m: [38;5;28mtype[39m[_T], *args, **kwargs) -> _T:
+[32m--> [39m[32m442[39m     obj = [30;43msuper[39;49m[30;43m([39;49m[30;43m)[39;49m[30;43m.[39;49m[30;43m__call__[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43margs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m  [38;5;66;03m# type: ignore[misc][39;00m
+[32m    443[39m     obj._no_new_attributes([38;5;28mcls[39m)
+[32m    444[39m     [38;5;28;01mreturn[39;00m obj
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243[39m, in [36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f[39m[34m(*args, **kwargs)[39m
+[32m    239[39m             warn_external(msg, PyVistaDeprecationWarning)
+[32m    241[39m         warn_positional_args()
+[32m--> [39m[32m243[39m [38;5;28;01mreturn[39;00m [30;43mf[39;49m[30;43m(
+... 23990 characters cut ...
+)
+ Vector(200, 30.50144175636, 45.54958132087)
+ Vector(200, 30.747515061, 44.58319063714)
+ Vector(200, 31.04145307666, 43.63026699497)
+ Vector(200, 31.38252502712, 42.69317951267)
+ Vector(200, 31.76988295377, 41.77425793739)
+ Vector(200, 32.20256382377, 40.87578685294)
+ Vector(200, 32.67949192431, 40)
+ Vector(200, 33.19948153698, 39.14907472268)
+ Vector(200, 33.76123988568, 38.3251265553)
+ Vector(200, 34.36337035064, 37.53020396283)
+ Vector(200, 35.00437594065, 36.76628324806)
+ Vector(200, 35.68266301481, 36.03526363828)
+ Vector(200, 36.39654524458, 35.3389625634)
+ Vector(200, 37.14424780627, 34.67911113762)
+ Vector(200, 37.92391179349, 34.05734985554)
+ Vector(200, 38.73359883873, 33.47522451368)
+ Vector(200, 39.57129593241, 32.93418236736)
+ Vector(200, 40.43492042757, 32.4355685326)
+ Vector(200, 41.32232521765, 31.98062264195)
+ Vector(200, 42.23130407451, 31.57047576259)
+ Vector(200, 43.15959713349, 31.20614758428)
+ Vector(200, 44.10489651178, 30.88854388428)
+ Vector(200, 45.06485204619, 30.61845427542)
+ Vector(200, 46.03707713601, 30.39655024303)
+ Vector(200, 47.01915467648, 30.2233834755)
+ Vector(200, 48.00864306808, 30.09938449269)
+ Vector(200, 49.00308228679, 30.02486157562) Vector(200, 50, 30)
+ Vector(200, 50.99691771321, 30.02486157562)
+ Vector(200, 51.99135693192, 30.09938449269)
+ Vector(200, 52.98084532352, 30.2233834755)
+ Vector(200, 53.96292286399, 30.39655024303)
+ Vector(200, 54.93514795381, 30.61845427542)
+ Vector(200, 55.89510348822, 30.88854388428)
+ Vector(200, 56.84040286651, 31.20614758428)
+ Vector(200, 57.76869592549, 31.57047576259)
+ Vector(200, 58.67767478235, 31.98062264195)
+ Vector(200, 59.56507957243, 32.4355685326)
+ Vector(200, 60.42870406759, 32.93418236736)
+ Vector(200, 61.26640116127, 33.47522451368)
+ Vector(200, 62.07608820651, 34.05734985554)
+ Vector(200, 62.85575219373, 34.67911113762)
+ Vector(200, 63.60345475542, 35.3389625634)
+ Vector(200, 64.31733698519, 36.03526363828)
+ Vector(200, 64.99562405935, 36.76628324806)
+ Vector(200, 65.63662964936, 37.53020396283)
+ Vector(200, 66.23876011432, 38.3251265553)
+ Vector(200, 66.80051846302, 39.14907472268)
+ Vector(200, 67.32050807569, 40)
+ Vector(200, 67.79743617623, 40.87578685294)
+ Vector(200, 68.23011704623, 41.77425793739)
+ Vector(200, 68.61747497288, 42.69317951267)
+ Vector(200, 68.95854692334, 43.63026699497)
+ Vector(200, 69.252484939, 44.58319063714)
+ Vector(200, 69.49855824364, 45.54958132087)
+ Vector(200, 69.69615506024, 46.52703644666)
+ Vector(200, 69.844784132, 47.51312590705)
+ Vector(200, 69.94407594362, 48.50539812827)
+ Vector(200, 69.99378364002, 49.50138616524)
+ Vector(200, 69.99378364002, 50.49861383476)
+ Vector(200, 69.94407594362, 51.49460187173)
+ Vector(200, 69.844784132, 52.48687409295)
+ Vector(200, 69.69615506024, 53.47296355334)
+ Vector(200, 69.49855824364, 54.45041867913)
+ Vector(200, 69.252484939, 55.41680936286)
+ Vector(200, 68.95854692334, 56.36973300503)
+ Vector(200, 68.61747497288, 57.30682048733)
+ Vector(200, 68.23011704623, 58.22574206261)
+ Vector(200, 67.79743617623, 59.12421314706)
+ Vector(200, 67.32050807569, 60)
+ Vector(200, 66.80051846302, 60.85092527732)
+ Vector(200, 66.23876011432, 61.6748734447)
+ Vector(200, 65.63662964936, 62.46979603717)
+ Vector(200, 64.99562405935, 63.23371675194)
+ Vector(200, 64.31733698519, 63.96473636172)
+ Vector(200, 63.60345475542, 64.6610374366)
+ Vector(200, 62.85575219373, 65.32088886238)
+ Vector(200, 62.07608820651, 65.94265014446)
+ Vector(200, 61.26640116127, 66.52477548632)
+ Vector(200, 60.42870406759, 67.06581763264)
+ Vector(200, 59.56507957243, 67.5644314674)
+ Vector(200, 58.67767478235, 68.01937735805)
+ Vector(200, 57.76869592549, 68.42952423741)
+ Vector(200, 56.84040286651, 68.79385241572)
+ Vector(200, 55.89510348822, 69.11145611572)
+ Vector(200, 54.93514795381, 69.38154572458)
+ Vector(200, 53.96292286399, 69.60344975697)
+ Vector(200, 52.98084532352, 69.7766165245)
+ Vector(200, 51.99135693192, 69.90061550731)
+ Vector(200, 50.99691771321, 69.97513842438)] when casting to a NumPy array.
+
+# -- cell 4 (0.1s, exit 1)
+verts = np.array([v.to_tuple() for v in verts])
+faces = np.array(faces, dtype=np.int64)
+d = np.concatenate([np.full((len(faces),1),3), faces]).astype(np.int64)
+pf = pv.PolyData(verts, d.reshape(-1,4))
+pv.plot(pf, screenshot="part_view.png", cpos="iso")
+print("verts:", len(verts), "faces:", len(faces))
+# -- output
+/tmp/ipykernel_301258/126362300.py:1: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  verts = np.array([v.to_tuple() for v in verts])
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 3[39m
+[32m      1[39m verts = np.array([v.to_tuple() [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m verts])
+[32m      2[39m faces = np.array(faces, dtype=np.int64)
+[32m----> [39m[32m3[39m d = np.concatenate([np.full((len(faces),[32m1[39m),[32m3[39m), faces]).astype(np.int64)
+[32m      4[39m pf = pv.PolyData(verts, d.reshape(-[32m1[39m,[32m4[39m))
+[32m      5[39m pv.plot(pf, screenshot=[33m"part_view.png"[39m, cpos=[33m"iso"[39m)
+[32m      6[39m print([33m"verts:"[39m, len(verts), [33m"faces:"[39m, len(faces))
+
+[31mValueError[39m: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 1 and the array at index 1 has size 3
+
+# -- cell 5 (0.4s, exit 0)
+film = np.concatenate([np.full((len(faces),1),3), faces], axis=1).astype(np.int64).ravel()
+pf = pv.PolyData(verts, film)
+pv.plot(pf, screenshot="part_view.png", cpos="iso")
+print("verts:", len(verts), "faces:", len(faces))
+# -- output
+verts: 530 faces: 520
+
+[0m[33m2026-09-14 16:55:45.216 (  35.481s) [    729881365780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 16:55:45.217 (  35.481s) [    729881365780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 16:55:45.230 (  35.494s) [    729881365780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_301258/2424544178.py:3: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pv.plot(pf, screenshot="part_view.png", cpos="iso")
+
+# -- cell 6 (0.9s, exit 1)
+from collections import Counter
+fs = shape.faces()
+types = Counter()
+cyls, planes = [], []
+for f in fs:
+    g = f.geom_type()
+    types[str(g)] += 1
+    if str(g) == "CYLINDER": cyls.append(f)
+    elif str(g) == "PLANE": planes.append(f)
+print(types)
+for c in cyls:
+    from build123d.geometry import Axis
+    ax = c.to_location()
+    print("cyl r:", c._geom_adaptor().Cylinder().Radius(), "locok")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 6[39m
+[32m      2[39m fs = shape.faces()
+[32m      3[39m types = Counter()
+[32m      4[39m cyls, planes = [], []
+[32m      5[39m [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m fs:
+[32m----> [39m[32m6[39m     g = f.geom_type()
+[32m      7[39m     types[str(g)] += [32m1[39m
+[32m      8[39m     [38;5;28;01mif[39;00m str(g) == [33m"CYLINDER"[39m: cyls.append(f)
+[32m      9[39m     [38;5;28;01melif[39;00m str(g) == [33m"PLANE"[39m: planes.append(f)
+
+[31mTypeError[39m: 'GeomType' object is not callable
+
+# -- cell 7 (0.1s, exit 0)
+from collections import Counter
+types = Counter()
+cyls = []
+for f in shape.faces():
+    t = str(f.geom_type)
+    types[t] += 1
+    if t == "GeomType.CYLINDER": cyls.append(f)
+print(types)
+for c in cyls:
+    import math
+    from OCP.gp import gp_Pnt
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_SurfaceType
+    surf = BRepAdaptor_Surface(c.wrapped, True)
+    cyl = surf.Cylinder()
+    loc = cyl.Location(); axd = cyl.Axis().Direction()
+    print("radius:", cyl.Radius(), "loc:", loc.X(), loc.Y(), loc.Z(), "dir:", axd.X(), axd.Y(), axd.Z())
+# -- output
+Counter({'GeomType.PLANE': 6, 'GeomType.CYLINDER': 1})
+radius: 20.0 loc: 0.0 50.0 50.0 dir: 1.0 0.0 0.0
+
+# -- cell 8 (0.1s, exit 0)
+import build123d as bd
+shape = bd.import_step("/home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/geometry/customer_part.step")
+# check closure of planes: faces with plane normal +-x at x=0 / x=200
+for f in shape.faces():
+    if str(f.geom_type) == "GeomType.PLANE":
+        n = f.normal_at()
+        c = f.center()
+        print("plane c:", np.round(np.array(tuple(c)),2), "n:", tuple(np.round(np.array(tuple(n)),2)))
+# -- output
+plane c: [ 0. 50. 50.] n: (np.float64(-1.0), np.float64(-0.0), np.float64(0.0))
+plane c: [100.   0.  50.] n: (np.float64(0.0), np.float64(-1.0), np.float64(-0.0))
+plane c: [100.  50. 100.] n: (np.float64(0.0), np.float64(0.0), np.float64(1.0))
+plane c: [100.  50.   0.] n: (np.float64(-0.0), np.float64(-0.0), np.float64(-1.0))
+plane c: [100. 100.  50.] n: (np.float64(-0.0), np.float64(1.0), np.float64(0.0))
+plane c: [200.  50.  50.] n: (np.float64(1.0), np.float64(0.0), np.float64(-0.0))
+
+# -- cell 9 (0.8s, exit 0)
+import numpy as np, build123d as bd
+shape = bd.import_step("/home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/geometry/customer_part.step")
+v = shape.volume
+box = 200*100*100
+bore = np.pi*20**2*200
+print("volume:", v, "box-bore:", box-bore, "through-hole" if abs(v-(box-bore)) < box else "blind")
+# -- output
+volume: 1748672.5877128076 box-bore: 1748672.5877128164 through-hole
+
+# -- cell 10 (0.1s, exit 0)
+import subprocess, re
+s = subprocess.run(["grep","-i","-m4","si_unit\|conversion\|length_measure\|millimetre\|metre",
+                    "/home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/geometry/customer_part.step"],
+                   capture_output=True, text=True).stdout
+print(s[:2000])
+# -- output
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,
+
+
+<>:2: SyntaxWarning: invalid escape sequence '\|'
+<>:2: SyntaxWarning: invalid escape sequence '\|'
+/tmp/ipykernel_301258/2390893674.py:2: SyntaxWarning: invalid escape sequence '\|'
+  s = subprocess.run(["grep","-i","-m4","si_unit\|conversion\|length_measure\|millimetre\|metre",
+
+# -- cell 11 (0.8s, exit 0)
+import subprocess
+s = subprocess.run(["grep","si_unit","/home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/geometry/customer_part.step"],
+                   capture_output=True, text=True).stdout
+print(s)
+# -- output
+
+
+# -- cell 12 (0.1s, exit 0)
+import subprocess, re
+raw = open("/home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/geometry/customer_part.step").read()
+hits = re.findall(r"SI_UNIT\(.*?LENGTH[^;]*?;", raw, re.I|re.S)
+print(hits[:5])
+# -- output
+["SI_UNIT($,.RADIAN.) );\n#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );\n#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,\n  'distance_accuracy_value','confusion accuracy');"]
+
+# -- cell 13 (0.2s, exit 1)
+import build123d as bd, numpy as np, subprocess, os, pathlib
+R_MM, L_MM, SCALE = 20.0, 200.0, 0.001  # mm -> m
+cyl = bd.Pos(0,0,0)*bd.Rotation(0,90,0)*bd.Cylinder(R_MM, L_MM)  # axis +x? check later
+import build123d as bd
+wall = cyl.faces().sort_by(lambda f: abs(f.center().x) ) 
+print([np.round(np.array(tuple(f.center())),1) for f in cyl.faces()])
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[13][39m[32m, line 5[39m
+[32m      1[39m [38;5;28;01mimport[39;00m build123d [38;5;28;01mas[39;00m bd, numpy [38;5;28;01mas[39;00m np, subprocess, os, pathlib
+[32m      2[39m R_MM, L_MM, SCALE = [32m20.0[39m, [32m200.0[39m, [32m0.001[39m  [38;5;66;03m# mm -> m[39;00m
+[32m      3[39m cyl = bd.Pos([32m0[39m,[32m0[39m,[32m0[39m)*bd.Rotation([32m0[39m,[32m90[39m,[32m0[39m)*bd.Cylinder(R_MM, L_MM)  [38;5;66;03m# axis +x? check later[39;00m
+[32m      4[39m [38;5;28;01mimport[39;00m build123d [38;5;28;01mas[39;00m bd
+[32m----> [39m[32m5[39m wall = cyl.faces().sort_by([38;5;28;01mlambda[39;00m f: abs(f.center().x) )
+[32m      6[39m print([np.round(np.array(tuple(f.center())),[32m1[39m) [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m cyl.faces()])
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:3436[39m, in [36mShapeList.sort_by[39m[34m(self, sort_by, reverse)[39m
+[32m   3415[39m [38;5;250m[39m[33;03m"""sort by[39;00m
+[32m   3416[39m 
+[32m   3417[39m [33;03mSort objects by provided criteria. Note that not all sort_by criteria apply to all[39;00m
+[32m   (...)[39m[32m   3431[39m [33;03m    ShapeList: sorted list of objects[39;00m
+[32m   3432[39m [33;03m"""[39;00m
+[32m   3434[39m [38;5;28;01mif[39;00m [38;5;28mcallable[39m(sort_by):
+[32m   3435[39m     [38;5;66;03m# If a callable is provided, use it directly as the key[39;00m
+[32m-> [39m[32m3436[39m     objects = [30;43msorted[39;49m[30;43m([39;49m[30;43mself[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mkey[39;49m[30;43m=[39;49m[30;43msort_by[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mreverse[39;49m[30;43m=[39;49m[30;43mreverse[39;49m[30;43m)[39;49m
+[32m   3438[39m [38;5;28;01melif[39;00m [38;5;28misinstance[39m(sort_by, [38;5;28mproperty[39m):
+[32m   3439[39m     objects = [38;5;28msorted[39m([38;5;28mself[39m, key=sort_by.[34m__get__[39m, reverse=reverse)
+
+[36mCell[39m[36m [39m[32mIn[13][39m[32m, line 5[39m, in [36m<lambda>[39m[34m(f)[39m
+[32m----> [39m[32m5[39m wall = cyl.faces().sort_by([38;5;28;01mlambda[39;00m f: abs(f.center().x) )
+
+[31mAttributeError[39m: 'Vector' object has no attribute 'x'
+
+# -- cell 14 (0.1s, exit 0)
+import build123d as bd, numpy as np
+R_MM, L_MM = 20.0, 200.0
+cyl = bd.Pos(0,50,50)*bd.Rotation(0,90,0)*bd.Cylinder(R_MM, L_MM)  # axis x, base at x=0?
+print("bbox:", cyl.bounding_box())
+faces = np.array([tuple(f.center()) for f in cyl.faces()])
+print(np.round(faces,1))
+# -- output
+bbox: bbox: -100.0 <= x <= 100.0, 30.0 <= y <= 70.0, 29.99999999999998 <= z <= 70.00000000000003
+[[   0.   50.   70.]
+ [ 100.   50.   50.]
+ [-100.   50.   50.]]
+
+# -- cell 15 (0.1s, exit 1)
+import build123d as bd, numpy as np
+R_MM, L_MM = 20.0, 200.0
+cyl = bd.Pos(100,50,50)*bd.Rotation(0,90,0)*bd.Cylinder(R_MM, L_MM)
+fl = cyl.faces()
+cyl_m = bd.Scale(0.001)*cyl if False else None
+groups = {"inlet":[], "outlet":[], "wall":[]}
+for f in fl:
+    cx = f.center().to_tuple()[0]
+    if abs(cx) < 1e-6: groups["inlet"].append(f)
+    elif abs(cx-L_MM) < 1e-6: groups["outlet"].append(f)
+    else: groups["wall"].append(f)
+for name, faces in groups.items():
+    solids_out = bd.Compound(children=faces)
+    scaled = bd.Scale(0.001)*solids_out
+    bd.export_stl(scaled, f"{name}.stl", ascii_format=True)
+    print(name, len(faces), "faces, ok")
+# -- output
+/tmp/ipykernel_301258/3701890227.py:8: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  cx = f.center().to_tuple()[0]
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[15][39m[32m, line 14[39m
+[32m     10[39m     [38;5;28;01melif[39;00m abs(cx-L_MM) < [32m1e-6[39m: groups[[33m"outlet"[39m].append(f)
+[32m     11[39m     [38;5;28;01melse[39;00m: groups[[33m"wall"[39m].append(f)
+[32m     12[39m [38;5;28;01mfor[39;00m name, faces [38;5;28;01min[39;00m groups.items():
+[32m     13[39m     solids_out = bd.Compound(children=faces)
+[32m---> [39m[32m14[39m     scaled = bd.Scale([32m0.001[39m)*solids_out
+[32m     15[39m     bd.export_stl(scaled, f"{name}.stl", ascii_format=[38;5;28;01mTrue[39;00m)
+[32m     16[39m     print(name, len(faces), [33m"faces, ok"[39m)
+
+[31mAttributeError[39m: module 'build123d' has no attribute 'Scale'
+
+# -- cell 16 (0.8s, exit 0)
+import build123d as bd, numpy as np
+R_MM, L_MM = 20.0, 200.0
+cyl = bd.Pos(100,50,50)*bd.Rotation(0,90,0)*bd.Cylinder(R_MM, L_MM)
+groups = {"inlet":[], "outlet":[], "wall":[]}
+for f in cyl.faces() if False else list(cyl.faces()):
+    cx = f.center().to_tuple()[0]
+    if abs(cx) < 1e-6: groups["inlet"].append(f)
+    elif abs(cx-L_MM) < 1e-6: groups["outlet"].append(f)
+    else: groups["wall"].append(f)
+for name, faces in groups.items():
+    scaled = bd.scale(bd.Compound(children=faces), 0.001)
+    bd.export_stl(scaled, f"{name}.stl", ascii_format=True)
+    print(name, len(faces), "exported")
+# -- output
+inlet 1 exported
+outlet 1 exported
+wall 1 exported
+
+/tmp/ipykernel_301258/1798818295.py:6: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  cx = f.center().to_tuple()[0]
+
+# -- cell 17 (0.1s, exit 0)
+import pathlib
+# background box
+bm = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}
+scale 1;
+vertices
+(
+    (-0.02 0.03 0.03)
+    ( 0.22 0.03 0.03)
+    ( 0.22 0.07 0.03)
+    (-0.02 0.07 0.03)
+    (-0.02 0.03 0.07)
+    ( 0.22 0.03 0.07)
+    ( 0.22 0.07 0.07)
+    (-0.02 0.07 0.07)
+);
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) (48 8 8) simpleGrading (1 1 1)
+);
+boundary
+(
+    bgwalls
+    {
+        type wall;
+        faces ( (0 4 5 1) (2 6 7 3) (0 1 5 4) (3 2 6 7) (0 3 7 4) (1 2 6 5) );
+    }
+);
+"""
+pathlib.Path("system/blockMeshDict").parent.mkdir(parents=True, exist_ok=True)
+pathlib.Path("system/blockMeshDict").write_text(bm)
+print("blockMeshDict written")
+# -- output
+blockMeshDict written
+
+# -- cell 18 (0.7s, exit 0)
+import pathlib
+shmd = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      snappyHexMeshDict;
+}
+castellatedMesh true;
+snap            true;
+addLayers       false;
+geometry
+{
+    inlet.stl { type triSurface; }
+    outlet.stl { type triSurface; }
+    wall.stl { type triSurface; }
+}
+castellatedMeshControls
+{
+    locationInMesh (0.10 0.05 0.05);
+    allowFreeStandingZoneFaces false;
+    nCellsBetweenLevels 1;
+    maxLocalCells 1000000;
+    maxGlobalCells 2000000;
+    minRefinementCells 10;
+    maxLoadUnbalance 0.10;
+    resolveFeatureAngle 30;
+    features ();
+    features
+    (
+        { file "inlet.eMesh"; level 0; }
+        { file "outlet.eMesh"; level 0; }
+        { file "wall.eMesh"; level 1; }
+    );
+    refinementSurfaces
+    {
+        inlet.stl { level (0 0); }
+        outlet.stl { level (0 0); }
+        wall.stl { level (1 1); }
+    }
+    refinementRegions {}
+}
+snapControls
+{
+    nSmoothPatch 3;
+    tolerance 2.0;
+    nSolveIter 30;
+    nRelaxIter 5;
+    nFeatureSnapIter 10;
+    implicitFeatureSnap false;
+    explicitFeatureSnap true;
+    multiRegionFeatureSnap false;
+}
+addLayersControls { relativeSizes false; expansionRatio 1.0; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; slipFeatureAngle 30; nRelaxIter 5; nSurfaceLayers 1; }
+meshQualityControls
+{
+    includeBbox 1;
+    maxNonOrtho 65;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave 80;
+    minFlatness 0.5;
+    minVol 1e-13;
+    minTetQuality -1;
+    minArea -1;
+    minTwist 0.02;
+    minDeterminant 0.001;
+    minFaceWeight 0.02;
+    minVolRatio 0.01;
+    minTriangleTwist -1;
+    nSmoothScale 4;
+    errorReduction 0.75;
+}
+mergeTolerance 1E-06;
+"""
+pathlib.Path("system/snappyHexMeshDict").write_text(shmd)
+print("snappyHexMeshDict written")
+# -- output
+snappyHexMeshDict written
+
+# -- cell 19 (0.4s, exit 0)
+import pathlib
+fvs = """FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default none; }
+gradSchemes { default none; }
+divSchemes { default none; }
+laplacianSchemes { default none; }
+interpolationSchemes { default none; }
+snGradSchemes { default none; }
+wallDist { method meshWave; }
+"""
+fvsol = """FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }
+"""
+pathlib.Path("system/fvSchemes").write_text(fvs)
+pathlib.Path("system/fvSolution").write_text(fvsol)
+cd = """FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application internal;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 1;
+deltaT 1;
+writeControl timeStep;
+writeInterval 1;
+purgeWrite 0;
+writeFormat ascii;
+writePrecision 8;
+writeCompression off;
+timeFormat general;
+timePrecision 6;
+runTimeModifiable true;
+"""
+pathlib.Path("system/controlDict").write_text(cd)
+import subprocess
+for cmd in (["blockMesh"], ["surfaceFeatureExtract"]):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    print(cmd[0], "rc", r.returncode); print(r.stdout[-1500:])
+# -- output
+blockMesh rc 1
+  | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 14 2026
+Time   : 17:00:21
+Host   : yc-demo
+PID    : 303622
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+No non-linear block edges defined
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+surfaceFeatureExtract rc 1
+\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : surfaceFeatureExtract
+Date   : Sep 14 2026
+Time   : 17:00:21
+Host   : yc-demo
+PID    : 303625
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+Note: Feature line extraction only valid on closed manifold surfaces
+
+Reading surfaceFeatureExtractDict
+
+# -- cell 20 (0.2s, exit 0)
+import subprocess
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.stderr[-800:]); print(r.stdout[-800:])
+# -- output
+--> FOAM FATAL ERROR: (openfoam-2512)
+Trying to specify a boundary face 4(0 1 5 4) on the face on cell 0 which is either an internal face or already belongs to the same patch. This is face 2 of patch 0 named bgwalls.
+
+    From void Foam::polyMesh::setTopology(const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, Foam::labelList&, Foam::labelList&, Foam::label&, Foam::label&, Foam::cellList&)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 348.
+
+FOAM exiting
+
+
+()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+No non-linear block edges defined
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+# -- cell 21 (0.2s, exit 0)
+import pathlib, subprocess
+p = pathlib.Path("system/blockMeshDict")
+t = p.read_text().replace("(0 4 5 1) (2 6 7 3) (0 1 5 4) (3 2 6 7) (0 1 5 4) (1 2 6 5)",
+  "(0 3 2 1) (4 5 6 7) (0 1 5 4) (3 2 6 7) (0 4 7 3) (1 2 6 5)")
+p.write_text(t)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-300:], r.stderr[-300:])
+# -- output
+1 * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+No non-linear block edges defined
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+  0 named bgwalls.
+
+    From void Foam::polyMesh::setTopology(const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, Foam::labelList&, Foam::labelList&, Foam::label&, Foam::label&, Foam::cellList&)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 348.
+
+FOAM exiting
+
+# -- cell 22 (0.8s, exit 0)
+print(open("system/blockMeshDict").read())
+# -- output
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}
+scale 1;
+vertices
+(
+    (-0.02 0.03 0.03)
+    ( 0.22 0.03 0.03)
+    ( 0.22 0.07 0.03)
+    (-0.02 0.07 0.03)
+    (-0.02 0.03 0.07)
+    ( 0.22 0.03 0.07)
+    ( 0.22 0.07 0.07)
+    (-0.02 0.07 0.07)
+);
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) (48 8 8) simpleGrading (1 1 1)
+);
+boundary
+(
+    bgwalls
+    {
+        type wall;
+        faces ( (0 4 5 1) (2 6 7 3) (0 1 5 4) (3 2 6 7) (0 3 7 4) (1 2 6 5) );
+    }
+);
+
+# -- cell 23 (2.4s, exit 0)
+import pathlib, subprocess
+p = pathlib.Path("system/blockMeshDict")
+t = p.read_text()
+t = t.replace("faces ( (0 4 5 1) (2 6 7 3) (0 1 5 4) (3 2 6 7) (0 3 7 4) (1 2 6 5) );",
+              "faces ( (0 3 2 1) (4 5 6 7) (0 1 5 4) (3 2 6 7) (0 4 7 3) (1 2 6 5) );")
+p.write_text(t)
+r = subprocess.run(["blockMesh"], capture_output=True, text=True)
+print(r.returncode)
+print(r.stderr[-300:])
+# -- output
+0
+
+# -- cell 24 (0.2s, exit 0)
+import subprocess
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-400:], r.stderr[-400:])
+# -- output
+1 ficationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+Note: Feature line extraction only valid on closed manifold surfaces
+
+Reading surfaceFeatureExtractDict
+
+ d file "/home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6/system/surfaceFeatureExtractDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 25 (0.9s, exit 0)
+import pathlib
+d = """FoamFile { version 2.0; format ascii; object surfaceFeatureExtractDict; }
+inlet.stl { extractionMethod extractFromSurface; extractFromSurfaceCoeffs { includedAngle 150; } writeObj no; }
+outlet.stl { extractionMethod extractFromSurface; extractFromSurfaceCoeffs { includedAngle 150; } writeObj no; }
+wall.stl { extractionMethod extractFromSurface; extractFromSurfaceCoeffs { includedAngle 150; } writeObj no; }
+"""
+pathlib.Path("system/surfaceFeatureExtractDict").write_text(d)
+import subprocess
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print(r.returncode); print(r.stderr[-300:]); print(r.stdout[-2500:])
+# -- output
+1
+FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'class' not found in dictionary 
+
+
+    From bool Foam::dictionary::readEntry(const Foam::word&, T&, Foam::keyType::option, Foam::IOobjectOption::readOption) const [with T = Foam::word]
+    in file lnInclude/dictionaryTemplates.C at line 327.
+
+FOAM exiting
+
+
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : surfaceFeatureExtract
+Date   : Sep 14 2026
+Time   : 17:01:58
+Host   : yc-demo
+PID    : 303796
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+Note: Feature line extraction only valid on closed manifold surfaces
+
+Reading surfaceFeatureExtractDict
+
+# -- cell 26 (0.4s, exit 0)
+import pathlib
+d = pathlib.Path("system/surfaceFeatureExtractDict")
+d.write_text(d.read_text().replace("version 2.0; format ascii; object surfaceFeatureExtractDict;",
+  "version 2.0; format ascii; class dictionary; object surfaceFeatureExtractDict;"))
+import subprocess
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print(r.returncode); print(r.stdout[-1200:]); print(r.stderr[-200:])
+# -- output
+1
+                |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : surfaceFeatureExtract
+Date   : Sep 14 2026
+Time   : 17:02:11
+Host   : yc-demo
+PID    : 303813
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+Note: Feature line extraction only valid on closed manifold surfaces
+
+Reading surfaceFeatureExtractDict
+
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+No surfaces specified/found for entry: inlet.stl
+
+    From int main(int, char**)
+    in file surfaceFeatureExtract.C at line 308.
+
+FOAM exiting
+
+# -- cell 27 (0.2s, exit 0)
+import shutil, os, subprocess, pathlib
+p = pathlib.Path("constant/triSurface"); p.mkdir(parents=True, exist_ok=True)
+for f in ["inlet.stl","outlet.stl","wall.stl"]:
+    shutil.move(f, p/f)
+r = subprocess.run(["surfaceFeatureExtract"], capture_output=True, text=True)
+print(r.returncode, r.stdout[-600:], r.stderr[-200:])
+# -- output
+0       : 0
+        mixed              : 0
+        non-feature        : 252
+    edges  : 252
+    of which
+        external edges     : 0
+        internal edges     : 0
+        flat edges         : 0
+        open edges         : 252
+        multiply connected : 0
+
+Writing extendedFeatureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6/constant/extendedFeatureEdgeMesh/wall.extendedFeatureEdgeMesh"
+
+Writing featureEdgeMesh to "/home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6/constant/triSurface/wall.eMesh"
+ExecutionTime = 0.01 s  ClockTime = 0 s
+
+End
+
+# -- cell 28 (0.3s, exit 0)
+import subprocess
+r = subprocess.run(["snappyHexMesh"], capture_output=True, text=True)
+print(rc := r.returncode)
+print(r.stdout[-1500:]); print(r.stderr[-200:])
+# -- output
+1
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh
+Date   : Sep 14 2026
+Time   : 17:02:33
+Host   : yc-demo
+PID    : 305122
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.01 s
+
+Overall mesh bounding box  : (-0.02 0.03 0.03) (0.22 0.07 0.07)
+Relative tolerance         : 1e-06
+Absolute matching distance : 2.4657656e-07
+
+
+urface> Foam::searchableSurface::New(const Foam::word&, const Foam::IOobject&, const Foam::dictionary&)
+    in file searchableSurfaces/searchableSurface/searchableSurface.C at line 53.
+
+FOAM exiting
+
+# -- cell 29 (1.8s, exit 0)
+import pathlib
+p = pathlib.Path("system/snappyHexMeshDict")
+d = p.read_text()
+d = d.replace("""inlet.stl { type triSurface; }
+    outlet.stl { type triSurface; }
+    wall.stl { type triSurface; }""",
+"""inlet { type triSurface; file "inlet.stl"; }
+    outlet { type triSurface; file "outlet.stl"; }
+    wall { type triSurface; file "wall.stl"; }""")
+d = d.replace("""{ file "inlet.eMesh"; level 0; }
+        { file "outlet.eMesh"; level 0; }
+        { file "wall.eMesh"; level 1; }""",
+"""{ file "inlet.eMesh"; level 1; }
+        { file "outlet.eMesh"; level 1; }
+        { file "wall.eMesh"; level 1; }""")
+d = d.replace("""inlet.stl { level (0 0); }
+        outlet.stl { level (0 0); }
+        wall.stl { level (1 1); }""",
+"""inlet { level (1 1); }
+        outlet { level (1 1); }
+        wall { level (1 1); }""")
+p.write_text(d)
+import subprocess
+r = subprocess.run(["snappyHexMesh"], capture_output=True, text=True)
+print(r.returncode); print(r.stdout[-1200:]); print(r.stderr[-200:])
+# -- output
+1
+-----------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh
+Date   : Sep 14 2026
+Time   : 17:02:54
+Host   : yc-demo
+PID    : 305150
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.01 s
+
+Overall mesh bounding box  : (-0.02 0.03 0.03) (0.22 0.07 0.07)
+Relative tolerance         : 1e-06
+Absolute matching distance : 2.4657656e-07
+
+
+urface> Foam::searchableSurface::New(const Foam::word&, const Foam::IOobject&, const Foam::dictionary&)
+    in file searchableSurfaces/searchableSurface/searchableSurface.C at line 53.
+
+FOAM exiting
+
+# -- cell 30 (0.3s, exit 0)
+import subprocess
+r = subprocess.run(["snappyHexMesh"], capture_output=True, text=True)
+i = r.stdout.find("Error")
+print(r.stdout[max(0,len(r.stdout)-4000)-0:])
+print("ERR:", r.stderr[:1500])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh
+Date   : Sep 14 2026
+Time   : 17:03:03
+Host   : yc-demo
+PID    : 305153
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T6-20260914-165436-821f/t6
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.01 s
+
+Overall mesh bounding box  : (-0.02 0.03 0.03) (0.22 0.07 0.07)
+Relative tolerance         : 1e-06
+Absolute matching distance : 2.4657656e-07
+
+
+ERR: 
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Unknown searchableSurface type triSurface
+
+Valid searchableSurface types :
+
+26
+(
+box
+closedTriSurfaceMesh
+collection
+cone
+cylinder
+disk
+distributedTriSurfaceMesh
+extrudedCircle
+plane
+plate
+rotatedBox
+searchableBox
+searchableCone
+searchableCylinder
+searchableDisk
+searchableExtrudedCircle
+searchablePlane
+searchablePlate
+searchableRotatedBox
+searchableSphere
+searchableSurfaceCollection
+searchableSurfaceWithGaps
+smoothTriSurfaceMesh
+sphere
+subTriSurfaceMesh
+triSurfaceMesh
+)
+
+
+
+file: system/snappyHexMeshDict/geometry/inlet at line 13.
+
+    From static Foam::autoPtr<Foam::searchableSurface> Foam::searchableSurface::New(const Foam::word&, const Foam::IOobject&, const Foam::dictionary&)
+    in file searchableSurfaces/searchableSurface/searchableSurface.C at line 53.
+
+FOAM exiting
+

@@ -1,0 +1,690 @@
+# -- cell 1 (2.3s, exit 0)
+import build123d as bd, numpy as np, inspect
+print(bd.__version__)
+print(inspect.signature(bd.loft))
+print(hasattr(bd,'Cone'))
+# -- output
+0.11.1
+(sections: 'Face | Sketch | Iterable[Vertex | Face | Sketch] | None' = None, ruled: 'bool' = False, clean: 'bool' = True, mode: 'Mode' = <Mode.ADD>) -> 'Part'
+True
+
+# -- cell 2 (0.3s, exit 1)
+import math
+def cyl_pt(r, th, z):
+    return (r*math.cos(th), r*math.sin(th), z)
+
+def bevel_gear(z, m, delta, Rin, Rout, backlash_mm=0.0, add_f=1.0, ded_f=1.25):
+    # blank: cone frustum from Rin..Rout cone distances, axis +Z, apex at origin
+    r_in = Rin*math.sin(delta); r_out = Rout*math.sin(delta)
+    blank = bd.Cone(r_out, r_in, Rout-Rin)  # along Z from z=Rin? Cone apex->? place at Rin..Rout
+    blank = bd.Pos(0,0,Rin)*blank
+    half_tooth = math.pi/(2*z)  # angular half width of one tooth arc (slot + tooth = pi/z)
+    eta = half_tooth/2 + (backlash_mm/2)/(Rout*math.sin(delta))  # widen slot each side for backlash
+    cuts=[]
+    for k in range(z):
+        th = 2*math.pi*k/z
+        wires=[]
+        for s in (Rin-2, Rout+2):
+            r=s*math.sin(delta)
+            r_lo=r-(ded_f+0.3)*m; r_hi=r+(add_f+0.3)*m
+            pts=[cyl_pt(r_lo,th-eta,s),cyl_pt(r_lo,th+eta,s),
+                 cyl_pt(r_hi,th+eta,s),cyl_pt(r_hi,th-eta,s)]
+            wires.append(bd.Wire.make_polygon(pts,close=True))
+        cuts.append(bd.loft(wires,ruled=True))
+    gear=blank
+    for c in cuts:
+        gear=gear-c
+    return gear
+
+# geometry params (mm)
+m=3; z1,z2=20,30
+d1=m*z1; d2=m*z2
+delta1=math.atan2(z1,z2); delta2=math.pi/2-delta1
+Rcone=d1/(2*math.sin(delta1))  # outer cone distance
+b=12.0  # face width (assumption)
+Rin=Rcone-b; Rout=Rcone
+print("pitch cones deg:",math.degrees(delta1),math.degrees(delta2),"Rcone",Rcone)
+pinion=bevel_gear(z1,m,delta1,Rin,Rout)
+wheel =bevel_gear(z2,m,delta2,Rin,Rout)
+print(pinion.bounding_box().size, wheel.bounding_box().size,
+      pinion.volume, wheel.volume)
+# -- output
+pitch cones deg: 33.690067525979785 56.309932474020215 Rcone 54.083269131959845
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 36[39m
+[32m     32[39m Rcone=d1/([32m2[39m*math.sin(delta1))  [38;5;66;03m# outer cone distance[39;00m
+[32m     33[39m b=[32m12.0[39m  [38;5;66;03m# face width (assumption)[39;00m
+[32m     34[39m Rin=Rcone-b; Rout=Rcone
+[32m     35[39m print([33m"pitch cones deg:"[39m,math.degrees(delta1),math.degrees(delta2),[33m"Rcone"[39m,Rcone)
+[32m---> [39m[32m36[39m pinion=bevel_gear(z1,m,delta1,Rin,Rout)
+[32m     37[39m wheel =bevel_gear(z2,m,delta2,Rin,Rout)
+[32m     38[39m print(pinion.bounding_box().size, wheel.bounding_box().size,
+[32m     39[39m       pinion.volume, wheel.volume)
+
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 22[39m, in [36mbevel_gear[39m[34m(z, m, delta, Rin, Rout, backlash_mm, add_f, ded_f)[39m
+[32m     18[39m             r_lo=r-(ded_f+[32m0.3[39m)*m; r_hi=r+(add_f+[32m0.3[39m)*m
+[32m     19[39m             pts=[cyl_pt(r_lo,th-eta,s),cyl_pt(r_lo,th+eta,s),
+[32m     20[39m                  cyl_pt(r_hi,th+eta,s),cyl_pt(r_hi,th-eta,s)]
+[32m     21[39m             wires.append(bd.Wire.make_polygon(pts,close=[38;5;28;01mTrue[39;00m))
+[32m---> [39m[32m22[39m         cuts.append(bd.loft(wires,ruled=[38;5;28;01mTrue[39;00m))
+[32m     23[39m     gear=blank
+[32m     24[39m     [38;5;28;01mfor[39;00m c [38;5;28;01min[39;00m cuts:
+[32m     25[39m         gear=gear-c
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    157[39m objs = [38;5;28mlist[39m(objs)  [38;5;66;03m# To determine its length[39;00m
+[32m    158[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(objs) < [32m2[39m:
+[32m--> [39m[32m159[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mMore than one wire is required[39m[33m"[39m)
+[32m    160[39m vertices = [obj [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m objs [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj.wrapped, TopoDS_Vertex)]
+[32m    161[39m vertex_count = [38;5;28mlen[39m(vertices)
+
+[31mValueError[39m: More than one wire is required
+
+# -- cell 3 (0.1s, exit 1)
+import inspect
+print(inspect.signature(bd.Wire.make_polygon))
+w1=bd.Wire.make_polygon([(0,0,0),(1,0,0),(1,1,0),(0,1,0)],close=True)
+print(w1.is_valid(), type(w1))
+# -- output
+(vertices: 'Iterable[VectorLike]', close: 'bool' = True) -> 'Wire'
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[3][39m[32m, line 4[39m
+[32m      1[39m [38;5;28;01mimport[39;00m inspect
+[32m      2[39m print(inspect.signature(bd.Wire.make_polygon))
+[32m      3[39m w1=bd.Wire.make_polygon([([32m0[39m,[32m0[39m,[32m0[39m),([32m1[39m,[32m0[39m,[32m0[39m),([32m1[39m,[32m1[39m,[32m0[39m),([32m0[39m,[32m1[39m,[32m0[39m)],close=[38;5;28;01mTrue[39;00m)
+[32m----> [39m[32m4[39m print(w1.is_valid(), type(w1))
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 4 (0.1s, exit 1)
+import numpy as np, math
+def wire_at(s):  # rectangle loop
+    pts=[(0,0,s),(2,0,s),(2,2,s),(0,2,s)]
+    return bd.Wire.make_polygon(pts,close=True)
+test=bd.loft([wire_at(0),wire_at(3)],ruled=True)
+print(type(test), test.volume if hasattr(test,'volume') else '?')
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 5[39m
+[32m      1[39m [38;5;28;01mimport[39;00m numpy [38;5;28;01mas[39;00m np, math
+[32m      2[39m [38;5;28;01mdef[39;00m wire_at(s):  [38;5;66;03m# rectangle loop[39;00m
+[32m      3[39m     pts=[([32m0[39m,[32m0[39m,s),([32m2[39m,[32m0[39m,s),([32m2[39m,[32m2[39m,s),([32m0[39m,[32m2[39m,s)]
+[32m      4[39m     [38;5;28;01mreturn[39;00m bd.Wire.make_polygon(pts,close=[38;5;28;01mTrue[39;00m)
+[32m----> [39m[32m5[39m test=bd.loft([wire_at([32m0[39m),wire_at([32m3[39m)],ruled=[38;5;28;01mTrue[39;00m)
+[32m      6[39m print(type(test), test.volume [38;5;28;01mif[39;00m hasattr(test,[33m'volume'[39m) [38;5;28;01melse[39;00m [33m'?'[39m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/operations_part.py:320[39m, in [36mloft[39m[34m(sections, ruled, clean, mode)[39m
+[32m    317[39m holes = normalize_list_of_lists(hole_candidates)
+[32m    319[39m [38;5;66;03m# Perform lofts[39;00m
+[32m--> [39m[32m320[39m new_solid = [30;43mSolid[39;49m[30;43m.[39;49m[30;43mmake_loft[39;49m[30;43m([39;49m[30;43mloft_sections[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m
+[32m    321[39m [38;5;28;01mif[39;00m holes:
+[32m    322[39m     [38;5;66;03m# Since the holes are interior a Solid will be generated here[39;00m
+[32m    323[39m     new_solid = cast(Solid, new_solid.cut(Solid.make_loft(holes, ruled)))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:159[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    157[39m objs = [38;5;28mlist[39m(objs)  [38;5;66;03m# To determine its length[39;00m
+[32m    158[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(objs) < [32m2[39m:
+[32m--> [39m[32m159[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mMore than one wire is required[39m[33m"[39m)
+[32m    160[39m vertices = [obj [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m objs [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj.wrapped, TopoDS_Vertex)]
+[32m    161[39m vertex_count = [38;5;28mlen[39m(vertices)
+
+[31mValueError[39m: More than one wire is required
+
+# -- cell 5 (0.1s, exit 1)
+w0=wire_at(0); w1=wire_at(3)
+t=bd.Solid.make_loft([w0.wrapped,w1.wrapped],ruled=True)
+print(t.volume)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 2[39m
+[32m      1[39m w0=wire_at([32m0[39m); w1=wire_at([32m3[39m)
+[32m----> [39m[32m2[39m t=bd.Solid.make_loft([w0.wrapped,w1.wrapped],ruled=[38;5;28;01mTrue[39;00m)
+[32m      3[39m print(t.volume)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/three_d.py:1434[39m, in [36mSolid.make_loft[39m[34m(cls, objs, ruled)[39m
+[32m   1416[39m [38;5;129m@classmethod[39m
+[32m   1417[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mmake_loft[39m([38;5;28mcls[39m, objs: Iterable[Vertex | Wire], ruled: [38;5;28mbool[39m = [38;5;28;01mFalse[39;00m) -> Solid:
+[32m   1418[39m [38;5;250m    [39m[33;03m"""make loft[39;00m
+[32m   1419[39m 
+[32m   1420[39m [33;03m    Makes a loft from a list of wires and vertices. Vertices can appear only at the[39;00m
+[32m   (...)[39m[32m   1432[39m [33;03m        Solid: Lofted object[39;00m
+[32m   1433[39m [33;03m    """[39;00m
+[32m-> [39m[32m1434[39m     [38;5;28;01mreturn[39;00m [38;5;28mcls[39m(TopoDS.Solid([30;43m_make_loft[39;49m[30;43m([39;49m[30;43mobjs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43;01mTrue[39;49;00m[30;43m,[39;49m[30;43m [39;49m[30;43mruled[39;49m[30;43m)[39;49m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/utils.py:160[39m, in [36m_make_loft[39m[34m(objs, filled, ruled)[39m
+[32m    158[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(objs) < [32m2[39m:
+[32m    159[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mMore than one wire is required[39m[33m"[39m)
+[32m--> [39m[32m160[39m vertices = [obj [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m objs [38;5;28;01mif[39;00m [38;5;28misinstance[39m([30;43mobj[39;49m[30;43m.[39;49m[30;43mwrapped[39;49m, TopoDS_Vertex)]
+[32m    161[39m vertex_count = [38;5;28mlen[39m(vertices)
+[32m    163[39m [38;5;28;01mif[39;00m vertex_count > [32m2[39m:
+
+[31mAttributeError[39m: 'OCP.OCP.TopoDS.TopoDS_Wire' object has no attribute 'wrapped'
+
+# -- cell 6 (0.1s, exit 0)
+F0=bd.Face(wire_at(0)); F1=bd.Face(wire_at(3))
+t=bd.loft([F0,F1],ruled=True)
+print(type(t), t.volume)
+# -- output
+<class 'build123d.topology.composite.Part'> 12.0
+
+# -- cell 7 (0.1s, exit 0)
+import build123d as bd, math
+def wire_at(s):
+    pts=[(0,0,s),(2,0,s),(2,2,s),(0,2,s)]
+    return bd.Wire.make_polygon(pts,close=True)
+t=bd.loft([bd.Face(wire_at(0)),bd.Face(wire_at(3))],ruled=True)
+print(type(t), t.volume)
+# -- output
+<class 'build123d.topology.composite.Part'> 12.0
+
+# -- cell 8 (3.9s, exit 0)
+import math
+def cyl_pt(r, th, z):
+    return (r*math.cos(th), r*math.sin(th), z)
+
+def bevel_gear(z, m, delta, Rin, Rout, backlash_mm=0.0, add_f=1.0, ded_f=1.25):
+    r_in = Rin*math.sin(delta); r_out = Rout*math.sin(delta)
+    blank = bd.Pos(0,0,Rin)*bd.Cone(r_out, r_in, Rout-Rin)
+    eta = math.pi/(2*z)/2 + (backlash_mm/2)/(Rout*math.sin(delta))  # half angular slot width
+    cuts=[]
+    for k in range(z):
+        th = 2*math.pi*k/z
+        faces=[]
+        for s in (Rin-2, Rout+2):
+            r=s*math.sin(delta)
+            r_lo=r-(ded_f+0.3)*m; r_hi=r+(add_f+0.3)*m
+            pts=[cyl_pt(r_lo,th-eta,s),cyl_pt(r_lo,th+eta,s),
+                 cyl_pt(r_hi,th+eta,s),cyl_pt(r_hi,th-eta,s)]
+            faces.append(bd.Face(bd.Wire.make_polygon(pts,close=True)))
+        cuts.append(bd.loft(faces,ruled=True))
+    gear=blank
+    for c in cuts:
+        gear=gear-c
+    return gear
+
+m=3; z1,z2=20,30
+d1=m*z1; d2=m*z2
+delta1=math.atan2(z1,z2); delta2=math.pi/2-delta1
+Rcone=d1/(2*math.sin(delta1))
+b=12.0
+Rin=Rcone-b; Rout=Rcone
+pinion=bevel_gear(z1,m,delta1,Rin,Rout)
+wheel =bevel_gear(z2,m,delta2,Rin,Rout)
+print("d1,d2 mm",d1,d2,"| deltas",180*delta1/math.pi,180*delta2/math.pi,
+      "| Rcone",Rcone,"| vols",pinion.volume,wheel.volume)
+import matplotlib_inline; import matplotlib.pyplot as plt
+bd.export_stl(pinion,"/tmp/pinion.stl"); bd.export_stl(wheel,"/tmp/wheel.stl")
+print("exported test")
+# -- output
+d1,d2 mm 60 90 | deltas 33.690067525979785 56.309932474020215 | Rcone 54.083269131959845 | vols 25366.19425553704 58223.63505918065
+exported test
+[no picture came back from this cell, and it looks like it drew one. A figure reaches you by being displayed, not by being saved: end the cell with the figure object, or call `display(fig)`, and do not set a matplotlib backend -- the kernel is already on the inline one. A `.png` written to disk is not sent; read it back with `IPython.display.Image(path)` if you want to see it.]
+
+# -- cell 9 (1.3s, exit 0)
+import pyvista as pv
+p=pv.Plotter(off_screen=True)
+p.add_mesh(pv.read("/tmp/pinion.stl"),color="gold")
+p.add_mesh(pv.read("/tmp/wheel.stl"),color="silver")
+p.camera_position='iso'
+p.show()
+# -- output
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-14 15:14:35.093 (   0.250s) [    7E7430C7F780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-14 15:14:35.093 (   0.250s) [    7E7430C7F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-14 15:14:35.106 (   0.263s) [    7E7430C7F780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_272484/4047627625.py:6: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.show()
+
+# -- cell 10 (0.8s, exit 0)
+def rotZ_to_X():   # maps local +Z axis onto global +X
+    return bd.Rot(0,90,0)
+def rotZ_to_Y():   # local +Z onto global +Y
+    return bd.Rot(-90,0,0)
+
+pin_l = rotZ_to_X() * pinion
+best=None
+for ph in np.linspace(0, 2*np.pi/z2, 9):
+    w = rotZ_to_Y() * bd.Rot(0,0,ph*180/np.pi) * wheel
+    ov = (pin_l & w)
+    v = ov.volume if hasattr(ov,'volume') else 0.0
+    if best is None or v<best[0]: best=(v,ph)
+print("min overlap mm^3, phase deg:",best[0],best[1]*180/np.pi)
+# -- output
+min overlap mm^3, phase deg: 0 0.0
+
+# -- cell 11 (0.8s, exit 1)
+HX,HY,HZ=80,70,60  # cavity half-extents mm (160x140x120)
+cav = bd.Box(2*HX,2*HY,2*HZ)
+pin_g = rotZ_to_X() * pinion
+whl_g = rotZ_to_Y() * wheel
+rsh1, rsh2 = 8.0, 11.0   # shaft radii (assumption)
+shaftP = bd.Cylinder(rsh1, HX+Rcone+1)
+shaftP = bd.Rot(0,90,0)*shaftP
+shaftP = bd.Pos(-HX+Rcone+1,0,0)*shaftP   # hmm redo:
+def shaft(axis,r,c0,c1):
+    c=bd.Cylinder(r, c1-c0)
+    if axis=='X': c=bd.Rot(0,90,0)*c
+    if axis=='Y': c=bd.Rot(-90,0,0)*c
+    return bd.Pos(c0,0,0)*c
+shaftP = shaft('X', rsh1, -HX, Rin)
+shaftW = shaft('Y', rsh2, -HY, Rin)
+oil = cav - (pin_g | whl_g) - (shaftP | shaftW)
+inter = pin_g & whl_g
+print("gear overlap mm^3:", inter.volume)
+print("oil volume m^3:", oil.volume/1e9)
+cl_tip = (pin_g|whl_g|shaftP|shaftW)
+print("ok", isinstance(oil, bd.Part))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[11][39m[32m, line 16[39m
+[32m     12[39m     [38;5;28;01mif[39;00m axis==[33m'Y'[39m: c=bd.Rot(-[32m90[39m,[32m0[39m,[32m0[39m)*c
+[32m     13[39m     [38;5;28;01mreturn[39;00m bd.Pos(c0,[32m0[39m,[32m0[39m)*c
+[32m     14[39m shaftP = shaft([33m'X'[39m, rsh1, -HX, Rin)
+[32m     15[39m shaftW = shaft([33m'Y'[39m, rsh2, -HY, Rin)
+[32m---> [39m[32m16[39m oil = cav - (pin_g | whl_g) - (shaftP | shaftW)
+[32m     17[39m inter = pin_g & whl_g
+[32m     18[39m print([33m"gear overlap mm^3:"[39m, inter.volume)
+[32m     19[39m print([33m"oil volume m^3:"[39m, oil.volume/[32m1e9[39m)
+
+[31mTypeError[39m: unsupported operand type(s) for |: 'Part' and 'Part'
+
+# -- cell 12 (1.6s, exit 0)
+oil = cav - pin_g - whl_g - shaftP - shaftW
+print("gear overlap mm^3:", (pin_g & whl_g).volume if hasattr(pin_g & whl_g,'volume') else 'comp')
+print("oil volume m^3:", oil.volume/1e9)
+print(isinstance(oil, bd.Part), len(oil.solids()))
+# -- output
+gear overlap mm^3: 0
+oil volume m^3: 0.002554233834087549
+True 1
+
+# -- cell 13 (46.9s, exit 1)
+import os
+HX,HY,HZ=80,70,60
+cav = bd.Box(2*HX,2*HY,2*HZ)
+pin_g = rotZ_to_X() * pinion
+whl_g = rotZ_to_Y() * wheel
+rsh1, rsh2 = 8.0, 11.0
+def shaft(axis,r,c0,c1):
+    c=bd.Cylinder(r, c1-c0)
+    if axis=='X': c=bd.Rot(0,90,0)*c
+    if axis=='Y': c=bd.Rot(-90,0,0)*c
+    return bd.Pos(c0,0,0)*c
+shaftP = shaft('X', rsh1, -HX, Rin)
+shaftW = shaft('Y', rsh2, -HY, Rin)
+oil = cav - pin_g - whl_g - shaftP - shaftW
+print("oil vol (m^3):", oil.volume/1e9, "solids:", len(oil.solids()))
+
+groups={"pinion":[], "wheel":[], "cavity_walls":[], "shaft_bore_pinion":[], "shaft_bore_wheel":[]}
+src=[("pinion",pin_g),("wheel",whl_g),("cavity_walls",cav),("shaft_bore_pinion",shaftP),("shaft_bore_wheel",shaftW)]
+for f in oil.faces():
+    c=f.center()
+    best=None
+    for name,s in src:
+        d=s.distance(f)
+        if best is None or d<best[0]: best=(d,name)
+    groups[best[1]].append(f)
+for k,v in groups.items(): print(k, len(v), sum(fi.area for fi in v)/1e4, "cm2")
+os.makedirs("constant/triSurface",exist_ok=True)
+for name,fs in groups.items():
+    comp=bd.Compound(children=fs)
+    comp_m = comp.scale(0.001)
+    bd.export_stl(comp_m, f"constant/triSurface/{name}.stl", tolerance=1e-5, angular_tolerance=0.3)
+print(os.listdir("constant/triSurface"))
+# -- output
+oil vol (m^3): 0.002554233834087549 solids: 1
+pinion 103 0.894099545240588 cm2
+wheel 153 1.7586790042892368 cm2
+cavity_walls 11 12.289616975063003 cm2
+shaft_bore_pinion 2 0.22964439114390606 cm2
+shaft_bore_wheel 0 0.0 cm2
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[13][39m[32m, line 30[39m
+[32m     26[39m [38;5;28;01mfor[39;00m k,v [38;5;28;01min[39;00m groups.items(): print(k, len(v), sum(fi.area [38;5;28;01mfor[39;00m fi [38;5;28;01min[39;00m v)/[32m1e4[39m, [33m"cm2"[39m)
+[32m     27[39m os.makedirs([33m"constant/triSurface"[39m,exist_ok=[38;5;28;01mTrue[39;00m)
+[32m     28[39m [38;5;28;01mfor[39;00m name,fs [38;5;28;01min[39;00m groups.items():
+[32m     29[39m     comp=bd.Compound(children=fs)
+[32m---> [39m[32m30[39m     comp_m = comp.scale([32m0.001[39m)
+[32m     31[39m     bd.export_stl(comp_m, f"constant/triSurface/{name}.stl", tolerance=[32m1e-5[39m, angular_tolerance=[32m0.3[39m)
+[32m     32[39m print(os.listdir([33m"constant/triSurface"[39m))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:1877[39m, in [36mShape.scale[39m[34m(self, factor, about)[39m
+[32m   1857[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mscale[39m(
+[32m   1858[39m     [38;5;28mself[39m,
+[32m   1859[39m     factor: [38;5;28mfloat[39m | [38;5;28mtuple[39m[[38;5;28mfloat[39m, [38;5;28mfloat[39m, [38;5;28mfloat[39m],
+[32m   1860[39m     about: VectorLike | [38;5;28;01mNone[39;00m = [38;5;28;01mNone[39;00m,
+[32m   1861[39m ) -> Self:
+[32m   1862[39m [38;5;250m    [39m[33;03m"""Scale this shape about a point.[39;00m
+[32m   1863[39m 
+[32m   1864[39m [33;03m    Non-uniform scaling may change the underlying geometry type to splines.[39;00m
+[32m   (...)[39m[32m   1874[39m [33;03m        Shape: a copy of the scaled shape.[39;00m
+[32m   1875[39m [33;03m    """[39;00m
+[32m-> [39m[32m1877[39m     current_location = [30;43mself[39;49m[30;43m.[39;49m[30;43mlocation[39;49m
+[32m   1878[39m     [38;5;28;01massert[39;00m current_location [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m
+[32m   1879[39m     about_point = current_location.position [38;5;28;01mif[39;00m about [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m Vector(about)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:505[39m, in [36mShape.location[39m[34m(self)[39m
+[32m    503[39m [38;5;250m[39m[33;03m"""Get this Shape's Location"""[39;00m
+[32m    504[39m [38;5;28;01mif[39;00m [38;5;28mself[39m._wrapped [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m:
+[32m--> [39m[32m505[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mCan[39m[33m'[39m[33mt find the location of an empty shape[39m[33m"[39m)
+[32m    506[39m [38;5;28;01mreturn[39;00m Location([38;5;28mself[39m.wrapped.Location())
+
+[31mValueError[39m: Can't find the location of an empty shape
+
+# -- cell 14 (0.1s, exit 1)
+import os, math
+groups={"pinion":[], "wheel":[], "cavity_walls":[], "shaft_bore_pinion":[], "shaft_bore_wheel":[]}
+faces=list(oil.faces())
+tol=0.5
+for f in faces:
+    c=f.center()
+    if abs(abs(c.x)-HX)<tol or abs(abs(c.y)-HY)<tol or abs(abs(c.z)-HZ)<tol:
+        groups["cavity_walls"].append(f); continue
+    if abs(math.hypot(c.y,c.z)-rsh1)<tol and c.x<Rin+tol:
+        groups["shaft_bore_pinion"].append(f); continue
+    if abs(math.hypot(c.x,c.z)-rsh2)<tol and c.y<Rin+tol:
+        groups["shaft_bore_wheel"].append(f); continue
+    # gear faces: nearest gear solid
+    dP=pin_g.distance(f); dW=whl_g.distance(f)
+    groups["pinion" if dP<=dW else "wheel"].append(f)
+for k,v in groups.items(): print(k, len(v), round(sum(fi.area for fi in v)/100,2), "cm2")
+os.makedirs("constant/triSurface",exist_ok=True)
+for name,fs in groups.items():
+    if not fs: print("EMPTY",name); continue
+    comp=bd.Compound(children=fs)
+    bd.export_stl(comp.scale(0.001), f"constant/triSurface/{name}.stl", tolerance=1e-6, angular_tolerance=0.25)
+print(os.listdir("constant/triSurface"))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[14][39m[32m, line 7[39m
+[32m      3[39m faces=list(oil.faces())
+[32m      4[39m tol=[32m0.5[39m
+[32m      5[39m [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m faces:
+[32m      6[39m     c=f.center()
+[32m----> [39m[32m7[39m     [38;5;28;01mif[39;00m abs(abs(c.x)-HX)<tol [38;5;28;01mor[39;00m abs(abs(c.y)-HY)<tol [38;5;28;01mor[39;00m abs(abs(c.z)-HZ)<tol:
+[32m      8[39m         groups[[33m"cavity_walls"[39m].append(f); [38;5;28;01mcontinue[39;00m
+[32m      9[39m     [38;5;28;01mif[39;00m abs(math.hypot(c.y,c.z)-rsh1)<tol [38;5;28;01mand[39;00m c.x<Rin+tol:
+[32m     10[39m         groups[[33m"shaft_bore_pinion"[39m].append(f); [38;5;28;01mcontinue[39;00m
+
+[31mAttributeError[39m: 'Vector' object has no attribute 'x'
+
+# -- cell 15 (0.1s, exit 1)
+import os, math
+groups={"pinion":[], "wheel":[], "cavity_walls":[], "shaft_bore_pinion":[], "shaft_bore_wheel":[]}
+tol=0.5
+for f in oil.faces():
+    c=f.center()
+    if abs(abs(c[0])-HX)<tol or abs(abs(c[1])-HY)<tol or abs(abs(c[2])-HZ)<tol:
+        groups["cavity_walls"].append(f)
+    elif abs(math.hypot(c[1],c[2])-rsh1)<tol and c[0]<Rin+tol:
+        groups["shaft_bore_pinion"].append(f)
+    elif abs(math.hypot(c[0],c[2])-rsh2)<tol and c[1]<Rin+tol:
+        groups["shaft_bore_wheel"].append(f)
+    else:
+        dP=pin_g.distance(f); dW=whl_g.distance(f)
+        groups["pinion" if dP<=dW else "wheel"].append(f)
+for k,v in groups.items(): print(k, len(v), round(sum(fi.area for fi in v)/100,2), "cm2")
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[15][39m[32m, line 6[39m
+[32m      2[39m groups={[33m"pinion"[39m:[], [33m"wheel"[39m:[], [33m"cavity_walls"[39m:[], [33m"shaft_bore_pinion"[39m:[], [33m"shaft_bore_wheel"[39m:[]}
+[32m      3[39m tol=[32m0.5[39m
+[32m      4[39m [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m oil.faces():
+[32m      5[39m     c=f.center()
+[32m----> [39m[32m6[39m     [38;5;28;01mif[39;00m abs(abs(c[[32m0[39m])-HX)<tol [38;5;28;01mor[39;00m abs(abs(c[[32m1[39m])-HY)<tol [38;5;28;01mor[39;00m abs(abs(c[[32m2[39m])-HZ)<tol:
+[32m      7[39m         groups[[33m"cavity_walls"[39m].append(f)
+[32m      8[39m     [38;5;28;01melif[39;00m abs(math.hypot(c[[32m1[39m],c[[32m2[39m])-rsh1)<tol [38;5;28;01mand[39;00m c[[32m0[39m]<Rin+tol:
+[32m      9[39m         groups[[33m"shaft_bore_pinion"[39m].append(f)
+
+[31mTypeError[39m: 'Vector' object is not subscriptable
+
+# -- cell 16 (46.4s, exit 0)
+import os, math
+groups={"pinion":[], "wheel":[], "cavity_walls":[], "shaft_bore_pinion":[], "shaft_bore_wheel":[]}
+tol=0.5
+for f in oil.faces():
+    cx,cy,cz = f.center().to_tuple()
+    if abs(abs(cx)-HX)<tol or abs(abs(cy)-HY)<tol or abs(abs(cz)-HZ)<tol:
+        groups["cavity_walls"].append(f)
+    elif abs(math.hypot(cy,cz)-rsh1)<tol and cx<Rin+tol:
+        groups["shaft_bore_pinion"].append(f)
+    elif abs(math.hypot(cx,cz)-rsh2)<tol and cy<Rin+tol:
+        groups["shaft_bore_wheel"].append(f)
+    else:
+        dP=pin_g.distance(f); dW=whl_g.distance(f)
+        groups["pinion" if dP<=dW else "wheel"].append(f)
+for k,v in groups.items(): print(k, len(v), round(sum(fi.area for fi in v)/100,2), "cm2")
+for name,fs in groups.items():
+    if fs:
+        comp=bd.Compound(children=fs)
+        bd.export_stl(comp.scale(0.001), f"constant/triSurface/{name}.stl", tolerance=1e-6, angular_tolerance=0.25)
+import os as _os
+print(_os.listdir("constant/triSurface"))
+# -- output
+pinion 103 89.41 cm2
+wheel 157 249.29 cm2
+cavity_walls 6 1157.1 cm2
+shaft_bore_pinion 3 21.41 cm2
+shaft_bore_wheel 0 0.0 cm2
+['shaft_bore_pinion.stl', 'wheel.stl', 'pinion.stl', 'cavity_walls.stl']
+
+/tmp/ipykernel_272484/3383199277.py:5: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  cx,cy,cz = f.center().to_tuple()
+
+# -- cell 17 (0.1s, exit 1)
+import os, math
+def shaft(axis,r,c0,c1):
+    c=bd.Cylinder(r, c1-c0)
+    if axis=='X': c=bd.Rot(0,90,0)*c
+    if axis=='Y': c=bd.Rot(90,0,0)*c   # Z -> -Y; so axis points +Y? Z->-Y means maps onto +? check
+    return bd.Pos(c0 if axis=='X' else 0, c0 if axis=='Y' else 0, 0)*c
+# verify: for Y, Rot(90,0,0) maps +Z to +Y (right-hand about +X is -90... ). test numerically:
+import numpy as np
+A=bd.Rot(90,0,0).rotation_matrix
+print("Z->", A@bd.Vector(0,0,1))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[17][39m[32m, line 9[39m
+[32m      5[39m     [38;5;28;01mif[39;00m axis==[33m'Y'[39m: c=bd.Rot([32m90[39m,[32m0[39m,[32m0[39m)*c   [38;5;66;03m# Z -> -Y; so axis points +Y? Z->-Y means maps onto +? check[39;00m
+[32m      6[39m     [38;5;28;01mreturn[39;00m bd.Pos(c0 [38;5;28;01mif[39;00m axis==[33m'X'[39m [38;5;28;01melse[39;00m [32m0[39m, c0 [38;5;28;01mif[39;00m axis==[33m'Y'[39m [38;5;28;01melse[39;00m [32m0[39m, [32m0[39m)*c
+[32m      7[39m [38;5;66;03m# verify: for Y, Rot(90,0,0) maps +Z to +Y (right-hand about +X is -90... ). test numerically:[39;00m
+[32m      8[39m [38;5;28;01mimport[39;00m numpy [38;5;28;01mas[39;00m np
+[32m----> [39m[32m9[39m A=bd.Rot([32m90[39m,[32m0[39m,[32m0[39m).rotation_matrix
+[32m     10[39m print([33m"Z->"[39m, A@bd.Vector([32m0[39m,[32m0[39m,[32m1[39m))
+
+[31mAttributeError[39m: 'Rotation' object has no attribute 'rotation_matrix'
+
+# -- cell 18 (0.1s, exit 0)
+test=bd.Rot(90,0,0)*bd.Pos(0,0,10)*bd.Cylinder(1,1)
+print("center:", test.center().to_tuple())
+test2=bd.Rot(-90,0,0)*bd.Pos(0,0,10)*bd.Cylinder(1,1)
+print("center:", test2.center().to_tuple())
+# -- output
+center: (1.766974823035287e-16, -10.0, 2.2108969810674454e-15)
+center: (5.300924469105861e-17, 10.0, 2.2299951174331808e-15)
+
+/tmp/ipykernel_272484/1930698873.py:2: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  print("center:", test.center().to_tuple())
+/tmp/ipykernel_272484/1930698873.py:4: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.
+  print("center:", test2.center().to_tuple())
+
+# -- cell 19 (45.9s, exit 0)
+import os, math
+def shaft(axis,r,c0,c1):
+    c=bd.Cylinder(r, c1-c0)
+    if axis=='X': c=bd.Rot(0,90,0)*c
+    if axis=='Y': c=bd.Rot(-90,0,0)*c
+    return (bd.Pos(c0,0,0) if axis=='X' else bd.Pos(0,c0,0))*c
+shaftP = shaft('X', rsh1, -HX, Rin)
+shaftW = shaft('Y', rsh2, -HY, Rin)
+oil = cav - pin_g - whl_g - shaftP - shaftW
+groups={"pinion":[], "wheel":[], "cavity_walls":[], "shaft_bore_pinion":[], "shaft_bore_wheel":[]}
+tol=0.5
+for f in oil.faces():
+    cx,cy,cz = tuple(f.center())
+    if abs(abs(cx)-HX)<tol or abs(abs(cy)-HY)<tol or abs(abs(cz)-HZ)<tol:
+        groups["cavity_walls"].append(f)
+    elif abs(math.hypot(cy,cz)-rsh1)<tol and cx<Rin+tol:
+        groups["shaft_bore_pinion"].append(f)
+    elif abs(math.hypot(cx,cz)-rsh2)<tol and cy<Rin+tol:
+        groups["shaft_bore_wheel"].append(f)
+    else:
+        dP=pin_g.distance(f); dW=whl_g.distance(f)
+        groups["pinion" if dP<=dW else "wheel"].append(f)
+for k,v in groups.items(): print(k, len(v), round(sum(fi.area for fi in v)/100,2), "cm2")
+for name,fs in groups.items():
+    if fs:
+        bd.export_stl(bd.Compound(children=fs).scale(0.001),
+                      f"constant/triSurface/{name}.stl", tolerance=1e-6, angular_tolerance=0.25)
+print(sorted(os.listdir("constant/triSurface")))
+# -- output
+pinion 104 93.21 cm2
+wheel 154 177.88 cm2
+cavity_walls 6 1162.19 cm2
+shaft_bore_pinion 1 30.68 cm2
+shaft_bore_wheel 1 38.73 cm2
+['cavity_walls.stl', 'pinion.stl', 'shaft_bore_pinion.stl', 'shaft_bore_wheel.stl', 'wheel.stl']
+
+# -- cell 20 (1.2s, exit 0)
+HX,HY,HZ=80,70,60
+cav = bd.Box(2*HX,2*HY,2*HZ)
+pin_g = rotZ_to_X() * pinion
+whl_g = rotZ_to_Y() * wheel
+rsh1, rsh2 = 8.0, 11.0
+def shaft(axis,r,c0,c1):
+    c=bd.Cylinder(r, c1-c0)
+    if axis=='X': c=bd.Rot(0,90,0)*c
+    if axis=='Y': c=bd.Rot(-90,0,0)*c
+    return (bd.Pos(c0,0,0) if axis=='X' else bd.Pos(0,c0,0))*c
+shaftP = shaft('X', rsh1, -HX, Rin)
+shaftW = shaft('Y', rsh2, -HY, Rin)
+oil = cav - pin_g - whl_g - shaftP - shaftW
+print("solids:", len(oil.solids()), "vol m^3:", oil.volume/1e9)
+print("gear overlap:", (pin_g & whl_g).volume)
+# -- output
+solids: 1 vol m^3: 0.002570833763358322
+gear overlap: 0
+
+# -- cell 21 (48.8s, exit 0)
+import os, math
+os.makedirs("constant/triSurface",exist_ok=True)
+groups={"pinion":[], "wheel":[], "cavity_walls":[], "shaft_bore_pinion":[], "shaft_bore_wheel":[]}
+tol=0.5
+for f in oil.faces():
+    cx,cy,cz = tuple(f.center())
+    if abs(abs(cx)-HX)<tol or abs(abs(cy)-HY)<tol or abs(abs(cz)-HZ)<tol:
+        groups["cavity_walls"].append(f)
+    elif abs(math.hypot(cy,cz)-rsh1)<tol and cx<Rin+tol:
+        groups["shaft_bore_pinion"].append(f)
+    elif abs(math.hypot(cx,cz)-rsh2)<tol and cy<Rin+tol:
+        groups["shaft_bore_wheel"].append(f)
+    else:
+        dP=pin_g.distance(f); dW=whl_g.distance(f)
+        groups["pinion" if dP<=dW else "wheel"].append(f)
+for k,v in groups.items(): print(k, len(v), round(sum(fi.area for fi in v)/100,2), "cm2")
+for name,fs in groups.items():
+    if fs:
+        bd.export_stl(bd.Compound(children=fs).scale(0.001),
+                      f"constant/triSurface/{name}.stl", tolerance=1e-6, angular_tolerance=0.25)
+print(sorted(os.listdir('constant/triSurface')))
+# -- output
+pinion 104 93.21 cm2
+wheel 154 177.88 cm2
+cavity_walls 6 1162.19 cm2
+shaft_bore_pinion 1 30.68 cm2
+shaft_bore_wheel 1 38.73 cm2
+['cavity_walls.stl', 'pinion.stl', 'shaft_bore_pinion.stl', 'shaft_bore_wheel.stl', 'wheel.stl']
+
+# -- cell 22 (0.2s, exit 0)
+import os, textwrap, subprocess
+os.makedirs("system",exist_ok=True)
+blockmesh = """
+convertToMeters 1;
+vertices
+(
+    (-0.085 -0.075 -0.065)
+    ( 0.085 -0.075 -0.065)
+    ( 0.085  0.075 -0.065)
+    (-0.085  0.075 -0.065)
+    (-0.085 -0.075  0.065)
+    ( 0.085 -0.075  0.065)
+    ( 0.085  0.075  0.065)
+    (-0.085  0.075  0.065)
+);
+blocks ( hex (0 1 2 3 4 5 6 7) (26 22 20) simpleGrading (1 1 1) );
+edges (); boundary ( w { type wall; faces ((0 3 7 4)(1 2 6 5)(0 1 5 4)(3 2 6 7)(4 5 6 7)(0 1 2 3)); } );
+mergePatchPairs ();
+"""
+open("system/blockMeshDict","w").write(blockmesh)
+print(subprocess.run(["blockMesh"],capture_output=True,text=True).returncode)
+# -- output
+1
+
+# -- cell 23 (0.2s, exit 0)
+r=subprocess.run(["blockMesh"],capture_output=True,text=True)
+print(r.stderr[-800:] or r.stdout[-800:])
+# -- output
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T15-20260914-151053-6c56/t15/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 24 (0.2s, exit 0)
+open("system/controlDict","w").write("""FoamFile { class dictionary; }
+application snappyHexMesh;
+startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1;
+writeControl timeStep; writeInterval 1; writeFormat ascii; writeCompression off;
+runTimeModifiable true;
+""")
+open("system/fvSchemes","w").write("FoamFile { class dictionary; }\nddtSchemes { default steadyState; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default none; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\n")
+open("system/fvSolution","w").write("FoamFile { class dictionary; }\nsolvers {}\nSIMPLE {}\nrelaxationFactors {}\n")
+print(subprocess.run(["blockMesh"],capture_output=True,text=True).stdout[-200:])
+# -- output
+kew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
