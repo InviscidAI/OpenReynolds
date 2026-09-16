@@ -1,0 +1,1240 @@
+# -- cell 1 (0.3s, exit 0)
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+# All dimensions are SI metres.
+R_BACKPLATE=0.060; T_BACKPLATE=0.004
+R_HUB=0.012; HUB_HEIGHT=0.018
+N_BLADES=7; BLADE_THICKNESS=0.003; BLADE_HEIGHT=0.014
+R_BLADE_IN=0.016; R_OUT=0.058; SWEEP_DEG=30.0
+Z_BOTTOM=T_BACKPLATE; Z_TOP=T_BACKPLATE+BLADE_HEIGHT
+ROOT_FILLET=0.002; COARSE_CELL=0.004
+
+def blade_centerline(r, theta0=0.0):
+    return theta0-np.deg2rad(SWEEP_DEG)*(r-R_BLADE_IN)/(R_OUT-R_BLADE_IN)
+
+def blade_edges(r, theta0=0.0):
+    th=blade_centerline(r,theta0)
+    # Constant physical thickness represented by +/- half-thickness angular offsets.
+    dth=np.arcsin((BLADE_THICKNESS/2)/r)
+    return th+dth, th-dth
+
+r=np.linspace(R_BLADE_IN,R_OUT,250)
+fig,ax=plt.subplots(figsize=(6,6))
+for k in range(N_BLADES):
+    t0=2*np.pi*k/N_BLADES
+    tp,tm=blade_edges(r,t0)
+    ax.fill(np.r_[r*np.cos(tp),(r*np.cos(tm))[::-1]],np.r_[r*np.sin(tp),(r*np.sin(tm))[::-1]],alpha=.55)
+for rr,ls in [(R_HUB,'--'),(R_BLADE_IN,':'),(R_OUT,'-')]:
+    ax.add_patch(plt.Circle((0,0),rr,fill=False,ls=ls,color='k'))
+ax.set_aspect('equal'); ax.set_xlabel('x [m]'); ax.set_ylabel('y [m]'); ax.set_title('Impeller water-domain planform (solids shaded)'); ax.grid(True)
+plt.show()
+mid_thickness=2*(0.5*(R_BLADE_IN+R_OUT))*np.sin((blade_edges(np.array([0.5*(R_BLADE_IN+R_OUT)]))[0]-blade_centerline(np.array([0.5*(R_BLADE_IN+R_OUT)]))))[0]
+print(f"Measured centerline sweep: {np.rad2deg(blade_centerline(R_OUT)-blade_centerline(R_BLADE_IN)):.3f} deg (requested -30.000 deg)")
+print(f"Measured blade thickness at mid-radius: {mid_thickness*1000:.3f} mm (requested 3.000 mm)")
+print(f"Flow height: {(Z_TOP-Z_BOTTOM)*1000:.3f} mm (requested 14.000 mm)")
+print(f"Axial inlet annulus: {R_HUB*1000:.1f} to {R_BLADE_IN*1000:.1f} mm radius")
+# -- output
+Measured centerline sweep: -30.000 deg (requested -30.000 deg)
+Measured blade thickness at mid-radius: 3.000 mm (requested 3.000 mm)
+Flow height: 14.000 mm (requested 14.000 mm)
+Axial inlet annulus: 12.0 to 16.0 mm radius
+
+# -- cell 2 (0.9s, exit 1)
+import gmsh, math, os
+
+gmsh.initialize()
+gmsh.model.add('impeller_water')
+occ=gmsh.model.occ
+# Base annular water envelope.
+outer=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_OUT)
+inner=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_HUB)
+base,_=occ.cut([(3,outer)],[(3,inner)],removeObject=True,removeTool=True)
+# Blade solids: smooth spline sides, with exact 3 mm normal thickness.
+blade_vols=[]
+for k in range(N_BLADES):
+    rv=np.linspace(R_BLADE_IN,R_OUT,25)
+    t0=2*np.pi*k/N_BLADES
+    tp,tm=blade_edges(rv,t0)
+    plus=[occ.addPoint(float(rr*np.cos(tt)),float(rr*np.sin(tt)),Z_BOTTOM) for rr,tt in zip(rv,tp)]
+    minus=[occ.addPoint(float(rr*np.cos(tt)),float(rr*np.sin(tt)),Z_BOTTOM) for rr,tt in zip(rv[::-1],tm[::-1])]
+    e1=occ.addBSpline(plus)
+    e2=occ.addLine(plus[-1],minus[0])
+    e3=occ.addBSpline(minus)
+    e4=occ.addLine(minus[-1],plus[0])
+    wire=occ.addWire([e1,e2,e3,e4],checkClosed=True)
+    face=occ.addPlaneSurface([wire])
+    ext=occ.extrude([(2,face)],0,0,Z_TOP-Z_BOTTOM)
+    blade_vols.extend([x for d,x in ext if d==3])
+fluid,_=occ.cut(base,[(3,v) for v in blade_vols],removeObject=True,removeTool=True)
+# Split volume conformally at the eye radius to preserve inlet/shroud boundary topology.
+eye_outer=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_BLADE_IN)
+eye_inner=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_HUB)
+eye_shell,_=occ.cut([(3,eye_outer)],[(3,eye_inner)],removeObject=True,removeTool=True)
+fluid_frag,_=occ.fragment(fluid,eye_shell,removeObject=True,removeTool=True)
+occ.synchronize()
+vols=gmsh.model.getEntities(3)
+# Name all fluid cells as one physical region.
+gmsh.model.addPhysicalGroup(3,[t for d,t in vols],1)
+gmsh.model.setPhysicalName(3,1,'water')
+# Classify boundary surfaces by analytic role; all residual cut faces are blades.
+boundary=set()
+for v in vols:
+    for d,t in gmsh.model.getBoundary([v],oriented=False,recursive=False):
+        if d==2: boundary.add(t)
+# Keep only surfaces incident to one volume (external boundary), not the conformal eye interface.
+incidence={s:0 for s in boundary}
+for d,v in vols:
+    for dd,s in gmsh.model.getBoundary([(d,v)],oriented=False):
+        if dd==2 and s in incidence: incidence[s]+=1
+external=[s for s,n in incidence.items() if n==1]
+groups={n:[] for n in ['inlet','radial_outlet','blades','backplate','hub','shroud']}
+for s in external:
+    typ=gmsh.model.getType(2,s)
+    cx,cy,cz=occ.getCenterOfMass(2,s); rr=math.hypot(cx,cy)
+    bb=gmsh.model.getBoundingBox(2,s)
+    if typ=='Plane' and abs(cz-Z_TOP)<1e-7:
+        groups['inlet' if rr < R_BLADE_IN else 'shroud'].append(s)
+    elif typ=='Plane' and abs(cz-Z_BOTTOM)<1e-7:
+        groups['backplate'].append(s)
+    elif typ=='Cylinder' and abs(math.hypot(cx,cy)-0.0)<1e-7:
+        # OCC cylinder centre of mass lies on axis; distinguish using surface area.
+        area=occ.getMass(2,s)
+        target_h=2*math.pi*R_HUB*(Z_TOP-Z_BOTTOM)
+        groups['hub' if abs(area-target_h)<0.25*target_h else 'radial_outlet'].append(s)
+    else:
+        groups['blades'].append(s)
+for i,(name,surfs) in enumerate(groups.items(),start=11):
+    if not surfs: raise RuntimeError(f'No surfaces found for {name}')
+    gmsh.model.addPhysicalGroup(2,surfs,i); gmsh.model.setPhysicalName(2,i,name)
+print('Volumes:',len(vols),'external surfaces:',len(external))
+print('Patch surface counts:',{k:len(v) for k,v in groups.items()})
+# Coarse tetrahedral mesh.
+gmsh.option.setNumber('Mesh.MeshSizeMin',COARSE_CELL)
+gmsh.option.setNumber('Mesh.MeshSizeMax',COARSE_CELL)
+gmsh.option.setNumber('Mesh.Algorithm3D',1)
+gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3)
+gmsh.write('impeller_water_coarse.msh')
+print('3D elements:',sum(len(tags) for et,tags,nodes in gmsh.model.mesh.getElements(3)))
+gmsh.finalize()
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference - Classify solids                                                                                Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference                                                                                  Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference                                                                                  Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference - Classify solids                                                                                Info    : [  0%] Fragments                                                                                  Info    : [ 10%] Fragments                                                                                  Info    : [ 20%] Fragments                                                                                  Info    : [ 30%] Fragments                                                                                  Info    : [ 40%] Fragments                                                                                  Info    : [ 50%] Fragments                                                                                  Info    : [ 60%] Fragments                                                                                  Info    : [ 70%] Fragments                                                                                  Info    : [ 80%] Fragments - Making faces                                                                                Info    : [ 90%] Fragments - Looking for internal shapes
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 65[39m
+[32m     61[39m         groups[[33m'hub'[39m [38;5;28;01mif[39;00m abs(area-target_h)<[32m0.25[39m*target_h [38;5;28;01melse[39;00m [33m'radial_outlet'[39m].append(s)
+[32m     62[39m     [38;5;28;01melse[39;00m:
+[32m     63[39m         groups[[33m'blades'[39m].append(s)
+[32m     64[39m [38;5;28;01mfor[39;00m i,(name,surfs) [38;5;28;01min[39;00m enumerate(groups.items(),start=[32m11[39m):
+[32m---> [39m[32m65[39m     [38;5;28;01mif[39;00m [38;5;28;01mnot[39;00m surfs: [38;5;28;01mraise[39;00m RuntimeError(f'No surfaces found for {name}')
+[32m     66[39m     gmsh.model.addPhysicalGroup([32m2[39m,surfs,i); gmsh.model.setPhysicalName([32m2[39m,i,name)
+[32m     67[39m print([33m'Volumes:'[39m,len(vols),[33m'external surfaces:'[39m,len(external))
+[32m     68[39m print([33m'Patch surface counts:'[39m,{k:len(v) [38;5;28;01mfor[39;00m k,v [38;5;28;01min[39;00m groups.items()})
+
+[31mRuntimeError[39m: No surfaces found for radial_outlet
+
+# -- cell 3 (0.1s, exit 0)
+for s in external:
+    typ=gmsh.model.getType(2,s); cm=occ.getCenterOfMass(2,s); area=occ.getMass(2,s); bb=gmsh.model.getBoundingBox(2,s)
+    print(s,typ,'CM=',tuple(round(x,6) for x in cm),'area=',round(area,8),'zspan=',round(bb[5]-bb[2],6))
+# -- output
+33 Cylinder CM= (0.050224, -0.028997, 0.011) area= 4.2e-05 zspan= 0.014
+34 Plane CM= (0.050213, -0.02899, 0.011) area= 4.2e-05 zspan= 0.014
+35 Plane CM= (0.050219, -0.028994, 0.004) area= 4e-08 zspan= 0.0
+36 Plane CM= (0.050219, -0.028994, 0.018) area= 4e-08 zspan= 0.0
+37 Cylinder CM= (0.053985, 0.021187, 0.011) area= 4.2e-05 zspan= 0.014
+38 Plane CM= (0.05398, 0.021186, 0.018) area= 4e-08 zspan= 0.0
+39 Plane CM= (0.053973, 0.021183, 0.011) area= 4.2e-05 zspan= 0.014
+40 Plane CM= (0.05398, 0.021186, 0.004) area= 4e-08 zspan= 0.0
+41 Cylinder CM= (0.008643, -0.057346, 0.011) area= 4.2e-05 zspan= 0.014
+42 Plane CM= (0.008642, -0.057333, 0.011) area= 4.2e-05 zspan= 0.014
+43 Plane CM= (0.008643, -0.057341, 0.004) area= 4e-08 zspan= 0.0
+44 Plane CM= (0.008643, -0.057341, 0.018) area= 4e-08 zspan= 0.0
+45 Cylinder CM= (-0.039446, -0.042512, 0.011) area= 4.2e-05 zspan= 0.014
+46 Plane CM= (-0.039437, -0.042503, 0.011) area= 4.2e-05 zspan= 0.014
+47 Plane CM= (-0.039442, -0.042508, 0.004) area= 4e-08 zspan= 0.0
+48 Plane CM= (-0.039442, -0.042508, 0.018) area= 4e-08 zspan= 0.0
+49 Cylinder CM= (-0.057831, 0.004334, 0.011) area= 4.2e-05 zspan= 0.014
+50 Plane CM= (-0.057826, 0.004333, 0.018) area= 4e-08 zspan= 0.0
+51 Plane CM= (-0.057818, 0.004333, 0.011) area= 4.2e-05 zspan= 0.014
+52 Plane CM= (-0.057826, 0.004333, 0.004) area= 4e-08 zspan= 0.0
+53 Cylinder CM= (-0.032669, 0.047917, 0.011) area= 4.2e-05 zspan= 0.014
+54 Plane CM= (-0.032666, 0.047912, 0.018) area= 4e-08 zspan= 0.0
+55 Plane CM= (-0.032662, 0.047906, 0.011) area= 4.2e-05 zspan= 0.014
+56 Plane CM= (-0.032666, 0.047912, 0.004) area= 4e-08 zspan= 0.0
+57 Cylinder CM= (0.017094, 0.055417, 0.011) area= 4.2e-05 zspan= 0.014
+58 Plane CM= (0.017092, 0.055412, 0.018) area= 4e-08 zspan= 0.0
+59 Plane CM= (0.01709, 0.055405, 0.011) area= 4.2e-05 zspan= 0.014
+60 Plane CM= (0.017092, 0.055412, 0.004) area= 4e-08 zspan= 0.0
+61 Cylinder CM= (0.055635, -0.014139, 0.011) area= 0.00040416 zspan= 0.014
+62 Cylinder CM= (0.056836, 0.009994,
+... 233 characters cut ...
+6885 zspan= 0.0
+66 Unknown CM= (0.032101, 0.019158, 0.011) area= 0.00064363 zspan= 0.014
+68 Plane CM= (-0.0, 0.0, 0.004) area= 0.00035087 zspan= 0.0
+82 Cylinder CM= (0.0, -0.0, 0.011) area= 0.00105558 zspan= 0.014
+83 Plane CM= (-0.0, 0.0, 0.018) area= 0.00035087 zspan= 0.0
+84 Plane CM= (0.02767, -0.02872, 0.004) area= 0.00126885 zspan= 0.0
+85 Unknown CM= (0.034992, -0.013153, 0.011) area= 0.00064363 zspan= 0.014
+86 Cylinder CM= (0.031707, -0.046506, 0.011) area= 0.00068684 zspan= 0.014
+87 Unknown CM= (0.014264, -0.034351, 0.011) area= 0.00066352 zspan= 0.014
+88 Plane CM= (0.02767, -0.02872, 0.018) area= 0.00126885 zspan= 0.0
+89 Plane CM= (-0.005202, -0.03954, 0.004) area= 0.00126885 zspan= 0.0
+90 Unknown CM= (0.011534, -0.035559, 0.011) area= 0.00064363 zspan= 0.014
+91 Cylinder CM= (-0.016591, -0.053786, 0.011) area= 0.00068684 zspan= 0.014
+92 Unknown CM= (-0.017964, -0.03257, 0.011) area= 0.00066352 zspan= 0.014
+93 Plane CM= (-0.005202, -0.03954, 0.018) area= 0.00126885 zspan= 0.0
+94 Plane CM= (-0.034157, -0.020585, 0.004) area= 0.00126885 zspan= 0.0
+95 Unknown CM= (-0.020609, -0.031188, 0.011) area= 0.00064363 zspan= 0.014
+96 Cylinder CM= (-0.052395, -0.020564, 0.011) area= 0.00068684 zspan= 0.014
+97 Unknown CM= (-0.036664, -0.006262, 0.011) area= 0.00066352 zspan= 0.014
+98 Plane CM= (-0.034157, -0.020585, 0.018) area= 0.00126885 zspan= 0.0
+99 Plane CM= (-0.037391, 0.01387, 0.004) area= 0.00126885 zspan= 0.0
+100 Unknown CM= (-0.037234, -0.003332, 0.011) area= 0.00064363 zspan= 0.014
+101 Cylinder CM= (-0.048745, 0.028143, 0.011) area= 0.00068684 zspan= 0.014
+102 Unknown CM= (-0.027756, 0.024761, 0.011) area= 0.00066352 zspan= 0.014
+103 Plane CM= (-0.037391, 0.01387, 0.018) area= 0.00126885 zspan= 0.0
+104 Plane CM= (-0.012469, 0.037881, 0.004) area= 0.00126885 zspan= 0.0
+105 Unknown CM= (-0.02582, 0.027033, 0.011) area= 0.00064363 zspan= 0.014
+106 Cylinder CM= (-0.008389, 0.055658, 0.011) area= 0.00068684 zspan= 0.014
+107 Unknown CM= (0.002053, 0.037138, 0.011) area= 0.00066352 zspan= 0.014
+108 Plane CM= (-0.012469, 0.037881, 0.018) area= 0.00126885 zspan= 0.0
+109 Plane CM= (0.021843, 0.033367, 0.004) area= 0.00126884 zspan= 0.0
+110 Unknown CM= (0.005036, 0.037042, 0.011) area= 0.00064363 zspan= 0.014
+111 Cylinder CM= (0.038284, 0.041261, 0.011) area= 0.00068684 zspan= 0.014
+112 Unknown CM= (0.030316, 0.02155, 0.011) area= 0.00066352 zspan= 0.014
+113 Plane CM= (0.021843, 0.033367, 0.018) area= 0.00126884 zspan= 0.0
+114 Cylinder CM= (0.015977, -0.000751, 0.011) area= 2.103e-05 zspan= 0.014
+115 Cylinder CM= (0.015977, 0.000751, 0.011) area= 2.103e-05 zspan= 0.014
+116 Plane CM= (0.015958, 0.0, 0.004) area= 1.4e-07 zspan= 0.0
+117 Plane CM= (0.015958, 0.0, 0.018) area= 1.4e-07 zspan= 0.0
+118 Cylinder CM= (0.009961, -0.012491, 0.011) area= 4.206e-05 zspan= 0.014
+119 Plane CM= (0.009949, -0.012476, 0.004) area= 1.4e-07 zspan= 0.0
+120 Plane CM= (0.009949, -0.012476, 0.018) area= 1.4e-07 zspan= 0.0
+121 Cylinder CM= (0.009961, 0.012491, 0.011) area= 4.206e-05 zspan= 0.014
+122 Plane CM= (0.009949, 0.012476, 0.018) area= 1.4e-07 zspan= 0.0
+123 Plane CM= (0.009949, 0.012476, 0.004) area= 1.4e-07 zspan= 0.0
+124 Plane CM= (-0.003551, -0.015558, 0.004) area= 1.4e-07 zspan= 0.0
+125 Cylinder CM= (-0.003555, -0.015576, 0.011) area= 4.206e-05 zspan= 0.014
+126 Plane CM= (-0.003551, -0.015558, 0.018) area= 1.4e-07 zspan= 0.0
+127 Plane CM= (-0.014377, -0.006924, 0.004) area= 1.4e-07 zspan= 0.0
+128 Cylinder CM= (-0.014394, -0.006932, 0.011) area= 4.206e-05 zspan= 0.014
+129 Plane CM= (-0.014377, -0.006924, 0.018) area= 1.4e-07 zspan= 0.0
+130 Plane CM= (-0.014377, 0.006924, 0.004) area= 1.4e-07 zspan= 0.0
+131 Cylinder CM= (-0.014394, 0.006932, 0.011) area= 4.206e-05 zspan= 0.014
+132 Plane CM= (-0.014377, 0.006924, 0.018) area= 1.4e-07 zspan= 0.0
+133 Plane CM= (-0.003551, 0.015558, 0.004) area= 1.4e-07 zspan= 0.0
+134 Cylinder CM= (-0.003555, 0.015576, 0.011) area= 4.206e-05 zspan= 0.014
+135 Plane CM= (-0.003551, 0.015558, 0.018) area= 1.4e-07 zspan= 0.0
+
+# -- cell 4 (1.4s, exit 0)
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize()
+gmsh.model.add('impeller_water')
+occ=gmsh.model.occ
+# Eye and outer annulus are constructed separately to retain the r=16 mm top-face edge.
+eye_o=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_BLADE_IN)
+eye_i=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_HUB)
+eye,_=occ.cut([(3,eye_o)],[(3,eye_i)],removeObject=True,removeTool=True)
+out_o=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_OUT)
+out_i=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_BLADE_IN)
+outer_ann,_=occ.cut([(3,out_o)],[(3,out_i)],removeObject=True,removeTool=True)
+blade_vols=[]
+for k in range(N_BLADES):
+    rv=np.linspace(R_BLADE_IN,R_OUT,25); t0=2*np.pi*k/N_BLADES
+    tp,tm=blade_edges(rv,t0)
+    plus=[occ.addPoint(float(rr*np.cos(tt)),float(rr*np.sin(tt)),Z_BOTTOM) for rr,tt in zip(rv,tp)]
+    minus=[occ.addPoint(float(rr*np.cos(tt)),float(rr*np.sin(tt)),Z_BOTTOM) for rr,tt in zip(rv[::-1],tm[::-1])]
+    edges=[occ.addBSpline(plus),occ.addLine(plus[-1],minus[0]),occ.addBSpline(minus),occ.addLine(minus[-1],plus[0])]
+    face=occ.addPlaneSurface([occ.addWire(edges,checkClosed=True)])
+    blade_vols += [t for d,t in occ.extrude([(2,face)],0,0,Z_TOP-Z_BOTTOM) if d==3]
+outer_fluid,_=occ.cut(outer_ann,[(3,v) for v in blade_vols],removeObject=True,removeTool=True)
+# Conformal fragments: eye plus all blade-to-blade passages.
+fluid_frag,_=occ.fragment(eye,outer_fluid,removeObject=True,removeTool=True)
+occ.synchronize()
+vols=gmsh.model.getEntities(3)
+inc={}
+for v in vols:
+    for d,s in gmsh.model.getBoundary([v],oriented=False):
+        if d==2: inc[s]=inc.get(s,0)+1
+external=[s for s,n in inc.items() if n==1]
+groups={n:[] for n in ['inlet','radial_outlet','blades','backplate','hub','shroud']}
+for s in external:
+    typ=gmsh.model.getType(2,s); cx,cy,cz=occ.getCenterOfMass(2,s); rr=math.hypot(cx,cy)
+    if typ=='Plane' and abs(cz-Z_TOP)<1e-7:
+        groups['inlet' if rr < 0.5*(R_HUB+R_BLADE_IN) else 'shroud'].append(s)
+    elif typ=='Plane' and abs(cz-Z_BOTTOM)<1e-7:
+        groups['backplate'].append(s)
+    elif typ=='Cylinder' and rr < 0.002:
+        groups['hub'].append(s)
+    elif typ=='Cylinder' and rr > 0.04:
+        groups['radial_outlet'].append(s)
+    else:
+        groups['blades'].append(s)
+gmsh.model.addPhysicalGroup(3,[t for d,t in vols],1); gmsh.model.setPhysicalName(3,1,'water')
+for i,(name,surfs) in enumerate(groups.items(),11):
+    if not surfs: raise RuntimeError(f'No surfaces found for {name}')
+    gmsh.model.addPhysicalGroup(2,surfs,i); gmsh.model.setPhysicalName(2,i,name)
+print('Fluid subvolumes:',len(vols),'external CAD faces:',len(external))
+print('Patch CAD-face counts:',{k:len(v) for k,v in groups.items()})
+gmsh.option.setNumber('Mesh.MeshSizeMin',COARSE_CELL)
+gmsh.option.setNumber('Mesh.MeshSizeMax',COARSE_CELL)
+gmsh.option.setNumber('Mesh.Algorithm3D',1)
+gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3)
+gmsh.write('impeller_water_coarse.msh')
+ne=sum(len(tags) for _,tags,_ in [gmsh.model.mesh.getElements(3)]) if False else sum(len(a) for a in gmsh.model.mesh.getElements(3)[1])
+print('Coarse tetrahedra:',ne)
+gmsh.finalize()
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference - Classify solids                                                                                Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                        
+... 28227 characters cut ...
+   : 0.20 < quality < 0.30 :         0 elements
+Info    : 0.30 < quality < 0.40 :        19 elements
+Info    : 0.40 < quality < 0.50 :        34 elements
+Info    : 0.50 < quality < 0.60 :        90 elements
+Info    : 0.60 < quality < 0.70 :       270 elements
+Info    : 0.70 < quality < 0.80 :       447 elements
+Info    : 0.80 < quality < 0.90 :       482 elements
+Info    : 0.90 < quality < 1.00 :       281 elements
+Info    : Optimizing volume 11
+Info    : Optimizing volume 12
+Info    : Optimizing volume 13
+Info    : Optimization starts (volume = 1.77616e-05) with worst = 0.0102939 / average = 0.764484:
+Info    : 0.00 < quality < 0.10 :         5 elements
+Info    : 0.10 < quality < 0.20 :        14 elements
+Info    : 0.20 < quality < 0.30 :        16 elements
+Info    : 0.30 < quality < 0.40 :        19 elements
+Info    : 0.40 < quality < 0.50 :        42 elements
+Info    : 0.50 < quality < 0.60 :        67 elements
+Info    : 0.60 < quality < 0.70 :       265 elements
+Info    : 0.70 < quality < 0.80 :       453 elements
+Info    : 0.80 < quality < 0.90 :       501 elements
+Info    : 0.90 < quality < 1.00 :       268 elements
+Info    : 35 edge swaps, 0 node relocations (volume = 1.77616e-05): worst = 0.303914 / average = 0.777185 (Wall 0.00046329s, CPU 0.000492s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :         0 elements
+Info    : 0.30 < quality < 0.40 :        18 elements
+Info    : 0.40 < quality < 0.50 :        40 elements
+Info    : 0.50 < quality < 0.60 :        74 elements
+Info    : 0.60 < quality < 0.70 :       269 elements
+Info    : 0.70 < quality < 0.80 :       440 elements
+Info    : 0.80 < quality < 0.90 :       509 elements
+Info    : 0.90 < quality < 1.00 :       269 elements
+Info    : Optimizing volume 14
+Info    : Optimization starts (volume = 1.77616e-05) with worst = 0.00594294 / average = 0.761388:
+Info    : 0.00 < quality < 0.10 :         9 elements
+Info    : 0.10 < quality < 0.20 :        14 elements
+Info    : 0.20 < quality < 0.30 :        17 elements
+Info    : 0.30 < quality < 0.40 :        21 elements
+Info    : 0.40 < quality < 0.50 :        33 elements
+Info    : 0.50 < quality < 0.60 :        78 elements
+Info    : 0.60 < quality < 0.70 :       273 elements
+Info    : 0.70 < quality < 0.80 :       447 elements
+Info    : 0.80 < quality < 0.90 :       494 elements
+Info    : 0.90 < quality < 1.00 :       265 elements
+Info    : 40 edge swaps, 0 node relocations (volume = 1.77616e-05): worst = 0.304531 / average = 0.77562 (Wall 0.00060356s, CPU 0.000633s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :         0 elements
+Info    : 0.30 < quality < 0.40 :        21 elements
+Info    : 0.40 < quality < 0.50 :        38 elements
+Info    : 0.50 < quality < 0.60 :        79 elements
+Info    : 0.60 < quality < 0.70 :       269 elements
+Info    : 0.70 < quality < 0.80 :       446 elements
+Info    : 0.80 < quality < 0.90 :       497 elements
+Info    : 0.90 < quality < 1.00 :       267 elements
+Info    : Optimizing volume 15
+Info    : Done optimizing mesh (Wall 0.0131609s, CPU 0.013775s)
+Info    : 4016 nodes 19853 elements
+Info    : Writing 'impeller_water_coarse.msh'...
+Info    : Done writing 'impeller_water_coarse.msh'
+Coarse tetrahedra: 12417
+
+Warning : No tetrahedra in region 3
+Warning : No tetrahedra in region 4
+Warning : No tetrahedra in region 7
+Warning : No tetrahedra in region 8
+Warning : No tetrahedra in region 11
+Warning : No tetrahedra in region 12
+Warning : No tetrahedra in region 15
+Warning : No elements in volume 3 4 7 8 11 12 15
+Warning : ------------------------------
+Warning : Mesh generation error summary
+Warning :     8 warnings
+Warning :     0 errors
+Warning : Check the full log for details
+Warning : ------------------------------
+
+# -- cell 5 (1.4s, exit 0)
+import gmsh, math
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize()
+gmsh.model.add('impeller_water')
+occ=gmsh.model.occ
+eye_o=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_BLADE_IN); eye_i=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_HUB)
+eye,_=occ.cut([(3,eye_o)],[(3,eye_i)],removeObject=True,removeTool=True)
+out_o=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_OUT); out_i=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_BLADE_IN)
+outer_ann,_=occ.cut([(3,out_o)],[(3,out_i)],removeObject=True,removeTool=True)
+blade_vols=[]
+for k in range(N_BLADES):
+    rv=np.linspace(R_BLADE_IN,R_OUT,25); t0=2*np.pi*k/N_BLADES; tp,tm=blade_edges(rv,t0)
+    plus=[occ.addPoint(float(rr*np.cos(tt)),float(rr*np.sin(tt)),Z_BOTTOM) for rr,tt in zip(rv,tp)]
+    minus=[occ.addPoint(float(rr*np.cos(tt)),float(rr*np.sin(tt)),Z_BOTTOM) for rr,tt in zip(rv[::-1],tm[::-1])]
+    edges=[occ.addBSpline(plus),occ.addLine(plus[-1],minus[0]),occ.addBSpline(minus),occ.addLine(minus[-1],plus[0])]
+    face=occ.addPlaneSurface([occ.addWire(edges,checkClosed=True)])
+    blade_vols += [t for d,t in occ.extrude([(2,face)],0,0,Z_TOP-Z_BOTTOM) if d==3]
+outer_fluid,_=occ.cut(outer_ann,[(3,v) for v in blade_vols],removeObject=True,removeTool=True)
+fluid_frag,_=occ.fragment(eye,outer_fluid,removeObject=True,removeTool=True)
+occ.synchronize()
+vols=[(d,t) for d,t in gmsh.model.getEntities(3) if occ.getMass(d,t)>1e-12]
+inc={}
+for v in vols:
+    for d,s in gmsh.model.getBoundary([v],oriented=False):
+        if d==2: inc[s]=inc.get(s,0)+1
+external=[s for s,n in inc.items() if n==1]
+groups={n:[] for n in ['inlet','radial_outlet','blades','backplate','hub','shroud']}
+for s in external:
+    typ=gmsh.model.getType(2,s); cx,cy,cz=occ.getCenterOfMass(2,s); rr=math.hypot(cx,cy)
+    if typ=='Plane' and abs(cz-Z_TOP)<1e-7: groups['inlet' if rr < 0.5*(R_HUB+R_BLADE_IN) else 'shroud'].append(s)
+    elif typ=='Plane' and abs(cz-Z_BOTTOM)<1e-7: groups['backplate'].append(s)
+    elif typ=='Cylinder' and rr < 0.002: groups['hub'].append(s)
+    elif typ=='Cylinder' and rr > 0.04: groups['radial_outlet'].append(s)
+    else: groups['blades'].append(s)
+gmsh.model.addPhysicalGroup(3,[t for d,t in vols],1); gmsh.model.setPhysicalName(3,1,'water')
+for i,(name,surfs) in enumerate(groups.items(),11):
+    if not surfs: raise RuntimeError(f'No surfaces found for {name}')
+    gmsh.model.addPhysicalGroup(2,surfs,i); gmsh.model.setPhysicalName(2,i,name)
+print('Positive-volume fluid regions:',len(vols),'patch CAD-face counts:',{k:len(v) for k,v in groups.items()})
+gmsh.option.setNumber('Mesh.MeshSizeMin',COARSE_CELL); gmsh.option.setNumber('Mesh.MeshSizeMax',COARSE_CELL)
+gmsh.option.setNumber('Mesh.Algorithm3D',1); gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3); gmsh.write('impeller_water_coarse.msh')
+ne=sum(len(a) for a in gmsh.model.mesh.getElements(3)[1]); print('Coarse tetrahedra:',ne)
+gmsh.finalize()
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference - Classify solids                                                                                Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                        
+... 28225 characters cut ...
+   : 0.20 < quality < 0.30 :         0 elements
+Info    : 0.30 < quality < 0.40 :        19 elements
+Info    : 0.40 < quality < 0.50 :        34 elements
+Info    : 0.50 < quality < 0.60 :        90 elements
+Info    : 0.60 < quality < 0.70 :       270 elements
+Info    : 0.70 < quality < 0.80 :       447 elements
+Info    : 0.80 < quality < 0.90 :       482 elements
+Info    : 0.90 < quality < 1.00 :       281 elements
+Info    : Optimizing volume 11
+Info    : Optimizing volume 12
+Info    : Optimizing volume 13
+Info    : Optimization starts (volume = 1.77616e-05) with worst = 0.0102939 / average = 0.764484:
+Info    : 0.00 < quality < 0.10 :         5 elements
+Info    : 0.10 < quality < 0.20 :        14 elements
+Info    : 0.20 < quality < 0.30 :        16 elements
+Info    : 0.30 < quality < 0.40 :        19 elements
+Info    : 0.40 < quality < 0.50 :        42 elements
+Info    : 0.50 < quality < 0.60 :        67 elements
+Info    : 0.60 < quality < 0.70 :       265 elements
+Info    : 0.70 < quality < 0.80 :       453 elements
+Info    : 0.80 < quality < 0.90 :       501 elements
+Info    : 0.90 < quality < 1.00 :       268 elements
+Info    : 35 edge swaps, 0 node relocations (volume = 1.77616e-05): worst = 0.303914 / average = 0.777185 (Wall 0.00049146s, CPU 0.000535s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :         0 elements
+Info    : 0.30 < quality < 0.40 :        18 elements
+Info    : 0.40 < quality < 0.50 :        40 elements
+Info    : 0.50 < quality < 0.60 :        74 elements
+Info    : 0.60 < quality < 0.70 :       269 elements
+Info    : 0.70 < quality < 0.80 :       440 elements
+Info    : 0.80 < quality < 0.90 :       509 elements
+Info    : 0.90 < quality < 1.00 :       269 elements
+Info    : Optimizing volume 14
+Info    : Optimization starts (volume = 1.77616e-05) with worst = 0.00594294 / average = 0.761388:
+Info    : 0.00 < quality < 0.10 :         9 elements
+Info    : 0.10 < quality < 0.20 :        14 elements
+Info    : 0.20 < quality < 0.30 :        17 elements
+Info    : 0.30 < quality < 0.40 :        21 elements
+Info    : 0.40 < quality < 0.50 :        33 elements
+Info    : 0.50 < quality < 0.60 :        78 elements
+Info    : 0.60 < quality < 0.70 :       273 elements
+Info    : 0.70 < quality < 0.80 :       447 elements
+Info    : 0.80 < quality < 0.90 :       494 elements
+Info    : 0.90 < quality < 1.00 :       265 elements
+Info    : 40 edge swaps, 0 node relocations (volume = 1.77616e-05): worst = 0.304531 / average = 0.77562 (Wall 0.00058253s, CPU 0.000548s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :         0 elements
+Info    : 0.30 < quality < 0.40 :        21 elements
+Info    : 0.40 < quality < 0.50 :        38 elements
+Info    : 0.50 < quality < 0.60 :        79 elements
+Info    : 0.60 < quality < 0.70 :       269 elements
+Info    : 0.70 < quality < 0.80 :       446 elements
+Info    : 0.80 < quality < 0.90 :       497 elements
+Info    : 0.90 < quality < 1.00 :       267 elements
+Info    : Optimizing volume 15
+Info    : Done optimizing mesh (Wall 0.0130459s, CPU 0.013499s)
+Info    : 4016 nodes 19853 elements
+Info    : Writing 'impeller_water_coarse.msh'...
+Info    : Done writing 'impeller_water_coarse.msh'
+Coarse tetrahedra: 12417
+
+Warning : No tetrahedra in region 3
+Warning : No tetrahedra in region 4
+Warning : No tetrahedra in region 7
+Warning : No tetrahedra in region 8
+Warning : No tetrahedra in region 11
+Warning : No tetrahedra in region 12
+Warning : No tetrahedra in region 15
+Warning : No elements in volume 3 4 7 8 11 12 15
+Warning : ------------------------------
+Warning : Mesh generation error summary
+Warning :     8 warnings
+Warning :     0 errors
+Warning : Check the full log for details
+Warning : ------------------------------
+
+# -- cell 6 (0.3s, exit 0)
+import subprocess, os, textwrap, shutil
+Path('system').mkdir(exist_ok=True); Path('constant').mkdir(exist_ok=True)
+Path('system/controlDict').write_text(textwrap.dedent('''
+FoamFile { format ascii; class dictionary; object controlDict; }
+application meshOnly;
+startFrom startTime; startTime 0; stopAt endTime; endTime 1;
+deltaT 1; writeControl timeStep; writeInterval 1;
+'''))
+if Path('constant/polyMesh').exists(): shutil.rmtree('constant/polyMesh')
+r=subprocess.run(['gmshToFoam','impeller_water_coarse.msh'],capture_output=True,text=True)
+print('gmshToFoam return:',r.returncode)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-35:]))
+print(Path('constant/polyMesh/boundary').read_text() if Path('constant/polyMesh/boundary').exists() else 'NO BOUNDARY FILE')
+# -- output
+gmshToFoam return: 0
+    Could not match gmsh face 3(505 31 507) to any of the interior or exterior faces that share the same 0th point
+--> FOAM Warning : Not using gmsh face 3(507 43 505) since zero vertex is not on boundary of polyMesh
+--> FOAM Warning : 
+    From int main(int, char**)
+    in file gmshToFoam.C at line 1538
+    Could not match gmsh face 3(507 43 505) to any of the interior or exterior faces that share the same 0th point
+--> FOAM Warning : Not using gmsh face 3(513 36 508) since zero vertex is not on boundary of polyMesh
+--> FOAM Warning : 
+    From int main(int, char**)
+    in file gmshToFoam.C at line 1538
+    Could not match gmsh face 3(513 36 508) to any of the interior or exterior faces that share the same 0th point
+--> FOAM Warning : Not using gmsh face 3(508 44 513) since zero vertex is not on boundary of polyMesh
+--> FOAM Warning : 
+    From int main(int, char**)
+    in file gmshToFoam.C at line 1538
+    Could not match gmsh face 3(508 44 513) to any of the interior or exterior faces that share the same 0th point
+--> FOAM Warning : Not using gmsh face 3(677 47 679) since zero vertex is not on boundary of polyMesh
+--> FOAM Warning : 
+    From int main(int, char**)
+    in file gmshToFoam.C at line 1538
+    Could not match gmsh face 3(677 47 679) to any of the interior or exterior faces that share the same 0th point
+--> FOAM Warning : Not using gmsh face 3(679 52 677) since zero vertex is not on boundary of polyMesh
+--> FOAM Warning : 
+    From int main(int, char**)
+    in file gmshToFoam.C at line 1538
+    Could not match gmsh face 3(679 52 677) to any of the interior or exterior faces that share the same 0th point
+Finding faces of patch 4
+Finding faces of patch 5
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone water and cellSet
+End
+
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+6
+(
+    radial_outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          840;
+        startFace       21965;
+    }
+    backplate
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1547;
+        startFace       22805;
+    }
+    blades
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1640;
+        startFace       24352;
+    }
+    shroud
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1473;
+        startFace       25992;
+    }
+    inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          74;
+        startFace       27465;
+    }
+    hub
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          164;
+        startFace       27539;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 7 (0.3s, exit 0)
+r=subprocess.run(['checkMesh','-allGeometry','-allTopology'],capture_output=True,text=True)
+Path('checkMesh.coarse.log').write_text(r.stdout+r.stderr)
+print('checkMesh return:',r.returncode)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-80:]))
+# -- output
+checkMesh return: 1
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allGeometry -allTopology
+Date   : Sep 16 2026
+Time   : 03:04:26
+Host   : yc-demo
+PID    : 806139
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T12-20260916-030226-cff8/t12
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T12-20260916-030226-cff8/t12/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 8 (0.3s, exit 0)
+Path('system/fvSchemes').write_text('FoamFile { format ascii; class dictionary; object fvSchemes; }\n')
+Path('system/fvSolution').write_text('FoamFile { format ascii; class dictionary; object fvSolution; }\n')
+r=subprocess.run(['checkMesh','-allGeometry','-allTopology'],capture_output=True,text=True)
+Path('checkMesh.coarse.log').write_text(r.stdout+r.stderr)
+print('checkMesh return:',r.returncode)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-90:]))
+# -- output
+checkMesh return: 1
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allGeometry -allTopology
+Date   : Sep 16 2026
+Time   : 03:04:30
+Host   : yc-demo
+PID    : 806179
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T12-20260916-030226-cff8/t12
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+# -- cell 9 (0.4s, exit 0)
+Path('system/fvSchemes').write_text(textwrap.dedent('''
+FoamFile { format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+'''))
+r=subprocess.run(['checkMesh','-allGeometry','-allTopology'],capture_output=True,text=True)
+Path('checkMesh.coarse.log').write_text(r.stdout+r.stderr)
+print('checkMesh return:',r.returncode)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-100:]))
+# -- output
+checkMesh return: 0
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           3694
+    faces:            27703
+    internal faces:   21965
+    cells:            12417
+    faces per cell:   4
+    boundary patches: 6
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    12417
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+ ***Unused points found in the mesh, number unused by faces: 84 number unused by cells: 84
+  <<Writing 84 unused points to set unusedPoints
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+  <<Writing 611 cells with two non-boundary faces to set twoInternalFacesCells
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    radial_outlet       840      547      ok (non-closed singly connected)   (-0.058 -0.0579988 0.004) (0.058 0.0579953 0.018)
+    backplate           1547     917      ok (non-closed singly connected)   (-0.0579925 -0.0579988 0.004) (0.058 0.057995 0.004)
+    blades              1640     1031     ok (non-closed singly connected)   (-0.0579306 -0.0575566 0.004) (0.0545206 0.0558468 0.018)
+    shroud              1473     884      ok (non-closed singly connected)   (-0.0579925 -0.0579988 0.018) (0.058 0.057995 0.018)
+    inlet               74       61       ok (non-closed singly connected)   (-0.0158882 -0.01591 0.018) (0.016 0.01591 0.018)
+    hub                 164      101      ok (non-closed singly connected)   (-0.012 -0.0119661 0.004) (0.012 0.0119613 0.018)
+    ".*"                5738     2869     ok (closed singly connected)       (-0.058 -0.0579988 0.004) (0.058 0.0579953 0.018)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    water               12417        3610         0.000129285  (-0.058 -0.0579988 0.004) (0.058 0.0579953 0.018)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.058 -0.0579988 0.004) (0.058 0.0579953 0.018)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-4.82684e-17 -1.0888e-17 2.77708e-16) OK.
+    Max cell openness = 2.16766e-16 OK.
+    Max aspect ratio = 11.6301 OK.
+    Minimum face area = 1.10218e-06. Maximum face area = 2.12786e-05.  Face area magnitudes OK.
+    Min volume = 6.3771e-10. Max volume = 3.04137e-08.  Total volume = 0.000129285.  Cell volumes OK.
+    Mesh non-orthogonality Max: 63.9332 average: 22.1952
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.02708 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.00150165 0.00809831 OK.
+    All angles in faces OK.
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0 average: 0.107154
+ ***Cells with small determinant (< 0.001) found, number of cells: 617
+  <<Writing 617 under-determined cells to set underdeterminedCells
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.16439 average: 0.433012
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.19673 average: 0.779433
+    Face volume ratio check OK.
+
+Failed 2 mesh checks.
+
+End
+
+# -- cell 10 (0.9s, exit 0)
+r=subprocess.run(['subsetMesh','-overwrite','water'],capture_output=True,text=True)
+print('subsetMesh return:',r.returncode); print('\n'.join((r.stdout+r.stderr).splitlines()[-25:]))
+for args in (['checkMesh'],['checkMesh','-allGeometry','-allTopology']):
+    q=subprocess.run(args,capture_output=True,text=True); out=q.stdout+q.stderr
+    print('\nCOMMAND',' '.join(args),'return',q.returncode)
+    print('\n'.join([ln for ln in out.splitlines() if any(x in ln for x in ['points:','cells:','regions:','unused','Failed','Mesh OK','Max aspect','non-orthogonality','skewness','determinant'])][-15:]))
+# -- output
+subsetMesh return: 0
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Adding exposed internal faces to patch "oldInternalFaces" (created if necessary)
+
+Using cellSet water
+
+Subset 12417 of 12417 cells
+
+Reading cellSet: twoInternalFacesCells underdeterminedCells
+Subsetting cellSet twoInternalFacesCells
+Subsetting cellSet underdeterminedCells
+Reading pointSet: unusedPoints
+Subsetting pointSet unusedPoints
+Writing subsetted mesh and fields to time 0
+
+End
+
+
+COMMAND checkMesh return 0
+    points:           3610
+    cells:            12417
+    Number of regions: 1 (OK).
+    Max aspect ratio = 11.6302 OK.
+    Mesh non-orthogonality Max: 63.9327 average: 22.1952
+    Max skewness = 1.02724 OK.
+Mesh OK.
+
+COMMAND checkMesh -allGeometry -allTopology return 0
+    points:           3610
+    cells:            12417
+    Number of regions: 1 (OK).
+    Max aspect ratio = 11.6302 OK.
+    Mesh non-orthogonality Max: 63.9327 average: 22.1952
+    Max skewness = 1.02724 OK.
+    Cell determinant (wellposedness) : minimum: 0 average: 0.107154
+ ***Cells with small determinant (< 0.001) found, number of cells: 617
+Failed 1 mesh checks.
+
+# -- cell 11 (0.3s, exit 0)
+r=subprocess.run(['foamToVTK','-no-fields'],capture_output=True,text=True)
+print('foamToVTK return:',r.returncode)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-20:]))
+print([str(p) for p in Path('VTK').rglob('*') if p.suffix in ('.vtk','.vtp','.vtu')][:20])
+# -- output
+foamToVTK return: 0
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Initial memory 217536 kB
+Create mesh for time = constant
+
+VTK mesh topology: 0.02 s, 219220 kB
+Time: constant
+    Internal  : "VTK/t12_0/internal.vtu"
+    Boundary  : "VTK/t12_0/boundary/radial_outlet.vtp"
+    Boundary  : "VTK/t12_0/boundary/backplate.vtp"
+    Boundary  : "VTK/t12_0/boundary/blades.vtp"
+    Boundary  : "VTK/t12_0/boundary/shroud.vtp"
+    Boundary  : "VTK/t12_0/boundary/inlet.vtp"
+    Boundary  : "VTK/t12_0/boundary/hub.vtp"
+Wrote in 0.02 s, 224392 kB
+
+End: 0.04 s, 279640 kB (peak)
+
+['VTK/t12_0/internal.vtu', 'VTK/t12_0/boundary/backplate.vtp', 'VTK/t12_0/boundary/shroud.vtp', 'VTK/t12_0/boundary/radial_outlet.vtp', 'VTK/t12_0/boundary/inlet.vtp', 'VTK/t12_0/boundary/hub.vtp', 'VTK/t12_0/boundary/blades.vtp']
+
+# -- cell 12 (0.3s, exit 0)
+# Promote the cleaned all-cell subset to the canonical constant/polyMesh location.
+clean=Path('0/polyMesh'); canonical=Path('constant/polyMesh')
+if clean.exists():
+    if canonical.exists(): shutil.rmtree(canonical)
+    shutil.move(str(clean),str(canonical))
+if Path('0').exists(): shutil.rmtree('0')
+r=subprocess.run(['checkMesh'],capture_output=True,text=True)
+print('checkMesh return:',r.returncode)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-45:]))
+# -- output
+checkMesh return: 0
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    radial_outlet       840      547      ok (non-closed singly connected)  
+    backplate           1547     917      ok (non-closed singly connected)  
+    blades              1640     1031     ok (non-closed singly connected)  
+    shroud              1473     884      ok (non-closed singly connected)  
+    inlet               74       61       ok (non-closed singly connected)  
+    hub                 164      101      ok (non-closed singly connected)  
+    ".*"                5738     2869     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    water               12417        3610         0.000129285  (-0.058 -0.0579988 0.004) (0.058 0.0579953 0.018)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.058 -0.0579988 0.004) (0.058 0.0579953 0.018)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (3.73804e-17 -3.35169e-17 -7.1229e-16) OK.
+    Max cell openness = 3.1093e-16 OK.
+    Max aspect ratio = 11.6302 OK.
+    Minimum face area = 1.10219e-06. Maximum face area = 2.12786e-05.  Face area magnitudes OK.
+    Min volume = 6.37717e-10. Max volume = 3.04134e-08.  Total volume = 0.000129285.  Cell volumes OK.
+    Mesh non-orthogonality Max: 63.9327 average: 22.1952
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.02724 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 13 (1.4s, exit 0)
+import pyvista as pv
+if Path('VTK').exists(): shutil.rmtree('VTK')
+subprocess.run(['foamToVTK','-no-fields'],check=True,capture_output=True,text=True)
+pv.global_theme.allow_empty_mesh=True
+plotter=pv.Plotter(off_screen=True,window_size=(1000,760))
+bdir=Path('VTK/t12_0/boundary')
+style={'backplate':('lightgray',0.22),'shroud':('skyblue',0.18),'blades':('goldenrod',1.0),'hub':('slategray',1.0),'inlet':('limegreen',1.0),'radial_outlet':('tomato',0.72)}
+for name,(color,opacity) in style.items():
+    mesh=pv.read(bdir/f'{name}.vtp')
+    plotter.add_mesh(mesh,color=color,opacity=opacity,show_edges=(name in ['blades','inlet','radial_outlet']),line_width=1)
+plotter.add_axes(); plotter.view_isometric(); plotter.camera.zoom(1.35)
+plotter.add_text('OpenFOAM boundary mesh: inlet green, outlet red, blades gold',font_size=11)
+plotter.show(screenshot='impeller_mesh.png')
+img=plt.imread('impeller_mesh.png'); plt.figure(figsize=(10,7.6)); plt.imshow(img); plt.axis('off'); plt.show()
+print('Rendered canonical OpenFOAM mesh; patch files:',sorted(p.stem for p in bdir.glob('*.vtp')))
+# -- output
+Rendered canonical OpenFOAM mesh; patch files: ['backplate', 'blades', 'hub', 'inlet', 'radial_outlet', 'shroud']
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-16 03:05:09.113 (   0.479s) [    7D1A7E223780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-16 03:05:09.113 (   0.479s) [    7D1A7E223780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:05:09.126 (   0.492s) [    7D1A7E223780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_804034/1406971545.py:13: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  plotter.show(screenshot='impeller_mesh.png')
+
+# -- cell 14 (1.4s, exit 0)
+Z_HUB_TOP=Z_BOTTOM+HUB_HEIGHT
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize(); gmsh.option.setNumber('General.Terminal',0); gmsh.model.add('impeller_water_final'); occ=gmsh.model.occ
+eye_o=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_HUB_TOP-Z_BOTTOM,R_BLADE_IN); eye_i=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_HUB_TOP-Z_BOTTOM,R_HUB)
+eye,_=occ.cut([(3,eye_o)],[(3,eye_i)],removeObject=True,removeTool=True)
+out_o=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_OUT); out_i=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_BLADE_IN)
+outer_ann,_=occ.cut([(3,out_o)],[(3,out_i)],removeObject=True,removeTool=True); blade_vols=[]
+for k in range(N_BLADES):
+    rv=np.linspace(R_BLADE_IN,R_OUT,25); tp,tm=blade_edges(rv,2*np.pi*k/N_BLADES)
+    pp=[occ.addPoint(float(r*np.cos(t)),float(r*np.sin(t)),Z_BOTTOM) for r,t in zip(rv,tp)]
+    pm=[occ.addPoint(float(r*np.cos(t)),float(r*np.sin(t)),Z_BOTTOM) for r,t in zip(rv[::-1],tm[::-1])]
+    es=[occ.addBSpline(pp),occ.addLine(pp[-1],pm[0]),occ.addBSpline(pm),occ.addLine(pm[-1],pp[0])]
+    f=occ.addPlaneSurface([occ.addWire(es,checkClosed=True)])
+    blade_vols += [t for d,t in occ.extrude([(2,f)],0,0,Z_TOP-Z_BOTTOM) if d==3]
+outer_fluid,_=occ.cut(outer_ann,[(3,v) for v in blade_vols],removeObject=True,removeTool=True)
+occ.fragment(eye,outer_fluid,removeObject=True,removeTool=True); occ.synchronize()
+vols=[e for e in gmsh.model.getEntities(3) if occ.getMass(*e)>1e-12]; inc={}
+for v in vols:
+    for d,s in gmsh.model.getBoundary([v],oriented=False):
+        if d==2: inc[s]=inc.get(s,0)+1
+external=[s for s,n in inc.items() if n==1]; groups={n:[] for n in ['inlet','radial_outlet','blades','backplate','hub','shroud']}
+hub_area=2*np.pi*R_HUB*(Z_HUB_TOP-Z_BOTTOM)
+for s in external:
+    typ=gmsh.model.getType(2,s); cx,cy,cz=occ.getCenterOfMass(2,s); rr=math.hypot(cx,cy); area=occ.getMass(2,s)
+    if typ=='Plane' and abs(cz-Z_HUB_TOP)<1e-7: groups['inlet'].append(s)
+    elif typ=='Plane' and abs(cz-Z_TOP)<1e-7: groups['shroud'].append(s)
+    elif typ=='Plane' and abs(cz-Z_BOTTOM)<1e-7: groups['backplate'].append(s)
+    elif typ=='Cylinder' and rr<0.002 and abs(area-hub_area)<0.25*hub_area: groups['hub'].append(s)
+    elif typ=='Cylinder' and rr<0.002: groups['shroud'].append(s)
+    elif typ=='Cylinder' and rr>0.04: groups['radial_outlet'].append(s)
+    else: groups['blades'].append(s)
+gmsh.model.addPhysicalGroup(3,[t for d,t in vols],1); gmsh.model.setPhysicalName(3,1,'water')
+for i,(name,surfs) in enumerate(groups.items(),11):
+    if not surfs: raise RuntimeError(name)
+    gmsh.model.addPhysicalGroup(2,surfs,i); gmsh.model.setPhysicalName(2,i,name)
+gmsh.option.setNumber('Mesh.MeshSizeMin',COARSE_CELL); gmsh.option.setNumber('Mesh.MeshSizeMax',COARSE_CELL); gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3); gmsh.write('impeller_water.msh')
+print('Final CAD bounds z:',Z_BOTTOM,Z_HUB_TOP,'blade/shroud top:',Z_TOP)
+print('Patch faces:',{k:len(v) for k,v in groups.items()},'tetrahedra:',sum(len(a) for a in gmsh.model.mesh.getElements(3)[1]))
+gmsh.finalize()
+# -- output
+Final CAD bounds z: 0.004 0.022 blade/shroud top: 0.018000000000000002
+Patch faces: {'inlet': 1, 'radial_outlet': 15, 'blades': 21, 'backplate': 15, 'hub': 1, 'shroud': 15} tetrahedra: 12543
+
+# -- cell 15 (0.7s, exit 0)
+if canonical.exists(): shutil.rmtree(canonical)
+subprocess.run(['gmshToFoam','impeller_water.msh'],check=True,capture_output=True,text=True)
+subprocess.run(['subsetMesh','-overwrite','water'],check=True,capture_output=True,text=True)
+clean=Path('0/polyMesh')
+if clean.exists():
+    if canonical.exists(): shutil.rmtree(canonical)
+    shutil.move(str(clean),str(canonical)); shutil.rmtree('0')
+r=subprocess.run(['checkMesh'],capture_output=True,text=True); Path('checkMesh.log').write_text(r.stdout+r.stderr)
+print('checkMesh return:',r.returncode)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-55:]))
+# -- output
+checkMesh return: 0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    12543
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    radial_outlet       840      547      ok (non-closed singly connected)  
+    backplate           1547     917      ok (non-closed singly connected)  
+    blades              1512     994      ok (non-closed singly connected)  
+    shroud              1640     995      ok (non-closed singly connected)  
+    inlet               49       47       ok (non-closed singly connected)  
+    hub                 232      135      ok (non-closed singly connected)  
+    ".*"                5820     2910     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    water               12543        3650         0.000130692  (-0.058 -0.0579988 0.004) (0.058 0.0579953 0.022)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.058 -0.0579988 0.004) (0.058 0.0579953 0.022)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (3.90405e-17 -2.22421e-17 -2.98899e-16) OK.
+    Max cell openness = 9.86221e-16 OK.
+    Max aspect ratio = 137.986 OK.
+    Minimum face area = 1.10219e-06. Maximum face area = 2.05753e-05.  Face area magnitudes OK.
+    Min volume = 1.18311e-10. Max volume = 3.04134e-08.  Total volume = 0.000130692.  Cell volumes OK.
+    Mesh non-orthogonality Max: 88.8439 average: 22.4309
+   *Number of severely non-orthogonal (> 70 degrees) faces: 11.
+    Non-orthogonality check OK.
+  <<Writing 11 non-orthogonal faces to set nonOrthoFaces
+    Face pyramids OK.
+    Max skewness = 0.804697 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 16 (1.1s, exit 0)
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize(); gmsh.option.setNumber('General.Terminal',0); gmsh.model.add('impeller_water_final_clean'); occ=gmsh.model.occ
+lo_o=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_OUT); lo_i=occ.addCylinder(0,0,Z_BOTTOM,0,0,Z_TOP-Z_BOTTOM,R_HUB)
+lower,_=occ.cut([(3,lo_o)],[(3,lo_i)],removeObject=True,removeTool=True); blade_vols=[]
+for k in range(N_BLADES):
+    rv=np.linspace(R_BLADE_IN,R_OUT,25); tp,tm=blade_edges(rv,2*np.pi*k/N_BLADES)
+    pp=[occ.addPoint(float(r*np.cos(t)),float(r*np.sin(t)),Z_BOTTOM) for r,t in zip(rv,tp)]; pm=[occ.addPoint(float(r*np.cos(t)),float(r*np.sin(t)),Z_BOTTOM) for r,t in zip(rv[::-1],tm[::-1])]
+    es=[occ.addBSpline(pp),occ.addLine(pp[-1],pm[0]),occ.addBSpline(pm),occ.addLine(pm[-1],pp[0])]
+    f=occ.addPlaneSurface([occ.addWire(es,checkClosed=True)]); blade_vols += [t for d,t in occ.extrude([(2,f)],0,0,Z_TOP-Z_BOTTOM) if d==3]
+lower_fluid,_=occ.cut(lower,[(3,v) for v in blade_vols],removeObject=True,removeTool=True)
+up_o=occ.addCylinder(0,0,Z_TOP,0,0,Z_HUB_TOP-Z_TOP,R_BLADE_IN); up_i=occ.addCylinder(0,0,Z_TOP,0,0,Z_HUB_TOP-Z_TOP,R_HUB)
+upper,_=occ.cut([(3,up_o)],[(3,up_i)],removeObject=True,removeTool=True)
+fluid,_=occ.fuse(lower_fluid,upper,removeObject=True,removeTool=True); occ.synchronize(); vols=gmsh.model.getEntities(3)
+inc={}
+for v in vols:
+    for d,s in gmsh.model.getBoundary([v],oriented=False):
+        if d==2: inc[s]=inc.get(s,0)+1
+external=[s for s,n in inc.items() if n==1]; groups={n:[] for n in ['inlet','radial_outlet','blades','backplate','hub','shroud']}
+for s in external:
+    typ=gmsh.model.getType(2,s); cx,cy,cz=occ.getCenterOfMass(2,s); rr=math.hypot(cx,cy)
+    if typ=='Plane' and abs(cz-Z_HUB_TOP)<1e-7: groups['inlet'].append(s)
+    elif typ=='Plane' and abs(cz-Z_TOP)<1e-7: groups['shroud'].append(s)
+    elif typ=='Plane' and abs(cz-Z_BOTTOM)<1e-7: groups['backplate'].append(s)
+    elif typ=='Cylinder' and rr<0.002 and occ.getMass(2,s)>0.0005: groups['hub'].append(s)
+    elif typ=='Cylinder' and rr<0.002: groups['shroud'].append(s)
+    elif typ=='Cylinder' and rr>0.04: groups['radial_outlet'].append(s)
+    else: groups['blades'].append(s)
+gmsh.model.addPhysicalGroup(3,[t for d,t in vols],1); gmsh.model.setPhysicalName(3,1,'water')
+for i,(name,surfs) in enumerate(groups.items(),11):
+    if not surfs: raise RuntimeError(name)
+    gmsh.model.addPhysicalGroup(2,surfs,i); gmsh.model.setPhysicalName(2,i,name)
+gmsh.option.setNumber('Mesh.MeshSizeMin',COARSE_CELL); gmsh.option.setNumber('Mesh.MeshSizeMax',COARSE_CELL); gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3); gmsh.write('impeller_water.msh')
+print('Fluid volumes:',len(vols),'patch CAD faces:',{k:len(v) for k,v in groups.items()},'tets:',sum(len(a) for a in gmsh.model.mesh.getElements(3)[1]))
+gmsh.finalize()
+# -- output
+Fluid volumes: 8 patch CAD faces: {'inlet': 1, 'radial_outlet': 13, 'blades': 29, 'backplate': 8, 'hub': 1, 'shroud': 22} tets: 12164
+
+# -- cell 17 (0.7s, exit 0)
+if canonical.exists(): shutil.rmtree(canonical)
+subprocess.run(['gmshToFoam','impeller_water.msh'],check=True,capture_output=True,text=True)
+subprocess.run(['subsetMesh','-overwrite','water'],check=True,capture_output=True,text=True)
+clean=Path('0/polyMesh')
+if clean.exists():
+    if canonical.exists(): shutil.rmtree(canonical)
+    shutil.move(str(clean),str(canonical)); shutil.rmtree('0')
+r=subprocess.run(['checkMesh'],capture_output=True,text=True); Path('checkMesh.log').write_text(r.stdout+r.stderr)
+print('checkMesh return:',r.returncode)
+for ln in (r.stdout+r.stderr).splitlines():
+    if any(x in ln for x in ['points:','cells:','regions:','BoundingBox','aspect ratio','non-orthogonality','skewness','volume =','Mesh OK','Failed']): print(ln)
+# -- output
+checkMesh return: 0
+    points:           3601
+    cells:            12164
+    Number of regions: 1 (OK).
+    CellZone            Cells        Points       Volume       BoundingBox
+    Max aspect ratio = 70.983 OK.
+    Min volume = 2.77798e-11. Max volume = 3.3682e-08.  Total volume = 0.00013069.  Cell volumes OK.
+    Mesh non-orthogonality Max: 85.9728 average: 22.3132
+    Max skewness = 1.01767 OK.
+Mesh OK.
+
+# -- cell 18 (0.8s, exit 0)
+gmsh.initialize(); gmsh.option.setNumber('General.Terminal',0); gmsh.open('impeller_water.msh')
+try: gmsh.model.mesh.optimize('Netgen')
+except Exception as e: print('Netgen optimizer:',e)
+gmsh.option.setNumber('Mesh.MshFileVersion',2.2); gmsh.write('impeller_water.msh'); gmsh.finalize()
+if canonical.exists(): shutil.rmtree(canonical)
+subprocess.run(['gmshToFoam','impeller_water.msh'],check=True,capture_output=True,text=True)
+subprocess.run(['subsetMesh','-overwrite','water'],check=True,capture_output=True,text=True)
+clean=Path('0/polyMesh')
+if clean.exists():
+    if canonical.exists(): shutil.rmtree(canonical)
+    shutil.move(str(clean),str(canonical)); shutil.rmtree('0')
+r=subprocess.run(['checkMesh'],capture_output=True,text=True); Path('checkMesh.log').write_text(r.stdout+r.stderr)
+print('FINAL checkMesh return:',r.returncode)
+print('\n'.join([ln for ln in (r.stdout+r.stderr).splitlines() if any(x in ln for x in ['points:','cells:','regions:','aspect ratio','non-orthogonality','skewness','Min volume','Mesh OK','Failed'])]))
+# -- output
+FINAL checkMesh return: 0
+    points:           3601
+    cells:            12164
+    Number of regions: 1 (OK).
+    Max aspect ratio = 70.983 OK.
+    Min volume = 2.77798e-11. Max volume = 3.3682e-08.  Total volume = 0.00013069.  Cell volumes OK.
+    Mesh non-orthogonality Max: 85.9728 average: 22.3132
+    Max skewness = 1.01767 OK.
+Mesh OK.
+
+# -- cell 19 (0.7s, exit 0)
+if Path('VTK').exists(): shutil.rmtree('VTK')
+subprocess.run(['foamToVTK','-no-fields'],check=True,capture_output=True,text=True)
+plotter=pv.Plotter(off_screen=True,window_size=(1000,760)); bdir=Path('VTK/t12_0/boundary')
+for name,(color,opacity) in style.items():
+    plotter.add_mesh(pv.read(bdir/f'{name}.vtp'),color=color,opacity=opacity,show_edges=(name in ['blades','inlet','radial_outlet']),line_width=1)
+plotter.add_axes(); plotter.view_isometric(); plotter.camera.zoom(1.35)
+plotter.add_text('Final OpenFOAM mesh: inlet green, outlet red, blades gold',font_size=11)
+plotter.show(screenshot='impeller_mesh_final.png')
+img=plt.imread('impeller_mesh_final.png'); plt.figure(figsize=(10,7.6)); plt.imshow(img); plt.axis('off'); plt.show()
+print(f'Measured final bounds: r_out={R_OUT*1000:.1f} mm, z={Z_BOTTOM*1000:.1f}..{Z_HUB_TOP*1000:.1f} mm; shroud z={Z_TOP*1000:.1f} mm')
+# -- output
+Measured final bounds: r_out=58.0 mm, z=4.0..22.0 mm; shroud z=18.0 mm
+
+[0m[33m2026-09-16 03:06:16.236 (  67.602s) [    7D1A7E223780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:06:16.236 (  67.603s) [    7D1A7E223780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_804034/9340254.py:8: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  plotter.show(screenshot='impeller_mesh_final.png')
+

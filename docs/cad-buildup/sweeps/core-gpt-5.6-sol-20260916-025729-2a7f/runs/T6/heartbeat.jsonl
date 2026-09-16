@@ -1,0 +1,6 @@
+{"turn": 1, "steps": 0, "stop_reason": "tool_use", "output_tokens": 426, "fenced": true, "text_chars": 171, "thinking_chars": 446, "phase": "turn", "expect_s": 0.0, "at": 1789529494.9023328}
+{"turn": 2, "steps": 1, "stop_reason": "tool_use", "output_tokens": 646, "fenced": true, "text_chars": 229, "thinking_chars": 0, "phase": "turn", "expect_s": 0.0, "at": 1789529504.5519238}
+{"turn": 3, "steps": 2, "stop_reason": "tool_use", "output_tokens": 449, "fenced": true, "text_chars": 344, "thinking_chars": 530, "phase": "turn", "expect_s": 0.0, "at": 1789529512.7224696}
+{"turn": 4, "steps": 3, "stop_reason": "tool_use", "output_tokens": 370, "fenced": true, "text_chars": 405, "thinking_chars": 0, "phase": "turn", "expect_s": 0.0, "at": 1789529517.8603382}
+{"turn": 5, "steps": 4, "stop_reason": "end_turn", "output_tokens": 88, "fenced": false, "text_chars": 358, "thinking_chars": 0, "phase": "turn", "expect_s": 0.0, "at": 1789529519.861045}
+{"turn": 6, "steps": 4, "stop_reason": "tool_use", "output_tokens": 133, "fenced": false, "text_chars": 201, "thinking_chars": 0, "phase": "turn", "expect_s": 0.0, "at": 1789529522.6284876}

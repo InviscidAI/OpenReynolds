@@ -1,0 +1,6 @@
+T25: run 20260916-032434-68c9
+  workspace /home/qiuzi/.openreynolds-buildup/work/T25-20260916-032434-68c9 clean (0 entries, 39 house names, no toolbox)
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T25-20260916-032434-68c9/t25/.reference/b123d_api.md
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-gpt-5.6-sol-20260916-025729-2a7f/runs/T25
+  refused in 10.4s, 1 cells, $0.01, checkMesh not ok, passed (wants refused)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-gpt-5.6-sol-20260916-025729-2a7f/runs/T25 --case /home/qiuzi/.openreynolds-buildup/work/T25-20260916-032434-68c9/t25

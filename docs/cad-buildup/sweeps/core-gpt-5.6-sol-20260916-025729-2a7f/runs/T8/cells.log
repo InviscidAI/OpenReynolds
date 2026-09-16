@@ -1,0 +1,787 @@
+# -- cell 1 (0.1s, exit 0)
+from pathlib import Path
+import subprocess, textwrap, json, os, numpy as np
+# All dimensions are metres. Requested geometry:
+L, W, H = 0.200, 0.030, 0.030
+block_L, block_W, block_T = 0.040, 0.030, 0.010
+x0, x1 = (L-block_L)/2, (L+block_L)/2
+cell = 0.005
+Path('system').mkdir(exist_ok=True); Path('constant').mkdir(exist_ok=True); Path('0').mkdir(exist_ok=True)
+# Vertex table for three fluid blocks and the central solid block.
+verts=[]; vid={}
+def V(x,y,z):
+    key=(x,y,z)
+    if key not in vid: vid[key]=len(verts); verts.append(key)
+    return vid[key]
+def hexb(xa,xb,za,zb,zone,nx,nz):
+    ids=[V(xa,0,za),V(xb,0,za),V(xb,W,za),V(xa,W,za),V(xa,0,zb),V(xb,0,zb),V(xb,W,zb),V(xa,W,zb)]
+    return f"    hex ({' '.join(map(str,ids))}) {zone} ({nx} 6 {nz}) simpleGrading (1 1 1)"
+blocks=[hexb(0,x0,0,H,'fluid',16,6),hexb(x0,x1,0,H,'fluid',8,6),hexb(x1,L,0,H,'fluid',16,6),hexb(x0,x1,-block_T,0,'solid',8,2)]
+# Named exterior faces are selected explicitly from the blocks at creation time.
+def F(*pts): return '('+' '.join(str(V(*p)) for p in pts)+')'
+inlet=[F((0,0,0),(0,0,H),(0,W,H),(0,W,0))]
+outlet=[F((L,0,0),(L,W,0),(L,W,H),(L,0,H))]
+fluidWalls=[]
+for xa,xb in [(0,x0),(x0,x1),(x1,L)]:
+    fluidWalls += [F((xa,0,0),(xb,0,0),(xb,0,H),(xa,0,H)),F((xa,W,0),(xa,W,H),(xb,W,H),(xb,W,0)),F((xa,0,H),(xb,0,H),(xb,W,H),(xa,W,H))]
+for xa,xb in [(0,x0),(x1,L)]: fluidWalls += [F((xa,0,0),(xa,W,0),(xb,W,0),(xb,0,0))]
+solidExternal=[F((x0,0,-block_T),(x1,0,-block_T),(x1,W,-block_T),(x0,W,-block_T)),F((x0,0,-block_T),(x0,0,0),(x1,0,0),(x1,0,-block_T)),F((x0,W,-block_T),(x1,W,-block_T),(x1,W,0),(x0,W,0)),F((x0,0,-block_T),(x0,W,-block_T),(x0,W,0),(x0,0,0)),F((x1,0,-block_T),(x1,0,0),(x1,W,0),(x1,W,-block_T))]
+def patch(name, typ, faces): return f"    {name}\n    {{\n        type {typ};\n        faces\n        (\n            "+'\n            '.join(faces)+"\n        );\n    }"
+dct=f'''FoamFile {{ format ascii; class dictionary; object blockMeshDict; }}
+scale 1;
+vertices
+(
+{chr(10).join('    ('+' '.join(f'{q:.9g}' for q in p)+')' for p in verts)}
+);
+blocks
+(
+{chr(10).join(blocks)}
+);
+edges ();
+boundary
+(
+{patch('inlet','patch',inlet)}
+{patch('outlet','patch',outlet)}
+{patch('ductWalls','wall',fluidWalls)}
+{patch('solidExternal','wall',solidExternal)}
+);
+mergePatchPairs ();
+'''
+Path('system/blockMeshDict').write_text(dct)
+print(f"Requested duct: {L*1000:.1f} x {W*1000:.1f} x {H*1000:.1f} mm")
+print(f"Requested block: {block_L*1000:.1f} x {block_W*1000:.1f} x {block_T*1000:.1f} mm")
+print(f"Block x extents: {x0*1000:.1f} to {x1*1000:.1f} mm; centre = {(x0+x1)*500:.1f} mm (requested halfway = {L*500:.1f} mm)")
+print(f"Coarse nominal cell edge: {cell*1000:.1f} mm; expected cells fluid={40*6*6}, solid={8*6*2}, total={40*6*6+8*6*2}")
+# -- output
+Requested duct: 200.0 x 30.0 x 30.0 mm
+Requested block: 40.0 x 30.0 x 10.0 mm
+Block x extents: 80.0 to 120.0 mm; centre = 100.0 mm (requested halfway = 100.0 mm)
+Coarse nominal cell edge: 5.0 mm; expected cells fluid=1440, solid=96, total=1536
+
+# -- cell 2 (0.3s, exit 1)
+bm = subprocess.run(['blockMesh'], text=True, capture_output=True)
+print('\n'.join((bm.stdout+bm.stderr).splitlines()[-35:]))
+if bm.returncode: raise RuntimeError(f'blockMesh failed: {bm.returncode}')
+# -- output
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 16 2026
+Time   : 03:33:17
+Host   : yc-demo
+PID    : 854887
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T8-20260916-033245-3ee9/t8
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T8-20260916-033245-3ee9/t8/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 3[39m
+[32m      1[39m bm = subprocess.run([[33m'blockMesh'[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m      2[39m print([33m'\n'[39m.join((bm.stdout+bm.stderr).splitlines()[-[32m35[39m:]))
+[32m----> [39m[32m3[39m [38;5;28;01mif[39;00m bm.returncode: [38;5;28;01mraise[39;00m RuntimeError(f'blockMesh failed: {bm.returncode}')
+
+[31mRuntimeError[39m: blockMesh failed: 1
+
+# -- cell 3 (0.1s, exit 0)
+Path('system/controlDict').write_text('''FoamFile { format ascii; class dictionary; object controlDict; }
+application     foamRun;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         1;
+deltaT          1;
+writeControl    timeStep;
+writeInterval   1;
+purgeWrite      0;
+writeFormat     ascii;
+writePrecision  8;
+writeCompression off;
+timeFormat      general;
+timePrecision   6;
+runTimeModifiable true;
+''')
+print('Wrote minimal system/controlDict for meshing utilities.')
+# -- output
+Wrote minimal system/controlDict for meshing utilities.
+
+# -- cell 4 (0.2s, exit 0)
+bm = subprocess.run(['blockMesh'], text=True, capture_output=True)
+print('\n'.join((bm.stdout+bm.stderr).splitlines()[-40:]))
+if bm.returncode: raise RuntimeError(f'blockMesh failed: {bm.returncode}')
+# -- output
+Block 2 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+    Block 3 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+Adding cell zones
+    0	fluid
+    1	solid
+No patch pairs to merge
+
+Writing polyMesh with 2 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 -0.01) (0.2 0.03 0.03)
+  nPoints: 2135
+  nCells: 1536
+  nFaces: 5152
+  nInternalFaces: 4064
+----------------
+Cell Zones
+----------------
+  zone 0 (size: 1440) name: fluid
+  zone 1 (size: 96) name: solid
+----------------
+Patches
+----------------
+  patch 0 (start: 4064 size: 36) name: inlet
+  patch 1 (start: 4100 size: 36) name: outlet
+  patch 2 (start: 4136 size: 912) name: ductWalls
+  patch 3 (start: 5048 size: 104) name: solidExternal
+
+End
+
+# -- cell 5 (0.3s, exit 1)
+import pyvista as pv
+Path('t8.foam').touch()
+reader=pv.OpenFOAMReader('t8.foam')
+reader.set_active_time_value(0.0)
+mesh=reader.read()
+print(mesh)
+print('Blocks:', [(i, mesh.get_block_name(i), mesh[i].n_cells if mesh[i] is not None else None) for i in range(mesh.n_blocks)])
+# -- output
+MultiBlock (0x716d27b0bc40)
+  N Blocks:   2
+  X Bounds:   0.000e+00, 2.000e-01
+  Y Bounds:   0.000e+00, 3.000e-02
+  Z Bounds:   -1.000e-02, 3.000e-02
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 7[39m
+[32m      3[39m reader=pv.OpenFOAMReader([33m't8.foam'[39m)
+[32m      4[39m reader.set_active_time_value([32m0.0[39m)
+[32m      5[39m mesh=reader.read()
+[32m      6[39m print(mesh)
+[32m----> [39m[32m7[39m print([33m'Blocks:'[39m, [(i, mesh.get_block_name(i), mesh[i].n_cells [38;5;28;01mif[39;00m mesh[i] [38;5;28;01mis[39;00m [38;5;28;01mnot[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m [38;5;28;01mNone[39;00m) [38;5;28;01mfor[39;00m i [38;5;28;01min[39;00m range(mesh.n_blocks)])
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/dataobject.py:123[39m, in [36mDataObject.__getattr__[39m[34m(self, item)[39m
+[32m    121[39m [38;5;28;01mif[39;00m _resolve_pending_accessor(item):
+[32m    122[39m     [38;5;28;01mreturn[39;00m [38;5;28mobject[39m.[34m__getattribute__[39m([38;5;28mself[39m, item)
+[32m--> [39m[32m123[39m [38;5;28;01mreturn[39;00m [30;43msuper[39;49m[30;43m([39;49m[30;43m)[39;49m[30;43m.[39;49m[30;43m__getattribute__[39;49m[30;43m([39;49m[30;43mitem[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/_vtk_utilities.py:146[39m, in [36mDisableVtkSnakeCase.__getattribute__[39m[34m(self, item)[39m
+[32m    144[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__getattribute__[39m([38;5;28mself[39m, item):
+[32m    145[39m     DisableVtkSnakeCase.check_attribute([38;5;28mself[39m, item)
+[32m--> [39m[32m146[39m     [38;5;28;01mreturn[39;00m [30;43mobject[39;49m[30;43m.[39;49m[30;43m__getattribute__[39;49m[30;43m([39;49m[30;43mself[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mitem[39;49m[30;43m)[39;49m
+
+[31mAttributeError[39m: 'MultiBlock' object has no attribute 'n_cells'
+
+# -- cell 6 (0.5s, exit 0)
+Path('t8.foam').touch()
+reader=pv.OpenFOAMReader('t8.foam'); reader.set_active_time_value(0.0); mesh=reader.read()
+def leaves(obj, prefix=''):
+    out=[]
+    if isinstance(obj,pv.MultiBlock):
+        for i in range(obj.n_blocks):
+            name=obj.get_block_name(i) or str(i); out += leaves(obj[i], prefix+'/'+name)
+    elif obj is not None: out.append((prefix,obj))
+    return out
+lf=leaves(mesh)
+print('OpenFOAM reader leaves:',[(n,g.n_cells,g.bounds) for n,g in lf])
+pl=pv.Plotter(off_screen=True, window_size=(1100,500))
+colors=['lightsteelblue','tomato','silver','gold']
+for (name,g),c in zip(lf,colors*4):
+    opacity=0.20 if 'internalMesh' in name else 0.65
+    pl.add_mesh(g, color=c, opacity=opacity, show_edges=True, edge_color='gray', line_width=0.5)
+pl.camera_position=[(0.27,-0.18,0.14),(0.10,0.015,0.005),(0,0,1)]
+pl.add_axes(); pl.show(screenshot='coarse_mesh.png', auto_close=True)
+print('Wrote coarse_mesh.png from the actual polyMesh.')
+# -- output
+OpenFOAM reader leaves: [('/internalMesh', 1536, BoundsTuple(x_min =  0.0,
+            x_max =  0.20000000298023224,
+            y_min =  0.0,
+            y_max =  0.029999999329447746,
+            z_min = -0.009999999776482582,
+            z_max =  0.029999999329447746)), ('/boundary/inlet', 36, BoundsTuple(x_min = 0.0,
+            x_max = 0.0,
+            y_min = 0.0,
+            y_max = 0.029999999329447746,
+            z_min = 0.0,
+            z_max = 0.029999999329447746)), ('/boundary/outlet', 36, BoundsTuple(x_min = 0.20000000298023224,
+            x_max = 0.20000000298023224,
+            y_min = 0.0,
+            y_max = 0.029999999329447746,
+            z_min = 0.0,
+            z_max = 0.029999999329447746)), ('/boundary/ductWalls', 912, BoundsTuple(x_min = 0.0,
+            x_max = 0.20000000298023224,
+            y_min = 0.0,
+            y_max = 0.029999999329447746,
+            z_min = 0.0,
+            z_max = 0.029999999329447746)), ('/boundary/solidExternal', 104, BoundsTuple(x_min =  0.07999999821186066,
+            x_max =  0.11999999731779099,
+            y_min =  0.0,
+            y_max =  0.029999999329447746,
+            z_min = -0.009999999776482582,
+            z_max =  0.0))]
+Wrote coarse_mesh.png from the actual polyMesh.
+
+[0m[33m2026-09-16 03:33:35.144 (   5.423s) [    716DB0A9B780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-16 03:33:35.144 (   5.424s) [    716DB0A9B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:33:35.157 (   5.437s) [    716DB0A9B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_854564/1594327659.py:18: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.add_axes(); pl.show(screenshot='coarse_mesh.png', auto_close=True)
+
+# -- cell 7 (0.2s, exit 0)
+import pyvista as pv
+Path('t8.foam').touch()
+reader=pv.OpenFOAMReader('t8.foam'); reader.set_active_time_value(0.0); mesh=reader.read()
+def leaves(obj, prefix=''):
+    out=[]
+    if isinstance(obj,pv.MultiBlock):
+        for i in range(obj.n_blocks):
+            name=obj.get_block_name(i) or str(i); out += leaves(obj[i], prefix+'/'+name)
+    elif obj is not None: out.append((prefix,obj))
+    return out
+lf=leaves(mesh)
+print('OpenFOAM reader leaves:',[(n,g.n_cells) for n,g in lf])
+pl=pv.Plotter(off_screen=True, window_size=(1100,500))
+colors=['lightsteelblue','tomato','silver','gold']
+for (name,g),c in zip(lf,colors*4):
+    pl.add_mesh(g, color=c, opacity=0.20 if 'internalMesh' in name else 0.65, show_edges=True, edge_color='gray', line_width=0.5)
+pl.camera_position=[(0.27,-0.18,0.14),(0.10,0.015,0.005),(0,0,1)]
+pl.add_axes(); pl.show(screenshot='coarse_mesh.png', auto_close=True)
+print('Wrote coarse_mesh.png from the actual polyMesh; bounds:',mesh.bounds)
+# -- output
+OpenFOAM reader leaves: [('/internalMesh', 1536), ('/boundary/inlet', 36), ('/boundary/outlet', 36), ('/boundary/ductWalls', 912), ('/boundary/solidExternal', 104)]
+Wrote coarse_mesh.png from the actual polyMesh; bounds: BoundsTuple(x_min =  0.0,
+            x_max =  0.20000000298023224,
+            y_min =  0.0,
+            y_max =  0.029999999329447746,
+            z_min = -0.009999999776482582,
+            z_max =  0.029999999329447746)
+
+[0m[33m2026-09-16 03:33:43.805 (  14.085s) [    716DB0A9B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:33:43.806 (  14.086s) [    716DB0A9B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_854564/903594256.py:18: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.add_axes(); pl.show(screenshot='coarse_mesh.png', auto_close=True)
+
+# -- cell 8 (0.3s, exit 1)
+sp=subprocess.run(['splitMeshRegions','-cellZones','-overwrite'],text=True,capture_output=True)
+print('\n'.join((sp.stdout+sp.stderr).splitlines()[-55:]))
+if sp.returncode: raise RuntimeError(f'splitMeshRegions failed: {sp.returncode}')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : splitMeshRegions -cellZones -overwrite
+Date   : Sep 16 2026
+Time   : 03:33:48
+Host   : yc-demo
+PID    : 855553
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T8-20260916-033245-3ee9/t8
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T8-20260916-033245-3ee9/t8/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[8][39m[32m, line 3[39m
+[32m      1[39m sp=subprocess.run([[33m'splitMeshRegions'[39m,[33m'-cellZones'[39m,[33m'-overwrite'[39m],text=[38;5;28;01mTrue[39;00m,capture_output=[38;5;28;01mTrue[39;00m)
+[32m      2[39m print([33m'\n'[39m.join((sp.stdout+sp.stderr).splitlines()[-[32m55[39m:]))
+[32m----> [39m[32m3[39m [38;5;28;01mif[39;00m sp.returncode: [38;5;28;01mraise[39;00m RuntimeError(f'splitMeshRegions failed: {sp.returncode}')
+
+[31mRuntimeError[39m: splitMeshRegions failed: 1
+
+# -- cell 9 (0.1s, exit 0)
+Path('system/fvSchemes').write_text('''FoamFile { format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+''')
+Path('system/fvSolution').write_text('''FoamFile { format ascii; class dictionary; object fvSolution; }
+solvers {}
+''')
+print('Wrote meshing-only fvSchemes and fvSolution prerequisites.')
+# -- output
+Wrote meshing-only fvSchemes and fvSolution prerequisites.
+
+# -- cell 10 (0.3s, exit 0)
+sp=subprocess.run(['splitMeshRegions','-cellZones','-overwrite'],text=True,capture_output=True)
+print('\n'.join((sp.stdout+sp.stderr).splitlines()[-65:]))
+if sp.returncode: raise RuntimeError(f'splitMeshRegions failed: {sp.returncode}')
+# -- output
+Number of regions:2
+
+Writing region per cell file (for manual decomposition) to "/home/qiuzi/.openreynolds-buildup/work/T8-20260916-033245-3ee9/t8/constant/cellToRegion"
+
+Writing region per cell as volScalarField to "/home/qiuzi/.openreynolds-buildup/work/T8-20260916-033245-3ee9/t8/0/cellToRegion"
+
+Region	Cells
+------	-----
+0	1440
+1	96
+
+Region	Zone	Name
+------	----	----
+0	(0)	fluid
+1	(1)	solid
+
+Sizes of interfaces between regions:
+
+Interface	Region	Region	Faces
+---------	------	------	-----
+0		0	1	48
+
+Reading volScalarField: cellToRegion
+
+
+Adding patches
+
+
+Adding patches
+
+For interface between region fluid and solid added patches
+    4	fluid_to_solid
+    5	solid_to_fluid
+
+Region 0
+-------- 
+Creating mesh for region 0 fluid
+Writing dummy "fluid/fvSchemes"
+Writing dummy "fluid/fvSolution"
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region0 points back to base mesh.
+Writing map faceRegionAddressing from region0 faces back to base mesh.
+Writing map cellRegionAddressing from region0 cells back to base mesh.
+Writing map boundaryRegionAddressing from region0 boundary back to base mesh.
+
+Region 1
+-------- 
+Creating mesh for region 1 solid
+Writing dummy "solid/fvSchemes"
+Writing dummy "solid/fvSolution"
+Mapping fields
+Mapping field cellToRegion
+Deleting empty patches
+Writing new mesh
+Writing addressing to base mesh
+Writing map pointRegionAddressing from region1 points back to base mesh.
+Writing map faceRegionAddressing from region1 faces back to base mesh.
+Writing map cellRegionAddressing from region1 cells back to base mesh.
+Writing map boundaryRegionAddressing from region1 boundary back to base mesh.
+End
+
+# -- cell 11 (0.1s, exit 0)
+for region in ['fluid','solid']:
+    p=Path(f'constant/{region}/polyMesh/boundary')
+    txt=p.read_text()
+    print(f'--- {region} boundary interface excerpt ---')
+    key=f'{region}_to_'+('solid' if region=='fluid' else 'fluid')
+    i=txt.find(key); print(txt[i:i+420])
+# -- output
+--- fluid boundary interface excerpt ---
+fluid_to_solid
+    {
+        type            mappedWall;
+        inGroups        1(wall);
+        nFaces          48;
+        startFace       4788;
+        sampleMode      nearestPatchFace;
+        sampleRegion    solid;
+        samplePatch     solid_to_fluid;
+    }
+)
+
+// ************************************************************************* //
+
+--- solid boundary interface excerpt ---
+solid_to_fluid
+    {
+        type            mappedWall;
+        inGroups        1(wall);
+        nFaces          48;
+        startFace       316;
+        sampleMode      nearestPatchFace;
+        sampleRegion    fluid;
+        samplePatch     fluid_to_solid;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 12 (0.3s, exit 1)
+check_reports={}
+for region in ['fluid','solid']:
+    cp=subprocess.run(['checkMesh','-region',region,'-allTopology','-allGeometry'],text=True,capture_output=True)
+    check_reports[region]=cp.stdout+cp.stderr
+    print(f'===== {region} =====')
+    lines=check_reports[region].splitlines()
+    print('\n'.join(lines[-42:]))
+    if cp.returncode: raise RuntimeError(f'checkMesh failed for {region}: {cp.returncode}')
+# -- output
+===== fluid =====
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.2 0.03 0.03)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-3.0204276e-18 2.7183848e-17 -1.8385211e-18) OK.
+    Max cell openness = 1.3552527e-16 OK.
+    Max aspect ratio = 1 OK.
+    Minimum face area = 2.5e-05. Maximum face area = 2.5e-05.  Face area magnitudes OK.
+    Min volume = 1.25e-07. Max volume = 1.25e-07.  Total volume = 0.00018.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.3306691e-14 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.005 0.005 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.125 average: 0.67708333
+    Cell determinant check OK.
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.5 average: 0.5
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 1 average: 1
+    Face volume ratio check OK.
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+
+    failed lookup of solid (objectRegistry t8)
+    available objects of type polyMesh:
+1(fluid)
+
+
+    From const Type& Foam::objectRegistry::lookupObject(const Foam::word&, bool) const [with Type = Foam::polyMesh]
+    in file ./src/OpenFOAM/lnInclude/objectRegistryTemplates.C at line 627.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[12][39m[32m, line 8[39m
+[32m      4[39m     check_reports[region]=cp.stdout+cp.stderr
+[32m      5[39m     print(f'===== {region} =====')
+[32m      6[39m     lines=check_reports[region].splitlines()
+[32m      7[39m     print([33m'\n'[39m.join(lines[-[32m42[39m:]))
+[32m----> [39m[32m8[39m     [38;5;28;01mif[39;00m cp.returncode: [38;5;28;01mraise[39;00m RuntimeError(f'checkMesh failed for {region}: {cp.returncode}')
+
+[31mRuntimeError[39m: checkMesh failed for fluid: 1
+
+# -- cell 13 (0.2s, exit 0)
+h=subprocess.run(['checkMesh','-help'],text=True,capture_output=True)
+print(h.stdout+h.stderr)
+# -- output
+Usage: checkMesh [OPTIONS]
+Options:
+  -allGeometry      Include bounding box checks
+  -allRegions       Use all regions in regionProperties
+  -allTopology      Include extra topology checks
+  -case <dir>       Case directory (instead of current directory)
+  -constant         Include 'constant/' dir in the times list
+  -decomposeParDict <file>
+                    Alternative decomposePar dictionary file
+  -latestTime       Select the latest time
+  -meshQuality      Read user-defined mesh quality criteria from
+                    system/meshQualityDict
+  -noTopology       Skip checking the mesh topology
+  -noZero           Exclude '0/' dir from the times list
+  -parallel         Run in parallel
+  -region <name>    Use specified mesh region. Eg, -region gas
+  -regions <wordRes>
+                    Use specified mesh region. Eg, -regions gas
+                    Or from regionProperties.  Eg, -regions '(gas "solid.*")'
+  -time <ranges>    List of ranges. Eg, ':10,20 40:70 1000:', 'none', etc
+  -write-edges      Write bad edges (possibly relevant for finite-area) in vtk
+                    format
+  -writeAllFields   Write volFields with mesh quality parameters
+  -writeAllSurfaceFields
+                    Write surfaceFields with mesh quality parameters
+  -writeChecks <word>
+                    Write checks to file in dictionary or JSON format
+  -writeFields <wordList>
+                    Write volFields with selected mesh quality parameters
+  -writeSets <surfaceFormat>
+                    Reconstruct and write all faceSets and cellSets in selected
+                    format
+  -doc              Display documentation in browser
+  -help             Display short help and exit
+  -help-compat      Display compatibility options and exit
+  -help-full        Display full help and exit
+
+Checks validity of a mesh
+
+Using: OpenFOAM-2512 (2512) - visit www.openfoam.com
+Build: _87ed40d2-20251219
+Arch:  LSB;label=32;scalar=64
+
+# -- cell 14 (0.1s, exit 0)
+Path('constant/regionProperties').write_text('''FoamFile { format ascii; class dictionary; object regionProperties; }
+regions
+(
+    fluid (fluid)
+    solid (solid)
+);
+''')
+print(Path('constant/regionProperties').read_text())
+# -- output
+FoamFile { format ascii; class dictionary; object regionProperties; }
+regions
+(
+    fluid (fluid)
+    solid (solid)
+);
+
+# -- cell 15 (0.3s, exit 0)
+cp=subprocess.run(['checkMesh','-allRegions','-allTopology','-allGeometry'],text=True,capture_output=True)
+check_all=cp.stdout+cp.stderr
+print('\n'.join(check_all.splitlines()[-95:]))
+if cp.returncode: raise RuntimeError(f'multi-region checkMesh failed: {cp.returncode}')
+# -- output
+Concave cell check OK.
+    Face interpolation weight : minimum: 0.5 average: 0.5
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 1 average: 1
+    Face volume ratio check OK.
+AMI: Patch source faces: 48
+AMI: Patch target faces: 48
+AMI: Patch source sum(weights) min:1 max:1 average:1
+AMI: Patch target sum(weights) min:1 max:1 average:1
+
+Mesh OK.
+
+Mesh stats solid
+    points:           189
+    faces:            364
+    internal faces:   212
+    cells:            96
+    faces per cell:   6
+    boundary patches: 2
+    point zones:      0
+    face zones:       0
+    cell zones:       2
+
+Overall number of cells of each type:
+    hexahedra:     96
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    solidExternal       104      119      ok (non-closed singly connected)   (0.08 0 -0.01) (0.12 0.03 0)
+    solid_to_fluid      48       63       ok (non-closed singly connected)   (0.08 0 0) (0.12 0.03 0)
+    ".*"                152      154      ok (closed singly connected)       (0.08 0 -0.01) (0.12 0.03 0)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               0            0            0            (1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+    solid               96           189          1.2e-05      (0.08 0 -0.01) (0.12 0.03 0)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0.08 0 -0.01) (0.12 0.03 0)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (7.132909e-18 8.9161363e-18 1.3552527e-16) OK.
+    Max cell openness = 1.3552527e-16 OK.
+    Max aspect ratio = 1 OK.
+    Minimum face area = 2.5e-05. Maximum face area = 2.5e-05.  Face area magnitudes OK.
+    Min volume = 1.25e-07. Max volume = 1.25e-07.  Total volume = 1.2e-05.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.0045694e-14 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.005 0.005 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.125 average: 0.36458333
+    Cell determinant check OK.
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.5 average: 0.5
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 1 average: 1
+    Face volume ratio check OK.
+AMI: Patch source faces: 48
+AMI: Patch target faces: 48
+AMI: Patch source sum(weights) min:1 max:1 average:1
+AMI: Patch target sum(weights) min:1 max:1 average:1
+
+Mesh OK.
+
+End
+
+# -- cell 16 (0.2s, exit 0)
+import pyvista as pv
+Path('t8.foam').touch()
+r2=pv.OpenFOAMReader('t8.foam'); r2.set_active_time_value(0.0); m2=r2.read()
+lf2=leaves(m2)
+print([(n,g.n_cells) for n,g in lf2])
+# -- output
+[('/defaultRegion/internalMesh', 1536), ('/defaultRegion/boundary/inlet', 36), ('/defaultRegion/boundary/outlet', 36), ('/defaultRegion/boundary/ductWalls', 912), ('/defaultRegion/boundary/solidExternal', 104), ('/fluid/internalMesh', 1440), ('/fluid/boundary/inlet', 36), ('/fluid/boundary/outlet', 36), ('/fluid/boundary/ductWalls', 912), ('/fluid/boundary/fluid_to_solid', 48), ('/solid/internalMesh', 96), ('/solid/boundary/solidExternal', 104), ('/solid/boundary/solid_to_fluid', 48)]
+
+# -- cell 17 (0.1s, exit 0)
+surfdir=Path('constant/triSurface'); surfdir.mkdir(parents=True,exist_ok=True)
+# Remove only generated STL outputs in this case subdirectory for reproducible reruns.
+for f in surfdir.glob('*.stl'): f.unlink()
+leafmap={n:g for n,g in lf2}
+exports={
+'inlet':'/fluid/boundary/inlet',
+'outlet':'/fluid/boundary/outlet',
+'ductWalls':'/fluid/boundary/ductWalls',
+'solidExternal':'/solid/boundary/solidExternal',
+'fluid_solid_interface':'/fluid/boundary/fluid_to_solid'}
+for name,key in exports.items():
+    s=leafmap[key].extract_surface().triangulate().clean()
+    s.save(surfdir/f'{name}.stl',binary=False)
+    print(name, 'quads=',leafmap[key].n_cells,'triangles=',s.n_cells,'bounds=',tuple(round(v,6) for v in s.bounds))
+# -- output
+inlet quads= 36 triangles= 72 bounds= (0.0, 0.0, 0.0, 0.03, 0.0, 0.03)
+outlet quads= 36 triangles= 72 bounds= (0.2, 0.2, 0.0, 0.03, 0.0, 0.03)
+ductWalls quads= 912 triangles= 1824 bounds= (0.0, 0.2, 0.0, 0.03, 0.0, 0.03)
+solidExternal quads= 104 triangles= 208 bounds= (0.08, 0.12, 0.0, 0.03, -0.01, 0.0)
+fluid_solid_interface quads= 48 triangles= 96 bounds= (0.08, 0.12, 0.0, 0.03, 0.0, 0.0)
+
+/tmp/ipykernel_854564/3526540146.py:12: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`PolyData.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  s=leafmap[key].extract_surface().triangulate().clean()
+
+# -- cell 18 (0.2s, exit 0)
+fluid_grid=leafmap['/fluid/internalMesh']; solid_grid=leafmap['/solid/internalMesh']
+fi=leafmap['/fluid/boundary/fluid_to_solid']; si=leafmap['/solid/boundary/solid_to_fluid']
+def sorted_centres(poly):
+    a=poly.cell_centers().points
+    return a[np.lexsort((a[:,2],a[:,1],a[:,0]))]
+interface_err=float(np.max(np.linalg.norm(sorted_centres(fi)-sorted_centres(si),axis=1)))
+print(f'Fluid bounds [m]: {tuple(float(v) for v in fluid_grid.bounds)}; volume={fluid_grid.volume:.9g} m3 (expected {L*W*H:.9g})')
+print(f'Solid bounds [m]: {tuple(float(v) for v in solid_grid.bounds)}; volume={solid_grid.volume:.9g} m3 (expected {block_L*block_W*block_T:.9g})')
+print(f'Interface area={fi.area:.9g} m2 (expected {block_L*block_W:.9g}); max paired face-centre mismatch={interface_err:.3g} m')
+pl2=pv.Plotter(off_screen=True,window_size=(1100,520))
+pl2.add_mesh(fluid_grid.extract_surface(),color='lightskyblue',opacity=0.28,show_edges=True,edge_color='steelblue')
+pl2.add_mesh(solid_grid.extract_surface(),color='orangered',opacity=1.0,show_edges=True,edge_color='darkred')
+pl2.camera_position=[(0.27,-0.18,0.14),(0.10,0.015,0.005),(0,0,1)]
+pl2.add_axes(); pl2.show(screenshot='final_regions.png',auto_close=True)
+print('Wrote final_regions.png.')
+# -- output
+Fluid bounds [m]: (0.0, 0.20000000298023224, 0.0, 0.029999999329447746, 0.0, 0.029999999329447746); volume=0.000179999995 m3 (expected 0.00018)
+Solid bounds [m]: (0.07999999821186066, 0.11999999731779099, 0.0, 0.029999999329447746, -0.009999999776482582, 0.0); volume=1.19999992e-05 m3 (expected 1.2e-05)
+Interface area=0.00119999995 m2 (expected 0.0012); max paired face-centre mismatch=0 m
+Wrote final_regions.png.
+
+[0m[33m2026-09-16 03:34:43.517 (  73.796s) [    716DB0A9B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_854564/880417580.py:11: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  pl2.add_mesh(fluid_grid.extract_surface(),color='lightskyblue',opacity=0.28,show_edges=True,edge_color='steelblue')
+/tmp/ipykernel_854564/880417580.py:12: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  pl2.add_mesh(solid_grid.extract_surface(),color='orangered',opacity=1.0,show_edges=True,edge_color='darkred')
+[0m[33m2026-09-16 03:34:43.518 (  73.797s) [    716DB0A9B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_854564/880417580.py:14: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl2.add_axes(); pl2.show(screenshot='final_regions.png',auto_close=True)
+

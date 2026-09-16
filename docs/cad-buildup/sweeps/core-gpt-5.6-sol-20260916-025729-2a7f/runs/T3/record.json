@@ -1,0 +1,449 @@
+{
+  "run_id": "20260916-032827-6533",
+  "case": "T3",
+  "arm": "core",
+  "model": "gpt-5.6-sol",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T3-20260916-032827-6533",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T3-20260916-032827-6533/t3",
+  "started_at": "2026-09-16T03:28:28",
+  "ended_at": "2026-09-16T03:31:19",
+  "seconds": 166.8,
+  "n_turns": 15,
+  "n_steps": 14,
+  "first_mesh_step": 6,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.417,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 22299,
+    "cache_read": 219239,
+    "cache_write": 0,
+    "output": 12003
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import gmsh, numpy as np, matplotlib.pyplot as plt\nL=0.120; W=0.006; R=W/2; HLOOP=0.012; SPAN=0.022; T=0.001\nstarts=np.array([0.008,0.035,0.062,0.089]); n_path=18\ngmsh.initialize(); gmsh.model.add('teslaValve2D'); occ=gmsh.model.occ\nparts=[(2,occ.addRectangle(0,-W/2,0,L,W))]\ndef bezier(p0,p1,p2,p3,t):\n    return (1-t)**3*p0+3*(1-t)**2*t*p1+3*(1-t)*t**2*p2+t**3*p3\nfor x0 in starts:\n    p0=np.array([x0,0.0]); p3=np.array([x0+SPAN,0.0])\n    p1=np.array([x0+0.002,HLOOP]); p2=np.array([x0+SPAN-0.007,HLOOP])\n    pts=np.array([bezier(p0,p1,p2,p3,t) for t in np.linspace(0,1,n_path)])\n    for p in pts: parts.append((2,occ.addDisk(float(p[0]),float(p[1]),0,R,R)))\n    for a,b in zip(pts[:-1],pts[1:]):\n        d=b-a; q=np.array([-d[1],d[0]])/np.linalg.norm(d)*R\n        tags=[occ.addPoint(float(v[0]),float(v[1]),0) for v in (a+q,b+q,b-q,a-q)]\n        curves=[occ.addLine(tags[i],tags[(i+1)%4]) for i in range(4)]\n        parts.append((2,occ.addPlaneSurface([occ.addCurveLoop(curves)])))\nfluid2d,_=occ.fuse([parts[0]],parts[1:],removeObject=True,removeTool=True); occ.synchronize()\ngmsh.option.setNumber('Mesh.MeshSizeMin',0.0015); gmsh.option.setNumber('Mesh.MeshSizeMax',0.0025)\ngmsh.model.mesh.generate(2)\nnodeTags,xyz,_=gmsh.model.mesh.getNodes(); xy=xyz.reshape(-1,3)[:,:2]; idx={t:i for i,t in enumerate(nodeTags)}\ntri=[]\nfor et,en in zip(*gmsh.model.mesh.getElements(2)[1:]):\n    if gmsh.model.mesh.getElementProperties(et)[0].startswith('Triangle'):\n        nn=gmsh.model.mesh.getElementProperties(et)[3]; tri.extend([[idx[t] for t in row[:3]] for row in np.array(en).reshape(-1,nn)])\nfig,ax=plt.subplots(figsize=(12,3)); ax.triplot(xy[:,0]*1000,xy[:,1]*1000,np.array(tri),lw=.35); ax.set_aspect('equal'); ax.set_xlabel('x [mm]'); ax.set_ylabel('y [mm]'); ax.set_title('Coarse planar Tesla-valve fluid region'); ax.grid(True,alpha=.2); plt.show()\nprint(f'Planar surfaces: {fluid2d}; coarse nodes={len(nodeTags)}, triangles={len(tri)}')",
+      "exit_code": 1,
+      "seconds": 1.3545200630032923,
+      "output": "Info    : [  0%] Union                                                                                  \rInfo    : [ 10%] Union                                                                                  \rInfo    : [ 20%] Union                                                                                  \rInfo    : [ 30%] Union                                                                                  \rInfo    : [ 40%] Union                                                                                  \rInfo    : [ 50%] Union                                                                                  \rInfo    : [ 60%] Union                                                                                  \rInfo    : [ 70%] Union                                                                                  \rInfo    : [ 80%] Union - Making faces                                                                                \rInfo    : [ 90%] Union                                                                                  \r                                                                                \rInfo    : Cannot bind existing OpenCASCADE surface 1 to second tag 2\nInfo    : Could not preserve tag of 2D object 2 (->1)\nInfo    : Cannot bind existing OpenCASCADE surface 1 to second tag 3\nInfo    : Could not preserve tag of 2D object 3 (->1)\nInfo    : Cannot bind existing OpenCASCADE surface 1 to second tag 4\nInfo    : Could not preserve tag of 2D object 4 (->1)\nInfo    : Cannot bind existing OpenCASCADE surface 1 to second tag 5\nInfo    : Could not preserve tag of 2D object 5 (->1)\nInfo    : Cannot bind existing OpenCASCADE surface 1 to second tag 6\nInfo    : Could not preserve tag of 2D object 6 (->1)\nInfo    : Cannot bind existing OpenCASCADE surface 1 to second tag 7\nInfo    : Could not preserve tag of 2D object 7 (->1)\nInfo    : Cannot bind existing OpenCASCADE surface 1 to second tag 8\nInfo    : Could not preserve tag of 2D object 8 (\n... 32019 characters cut ...\nPlane, Frontal-Delaunay)\nInfo    : [ 70%] Meshing surface 45 (Plane, Frontal-Delaunay)\nInfo    : [ 70%] Meshing surface 46 (Plane, Frontal-Delaunay)\nInfo    : [ 70%] Meshing surface 47 (Plane, Frontal-Delaunay)\nInfo    : [ 70%] Meshing surface 48 (Plane, Frontal-Delaunay)\nInfo    : [ 70%] Meshing surface 49 (Plane, Frontal-Delaunay)\nInfo    : [ 80%] Meshing surface 50 (Plane, Frontal-Delaunay)\nInfo    : [ 80%] Meshing surface 51 (Plane, Frontal-Delaunay)\nInfo    : [ 80%] Meshing surface 52 (Plane, Frontal-Delaunay)\nInfo    : [ 80%] Meshing surface 53 (Plane, Frontal-Delaunay)\nInfo    : [ 80%] Meshing surface 54 (Plane, Frontal-Delaunay)\nInfo    : [ 80%] Meshing surface 55 (Plane, Frontal-Delaunay)\nInfo    : [ 80%] Meshing surface 56 (Plane, Frontal-Delaunay)\nInfo    : [ 90%] Meshing surface 57 (Plane, Frontal-Delaunay)\nInfo    : [ 90%] Meshing surface 58 (Plane, Frontal-Delaunay)\nInfo    : [ 90%] Meshing surface 59 (Plane, Frontal-Delaunay)\nInfo    : [ 90%] Meshing surface 60 (Plane, Frontal-Delaunay)\nInfo    : [ 90%] Meshing surface 61 (Plane, Frontal-Delaunay)\nInfo    : [ 90%] Meshing surface 62 (Plane, Frontal-Delaunay)\nInfo    : [ 90%] Meshing surface 63 (Plane, Frontal-Delaunay)\nInfo    : [100%] Meshing surface 64 (Plane, Frontal-Delaunay)\nInfo    : [100%] Meshing surface 65 (Plane, Frontal-Delaunay)\nInfo    : [100%] Meshing surface 66 (Plane, Frontal-Delaunay)\nInfo    : [100%] Meshing surface 67 (Plane, Frontal-Delaunay)\nInfo    : [100%] Meshing surface 68 (Plane, Frontal-Delaunay)\nInfo    : [100%] Meshing surface 69 (Plane, Frontal-Delaunay)\nInfo    : Done meshing 2D (Wall 0.0934131s, CPU 0.093502s)\nInfo    : 3919 nodes 8524 elements\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[1]\u001b[39m\u001b[32m, line 24\u001b[39m\n\u001b[32m     20\u001b[39m gmsh.model.mesh.generate(\u001b[32m2\u001b[39m)\n\u001b[32m     21\u001b[39m nodeTags,xyz,_=gmsh.model.mesh.getNodes(); xy=xyz.reshape(-\u001b[32m1\u001b[39m,\u001b[32m3\u001b[39m)[:,:\u001b[32m2\u001b[39m]; idx={t:i \u001b[38;5;28;01mfor\u001b[39;00m i,t \u001b[38;5;28;01min\u001b[39;00m enumerate(nodeTags)}\n\u001b[32m     22\u001b[39m tri=[]\n\u001b[32m     23\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m et,en \u001b[38;5;28;01min\u001b[39;00m zip(*gmsh.model.mesh.getElements(\u001b[32m2\u001b[39m)[\u001b[32m1\u001b[39m:]):\n\u001b[32m---> \u001b[39m\u001b[32m24\u001b[39m     \u001b[38;5;28;01mif\u001b[39;00m gmsh.model.mesh.getElementProperties(et)[\u001b[32m0\u001b[39m].startswith(\u001b[33m'Triangle'\u001b[39m):\n\u001b[32m     25\u001b[39m         nn=gmsh.model.mesh.getElementProperties(et)[\u001b[32m3\u001b[39m]; tri.extend([[idx[t] \u001b[38;5;28;01mfor\u001b[39;00m t \u001b[38;5;28;01min\u001b[39;00m row[:\u001b[32m3\u001b[39m]] \u001b[38;5;28;01mfor\u001b[39;00m row \u001b[38;5;28;01min\u001b[39;00m np.array(en).reshape(-\u001b[32m1\u001b[39m,nn)])\n\u001b[32m     26\u001b[39m fig,ax=plt.subplots(figsize=(\u001b[32m12\u001b[39m,\u001b[32m3\u001b[39m)); ax.triplot(xy[:,\u001b[32m0\u001b[39m]*\u001b[32m1000\u001b[39m,xy[:,\u001b[32m1\u001b[39m]*\u001b[32m1000\u001b[39m,np.array(tri),lw=\u001b[32m.35\u001b[39m); ax.set_aspect(\u001b[33m'equal'\u001b[39m); ax.set_xlabel(\u001b[33m'x [mm]'\u001b[39m); ax.set_ylabel(\u001b[33m'y [mm]'\u001b[39m); ax.set_title(\u001b[33m'Coarse planar Tesla-valve fluid region'\u001b[39m); ax.grid(\u001b[38;5;28;01mTrue\u001b[39;00m,alpha=\u001b[32m.2\u001b[39m); plt.show()\n\u001b[32m     27\u001b[39m print(f'Planar surfaces: {fluid2d}; coarse nodes={len(nodeTags)}, triangles={len(tri)}')\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/gmsh.py:3105\u001b[39m, in \u001b[36mmodel.mesh.getElementProperties\u001b[39m\u001b[34m(elementType)\u001b[39m\n\u001b[32m   3101\u001b[39m             api_localNodeCoord_, api_localNodeCoord_n_ = POINTER(c_double)(), c_size_t()\n\u001b[32m   3102\u001b[39m             api_numPrimaryNodes_ = c_int()\n\u001b[32m   3103\u001b[39m             ierr = c_int()\n\u001b[32m   3104\u001b[39m             lib.gmshModelMeshGetElementProperties(\n\u001b[32m-> \u001b[39m\u001b[32m3105\u001b[39m                 c_int(elementType),\n\u001b[32m   3106\u001b[39m                 byref(api_elementName_),\n\u001b[32m   3107\u001b[39m                 byref(api_dim_),\n\u001b[32m   3108\u001b[39m                 byref(api_order_),\n\n\u001b[31mTypeError\u001b[39m: only integer scalar arrays can be converted to a scalar index",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.finalize()\ntry:\n    import shapely\n    from shapely.geometry import LineString, box\n    from shapely.ops import unary_union\n    print('shapely',shapely.__version__,'available')\nexcept Exception as e:\n    print('shapely unavailable:',repr(e))",
+      "exit_code": 0,
+      "seconds": 0.05072222600574605,
+      "output": "shapely unavailable: ModuleNotFoundError(\"No module named 'shapely'\")",
+      "image": ""
+    },
+    {
+      "cmd": "import gmsh\ntry:\n    import shapely\n    from shapely.geometry import LineString, box\n    from shapely.ops import unary_union\n    print('shapely',shapely.__version__,'available')\nexcept Exception as e:\n    print('shapely unavailable:',repr(e))",
+      "exit_code": 0,
+      "seconds": 0.05071150601725094,
+      "output": "shapely unavailable: ModuleNotFoundError(\"No module named 'shapely'\")",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np, matplotlib.pyplot as plt\nL=0.120; W=0.006; R=W/2; HLOOP=0.012; SPAN=0.022; T=0.001\nstarts=np.array([0.008,0.035,0.062,0.089]); n_path=41\ndef bezier_offset(x0,side):\n    t=np.linspace(0,1,n_path); p0=np.array([x0,0.0]); p3=np.array([x0+SPAN,0.0]); p1=np.array([x0+0.002,HLOOP]); p2=np.array([x0+SPAN-0.007,HLOOP])\n    p=((1-t)**3)[:,None]*p0+(3*(1-t)**2*t)[:,None]*p1+(3*(1-t)*t**2)[:,None]*p2+(t**3)[:,None]*p3\n    d=(3*(1-t)**2)[:,None]*(p1-p0)+(6*(1-t)*t)[:,None]*(p2-p1)+(3*t**2)[:,None]*(p3-p2)\n    n=np.column_stack((-d[:,1],d[:,0])); n/=np.linalg.norm(n,axis=1)[:,None]; q=p+side*R*n\n    out=[]\n    for a,b in zip(q[:-1],q[1:]):\n        if a[1]>=R: out.append(a)\n        if (a[1]-R)*(b[1]-R)<0: out.append(a+(b-a)*(R-a[1])/(b[1]-a[1]))\n    if q[-1,1]>=R: out.append(q[-1])\n    return np.array(out)\nouter=[bezier_offset(x,1) for x in starts]; inner=[bezier_offset(x,-1) for x in starts]\ngmsh.initialize(); gmsh.model.add('teslaValve2D'); geo=gmsh.model.geo\ndef pt(v): return geo.addPoint(float(v[0]),float(v[1]),0,0.0018)\ndef line(a,b): return geo.addLine(pt(a),pt(b))\ndef spline(arr): return geo.addSpline([pt(v) for v in arr])\nouter_curves=[]; outlet_curve=line((L,-R),(L,R)); outer_curves += [line((0,-R),(L,-R)),outlet_curve]\nx=L\nfor q in outer[::-1]:\n    outer_curves.append(line((x,R),q[-1])); outer_curves.append(spline(q[::-1])); x=q[0,0]\nouter_curves.append(line((x,R),(0,R))); inlet_curve=line((0,R),(0,-R)); outer_curves.append(inlet_curve)\nhole_loops=[]; hole_curves=[]\nfor q in inner:\n    c1=line(q[0],q[-1]); c2=spline(q[::-1]); hole_curves += [c1,c2]; hole_loops.append(geo.addCurveLoop([c1,c2]))\nouter_loop=geo.addCurveLoop(outer_curves); fluid_surface=geo.addPlaneSurface([outer_loop]+hole_loops); geo.synchronize()\ngmsh.model.addPhysicalGroup(1,[inlet_curve],name='inlet2d'); gmsh.model.addPhysicalGroup(1,[outlet_curve],name='outlet2d'); gmsh.model.addPhysicalGroup(1,[c for c in outer_curves+hole_curves if c not in (inlet_curve,outlet_curve)],name='walls2d'); gmsh.model.addPhysicalGroup(2,[fluid_surface],name='fluid2d')\ngmsh.model.mesh.generate(2); gmsh.write('coarse2d.msh')\nnodeTags,xyz,_=gmsh.model.mesh.getNodes(); xy=xyz.reshape(-1,3)[:,:2]; idx={int(t):i for i,t in enumerate(nodeTags)}; tri=[]\ntypes,_,nodeSets=gmsh.model.mesh.getElements(2)\nfor et,en in zip(types,nodeSets):\n    if gmsh.model.mesh.getElementProperties(int(et))[0].startswith('Triangle'):\n        nn=gmsh.model.mesh.getElementProperties(int(et))[3]; tri += [[idx[int(t)] for t in row[:3]] for row in np.array(en).reshape(-1,nn)]\nfig,ax=plt.subplots(figsize=(12,3)); ax.triplot(xy[:,0]*1000,xy[:,1]*1000,np.asarray(tri),lw=.35); ax.set_aspect('equal'); ax.set(xlabel='x [mm]',ylabel='y [mm]',title='Coarse planar Tesla-valve fluid region'); ax.grid(True,alpha=.2); plt.show()\nprint(f'coarse nodes={len(nodeTags)}, triangles={len(tri)}, holes={len(hole_loops)}')",
+      "exit_code": 1,
+      "seconds": 0.050657476007472724,
+      "output": "Error   : Curve loop 1 is wrong\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mException\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[4]\u001b[39m\u001b[32m, line 27\u001b[39m\n\u001b[32m     23\u001b[39m     outer_curves.append(line((x,R),q[-\u001b[32m1\u001b[39m])); outer_curves.append(spline(q[::-\u001b[32m1\u001b[39m])); x=q[\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m]\n\u001b[32m     24\u001b[39m outer_curves.append(line((x,R),(\u001b[32m0\u001b[39m,R))); inlet_curve=line((\u001b[32m0\u001b[39m,R),(\u001b[32m0\u001b[39m,-R)); outer_curves.append(inlet_curve)\n\u001b[32m     25\u001b[39m hole_loops=[]; hole_curves=[]\n\u001b[32m     26\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m q \u001b[38;5;28;01min\u001b[39;00m inner:\n\u001b[32m---> \u001b[39m\u001b[32m27\u001b[39m     c1=line(q[\u001b[32m0\u001b[39m],q[-\u001b[32m1\u001b[39m]); c2=spline(q[::-\u001b[32m1\u001b[39m]); hole_curves += [c1,c2]; hole_loops.append(geo.addCurveLoop([c1,c2]))\n\u001b[32m     28\u001b[39m outer_loop=geo.addCurveLoop(outer_curves); fluid_surface=geo.addPlaneSurface([outer_loop]+hole_loops); geo.synchronize()\n\u001b[32m     29\u001b[39m gmsh.model.addPhysicalGroup(\u001b[32m1\u001b[39m,[inlet_curve],name=\u001b[33m'inlet2d'\u001b[39m); gmsh.model.addPhysicalGroup(\u001b[32m1\u001b[39m,[outlet_curve],name=\u001b[33m'outlet2d'\u001b[39m); gmsh.model.addPhysicalGroup(\u001b[32m1\u001b[39m,[c \u001b[38;5;28;01mfor\u001b[39;00m c \u001b[38;5;28;01min\u001b[39;00m outer_curves+hole_curves \u001b[38;5;28;01mif\u001b[39;00m c \u001b[38;5;28;01mnot\u001b[39;00m \u001b[38;5;28;01min\u001b[39;00m (inlet_curve,outlet_curve)],name=\u001b[33m'walls2d'\u001b[39m); gmsh.model.addPhysicalGroup(\u001b[32m2\u001b[39m,[fluid_surface],name=\u001b[33m'fluid2d'\u001b[39m)\n\u001b[32m     30\u001b[39m gmsh.model.mesh.generate(\u001b[32m2\u001b[39m); gmsh.write(\u001b[33m'coarse2d.msh'\u001b[39m)\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/gmsh.py:5841\u001b[39m, in \u001b[36mmodel.geo.addCurveLoop\u001b[39m\u001b[34m(curveTags, tag, reorient)\u001b[39m\n\u001b[32m   5837\u001b[39m                 c_int(tag),\n\u001b[32m   5838\u001b[39m                 c_int(bool(reorient)),\n\u001b[32m   5839\u001b[39m                 byref(ierr))\n\u001b[32m   5840\u001b[39m             \u001b[38;5;28;01mif\u001b[39;00m ierr.value != \u001b[32m0\u001b[39m:\n\u001b[32m-> \u001b[39m\u001b[32m5841\u001b[39m                 \u001b[38;5;28;01mraise\u001b[39;00m Exception(logger.getLastError())\n\u001b[32m   5842\u001b[39m             \u001b[38;5;28;01mreturn\u001b[39;00m api_result_\n\n\u001b[31mException\u001b[39m: Curve loop 1 is wrong",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np, matplotlib.pyplot as plt\nif gmsh.isInitialized(): gmsh.finalize()\nL=0.120; W=0.006; R=W/2; HLOOP=0.012; SPAN=0.022; T=0.001; starts=np.array([0.008,0.035,0.062,0.089]); n_path=41\ndef bezier_offset(x0,side):\n    t=np.linspace(0,1,n_path); p0=np.array([x0,0.]); p3=np.array([x0+SPAN,0.]); p1=np.array([x0+.002,HLOOP]); p2=np.array([x0+SPAN-.007,HLOOP])\n    p=((1-t)**3)[:,None]*p0+(3*(1-t)**2*t)[:,None]*p1+(3*(1-t)*t**2)[:,None]*p2+(t**3)[:,None]*p3\n    d=(3*(1-t)**2)[:,None]*(p1-p0)+(6*(1-t)*t)[:,None]*(p2-p1)+(3*t**2)[:,None]*(p3-p2); n=np.column_stack((-d[:,1],d[:,0])); n/=np.linalg.norm(n,axis=1)[:,None]; q=p+side*R*n\n    out=[]\n    for a,b in zip(q[:-1],q[1:]):\n        if a[1]>=R: out.append(a)\n        if (a[1]-R)*(b[1]-R)<0: out.append(a+(b-a)*(R-a[1])/(b[1]-a[1]))\n    if q[-1,1]>=R: out.append(q[-1])\n    return np.array(out)\nouter=[bezier_offset(x,1) for x in starts]; inner=[bezier_offset(x,-1) for x in starts]\ngmsh.initialize(); gmsh.model.add('teslaValve2D'); geo=gmsh.model.geo\ndef P(v): return geo.addPoint(float(v[0]),float(v[1]),0,0.0018)\ndef add_line(cur,v):\n    nxt=P(v); return geo.addLine(cur,nxt),nxt\ndef add_spline(cur,arr):\n    tags=[cur]+[P(v) for v in arr]; return geo.addSpline(tags),tags[-1]\nouter_curves=[]; cur=P((0,-R)); c,cur=add_line(cur,(L,-R)); outer_curves.append(c); c,cur=add_line(cur,(L,R)); outlet_curve=c; outer_curves.append(c)\nx=L\nfor q in outer[::-1]:\n    c,cur=add_line(cur,q[-1]); outer_curves.append(c); c,cur=add_spline(cur,q[-2::-1]); outer_curves.append(c); x=q[0,0]\nc,cur=add_line(cur,(0,R)); outer_curves.append(c); c=geo.addLine(cur,outer_curves and geo.getMaxTag(0)-0 if False else 1)\n# inlet closes to the first point tag, which is 1 in this newly created model\ninlet_curve=c; outer_curves.append(c)\nhole_loops=[]; hole_curves=[]\nfor q in inner:\n    tags=[P(v) for v in q]; c1=geo.addLine(tags[0],tags[-1]); c2=geo.addSpline(tags[::-1]); hole_curves += [c1,c2]; hole_loops.append(geo.addCurveLoop([c1,c2]))\nouter_loop=geo.addCurveLoop(outer_curves); fluid_surface=geo.addPlaneSurface([outer_loop]+hole_loops); geo.synchronize()\ngmsh.model.addPhysicalGroup(1,[inlet_curve],name='inlet2d'); gmsh.model.addPhysicalGroup(1,[outlet_curve],name='outlet2d'); gmsh.model.addPhysicalGroup(1,[c for c in outer_curves+hole_curves if c not in (inlet_curve,outlet_curve)],name='walls2d'); gmsh.model.addPhysicalGroup(2,[fluid_surface],name='fluid2d')\ngmsh.model.mesh.generate(2); gmsh.write('coarse2d.msh')\nnodeTags,xyz,_=gmsh.model.mesh.getNodes(); xy=xyz.reshape(-1,3)[:,:2]; idx={int(t):i for i,t in enumerate(nodeTags)}; tri=[]\ntypes,_,nodeSets=gmsh.model.mesh.getElements(2)\nfor et,en in zip(types,nodeSets):\n    if gmsh.model.mesh.getElementProperties(int(et))[0].startswith('Triangle'):\n        nn=gmsh.model.mesh.getElementProperties(int(et))[3]; tri += [[idx[int(t)] for t in row[:3]] for row in np.array(en).reshape(-1,nn)]\nfig,ax=plt.subplots(figsize=(12,3)); ax.triplot(xy[:,0]*1000,xy[:,1]*1000,np.asarray(tri),lw=.35); ax.set_aspect('equal'); ax.set(xlabel='x [mm]',ylabel='y [mm]',title='Coarse planar Tesla-valve fluid region'); ax.grid(True,alpha=.2); plt.show()\nprint(f'coarse nodes={len(nodeTags)}, triangles={len(tri)}, holes={len(hole_loops)}')",
+      "exit_code": 0,
+      "seconds": 0.20117959601338953,
+      "output": "Info    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Line)\nInfo    : [ 10%] Meshing curve 2 (Line)\nInfo    : [ 20%] Meshing curve 3 (Line)\nInfo    : [ 20%] Meshing curve 4 (Nurb)\nInfo    : [ 30%] Meshing curve 5 (Line)\nInfo    : [ 30%] Meshing curve 6 (Nurb)\nInfo    : [ 40%] Meshing curve 7 (Line)\nInfo    : [ 40%] Meshing curve 8 (Nurb)\nInfo    : [ 50%] Meshing curve 9 (Line)\nInfo    : [ 50%] Meshing curve 10 (Nurb)\nInfo    : [ 60%] Meshing curve 11 (Line)\nInfo    : [ 60%] Meshing curve 12 (Line)\nInfo    : [ 70%] Meshing curve 13 (Line)\nInfo    : [ 70%] Meshing curve 14 (Nurb)\nInfo    : [ 80%] Meshing curve 15 (Line)\nInfo    : [ 80%] Meshing curve 16 (Nurb)\nInfo    : [ 90%] Meshing curve 17 (Line)\nInfo    : [ 90%] Meshing curve 18 (Nurb)\nInfo    : [100%] Meshing curve 19 (Line)\nInfo    : [100%] Meshing curve 20 (Nurb)\nInfo    : Done meshing 1D (Wall 0.020365s, CPU 0.020678s)\nInfo    : Meshing 2D...\nInfo    : Meshing surface 1 (Plane, Frontal-Delaunay)\nInfo    : Done meshing 2D (Wall 0.0107422s, CPU 0.010783s)\nInfo    : 931 nodes 1636 elements\nInfo    : Writing 'coarse2d.msh'...\nInfo    : Done writing 'coarse2d.msh'\ncoarse nodes=931, triangles=1141, holes=4",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "gmsh.model.mesh.clear(); gmsh.model.removePhysicalGroups()\next=geo.extrude([(2,fluid_surface)],0,0,T,numElements=[1],recombine=True); geo.synchronize()\nvolume=[tag for dim,tag in ext if dim==3][0]; top=[tag for dim,tag in ext if dim==2][0]\nlaterals=[tag for dim,tag in ext if dim==2 and tag!=top]\ndef contains_base(surface,curve): return curve in [abs(t) for d,t in gmsh.model.getBoundary([(2,surface)],oriented=False) if d==1]\ninlet_faces=[s for s in laterals if contains_base(s,inlet_curve)]; outlet_faces=[s for s in laterals if contains_base(s,outlet_curve)]; wall_faces=[s for s in laterals if s not in inlet_faces+outlet_faces]\ngmsh.model.addPhysicalGroup(2,inlet_faces,name='inlet'); gmsh.model.addPhysicalGroup(2,outlet_faces,name='outlet'); gmsh.model.addPhysicalGroup(2,wall_faces,name='walls'); gmsh.model.addPhysicalGroup(2,[fluid_surface,top],name='frontAndBack'); gmsh.model.addPhysicalGroup(3,[volume],name='fluid')\ngmsh.option.setNumber('Mesh.MshFileVersion',2.2); gmsh.model.mesh.generate(3); gmsh.write('teslaValve.msh')\nprint('volume',volume,'inlet',inlet_faces,'outlet',outlet_faces,'walls',len(wall_faces),'front/back',[fluid_surface,top]); print('3D elements',sum(len(a) for a in gmsh.model.mesh.getElements(3)[1]))",
+      "exit_code": 0,
+      "seconds": 0.10077058200840838,
+      "output": "Info    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Line)\nInfo    : [ 10%] Meshing curve 2 (Line)\nInfo    : [ 10%] Meshing curve 3 (Line)\nInfo    : [ 10%] Meshing curve 4 (Nurb)\nInfo    : [ 10%] Meshing curve 5 (Line)\nInfo    : [ 10%] Meshing curve 6 (Nurb)\nInfo    : [ 20%] Meshing curve 7 (Line)\nInfo    : [ 20%] Meshing curve 8 (Nurb)\nInfo    : [ 20%] Meshing curve 9 (Line)\nInfo    : [ 20%] Meshing curve 10 (Nurb)\nInfo    : [ 20%] Meshing curve 11 (Line)\nInfo    : [ 20%] Meshing curve 12 (Line)\nInfo    : [ 30%] Meshing curve 13 (Line)\nInfo    : [ 30%] Meshing curve 14 (Nurb)\nInfo    : [ 30%] Meshing curve 15 (Line)\nInfo    : [ 30%] Meshing curve 16 (Nurb)\nInfo    : [ 30%] Meshing curve 17 (Line)\nInfo    : [ 30%] Meshing curve 18 (Nurb)\nInfo    : [ 40%] Meshing curve 19 (Line)\nInfo    : [ 40%] Meshing curve 20 (Nurb)\nInfo    : [ 40%] Meshing curve 22 (Extruded)\nInfo    : [ 40%] Meshing curve 23 (Extruded)\nInfo    : [ 40%] Meshing curve 24 (Extruded)\nInfo    : [ 40%] Meshing curve 25 (Extruded)\nInfo    : [ 50%] Meshing curve 26 (Extruded)\nInfo    : [ 50%] Meshing curve 27 (Extruded)\nInfo    : [ 50%] Meshing curve 28 (Extruded)\nInfo    : [ 50%] Meshing curve 29 (Extruded)\nInfo    : [ 50%] Meshing curve 30 (Extruded)\nInfo    : [ 50%] Meshing curve 31 (Extruded)\nInfo    : [ 60%] Meshing curve 32 (Extruded)\nInfo    : [ 60%] Meshing curve 33 (Extruded)\nInfo    : [ 60%] Meshing curve 34 (Extruded)\nInfo    : [ 60%] Meshing curve 35 (Extruded)\nInfo    : [ 60%] Meshing curve 36 (Extruded)\nInfo    : [ 60%] Meshing curve 37 (Extruded)\nInfo    : [ 70%] Meshing curve 38 (Extruded)\nInfo    : [ 70%] Meshing curve 39 (Extruded)\nInfo    : [ 70%] Meshing curve 40 (Extruded)\nInfo    : [ 70%] Meshing curve 41 (Extruded)\nInfo    : [ 70%] Meshing curve 43 (Extruded)\nInfo    : [ 70%] Meshing curve 44 (Extruded)\nInfo    : [ 80%] Meshing curve 48 (Extruded)\nInfo    : [ 80%] Meshing curve 52 (Extruded)\nInfo    : [ 80%] Meshing curve 56 (Extruded)\nInfo    : [ 80%] Meshing curve 60 (Extruded)\nInfo    : [ 80%] Meshing curve 64 (Extruded)\nInfo    : [ 80%] Meshing curve 68 (Extruded)\nInfo    : [ 90%] Meshing curve 72 (Extruded)\nInfo    : [ 90%] Meshing curve 76 (Extruded)\nInfo    : [ 90%] Meshing curve 80 (Extruded)\nInfo    : [ 90%] Meshing curve 84 (Extruded)\nInfo    : [ 90%] Meshing curve 91 (Extruded)\nInfo    : [ 90%] Meshing curve 92 (Extruded)\nInfo    : [100%] Meshing curve 99 (Extruded)\nInfo    : [100%] Meshing curve 100 (Extruded)\nInfo    : [100%] Meshing curve 107 (Extruded)\nInfo    : [100%] Meshing curve 108 (Extruded)\nInfo    : [100%] Meshing curve 115 (Extruded)\nInfo    : [100%] Meshing curve 116 (Extruded)\nInfo    : Done meshing 1D (Wall 0.0205429s, CPU 0.020884s)\nInfo    : Meshing 2D...\nInfo    : [  0%] Meshing surface 1 (Plane, Frontal-Delaunay)\nInfo    : [ 10%] Meshing surface 45 (Extruded)\nInfo    : [ 10%] Meshing surface 49 (Extruded)\nInfo    : [ 20%] Meshing surface 53 (Extruded)\nInfo    : [ 20%] Meshing surface 57 (Extruded)\nInfo    : [ 30%] Meshing surface 61 (Extruded)\nInfo    : [ 30%] Meshing surface 65 (Extruded)\nInfo    : [ 40%] Meshing surface 69 (Extruded)\nInfo    : [ 40%] Meshing surface 73 (Extruded)\nInfo    : [ 50%] Meshing surface 77 (Extruded)\nInfo    : [ 50%] Meshing surface 81 (Extruded)\nInfo    : [ 60%] Meshing surface 85 (Extruded)\nInfo    : [ 60%] Meshing surface 89 (Extruded)\nInfo    : [ 60%] Meshing surface 93 (Extruded)\nInfo    : [ 70%] Meshing surface 97 (Extruded)\nInfo    : [ 70%] Meshing surface 101 (Extruded)\nInfo    : [ 80%] Meshing surface 105 (Extruded)\nInfo    : [ 80%] Meshing surface 109 (Extruded)\nInfo    : [ 90%] Meshing surface 113 (Extruded)\nInfo    : [ 90%] Meshing surface 117 (Extruded)\nInfo    : [100%] Meshing surface 121 (Extruded)\nInfo    : [100%] Meshing surface 122 (Extruded)\nInfo    : Done meshing 2D (Wall 0.0121095s, CPU 0.012286s)\nInfo    : Meshing 3D...\nInfo    : Meshing volume 1 (Extruded)\nInfo    : Done meshing 3D (Wall 0.00214457s, CPU 0.002173s)\nInfo    : Optimizing mesh...\nInfo    : Done optimizing mesh (Wall 3.075e-05s, CPU 4.1e-05s)\nInfo    : 1862 nodes 4656 elements\nInfo    : Writing 'teslaValve.msh'...\nvolume 1 inlet [89] outlet [49] walls 18 front/back [1, 122]\nInfo    : Done writing 'teslaValve.msh'\n3D elements 1141",
+      "image": ""
+    },
+    {
+      "cmd": "import os, subprocess\nos.makedirs('system',exist_ok=True)\nopen('system/controlDict','w').write(\"FoamFile\\n{ version 2.0; format ascii; class dictionary; object controlDict; }\\napplication checkMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\\n\")\nr=subprocess.run(['gmshToFoam','teslaValve.msh','-case','.'],text=True,capture_output=True); print(r.stdout[-2500:]); print(r.stderr[-1000:]); print('return',r.returncode)\nprint(open('constant/polyMesh/boundary').read())",
+      "exit_code": 0,
+      "seconds": 0.2010422559978906,
+      "output": "---------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : gmshToFoam teslaValve.msh -case .\nDate   : Sep 16 2026\nTime   : 03:30:13\nHost   : yc-demo\nPID    : 848495\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T3-20260916-032827-6533/t3\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nStarting to read mesh format at line 2\nRead format version 2.2  ascii 0\n\nStarting to read physical names at line 5\nPhysical names:9\n    Line 1\tinlet2d\n    Line 2\toutlet2d\n    Line 3\twalls2d\n    Surface 4\tfluid2d\n    Surface 5\tinlet\n    Surface 6\toutlet\n    Surface 7\twalls\n    Surface 8\tfrontAndBack\n    Volume 9\tfluid\n\nStarting to read points at line 17\nVertices to be read: 1358\nVertices read:1358\n\nStarting to read cells at line 1378\nCells to be read: 3646\n\nMapping region 8 to Foam patch 0\nMapping region 7 to Foam patch 1\nMapping region 6 to Foam patch 2\nMapping region 5 to Foam patch 3\nMapping region 9 to Foam cellZone 0\nCells:\n    total:1141\n    hex  :0\n    prism:1141\n    pyr  :0\n    tet  :0\n\nCellZones:\nZone\tSize\n    0\t1141\n\nPatch 0 gets name frontAndBack\nPatch 1 gets name walls\nPatch 2 gets name outlet\nPatch 3 gets name inlet\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 2505 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone fluid and cellSet\nEnd\n\n\n\nreturn 0\n/*--------------------------------*- C++ -*----------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n4\n(\n    frontAndBack\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          2282;\n        startFace       1600;\n    }\n    walls\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          215;\n        startFace       3882;\n    }\n    outlet\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          4;\n        startFace       4097;\n    }\n    inlet\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          4;\n        startFace       4101;\n    }\n)\n\n// ************************************************************************* //",
+      "image": ""
+    },
+    {
+      "cmd": "import re\np='constant/polyMesh/boundary'; txt=open(p).read()\ndef set_patch_type(text,name,newtype):\n    pat=r'(\\n\\s*'+re.escape(name)+r'\\s*\\n\\s*\\{.*?\\n\\s*type\\s+)\\w+(;.*?\\n\\s*physicalType\\s+)\\w+(;)'\n    return re.sub(pat,lambda m:m.group(1)+newtype+m.group(2)+newtype+m.group(3),text,count=1,flags=re.S)\ntxt=set_patch_type(txt,'frontAndBack','empty'); txt=set_patch_type(txt,'walls','wall'); open(p,'w').write(txt)\nr=subprocess.run(['checkMesh','-case','.','-allGeometry','-allTopology'],text=True,capture_output=True); print(r.stdout[-6000:]); print(r.stderr[-1000:]); print('return',r.returncode)",
+      "exit_code": 0,
+      "seconds": 0.2010027749929577,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh -case . -allGeometry -allTopology\nDate   : Sep 16 2026\nTime   : 03:30:24\nHost   : yc-demo\nPID    : 848585\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T3-20260916-032827-6533/t3\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\n\n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T3-20260916-032827-6533/t3/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting\n\n\nreturn 1",
+      "image": ""
+    },
+    {
+      "cmd": "for name in ('fvSchemes','fvSolution'):\n    open('system/'+name,'w').write(f\"FoamFile\\n{{ version 2.0; format ascii; class dictionary; object {name}; }}\\n{{}}\\n\")\nr=subprocess.run(['checkMesh','-case','.','-allGeometry','-allTopology'],text=True,capture_output=True); print(r.stdout[-7000:]); print(r.stderr[-1000:]); print('return',r.returncode)",
+      "exit_code": 0,
+      "seconds": 0.2010031359968707,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh -case . -allGeometry -allTopology\nDate   : Sep 16 2026\nTime   : 03:30:28\nHost   : yc-demo\nPID    : 848590\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T3-20260916-032827-6533/t3\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\n\n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'divSchemes' not found in dictionary \"system/fvSchemes\"\n\n\nfile: system/fvSchemes\n\n    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const\n    in file db/dictionary/dictionary.C at line 457.\n\nFOAM exiting\n\n\nreturn 1",
+      "image": ""
+    },
+    {
+      "cmd": "open('system/fvSchemes','w').write('''FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }\nddtSchemes { default Euler; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\n''')\nopen('system/fvSolution','w').write('FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }\\nsolvers {}\\n')\nr=subprocess.run(['checkMesh','-case','.','-allGeometry','-allTopology'],text=True,capture_output=True); print(r.stdout[-7000:]); print(r.stderr[-1000:]); print('return',r.returncode)",
+      "exit_code": 0,
+      "seconds": 0.20100521598942578,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh -case . -allGeometry -allTopology\nDate   : Sep 16 2026\nTime   : 03:30:34\nHost   : yc-demo\nPID    : 848659\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T3-20260916-032827-6533/t3\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nCheck mesh...\n    Enabling all (cell, face, edge, point) topology checks.\n    Enabling all geometry checks.\n\nTime = constant\n\nMesh stats \n    points:           1358\n    internal points:  0\n    edges:            4325\n    internal edges:   456\n    internal edges using one boundary point:   0\n    internal edges using two boundary points:  456\n    faces:            4105\n    internal faces:   1600\n    cells:            1141\n    faces per cell:   5\n    boundary patches: 4\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     0\n    prisms:        1141\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Topological cell zip-up check OK.\n    Face-face connectivity OK.\n  <<Writing 223 cells with two non-boundary faces to set twoInternalFacesCells\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology  Bounding box\n    frontAndBack        2282     1358     ok (non-closed singly connected)   (0 -0.003 0) (0.12 0.0119989 0.001)\n    walls               215      434      ok (non-closed singly connected)   (0 -0.003 0) (0.12 0.0119989 0.001)\n    outlet              4        10       ok (non-closed singly connected)   (0.12 -0.003 0) (0.12 0.003 0.001)\n    inlet               4        10       ok (non-closed singly connected)   (0 -0.003 0) (0 0.003 0.001)\n    \".*\"                2505     1358     ok (closed singly connected)       (0 -0.003 0) (0.12 0.0119989 0.001)\n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    fluid               1141         1358         1.28712e-06  (0 -0.003 0) (0.12 0.0119989 0.001)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (0 -0.003 0) (0.12 0.0119989 0.001)\n    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)\n    Mesh has 2 solution (non-empty) directions (1 1 0)\n    All edges aligned with or perpendicular to non-empty directions.\n    Boundary openness (-1.14575e-18 -2.75697e-17 -1.421e-19) OK.\n    Max cell openness = 1.49495e-16 OK.\n    Max aspect ratio = 1.90453 OK.\n    Minimum face area = 3.66429e-07. Maximum face area = 2.26181e-06.  Face area magnitudes OK.\n    Min volume = 3.66429e-10. Max volume = 1.67106e-09.  Total volume = 1.28712e-06.  Cell volumes OK.\n    Mesh non-orthogonality Max: 20.0302 average: 4.78806\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.299712 OK.\n    Coupled point location match (average 0) OK.\n    Face tets OK.\n    Min/max edge length = 0.000784131 0.00226181 OK.\n    All angles in faces OK.\n    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1\n    All face flatness OK.\n    Cell determinant (wellposedness) : minimum: 0.0732179 average: 0.23715\n    Cell determinant check OK.\n    Concave cell check OK.\n    Face interpolation weight : minimum: 0.336816 average: 0.473472\n    Face interpolation weight check OK.\n    Face volume ratio : minimum: 0.507877 average: 0.90315\n    Face volume ratio check OK.\n\nMesh OK.\n\nEnd\n\n\n\nreturn 0",
+      "image": ""
+    },
+    {
+      "cmd": "r=subprocess.run(['surfaceMeshExtract','-help'],text=True,capture_output=True); print((r.stdout+r.stderr)[:5000])",
+      "exit_code": 0,
+      "seconds": 0.20098140600020997,
+      "output": "Usage: surfaceMeshExtract [OPTIONS] <output>\nArguments:\n  <output>          The output surface file\nOptions:\n  -case <dir>       Case directory (instead of current directory)\n  -constant         Include 'constant/' dir in the times list\n  -excludeProcPatches\n                    Exclude processor patches\n  -extractZonePoints\n                    Extract point-patches for selected faceZones\n  -faceZones <wordRes>\n                    Specify single or multiple faceZones to extract\n                    Eg, 'cells' or '( slice \"mfp-.*\" )'\n  -featureAngle <angle>\n                    Auto-extract feature edges/points and put into separate\n                    point-patches\n  -latestTime       Select the latest time\n  -noZero           Exclude '0/' dir from the times list\n  -parallel         Run in parallel\n  -patches <wordRes>\n                    Specify single patch or multiple patches to extract.\n                    Eg, 'top' or '( front \".*back\" )'\n  -region <name>    Specify mesh region (default: region0)\n  -time <ranges>    List of ranges. Eg, ':10,20 40:70 1000:', 'none', etc\n  -writeOBJ         Write added pointPatch points to .obj files\n  -doc              Display documentation in browser\n  -help             Display short help and exit\n  -help-compat      Display compatibility options and exit\n  -help-full        Display full help and exit\n\nExtract patch or faceZone surfaces from a polyMesh.\n\nUsing: OpenFOAM-2512 (2512) - visit www.openfoam.com\nBuild: _87ed40d2-20251219\nArch:  LSB;label=32;scalar=64",
+      "image": ""
+    },
+    {
+      "cmd": "for patch in ('inlet','outlet','walls','frontAndBack'):\n    r=subprocess.run(['surfaceMeshExtract','-case','.','-constant','-patches',patch,patch+'.stl'],text=True,capture_output=True)\n    print(patch,'return',r.returncode, next((s for s in r.stdout.splitlines() if 'faces' in s.lower()),''))\nprint([(f,os.path.getsize(f)) for f in ('inlet.stl','outlet.stl','walls.stl','frontAndBack.stl')])",
+      "exit_code": 0,
+      "seconds": 0.7022656089975499,
+      "output": "inlet return 0 \noutlet return 0 \nwalls return 0 \nfrontAndBack return 0 \n[('inlet.stl', 1044), ('outlet.stl', 1116), ('walls.stl', 67693), ('frontAndBack.stl', 27)]",
+      "image": ""
+    },
+    {
+      "cmd": "p='constant/polyMesh/boundary'; original=open(p).read(); temporary=set_patch_type(original,'frontAndBack','patch'); open(p,'w').write(temporary)\nr=subprocess.run(['surfaceMeshExtract','-case','.','-constant','-patches','frontAndBack','frontAndBack.stl'],text=True,capture_output=True)\nopen(p,'w').write(original)\nprint('return',r.returncode,'frontAndBack.stl bytes',os.path.getsize('frontAndBack.stl'),'restored empty=',bool(re.search(r'frontAndBack\\s*\\{\\s*type\\s+empty;',open(p).read(),re.S)))",
+      "exit_code": 0,
+      "seconds": 0.20100934599759057,
+      "output": "return 0 frontAndBack.stl bytes 358996 restored empty= True",
+      "image": ""
+    },
+    {
+      "cmd": "# Numerical construction audit\nsamples=[]\nfor x0 in starts:\n    t=np.linspace(0,1,401); p0=np.array([x0,0.]); p3=np.array([x0+SPAN,0.]); p1=np.array([x0+.002,HLOOP]); p2=np.array([x0+SPAN-.007,HLOOP])\n    p=((1-t)**3)[:,None]*p0+(3*(1-t)**2*t)[:,None]*p1+(3*(1-t)*t**2)[:,None]*p2+(t**3)[:,None]*p3\n    d=(3*(1-t)**2)[:,None]*(p1-p0)+(6*(1-t)*t)[:,None]*(p2-p1)+(3*t**2)[:,None]*(p3-p2); n=np.column_stack((-d[:,1],d[:,0])); n/=np.linalg.norm(n,axis=1)[:,None]\n    samples.append((p+R*n,p-R*n,p))\nmeasured_widths=np.concatenate([np.linalg.norm(a-b,axis=1) for a,b,_ in samples]); bb=gmsh.model.getBoundingBox(3,volume)\nprint(f'channel width requested 6.000 mm; measured offset width {measured_widths.min()*1000:.6f}..{measured_widths.max()*1000:.6f} mm')\nprint(f'overall length requested about 120 mm; measured {(bb[3]-bb[0])*1000:.6f} mm')\nprint(f'bypass loops requested 4; constructed/measured topology holes {len(hole_loops)}')\nprint(f'assumed branch-to-rejoin span {SPAN*1000:.3f} mm; centerline peak rise {max(p[:,1].max() for _,_,p in samples)*1000:.3f} mm; planar extrusion {(bb[5]-bb[2])*1000:.6f} mm')\n# Closed-surface extraction check without leaving a duplicate STL\nbtxt=open('constant/polyMesh/boundary').read(); open('constant/polyMesh/boundary','w').write(set_patch_type(btxt,'frontAndBack','patch'))\nr1=subprocess.run(['surfaceMeshExtract','-case','.','-constant','-patches','(inlet outlet walls frontAndBack)','closedAudit.stl'],text=True,capture_output=True)\nopen('constant/polyMesh/boundary','w').write(btxt); r2=subprocess.run(['surfaceCheck','closedAudit.stl'],text=True,capture_output=True); print('\\n'.join(r2.stdout.splitlines()[-25:])); os.remove('closedAudit.stl')",
+      "exit_code": 0,
+      "seconds": 0.40155804200912826,
+      "output": "channel width requested 6.000 mm; measured offset width 6.000000..6.000000 mm\noverall length requested about 120 mm; measured 120.000000 mm\nbypass loops requested 4; constructed/measured topology holes 4\nassumed branch-to-rejoin span 22.000 mm; centerline peak rise 9.000 mm; planar extrusion 1.000000 mm\n    0.75 .. 0.8  : 0.00439883\n    0.8 .. 0.85  : 0.0131965\n    0.85 .. 0.9  : 0.058651\n    0.9 .. 0.95  : 0.107038\n    0.95 .. 1  : 0.655425\n\n    min 0.655235 for triangle 2424\n    max 1 for triangle 742\n\nEdges:\n    min 0.000784121 for edge 1412 points (0.0582017 0.00220515 0)(0.0575469 0.00177378 0)\n    max 0.0022618 for edge 62 points (0.0785683 -0.00135602 0)(0.0770149 -0.003 0)\n\nChecking for points less than 1e-6 of bounding box ((0.12 0.0149989 0.001) metre) apart.\nFound 0 nearby points.\n\nSurface is closed. All edges connected to two faces.\n\nNumber of unconnected parts : 1\n\nNumber of zones (connected area with consistent normal) : 1\n\n\nEnd",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 2533,
+      "fenced": true,
+      "text_chars": 557,
+      "thinking_chars": 3309,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529342.13164
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 425,
+      "fenced": true,
+      "text_chars": 326,
+      "thinking_chars": 1180,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529350.0219712
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 157,
+      "fenced": true,
+      "text_chars": 104,
+      "thinking_chars": 392,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529353.2544622
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 2386,
+      "fenced": true,
+      "text_chars": 349,
+      "thinking_chars": 1037,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529381.6647651
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 1510,
+      "fenced": true,
+      "text_chars": 234,
+      "thinking_chars": 606,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529395.578731
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 977,
+      "fenced": true,
+      "text_chars": 421,
+      "thinking_chars": 1715,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529408.3223772
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 325,
+      "fenced": true,
+      "text_chars": 266,
+      "thinking_chars": 501,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529413.603401
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 492,
+      "fenced": true,
+      "text_chars": 363,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529424.753418
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 225,
+      "fenced": true,
+      "text_chars": 209,
+      "thinking_chars": 416,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529428.3149714
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 304,
+      "fenced": true,
+      "text_chars": 167,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529434.0832806
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 446,
+      "fenced": true,
+      "text_chars": 215,
+      "thinking_chars": 1026,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529442.6009264
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 337,
+      "fenced": true,
+      "text_chars": 189,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529448.2745204
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 391,
+      "fenced": true,
+      "text_chars": 311,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529454.0716977
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 1155,
+      "fenced": true,
+      "text_chars": 313,
+      "thinking_chars": 483,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529468.007239
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 340,
+      "fenced": false,
+      "text_chars": 698,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529473.741997
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 2,728 triangles across 4 file(s) (patch set read from .)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "frontAndBack.stl",
+          "inlet.stl",
+          "outlet.stl",
+          "walls.stl"
+        ],
+        "triangles": 2728
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the patch set (patch set read from .)",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 2728
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 12 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 12
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "number of bypass loops, 4",
+      "measured": null
+    },
+    {
+      "property": "channel width, 6 mm, in the main channel and in a loop",
+      "measured": null
+    },
+    {
+      "property": "overall length, ~120 mm",
+      "measured": null
+    },
+    {
+      "property": "**every loop both branches from and rejoins the main channel** \u2014 the fluid domain is one connected region with no isolated pocket and no loop that dead-ends",
+      "measured": null
+    },
+    {
+      "property": "the mesh is one cell thick with both side patches `empty`",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "n/a",
+          "concern": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 15,
+    "steps": 14,
+    "seconds": 170.0,
+    "killed": false,
+    "first_mesh_step": 6,
+    "first_mesh_turn": 7
+  }
+}

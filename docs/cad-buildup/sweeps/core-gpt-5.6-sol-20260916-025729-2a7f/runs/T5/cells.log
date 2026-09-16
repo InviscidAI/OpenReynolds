@@ -1,0 +1,262 @@
+# -- cell 1 (2.6s, exit 0)
+from pathlib import Path
+import re, build123d as bd
+step_path = Path('/home/qiuzi/.openreynolds-buildup/work/T5-20260916-033119-95c3/geometry/assembly.step')
+header = step_path.read_text(errors='ignore')[:20000]
+unit_lines = [ln.strip() for ln in header.splitlines() if 'SI_UNIT' in ln or 'CONVERSION_BASED_UNIT' in ln]
+print('STEP bytes:', step_path.stat().st_size)
+print('Unit declarations:', unit_lines[:20])
+shape = bd.import_step(step_path)
+print('Imported type:', type(shape).__name__)
+print('solids:', len(shape.solids()), 'shells:', len(shape.shells()), 'faces:', len(shape.faces()))
+print('valid:', shape.is_valid)
+print('bbox:', shape.bounding_box().min, shape.bounding_box().max, 'size:', shape.bounding_box().size)
+print('volume:', shape.volume)
+# -- output
+STEP bytes: 110029
+Unit declarations: []
+Imported type: Compound
+solids: 3 shells: 3 faces: 78
+valid: True
+bbox: Vector: (X=-26.975, Y=-19.419, Z=0) Vector: (X=26.975, Y=26.871, Z=31.3) size: Vector: (X=53.95, Y=46.29, Z=31.3)
+volume: 41194.13918234188
+
+# -- cell 2 (1.1s, exit 0)
+import subprocess, inspect
+print(subprocess.run(['grep','-inE','SI_UNIT|CONVERSION_BASED_UNIT|LENGTH_UNIT',str(step_path)],capture_output=True,text=True).stdout[-4000:])
+for i,s in enumerate(shape.solids()):
+    bb=s.bounding_box()
+    print(f'solid {i}: valid={s.is_valid}, volume={s.volume:.6g}, bbox=({bb.min.X:.3f},{bb.min.Y:.3f},{bb.min.Z:.3f})..({bb.max.X:.3f},{bb.max.Y:.3f},{bb.max.Z:.3f}), faces={len(s.faces())}')
+print('tessellate signature:', inspect.signature(shape.tessellate))
+verts, tris = shape.tessellate(0.15)
+import numpy as np, pyvista as pv
+V=np.array([[v.X,v.Y,v.Z] for v in verts]); T=np.array(tris,dtype=int)
+mesh=pv.PolyData(V,np.c_[np.full(len(T),3),T])
+pl=pv.Plotter(off_screen=True,window_size=(900,700)); pl.add_mesh(mesh,color='lightgray',show_edges=True,edge_color='dimgray'); pl.view_isometric(); pl.add_axes(); pl.show(screenshot='assembly.png')
+print('rendered triangles:',len(T))
+# -- output
+2412:SI_UNIT($,.STERADIAN.)
+2418:SI_UNIT($,.RADIAN.)
+2421:LENGTH_UNIT()
+2423:SI_UNIT($,.METRE.)
+
+solid 0: valid=True, volume=2552.27, bbox=(-26.975,-19.419,-0.000)..(26.975,26.871,3.500), faces=34
+solid 1: valid=True, volume=12186.1, bbox=(-18.804,-18.901,20.100)..(18.804,18.707,31.300), faces=29
+solid 2: valid=True, volume=26455.7, bbox=(-19.258,-19.355,1.500)..(19.258,19.161,20.100), faces=15
+tessellate signature: (tolerance: 'float', angular_tolerance: 'float' = 0.1) -> 'tuple[list[Vector], list[tuple[int, int, int]]]'
+rendered triangles: 33008
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-16 03:31:34.802 (   0.419s) [    7EC3329C5780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-16 03:31:34.802 (   0.420s) [    7EC3329C5780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:31:34.816 (   0.434s) [    7EC3329C5780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_850902/3324207451.py:11: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl=pv.Plotter(off_screen=True,window_size=(900,700)); pl.add_mesh(mesh,color='lightgray',show_edges=True,edge_color='dimgray'); pl.view_isometric(); pl.add_axes(); pl.show(screenshot='assembly.png')
+
+# -- cell 3 (0.7s, exit 0)
+lines=step_path.read_text(errors='ignore').splitlines()
+for n in range(2395,2435): print(f'{n+1}: {lines[n]}')
+colors=['#d9a441','#5aa0d6','#75b36a']
+pl=pv.Plotter(off_screen=True,shape=(1,2),window_size=(1200,600))
+for j in range(2):
+    pl.subplot(0,j)
+    for i,s in enumerate(shape.solids()):
+        vv,tt=s.tessellate(0.12); v=np.array([[p.X,p.Y,p.Z] for p in vv]); t=np.array(tt,int)
+        pd=pv.PolyData(v,np.c_[np.full(len(t),3),t])
+        if j==1: pd=pd.clip(normal=(1,0,0),origin=(0,0,0),invert=False)
+        pl.add_mesh(pd,color=colors[i],show_edges=(j==1),opacity=0.9)
+    pl.add_axes(); pl.view_isometric()
+pl.show(screenshot='solids_cutaway.png')
+# -- output
+2396: #2294=(
+2397: GEOMETRIC_REPRESENTATION_CONTEXT(3)
+2398: GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#2298))
+2399: GLOBAL_UNIT_ASSIGNED_CONTEXT((#2301,#2300,#2299))
+2400: REPRESENTATION_CONTEXT('LD19_BODY','COMPONENT_PART')
+2401: );
+2402: #2295=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(5.E-6),#2301,
+2403: 'DISTANCE_ACCURACY_VALUE','Maximum Tolerance applied to model');
+2404: #2296=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(5.E-6),#2301,
+2405: 'DISTANCE_ACCURACY_VALUE','Maximum Tolerance applied to model');
+2406: #2297=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(5.E-6),#2301,
+2407: 'DISTANCE_ACCURACY_VALUE','Maximum Tolerance applied to model');
+2408: #2298=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(5.E-6),#2301,
+2409: 'DISTANCE_ACCURACY_VALUE','Maximum Tolerance applied to model');
+2410: #2299=(
+2411: NAMED_UNIT(*)
+2412: SI_UNIT($,.STERADIAN.)
+2413: SOLID_ANGLE_UNIT()
+2414: );
+2415: #2300=(
+2416: NAMED_UNIT(*)
+2417: PLANE_ANGLE_UNIT()
+2418: SI_UNIT($,.RADIAN.)
+2419: );
+2420: #2301=(
+2421: LENGTH_UNIT()
+2422: NAMED_UNIT(*)
+2423: SI_UNIT($,.METRE.)
+2424: );
+2425: #2302=PRODUCT_DEFINITION_SHAPE('','',#2309);
+2426: #2303=PRODUCT_DEFINITION_SHAPE('','',#2310);
+2427: #2304=PRODUCT_DEFINITION_SHAPE(' ','NAUO PRDDFN',#28);
+2428: #2305=PRODUCT_DEFINITION_SHAPE('','',#2311);
+2429: #2306=PRODUCT_DEFINITION_SHAPE(' ','NAUO PRDDFN',#29);
+2430: #2307=PRODUCT_DEFINITION_SHAPE('','',#2312);
+2431: #2308=PRODUCT_DEFINITION_SHAPE(' ','NAUO PRDDFN',#30);
+2432: #2309=PRODUCT_DEFINITION('','',#2317,#2313);
+2433: #2310=PRODUCT_DEFINITION('','',#2318,#2314);
+2434: #2311=PRODUCT_DEFINITION('','',#2319,#2315);
+2435: #2312=PRODUCT_DEFINITION('','',#2320,#2316);
+
+[0m[33m2026-09-16 03:31:42.224 (   7.841s) [    7EC3329C5780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:31:42.225 (   7.842s) [    7EC3329C5780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_850902/1035618585.py:13: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot='solids_cutaway.png')
+
+# -- cell 4 (0.2s, exit 1)
+from collections import Counter
+solids=list(shape.solids())
+for i in range(3):
+ for j in range(i+1,3):
+  common=solids[i] & solids[j]
+  print(f'common {i}-{j}: volume={common.volume:.9g}, solids={len(common.solids())}, valid={common.is_valid}')
+for i,s in enumerate(solids):
+ print('\nSOLID',i,'surface types',Counter(str(f.geom_type) for f in s.faces()))
+ rows=[]
+ for k,f in enumerate(s.faces()):
+  c=f.center(); rows.append((f.area,k,str(f.geom_type),c.X,c.Y,c.Z))
+ for r in sorted(rows,reverse=True)[:20]: print(' area=%9.3f face=%2d %-15s center=(%7.2f,%7.2f,%6.2f)'%r)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 6[39m
+[32m      2[39m solids=list(shape.solids())
+[32m      3[39m [38;5;28;01mfor[39;00m i [38;5;28;01min[39;00m range([32m3[39m):
+[32m      4[39m  [38;5;28;01mfor[39;00m j [38;5;28;01min[39;00m range(i+[32m1[39m,[32m3[39m):
+[32m      5[39m   common=solids[i] & solids[j]
+[32m----> [39m[32m6[39m   print(f'common {i}-{j}: volume={common.volume:.9g}, solids={len(common.solids())}, valid={common.is_valid}')
+[32m      7[39m [38;5;28;01mfor[39;00m i,s [38;5;28;01min[39;00m enumerate(solids):
+[32m      8[39m  print([33m'\nSOLID'[39m,i,[33m'surface types'[39m,Counter(str(f.geom_type) [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m s.faces()))
+[32m      9[39m  rows=[]
+
+[31mAttributeError[39m: 'NoneType' object has no attribute 'volume'
+
+# -- cell 5 (0.2s, exit 0)
+from collections import Counter
+solids=list(shape.solids())
+for i in range(3):
+ for j in range(i+1,3):
+  common=solids[i] & solids[j]
+  print(f'common {i}-{j}:', 'null/touching only' if common is None else f'volume={common.volume:.9g}, solids={len(common.solids())}, valid={common.is_valid}')
+for i,s in enumerate(solids):
+ print('\nSOLID',i,'surface types',Counter(str(f.geom_type) for f in s.faces()))
+ rows=[]
+ for k,f in enumerate(s.faces()):
+  c=f.center(); rows.append((f.area,k,str(f.geom_type),c.X,c.Y,c.Z))
+ for r in sorted(rows,reverse=True)[:20]: print(' area=%9.3f face=%2d %-15s center=(%7.2f,%7.2f,%6.2f)'%r)
+# -- output
+common 0-1: null/touching only
+common 0-2: null/touching only
+common 1-2: null/touching only
+
+SOLID 0 surface types Counter({'GeomType.PLANE': 21, 'GeomType.CYLINDER': 13})
+ area= 1573.925 face=17 GeomType.PLANE  center=(  -0.00,  -0.00,  0.00)
+ area= 1496.411 face=16 GeomType.PLANE  center=(  -0.00,  -0.10,  1.50)
+ area=   60.715 face=15 GeomType.CYLINDER center=(   3.56,  22.94,  1.75)
+ area=   60.711 face= 4 GeomType.CYLINDER center=( -23.05,  -5.07,  1.75)
+ area=   60.711 face=10 GeomType.CYLINDER center=(  23.05,  -5.07,  1.75)
+ area=   42.847 face= 7 GeomType.PLANE  center=(  -0.00, -19.40,  0.75)
+ area=   35.243 face=18 GeomType.PLANE  center=(   0.00,  23.30,  3.50)
+ area=   35.243 face=20 GeomType.PLANE  center=( -23.40,  -8.62,  3.50)
+ area=   35.243 face=19 GeomType.PLANE  center=(  23.40,  -8.62,  3.50)
+ area=   28.274 face=29 GeomType.CYLINDER center=(   2.25,  23.30,  1.00)
+ area=   28.274 face=26 GeomType.CYLINDER center=(  25.65,  -8.62,  1.00)
+ area=   28.274 face=23 GeomType.CYLINDER center=( -21.15,  -8.62,  1.00)
+ area=   28.173 face=12 GeomType.PLANE  center=(  19.28,   4.77,  0.75)
+ area=   28.173 face= 2 GeomType.PLANE  center=( -19.28,   4.77,  0.75)
+ area=   15.419 face= 1 GeomType.PLANE  center=(  -9.14,  19.15,  0.75)
+ area=   15.419 face=13 GeomType.PLANE  center=(   9.14,  19.15,  0.75)
+ area=   11.784 face=33 GeomType.CYLINDER center=(  17.81, -17.94,  0.78)
+ area=   11.784 face=31 GeomType.CYLINDER center=( -17.81,  17.69,  0.78)
+ area=   11.784 face=30 GeomType.CYLINDER center=( -17.81, -17.94,  0.78)
+ area=   11.784 face=32 GeomType.CYLINDER center=(  17.81,  17.69,  0.78)
+
+SOLID 1 surface types Counter({'GeomType.PLANE': 11, 'GeomType.CYLINDER': 11, 'GeomType.BSPLINE': 4, 'GeomType.TORUS': 2, 'GeomType.CONE': 1})
+ area= 1392.883 face= 5 GeomType.PLANE  center=(   0.00,  -0.10, 20.10)
+ area=  886.977 face= 7 GeomType.PLANE  center=(  -0.06,  -0.10, 31.30)
+ area=  736.245 face= 6 GeomType.CONE   center=( -17.42,  -0.10, 27.45)
+ area=  293.860 face= 0 GeomType.PLANE  center=(   0.00,  -0.10, 23.60)
+ area=   85.924 face=12 GeomType.TORUS  center=( -17.65,  -0.10, 23.74)
+ area=   83.334 face=17 GeomType.TORUS  center=( -17.19,  -0.10, 31.16)
+ area=   82.972 face= 1 GeomType.PLANE  center=(   0.00,  18.67, 21.60)
+ area=   82.972 face= 2 GeomType.PLANE  center=( -18.77,  -0.10, 21.60)
+ area=   82.972 face= 4 GeomType.PLANE  center=(  18.77,  -0.10, 21.60)
+ area=   82.972 face= 3 GeomType.PLANE  center=(   0.00, -18.86, 21.60)
+ area=   23.689 face=22 GeomType.CYLINDER center=(  17.30,  17.21, 21.63)
+ area=   23.689 face=20 GeomType.CYLINDER center=( -17.30, -17.40, 21.63)
+ area=   23.689 face=24 GeomType.CYLINDER center=( -17.30,  17.21, 21.63)
+ area=   23.689 face=18 GeomType.CYLINDER center=(  17.30, -17.40, 21.63)
+ area=   21.234 face=15 GeomType.CYLINDER center=(   0.00, -18.68, 23.46)
+ area=   21.234 face=14 GeomType.CYLINDER center=(   0.00,  18.48, 23.46)
+ area=   21.234 face=16 GeomType.CYLINDER center=(  18.58,  -0.10, 23.46)
+ area=   21.234 face=13 GeomType.CYLINDER center=( -18.58,  -0.10, 23.46)
+ area=    5.797 face=23 GeomType.BSPLINE center=(  17.16,  17.06, 23.46)
+ area=    5.797 face=25 GeomType.BSPLINE center=( -17.16,  17.06, 23.46)
+
+SOLID 2 surface types Counter({'GeomType.PLANE': 11, 'GeomType.CYLINDER': 4})
+ area= 1462.092 face= 5 GeomType.PLANE  center=(   0.00,  -0.10,  1.50)
+ area= 1392.883 face= 4 GeomType.PLANE  center=(   0.00,  -0.10, 20.10)
+ area=  522.167 face= 3 GeomType.PLANE  center=(  19.03,  -0.10, 10.75)
+ area=  522.167 face= 2 GeomType.PLANE  center=( -19.03,  -0.10, 10.75)
+ area=  522.167 face= 1 GeomType.PLANE  center=(   0.00,  18.94, 10.75)
+ area=  481.747 face= 0 GeomType.PLANE  center=(   0.00, -19.12, 11.19)
+ area=  146.116 face= 6 GeomType.CYLINDER center=( -17.57, -17.66, 10.83)
+ area=  146.116 face= 9 GeomType.CYLINDER center=(  17.57, -17.66, 10.83)
+ area=  146.116 face= 7 GeomType.CYLINDER center=( -17.57,  17.47, 10.83)
+ area=  146.116 face= 8 GeomType.CYLINDER center=(  17.57,  17.47, 10.83)
+ area=   40.420 face=14 GeomType.PLANE  center=(   0.00, -16.96,  5.39)
+ area=   21.620 face=10 GeomType.PLANE  center=(   0.00, -18.06,  7.57)
+ area=   21.620 face=12 GeomType.PLANE  center=(   0.00, -18.16,  3.27)
+ area=    9.890 face=11 GeomType.PLANE  center=(  -4.70, -18.11,  5.42)
+ area=    9.890 face=13 GeomType.PLANE  center=(   4.70, -18.11,  5.42)
+
+# -- cell 6 (21.2s, exit 0)
+print(subprocess.run(['grep','-inE','PRODUCT\(|PRODUCT_DEFINITION_FORMATION|MANIFOLD_SOLID_BREP',str(step_path)],capture_output=True,text=True).stdout[:5000])
+# Sample inside/outside occupancy of each solid on x=0 cross-section using OCCT point classification
+from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+from OCP.gp import gp_Pnt
+from OCP.TopAbs import TopAbs_IN, TopAbs_ON
+ys=np.linspace(-25,25,101); zs=np.linspace(0,32,65)
+occ=np.zeros((len(zs),len(ys)),int)
+for iz,z in enumerate(zs):
+ for iy,y in enumerate(ys):
+  for i,s in enumerate(solids):
+   cl=BRepClass3d_SolidClassifier(s.wrapped,gp_Pnt(0,float(y),float(z)),1e-6)
+   if cl.State() in (TopAbs_IN,TopAbs_ON): occ[iz,iy]|=(1<<i)
+import matplotlib.pyplot as plt
+plt.figure(figsize=(10,5)); plt.imshow(occ,origin='lower',extent=[ys[0],ys[-1],zs[0],zs[-1]],aspect='equal',interpolation='nearest',cmap='tab10'); plt.colorbar(label='solid occupancy bitmask'); plt.xlabel('y'); plt.ylabel('z'); plt.title('x=0 section occupancy'); plt.tight_layout(); plt.savefig('section_x0.png',dpi=160); plt.show()
+print('occupied fractions by bitmask:',dict(zip(*np.unique(occ,return_counts=True))))
+# -- output
+1409:#1323=MANIFOLD_SOLID_BREP('LD19_BASE',#1298);
+1410:#1324=MANIFOLD_SOLID_BREP('LD19_EMITTER',#1299);
+1411:#1325=MANIFOLD_SOLID_BREP('LD19_BODY',#1300);
+2440:#2317=PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE('','',#2325,
+2442:#2318=PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE('','',#2326,
+2444:#2319=PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE('','',#2327,
+2446:#2320=PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE('','',#2328,
+2452:#2325=PRODUCT('LD19','LD19','LD19',(#2333));
+2453:#2326=PRODUCT('LD19_BASE','LD19_BASE','LD19_BASE',(#2334));
+2454:#2327=PRODUCT('LD19_EMITTER','LD19_EMITTER','LD19_EMITTER',(#2335));
+2455:#2328=PRODUCT('LD19_BODY','LD19_BODY','LD19_BODY',(#2336));
+
+occupied fractions by bitmask: {np.int64(0): np.int64(1876), np.int64(1): np.int64(271), np.int64(2): np.int64(1568), np.int64(4): np.int64(2773), np.int64(5): np.int64(77)}
+
+<>:1: SyntaxWarning: invalid escape sequence '\('
+<>:1: SyntaxWarning: invalid escape sequence '\('
+/tmp/ipykernel_850902/1600597965.py:1: SyntaxWarning: invalid escape sequence '\('
+  print(subprocess.run(['grep','-inE','PRODUCT\(|PRODUCT_DEFINITION_FORMATION|MANIFOLD_SOLID_BREP',str(step_path)],capture_output=True,text=True).stdout[:5000])
+

@@ -1,0 +1,1108 @@
+# -- cell 1 (2.2s, exit 0)
+import build123d as bd, inspect, math, numpy as np
+print('build123d', bd.__version__ if hasattr(bd,'__version__') else 'installed')
+print('loft:', inspect.signature(bd.loft))
+print('Polygon:', inspect.signature(bd.Polygon))
+print('Plane:', inspect.signature(bd.Plane))
+print('export_stl:', inspect.signature(bd.export_stl))
+# -- output
+build123d 0.11.1
+loft: (sections: 'Face | Sketch | Iterable[Vertex | Face | Sketch] | None' = None, ruled: 'bool' = False, clean: 'bool' = True, mode: 'Mode' = <Mode.ADD>) -> 'Part'
+Polygon: (*pts: 'VectorLike | Iterable[VectorLike]', rotation: 'float' = 0, align: 'Align | tuple[Align, Align] | None' = (<Align.NONE>, <Align.NONE>), mode: 'Mode' = <Mode.ADD>)
+Plane: (*args: 'Any', **kwargs: 'Any') -> 'None'
+export_stl: (to_export: build123d.topology.shape_core.Shape, file_path: os.PathLike | str | bytes, tolerance: float = 0.001, angular_tolerance: float = 0.1, ascii_format: bool = False) -> bool
+
+# -- cell 2 (1.4s, exit 0)
+from build123d import *
+# Requested dimensions, metres
+m=0.003; z_p=20; z_w=30; alpha=math.radians(20); backlash=0.0003
+Lx,Ly,Lz=0.160,0.140,0.120
+# Assumptions required by the underspecified enclosure/gear blank
+face_width=0.015; shaft_d=0.018
+R=0.5*m*math.sqrt(z_p**2+z_w**2)
+delta_p=math.atan(z_p/z_w); delta_w=math.atan(z_w/z_p)
+
+def involute_outline(z, phase=0.0, flank_n=5, arc_n=3):
+    rp=0.5*m*z; rb=rp*math.cos(alpha); ra=rp+m; rr=rp-1.25*m
+    inv=lambda r: math.sqrt((r/rb)**2-1)-math.acos(rb/r)
+    invp=inv(rp)
+    # split total backlash equally between the two gears
+    tooth_thickness=math.pi*m/2-backlash/2
+    half=tooth_thickness/(2*rp)
+    rs=np.linspace(max(rr,rb),ra,flank_n)
+    flank=[half+invp-inv(r) for r in rs]
+    pts=[]
+    for j in range(z):
+        c=phase+2*math.pi*j/z
+        # root arc preceding left flank
+        aL=flank[0]
+        for a in np.linspace(c-math.pi/z+aL,c-aL,arc_n,endpoint=False): pts.append((rr*math.cos(a),rr*math.sin(a)))
+        if rr < rb: pts.append((rr*math.cos(c-aL),rr*math.sin(c-aL)))
+        for r,aoff in zip(rs,flank): pts.append((r*math.cos(c-aoff),r*math.sin(c-aoff)))
+        at=flank[-1]
+        for a in np.linspace(c-at,c+at,arc_n,endpoint=False): pts.append((ra*math.cos(a),ra*math.sin(a)))
+        for r,aoff in zip(rs[::-1],flank[::-1]): pts.append((r*math.cos(c+aoff),r*math.sin(c+aoff)))
+        if rr < rb: pts.append((rr*math.cos(c+aL),rr*math.sin(c+aL)))
+    return pts
+
+def bevel_local(z, phase=0):
+    d=math.atan(z/(z_w if z==z_p else z_p))
+    outer_z=R*math.cos(d); inner_R=R-face_width; inner_z=inner_R*math.cos(d)
+    po=involute_outline(z,phase)
+    pi=[(x*inner_R/R,y*inner_R/R) for x,y in po]
+    wo=Wire.make_polygon([Vector(x,y,outer_z) for x,y in po],close=True)
+    wi=Wire.make_polygon([Vector(x,y,inner_z) for x,y in pi],close=True)
+    return loft([Face(wi),Face(wo)],ruled=True), inner_z, outer_z
+pin_local,pin_zi,pin_zo=bevel_local(z_p,0)
+pinion=Rot(0,90,0)*pin_local
+wheel0,w_zi,w_zo=bevel_local(z_w,0)
+print('R, cone angles, face width:',R,math.degrees(delta_p),math.degrees(delta_w),face_width)
+print('volumes:',pinion.volume,wheel0.volume,'valid',pinion.is_valid,wheel0.is_valid)
+# -- output
+R, cone angles, face width: 0.05408326913195984 33.690067525979785 56.309932474020215 0.015
+volumes: 2.550777708355715e-05 3.882120667473287e-05 valid True True
+
+# -- cell 3 (22.0s, exit 0)
+phases=np.linspace(0,360/z_w,25)
+ivals=[]
+for deg in phases:
+    w=Rot(0,0,float(deg))*wheel0
+    try: ivals.append((deg,(pinion&w).volume))
+    except: ivals.append((deg,float('nan')))
+print(ivals)
+best=min(ivals,key=lambda q:q[1])
+wheel_phase_deg=best[0]; wheel=Rot(0,0,wheel_phase_deg)*wheel0
+print('chosen wheel phase deg / common solid volume:',wheel_phase_deg,best[1])
+# -- output
+[(np.float64(0.0), 2.640232085811757e-07), (np.float64(0.5), 2.595264563716088e-07), (np.float64(1.0), 2.4610213442819514e-07), (np.float64(1.5), 2.2502755691318466e-07), (np.float64(2.0), 1.9830312164379476e-07), (np.float64(2.5), 1.6677152804822565e-07), (np.float64(3.0), 1.331729933142736e-07), (np.float64(3.5), 9.872055918400955e-08), (np.float64(4.0), 6.590377777935919e-08), (np.float64(4.5), 3.763383410550161e-08), (np.float64(5.0), 1.7771207008561806e-08), (np.float64(5.5), 6.835892435518738e-09), (np.float64(6.0), 2.6149550116636365e-09), (np.float64(6.5), 6.931801963910558e-09), (np.float64(7.0), 1.7961930938458385e-08), (np.float64(7.5), 3.789144434995248e-08), (np.float64(8.0), 6.620767446399561e-08), (np.float64(8.5), 9.89808970907376e-08), (np.float64(9.0), 1.3338505546072132e-07), (np.float64(9.5), 1.6691852018908768e-07), (np.float64(10.0), 1.9837822317790476e-07), (np.float64(10.5), 2.2505107640947135e-07), (np.float64(11.0), 2.460982878033131e-07), (np.float64(11.5), 2.5952645462066736e-07), (np.float64(12.0), 2.6402222364467537e-07)]
+chosen wheel phase deg / common solid volume: 6.0 2.6149550116636365e-09
+
+# -- cell 4 (4.0s, exit 0)
+# Shafts run away from the cone apex to and slightly through the +X and +Z walls
+shaft_r=shaft_d/2
+pin_shaft=Rot(0,90,0)*(Pos(0,0,pin_zi)*Cylinder(shaft_r,Lx/2+0.003-pin_zi))
+wheel_shaft=Pos(0,0,w_zi)*Cylinder(shaft_r,Lz/2+0.003-w_zi)
+pin_assembly=pinion.fuse(pin_shaft)
+wheel_assembly=wheel.fuse(wheel_shaft)
+solid_union=pin_assembly.fuse(wheel_assembly)
+cavity=Pos(-Lx/2,-Ly/2,-Lz/2)*Box(Lx,Ly,Lz,align=(Align.MIN,Align.MIN,Align.MIN))
+fluid=cavity-solid_union
+print('assembly volumes / overlap / fluid:',pin_assembly.volume,wheel_assembly.volume,(pin_assembly&wheel_assembly).volume,fluid.volume)
+print('expected volume check:',cavity.volume-solid_union.volume,'connected solids',len(fluid.solids()),'valid',fluid.is_valid)
+print('bbox:',fluid.bounding_box().min,fluid.bounding_box().max,'faces',len(fluid.faces()))
+# -- output
+assembly volumes / overlap / fluid: 3.517759927130654e-05 4.721868383777833e-05 9.745751692304738e-08 0.002605701174371883
+expected volume check: 0.002605701174371687 connected solids 1 valid True
+bbox: Vector: (X=-0.08, Y=-0.07, Z=-0.06) Vector: (X=0.08, Y=0.07, Z=0.06) faces 868
+
+# -- cell 5 (0.8s, exit 0)
+import os, pyvista as pv
+os.makedirs('constant/triSurface',exist_ok=True)
+bd.export_stl(solid_union,'coarse_gears_preview.stl',tolerance=0.00035,angular_tolerance=0.18)
+meshprev=pv.read('coarse_gears_preview.stl')
+pl=pv.Plotter(off_screen=True,window_size=(900,700)); pl.set_background('white')
+pl.add_mesh(meshprev,color='goldenrod',show_edges=True,edge_color='#555555')
+pl.add_mesh(pv.Box(bounds=(-Lx/2,Lx/2,-Ly/2,Ly/2,-Lz/2,Lz/2)),color='lightblue',opacity=.12,style='wireframe',line_width=2)
+pl.add_axes(); pl.view_isometric(); pl.camera.zoom(1.35)
+pl.show(screenshot='coarse_geometry.png')
+print(meshprev.n_cells, meshprev.bounds)
+# -- output
+32750 BoundsTuple(x_min = -0.0478333942592144,
+            x_max =  0.05775962397456169,
+            y_min = -0.047998782247304916,
+            y_max =  0.047998782247304916,
+            z_min = -0.032998450100421906,
+            z_max =  0.0423397496342659)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-16 03:08:30.459 (   0.459s) [    794211B64780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-16 03:08:30.460 (   0.460s) [    794211B64780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:08:30.473 (   0.473s) [    794211B64780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_810136/2964533891.py:9: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot='coarse_geometry.png')
+
+# -- cell 6 (0.2s, exit 0)
+from collections import Counter,defaultdict
+cnt=Counter(str(f.geom_type) for f in fluid.faces())
+areas=defaultdict(float)
+for f in fluid.faces(): areas[str(f.geom_type)]+=f.area
+print(cnt)
+print(dict(areas))
+# summarize cylinders by centers/bounds
+cyl=[]
+for i,f in enumerate(fluid.faces()):
+    if 'CYLINDER' in str(f.geom_type):
+        bb=f.bounding_box(); cyl.append((i,f.area,tuple(round(v,5) for v in f.center()),tuple(round(v,5) for v in bb.min),tuple(round(v,5) for v in bb.max)))
+print('cyl count',len(cyl)); print(cyl[:20])
+# -- output
+Counter({'GeomType.BSPLINE': 850, 'GeomType.PLANE': 14, 'GeomType.CYLINDER': 4})
+{'GeomType.PLANE': 0.13035707763986515, 'GeomType.BSPLINE': 0.011032175124686945, 'GeomType.CYLINDER': 0.003918313782464596}
+cyl count 4
+[(346, 0.001414410545851355, (0.0199, 0.0, 0.009), (0.00728, -0.009, -0.009), (0.03252, 0.009, 0.009)), (350, 0.0007215396700929949, (0.05138, 0.0, 0.009), (0.045, -0.009, -0.009), (0.05776, 0.009, 0.009)), (356, 0.0010845672266938879, (-0.009, 0.0, 0.01135), (-0.009, -0.009, 0.00102), (0.009, 0.009, 0.02168)), (865, 0.0006977963398263589, (-0.009, 0.0, 0.03617), (-0.009, -0.009, 0.03), (0.009, 0.009, 0.04234))]
+
+# -- cell 7 (0.2s, exit 0)
+for name,s in [('pin_shaft',pin_shaft),('wheel_shaft',wheel_shaft),('pinion',pinion),('wheel',wheel)]:
+ bb=s.bounding_box(); print(name,bb.min,bb.max,s.volume)
+print('pin z values',pin_zi,pin_zo,'wheel',w_zi,w_zo)
+# -- output
+pin_shaft Vector: (X=0.007279, Y=-0.009, Z=-0.009) Vector: (X=0.05776, Y=0.009, Z=0.009) 1.2845787344661809e-05
+wheel_shaft Vector: (X=-0.009, Y=-0.009, Z=0.001019) Vector: (X=0.009, Y=0.009, Z=0.04234) 1.0514787267653801e-05
+pinion Vector: (X=0.032519, Y=-0.032999, Z=-0.032999) Vector: (X=0.045, Y=0.032999, Z=0.032999) 2.550777708355715e-05
+wheel Vector: (X=-0.047833, Y=-0.047999, Z=0.021679) Vector: (X=0.047833, Y=0.047999, Z=0.03) 3.882120667473287e-05
+pin z values 0.03251924558493235 0.045000000000000005 wheel 0.021679497056621568 0.030000000000000002
+
+# -- cell 8 (2.7s, exit 0)
+pin_len=Lx/2+0.003-pin_zi; wheel_len=Lz/2+0.003-w_zi
+pin_shaft=Pos(pin_zi,0,0)*(Rot(0,90,0)*Cylinder(shaft_r,pin_len,align=(Align.CENTER,Align.CENTER,Align.MIN)))
+wheel_shaft=Pos(0,0,w_zi)*Cylinder(shaft_r,wheel_len,align=(Align.CENTER,Align.CENTER,Align.MIN))
+pin_assembly=pinion.fuse(pin_shaft); wheel_assembly=wheel.fuse(wheel_shaft)
+solid_union=pin_assembly.fuse(wheel_assembly); fluid=cavity-solid_union
+for name,s in [('pin_shaft',pin_shaft),('wheel_shaft',wheel_shaft),('fluid',fluid)]:
+ bb=s.bounding_box(); print(name,bb.min,bb.max)
+print('fluid connected/valid/volume/faces',len(fluid.solids()),fluid.is_valid,fluid.volume,len(fluid.faces()))
+# -- output
+pin_shaft Vector: (X=0.032519, Y=-0.009, Z=-0.009) Vector: (X=0.083, Y=0.009, Z=0.009)
+wheel_shaft Vector: (X=-0.009, Y=-0.009, Z=0.021679) Vector: (X=0.009, Y=0.009, Z=0.063)
+fluid Vector: (X=-0.08, Y=-0.07, Z=-0.06) Vector: (X=0.08, Y=0.07, Z=0.06)
+fluid connected/valid/volume/faces 1 True 0.0026071331458462446 862
+
+# -- cell 9 (0.4s, exit 0)
+groups={'cavityWalls':[],'pinion':[],'wheel':[],'pinionShaftBore':[],'wheelShaftBore':[]}
+amb=[]
+tol=2e-6
+for f in fluid.faces():
+    bb=f.bounding_box(); c=f.center(); gt=str(f.geom_type)
+    onwall=(abs(bb.min.X+Lx/2)<tol and abs(bb.max.X+Lx/2)<tol) or (abs(bb.min.X-Lx/2)<tol and abs(bb.max.X-Lx/2)<tol) or (abs(bb.min.Y+Ly/2)<tol and abs(bb.max.Y+Ly/2)<tol) or (abs(bb.min.Y-Ly/2)<tol and abs(bb.max.Y-Ly/2)<tol) or (abs(bb.min.Z+Lz/2)<tol and abs(bb.max.Z+Lz/2)<tol) or (abs(bb.min.Z-Lz/2)<tol and abs(bb.max.Z-Lz/2)<tol)
+    if onwall: groups['cavityWalls'].append(f)
+    elif 'CYLINDER' in gt:
+        # Pinion shaft cylinders vary principally in X; wheel shaft cylinders in Z
+        if (bb.max.X-bb.min.X) > (bb.max.Z-bb.min.Z): groups['pinionShaftBore'].append(f)
+        else: groups['wheelShaftBore'].append(f)
+    else:
+        pin_ax=(bb.min.X>=pin_zi-1e-5 and bb.max.X<=pin_zo+1e-5)
+        wh_ax=(bb.min.Z>=w_zi-1e-5 and bb.max.Z<=w_zo+1e-5)
+        if pin_ax and not wh_ax: groups['pinion'].append(f)
+        elif wh_ax and not pin_ax: groups['wheel'].append(f)
+        elif pin_ax and wh_ax:
+            # contact-zone cut faces: assign by which axial span they occupy more tightly
+            sx=(bb.max.X-bb.min.X)/(pin_zo-pin_zi); sz=(bb.max.Z-bb.min.Z)/(w_zo-w_zi)
+            groups['pinion' if sx>sz else 'wheel'].append(f)
+        else: amb.append((gt,tuple(c),bb.min,bb.max,f.area))
+print({k:(len(v),sum(f.area for f in v)) for k,v in groups.items()})
+print('ambiguous',len(amb)); print(amb[:10])
+# -- output
+{'cavityWalls': (6, 0.11629106199011846), 'pinion': (342, 0.008736743354248015), 'wheel': (512, 0.015434638780617859), 'pinionShaftBore': (1, 0.001979203371761569), 'wheelShaftBore': (1, 0.0016964600329384876)}
+ambiguous 0
+[]
+
+# -- cell 10 (0.6s, exit 0)
+tri='constant/triSurface'; os.makedirs(tri,exist_ok=True)
+for name,faces in groups.items():
+    patch_shape=Compound(faces)
+    bd.export_stl(patch_shape,f'{tri}/{name}.stl',tolerance=0.0001,angular_tolerance=0.08,ascii_format=False)
+print([(p,os.path.getsize(f'{tri}/{p}.stl')) for p in groups])
+# Persist exact CAD too for reproducibility/interchange
+bd.export_step(fluid,'oilFluid.step')
+print('STEP bytes',os.path.getsize('oilFluid.step'))
+# -- output
+[('cavityWalls', 16684), ('pinion', 2156334), ('wheel', 3165284), ('pinionShaftBore', 22684), ('wheelShaftBore', 24484)]
+STEP bytes 3968899
+
+# -- cell 11 (1.0s, exit 0)
+import subprocess
+for name in groups:
+ r=subprocess.run(['surfaceCheck',f'{tri}/{name}.stl'],text=True,capture_output=True)
+ lines=[ln for ln in (r.stdout+r.stderr).splitlines() if any(x in ln for x in ['Triangles','Bounding Box','unconnected','illegal','closed','open edges'])]
+ print('\n',name,'rc',r.returncode); print('\n'.join(lines[-8:]))
+# -- output
+cavityWalls rc 0
+Triangles    : 332 in 1 region(s)
+Bounding Box : (-0.08 -0.07 -0.06) (0.08 0.07 0.06)
+Surface has no illegal triangles.
+Surface is not closed since not all edges (656) connected to two faces:
+Number of unconnected parts : 1
+
+ pinion rc 0
+Triangles    : 43125 in 1 region(s)
+Bounding Box : (0.0325192 -0.0329985 -0.0329985) (0.045 0.0329985 0.0329985)
+Surface has no illegal triangles.
+Surface is not closed since not all edges (64775) connected to two faces:
+Number of unconnected parts : 1
+
+ wheel rc 0
+Triangles    : 63304 in 1 region(s)
+Bounding Box : (-0.0478334 -0.0479988 0.0216795) (0.0478334 0.0479988 0.03)
+Surface has no illegal triangles.
+Surface is not closed since not all edges (95039) connected to two faces:
+Number of unconnected parts : 1
+
+ pinionShaftBore rc 0
+Triangles    : 452 in 1 region(s)
+Bounding Box : (0.045 -0.00899913 -0.009) (0.08 0.00899913 0.009)
+Surface has no illegal triangles.
+Surface is not closed since not all edges (904) connected to two faces:
+Number of unconnected parts : 1
+
+ wheelShaftBore rc 0
+Triangles    : 488 in 1 region(s)
+Bounding Box : (-0.009 -0.009 0.03) (0.009 0.009 0.06)
+Surface has no illegal triangles.
+Surface is not closed since not all edges (976) connected to two faces:
+Number of unconnected parts : 1
+
+# -- cell 12 (0.7s, exit 0)
+bd.export_stl(fluid,'fluidUnionTest.stl',tolerance=0.0001,angular_tolerance=0.08)
+r=subprocess.run(['surfaceCheck','fluidUnionTest.stl'],text=True,capture_output=True)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-22:]))
+# -- output
+0.9 .. 0.95  : 0.0278879
+    0.95 .. 1  : 0.0154716
+
+    min 8.60732e-09 for triangle 23123
+    max 0.999691 for triangle 5609
+
+Edges:
+    min 6.8922e-05 for edge 38732 points (-0.0221625 0.0220163 0.0227196)(-0.0221137 0.022065 0.0227196)
+    max 0.212603 for edge 506 points (0.08 0.07 -0.06)(-0.08 -0.07 -0.06)
+
+Checking for points less than 1e-6 of bounding box ((0.16 0.14 0.12) metre) apart.
+Found 0 nearby points.
+
+Surface is closed. All edges connected to two faces.
+
+Number of unconnected parts : 1
+
+Number of zones (connected area with consistent normal) : 1
+
+
+End
+
+# -- cell 13 (0.1s, exit 0)
+os.makedirs('system',exist_ok=True); os.makedirs('constant/polyMesh',exist_ok=True)
+open('system/controlDict','w').write('''FoamFile{format ascii;class dictionary;object controlDict;}\napplication snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;''')
+open('system/blockMeshDict','w').write('''FoamFile{format ascii;class dictionary;object blockMeshDict;}\nscale 1;\nvertices ((-0.085 -0.075 -0.065)(0.085 -0.075 -0.065)(0.085 0.075 -0.065)(-0.085 0.075 -0.065)(-0.085 -0.075 0.065)(0.085 -0.075 0.065)(0.085 0.075 0.065)(-0.085 0.075 0.065));\nblocks (hex (0 1 2 3 4 5 6 7) (17 15 13) simpleGrading (1 1 1));\nedges(); boundary(background{type patch;faces((0 4 7 3)(1 2 6 5)(0 1 5 4)(3 7 6 2)(0 3 2 1)(4 5 6 7));}); mergePatchPairs();''')
+geom='\n'.join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in groups)
+refs='''cavityWalls {level (0 0); patchInfo {type wall;}} pinion {level (2 2); patchInfo {type wall;}} wheel {level (2 2); patchInfo {type wall;}} pinionShaftBore {level (1 1); patchInfo {type wall;}} wheelShaftBore {level (1 1); patchInfo {type wall;}}'''
+open('system/snappyHexMeshDict','w').write(f'''FoamFile{{format ascii;class dictionary;object snappyHexMeshDict;}}\ncastellatedMesh true; snap true; addLayers false;\ngeometry{{{geom}}}\ncastellatedMeshControls{{maxLocalCells 300000; maxGlobalCells 400000; minRefinementCells 0; nCellsBetweenLevels 1; resolveFeatureAngle 35; refinementSurfaces{{{refs}}} refinementRegions{{}} locationInMesh (-0.06 0 0); allowFreeStandingZoneFaces true;}}\nsnapControls{{nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5; nFeatureSnapIter 0; implicitFeatureSnap false; explicitFeatureSnap false; multiRegionFeatureSnap false;}}\naddLayersControls{{relativeSizes true; layers{{}} expansionRatio 1.0; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedianAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50;}}\nmeshQualityControls{{#include \"meshQualityDict\"}}\nmergeTolerance 1e-6;''')
+print('wrote meshing dictionaries; background cells',17*15*13)
+# -- output
+wrote meshing dictionaries; background cells 3315
+
+# -- cell 14 (0.2s, exit 0)
+r=subprocess.run(['blockMesh'],text=True,capture_output=True); print(r.stdout[-2500:]); print(r.stderr[-500:]); print('return',r.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 16 2026
+Time   : 03:09:49
+Host   : yc-demo
+PID    : 815478
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T15-20260916-030628-e63a/t15
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+--> FOAM Warning : 
+    From virtual Foam::Istream& Foam::ISstream::read(Foam::word&)
+    in file db/IOstreams/Sstreams/ISstream.C at line 967
+    Reading "system/blockMeshDict" at line 5
+    Missing 1 closing ')' while parsing
+
+boundary(background
+
+--> FOAM Warning : 
+    From virtual Foam::Istream& Foam::ISstream::read(Foam::word&)
+    in file db/IOstreams/Sstreams/ISstream.C at line 967
+    Reading "system/blockMeshDict" at line 5
+    Missing 2 closing ')' while parsing
+
+faces((0
+
+
+ict" at line 5
+    Too many closing ')' ... was a ';' forgotten?
+--> FOAM Warning :
+    Reading "system/blockMeshDict" at line 5
+    Imbalanced brackets
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+ill defined primitiveEntry starting at keyword 'faces((0' on line 5 and ending at line 5
+
+file: system/blockMeshDict at line 5.
+
+    From void Foam::primitiveEntry::readEntry(const Foam::dictionary&, Foam::Istream&)
+    in file db/dictionary/primitiveEntry/primitiveEntryIO.C at line 243.
+
+FOAM exiting
+
+
+return 1
+
+# -- cell 15 (0.2s, exit 0)
+open('system/blockMeshDict','w').write('''FoamFile { format ascii; class dictionary; object blockMeshDict; }
+scale 1;
+vertices
+(
+(-0.085 -0.075 -0.065) (0.085 -0.075 -0.065) (0.085 0.075 -0.065) (-0.085 0.075 -0.065)
+(-0.085 -0.075 0.065) (0.085 -0.075 0.065) (0.085 0.075 0.065) (-0.085 0.075 0.065)
+);
+blocks ( hex (0 1 2 3 4 5 6 7) (17 15 13) simpleGrading (1 1 1) );
+edges ();
+boundary
+(
+ background
+ {
+  type patch;
+  faces
+  (
+   (0 4 7 3) (1 2 6 5) (0 1 5 4) (3 7 6 2) (0 3 2 1) (4 5 6 7)
+  );
+ }
+);
+mergePatchPairs ();
+''')
+r=subprocess.run(['blockMesh'],text=True,capture_output=True); print('\n'.join(r.stdout.splitlines()[-25:])); print(r.stderr); print('return',r.returncode)
+# -- output
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.01 .. 0.01
+        j : 0.01 .. 0.01
+        k : 0.01 .. 0.01
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.085 -0.075 -0.065) (0.085 0.075 0.065)
+  nPoints: 4032
+  nCells: 3315
+  nFaces: 10616
+  nInternalFaces: 9274
+----------------
+Patches
+----------------
+  patch 0 (start: 9274 size: 1342) name: background
+
+End
+
+
+return 0
+
+# -- cell 16 (0.3s, exit 0)
+open('system/meshQualityDict','w').write('''maxNonOrtho 75; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80; minVol 1e-15; minTetQuality 1e-20; minArea -1; minTwist 0.01; minDeterminant 0.001; minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; relaxed {maxNonOrtho 80;}''')
+r=subprocess.run(['snappyHexMesh','-overwrite'],text=True,capture_output=True,timeout=240)
+open('snappy.log','w').write(r.stdout+r.stderr)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-60:])); print('return',r.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 16 2026
+Time   : 03:09:58
+Host   : yc-demo
+PID    : 815617
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T15-20260916-030628-e63a/t15
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T15-20260916-030628-e63a/t15/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+return 1
+
+# -- cell 17 (0.9s, exit 0)
+open('system/fvSchemes','w').write('''FoamFile{format ascii;class dictionary;object fvSchemes;} ddtSchemes{default steadyState;} gradSchemes{default Gauss linear;} divSchemes{default none;} laplacianSchemes{default Gauss linear corrected;} interpolationSchemes{default linear;} snGradSchemes{default corrected;} wallDist{method meshWave;}''')
+open('system/fvSolution','w').write('''FoamFile{format ascii;class dictionary;object fvSolution;} solvers{} SIMPLE{} relaxationFactors{}''')
+r=subprocess.run(['snappyHexMesh','-overwrite'],text=True,capture_output=True,timeout=240)
+open('snappy.log','w').write(r.stdout+r.stderr)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-80:])); print('return',r.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 16 2026
+Time   : 03:10:01
+Host   : yc-demo
+PID    : 815650
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T15-20260916-030628-e63a/t15
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0 s
+
+Overall mesh bounding box  : (-0.085 -0.075 -0.065) (0.085 0.075 0.065)
+Relative tolerance         : 1e-06
+Absolute matching distance : 2.61343e-07
+
+Reading refinement surfaces.
+Read refinement surfaces in = 0.04 s
+
+Reading refinement shells.
+Read refinement shells in = 0 s
+
+Setting refinement level of surface to be consistent with shells.
+For geometry cavityWalls.stl detected 0 uncached triangles out of 332
+For geometry pinion.stl detected 0 uncached triangles out of 43125
+For geometry wheel.stl detected 0 uncached triangles out of 63304
+For geometry pinionShaftBore.stl detected 0 uncached triangles out of 452
+For geometry wheelShaftBore.stl detected 0 uncached triangles out of 488
+Checked shell refinement in = 0.57 s
+
+Reading features.
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'features' not found in dictionary "system/snappyHexMeshDict/castellatedMeshControls"
+
+
+file: system/snappyHexMeshDict/castellatedMeshControls at line 8.
+
+    From static Foam::ITstream& Foam::meshRefinement::lookup(const Foam::dictionary&, const Foam::word&, bool, Foam::keyType::option)
+    in file meshRefinement/meshRefinement.C at line 3896.
+
+FOAM exiting
+
+return 1
+
+# -- cell 18 (0.8s, exit 0)
+p=open('system/snappyHexMeshDict').read(); p=p.replace('refinementRegions{} locationInMesh','refinementRegions{} features(); locationInMesh'); open('system/snappyHexMeshDict','w').write(p)
+r=subprocess.run(['snappyHexMesh','-overwrite'],text=True,capture_output=True,timeout=240)
+open('snappy.log','w').write(r.stdout+r.stderr)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-80:])); print('return',r.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 16 2026
+Time   : 03:10:05
+Host   : yc-demo
+PID    : 815681
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T15-20260916-030628-e63a/t15
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Read mesh in = 0.02 s
+
+Overall mesh bounding box  : (-0.085 -0.075 -0.065) (0.085 0.075 0.065)
+Relative tolerance         : 1e-06
+Absolute matching distance : 2.61343e-07
+
+Reading refinement surfaces.
+Read refinement surfaces in = 0.04 s
+
+Reading refinement shells.
+Read refinement shells in = 0 s
+
+Setting refinement level of surface to be consistent with shells.
+For geometry cavityWalls.stl detected 0 uncached triangles out of 332
+For geometry pinion.stl detected 0 uncached triangles out of 43125
+For geometry wheel.stl detected 0 uncached triangles out of 63304
+For geometry pinionShaftBore.stl detected 0 uncached triangles out of 452
+For geometry wheelShaftBore.stl detected 0 uncached triangles out of 488
+Checked shell refinement in = 0.54 s
+
+Reading features.
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'features' not found in dictionary "system/snappyHexMeshDict/castellatedMeshControls"
+
+
+file: system/snappyHexMeshDict/castellatedMeshControls at line 8.
+
+    From static Foam::ITstream& Foam::meshRefinement::lookup(const Foam::dictionary&, const Foam::word&, bool, Foam::keyType::option)
+    in file meshRefinement/meshRefinement.C at line 3896.
+
+FOAM exiting
+
+return 1
+
+# -- cell 19 (0.1s, exit 0)
+print(open('system/snappyHexMeshDict').read())
+# -- output
+FoamFile{format ascii;class dictionary;object snappyHexMeshDict;}
+castellatedMesh true; snap true; addLayers false;
+geometry{  cavityWalls.stl { type triSurfaceMesh; name cavityWalls; }
+  pinion.stl { type triSurfaceMesh; name pinion; }
+  wheel.stl { type triSurfaceMesh; name wheel; }
+  pinionShaftBore.stl { type triSurfaceMesh; name pinionShaftBore; }
+  wheelShaftBore.stl { type triSurfaceMesh; name wheelShaftBore; }}
+castellatedMeshControls{maxLocalCells 300000; maxGlobalCells 400000; minRefinementCells 0; nCellsBetweenLevels 1; resolveFeatureAngle 35; refinementSurfaces{cavityWalls {level (0 0); patchInfo {type wall;}} pinion {level (2 2); patchInfo {type wall;}} wheel {level (2 2); patchInfo {type wall;}} pinionShaftBore {level (1 1); patchInfo {type wall;}} wheelShaftBore {level (1 1); patchInfo {type wall;}}} refinementRegions{} features(); locationInMesh (-0.06 0 0); allowFreeStandingZoneFaces true;}
+snapControls{nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5; nFeatureSnapIter 0; implicitFeatureSnap false; explicitFeatureSnap false; multiRegionFeatureSnap false;}
+addLayersControls{relativeSizes true; layers{} expansionRatio 1.0; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedianAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50;}
+meshQualityControls{#include "meshQualityDict"}
+mergeTolerance 1e-6;
+
+# -- cell 20 (2.5s, exit 0)
+p=open('system/snappyHexMeshDict').read(); a=p.index('castellatedMeshControls'); b=p.index('snapControls')
+cc='''castellatedMeshControls
+{
+ maxLocalCells 300000;
+ maxGlobalCells 400000;
+ minRefinementCells 0;
+ nCellsBetweenLevels 1;
+ features ();
+ refinementSurfaces
+ {
+  cavityWalls { level (0 0); patchInfo { type wall; } }
+  pinion { level (2 2); patchInfo { type wall; } }
+  wheel { level (2 2); patchInfo { type wall; } }
+  pinionShaftBore { level (1 1); patchInfo { type wall; } }
+  wheelShaftBore { level (1 1); patchInfo { type wall; } }
+ }
+ resolveFeatureAngle 35;
+ refinementRegions { }
+ locationInMesh (-0.06 0 0);
+ allowFreeStandingZoneFaces true;
+}
+'''
+open('system/snappyHexMeshDict','w').write(p[:a]+cc+p[b:])
+r=subprocess.run(['snappyHexMesh','-overwrite'],text=True,capture_output=True,timeout=240); open('snappy.log','w').write(r.stdout+r.stderr)
+print('\n'.join((r.stdout+r.stderr).splitlines()[-80:])); print('return',r.returncode)
+# -- output
+faces with face twist < 0.01                           : 0
+    faces on cells with determinant < 0.001                : 0
+Successfully moved mesh
+Moved mesh in = 0.09 s
+
+
+Repatching faces according to nearest surface ...
+Repatched 10 faces in = 0.04 s
+
+
+Edge intersection testing:
+    Number of edges             : 37216
+    Number of edges to retest   : 18129
+    Number of intersected edges : 4750
+Merging 402 sets of faces.
+
+Edge intersection testing:
+    Number of edges             : 36670
+    Number of edges to retest   : 1695
+    Number of intersected edges : 4264
+
+Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 75  degrees                        : 0
+    faces with face pyramid volume < 1e-15                 : 0
+    faces with face-decomposition tet quality < 1e-20      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.01                           : 0
+    faces on cells with determinant < 0.001                : 0
+
+Merging all points on surface that
+- are used by only two boundary faces and
+- make an angle with a cosine of more than 0.819152.
+
+Removing 201 straight edge points ...
+
+Edge intersection testing:
+    Number of edges             : 36670
+    Number of edges to retest   : 1125
+    Number of intersected edges : 4264
+
+Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 75  degrees                        : 0
+    faces with face pyramid volume < 1e-15                 : 0
+    faces with face-decomposition tet quality < 1e-20      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.01                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:10640  faces:36670  points:15591
+Cells per refinement level:
+    0	1706
+    1	2156
+    2	6778
+Writing mesh to time constant
+Wrote mesh in = 0.03 s.
+Mesh snapped in = 0.53 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 75  degrees                        : 0
+    faces with face pyramid volume < 1e-15                 : 0
+    faces with face-decomposition tet quality < 1e-20      : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.01                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 2.24 s.
+End
+
+return 0
+
+# -- cell 21 (0.4s, exit 0)
+r=subprocess.run(['checkMesh','-allGeometry','-allTopology'],text=True,capture_output=True); open('checkMesh.log','w').write(r.stdout+r.stderr); print('\n'.join((r.stdout+r.stderr).splitlines()[-100:])); print('return',r.returncode)
+# -- output
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           15591
+    faces:            36670
+    internal faces:   32000
+    cells:            10640
+    faces per cell:   6.45395
+    boundary patches: 5
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     8464
+    prisms:        78
+    wedges:        0
+    pyramids:      0
+    tet wedges:    18
+    tetrahedra:    0
+    polyhedra:     2080
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   118
+            5   180
+            6   503
+            7   8
+            9   912
+           12   227
+           15   110
+           18   22
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology  Bounding box
+             cavityWalls     1108     1152  ok (non-closed singly connected) (-0.08 -0.07 -0.06) (0.08 0.07 0.06)
+                  pinion     1130     1261  ok (non-closed singly connected) (0.0309017 -0.0315589 -0.0315589) (0.0464315 0.0315589 0.0315848)
+                   wheel     2156     2292  ok (non-closed singly connected) (-0.0442002 -0.044226 0.0193023) (0.0450009 0.044226 0.0314315)
+         pinionShaftBore      144      192  ok (non-closed singly connected) (0.045 -0.0116626 -0.0116626) (0.08 0.0116626 0.0116626)
+          wheelShaftBore      132      180  ok (non-closed singly connected) (-0.0116626 -0.0116626 0.03) (0.0116626 0.0116626 0.06)
+                    ".*"     4670     4915      ok (closed singly connected) (-0.08 -0.07 -0.06) (0.08 0.07 0.06)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.08 -0.07 -0.06) (0.08 0.07 0.06)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.52328e-16 -1.19753e-17 1.61298e-16) OK.
+    Max cell openness = 2.96093e-16 OK.
+    Max aspect ratio = 4.18026 OK.
+    Minimum face area = 6.90661e-07. Maximum face area = 0.000215332.  Face area magnitudes OK.
+    Min volume = 2.76839e-09. Max volume = 1.84416e-06.  Total volume = 0.00248166.  Cell volumes OK.
+    Mesh non-orthogonality Max: 45.8303 average: 13.2617
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.36995 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.000469907 0.0197093 OK.
+   *There are 261 faces with concave angles between consecutive edges. Max concave angle = 53.4237 degrees.
+  <<Writing 261 faces with concave angles to set concaveFaces
+    Face flatness (1 = flat, 0 = butterfly) : min = 0.836668  average = 0.997796
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.0295561 average: 2.45462
+    Cell determinant check OK.
+ ***Concave cells (using face planes) found, number of cells: 653
+  <<Writing 653 concave cells to set concaveCells
+    Face interpolation weight : minimum: 0.0929353 average: 0.443986
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.0198614 average: 0.73449
+    Face volume ratio check OK.
+
+Failed 1 mesh checks.
+
+End
+
+return 0
+
+# -- cell 22 (1.1s, exit 1)
+subprocess.run(['foamToVTK','-constant'],text=True,capture_output=True,check=True)
+import glob
+files=glob.glob('VTK/**/*.vtk',recursive=True)+glob.glob('VTK/**/*.vtu',recursive=True)
+print(files[:10])
+# Read internal mesh and show boundary plus clip
+mb=pv.read(files[0]); ug=mb if isinstance(mb,pv.UnstructuredGrid) else mb.combine()
+cl=ug.clip(normal=(1,1,0),origin=(0,0,0),invert=False)
+pl=pv.Plotter(off_screen=True,window_size=(1000,700)); pl.set_background('white')
+pl.add_mesh(cl,scalars=None,color='lightsteelblue',show_edges=True,edge_color='#555',line_width=.3)
+pl.add_axes(); pl.view_isometric(); pl.camera.zoom(1.2); pl.show(screenshot='coarse_mesh_clip.png')
+print('display cells',ug.n_cells,'clipped',cl.n_cells)
+# -- output
+['VTK/t15_0/internal.vtu']
+
+[0m[33m2026-09-16 03:10:28.305 ( 118.305s) [    794211B64780]vtkTableBasedClipDataSe:1410  WARN| vtkTableBasedClipDataSet (0x62a916decdb0): Output points used by cells not supported by vtkTableBasedClipDataSet will appear twice. To avoid this, consider using vtkClipDataSet directly[0m
+[0m[33m2026-09-16 03:10:28.326 ( 118.326s) [    794211B64780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:10:28.327 ( 118.327s) [    794211B64780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/colors.py:1761[39m, in [36mColor.__init__[39m[34m(self, color, opacity, default_color, default_opacity)[39m
+[32m   1759[39m [38;5;28;01melif[39;00m [38;5;28misinstance[39m(color, [38;5;28mstr[39m):
+[32m   1760[39m     [38;5;66;03m# From named color or hex string[39;00m
+[32m-> [39m[32m1761[39m     [30;43mself[39;49m[30;43m.[39;49m[30;43m_from_str[39;49m[30;43m([39;49m[30;43mcolor[39;49m[30;43m)[39;49m
+[32m   1762[39m [38;5;28;01melif[39;00m [38;5;28misinstance[39m(color, [38;5;28mdict[39m):
+[32m   1763[39m     [38;5;66;03m# From dictionary[39;00m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/colors.py:1925[39m, in [36mColor._from_str[39m[34m(self, n)[39m
+[32m   1924[39m msg = [33mf[39m[33m'[39m[33mInvalid color name or hex string: [39m[38;5;132;01m{[39;00marg[38;5;132;01m}[39;00m[33m'[39m
+[32m-> [39m[32m1925[39m [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m(msg) [38;5;28;01mfrom[39;00m[38;5;250m [39m[38;5;2
+... 5586 characters cut ...
+/lib/python3.13/site-packages/pyvista/core/utilities/misc.py:531[39m, in [36m_NoNewAttrMixin.__setattr__[39m[34m(self, key, value)[39m
+[32m    529[39m [38;5;250m[39m[33;03m"""Prevent adding new attributes to classes using "normal" methods."""[39;00m
+[32m    530[39m [38;5;28mself[39m._check_new_attribute(key)
+[32m--> [39m[32m531[39m [30;43mobject[39;49m[30;43m.[39;49m[30;43m__setattr__[39;49m[30;43m([39;49m[30;43mself[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mkey[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mvalue[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/_property.py:389[39m, in [36mProperty.edge_color[39m[34m(self, value)[39m
+[32m    387[39m [38;5;129m@edge_color[39m.setter
+[32m    388[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34medge_color[39m([38;5;28mself[39m, value):
+[32m--> [39m[32m389[39m     rgb_color = [30;43mColor[39;49m[30;43m([39;49m[30;43mvalue[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mdefault_color[39;49m[30;43m=[39;49m[30;43mself[39;49m[30;43m.[39;49m[30;43m_theme[39;49m[30;43m.[39;49m[30;43medge_color[39;49m[30;43m)[39;49m  [38;5;66;03m# type: ignore[union-attr][39;00m
+[32m    390[39m     [38;5;28mself[39m.SetEdgeColor(rgb_color.float_rgb)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/misc.py:442[39m, in [36m_AutoFreezeMeta.__call__[39m[34m(cls, *args, **kwargs)[39m
+[32m    441[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34m__call__[39m([38;5;28mcls[39m: [38;5;28mtype[39m[_T], *args, **kwargs) -> _T:
+[32m--> [39m[32m442[39m     obj = [30;43msuper[39;49m[30;43m([39;49m[30;43m)[39;49m[30;43m.[39;49m[30;43m__call__[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43margs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m  [38;5;66;03m# type: ignore[misc][39;00m
+[32m    443[39m     obj._no_new_attributes([38;5;28mcls[39m)
+[32m    444[39m     [38;5;28;01mreturn[39;00m obj
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243[39m, in [36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f[39m[34m(*args, **kwargs)[39m
+[32m    239[39m             warn_external(msg, PyVistaDeprecationWarning)
+[32m    241[39m         warn_positional_args()
+[32m--> [39m[32m243[39m [38;5;28;01mreturn[39;00m [30;43mf[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43margs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/plotting/colors.py:1786[39m, in [36mColor.__init__[39m[34m(self, color, opacity, default_color, default_opacity)[39m
+[32m   1775[39m [38;5;28;01mexcept[39;00m [38;5;167;01mValueError[39;00m [38;5;28;01mas[39;00m e:
+[32m   1776[39m     msg = (
+[32m   1777[39m         [33m'[39m[38;5;130;01m\n[39;00m[33m'[39m
+[32m   1778[39m         [33mf[39m[33m'[39m[38;5;130;01m\t[39;00m[33mInvalid color input: ([39m[38;5;132;01m{[39;00mcolor[38;5;132;01m}[39;00m[33m)[39m[38;5;130;01m\n[39;00m[33m'[39m
+[32m   (...)[39m[32m   1784[39m         [33m"[39m[38;5;130;01m\t[39;00m[38;5;130;01m\t[39;00m[33mcolor=[39m[33m'[39m[33m#FFFFFF[39m[33m'[39m[33m"[39m
+[32m   1785[39m     )
+[32m-> [39m[32m1786[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m(msg) [38;5;28;01mfrom[39;00m[38;5;250m [39m[34;01me[39;00m
+[32m   1788[39m [38;5;66;03m# Overwrite opacity if it is provided[39;00m
+[32m   1789[39m [38;5;28;01mtry[39;00m:
+
+[31mValueError[39m: 
+	Invalid color input: (#555)
+	Must be a string, rgb(a) sequence, or hex color string.  For example:
+		color='white'
+		color='w'
+		color=[1.0, 1.0, 1.0]
+		color=[255, 255, 255]
+		color='#FFFFFF'
+
+# -- cell 23 (0.2s, exit 0)
+pl=pv.Plotter(off_screen=True,window_size=(1000,700)); pl.set_background('white')
+pl.add_mesh(cl,color='lightsteelblue',show_edges=True,edge_color='#555555',line_width=.3)
+pl.add_axes(); pl.view_isometric(); pl.camera.zoom(1.2); pl.show(screenshot='coarse_mesh_clip.png')
+print('display cells',ug.n_cells,'clipped',cl.n_cells)
+# -- output
+display cells 10640 clipped 7368
+
+[0m[33m2026-09-16 03:10:32.248 ( 122.248s) [    794211B64780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:10:32.249 ( 122.249s) [    794211B64780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_810136/2000209297.py:3: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.add_axes(); pl.view_isometric(); pl.camera.zoom(1.2); pl.show(screenshot='coarse_mesh_clip.png')
+
+# -- cell 24 (0.3s, exit 0)
+r=subprocess.run(['checkMesh'],text=True,capture_output=True); open('checkMesh.log','w').write(r.stdout+r.stderr); print('\n'.join((r.stdout+r.stderr).splitlines()[-55:])); print('return',r.returncode)
+# -- output
+5   180
+            6   503
+            7   8
+            9   912
+           12   227
+           15   110
+           18   22
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+             cavityWalls     1108     1152  ok (non-closed singly connected)
+                  pinion     1130     1261  ok (non-closed singly connected)
+                   wheel     2156     2292  ok (non-closed singly connected)
+         pinionShaftBore      144      192  ok (non-closed singly connected)
+          wheelShaftBore      132      180  ok (non-closed singly connected)
+                    ".*"     4670     4915      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.08 -0.07 -0.06) (0.08 0.07 0.06)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.52328e-16 -1.19753e-17 1.61298e-16) OK.
+    Max cell openness = 2.96093e-16 OK.
+    Max aspect ratio = 4.18026 OK.
+    Minimum face area = 6.90661e-07. Maximum face area = 0.000215332.  Face area magnitudes OK.
+    Min volume = 2.76839e-09. Max volume = 1.84416e-06.  Total volume = 0.00248166.  Cell volumes OK.
+    Mesh non-orthogonality Max: 45.8303 average: 13.2617
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.36995 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+return 0
+
+# -- cell 25 (0.6s, exit 0)
+# Recreate visualization bindings locally so build.py replays cleanly
+subprocess.run(['foamToVTK','-constant'],text=True,capture_output=True,check=True)
+files=glob.glob('VTK/**/*.vtk',recursive=True)+glob.glob('VTK/**/*.vtu',recursive=True)
+ug0=pv.read([f for f in files if f.endswith('internal.vtu')][0]); ug=ug0 if isinstance(ug0,pv.UnstructuredGrid) else ug0.combine()
+cl=ug.clip(normal=(1,1,0),origin=(0,0,0),invert=False)
+pl=pv.Plotter(off_screen=True,window_size=(1000,700)); pl.set_background('white'); pl.add_mesh(cl,color='lightsteelblue',show_edges=True,edge_color='#555555',line_width=.3); pl.add_axes(); pl.view_isometric(); pl.camera.zoom(1.2); pl.show(screenshot='coarse_mesh_clip.png')
+# Direct construction measurements
+th_p=math.pi*m/2-backlash/2; th_w=math.pi*m/2-backlash/2
+pair_backlash=math.pi*m-(th_p+th_w)
+print(f'teeth pinion={z_p} requested=20; wheel={z_w} requested=30')
+print(f'module={m:.6f} m requested=0.003000 m')
+print(f'pressure angle={math.degrees(alpha):.6f} deg requested=20 deg')
+print(f'pitch diameters pinion={m*z_p:.6f} m wheel={m*z_w:.6f} m')
+print(f'pitch cone angles={math.degrees(delta_p):.6f}, {math.degrees(delta_w):.6f} deg; sum={math.degrees(delta_p+delta_w):.6f} deg requested shaft angle=90 deg')
+print(f'constructed pair backlash at pitch line={pair_backlash:.7f} m requested=0.0003000 m')
+print(f'cavity={Lx:.3f} x {Ly:.3f} x {Lz:.3f} m requested=0.160 x 0.140 x 0.120 m')
+print(f'fluid CAD solids={len(fluid.solids())}; mesh cells={ug.n_cells}')
+# -- output
+teeth pinion=20 requested=20; wheel=30 requested=30
+module=0.003000 m requested=0.003000 m
+pressure angle=20.000000 deg requested=20 deg
+pitch diameters pinion=0.060000 m wheel=0.090000 m
+pitch cone angles=33.690068, 56.309932 deg; sum=90.000000 deg requested shaft angle=90 deg
+constructed pair backlash at pitch line=0.0003000 m requested=0.0003000 m
+cavity=0.160 x 0.140 x 0.120 m requested=0.160 x 0.140 x 0.120 m
+fluid CAD solids=1; mesh cells=10640
+
+[0m[33m2026-09-16 03:10:47.116 ( 137.116s) [    794211B64780]vtkTableBasedClipDataSe:1410  WARN| vtkTableBasedClipDataSet (0x62a91e137220): Output points used by cells not supported by vtkTableBasedClipDataSet will appear twice. To avoid this, consider using vtkClipDataSet directly[0m
+[0m[33m2026-09-16 03:10:47.136 ( 137.136s) [    794211B64780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:10:47.137 ( 137.137s) [    794211B64780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_810136/3627744916.py:6: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl=pv.Plotter(off_screen=True,window_size=(1000,700)); pl.set_background('white'); pl.add_mesh(cl,color='lightsteelblue',show_edges=True,edge_color='#555555',line_width=.3); pl.add_axes(); pl.view_isometric(); pl.camera.zoom(1.2); pl.show(screenshot='coarse_mesh_clip.png')
+
+# -- cell 26 (6.1s, exit 0)
+master=pv.read('fluidUnionTest.stl').triangulate(); cc=master.cell_centers().points
+P=master.points; F=master.faces.reshape(-1,4)[:,1:]
+labels=np.empty(master.n_cells,dtype=object)
+for i,(cen,ids) in enumerate(zip(cc,F)):
+    verts=P[ids]; x,y,z=cen
+    onwall=(np.ptp(verts[:,0])<2e-7 and (abs(x-Lx/2)<2e-7 or abs(x+Lx/2)<2e-7)) or (np.ptp(verts[:,1])<2e-7 and (abs(y-Ly/2)<2e-7 or abs(y+Ly/2)<2e-7)) or (np.ptp(verts[:,2])<2e-7 and (abs(z-Lz/2)<2e-7 or abs(z+Lz/2)<2e-7))
+    if onwall: lab='cavityWalls'
+    elif x>=pin_zo-2e-5 and x<=Lx/2+2e-5 and abs(math.hypot(y,z)-shaft_r)<4e-4: lab='pinionShaftBore'
+    elif z>=w_zo-2e-5 and z<=Lz/2+2e-5 and abs(math.hypot(x,y)-shaft_r)<4e-4: lab='wheelShaftBore'
+    else:
+        pin_ax=pin_zi-2e-5<=x<=pin_zo+2e-5; wh_ax=w_zi-2e-5<=z<=w_zo+2e-5
+        if pin_ax and not wh_ax: lab='pinion'
+        elif wh_ax and not pin_ax: lab='wheel'
+        elif pin_ax and wh_ax: lab='pinion' if abs((x-(pin_zi+pin_zo)/2)/(pin_zo-pin_zi)) > abs((z-(w_zi+w_zo)/2)/(w_zo-w_zi)) else 'wheel'
+        else: raise RuntimeError(('unclassified triangle',i,cen))
+    labels[i]=lab
+for name in groups:
+    ids=np.where(labels==name)[0]; master.extract_cells(ids).extract_surface().triangulate().save(f'{tri}/{name}.stl',binary=True)
+print({n:int(np.sum(labels==n)) for n in groups},'total',master.n_cells)
+# -- output
+{'cavityWalls': 486, 'pinion': 44441, 'wheel': 62137, 'pinionShaftBore': 452, 'wheelShaftBore': 488} total 108004
+
+/tmp/ipykernel_810136/3362034581.py:18: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  ids=np.where(labels==name)[0]; master.extract_cells(ids).extract_surface().triangulate().save(f'{tri}/{name}.stl',binary=True)
+
+# -- cell 27 (2.8s, exit 0)
+subprocess.run(['blockMesh'],text=True,capture_output=True,check=True)
+r1=subprocess.run(['snappyHexMesh','-overwrite'],text=True,capture_output=True,timeout=240); open('snappy.log','w').write(r1.stdout+r1.stderr)
+r2=subprocess.run(['checkMesh'],text=True,capture_output=True); open('checkMesh.log','w').write(r2.stdout+r2.stderr)
+print('snappy rc',r1.returncode,'check rc',r2.returncode); print('\n'.join((r2.stdout+r2.stderr).splitlines()[-35:]))
+# -- output
+snappy rc 0 check rc 0
+                   wheel     2132     2291  ok (non-closed singly connected)
+         pinionShaftBore      144      192  ok (non-closed singly connected)
+          wheelShaftBore      132      180  ok (non-closed singly connected)
+                    ".*"     4673     4916      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.08 -0.07 -0.06) (0.08 0.07 0.06)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-2.5039e-16 -1.21098e-17 1.38531e-16) OK.
+    Max cell openness = 2.96093e-16 OK.
+    Max aspect ratio = 4.18026 OK.
+    Minimum face area = 6.90661e-07. Maximum face area = 0.000215332.  Face area magnitudes OK.
+    Min volume = 2.76839e-09. Max volume = 1.84416e-06.  Total volume = 0.00248166.  Cell volumes OK.
+    Mesh non-orthogonality Max: 45.8303 average: 13.2617
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 2.36995 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+

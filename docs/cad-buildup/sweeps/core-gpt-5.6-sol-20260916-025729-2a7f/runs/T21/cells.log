@@ -1,0 +1,840 @@
+# -- cell 1 (2.2s, exit 0)
+import inspect, build123d as bd
+print('build123d', getattr(bd, '__version__', 'installed'))
+print('Shape.tessellate', inspect.signature(bd.Shape.tessellate))
+print('Box', inspect.signature(bd.Box), 'Cylinder', inspect.signature(bd.Cylinder))
+# -- output
+build123d 0.11.1
+Shape.tessellate (self, tolerance: 'float', angular_tolerance: 'float' = 0.1) -> 'tuple[list[Vector], list[tuple[int, int, int]]]'
+Box (length: 'float', width: 'float', height: 'float', rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>) Cylinder (radius: 'float', height: 'float', arc_size: 'float' = 360, rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)
+
+# -- cell 2 (0.6s, exit 0)
+from pathlib import Path
+import numpy as np, pyvista as pv, matplotlib.pyplot as plt
+L, W, H = 0.160, 0.100, 0.040
+WALL = 0.003
+STAND_D, STAND_H = 0.010, 0.025
+HOLE_D, HOLE_DEPTH = 0.004, 0.012
+INSET = 0.015
+VENT_W, VENT_H, VENT_Z0 = 0.030, 0.020, 0.010
+centers = [(INSET,INSET),(INSET,W-INSET),(L-INSET,INSET),(L-INSET,W-INSET)]
+cavity = bd.Box(L,W,H, align=(bd.Align.MIN,bd.Align.MIN,bd.Align.MIN))
+annuli=[]
+for x,y in centers:
+    outer = bd.Pos(x,y,0) * bd.Cylinder(STAND_D/2,STAND_H,align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN))
+    hole = bd.Pos(x,y,STAND_H-HOLE_DEPTH) * bd.Cylinder(HOLE_D/2,HOLE_DEPTH,align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN))
+    annuli.append(outer-hole)
+standoffs = annuli[0].fuse(*annuli[1:])
+fluid = cavity-standoffs
+expected_volume=L*W*H-4*(np.pi*(STAND_D/2)**2*STAND_H-np.pi*(HOLE_D/2)**2*HOLE_DEPTH)
+bb=fluid.bounding_box()
+print(f'envelope measured = {bb.size.X:.6f} x {bb.size.Y:.6f} x {bb.size.Z:.6f} m; requested = {L:.6f} x {W:.6f} x {H:.6f} m')
+print(f'fluid volume measured = {fluid.volume:.12g} m^3; analytic = {expected_volume:.12g} m^3; rel.err = {(fluid.volume/expected_volume-1):.3e}')
+verts,tris=fluid.tessellate(0.001,0.15)
+pts=np.array([[v.X,v.Y,v.Z] for v in verts]); faces=np.hstack([np.full((len(tris),1),3),np.array(tris)]).ravel()
+poly=pv.PolyData(pts,faces)
+pl=pv.Plotter(off_screen=True,window_size=(900,650)); pl.add_mesh(poly,color='lightblue',opacity=0.55,show_edges=True,edge_color='navy')
+pl.camera_position=[(0.24,-0.19,0.15),(0.08,0.05,0.015),(0,0,1)]; pl.add_axes(); pl.show(screenshot='coarse_geometry.png')
+print('coarse tessellation:',poly.n_cells,'triangles; screenshot coarse_geometry.png')
+# -- output
+envelope measured = 0.160000 x 0.100000 x 0.040000 m; requested = 0.160000 x 0.100000 x 0.040000 m
+fluid volume measured = 0.000632749204156 m^3; analytic = 0.000632749204156 m^3; rel.err = -5.551e-16
+coarse tessellation: 2700 triangles; screenshot coarse_geometry.png
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-16 03:19:23.225 (   0.332s) [    7E0B079B0780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-16 03:19:23.226 (   0.332s) [    7E0B079B0780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:19:23.239 (   0.346s) [    7E0B079B0780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_830540/4053515682.py:26: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.camera_position=[(0.24,-0.19,0.15),(0.08,0.05,0.015),(0,0,1)]; pl.add_axes(); pl.show(screenshot='coarse_geometry.png')
+
+# -- cell 3 (0.1s, exit 0)
+import gmsh, math
+gmsh.initialize()
+gmsh.model.add('enclosure_air')
+occ=gmsh.model.occ
+vbox=occ.addBox(0,0,0,L,W,H)
+ann_tags=[]
+for x,y in centers:
+    out=occ.addCylinder(x,y,0,0,0,STAND_H,STAND_D/2)
+    inn=occ.addCylinder(x,y,STAND_H-HOLE_DEPTH,0,0,HOLE_DEPTH,HOLE_D/2)
+    cut,_=occ.cut([(3,out)],[(3,inn)],removeObject=True,removeTool=True)
+    ann_tags.extend(cut)
+fluid_dimtags,_=occ.cut([(3,vbox)],ann_tags,removeObject=True,removeTool=True)
+vent=occ.addRectangle(0,(W-VENT_W)/2,0,VENT_H,VENT_W)
+occ.rotate([(2,vent)],0,0,0,0,1,0,-math.pi/2)
+occ.translate([(2,vent)],0,0,VENT_Z0)
+frag,_=occ.fragment(fluid_dimtags,[(2,vent)],removeObject=True,removeTool=True)
+occ.synchronize()
+vols=gmsh.model.getEntities(3); surfs=gmsh.model.getBoundary(vols,oriented=False,recursive=False)
+print('volumes',vols,'boundary surface count',len(surfs))
+for d,t in surfs:
+    typ=gmsh.model.getType(d,t); com=occ.getCenterOfMass(d,t); area=occ.getMass(d,t)
+    print(f's{t:2d} {typ:10s} area={area:.9g} com=({com[0]:.5f},{com[1]:.5f},{com[2]:.5f})')
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference                                                                                  Info    : [ 80%] Difference - Adding holes                                                                                Info    : [ 90%] Difference - Classify solids                                                                                Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference                                                                          
+... 2241 characters cut ...
+                         Info    : [ 80%] Difference - Adding holes                                                                                Info    : [ 90%] Difference - Classify solids                                                                                Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 80%] Difference                                                                                  Info    : [ 90%] Difference - Classify solids                                                                                Info    : [  0%] Fragments                                                                                  Info    : [ 10%] Fragments                                                                                  Info    : [ 20%] Fragments                                                                                  Info    : [ 30%] Fragments                                                                                  Info    : [ 40%] Fragments                                                                                  Info    : [ 50%] Fragments                                                                                  Info    : [ 70%] Fragments - Filling splits of edges                                                                                Info    : [ 80%] Fragments - Making faces                                                                                Info    : [ 90%] Fragments                                                                                                                                                                  volumes [(3, 1)] boundary surface count 23
+s48 Plane      area=0.0006 com=(0.00000,0.05000,0.02000)
+s49 Plane      area=0.0034 com=(-0.00000,0.05000,0.02000)
+s50 Plane      area=0.0064 com=(0.08000,0.00000,0.02000)
+s51 Plane      area=0.016 com=(0.08000,0.05000,0.04000)
+s52 Plane      area=0.0064 com=(0.08000,0.10000,0.02000)
+s53 Plane      area=0.0156858407 com=(0.08000,0.05000,0.00000)
+s54 Plane      area=0.004 com=(0.16000,0.05000,0.02000)
+s55 Cylinder   area=0.000785398163 com=(0.01500,0.01500,0.01250)
+s56 Cylinder   area=0.000785398163 com=(0.14500,0.01500,0.01250)
+s57 Cylinder   area=0.000785398163 com=(0.01500,0.08500,0.01250)
+s58 Cylinder   area=0.000785398163 com=(0.14500,0.08500,0.01250)
+s59 Plane      area=6.59734457e-05 com=(0.01500,0.01500,0.02500)
+s60 Plane      area=6.59734457e-05 com=(0.14500,0.01500,0.02500)
+s61 Plane      area=6.59734457e-05 com=(0.01500,0.08500,0.02500)
+s62 Plane      area=6.59734457e-05 com=(0.14500,0.08500,0.02500)
+s63 Cylinder   area=0.000150796447 com=(0.01500,0.01500,0.01900)
+s64 Cylinder   area=0.000150796447 com=(0.14500,0.01500,0.01900)
+s65 Cylinder   area=0.000150796447 com=(0.01500,0.08500,0.01900)
+s66 Cylinder   area=0.000150796447 com=(0.14500,0.08500,0.01900)
+s67 Plane      area=1.25663706e-05 com=(0.01500,0.01500,0.01300)
+s68 Plane      area=1.25663706e-05 com=(0.14500,0.01500,0.01300)
+s69 Plane      area=1.25663706e-05 com=(0.01500,0.08500,0.01300)
+s70 Plane      area=1.25663706e-05 com=(0.14500,0.08500,0.01300)
+
+# -- cell 4 (7.7s, exit 0)
+surface_info={t:(gmsh.model.getType(2,t),occ.getMass(2,t),occ.getCenterOfMass(2,t)) for _,t in surfs}
+def near(a,b,tol=1e-9): return abs(a-b)<tol
+open_top=[t for t,(typ,a,c) in surface_info.items() if typ=='Plane' and near(a,L*W) and near(c[2],H)]
+vent_faces=[t for t,(typ,a,c) in surface_info.items() if typ=='Plane' and near(a,VENT_W*VENT_H) and near(c[0],0)]
+stand_cyl=[t for t,(typ,a,c) in surface_info.items() if typ=='Cylinder' and near(a,math.pi*STAND_D*STAND_H)]
+stand_tops=[t for t,(typ,a,c) in surface_info.items() if typ=='Plane' and near(a,math.pi*((STAND_D/2)**2-(HOLE_D/2)**2))]
+hole_cyl=[t for t,(typ,a,c) in surface_info.items() if typ=='Cylinder' and near(a,math.pi*HOLE_D*HOLE_DEPTH)]
+hole_bottoms=[t for t,(typ,a,c) in surface_info.items() if typ=='Plane' and near(a,math.pi*(HOLE_D/2)**2)]
+used=set(open_top+vent_faces+stand_cyl+stand_tops+hole_cyl+hole_bottoms)
+walls_floor=[t for _,t in surfs if t not in used]
+groups={'openTop':open_top,'vent':vent_faces,'enclosureWallsAndFloor':walls_floor,'standoffOuterSurfaces':stand_cyl+stand_tops,'blindHoleSurfaces':hole_cyl+hole_bottoms}
+for name,tags in groups.items():
+    pg=gmsh.model.addPhysicalGroup(2,tags); gmsh.model.setPhysicalName(2,pg,name); print(name,tags)
+vg=gmsh.model.addPhysicalGroup(3,[t for _,t in vols]); gmsh.model.setPhysicalName(3,vg,'air')
+# Curvature-aware refinement fields on semantic surfaces
+fd=gmsh.model.mesh.field.add('Distance'); gmsh.model.mesh.field.setNumbers(fd,'FacesList',stand_cyl+stand_tops)
+fs=gmsh.model.mesh.field.add('Threshold'); gmsh.model.mesh.field.setNumber(fs,'InField',fd); gmsh.model.mesh.field.setNumber(fs,'SizeMin',0.0015); gmsh.model.mesh.field.setNumber(fs,'SizeMax',0.004); gmsh.model.mesh.field.setNumber(fs,'DistMin',0.002); gmsh.model.mesh.field.setNumber(fs,'DistMax',0.012)
+fh=gmsh.model.mesh.field.add('Distance'); gmsh.model.mesh.field.setNumbers(fh,'FacesList',hole_cyl+hole_bottoms)
+fht=gmsh.model.mesh.field.add('Threshold'); gmsh.model.mesh.field.setNumber(fht,'InField',fh); gmsh.model.mesh.field.setNumber(fht,'SizeMin',0.0008); gmsh.model.mesh.field.setNumber(fht,'SizeMax',0.004); gmsh.model.mesh.field.setNumber(fht,'DistMin',0.001); gmsh.model.mesh.field.setNumber(fht,'DistMax',0.006)
+fmin=gmsh.model.mesh.field.add('Min'); gmsh.model.mesh.field.setNumbers(fmin,'FieldsList',[fs,fht]); gmsh.model.mesh.field.setAsBackgroundMesh(fmin)
+gmsh.option.setNumber('Mesh.MeshSizeMin',0.0007); gmsh.option.setNumber('Mesh.MeshSizeMax',0.004)
+gmsh.option.setNumber('Mesh.MeshSizeFromCurvature',24); gmsh.option.setNumber('Mesh.Algorithm3D',10); gmsh.option.setNumber('Mesh.Optimize',1); gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3); gmsh.model.mesh.optimize('Netgen')
+gmsh.write('enclosure_air.msh')
+types,elemTags,nodeTags=gmsh.model.mesh.getElements(3)
+print('3D elements by type:',[(gmsh.model.mesh.getElementProperties(t)[0],len(e)) for t,e in zip(types,elemTags)])
+# -- output
+openTop [51]
+vent [48]
+enclosureWallsAndFloor [49, 50, 52, 53, 54]
+standoffOuterSurfaces [55, 56, 57, 58, 59, 60, 61, 62]
+blindHoleSurfaces [63, 64, 65, 66, 67, 68, 69, 70]
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 61 (Line)
+Info    : [ 10%] Meshing curve 62 (Line)
+Info    : [ 10%] Meshing curve 63 (Line)
+Info    : [ 10%] Meshing curve 64 (Line)
+Info    : [ 20%] Meshing curve 65 (Line)
+Info    : [ 20%] Meshing curve 66 (Line)
+Info    : [ 20%] Meshing curve 67 (Line)
+Info    : [ 20%] Meshing curve 68 (Line)
+Info    : [ 30%] Meshing curve 69 (Line)
+Info    : [ 30%] Meshing curve 70 (Line)
+Info    : [ 30%] Meshing curve 71 (Line)
+Info    : [ 30%] Meshing curve 72 (Line)
+Info    : [ 40%] Meshing curve 73 (Line)
+Info    : [ 40%] Meshing curve 74 (Line)
+Info    : [ 40%] Meshing curve 75 (Line)
+Info    : [ 40%] Meshing curve 76 (Line)
+Info    : [ 50%] Meshing curve 77 (Circle)
+Info    : [ 50%] Meshing curve 78 (Circle)
+Info    : [ 50%] Meshing curve 79 (Circle)
+Info    : [ 50%] Meshing curve 80 (Circle)
+Info    : [ 60%] Meshing curve 81 (Circle)
+Info    : [ 60%] Meshing curve 82 (Line)
+Info    : [ 60%] Meshing curve 83 (Circle)
+Info    : [ 60%] Meshing curve 84 (Line)
+Info    : [ 70%] Meshing curve 85 (Circle)
+Info    : [ 70%] Meshing curve 86 (Line)
+Info    : [ 70%] Meshing curve 87 (Circle)
+Info    : [ 70%] Meshing curve 88 (Line)
+Info    : [ 80%] Meshing curve 89 (Circle)
+Info    : [ 80%] Meshing curve 90 (Circle)
+Info    : [ 80%] Meshing curve 91 (Circle)
+Info    : [ 80%] Meshing curve 92 (Circle)
+Info    : [ 90%] Meshing curve 93 (Line)
+Info    : [ 90%] Meshing curve 94 (Circle)
+Info    : [ 90%] Meshing curve 95 (Line)
+Info    : [ 90%] Meshing curve 96 (Circle)
+Info    : [100%] Meshing curve 97 (Line)
+Info    : [100%] Meshing curve 98 (Circle)
+Info    : [100%] Meshing curve 99 (Line)
+Info    : [100%] Meshing curve 100 (Circle)
+Info    : Done meshing 1D (Wall 0.0414877s, CPU 0.041918s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 48 (Plane, Fro
+... 3577 characters cut ...
+e computing interpolated mesh sizes
+Info    : Improving       4039 tet. on   1 thrd (S & ER)
+Info    : Improving        161 tet. on   1 thrd (S & ER)
+Info    : Improving         46 tet. on   1 thrd (S & ER)
+Info    : Improving         38 tet. on   1 thrd (S & ER)
+Info    : Improving         37 tet. on   1 thrd (S & ER)
+Info    : Improving         37 tet. on   1 thrd (GSC)
+Info    : Improving          1 tet. on   1 thrd (S & ER)
+Info    : Improving          1 tet. on   1 thrd (S & ER)
+Info    :  	Final tet. mesh contains 138685 tetrahedra
+Info    :  	Final tet. mesh contains 22971 vertices
+Info    : tEmptyMesh  	 = 	    0.033
+Info    : tVerifyBnd  	 = 	    0.008
+Info    : tBndRecovery	 = 	    0.060
+Info    : tConvertMesh	 = 	    0.009
+Info    : tRefine     	 = 	    1.278
+Info    : tOptimize   	 = 	    0.022
+Info    : Done meshing 3D (Wall 1.43223s, CPU 1.41445s)
+Info    : 22971 nodes 132077 elements
+Info    : Optimizing mesh (Netgen)...
+Info    : Optimizing volume 1
+Info    : CalcLocalH: 22971 Points 112023 Elements 19208 Surface Elements 
+Info    : Remove Illegal Elements 
+Info    : 1431 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 14.332 
+Info    : 253 splits performed 
+Info    : SwapImprove  
+Info    : 311 swaps performed 
+Info    : SwapImprove2  
+Info    : 4 swaps performed 
+Info    : 702 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 145.835 
+Info    : 188 splits performed 
+Info    : SwapImprove  
+Info    : 61 swaps performed 
+Info    : SwapImprove2  
+Info    : 5 swaps performed 
+Info    : 147 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 145.835 
+Info    : 43 splits performed 
+Info    : SwapImprove  
+Info    : 4 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : 28 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 145.835 
+Info    : 8 splits performed 
+Info    : SwapImprove  
+Info    : 1 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : 3 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 145.835 
+Info    : 1 splits performed 
+Info    : SwapImprove  
+Info    : 0 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : 0 illegal tets 
+Info    : Volume Optimization 
+Info    : CombineImprove 
+Info    : 1058 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 154109 
+Info    : Total badness = 144991 
+Info    : SplitImprove 
+Info    : badmax = 15.9394 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 144991 
+Info    : Total badness = 143928 
+Info    : SwapImprove  
+Info    : 5655 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 134848 
+Info    : Total badness = 131941 
+Info    : CombineImprove 
+Info    : 209 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 130046 
+Info    : Total badness = 129643 
+Info    : SplitImprove 
+Info    : badmax = 13.239 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 129643 
+Info    : Total badness = 129577 
+Info    : SwapImprove  
+Info    : 1074 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 128824 
+Info    : Total badness = 128186 
+Info    : CombineImprove 
+Info    : 59 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 127658 
+Info    : Total badness = 127560 
+Info    : SplitImprove 
+Info    : badmax = 15.6764 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 127560 
+Info    : Total badness = 127542 
+Info    : SwapImprove  
+Info    : 363 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 127371 
+Info    : Total badness = 127163 
+Info    : Done optimizing mesh (Wall 5.63941s, CPU 5.61508s)
+Info    : Writing 'enclosure_air.msh'...
+Info    : Done writing 'enclosure_air.msh'
+3D elements by type: [('Tetrahedron 4', 102401)]
+
+# -- cell 5 (0.7s, exit 0)
+tri_dir=Path('constant/triSurface'); tri_dir.mkdir(parents=True,exist_ok=True)
+all_node_tags,all_xyz,_=gmsh.model.mesh.getNodes()
+xyz_map={int(tag):all_xyz[3*i:3*i+3] for i,tag in enumerate(all_node_tags)}
+signed_bnd=gmsh.model.getBoundary(vols,combined=False,oriented=True,recursive=False)
+orient={abs(t):(1 if t>0 else -1) for d,t in signed_bnd}
+def surface_triangles(tags):
+    out=[]
+    for st in tags:
+        etypes,etags,enodes=gmsh.model.mesh.getElements(2,st)
+        for et,nds in zip(etypes,enodes):
+            name,dim,order,nper,_,_=gmsh.model.mesh.getElementProperties(et)
+            if name.startswith('Triangle') and nper==3:
+                arr=np.array(nds,dtype=np.int64).reshape(-1,3)
+                if orient.get(st,1)<0: arr=arr[:,[0,2,1]]
+                out.extend(arr.tolist())
+    return out
+def write_ascii_stl(path,name,triangles):
+    area=0.0
+    with open(path,'w') as f:
+        f.write(f'solid {name}\n')
+        for ids in triangles:
+            p=np.array([xyz_map[i] for i in ids]); cr=np.cross(p[1]-p[0],p[2]-p[0]); mag=np.linalg.norm(cr); area+=mag/2
+            n=cr/mag
+            f.write(f' facet normal {n[0]:.12g} {n[1]:.12g} {n[2]:.12g}\n  outer loop\n')
+            for q in p: f.write(f'   vertex {q[0]:.12g} {q[1]:.12g} {q[2]:.12g}\n')
+            f.write('  endloop\n endfacet\n')
+        f.write(f'endsolid {name}\n')
+    return area
+for name,tags in groups.items():
+    ts=surface_triangles(tags); area=write_ascii_stl(tri_dir/f'{name}.stl',name,ts)
+    print(f'{name}.stl: {len(ts)} triangles, triangulated area {area:.9g} m^2')
+print('Exported',len(list(tri_dir.glob('*.stl'))),'patch STL files before OpenFOAM conversion.')
+# -- output
+openTop.stl: 2354 triangles, triangulated area 0.016 m^2
+vent.stl: 106 triangles, triangulated area 0.0006 m^2
+enclosureWallsAndFloor.stl: 8098 triangles, triangulated area 0.0358894171 m^2
+standoffOuterSurfaces.stl: 5180 triangles, triangulated area 0.00339638177 m^2
+blindHoleSurfaces.stl: 3470 triangles, triangulated area 0.000650335048 m^2
+Exported 5 patch STL files before OpenFOAM conversion.
+
+# -- cell 6 (0.7s, exit 0)
+import subprocess, textwrap, os
+Path('system').mkdir(exist_ok=True)
+Path('system/controlDict').write_text(textwrap.dedent('''\
+FoamFile
+{
+    format ascii;
+    class dictionary;
+    object controlDict;
+}
+application checkMesh;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 1;
+deltaT 1;
+writeControl timeStep;
+writeInterval 1;
+'''))
+r=subprocess.run(['gmshToFoam','enclosure_air.msh'],text=True,capture_output=True)
+print(r.stdout[-5000:]); print(r.stderr[-1000:]); print('returncode',r.returncode)
+print('\nBoundary file patch lines:')
+btxt=Path('constant/polyMesh/boundary').read_text()
+for line in btxt.splitlines():
+    if line.strip() in list(groups)+['air']: print(line.strip())
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : gmshToFoam enclosure_air.msh
+Date   : Sep 16 2026
+Time   : 03:20:31
+Host   : yc-demo
+PID    : 832005
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T21-20260916-031852-a0b3/t21
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:6
+    Surface 1	openTop
+    Surface 2	vent
+    Surface 3	enclosureWallsAndFloor
+    Surface 4	standoffOuterSurfaces
+    Surface 5	blindHoleSurfaces
+    Volume 6	air
+
+Starting to read points at line 14
+Vertices to be read: 22138
+Vertices read:22138
+
+Starting to read cells at line 22155
+Cells to be read: 121609
+
+Mapping region 2 to Foam patch 0
+Mapping region 3 to Foam patch 1
+Mapping region 1 to Foam patch 2
+Mapping region 4 to Foam patch 3
+Mapping region 5 to Foam patch 4
+Mapping region 6 to Foam cellZone 0
+Cells:
+    total:102401
+    hex  :0
+    prism:0
+    pyr  :0
+    tet  :102401
+
+CellZones:
+Zone	Size
+    0	102401
+
+Patch 0 gets name vent
+Patch 1 gets name enclosureWallsAndFloor
+Patch 2 gets name openTop
+Patch 3 gets name standoffOuterSurfaces
+Patch 4 gets name blindHoleSurfaces
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 19208 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone air and cellSet
+End
+
+
+
+returncode 0
+
+Boundary file patch lines:
+vent
+enclosureWallsAndFloor
+openTop
+standoffOuterSurfaces
+blindHoleSurfaces
+
+# -- cell 7 (0.4s, exit 0)
+print(Path('constant/polyMesh/boundary').read_text())
+r=subprocess.run(['checkMesh','-allTopology','-allGeometry'],text=True,capture_output=True)
+Path('checkMesh.log').write_text(r.stdout+r.stderr)
+print('\n--- checkMesh tail ---\n',r.stdout[-7000:]); print(r.stderr[-1000:]); print('returncode',r.returncode)
+# -- output
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+5
+(
+    vent
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          106;
+        startFace       195198;
+    }
+    enclosureWallsAndFloor
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          8098;
+        startFace       195304;
+    }
+    openTop
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          2354;
+        startFace       203402;
+    }
+    standoffOuterSurfaces
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          5180;
+        startFace       205756;
+    }
+    blindHoleSurfaces
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          3470;
+        startFace       210936;
+    }
+)
+
+// ************************************************************************* //
+
+
+--- checkMesh tail ---
+ /*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allTopology -allGeometry
+Date   : Sep 16 2026
+Time   : 03:20:36
+Host   : yc-demo
+PID    : 832076
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T21-20260916-031852-a0b3/t21
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T21-20260916-031852-a0b3/t21/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+returncode 1
+
+# -- cell 8 (1.5s, exit 0)
+Path('system/fvSchemes').write_text(textwrap.dedent('''\
+FoamFile { format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+'''))
+Path('system/fvSolution').write_text('FoamFile { format ascii; class dictionary; object fvSolution; }\nsolvers {}\n')
+r=subprocess.run(['checkMesh','-allTopology','-allGeometry'],text=True,capture_output=True)
+Path('checkMesh.log').write_text(r.stdout+r.stderr)
+print(r.stdout[-9000:]); print(r.stderr[-1000:]); print('returncode',r.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allTopology -allGeometry
+Date   : Sep 16 2026
+Time   : 03:20:41
+Host   : yc-demo
+PID    : 832099
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T21-20260916-031852-a0b3/t21
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           22138
+    faces:            214406
+    internal faces:   195198
+    cells:            102401
+    faces per cell:   4
+    boundary patches: 5
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    102401
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    vent                106      67       ok (non-closed singly connected)   (0 0.035 0.01) (2.22045e-18 0.065 0.03)
+    enclosureWallsAndFloor8098     4171     ok (non-closed singly connected)   (0 0 0) (0.16 0.1 0.04)
+    openTop             2354     1243     ok (non-closed singly connected)   (0 0 0.04) (0.16 0.1 0.04)
+    standoffOuterSurfaces5180     2674     ok (non-closed singly connected)   (0.01 0.01 0) (0.15 0.09 0.025)
+    blindHoleSurfaces   3470     1775     ok (non-closed singly connected)   (0.013 0.013 0.013) (0.147 0.087 0.025)
+    ".*"                19208    9606     ok (closed singly connected)       (0 0 0) (0.16 0.1 0.04)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    air                 102401       22138        0.000632807  (0 0 0) (0.16 0.1 0.04)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.16 0.1 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (2.75447e-17 5.73348e-18 -4.4644e-15) OK.
+    Max cell openness = 2.19254e-16 OK.
+    Max aspect ratio = 4.8375 OK.
+    Minimum face area = 7.363e-08. Maximum face area = 2.62529e-05.  Face area magnitudes OK.
+    Min volume = 1.06085e-11. Max volume = 4.51408e-08.  Total volume = 0.000632807.  Cell volumes OK.
+    Mesh non-orthogonality Max: 58.6574 average: 16.3363
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.673977 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.000323542 0.00915252 OK.
+    All angles in faces OK.
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.00518592 average: 0.176475
+    Cell determinant check OK.
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.166034 average: 0.445636
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.199089 average: 0.814803
+    Face volume ratio check OK.
+
+Mesh OK.
+
+End
+
+
+
+returncode 0
+
+# -- cell 9 (0.4s, exit 0)
+# Recover dimensions from the actual imprinted OCC surfaces
+vbb=occ.getBoundingBox(2,vent_faces[0]); vdim=(vbb[4]-vbb[1],vbb[5]-vbb[2]); vz0=vbb[2]
+sbb=occ.getBoundingBox(2,stand_cyl[0]); sdiam=max(sbb[3]-sbb[0],sbb[4]-sbb[1]); sheight=sbb[5]-sbb[2]
+hbb=occ.getBoundingBox(2,hole_cyl[0]); hdiam=max(hbb[3]-hbb[0],hbb[4]-hbb[1]); hdepth=hbb[5]-hbb[2]
+actual_centers=sorted([(surface_info[t][2][0],surface_info[t][2][1]) for t in stand_cyl])
+print(f'internal envelope measured {bb.size.X:.6f} x {bb.size.Y:.6f} x {bb.size.Z:.6f} m; requested 0.160 x 0.100 x 0.040 m')
+print(f'standoff measured diameter {sdiam:.6f} m, height {sheight:.6f} m; requested 0.010, 0.025 m')
+print(f'blind hole measured diameter {hdiam:.6f} m, depth {hdepth:.6f} m; requested 0.004, 0.012 m')
+print('standoff centres measured:',actual_centers,'m; requested 0.015 m inset from internal corners')
+print(f'vent measured width(y) {vdim[0]:.6f} m, height(z) {vdim[1]:.6f} m, lower edge {vz0:.6f} m; requested 0.030, 0.020, 0.010 m')
+colors={'openTop':'deepskyblue','vent':'limegreen','enclosureWallsAndFloor':'lightgray','standoffOuterSurfaces':'orange','blindHoleSurfaces':'magenta'}
+pl2=pv.Plotter(off_screen=True,window_size=(950,680))
+for name,tags in groups.items():
+    ts=surface_triangles(tags); unique=sorted(set(i for tri in ts for i in tri)); imap={n:i for i,n in enumerate(unique)}
+    p=np.array([xyz_map[i] for i in unique]); f=np.hstack([np.full((len(ts),1),3),np.array([[imap[i] for i in tri] for tri in ts])]).ravel()
+    pl2.add_mesh(pv.PolyData(p,f),color=colors[name],opacity=0.28 if name=='openTop' else 0.82,show_edges=False,label=name)
+pl2.add_legend(); pl2.add_axes(); pl2.camera_position=[(0.24,-0.19,0.14),(0.08,0.05,0.015),(0,0,1)]
+pl2.show(screenshot='final_patch_mesh.png')
+print('Rendered actual final surface mesh to final_patch_mesh.png')
+# -- output
+internal envelope measured 0.160000 x 0.100000 x 0.040000 m; requested 0.160 x 0.100 x 0.040 m
+standoff measured diameter 0.010010 m, height 0.025013 m; requested 0.010, 0.025 m
+blind hole measured diameter 0.004006 m, depth 0.012006 m; requested 0.004, 0.012 m
+standoff centres measured: [(0.015, 0.015), (0.015, 0.085), (0.14500000000000002, 0.015), (0.14500000000000002, 0.085)] m; requested 0.015 m inset from internal corners
+vent measured width(y) 0.030000 m, height(z) 0.020000 m, lower edge 0.010000 m; requested 0.030, 0.020, 0.010 m
+Rendered actual final surface mesh to final_patch_mesh.png
+
+[0m[33m2026-09-16 03:20:55.916 (  93.023s) [    7E0B079B0780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:20:55.917 (  93.023s) [    7E0B079B0780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_830540/3862221005.py:18: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl2.show(screenshot='final_patch_mesh.png')
+
+# -- cell 10 (0.1s, exit 0)
+def cylinder_measures(st):
+    curves=gmsh.model.getBoundary([(2,st)],oriented=False,recursive=False)
+    circumferences=[occ.getMass(1,t) for d,t in curves if d==1]
+    circ=sum(circumferences)/len(circumferences)
+    area=occ.getMass(2,st)
+    return circ/math.pi, area/circ
+sd,sh=cylinder_measures(stand_cyl[0]); hd,hdep=cylinder_measures(hole_cyl[0])
+mesh_vol=0.000632807; cad_vol=fluid.volume
+print(f'standoff diameter/height recovered = {sd:.9f}, {sh:.9f} m; requested = 0.010000000, 0.025000000 m')
+print(f'blind-hole diameter/depth recovered = {hd:.9f}, {hdep:.9f} m; requested = 0.004000000, 0.012000000 m')
+print(f'CAD fluid volume = {cad_vol:.12g} m^3; checkMesh volume = {mesh_vol:.12g} m^3; difference = {(mesh_vol/cad_vol-1)*100:.4f}%')
+print('STLs:',sorted(str(p) for p in tri_dir.glob('*.stl')))
+gmsh.finalize()
+# -- output
+standoff diameter/height recovered = 0.010000000, 0.025000000 m; requested = 0.010000000, 0.025000000 m
+blind-hole diameter/depth recovered = 0.004000000, 0.012000000 m; requested = 0.004000000, 0.012000000 m
+CAD fluid volume = 0.000632749204156 m^3; checkMesh volume = 0.000632807 m^3; difference = 0.0091%
+STLs: ['constant/triSurface/blindHoleSurfaces.stl', 'constant/triSurface/enclosureWallsAndFloor.stl', 'constant/triSurface/openTop.stl', 'constant/triSurface/standoffOuterSurfaces.stl', 'constant/triSurface/vent.stl']
+
+# -- cell 11 (1.8s, exit 0)
+def read_ascii_tris(path):
+    vs=[]
+    for line in Path(path).read_text().splitlines():
+        s=line.strip().split()
+        if s and s[0]=='vertex': vs.append(tuple(map(float,s[1:4])))
+    return np.array(vs).reshape(-1,3,3)
+def expected_outward(name,c):
+    if name=='openTop': return np.array([0.,0.,1.])
+    if name=='vent': return np.array([-1.,0.,0.])
+    if name=='enclosureWallsAndFloor':
+        distances=[(c[2],np.array([0.,0.,-1.])),(c[0],np.array([-1.,0.,0.])),(L-c[0],np.array([1.,0.,0.])),(c[1],np.array([0.,-1.,0.])),(W-c[1],np.array([0.,1.,0.]))]
+        return min(distances,key=lambda q:q[0])[1]
+    x,y=min(centers,key=lambda q:(c[0]-q[0])**2+(c[1]-q[1])**2)
+    if name=='standoffOuterSurfaces':
+        return np.array([0.,0.,-1.]) if abs(c[2]-STAND_H)<1e-7 else np.array([x-c[0],y-c[1],0.])
+    return np.array([0.,0.,-1.]) if abs(c[2]-(STAND_H-HOLE_DEPTH))<1e-7 else np.array([c[0]-x,c[1]-y,0.])
+for name in groups:
+    path=tri_dir/f'{name}.stl'; arr=read_ascii_tris(path); flipped=0
+    for i,p in enumerate(arr):
+        cr=np.cross(p[1]-p[0],p[2]-p[0]); exp=expected_outward(name,p.mean(axis=0))
+        if np.dot(cr,exp)<0: arr[i,[1,2]]=arr[i,[2,1]]; flipped+=1
+    write_ascii_stl(path,name,[[j for j in range(3)]]) if False else None
+    with open(path,'w') as f:
+        f.write(f'solid {name}\n')
+        for p in arr:
+            cr=np.cross(p[1]-p[0],p[2]-p[0]); n=cr/np.linalg.norm(cr)
+            f.write(f' facet normal {n[0]:.12g} {n[1]:.12g} {n[2]:.12g}\n  outer loop\n')
+            for q in p: f.write(f'   vertex {q[0]:.12g} {q[1]:.12g} {q[2]:.12g}\n')
+            f.write('  endloop\n endfacet\n')
+        f.write(f'endsolid {name}\n')
+    print(name,'triangles',len(arr),'flipped',flipped)
+# Independent welded-edge audit across all patch STLs
+from collections import defaultdict
+edges=defaultdict(list); scaleq=10**11
+for name in groups:
+    for p in read_ascii_tris(tri_dir/f'{name}.stl'):
+        q=[tuple(np.rint(v*scaleq).astype(np.int64)) for v in p]
+        for a,b in [(q[0],q[1]),(q[1],q[2]),(q[2],q[0])]: edges[tuple(sorted((a,b)))].append((a,b))
+free=sum(len(v)==1 for v in edges.values()); nonman=sum(len(v)!=2 for v in edges.values()); same=sum(len(v)==2 and v[0]==v[1] for v in edges.values())
+print('union edge audit: free =',free,'non-manifold =',nonman,'same-direction =',same,'of',len(edges),'unique edges')
+# -- output
+openTop triangles 2354 flipped 0
+vent triangles 106 flipped 0
+enclosureWallsAndFloor triangles 8098 flipped 6428
+standoffOuterSurfaces triangles 5180 flipped 5180
+blindHoleSurfaces triangles 3470 flipped 296
+union edge audit: free = 0 non-manifold = 0 same-direction = 0 of 28812 unique edges
+

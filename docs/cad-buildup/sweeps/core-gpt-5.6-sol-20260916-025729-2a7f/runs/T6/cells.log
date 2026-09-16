@@ -1,0 +1,121 @@
+# -- cell 1 (2.4s, exit 1)
+from pathlib import Path
+import re
+import build123d as bd
+step_path = Path('/home/qiuzi/.openreynolds-buildup/work/T6-20260916-033127-a3a6/geometry/customer_part.step')
+header = step_path.read_text(errors='ignore')[:200000]
+unit_lines = [ln.strip() for ln in header.splitlines() if any(k in ln.upper() for k in ('SI_UNIT','CONVERSION_BASED_UNIT','LENGTH_UNIT'))]
+shape = bd.import_step(step_path)
+solids = list(shape.solids())
+bb = shape.bounding_box()
+print('STEP unit declarations:')
+print('\n'.join(unit_lines[:20]) if unit_lines else 'NONE FOUND')
+print(f'Imported type: {type(shape).__name__}; solids={len(solids)}; shells={len(shape.shells())}; faces={len(shape.faces())}')
+print(f'OCCT valid: {shape.is_valid()}')
+print(f'Bounds (import coordinates): min=({bb.min.X:.6g},{bb.min.Y:.6g},{bb.min.Z:.6g}) max=({bb.max.X:.6g},{bb.max.Y:.6g},{bb.max.Z:.6g}) size=({bb.size.X:.6g},{bb.size.Y:.6g},{bb.size.Z:.6g})')
+print('Solid volumes:', [float(s.volume) for s in solids])
+# -- output
+STEP unit declarations:
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+Imported type: Solid; solids=1; shells=1; faces=7
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 13[39m
+[32m      9[39m bb = shape.bounding_box()
+[32m     10[39m print([33m'STEP unit declarations:'[39m)
+[32m     11[39m print([33m'\n'[39m.join(unit_lines[:[32m20[39m]) [38;5;28;01mif[39;00m unit_lines [38;5;28;01melse[39;00m [33m'NONE FOUND'[39m)
+[32m     12[39m print(f'Imported type: {type(shape).__name__}; solids={len(solids)}; shells={len(shape.shells())}; faces={len(shape.faces())}')
+[32m---> [39m[32m13[39m print(f'OCCT valid: {shape.is_valid()}')
+[32m     14[39m print(f'Bounds (import coordinates): min=({bb.min.X:.6g},{bb.min.Y:.6g},{bb.min.Z:.6g}) max=({bb.max.X:.6g},{bb.max.Y:.6g},{bb.max.Z:.6g}) size=({bb.size.X:.6g},{bb.size.Y:.6g},{bb.size.Z:.6g})')
+[32m     15[39m print([33m'Solid volumes:'[39m, [float(s.volume) [38;5;28;01mfor[39;00m s [38;5;28;01min[39;00m solids])
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 2 (0.6s, exit 0)
+from pathlib import Path
+import build123d as bd
+import pyvista as pv
+step_path = Path('/home/qiuzi/.openreynolds-buildup/work/T6-20260916-033127-a3a6/geometry/customer_part.step')
+header = step_path.read_text(errors='ignore')[:200000]
+unit_context = [ln.strip() for ln in header.splitlines() if any(f'#{i} =' in ln for i in range(420,432))]
+shape = bd.import_step(step_path)
+solids = list(shape.solids()); bb = shape.bounding_box()
+print('STEP records near unit assignment:\n' + '\n'.join(unit_context))
+print(f'Imported type={type(shape).__name__}; solids={len(solids)}; shells={len(shape.shells())}; faces={len(shape.faces())}; valid={shape.is_valid}')
+print(f'Bounds: min=({bb.min.X:.6g},{bb.min.Y:.6g},{bb.min.Z:.6g}), max=({bb.max.X:.6g},{bb.max.Y:.6g},{bb.max.Z:.6g}), size=({bb.size.X:.6g},{bb.size.Y:.6g},{bb.size.Z:.6g})')
+print(f'Volume={shape.volume:.9g} coordinate_unit^3')
+bd.export_stl(shape, 'customer_import_raw.stl', tolerance=0.15, angular_tolerance=0.15)
+mesh = pv.read('customer_import_raw.stl')
+pl = pv.Plotter(off_screen=True, window_size=(900,650)); pl.add_mesh(mesh, color='lightsteelblue', show_edges=True); pl.add_axes(); pl.view_isometric(); pl.show(screenshot='customer_import.png')
+print('Rendered customer_import.png')
+# -- output
+STEP records near unit assignment:
+#420 = ORIENTED_EDGE('',*,*,#348,.T.);
+#421 = ORIENTED_EDGE('',*,*,#249,.F.);
+#422 = FACE_BOUND('',#423,.T.);
+#423 = EDGE_LOOP('',(#424));
+#424 = ORIENTED_EDGE('',*,*,#372,.F.);
+#425 = ( GEOMETRIC_REPRESENTATION_CONTEXT(3)
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,
+#430 = PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#7));
+Imported type=Solid; solids=1; shells=1; faces=7; valid=True
+Bounds: min=(0,0,0), max=(200,100,100), size=(200,100,100)
+Volume=1748672.59 coordinate_unit^3
+Rendered customer_import.png
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-16 03:31:44.867 (   0.293s) [    7A9AE1504780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-16 03:31:44.868 (   0.293s) [    7A9AE1504780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:31:44.881 (   0.306s) [    7A9AE1504780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_852276/1374207071.py:15: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl = pv.Plotter(off_screen=True, window_size=(900,650)); pl.add_mesh(mesh, color='lightsteelblue', show_edges=True); pl.add_axes(); pl.view_isometric(); pl.show(screenshot='customer_import.png')
+
+# -- cell 3 (0.1s, exit 0)
+lines = header.splitlines()
+for i, ln in enumerate(lines):
+    if ln.startswith('#425'):
+        print('Complete STEP context:')
+        print('\n'.join(lines[i:i+12]))
+print('\nCAD face inventory:')
+for i, f in enumerate(shape.faces(), 1):
+    c = f.center(); n = f.normal_at(); fb = f.bounding_box()
+    print(f'{i}: geom={f.geom_type}, area={f.area:.9g}, edges={len(f.edges())}, center=({c.X:.6g},{c.Y:.6g},{c.Z:.6g}), normal=({n.X:.5g},{n.Y:.5g},{n.Z:.5g}), size=({fb.size.X:.6g},{fb.size.Y:.6g},{fb.size.Z:.6g})')
+# -- output
+Complete STEP context:
+#425 = ( GEOMETRIC_REPRESENTATION_CONTEXT(3) 
+GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#429)) GLOBAL_UNIT_ASSIGNED_CONTEXT
+((#426,#427,#428)) REPRESENTATION_CONTEXT('Context #1',
+  '3D Context with UNIT and UNCERTAINTY') );
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,
+  'distance_accuracy_value','confusion accuracy');
+#430 = PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#7));
+ENDSEC;
+END-ISO-10303-21;
+
+CAD face inventory:
+1: geom=GeomType.PLANE, area=8743.36294, edges=5, center=(0,50,50), normal=(-1,-0,0), size=(0,100,100)
+2: geom=GeomType.PLANE, area=20000, edges=4, center=(100,0,50), normal=(0,-1,-0), size=(200,0,100)
+3: geom=GeomType.PLANE, area=20000, edges=4, center=(100,50,100), normal=(0,0,1), size=(200,100,0)
+4: geom=GeomType.PLANE, area=20000, edges=4, center=(100,50,0), normal=(-0,-0,-1), size=(200,100,0)
+5: geom=GeomType.PLANE, area=20000, edges=4, center=(100,100,50), normal=(-0,1,0), size=(200,0,100)
+6: geom=GeomType.CYLINDER, area=25132.7412, edges=3, center=(100,50,30), normal=(-0,-2.0682e-13,1), size=(200,40,40)
+7: geom=GeomType.PLANE, area=8743.36294, edges=5, center=(200,50,50), normal=(1,0,-0), size=(0,100,100)
+
+# -- cell 4 (0.1s, exit 0)
+from pathlib import Path
+for diagnostic in ('customer_import_raw.stl', 'customer_import.png'):
+    Path(diagnostic).unlink(missing_ok=True)
+print('Removed temporary inspection artifacts; no geometry or mesh retained.')
+# -- output
+Removed temporary inspection artifacts; no geometry or mesh retained.
+

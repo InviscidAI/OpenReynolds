@@ -1,0 +1,1039 @@
+# -- cell 1 (2.4s, exit 0)
+import build123d as bd
+import numpy as np
+import matplotlib.pyplot as plt
+# All dimensions are metres.
+L=0.060; R_BORE=0.02005; R_SHAFT=0.020; KEY_W=0.012; KEY_DEPTH=0.005
+# Algebra-mode CAD: shaft keyway extends from the nominal crown down to y=15 mm.
+outer = bd.Cylinder(R_BORE, L)
+shaft_blank = bd.Cylinder(R_SHAFT, L)
+key_cut = bd.Pos(-KEY_W/2, R_SHAFT-KEY_DEPTH, 0) * bd.Box(KEY_W, KEY_DEPTH+0.001, L)
+shaft_keyed = shaft_blank - key_cut
+fluid = outer - shaft_keyed
+print(f"sealed length: {L:.6f} m (requested 0.060000 m)")
+print(f"bore diameter: {2*R_BORE:.6f} m (requested 0.040100 m)")
+print(f"shaft diameter: {2*R_SHAFT:.6f} m (requested 0.040000 m)")
+print(f"radial clearance: {R_BORE-R_SHAFT:.8f} m (requested 0.00005000 m)")
+print(f"keyway width: {KEY_W:.6f} m; radial crown-to-floor depth: {KEY_DEPTH:.6f} m")
+print(f"fluid volume: {fluid.volume:.10e} m^3; faces: {len(fluid.faces())}; solids: {len(fluid.solids())}")
+# Cross-section plot, full and clearance close-up.
+th=np.linspace(0,2*np.pi,1000); yi=np.sqrt(R_SHAFT**2-(KEY_W/2)**2)
+fig,ax=plt.subplots(1,2,figsize=(11,4.5))
+for a in ax:
+    a.plot(R_BORE*np.cos(th)*1e3,R_BORE*np.sin(th)*1e3,'b-',lw=2,label='bore')
+    # keyed shaft boundary
+    tt=np.linspace(np.arcsin(yi/R_SHAFT),2*np.pi+np.arcsin(yi/R_SHAFT),1200)
+    keep=~((np.sin(tt)>0)&(np.abs(R_SHAFT*np.cos(tt))<KEY_W/2))
+    a.plot((R_SHAFT*np.cos(tt)[keep])*1e3,(R_SHAFT*np.sin(tt)[keep])*1e3,'k-',lw=1.5)
+    a.plot(np.array([-6,-6,6,6]),np.array([yi*1e3,15,15,yi*1e3]),'k-',lw=1.5)
+    a.set_aspect('equal'); a.grid(True); a.set_xlabel('x [mm]'); a.set_ylabel('y [mm]')
+ax[0].set_xlim(-22,22); ax[0].set_ylim(-22,22); ax[0].set_title('Oil cross-section')
+ax[1].set_xlim(17.5,20.2); ax[1].set_ylim(-4,4); ax[1].set_title('0.05 mm clearance detail')
+plt.tight_layout(); plt.show()
+# -- output
+sealed length: 0.060000 m (requested 0.060000 m)
+bore diameter: 0.040100 m (requested 0.040100 m)
+shaft diameter: 0.040000 m (requested 0.040000 m)
+radial clearance: 0.00005000 m (requested 0.00005000 m)
+keyway width: 0.012000 m; radial crown-to-floor depth: 0.005000 m
+fluid volume: 4.5147647803e-06 m^3; faces: 8; solids: 1
+
+# -- cell 2 (0.1s, exit 0)
+faces=list(fluid.faces())
+for i,f in enumerate(faces):
+    c=f.center(); n=f.normal_at();
+    print(i, type(f.geom_adaptor()).__name__, f"area={f.area:.10e}", f"center=({c.X:.6g},{c.Y:.6g},{c.Z:.6g})", f"normal=({n.X:.3g},{n.Y:.3g},{n.Z:.3g})")
+# -- output
+0 Geom_CylindricalSurface area=7.5586719245e-03 center=(-0.02005,2.45542e-18,0) normal=(-1,1.22e-16,0)
+1 Geom_Plane area=7.5246079672e-05 center=(-0.00529817,0.0136505,0.03) normal=(0,0,1)
+2 Geom_Plane area=7.5246079672e-05 center=(-0.00529817,0.0136505,-0.03) normal=(-0,-0,-1)
+3 Geom_Plane area=5.2306787322e-04 center=(-0.0043589,0.018,4.33681e-19) normal=(-0,1,0)
+4 Geom_Plane area=3.6000000000e-04 center=(-1.73472e-18,0.015,0) normal=(1,0,-0)
+5 Geom_Plane area=7.2000000000e-04 center=(-0.006,0.012,0) normal=(0,-1,-0)
+6 Geom_Plane area=2.4000000000e-04 center=(-0.012,0.014,4.33681e-19) normal=(-1,-0,0)
+7 Geom_RectangularTrimmedSurface area=7.3088532122e-03 center=(0.0104071,-0.017079,0) normal=(-0.52,0.854,-0)
+
+# -- cell 3 (0.1s, exit 0)
+import inspect
+print(inspect.signature(bd.Box)); print(inspect.signature(bd.Cylinder)); print(bd.Align.MIN)
+# -- output
+(length: 'float', width: 'float', height: 'float', rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)
+(radius: 'float', height: 'float', arc_size: 'float' = 360, rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)
+Align.MIN
+
+# -- cell 4 (0.1s, exit 0)
+A=bd.Align
+outer = bd.Cylinder(R_BORE,L,align=(A.CENTER,A.CENTER,A.MIN))
+shaft_blank = bd.Cylinder(R_SHAFT,L,align=(A.CENTER,A.CENTER,A.MIN))
+key_cut = bd.Pos(-KEY_W/2,R_SHAFT-KEY_DEPTH,0)*bd.Box(KEY_W,KEY_DEPTH+0.001,L,align=(A.MIN,A.MIN,A.MIN))
+shaft_keyed=shaft_blank-key_cut
+fluid=outer-shaft_keyed
+faces=list(fluid.faces())
+print(f"volume={fluid.volume:.10e} m3, connected solids={len(fluid.solids())}, faces={len(faces)}")
+for i,f in enumerate(faces):
+ c=f.center(); n=f.normal_at(); print(i,type(f.geom_adaptor()).__name__,f"A={f.area:.9e}",f"c=({c.X:.6g},{c.Y:.6g},{c.Z:.6g})",f"n=({n.X:.2g},{n.Y:.2g},{n.Z:.2g})")
+# -- output
+volume=3.7584483039e-06 m3, connected solids=1, faces=7
+0 Geom_CylindricalSurface A=7.558671925e-03 c=(-0.02005,2.45542e-18,0.03) n=(-1,1.2e-16,0)
+1 Geom_Plane A=6.264080507e-05 c=(2.70617e-16,0.0156128,0.06) n=(0,0,1)
+2 Geom_Plane A=6.264080507e-05 c=(2.9924e-16,0.0156128,0) n=(-0,-0,-1)
+3 Geom_Plane A=2.447270417e-04 c=(0.006,0.0170394,0.03) n=(1,0,-0)
+4 Geom_Plane A=7.200000000e-04 c=(-8.67362e-19,0.015,0.03) n=(0,-1,-0)
+5 Geom_Plane A=2.447270417e-04 c=(-0.006,0.0170394,0.03) n=(-1,-0,0)
+6 Geom_RectangularTrimmedSurface A=6.808559999e-03 c=(-3.92011e-17,-0.02,0.03) n=(2e-15,1,-0)
+
+# -- cell 5 (0.1s, exit 0)
+print(inspect.signature(bd.export_stl))
+# -- output
+(to_export: build123d.topology.shape_core.Shape, file_path: os.PathLike | str | bytes, tolerance: float = 0.001, angular_tolerance: float = 0.1, ascii_format: bool = False) -> bool
+
+# -- cell 6 (2.8s, exit 0)
+from pathlib import Path
+tri=Path('constant/triSurface'); tri.mkdir(parents=True,exist_ok=True)
+bore=[f for f in faces if type(f.geom_adaptor()).__name__=='Geom_CylindricalSurface']
+shaft=[f for f in faces if type(f.geom_adaptor()).__name__=='Geom_RectangularTrimmedSurface']
+planes=[f for f in faces if type(f.geom_adaptor()).__name__=='Geom_Plane']
+high=[f for f in planes if f.normal_at().Z < -0.9]  # z=0, 50 mm shaft side
+low=[f for f in planes if f.normal_at().Z > 0.9]    # z=L, 30 mm shaft side
+floor=[f for f in planes if f.normal_at().Y < -0.9]
+flanks=[f for f in planes if abs(f.normal_at().X) > 0.9]
+patch_faces={'shaft':shaft,'keywayFloor':floor,'keywayFlanks':flanks,'bore':bore,'highPressure':high,'lowPressure':low}
+for name,fs in patch_faces.items():
+    shape=fs[0] if len(fs)==1 else bd.Compound(fs)
+    ok=bd.export_stl(shape,tri/f'{name}.stl',tolerance=5e-6,angular_tolerance=np.deg2rad(1),ascii_format=True)
+    print(name,'faces',len(fs),'CAD area',sum(f.area for f in fs),'export',ok)
+print('STLs:',sorted(p.name for p in tri.glob('*.stl')))
+# -- output
+shaft faces 1 CAD area 0.006808559998978549 export True
+keywayFloor faces 1 CAD area 0.0007199999999999999 export True
+keywayFlanks faces 2 CAD area 0.0004894540834006595 export True
+bore faces 1 CAD area 0.00755867192453704 export True
+highPressure faces 1 CAD area 6.264080506500279e-05 export True
+lowPressure faces 1 CAD area 6.264080506500303e-05 export True
+STLs: ['bore.stl', 'highPressure.stl', 'keywayFlanks.stl', 'keywayFloor.stl', 'lowPressure.stl', 'shaft.stl']
+
+# -- cell 7 (0.6s, exit 1)
+import gmsh, pyvista as pv
+gmsh.initialize(); gmsh.model.add('oilSection')
+o=gmsh.model.occ.addDisk(0,0,0,R_BORE,R_BORE)
+s=gmsh.model.occ.addDisk(0,0,0,R_SHAFT,R_SHAFT)
+k=gmsh.model.occ.addRectangle(-KEY_W/2,R_SHAFT-KEY_DEPTH,0,KEY_W,KEY_DEPTH+0.001)
+shaft2,_=gmsh.model.occ.cut([(2,s)],[(2,k)],removeObject=True,removeTool=True)
+fluid2,_=gmsh.model.occ.cut([(2,o)],shaft2,removeObject=True,removeTool=True)
+gmsh.model.occ.synchronize()
+gmsh.option.setNumber('Mesh.MeshSizeMin',2.5e-5); gmsh.option.setNumber('Mesh.MeshSizeMax',5e-4)
+gmsh.option.setNumber('Mesh.MeshSizeFromCurvature',20); gmsh.option.setNumber('Mesh.Algorithm',6)
+gmsh.model.addPhysicalGroup(2,[fluid2[0][1]],1); gmsh.model.setPhysicalName(2,1,'oilSection')
+gmsh.model.mesh.generate(2); gmsh.write('section.msh'); gmsh.finalize()
+sec=pv.read('section.msh')
+print('2D cells:',sec.n_cells,'points:',sec.n_points,'bounds:',sec.bounds)
+pl=pv.Plotter(off_screen=True,window_size=(800,700)); pl.add_mesh(sec,show_edges=True,color='lightblue',line_width=0.3); pl.view_xy(); pl.camera.zoom(1.25); pl.show(screenshot='sectionMesh.png')
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 70%] Difference                                                                                  Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference                                                                                                                                                                  Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 
+... 5099 characters cut ...
+([32m1.25[39m); pl.show(screenshot=[33m'sectionMesh.png'[39m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/_deprecate_positional_args.py:243[39m, in [36m_deprecate_positional_args.<locals>._inner_deprecate_positional_args.<locals>.inner_f[39m[34m(*args, **kwargs)[39m
+[32m    239[39m             warn_external(msg, PyVistaDeprecationWarning)
+[32m    241[39m         warn_positional_args()
+[32m--> [39m[32m243[39m [38;5;28;01mreturn[39;00m [30;43mf[39;49m[30;43m([39;49m[30;43m*[39;49m[30;43margs[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43m*[39;49m[30;43m*[39;49m[30;43mkwargs[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:347[39m, in [36mread[39m[34m(filename, force_ext, file_format, progress_bar, cls, validate)[39m
+[32m    230[39m [38;5;129m@_deprecate_positional_args[39m(allowed=[[33m'[39m[33mfilename[39m[33m'[39m])
+[32m    231[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mread[39m(  [38;5;66;03m# noqa: PLR0917[39;00m
+[32m    232[39m     filename: PathStrSeq,
+[32m   (...)[39m[32m    238[39m     validate: [38;5;28mbool[39m | [38;5;28;01mNone[39;00m = [38;5;28;01mNone[39;00m,
+[32m    239[39m ) -> DataObject:
+[32m    240[39m [38;5;250m    [39m[33;03m"""Read any file type supported by ``vtk`` or ``meshio``.[39;00m
+[32m    241[39m 
+[32m    242[39m [33;03m    Automatically determines the correct reader to use then wraps the[39;00m
+[32m   (...)[39m[32m    345[39m 
+[32m    346[39m [33;03m    """[39;00m
+[32m--> [39m[32m347[39m     result = [30;43m_read_dispatch[39;49m[30;43m([39;49m
+[32m    348[39m [30;43m        [39;49m[30;43mfilename[39;49m[30;43m,[39;49m
+[32m    349[39m [30;43m        [39;49m[30;43mforce_ext[39;49m[30;43m=[39;49m[30;43mforce_ext[39;49m[30;43m,[39;49m
+[32m    350[39m [30;43m        [39;49m[30;43mfile_format[39;49m[30;43m=[39;49m[30;43mfile_format[39;49m[30;43m,[39;49m
+[32m    351[39m [30;43m        [39;49m[30;43mprogress_bar[39;49m[30;43m=[39;49m[30;43mprogress_bar[39;49m[30;43m,[39;49m
+[32m    352[39m [30;43m        [39;49m[30;43mvalidate[39;49m[30;43m=[39;49m[30;43mvalidate[39;49m[30;43m,[39;49m
+[32m    353[39m [30;43m    [39;49m[30;43m)[39;49m
+[32m    354[39m     [38;5;28;01mif[39;00m [38;5;28mcls[39m [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m [38;5;129;01mand[39;00m [38;5;129;01mnot[39;00m [38;5;28misinstance[39m(result, [38;5;28mcls[39m):
+[32m    355[39m         msg = (
+[32m    356[39m             [33mf[39m[33m'[39m[33mExpected an instance of [39m[38;5;132;01m{[39;00m[38;5;28mcls[39m.[34m__name__[39m[38;5;132;01m}[39;00m[33m when reading [39m[38;5;132;01m{[39;00mfilename[38;5;132;01m!r}[39;00m[33m, [39m[33m'[39m
+[32m    357[39m             [33mf[39m[33m'[39m[33mbut got [39m[38;5;132;01m{[39;00m[38;5;28mtype[39m(result).[34m__name__[39m[38;5;132;01m}[39;00m[33m.[39m[33m'[39m
+[32m    358[39m         )
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/pyvista/core/utilities/fileio.py:460[39m, in [36m_read_dispatch[39m[34m(filename, force_ext, file_format, progress_bar, validate)[39m
+[32m    458[39m     [38;5;28;01mfrom[39;00m[38;5;250m [39m[34;01mmeshio[39;00m[34;01m.[39;00m[34;01m_exceptions[39;00m[38;5;250m [39m[38;5;28;01mimport[39;00m ReadError  [38;5;66;03m# noqa: PLC0415[39;00m
+[32m    459[39m [38;5;28;01mexcept[39;00m [38;5;167;01mImportError[39;00m:
+[32m--> [39m[32m460[39m     [38;5;28;01mraise[39;00m [38;5;167;01mOSError[39;00m(msg)
+[32m    461[39m [38;5;28;01mtry[39;00m:
+[32m    462[39m     [38;5;28;01mreturn[39;00m read_meshio(filename)
+
+[31mOSError[39m: This file was not able to be automatically read by pyvista.
+  '/home/qiuzi/.openreynolds-buildup/work/T19-20260916-031257-3cfe/t19/section.msh'
+
+# -- cell 8 (0.6s, exit 0)
+gmsh.initialize(); gmsh.model.add('oilSection')
+o=gmsh.model.occ.addDisk(0,0,0,R_BORE,R_BORE); s=gmsh.model.occ.addDisk(0,0,0,R_SHAFT,R_SHAFT)
+k=gmsh.model.occ.addRectangle(-KEY_W/2,R_SHAFT-KEY_DEPTH,0,KEY_W,KEY_DEPTH+0.001)
+shaft2,_=gmsh.model.occ.cut([(2,s)],[(2,k)]); fluid2,_=gmsh.model.occ.cut([(2,o)],shaft2)
+gmsh.model.occ.synchronize(); gmsh.option.setNumber('Mesh.MeshSizeMin',2.5e-5); gmsh.option.setNumber('Mesh.MeshSizeMax',5e-4); gmsh.option.setNumber('Mesh.MeshSizeFromCurvature',20)
+gmsh.model.mesh.generate(2); gmsh.write('section.vtk'); gmsh.finalize()
+sec=pv.read('section.vtk'); print('2D cells:',sec.n_cells,'points:',sec.n_points,'bounds:',tuple(round(v,7) for v in sec.bounds))
+pl=pv.Plotter(off_screen=True,window_size=(800,700)); pl.add_mesh(sec,show_edges=True,color='lightblue',line_width=0.4); pl.view_xy(); pl.camera.zoom(1.2); pl.show(screenshot='sectionMesh.png')
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 70%] Difference                                                                                  Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference                                                                                                                                                                  Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference - Adding holes                                                                                                                                                                Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 3 (Line)
+Info    : [ 20%] Meshing curve 4 (Ellipse)
+Info    : [ 40%] Meshing curve 5 (Line)
+Info    : [ 60%] Meshing curve 6 (Line)
+Info    : [ 70%] Meshing curve 7 (Ellipse)
+Info    : [ 90%] Meshing curve 8 (Ellipse)
+Info    : Done meshing 1D (Wall 0.00088734s, CPU 0.000992s)
+Info    : Meshing 2D...
+Info    : Meshing surface 1 (Plane, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 0.0127703s, CPU 0.012671s)
+Info    : 777 nodes 1560 elements
+Info    : Writing 'section.vtk'...
+Info    : Done writing 'section.vtk'
+2D cells: 1560 points: 777 bounds: (-0.02005, 0.02005, -0.02005, 0.02005, 0.0, 0.0)
+
+[0m[33m2026-09-16 03:14:23.864 (   7.534s) [    7CF70D2BF780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-16 03:14:23.865 (   7.534s) [    7CF70D2BF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:14:23.877 (   7.546s) [    7CF70D2BF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_820731/663864999.py:8: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl=pv.Plotter(off_screen=True,window_size=(800,700)); pl.add_mesh(sec,show_edges=True,color='lightblue',line_width=0.4); pl.view_xy(); pl.camera.zoom(1.2); pl.show(screenshot='sectionMesh.png')
+
+# -- cell 9 (0.2s, exit 0)
+import gmsh, pyvista as pv
+gmsh.initialize(); gmsh.model.add('oilSection')
+o=gmsh.model.occ.addDisk(0,0,0,R_BORE,R_BORE); s=gmsh.model.occ.addDisk(0,0,0,R_SHAFT,R_SHAFT)
+k=gmsh.model.occ.addRectangle(-KEY_W/2,R_SHAFT-KEY_DEPTH,0,KEY_W,KEY_DEPTH+0.001)
+shaft2,_=gmsh.model.occ.cut([(2,s)],[(2,k)]); fluid2,_=gmsh.model.occ.cut([(2,o)],shaft2)
+gmsh.model.occ.synchronize(); gmsh.option.setNumber('Mesh.MeshSizeMin',2.5e-5); gmsh.option.setNumber('Mesh.MeshSizeMax',5e-4); gmsh.option.setNumber('Mesh.MeshSizeFromCurvature',20)
+gmsh.model.mesh.generate(2); gmsh.write('section.vtk'); gmsh.finalize()
+sec=pv.read('section.vtk'); print('2D cells:',sec.n_cells,'points:',sec.n_points,'bounds:',tuple(round(v,7) for v in sec.bounds))
+pl=pv.Plotter(off_screen=True,window_size=(800,700)); pl.add_mesh(sec,show_edges=True,color='lightblue',line_width=0.4); pl.view_xy(); pl.camera.zoom(1.2); pl.show(screenshot='sectionMesh.png')
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 70%] Difference                                                                                  Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference                                                                                                                                                                  Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference - Adding holes                                                                                                                                                                Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 3 (Line)
+Info    : [ 20%] Meshing curve 4 (Ellipse)
+Info    : [ 40%] Meshing curve 5 (Line)
+Info    : [ 60%] Meshing curve 6 (Line)
+Info    : [ 70%] Meshing curve 7 (Ellipse)
+Info    : [ 90%] Meshing curve 8 (Ellipse)
+Info    : Done meshing 1D (Wall 0.00086271s, CPU 0.00093s)
+Info    : Meshing 2D...
+Info    : Meshing surface 1 (Plane, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 0.0116072s, CPU 0.011623s)
+Info    : 777 nodes 1560 elements
+Info    : Writing 'section.vtk'...
+Info    : Done writing 'section.vtk'
+2D cells: 1560 points: 777 bounds: (-0.02005, 0.02005, -0.02005, 0.02005, 0.0, 0.0)
+
+[0m[33m2026-09-16 03:14:28.371 (  12.041s) [    7CF70D2BF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:14:28.372 (  12.041s) [    7CF70D2BF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_820731/905762845.py:9: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl=pv.Plotter(off_screen=True,window_size=(800,700)); pl.add_mesh(sec,show_edges=True,color='lightblue',line_width=0.4); pl.view_xy(); pl.camera.zoom(1.2); pl.show(screenshot='sectionMesh.png')
+
+# -- cell 10 (0.1s, exit 1)
+gmsh.initialize(); gmsh.model.add('oilLeak')
+o=gmsh.model.occ.addDisk(0,0,0,R_BORE,R_BORE); s=gmsh.model.occ.addDisk(0,0,0,R_SHAFT,R_SHAFT)
+k=gmsh.model.occ.addRectangle(-KEY_W/2,R_SHAFT-KEY_DEPTH,0,KEY_W,KEY_DEPTH+0.001)
+shaft2,_=gmsh.model.occ.cut([(2,s)],[(2,k)]); fluid2,_=gmsh.model.occ.cut([(2,o)],shaft2); base=fluid2[0][1]
+gmsh.model.occ.synchronize(); ext=gmsh.model.occ.extrude([(2,base)],0,0,L,numElements=[60],recombine=True); gmsh.model.occ.synchronize()
+vol=[t for d,t in ext if d==3][0]; top=ext[0][1]
+all_surfs=[t for d,t in gmsh.model.getBoundary([(3,vol)],oriented=False) if d==2]
+side=[t for t in all_surfs if t not in (base,top)]
+areas={t:gmsh.model.occ.getMass(2,t) for t in all_surfs}; types={t:gmsh.model.getType(2,t) for t in all_surfs}
+cyl=[t for t in side if types[t]=='Cylinder']; planar=[t for t in side if types[t]=='Plane']
+bore_g=[max(cyl,key=lambda t:areas[t])]; shaft_g=[t for t in cyl if t not in bore_g]
+floor_g=[max(planar,key=lambda t:areas[t])]; flanks_g=[t for t in planar if t not in floor_g]
+groups={'shaft':shaft_g,'keywayFloor':floor_g,'keywayFlanks':flanks_g,'bore':bore_g,'highPressure':[base],'lowPressure':[top]}
+for pid,(name,tags) in enumerate(groups.items(),1): gmsh.model.addPhysicalGroup(2,tags,pid); gmsh.model.setPhysicalName(2,pid,name); print(name,tags,'area',sum(areas[t] for t in tags))
+gmsh.model.addPhysicalGroup(3,[vol],100); gmsh.model.setPhysicalName(3,100,'oil')
+gmsh.option.setNumber('Mesh.MeshSizeMin',2.5e-5); gmsh.option.setNumber('Mesh.MeshSizeMax',5e-4); gmsh.option.setNumber('Mesh.MeshSizeFromCurvature',20); gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3); gmsh.write('oilLeak.msh'); gmsh.write('oilLeak.vtk')
+print('nodes',len(gmsh.model.mesh.getNodes()[0]),'3D elements',sum(len(a) for a in gmsh.model.mesh.getElements(3)[1])); gmsh.finalize()
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 70%] Difference                                                                                  Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference                                                                                                                                                                  Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference - Adding holes
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[10][39m[32m, line 11[39m
+[32m      7[39m all_surfs=[t [38;5;28;01mfor[39;00m d,t [38;5;28;01min[39;00m gmsh.model.getBoundary([([32m3[39m,vol)],oriented=[38;5;28;01mFalse[39;00m) [38;5;28;01mif[39;00m d==[32m2[39m]
+[32m      8[39m side=[t [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m all_surfs [38;5;28;01mif[39;00m t [38;5;28;01mnot[39;00m [38;5;28;01min[39;00m (base,top)]
+[32m      9[39m areas={t:gmsh.model.occ.getMass([32m2[39m,t) [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m all_surfs}; types={t:gmsh.model.getType([32m2[39m,t) [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m all_surfs}
+[32m     10[39m cyl=[t [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m side [38;5;28;01mif[39;00m types[t]==[33m'Cylinder'[39m]; planar=[t [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m side [38;5;28;01mif[39;00m types[t]==[33m'Plane'[39m]
+[32m---> [39m[32m11[39m bore_g=[max(cyl,key=[38;5;28;01mlambda[39;00m t:areas[t])]; shaft_g=[t [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m cyl [38;5;28;01mif[39;00m t [38;5;28;01mnot[39;00m [38;5;28;01min[39;00m bore_g]
+[32m     12[39m floor_g=[max(planar,key=[38;5;28;01mlambda[39;00m t:areas[t])]; flanks_g=[t [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m planar [38;5;28;01mif[39;00m t [38;5;28;01mnot[39;00m [38;5;28;01min[39;00m floor_g]
+[32m     13[39m groups={[33m'shaft'[39m:shaft_g,[33m'keywayFloor'[39m:floor_g,[33m'keywayFlanks'[39m:flanks_g,[33m'bore'[39m:bore_g,[33m'highPressure'[39m:[base],[33m'lowPressure'[39m:[top]}
+[32m     14[39m [38;5;28;01mfor[39;00m pid,(name,tags) [38;5;28;01min[39;00m enumerate(groups.items(),[32m1[39m): gmsh.model.addPhysicalGroup([32m2[39m,tags,pid); gmsh.model.setPhysicalName([32m2[39m,pid,name); print(name,tags,[33m'area'[39m,sum(areas[t] [38;5;28;01mfor[39;00m t [38;5;28;01min[39;00m tags))
+
+[31mValueError[39m: max() iterable argument is empty
+
+# -- cell 11 (0.1s, exit 0)
+for t in all_surfs: print(t,types[t],areas[t],gmsh.model.occ.getCenterOfMass(2,t))
+gmsh.finalize()
+# -- output
+1 Plane 6.264080506500856e-05 (-5.108760636751697e-16, 0.015612826159962062, 0.0)
+2 Unknown 0.00755867192453704 (-3.469446951953614e-18, 3.1552505360626224e-19, 0.03)
+3 Unknown 0.005289235591643116 (-0.004328515990132748, -0.005898772981354064, 0.03)
+4 Unknown 0.001519324407335403 (0.015068895571920187, 0.011057546313933037, 0.030000000000000002)
+5 Plane 0.0002447270417003373 (0.006, 0.01703939201416948, 0.03)
+6 Plane 0.0007199999999999999 (-4.743384504624082e-20, 0.015, 0.03)
+7 Plane 0.00024472704170031543 (-0.006, 0.017039392014169295, 0.03)
+8 Plane 6.264080506500856e-05 (-5.108760636751697e-16, 0.015612826159962062, 0.06)
+
+# -- cell 12 (0.6s, exit 0)
+import gmsh
+gmsh.initialize(); gmsh.model.add('oilLeak')
+o=gmsh.model.occ.addDisk(0,0,0,R_BORE,R_BORE); s=gmsh.model.occ.addDisk(0,0,0,R_SHAFT,R_SHAFT); k=gmsh.model.occ.addRectangle(-KEY_W/2,R_SHAFT-KEY_DEPTH,0,KEY_W,KEY_DEPTH+0.001)
+shaft2,_=gmsh.model.occ.cut([(2,s)],[(2,k)]); fluid2,_=gmsh.model.occ.cut([(2,o)],shaft2); base=fluid2[0][1]
+gmsh.model.occ.synchronize(); ext=gmsh.model.occ.extrude([(2,base)],0,0,L,numElements=[60],recombine=True); gmsh.model.occ.synchronize(); vol=[t for d,t in ext if d==3][0]; top=ext[0][1]
+all_surfs=[t for d,t in gmsh.model.getBoundary([(3,vol)],oriented=False) if d==2]; side=[t for t in all_surfs if t not in (base,top)]; areas={t:gmsh.model.occ.getMass(2,t) for t in all_surfs}; planes=[t for t in side if gmsh.model.getType(2,t)=='Plane']; swept=[t for t in side if t not in planes]
+bore_g=[max(swept,key=lambda t:areas[t])]; shaft_g=[t for t in swept if t not in bore_g]; floor_g=[max(planes,key=lambda t:areas[t])]; flanks_g=[t for t in planes if t not in floor_g]
+groups={'shaft':shaft_g,'keywayFloor':floor_g,'keywayFlanks':flanks_g,'bore':bore_g,'highPressure':[base],'lowPressure':[top]}
+for pid,(name,tags) in enumerate(groups.items(),1):
+ gmsh.model.addPhysicalGroup(2,tags,pid); gmsh.model.setPhysicalName(2,pid,name); print(name,'area',sum(areas[t] for t in tags))
+gmsh.model.addPhysicalGroup(3,[vol],100); gmsh.model.setPhysicalName(3,100,'oil'); gmsh.option.setNumber('Mesh.MeshSizeMin',2.5e-5); gmsh.option.setNumber('Mesh.MeshSizeMax',5e-4); gmsh.option.setNumber('Mesh.MeshSizeFromCurvature',20); gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3); gmsh.write('oilLeak.msh'); gmsh.write('oilLeak.vtk'); print('nodes',len(gmsh.model.mesh.getNodes()[0]),'3D cells',sum(len(a) for a in gmsh.model.mesh.getElements(3)[1])); gmsh.finalize()
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 70%] Difference                                                                                  Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference                                                                                                                                                                  Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference - Adding holes                                                                                                                                                                shaft area 0.006808559998978519
+keywayFloor area 0.0007199999999999999
+keywayFlanks area 0.0004894540834006528
+bore area 0.00755867192453704
+highPressure area 6.264080506500856e-05
+lowPressure area 6.264080506500856e-05
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Ellipse)
+Info    : [ 20%] Meshing curve 5 (Line)
+Info    : [ 20%] Meshing curve 6 (Line)
+Info    : [ 30%] Meshing curve 7 (Ellipse)
+Info    : [ 30%] Meshing curve 8 (Ellipse)
+Info    : [ 40%] Meshing curve 9 (Extruded)
+Info    : [ 40%] Meshing curve 10 (Extruded)
+Info    : [ 50%] Meshing curve 11 (Extruded)
+Info    : [ 60%] Meshing curve 12 (Extruded)
+Info    : [ 60%] Meshing curve 13 (Extruded)
+Info    : [ 70%] Meshing curve 14 (Extruded)
+Info    : [ 70%] Meshing curve 15 (Extruded)
+Info    : [ 80%] Meshing curve 16 (Extruded)
+Info    : [ 80%] Meshing curve 17 (Extruded)
+Info    : [ 90%] Meshing curve 18 (Extruded)
+Info    : [ 90%] Meshing curve 19 (Extruded)
+Info    : [100%] Meshing curve 20 (Extruded)
+Info    : Done meshing 1D (Wall 0.00161033s, CPU 0.001798s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Plane, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 2 (Extruded)
+Info    : [ 30%] Meshing surface 3 (Extruded)
+Info    : [ 40%] Meshing surface 4 (Extruded)
+Info    : [ 60%] Meshing surface 5 (Extruded)
+Info    : [ 70%] Meshing surface 6 (Extruded)
+Info    : [ 80%] Meshing surface 7 (Extruded)
+Info    : [ 90%] Meshing surface 8 (Extruded)
+Info    : Done meshing 2D (Wall 0.0842465s, CPU 0.084558s)
+Info    : Meshing 3D...
+Info    : Meshing volume 1 (Extruded)
+Info    : Done meshing 3D (Wall 0.128411s, CPU 0.126716s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 0.00112434s, CPU 0.001259s)
+Info    : 47397 nodes 96720 elements
+Info    : Writing 'oilLeak.msh'...
+Info    : Done writing 'oilLeak.msh'
+Info    : Writing 'oilLeak.vtk'...
+Info    : Done writing 'oilLeak.vtk'
+nodes 47397 3D cells 61920
+
+# -- cell 13 (0.3s, exit 1)
+import subprocess, pathlib
+r=subprocess.run(['gmshToFoam','oilLeak.msh'],text=True,capture_output=True); print(r.stdout[-2500:]); print(r.stderr[-1000:]); r.check_returncode()
+print(pathlib.Path('constant/polyMesh/boundary').read_text())
+c=subprocess.run(['checkMesh','-allGeometry','-allTopology'],text=True,capture_output=True); print(c.stdout[-5000:]); print(c.stderr[-1000:]); print('checkMesh return',c.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : gmshToFoam oilLeak.msh
+Date   : Sep 16 2026
+Time   : 03:14:58
+Host   : yc-demo
+PID    : 822478
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T19-20260916-031257-3cfe/t19
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T19-20260916-031257-3cfe/t19/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mCalledProcessError[39m                        Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[13][39m[32m, line 2[39m
+[32m      1[39m [38;5;28;01mimport[39;00m subprocess, pathlib
+[32m----> [39m[32m2[39m r=subprocess.run([[33m'gmshToFoam'[39m,[33m'oilLeak.msh'[39m],text=[38;5;28;01mTrue[39;00m,capture_output=[38;5;28;01mTrue[39;00m); print(r.stdout[-[32m2500[39m:]); print(r.stderr[-[32m1000[39m:]); r.check_returncode()
+[32m      3[39m print(pathlib.Path([33m'constant/polyMesh/boundary'[39m).read_text())
+[32m      4[39m c=subprocess.run([[33m'checkMesh'[39m,[33m'-allGeometry'[39m,[33m'-allTopology'[39m],text=[38;5;28;01mTrue[39;00m,capture_output=[38;5;28;01mTrue[39;00m); print(c.stdout[-[32m5000[39m:]); print(c.stderr[-[32m1000[39m:]); print([33m'checkMesh return'[39m,c.returncode)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/subprocess.py:508[39m, in [36mCompletedProcess.check_returncode[39m[34m(self)[39m
+[32m    506[39m [38;5;250m[39m[33;03m"""Raise CalledProcessError if the exit code is non-zero."""[39;00m
+[32m    507[39m [38;5;28;01mif[39;00m [38;5;28mself[39m.returncode:
+[32m--> [39m[32m508[39m     [38;5;28;01mraise[39;00m CalledProcessError([38;5;28mself[39m.returncode, [38;5;28mself[39m.args, [38;5;28mself[39m.stdout,
+[32m    509[39m                              [38;5;28mself[39m.stderr)
+
+[31mCalledProcessError[39m: Command '['gmshToFoam', 'oilLeak.msh']' returned non-zero exit status 1.
+
+# -- cell 14 (0.7s, exit 0)
+import subprocess
+from pathlib import Path
+Path('system').mkdir(exist_ok=True)
+Path('system/controlDict').write_text('''FoamFile\n{\n version 2.0; format ascii; class dictionary; object controlDict;\n}\napplication checkMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n''')
+r=subprocess.run(['gmshToFoam','oilLeak.msh'],text=True,capture_output=True); print(r.stdout[-1800:]); print(r.stderr[-500:]); r.check_returncode()
+print(Path('constant/polyMesh/boundary').read_text())
+# -- output
+eModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:7
+    Surface 1	shaft
+    Surface 2	keywayFloor
+    Surface 3	keywayFlanks
+    Surface 4	bore
+    Surface 5	highPressure
+    Surface 6	lowPressure
+    Volume 100	oil
+
+Starting to read points at line 15
+Vertices to be read: 47397
+Vertices read:47397
+
+Starting to read cells at line 47415
+Cells to be read: 95304
+
+Mapping region 5 to Foam patch 0
+Mapping region 6 to Foam patch 1
+Mapping region 4 to Foam patch 2
+Mapping region 1 to Foam patch 3
+Mapping region 3 to Foam patch 4
+Mapping region 2 to Foam patch 5
+Mapping region 100 to Foam cellZone 0
+Cells:
+    total:61920
+    hex  :0
+    prism:61920
+    pyr  :0
+    tet  :0
+
+CellZones:
+Zone	Size
+    0	61920
+
+Patch 0 gets name highPressure
+Patch 1 gets name lowPressure
+Patch 2 gets name bore
+Patch 3 gets name shaft
+Patch 4 gets name keywayFlanks
+Patch 5 gets name keywayFloor
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 33384 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+Finding faces of patch 5
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone oil and cellSet
+End
+
+
+
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+6
+(
+    highPressure
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1032;
+        startFace       138108;
+    }
+    lowPressure
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1032;
+        startFace       139140;
+    }
+    bore
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          15120;
+        startFace       140172;
+    }
+    shaft
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          13680;
+        startFace       155292;
+    }
+    keywayFlanks
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1080;
+        startFace       168972;
+    }
+    keywayFloor
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1440;
+        startFace       170052;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 15 (0.4s, exit 0)
+c=subprocess.run(['checkMesh','-allGeometry','-allTopology'],text=True,capture_output=True); print(c.stdout[-7000:]); print(c.stderr[-1000:]); print('return',c.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allGeometry -allTopology
+Date   : Sep 16 2026
+Time   : 03:15:06
+Host   : yc-demo
+PID    : 822560
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T19-20260916-031257-3cfe/t19
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T19-20260916-031257-3cfe/t19/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+return 1
+
+# -- cell 16 (0.4s, exit 0)
+Path('system/fvSchemes').write_text('FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }\n')
+Path('system/fvSolution').write_text('FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }\n')
+c=subprocess.run(['checkMesh','-allGeometry','-allTopology'],text=True,capture_output=True); print(c.stdout[-7000:]); print(c.stderr[-800:]); print('return',c.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allGeometry -allTopology
+Date   : Sep 16 2026
+Time   : 03:15:11
+Host   : yc-demo
+PID    : 822583
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T19-20260916-031257-3cfe/t19
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+
+return 1
+
+# -- cell 17 (1.0s, exit 0)
+Path('system/fvSchemes').write_text('''FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+wallDist { method meshWave; }
+''')
+c=subprocess.run(['checkMesh','-allGeometry','-allTopology'],text=True,capture_output=True); print(c.stdout[-7000:]); print(c.stderr[-500:]); print('return',c.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -allGeometry -allTopology
+Date   : Sep 16 2026
+Time   : 03:15:16
+Host   : yc-demo
+PID    : 822653
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T19-20260916-031257-3cfe/t19
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           47397
+    faces:            171492
+    internal faces:   138108
+    cells:            61920
+    faces per cell:   5
+    boundary patches: 6
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        61920
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    highPressure        1032     777      ok (non-closed singly connected)   (-0.02005 -0.02005 0) (0.02005 0.02005 0)
+    lowPressure         1032     777      ok (non-closed singly connected)   (-0.02005 -0.02005 0.06) (0.02005 0.02005 0.06)
+    bore                15120    15372    ok (non-closed singly connected)   (-0.02005 -0.02005 0) (0.02005 0.02005 0.06)
+    shaft               13680    13969    ok (non-closed singly connected)   (-0.0199998 -0.02 0) (0.02 0.0190788 0.06)
+    keywayFlanks        1080     1220     ok (non-closed singly connected)   (-0.006 0.015 0) (0.006 0.0190788 0.06)
+    keywayFloor         1440     1525     ok (non-closed singly connected)   (-0.006 0.015 0) (0.006 0.015 0.06)
+    ".*"                33384    32352    ok (closed singly connected)       (-0.02005 -0.02005 0) (0.02005 0.02005 0.06)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    oil                 61920        47397        3.75762e-06  (-0.02005 -0.02005 0) (0.02005 0.02005 0.06)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.02005 -0.02005 0) (0.02005 0.02005 0.06)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (2.6524e-15 2.5777e-15 -6.24098e-18) OK.
+    Max cell openness = 3.93356e-16 OK.
+    Max aspect ratio = 40.6731 OK.
+    Minimum face area = 1.22296e-08. Maximum face area = 6.39194e-07.  Face area magnitudes OK.
+    Min volume = 1.22296e-11. Max volume = 1.37169e-10.  Total volume = 3.75762e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 78.5571 average: 26.7269
+   *Number of severely non-orthogonal (> 70 degrees) faces: 13680.
+    Non-orthogonality check OK.
+  <<Writing 13680 non-orthogonal faces to set nonOrthoFaces
+    Face pyramids OK.
+    Max skewness = 1.31447 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 5e-05 0.001 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.000273216 average: 0.122602
+ ***Cells with small determinant (< 0.001) found, number of cells: 912
+  <<Writing 912 under-determined cells to set underdeterminedCells
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.203234 average: 0.491249
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.255074 average: 0.968116
+    Face volume ratio check OK.
+
+Failed 1 mesh checks.
+
+End
+
+
+
+return 0
+
+# -- cell 18 (2.3s, exit 0)
+gmsh.initialize(); gmsh.model.add('oilLeakRefined')
+o=gmsh.model.occ.addDisk(0,0,0,R_BORE,R_BORE); s=gmsh.model.occ.addDisk(0,0,0,R_SHAFT,R_SHAFT); k=gmsh.model.occ.addRectangle(-KEY_W/2,R_SHAFT-KEY_DEPTH,0,KEY_W,KEY_DEPTH+0.001)
+shaft2,_=gmsh.model.occ.cut([(2,s)],[(2,k)]); fluid2,_=gmsh.model.occ.cut([(2,o)],shaft2); base=fluid2[0][1]; gmsh.model.occ.synchronize(); ext=gmsh.model.occ.extrude([(2,base)],0,0,L,numElements=[240],recombine=True); gmsh.model.occ.synchronize(); vol=[t for d,t in ext if d==3][0]; top=ext[0][1]
+surfs=[t for d,t in gmsh.model.getBoundary([(3,vol)],oriented=False) if d==2]; side=[t for t in surfs if t not in (base,top)]; areas={t:gmsh.model.occ.getMass(2,t) for t in surfs}; planes=[t for t in side if gmsh.model.getType(2,t)=='Plane']; swept=[t for t in side if t not in planes]; bore_g=[max(swept,key=lambda t:areas[t])]; shaft_g=[t for t in swept if t not in bore_g]; floor_g=[max(planes,key=lambda t:areas[t])]; flanks_g=[t for t in planes if t not in floor_g]
+for pid,(name,tags) in enumerate({'shaft':shaft_g,'keywayFloor':floor_g,'keywayFlanks':flanks_g,'bore':bore_g,'highPressure':[base],'lowPressure':[top]}.items(),1): gmsh.model.addPhysicalGroup(2,tags,pid); gmsh.model.setPhysicalName(2,pid,name)
+gmsh.model.addPhysicalGroup(3,[vol],100); gmsh.model.setPhysicalName(3,100,'oil'); gmsh.option.setNumber('Mesh.MeshSizeMin',2.5e-5); gmsh.option.setNumber('Mesh.MeshSizeMax',5e-4); gmsh.option.setNumber('Mesh.MeshSizeFromCurvature',20); gmsh.option.setNumber('Mesh.MshFileVersion',2.2); gmsh.model.mesh.generate(3); gmsh.write('oilLeak.msh'); gmsh.write('oilLeak.vtk'); print('refined nodes',len(gmsh.model.mesh.getNodes()[0]),'cells',sum(len(a) for a in gmsh.model.mesh.getElements(3)[1])); gmsh.finalize()
+# -- output
+Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 70%] Difference                                                                                  Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference                                                                                                                                                                  Info    : [  0%] Difference                                                                                  Info    : [ 10%] Difference                                                                                  Info    : [ 20%] Difference                                                                                  Info    : [ 30%] Difference                                                                                  Info    : [ 40%] Difference                                                                                  Info    : [ 50%] Difference                                                                                  Info    : [ 60%] Difference                                                                                  Info    : [ 70%] Difference - Filling splits of edges                                                                                Info    : [ 80%] Difference - Making faces                                                                                Info    : [ 90%] Difference - Adding holes                                                                                                                                                                Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Ellipse)
+Info    : [ 20%] Meshing curve 5 (Line)
+Info    : [ 20%] Meshing curve 6 (Line)
+Info    : [ 30%] Meshing curve 7 (Ellipse)
+Info    : [ 30%] Meshing curve 8 (Ellipse)
+Info    : [ 40%] Meshing curve 9 (Extruded)
+Info    : [ 40%] Meshing curve 10 (Extruded)
+Info    : [ 50%] Meshing curve 11 (Extruded)
+Info    : [ 60%] Meshing curve 12 (Extruded)
+Info    : [ 60%] Meshing curve 13 (Extruded)
+Info    : [ 70%] Meshing curve 14 (Extruded)
+Info    : [ 70%] Meshing curve 15 (Extruded)
+Info    : [ 80%] Meshing curve 16 (Extruded)
+Info    : [ 80%] Meshing curve 17 (Extruded)
+Info    : [ 90%] Meshing curve 18 (Extruded)
+Info    : [ 90%] Meshing curve 19 (Extruded)
+Info    : [100%] Meshing curve 20 (Extruded)
+Info    : Done meshing 1D (Wall 0.00182599s, CPU 0.002035s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Plane, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 2 (Extruded)
+Info    : [ 30%] Meshing surface 3 (Extruded)
+Info    : [ 40%] Meshing surface 4 (Extruded)
+Info    : [ 60%] Meshing surface 5 (Extruded)
+Info    : [ 70%] Meshing surface 6 (Extruded)
+Info    : [ 80%] Meshing surface 7 (Extruded)
+Info    : [ 90%] Meshing surface 8 (Extruded)
+Info    : Done meshing 2D (Wall 0.308312s, CPU 0.308192s)
+Info    : Meshing 3D...
+Info    : Meshing volume 1 (Extruded)
+Info    : Done meshing 3D (Wall 0.57575s, CPU 0.562834s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 0.00569712s, CPU 0.005726s)
+Info    : 187257 nodes 377520 elements
+Info    : Writing 'oilLeak.msh'...
+Info    : Done writing 'oilLeak.msh'
+Info    : Writing 'oilLeak.vtk'...
+Info    : Done writing 'oilLeak.vtk'
+refined nodes 187257 cells 247680
+
+# -- cell 19 (5.0s, exit 0)
+r=subprocess.run(['gmshToFoam','oilLeak.msh'],text=True,capture_output=True); print(r.stdout[-900:]); r.check_returncode(); c=subprocess.run(['checkMesh','-allGeometry','-allTopology'],text=True,capture_output=True); print(c.stdout[-4200:]); print('return',c.returncode)
+# -- output
+otal:247680
+    hex  :0
+    prism:247680
+    pyr  :0
+    tet  :0
+
+CellZones:
+Zone	Size
+    0	247680
+
+Patch 0 gets name highPressure
+Patch 1 gets name lowPressure
+Patch 2 gets name bore
+Patch 3 gets name shaft
+Patch 4 gets name keywayFlanks
+Patch 5 gets name keywayFloor
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 127344 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+Finding faces of patch 5
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone oil and cellSet
+End
+
+
+ion trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           187257
+    faces:            682872
+    internal faces:   555528
+    cells:            247680
+    faces per cell:   5
+    boundary patches: 6
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        247680
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    highPressure        1032     777      ok (non-closed singly connected)   (-0.02005 -0.02005 0) (0.02005 0.02005 0)
+    lowPressure         1032     777      ok (non-closed singly connected)   (-0.02005 -0.02005 0.06) (0.02005 0.02005 0.06)
+    bore                60480    60732    ok (non-closed singly connected)   (-0.02005 -0.02005 0) (0.02005 0.02005 0.06)
+    shaft               54720    55189    ok (non-closed singly connected)   (-0.0199998 -0.02 0) (0.02 0.0190788 0.06)
+    keywayFlanks        4320     4820     ok (non-closed singly connected)   (-0.006 0.015 0) (0.006 0.0190788 0.06)
+    keywayFloor         5760     6025     ok (non-closed singly connected)   (-0.006 0.015 0) (0.006 0.015 0.06)
+    ".*"                127344   126312   ok (closed singly connected)       (-0.02005 -0.02005 0) (0.02005 0.02005 0.06)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    oil                 247680       187257       3.75762e-06  (-0.02005 -0.02005 0) (0.02005 0.02005 0.06)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.02005 -0.02005 0) (0.02005 0.02005 0.06)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (1.23524e-14 1.35313e-14 -5.72299e-18) OK.
+    Max cell openness = 3.93356e-16 OK.
+    Max aspect ratio = 10.1683 OK.
+    Minimum face area = 1.22296e-08. Maximum face area = 1.59799e-07.  Face area magnitudes OK.
+    Min volume = 3.0574e-12. Max volume = 3.42923e-11.  Total volume = 3.75762e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 78.5571 average: 26.651
+   *Number of severely non-orthogonal (> 70 degrees) faces: 54720.
+    Non-orthogonality check OK.
+  <<Writing 54720 non-orthogonal faces to set nonOrthoFaces
+    Face pyramids OK.
+    Max skewness = 1.31447 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 5e-05 0.000639194 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.00297457 average: 0.308777
+    Cell determinant check OK.
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.203234 average: 0.491297
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.255074 average: 0.968294
+    Face volume ratio check OK.
+
+Mesh OK.
+
+End
+
+
+return 0
+
+# -- cell 20 (0.7s, exit 0)
+import pyvista as pv
+grid=pv.read('oilLeak.vtk'); cut=grid.clip(normal=(1,0,0),origin=(0,0,0)); surf=cut.extract_surface()
+print('VTK cells',grid.n_cells,'cutaway surface cells',surf.n_cells,'bounds',grid.bounds)
+pl=pv.Plotter(off_screen=True,window_size=(1000,650)); pl.add_mesh(surf,color='lightsteelblue',show_edges=True,edge_color='gray',line_width=0.15); pl.view_isometric(); pl.camera.zoom(1.35); pl.show(screenshot='finalMeshCutaway.png')
+# -- output
+VTK cells 375024 cutaway surface cells 134116 bounds BoundsTuple(x_min = -0.02005,
+            x_max =  0.02005,
+            y_min = -0.02005,
+            y_max =  0.02005,
+            z_min =  0.0,
+            z_max =  0.06)
+
+/tmp/ipykernel_820731/3084749559.py:2: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  grid=pv.read('oilLeak.vtk'); cut=grid.clip(normal=(1,0,0),origin=(0,0,0)); surf=cut.extract_surface()
+[0m[33m2026-09-16 03:15:48.382 (  92.051s) [    7CF70D2BF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-16 03:15:48.382 (  92.052s) [    7CF70D2BF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_820731/3084749559.py:4: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl=pv.Plotter(off_screen=True,window_size=(1000,650)); pl.add_mesh(surf,color='lightsteelblue',show_edges=True,edge_color='gray',line_width=0.15); pl.view_isometric(); pl.camera.zoom(1.35); pl.show(screenshot='finalMeshCutaway.png')
+

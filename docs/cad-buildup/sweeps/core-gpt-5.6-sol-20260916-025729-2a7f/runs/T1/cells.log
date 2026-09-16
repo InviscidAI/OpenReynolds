@@ -1,0 +1,800 @@
+# -- cell 1 (2.6s, exit 0)
+import build123d as bd
+import matplotlib.pyplot as plt
+# All dimensions in metres.
+W = 0.010
+L = 0.120
+R = 0.015
+T = 0.001  # assumed numerical extrusion thickness for the 2-D mesh
+lower = bd.Pos(L/2, 0, 0) * bd.Rectangle(L, W)
+upper = bd.Pos(L/2, 2*R, 0) * bd.Rectangle(L, W)
+outer_disk = bd.Pos(L, R, 0) * bd.Circle(R + W/2)
+inner_disk = bd.Pos(L, R, 0) * bd.Circle(R - W/2)
+right_clip = bd.Pos(L + (R + W/2)/2, R, 0) * bd.Rectangle(R + W/2, 2*(R + W/2))
+bend = (outer_disk - inner_disk) & right_clip
+footprint = lower + upper + bend
+fluid = bd.extrude(footprint, T)
+print(f"requested width={W:.6f} m; measured straight width={lower.bounding_box().size.Y:.6f} m")
+print(f"requested leg length={L:.6f} m; measured={lower.bounding_box().size.X:.6f} m")
+print(f"requested centreline radius={R:.6f} m; constructed mean radius={((R-W/2)+(R+W/2))/2:.6f} m")
+print(f"fluid volume={fluid.volume:.9e} m^3; expected area*thickness={(2*L*W + 3.141592653589793*R*W)*T:.9e} m^3")
+# Plot exact footprint boundaries in the x-y plane.
+fig, ax = plt.subplots(figsize=(8,3))
+for e in footprint.edges():
+    pts = [e.position_at(i/100) for i in range(101)]
+    ax.plot([p.X*1000 for p in pts], [p.Y*1000 for p in pts], 'k-', lw=2)
+ax.set_aspect('equal'); ax.set_xlabel('x [mm]'); ax.set_ylabel('y [mm]')
+ax.set_title('U-bend fluid footprint (coarse CAD inspection)'); ax.grid(True)
+plt.tight_layout(); plt.show()
+# -- output
+requested width=0.010000 m; measured straight width=0.010000 m
+requested leg length=0.120000 m; measured=0.120000 m
+requested centreline radius=0.015000 m; constructed mean radius=0.015000 m
+fluid volume=2.871238898e-06 m^3; expected area*thickness=2.871238898e-06 m^3
+
+# -- cell 2 (0.2s, exit 0)
+from pathlib import Path
+import numpy as np, math
+# Structured 2-D blocks; each quad is counter-clockwise and boundary labels are created here.
+nL, nW, nQ = 48, 4, 10
+raw_pts, quads, edge_labels = [], [], {}
+def node(x,y):
+    raw_pts.append((float(x),float(y))); return len(raw_pts)-1
+def add_block(X, Y, labels):
+    ids=np.empty(X.shape,dtype=int)
+    for ij in np.ndindex(X.shape): ids[ij]=node(X[ij],Y[ij])
+    ni,nj=X.shape[0]-1,X.shape[1]-1
+    for i in range(ni):
+        for j in range(nj): quads.append([ids[i,j],ids[i+1,j],ids[i+1,j+1],ids[i,j+1]])
+    for side,label in labels.items():
+        seq = ids[0,:] if side=='i0' else ids[-1,:] if side=='i1' else ids[:,0] if side=='j0' else ids[:,-1]
+        for a,b in zip(seq[:-1],seq[1:]): edge_labels[frozenset((a,b))]=label
+# lower: x increases, y increases
+x=np.linspace(0,L,nL+1); y=np.linspace(-W/2,W/2,nW+1); X,Y=np.meshgrid(x,y,indexing='ij')
+add_block(X,Y,{'i0':'inlet','j0':'walls','j1':'walls'})
+# bend: theta increases; radius decreases, preserving CCW cell order
+theta=np.linspace(-math.pi/2,math.pi/2,2*nQ+1); rad=np.linspace(R+W/2,R-W/2,nW+1)
+TH,RR=np.meshgrid(theta,rad,indexing='ij'); X=L+RR*np.cos(TH); Y=R+RR*np.sin(TH)
+add_block(X,Y,{'j0':'walls','j1':'walls'})
+# upper: both x and y decrease, preserving CCW cell order
+x=np.linspace(L,0,nL+1); y=np.linspace(2*R+W/2,2*R-W/2,nW+1); X,Y=np.meshgrid(x,y,indexing='ij')
+add_block(X,Y,{'i1':'outlet','j0':'walls','j1':'walls'})
+# Merge coincident nodes across block interfaces and transfer boundary labels.
+merged=[]; key_to_new={}; old_to_new={}
+for old,p in enumerate(raw_pts):
+    key=(round(p[0],12),round(p[1],12))
+    if key not in key_to_new: key_to_new[key]=len(merged); merged.append(p)
+    old_to_new[old]=key_to_new[key]
+quads=[[old_to_new[v] for v in q] for q in quads]
+labels2={frozenset(old_to_new[v] for v in e):lab for e,lab in edge_labels.items()}
+N=len(merged); points=[(x,y,0.0) for x,y in merged]+[(x,y,T) for x,y in merged]
+# Assemble outward-oriented hex faces, retaining first-use orientation for owner.
+face_map={}; faces=[]; owners=[]; neighbours=[]; patch_for_face={}
+for ci,q in enumerate(quads):
+    b=q; t=[v+N for v in q]
+    candidates=[([b[0],b[3],b[2],b[1]],'frontAndBack'),([t[0],t[1],t[2],t[3]],'frontAndBack')]
+    for k in range(4):
+        a,c=b[k],b[(k+1)%4]; candidates.append(([a,a+N,c+N,c],labels2.get(frozenset((a,c)))))
+    for f,lab in candidates:
+        key=tuple(sorted(f))
+        if key in face_map: neighbours.append((face_map[key],ci)); patch_for_face.pop(face_map[key],None)
+        else:
+            fi=len(faces); face_map[key]=fi; faces.append(f); owners.append(ci)
+            if lab: patch_for_face[fi]=lab
+# OpenFOAM requires internal faces first.
+internal_ids=[fi for fi,_ in neighbours]; neighbour_by_face={fi:nb for fi,nb in neighbours}
+patch_order=['inlet','outlet','walls','frontAndBack']
+boundary_ids=[fi for p in patch_order for fi in range(len(faces)) if patch_for_face.get(fi)==p]
+order=internal_ids+boundary_ids; remap={old:new for new,old in enumerate(order)}
+faces_o=[faces[i] for i in order]; owners_o=[owners[i] for i in order]; neigh_o=[neighbour_by_face[i] for i in internal_ids]
+root=Path('.'); pm=root/'constant/polyMesh'; pm.mkdir(parents=True,exist_ok=True); (root/'system').mkdir(exist_ok=True); (root/'triSurface').mkdir(exist_ok=True)
+head=lambda cls,obj: f"FoamFile\n{{\n    format ascii;\n    class {cls};\n    object {obj};\n}}\n"
+(pm/'points').write_text(head('vectorField','points')+f"{len(points)}\n(\n"+''.join(f"({x:.12g} {y:.12g} {z:.12g})\n" for x,y,z in points)+")\n")
+(pm/'faces').write_text(head('faceList','faces')+f"{len(faces_o)}\n(\n"+''.join(f"4({' '.join(map(str,f))})\n" for f in faces_o)+")\n")
+(pm/'owner').write_text(head('labelList','owner')+f"{len(owners_o)}\n(\n"+'\n'.join(map(str,owners_o))+"\n)\n")
+(pm/'neighbour').write_text(head('labelList','neighbour')+f"{len(neigh_o)}\n(\n"+'\n'.join(map(str,neigh_o))+"\n)\n")
+start=len(internal_ids); entries=[]
+for p in patch_order:
+    count=sum(patch_for_face.get(fi)==p for fi in boundary_ids)
+    typ='empty' if p=='frontAndBack' else 'patch' if p in ('inlet','outlet') else 'wall'
+    entries.append(f"    {p}\n    {{\n        type {typ};\n        nFaces {count};\n        startFace {start};\n    }}\n"); start+=count
+(pm/'boundary').write_text(head('polyBoundaryMesh','boundary')+f"{len(entries)}\n(\n"+''.join(entries)+")\n")
+(root/'system/controlDict').write_text(head('dictionary','controlDict')+'application checkMesh;\nstartFrom startTime;\nstartTime 0;\nstopAt endTime;\nendTime 1;\ndeltaT 1;\nwriteControl timeStep;\nwriteInterval 1;\n')
+# Export each named patch as its own triangulated STL in metres.
+def stl_for_patch(name):
+    out=[f"solid {name}\n"]
+    for fi,lab in patch_for_face.items():
+        if lab!=name: continue
+        f=faces[fi]
+        for tri in ((f[0],f[1],f[2]),(f[0],f[2],f[3])):
+            a,b,c=[np.array(points[v]) for v in tri]; n=np.cross(b-a,c-a); n=n/(np.linalg.norm(n) or 1)
+            out.append(f" facet normal {' '.join(f'{v:.12g}' for v in n)}\n  outer loop\n"+''.join(f"   vertex {' '.join(f'{v:.12g}' for v in points[k])}\n" for k in tri)+"  endloop\n endfacet\n")
+    out.append(f"endsolid {name}\n"); (root/'triSurface'/f'{name}.stl').write_text(''.join(out))
+for p in patch_order: stl_for_patch(p)
+bd.export_step(fluid, root/'fluid_volume.step')
+print(f"coarse mesh: {len(quads)} hex cells, {len(points)} points, {len(internal_ids)} internal faces")
+print(f"resolution: {nW} cells across 10 mm, {nL} along each 120 mm leg, {2*nQ} around 180 deg")
+print({p:sum(v==p for v in patch_for_face.values()) for p in patch_order})
+# -- output
+coarse mesh: 464 hex cells, 1170 points, 808 internal faces
+resolution: 4 cells across 10 mm, 48 along each 120 mm leg, 20 around 180 deg
+{'inlet': 4, 'outlet': 4, 'walls': 232, 'frontAndBack': 928}
+
+# -- cell 3 (0.2s, exit 0)
+import subprocess
+cm = subprocess.run(['checkMesh','-constant','-allTopology','-allGeometry'],text=True,capture_output=True)
+print(cm.stdout[-6000:])
+print('checkMesh return code:',cm.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant -allTopology -allGeometry
+Date   : Sep 16 2026
+Time   : 02:58:41
+Host   : yc-demo
+PID    : 797858
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260916-025729-d00a/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+checkMesh return code: 1
+
+# -- cell 4 (0.1s, exit 0)
+print('STDOUT:\n',cm.stdout)
+print('STDERR:\n',cm.stderr)
+# -- output
+STDOUT:
+ /*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant -allTopology -allGeometry
+Date   : Sep 16 2026
+Time   : 02:58:41
+Host   : yc-demo
+PID    : 797858
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260916-025729-d00a/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+STDERR:
+ 
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T1-20260916-025729-d00a/t1/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 5 (0.1s, exit 0)
+for name in ('fvSchemes','fvSolution'):
+    Path('system',name).write_text(head('dictionary',name))
+print('wrote minimal system/fvSchemes and system/fvSolution')
+# -- output
+wrote minimal system/fvSchemes and system/fvSolution
+
+# -- cell 6 (0.2s, exit 0)
+cm2=subprocess.run(['checkMesh','-constant','-allTopology','-allGeometry'],text=True,capture_output=True)
+print(cm2.stdout[-7000:]); print(cm2.stderr); print('return code:',cm2.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant -allTopology -allGeometry
+Date   : Sep 16 2026
+Time   : 02:58:48
+Host   : yc-demo
+PID    : 797892
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260916-025729-d00a/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+
+return code: 1
+
+# -- cell 7 (0.1s, exit 0)
+Path('system/fvSchemes').write_text(head('dictionary','fvSchemes')+'''ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+wallDist { method meshWave; }
+''')
+Path('system/fvSolution').write_text(head('dictionary','fvSolution')+'solvers {}\n')
+print('completed required checkMesh dictionaries')
+# -- output
+completed required checkMesh dictionaries
+
+# -- cell 8 (0.2s, exit 0)
+cm3=subprocess.run(['checkMesh','-constant','-allTopology','-allGeometry'],text=True,capture_output=True)
+print(cm3.stdout[-7000:]); print(cm3.stderr); print('return code:',cm3.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant -allTopology -allGeometry
+Date   : Sep 16 2026
+Time   : 02:58:54
+Host   : yc-demo
+PID    : 797979
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260916-025729-d00a/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           1170
+    internal points:  0
+    edges:            2681
+    internal edges:   345
+    internal edges using one boundary point:   0
+    internal edges using two boundary points:  345
+    faces:            1976
+    internal faces:   808
+    cells:            464
+    faces per cell:   6
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     464
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+  <<Writing 4 cells with two non-boundary faces to set twoInternalFacesCells
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    inlet               4        10       ok (non-closed singly connected)   (0 -0.005 0) (0 0.005 0.001)
+    outlet              4        10       ok (non-closed singly connected)   (0 0.025 0) (0 0.035 0.001)
+    walls               232      468      ok (non-closed singly connected)   (0 -0.005 0) (0.14 0.035 0.001)
+    frontAndBack        928      1170     ok (non-closed singly connected)   (0 -0.005 0) (0.14 0.035 0.001)
+    ".*"                1168     1170     ok (closed singly connected)       (0 -0.005 0) (0.14 0.035 0.001)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.005 0) (0.14 0.035 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (2.50789e-20 -4.01263e-19 6.55396e-18) OK.
+    Max cell openness = 1.47671e-16 OK.
+    Max aspect ratio = 1.34145 OK.
+    Minimum face area = 1.56918e-06. Maximum face area = 7.33287e-06.  Face area magnitudes OK.
+ ***Zero or negative cell volume detected.  Minimum negative volume: -2.44429e-09, Number of negative volume cells: 464
+  <<Writing 464 zero volume cells to set zeroVolumeCells
+    Mesh non-orthogonality Max: 180 average: 179.886
+ ***Number of non-orthogonality errors: 808.
+  <<Writing 808 non-orthogonal faces to set nonOrthoFaces
+ ***Error in face pyramids: 1856 faces are incorrectly oriented.
+  <<Writing 1048 faces with incorrect orientation to set wrongOrientedFaces
+    Max skewness = 0.0628902 OK.
+    Coupled point location match (average 0) OK.
+ ***Error in face tets: 2904 faces with low quality or negative volume decomposition tets.
+  <<Writing 1048 faces with low quality or negative volume decomposition tets to set lowQualityTetFaces
+    Min/max edge length = 0.001 0.00313836 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.125 average: 0.37085
+    Cell determinant check OK.
+ ***Concave cells (using face planes) found, number of cells: 464
+  <<Writing 464 concave cells to set concaveCells
+    Face interpolation weight : minimum: 0.414457 average: 0.498169
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 1 average: 1.01572
+    Face volume ratio check OK.
+
+Failed 5 mesh checks.
+
+End
+
+
+
+return code: 0
+
+# -- cell 9 (0.2s, exit 0)
+import shutil
+shutil.rmtree(pm/'sets',ignore_errors=True)
+face_map={}; faces=[]; owners=[]; neighbours=[]; patch_for_face={}
+for ci,q in enumerate(quads):
+    b=q; t=[v+N for v in q]
+    candidates=[([b[0],b[3],b[2],b[1]],'frontAndBack'),([t[0],t[1],t[2],t[3]],'frontAndBack')]
+    for k in range(4):
+        a,c=b[k],b[(k+1)%4]; candidates.append(([a,c,c+N,a+N],labels2.get(frozenset((a,c)))))
+    for f,lab in candidates:
+        key=tuple(sorted(f))
+        if key in face_map: neighbours.append((face_map[key],ci)); patch_for_face.pop(face_map[key],None)
+        else:
+            fi=len(faces); face_map[key]=fi; faces.append(f); owners.append(ci)
+            if lab: patch_for_face[fi]=lab
+internal_ids=[fi for fi,_ in neighbours]; neighbour_by_face={fi:nb for fi,nb in neighbours}
+boundary_ids=[fi for p in patch_order for fi in range(len(faces)) if patch_for_face.get(fi)==p]
+order=internal_ids+boundary_ids
+faces_o=[faces[i] for i in order]; owners_o=[owners[i] for i in order]; neigh_o=[neighbour_by_face[i] for i in internal_ids]
+(pm/'faces').write_text(head('faceList','faces')+f"{len(faces_o)}\n(\n"+''.join(f"4({' '.join(map(str,f))})\n" for f in faces_o)+")\n")
+(pm/'owner').write_text(head('labelList','owner')+f"{len(owners_o)}\n(\n"+'\n'.join(map(str,owners_o))+"\n)\n")
+(pm/'neighbour').write_text(head('labelList','neighbour')+f"{len(neigh_o)}\n(\n"+'\n'.join(map(str,neigh_o))+"\n)\n")
+for p in patch_order: stl_for_patch(p)
+print('reversed lateral face winding and regenerated mesh/STLs')
+# -- output
+reversed lateral face winding and regenerated mesh/STLs
+
+# -- cell 10 (0.2s, exit 0)
+cm4=subprocess.run(['checkMesh','-constant','-allTopology','-allGeometry'],text=True,capture_output=True)
+print(cm4.stdout[-6500:]); print(cm4.stderr); print('return code:',cm4.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant -allTopology -allGeometry
+Date   : Sep 16 2026
+Time   : 02:59:11
+Host   : yc-demo
+PID    : 798132
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260916-025729-d00a/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           1170
+    internal points:  0
+    edges:            2681
+    internal edges:   345
+    internal edges using one boundary point:   0
+    internal edges using two boundary points:  345
+    faces:            1976
+    internal faces:   808
+    cells:            464
+    faces per cell:   6
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     464
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+  <<Writing 4 cells with two non-boundary faces to set twoInternalFacesCells
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    inlet               4        10       ok (non-closed singly connected)   (0 -0.005 0) (0 0.005 0.001)
+    outlet              4        10       ok (non-closed singly connected)   (0 0.025 0) (0 0.035 0.001)
+    walls               232      468      ok (non-closed singly connected)   (0 -0.005 0) (0.14 0.035 0.001)
+    frontAndBack        928      1170     ok (non-closed singly connected)   (0 -0.005 0) (0.14 0.035 0.001)
+    ".*"                1168     1170     ok (closed singly connected)       (0 -0.005 0) (0.14 0.035 0.001)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.005 0) (0.14 0.035 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (-5.85175e-20 3.34386e-19 6.55396e-18) OK.
+    Max cell openness = 1.55965e-16 OK.
+    Max aspect ratio = 1.34145 OK.
+    Minimum face area = 1.56918e-06. Maximum face area = 7.33287e-06.  Face area magnitudes OK.
+    Min volume = 4.39972e-09. Max volume = 7.33287e-09.  Total volume = 2.8693e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 1.85 average: 0.136646
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.070252 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.001 0.00313836 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.125 average: 0.37085
+    Cell determinant check OK.
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.414126 average: 0.498523
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.703955 average: 0.986906
+    Face volume ratio check OK.
+
+Mesh OK.
+
+End
+
+
+
+return code: 0
+
+# -- cell 11 (0.8s, exit 0)
+fig,ax=plt.subplots(figsize=(10,3.2))
+# draw every unique planar mesh edge
+seen=set()
+for q in quads:
+    for a,b in zip(q,q[1:]+q[:1]):
+        e=tuple(sorted((a,b)))
+        if e not in seen:
+            seen.add(e); xa,ya=merged[a]; xb,yb=merged[b]; ax.plot([xa*1000,xb*1000],[ya*1000,yb*1000],color='0.45',lw=.45)
+colors={'inlet':'tab:blue','outlet':'tab:orange','walls':'tab:red'}
+for e,lab in labels2.items():
+    a,b=tuple(e); xa,ya=merged[a]; xb,yb=merged[b]
+    ax.plot([xa*1000,xb*1000],[ya*1000,yb*1000],color=colors[lab],lw=2)
+ax.set_aspect('equal'); ax.set_xlabel('x [mm]'); ax.set_ylabel('y [mm]'); ax.grid(True,alpha=.25)
+ax.set_title('Checked 2-D OpenFOAM mesh: inlet blue, outlet orange, walls red')
+plt.tight_layout(); plt.show()
+# -- output
+
+
+# -- cell 12 (0.6s, exit 0)
+nL,nW,nQ=120,10,24
+raw_pts=[]; quads=[]; edge_labels={}
+x=np.linspace(0,L,nL+1); y=np.linspace(-W/2,W/2,nW+1); X,Y=np.meshgrid(x,y,indexing='ij'); add_block(X,Y,{'i0':'inlet','j0':'walls','j1':'walls'})
+theta=np.linspace(-math.pi/2,math.pi/2,2*nQ+1); rad=np.linspace(R+W/2,R-W/2,nW+1); TH,RR=np.meshgrid(theta,rad,indexing='ij'); add_block(L+RR*np.cos(TH),R+RR*np.sin(TH),{'j0':'walls','j1':'walls'})
+x=np.linspace(L,0,nL+1); y=np.linspace(2*R+W/2,2*R-W/2,nW+1); X,Y=np.meshgrid(x,y,indexing='ij'); add_block(X,Y,{'i1':'outlet','j0':'walls','j1':'walls'})
+merged=[]; key_to_new={}; old_to_new={}
+for old,p in enumerate(raw_pts):
+    key=(round(p[0],12),round(p[1],12))
+    if key not in key_to_new: key_to_new[key]=len(merged); merged.append(p)
+    old_to_new[old]=key_to_new[key]
+quads=[[old_to_new[v] for v in q] for q in quads]; labels2={frozenset(old_to_new[v] for v in e):lab for e,lab in edge_labels.items()}
+N=len(merged); points=[(x,y,0.0) for x,y in merged]+[(x,y,T) for x,y in merged]
+face_map={}; faces=[]; owners=[]; neighbours=[]; patch_for_face={}
+for ci,q in enumerate(quads):
+    b=q; t=[v+N for v in q]; candidates=[([b[0],b[3],b[2],b[1]],'frontAndBack'),([t[0],t[1],t[2],t[3]],'frontAndBack')]
+    candidates += [([b[k],b[(k+1)%4],b[(k+1)%4]+N,b[k]+N],labels2.get(frozenset((b[k],b[(k+1)%4])))) for k in range(4)]
+    for f,lab in candidates:
+        key=tuple(sorted(f))
+        if key in face_map: neighbours.append((face_map[key],ci)); patch_for_face.pop(face_map[key],None)
+        else:
+            fi=len(faces); face_map[key]=fi; faces.append(f); owners.append(ci)
+            if lab: patch_for_face[fi]=lab
+internal_ids=[fi for fi,_ in neighbours]; neighbour_by_face={fi:nb for fi,nb in neighbours}; boundary_ids=[fi for p in patch_order for fi in range(len(faces)) if patch_for_face.get(fi)==p]; order=internal_ids+boundary_ids
+faces_o=[faces[i] for i in order]; owners_o=[owners[i] for i in order]; neigh_o=[neighbour_by_face[i] for i in internal_ids]
+(pm/'points').write_text(head('vectorField','points')+f"{len(points)}\n(\n"+''.join(f"({x:.12g} {y:.12g} {z:.12g})\n" for x,y,z in points)+")\n")
+(pm/'faces').write_text(head('faceList','faces')+f"{len(faces_o)}\n(\n"+''.join(f"4({' '.join(map(str,f))})\n" for f in faces_o)+")\n")
+(pm/'owner').write_text(head('labelList','owner')+f"{len(owners_o)}\n(\n"+'\n'.join(map(str,owners_o))+"\n)\n"); (pm/'neighbour').write_text(head('labelList','neighbour')+f"{len(neigh_o)}\n(\n"+'\n'.join(map(str,neigh_o))+"\n)\n")
+start=len(internal_ids); entries=[]
+for p in patch_order:
+    count=sum(patch_for_face.get(fi)==p for fi in boundary_ids); typ='empty' if p=='frontAndBack' else 'patch' if p in ('inlet','outlet') else 'wall'; entries.append(f"    {p}\n    {{\n        type {typ};\n        nFaces {count};\n        startFace {start};\n    }}\n"); start+=count
+(pm/'boundary').write_text(head('polyBoundaryMesh','boundary')+f"{len(entries)}\n(\n"+''.join(entries)+")\n")
+for p in patch_order: stl_for_patch(p)
+shutil.rmtree(pm/'sets',ignore_errors=True)
+print(f'production mesh: {len(quads)} cells; nominal straight spacing {L/nL*1000:.3f} mm; {nW} cells across width')
+# -- output
+production mesh: 2880 cells; nominal straight spacing 1.000 mm; 10 cells across width
+
+# -- cell 13 (0.3s, exit 0)
+final_check=subprocess.run(['checkMesh','-constant','-allTopology','-allGeometry'],text=True,capture_output=True)
+print(final_check.stdout[-5000:]); print(final_check.stderr); print('return code:',final_check.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant -allTopology -allGeometry
+Date   : Sep 16 2026
+Time   : 02:59:36
+Host   : yc-demo
+PID    : 798961
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T1-20260916-025729-d00a/t1
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+Check mesh...
+    Enabling all (cell, face, edge, point) topology checks.
+    Enabling all geometry checks.
+
+Time = constant
+
+Mesh stats 
+    points:           6358
+    internal points:  0
+    edges:            15295
+    internal edges:   2583
+    internal edges using one boundary point:   0
+    internal edges using two boundary points:  2583
+    faces:            11818
+    internal faces:   5462
+    cells:            2880
+    faces per cell:   6
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     2880
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Topological cell zip-up check OK.
+    Face-face connectivity OK.
+  <<Writing 4 cells with two non-boundary faces to set twoInternalFacesCells
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology  Bounding box
+    inlet               10       22       ok (non-closed singly connected)   (0 -0.005 0) (0 0.005 0.001)
+    outlet              10       22       ok (non-closed singly connected)   (0 0.025 0) (0 0.035 0.001)
+    walls               576      1156     ok (non-closed singly connected)   (0 -0.005 0) (0.14 0.035 0.001)
+    frontAndBack        5760     6358     ok (non-closed singly connected)   (0 -0.005 0) (0.14 0.035 0.001)
+    ".*"                6356     6358     ok (closed singly connected)       (0 -0.005 0) (0.14 0.035 0.001)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.005 0) (0.14 0.035 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (1.32014e-18 1.33685e-19 -1.27001e-18) OK.
+    Max cell openness = 2.0814e-16 OK.
+    Max aspect ratio = 1.41974 OK.
+    Minimum face area = 6.54382e-07. Maximum face area = 1.30876e-06.  Face area magnitudes OK.
+    Min volume = 6.86733e-10. Max volume = 1.27536e-09.  Total volume = 2.8709e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0.836177 average: 0.0368209
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.0332131 OK.
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.000654382 0.00130876 OK.
+    All angles in faces OK.
+    Face flatness (1 = flat, 0 = butterfly) : min = 1  average = 1
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0.125 average: 0.44729
+    Cell determinant check OK.
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.40732 average: 0.499392
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.686733 average: 0.994194
+    Face volume ratio check OK.
+
+Mesh OK.
+
+End
+
+
+
+return code: 0
+
+# -- cell 14 (3.6s, exit 0)
+fig,ax=plt.subplots(figsize=(10,3.2)); seen=set()
+for q in quads:
+    for a,b in zip(q,q[1:]+q[:1]):
+        e=tuple(sorted((a,b)))
+        if e not in seen:
+            seen.add(e); xa,ya=merged[a]; xb,yb=merged[b]; ax.plot([xa*1000,xb*1000],[ya*1000,yb*1000],color='0.55',lw=.28)
+for e,lab in labels2.items():
+    a,b=tuple(e); xa,ya=merged[a]; xb,yb=merged[b]; ax.plot([xa*1000,xb*1000],[ya*1000,yb*1000],color=colors[lab],lw=1.8)
+ax.set_aspect('equal'); ax.set_xlabel('x [mm]'); ax.set_ylabel('y [mm]'); ax.set_title('Final 2-D U-bend mesh (2,880 cells)'); ax.grid(True,alpha=.2)
+plt.tight_layout(); plt.savefig('final_mesh.png',dpi=180); plt.show()
+# -- output
+
+

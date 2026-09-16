@@ -1,0 +1,463 @@
+{
+  "run_id": "20260916-032145-8888",
+  "case": "T23",
+  "arm": "core",
+  "model": "gpt-5.6-sol",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T23-20260916-032145-8888",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T23-20260916-032145-8888/t23",
+  "started_at": "2026-09-16T03:21:46",
+  "ended_at": "2026-09-16T03:24:05",
+  "seconds": 135.1,
+  "n_turns": 15,
+  "n_steps": 14,
+  "first_mesh_step": 5,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.3192,
+  "given": [
+    "b123d_api.md"
+  ],
+  "tokens": {
+    "input": 20601,
+    "cache_read": 197785,
+    "cache_write": 0,
+    "output": 7883
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd\nimport math, os\n# All dimensions are metres (request converted from mm once here).\nCUBE_SIDE = 0.040\nHOLLOW_R = 0.016\nBALL_R = 0.015\nHOLE_R = 0.012\nHALF = CUBE_SIDE/2\ncube = bd.Box(CUBE_SIDE, CUBE_SIDE, CUBE_SIDE, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.CENTER))\nhollow = bd.Sphere(HOLLOW_R)\nball = bd.Sphere(BALL_R)\n# Six radial cylinders, each explicitly associated with one cube face.\nhole_px = bd.Pos(0,0,0) * bd.Cylinder(HOLE_R, HALF, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)).rotate(bd.Axis.Y,90)\nhole_nx = bd.Pos(0,0,0) * bd.Cylinder(HOLE_R, HALF, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)).rotate(bd.Axis.Y,-90)\nhole_py = bd.Pos(0,0,0) * bd.Cylinder(HOLE_R, HALF, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)).rotate(bd.Axis.X,-90)\nhole_ny = bd.Pos(0,0,0) * bd.Cylinder(HOLE_R, HALF, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)).rotate(bd.Axis.X,90)\nhole_pz = bd.Cylinder(HOLE_R, HALF, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN))\nhole_nz = bd.Cylinder(HOLE_R, HALF, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)).rotate(bd.Axis.X,180)\npassages = hole_px + hole_nx + hole_py + hole_ny + hole_pz + hole_nz\nwater = ((hollow + passages) & cube) - ball\nprint('water volume', water.volume, 'm^3; bbox', water.bounding_box().min, water.bounding_box().max)\nprint('faces', len(water.faces()), 'solids', len(water.solids()))\nfor i,f in enumerate(water.faces()):\n    print(i, f.geom_type, round(f.area,10), tuple(round(v,6) for v in f.center()))",
+      "exit_code": 0,
+      "seconds": 2.457567764009582,
+      "output": "water volume 2.0658481096018842e-05 m^3; bbox Vector: (X=-0.02, Y=-0.02, Z=-0.02) Vector: (X=0.02, Y=0.02, Z=0.02)\nfaces 21 solids 1\n0 GeomType.SPHERE 1.69604e-05 (0.009692, 0.009692, -0.008254)\n1 GeomType.CYLINDER 0.0006656798 (0.015292, 0.0, 0.012)\n2 GeomType.CYLINDER 0.0006656843 (-0.012, 0.015292, 0.0)\n3 GeomType.CYLINDER 0.0006656843 (-0.012, -0.0, -0.015292)\n4 GeomType.SPHERE 1.69606e-05 (0.009692, -0.009692, -0.008254)\n5 GeomType.CYLINDER 0.0006656843 (-0.012, -0.015292, 0.0)\n6 GeomType.SPHERE 1.69603e-05 (0.009692, -0.009692, 0.008254)\n7 GeomType.CYLINDER 0.0006656798 (-0.012, 0.0, 0.015292)\n8 GeomType.SPHERE 1.69603e-05 (0.009692, 0.009692, 0.008254)\n9 GeomType.PLANE 0.0004523893 (0.02, -0.0, 0.0)\n10 GeomType.SPHERE 1.69605e-05 (-0.009692, 0.009692, 0.008254)\n11 GeomType.CYLINDER 0.0006656935 (-0.015292, -0.0, -0.012)\n12 GeomType.SPHERE 1.69599e-05 (-0.009692, 0.009692, -0.008254)\n13 GeomType.PLANE 0.0004523893 (-0.0, 0.02, 0.0)\n14 GeomType.SPHERE 1.69602e-05 (-0.009692, -0.009692, -0.008254)\n15 GeomType.PLANE 0.0004523893 (-0.0, -0.0, -0.02)\n16 GeomType.SPHERE 1.69604e-05 (-0.009692, -0.009692, 0.008254)\n17 GeomType.PLANE 0.0004523893 (-0.0, -0.02, 0.0)\n18 GeomType.PLANE 0.0004523893 (-0.0, -0.0, 0.02)\n19 GeomType.PLANE 0.0004523893 (-0.02, -0.0, -0.0)\n20 GeomType.SPHERE 0.0028274334 (-0.015, 0.0, 0.0)",
+      "image": ""
+    },
+    {
+      "cmd": "import inspect, pyvista as pv\nos.makedirs('constant/triSurface', exist_ok=True)\nbd.export_stl(water, 'water_preview.stl', tolerance=0.00035, angular_tolerance=0.18)\nmeshprev = pv.read('water_preview.stl')\npl = pv.Plotter(off_screen=True, window_size=(850,700))\npl.add_mesh(meshprev, color='deepskyblue', opacity=0.55, show_edges=True, edge_color='navy')\npl.add_axes(); pl.view_isometric(); pl.show(screenshot='water_preview.png')\nprint('preview triangles', meshprev.n_cells)\nfor i,f in enumerate(water.faces()):\n    if f.geom_type == bd.GeomType.CYLINDER:\n        print('cylinder face',i,'axis',f.axis_of_rotation)\nfrom IPython.display import display, Image\ndisplay(Image('water_preview.png'))",
+      "exit_code": 0,
+      "seconds": 1.10392294099438,
+      "output": "preview triangles 33174\ncylinder face 1 axis Axis: (position=(0, 0, 0), direction=(1, 0, 0))\ncylinder face 2 axis Axis: (position=(0, 0, 0), direction=(0, 1, 0))\ncylinder face 3 axis Axis: (position=(0, 0, 0), direction=(0, 0, -1))\ncylinder face 5 axis Axis: (position=(0, 0, 0), direction=(0, -1, 0))\ncylinder face 7 axis Axis: (position=(0, 0, 0), direction=(0, 0, 1))\ncylinder face 11 axis Axis: (position=(0, 0, 0), direction=(1, 0, 0))\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-16 03:22:10.700 (   0.777s) [    7EA9DD8F4780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-16 03:22:10.700 (   0.778s) [    7EA9DD8F4780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-16 03:22:10.713 (   0.791s) [    7EA9DD8F4780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_835892/2188586471.py:7: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  pl.add_axes(); pl.view_isometric(); pl.show(screenshot='water_preview.png')",
+      "image": "2 pictures"
+    },
+    {
+      "cmd": "from pathlib import Path\ntri = Path('constant/triSurface')\n# Clean only artifacts created by this build before deterministic export.\nfor p in tri.glob('*.stl'): p.unlink()\nfor p in [Path('water_preview.stl')]:\n    if p.exists(): p.unlink()\nfaces = list(water.faces())\nball_faces = [f for f in faces if f.geom_type == bd.GeomType.SPHERE and f.area > 1e-3]\nhollow_faces = [f for f in faces if f.geom_type == bd.GeomType.SPHERE and f.area < 1e-3]\nopening_faces = {}\nhole_faces = {}\naxis_names = [(0,'x'),(1,'y'),(2,'z')]\nfor f in faces:\n    c = f.center()\n    if f.geom_type == bd.GeomType.PLANE:\n        vals=[c.X,c.Y,c.Z]; k=max(range(3),key=lambda j:abs(vals[j])); opening_faces[('p' if vals[k]>0 else 'n')+axis_names[k][1]]=f\n    elif f.geom_type == bd.GeomType.CYLINDER:\n        d=f.axis_of_rotation.direction; vals=[d.X,d.Y,d.Z]; k=max(range(3),key=lambda j:abs(vals[j])); cv=[c.X,c.Y,c.Z][k]; hole_faces[('p' if cv>0 else 'n')+axis_names[k][1]]=f\npatch_shapes={'ball':bd.Compound(ball_faces),'hollowWall':bd.Compound(hollow_faces)}\nfor n in ['px','nx','py','ny','pz','nz']:\n    patch_shapes['hole_'+n]=hole_faces[n]\n    patch_shapes['opening_'+n]=opening_faces[n]\nfor name,shape in patch_shapes.items():\n    bd.export_stl(shape, str(tri/(name+'.stl')), tolerance=0.00012, angular_tolerance=0.10)\nball_r_check=math.sqrt(ball_faces[0].area/(4*math.pi))\nopening_r_checks={n:math.sqrt(f.area/math.pi) for n,f in opening_faces.items()}\nprint('exported patches:', sorted(patch_shapes))\nprint(f'ball radius measured from area: {ball_r_check:.9f} m (requested {BALL_R:.9f})')\nprint('opening radii measured from area:', {k:round(v,9) for k,v in opening_r_checks.items()}, 'requested',HOLE_R)\nprint('hollow spherical pieces',len(hollow_faces),'combined area',sum(f.area for f in hollow_faces))\nprint('hole assignments', {k:tuple(round(x,6) for x in hole_faces[k].center()) for k in sorted(hole_faces)})",
+      "exit_code": 0,
+      "seconds": 4.06068709900137,
+      "output": "exported patches: ['ball', 'hole_nx', 'hole_ny', 'hole_nz', 'hole_px', 'hole_py', 'hole_pz', 'hollowWall', 'opening_nx', 'opening_ny', 'opening_nz', 'opening_px', 'opening_py', 'opening_pz']\nball radius measured from area: 0.015000000 m (requested 0.015000000)\nopening radii measured from area: {'px': 0.012, 'py': 0.012, 'nz': 0.012, 'ny': 0.012, 'pz': 0.012, 'nx': 0.012} requested 0.012\nhollow spherical pieces 8 combined area 0.00013568263293830637\nhole assignments {'nx': (-0.015292, -0.0, -0.012), 'ny': (-0.012, -0.015292, 0.0), 'nz': (-0.012, -0.0, -0.015292), 'px': (0.015292, 0.0, 0.012), 'py': (-0.012, 0.015292, 0.0), 'pz': (-0.012, 0.0, 0.015292)}",
+      "image": ""
+    },
+    {
+      "cmd": "import gmsh\nbd.export_step(water, 'water.step')\ngmsh.initialize()\ngmsh.model.add('water')\ngmsh.model.occ.importShapes('water.step')\ngmsh.model.occ.synchronize()\nvols=gmsh.model.getEntities(3); surfs=gmsh.model.getBoundary(vols, oriented=False, recursive=False)\nprint('gmsh volumes',vols,'surfaces',len(surfs))\nfor _,tag in surfs:\n    typ=gmsh.model.getType(2,tag); com=gmsh.model.occ.getCenterOfMass(2,tag); area=gmsh.model.occ.getMass(2,tag)\n    print(tag,typ,tuple(round(x,6) for x in com),round(area,10))\ngmsh.finalize()",
+      "exit_code": 0,
+      "seconds": 0.1008998729812447,
+      "output": "Info    :  - Label 'Shapes/COMPOUND' (3D)\ngmsh volumes [(3, 1)] surfaces 21\n1 Sphere (0.009173, 0.009173, -0.009173) 1.69606e-05\n2 Cylinder (0.015567, 0.0, 0.0) 0.0006656798\n3 Cylinder (-0.0, 0.015567, 0.0) 0.0006656842\n4 Cylinder (-0.0, -0.0, -0.015567) 0.0006656842\n5 Sphere (0.009173, -0.009173, -0.009173) 1.69606e-05\n6 Cylinder (-0.0, -0.015567, 0.0) 0.0006656842\n7 Sphere (0.009173, -0.009173, 0.009173) 1.69604e-05\n8 Cylinder (0.0, 0.0, 0.015567) 0.0006656798\n9 Sphere (0.009173, 0.009173, 0.009173) 1.69603e-05\n10 Plane (0.02, -0.0, 0.0) 0.0004523893\n11 Sphere (-0.009173, 0.009173, 0.009173) 1.69605e-05\n12 Cylinder (-0.015567, 0.0, -0.0) 0.0006656929\n13 Sphere (-0.009173, 0.009173, -0.009173) 1.69603e-05\n14 Plane (-0.0, 0.02, 0.0) 0.0004523893\n15 Sphere (-0.009173, -0.009173, -0.009173) 1.69602e-05\n16 Plane (-0.0, -0.0, -0.02) 0.0004523893\n17 Sphere (-0.009173, -0.009173, 0.009173) 1.69605e-05\n18 Plane (-0.0, -0.02, 0.0) 0.0004523893\n19 Plane (-0.0, -0.0, 0.02) 0.0004523893\n20 Plane (-0.02, -0.0, -0.0) 0.0004523893\n21 Sphere (-0.0, -0.0, 0.0) 0.0028274334",
+      "image": ""
+    },
+    {
+      "cmd": "gmsh.initialize()\ngmsh.option.setNumber('General.Terminal',1)\ngmsh.model.add('water')\ngmsh.model.occ.importShapes('water.step'); gmsh.model.occ.synchronize()\nvoltag=gmsh.model.getEntities(3)[0][1]\ngsurf=gmsh.model.getBoundary([(3,voltag)],oriented=False)\ngball=[]; ghollow=[]; gholes={}; gopens={}\nfor _,tag in gsurf:\n    typ=gmsh.model.getType(2,tag); c=gmsh.model.occ.getCenterOfMass(2,tag); area=gmsh.model.occ.getMass(2,tag)\n    if typ=='Sphere':\n        (gball if area>1e-3 else ghollow).append(tag)\n    elif typ in ('Cylinder','Plane'):\n        k=max(range(3),key=lambda j:abs(c[j])); key=('p' if c[k]>0 else 'n')+'xyz'[k]\n        (gholes if typ=='Cylinder' else gopens)[key]=tag\nphys_ids={}; pid=1\nfor name,tags in [('ball',gball),('hollowWall',ghollow)]+[(f'hole_{n}',[gholes[n]]) for n in ['px','nx','py','ny','pz','nz']]+[(f'opening_{n}',[gopens[n]]) for n in ['px','nx','py','ny','pz','nz']]:\n    gmsh.model.addPhysicalGroup(2,tags,pid); gmsh.model.setPhysicalName(2,pid,name); phys_ids[name]=pid; pid+=1\ngmsh.model.addPhysicalGroup(3,[voltag],100); gmsh.model.setPhysicalName(3,100,'water')\ngmsh.option.setNumber('Mesh.MeshSizeMin',0.0008); gmsh.option.setNumber('Mesh.MeshSizeMax',0.0008)\ngmsh.option.setNumber('Mesh.MshFileVersion',2.2); gmsh.option.setNumber('Mesh.Binary',0)\ngmsh.option.setNumber('Mesh.Optimize',1)\ngmsh.model.mesh.generate(3)\ngmsh.write('water.msh')\nprint('nodes',len(gmsh.model.mesh.getNodes()[0]),'3D elements',sum(len(a) for a in gmsh.model.mesh.getElements(3)[1]))\nprint('physical IDs',phys_ids)\ngmsh.finalize()",
+      "exit_code": 0,
+      "seconds": 4.361670528014656,
+      "output": "Info    :  - Label 'Shapes/COMPOUND' (3D)\nInfo    : Meshing 1D...\nInfo    : [  0%] Meshing curve 1 (Circle)\nInfo    : [ 10%] Meshing curve 2 (Circle)\nInfo    : [ 10%] Meshing curve 3 (Circle)\nInfo    : [ 10%] Meshing curve 4 (Circle)\nInfo    : [ 10%] Meshing curve 5 (Ellipse)\nInfo    : [ 10%] Meshing curve 6 (Line)\nInfo    : [ 20%] Meshing curve 7 (Circle)\nInfo    : [ 20%] Meshing curve 8 (Ellipse)\nInfo    : [ 20%] Meshing curve 9 (Ellipse)\nInfo    : [ 20%] Meshing curve 10 (Ellipse)\nInfo    : [ 20%] Meshing curve 11 (Circle)\nInfo    : [ 20%] Meshing curve 12 (Ellipse)\nInfo    : [ 30%] Meshing curve 13 (Ellipse)\nInfo    : [ 30%] Meshing curve 14 (Circle)\nInfo    : [ 30%] Meshing curve 15 (Ellipse)\nInfo    : [ 30%] Meshing curve 16 (Ellipse)\nInfo    : [ 30%] Meshing curve 17 (Line)\nInfo    : [ 30%] Meshing curve 18 (Circle)\nInfo    : [ 40%] Meshing curve 19 (Ellipse)\nInfo    : [ 40%] Meshing curve 20 (Ellipse)\nInfo    : [ 40%] Meshing curve 21 (Circle)\nInfo    : [ 40%] Meshing curve 22 (Ellipse)\nInfo    : [ 40%] Meshing curve 23 (Circle)\nInfo    : [ 40%] Meshing curve 24 (Ellipse)\nInfo    : [ 50%] Meshing curve 25 (Ellipse)\nInfo    : [ 50%] Meshing curve 26 (Circle)\nInfo    : [ 50%] Meshing curve 27 (Line)\nInfo    : [ 50%] Meshing curve 28 (Circle)\nInfo    : [ 50%] Meshing curve 29 (Circle)\nInfo    : [ 50%] Meshing curve 30 (Ellipse)\nInfo    : [ 60%] Meshing curve 31 (Ellipse)\nInfo    : [ 60%] Meshing curve 32 (Circle)\nInfo    : [ 60%] Meshing curve 33 (Ellipse)\nInfo    : [ 60%] Meshing curve 34 (Circle)\nInfo    : [ 60%] Meshing curve 35 (Circle)\nInfo    : [ 60%] Meshing curve 36 (Line)\nInfo    : [ 70%] Meshing curve 37 (Circle)\nInfo    : [ 70%] Meshing curve 38 (Circle)\nInfo    : [ 70%] Meshing curve 39 (Ellipse)\nInfo    : [ 70%] Meshing curve 40 (Ellipse)\nInfo    : [ 70%] Meshing curve 41 (Circle)\nInfo    : [ 70%] Meshing curve 42 (Ellipse)\nInfo    : [ 80%] Meshing curve 43 (Circle)\nInfo    : [ 80%] Meshing curve 44 (Circle)\nInfo    : [ 80%] Meshing curve 45 (Line)\n... 4637 characters cut ...\ns removed 0 6)\nInfo    : It. 12500 - 12494 nodes created - worst tet radius 1.17845 (nodes removed 0 6)\nInfo    : It. 13000 - 12994 nodes created - worst tet radius 1.16514 (nodes removed 0 6)\nInfo    : It. 13500 - 13494 nodes created - worst tet radius 1.15234 (nodes removed 0 6)\nInfo    : It. 14000 - 13994 nodes created - worst tet radius 1.13998 (nodes removed 0 6)\nInfo    : It. 14500 - 14494 nodes created - worst tet radius 1.1278 (nodes removed 0 6)\nInfo    : It. 15000 - 14994 nodes created - worst tet radius 1.11601 (nodes removed 0 6)\nInfo    : It. 15500 - 15494 nodes created - worst tet radius 1.10555 (nodes removed 0 6)\nInfo    : It. 16000 - 15994 nodes created - worst tet radius 1.09486 (nodes removed 0 6)\nInfo    : It. 16500 - 16494 nodes created - worst tet radius 1.08463 (nodes removed 0 6)\nInfo    : It. 17000 - 16994 nodes created - worst tet radius 1.0753 (nodes removed 0 6)\nInfo    : It. 17500 - 17494 nodes created - worst tet radius 1.06654 (nodes removed 0 6)\nInfo    : It. 18000 - 17994 nodes created - worst tet radius 1.05757 (nodes removed 0 6)\nInfo    : It. 18500 - 18494 nodes created - worst tet radius 1.04933 (nodes removed 0 6)\nInfo    : It. 19000 - 18994 nodes created - worst tet radius 1.04131 (nodes removed 0 6)\nInfo    : It. 19500 - 19494 nodes created - worst tet radius 1.03297 (nodes removed 0 6)\nInfo    : It. 20000 - 19994 nodes created - worst tet radius 1.02506 (nodes removed 0 6)\nInfo    : It. 20500 - 20494 nodes created - worst tet radius 1.01776 (nodes removed 0 6)\nInfo    : It. 21000 - 20994 nodes created - worst tet radius 1.01113 (nodes removed 0 6)\nInfo    : It. 21500 - 21494 nodes created - worst tet radius 1.00413 (nodes removed 0 6)\nInfo    : 3D refinement terminated (40374 nodes total):\nInfo    :  - 0 Delaunay cavities modified for star shapeness\nInfo    :  - 6 nodes could not be inserted\nInfo    :  - 197394 tetrahedra created in 1.26017 sec. (156641 tets/s)\nInfo    : 0 node relocations\nInfo    : Done meshing 3D (Wall 2.52942s, CPU 2.5141s)\nInfo    : Optimizing mesh...\nInfo    : Optimizing volume 1\nInfo    : Optimization starts (volume = 2.06597e-05) with worst = 0.00128078 / average = 0.773178:\nInfo    : 0.00 < quality < 0.10 :       441 elements\nInfo    : 0.10 < quality < 0.20 :      1314 elements\nInfo    : 0.20 < quality < 0.30 :      2265 elements\nInfo    : 0.30 < quality < 0.40 :      3592 elements\nInfo    : 0.40 < quality < 0.50 :      5358 elements\nInfo    : 0.50 < quality < 0.60 :      9359 elements\nInfo    : 0.60 < quality < 0.70 :     21282 elements\nInfo    : 0.70 < quality < 0.80 :     48435 elements\nInfo    : 0.80 < quality < 0.90 :     72334 elements\nInfo    : 0.90 < quality < 1.00 :     33014 elements\nInfo    : 3977 edge swaps, 94 node relocations (volume = 2.06597e-05): worst = 0.00128078 / average = 0.785801 (Wall 0.108238s, CPU 0.108508s)\nInfo    : 4010 edge swaps, 101 node relocations (volume = 2.06597e-05): worst = 0.00128078 / average = 0.785886 (Wall 0.13649s, CPU 0.136773s)\nInfo    : No ill-shaped tets in the mesh :-)\nInfo    : 0.00 < quality < 0.10 :         1 elements\nInfo    : 0.10 < quality < 0.20 :         0 elements\nInfo    : 0.20 < quality < 0.30 :         7 elements\nInfo    : 0.30 < quality < 0.40 :      3584 elements\nInfo    : 0.40 < quality < 0.50 :      5147 elements\nInfo    : 0.50 < quality < 0.60 :      9059 elements\nInfo    : 0.60 < quality < 0.70 :     21222 elements\nInfo    : 0.70 < quality < 0.80 :     48767 elements\nInfo    : 0.80 < quality < 0.90 :     73057 elements\nInfo    : 0.90 < quality < 1.00 :     32928 elements\nInfo    : Done optimizing mesh (Wall 0.398838s, CPU 0.383609s)\nInfo    : 40374 nodes 232041 elements\nInfo    : Writing 'water.msh'...\nInfo    : Done writing 'water.msh'\nnodes 40374 3D elements 193795\nphysical IDs {'ball': 1, 'hollowWall': 2, 'hole_px': 3, 'hole_nx': 4, 'hole_py': 5, 'hole_ny': 6, 'hole_pz': 7, 'hole_nz': 8, 'opening_px': 9, 'opening_nx': 10, 'opening_py': 11, 'opening_ny': 12, 'opening_pz': 13, 'opening_nz': 14}",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, textwrap, shutil\nos.makedirs('system',exist_ok=True); os.makedirs('constant',exist_ok=True)\nPath('system/controlDict').write_text(textwrap.dedent('''\\\nFoamFile { format ascii; class dictionary; object controlDict; }\napplication checkMesh;\nstartFrom startTime; startTime 0; stopAt endTime; endTime 1;\ndeltaT 1; writeControl timeStep; writeInterval 1;\n'''))\nres=subprocess.run(['gmshToFoam','water.msh'],text=True,capture_output=True)\nprint(res.stdout[-3500:]); print(res.stderr[-1000:]); print('returncode',res.returncode)\nprint(Path('constant/polyMesh/boundary').read_text())",
+      "exit_code": 0,
+      "seconds": 1.203385103988694,
+      "output": "-------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : gmshToFoam water.msh\nDate   : Sep 16 2026\nTime   : 03:22:50\nHost   : yc-demo\nPID    : 836956\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T23-20260916-032145-8888/t23\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nStarting to read mesh format at line 2\nRead format version 2.2  ascii 0\n\nStarting to read physical names at line 5\nPhysical names:15\n    Surface 1\tball\n    Surface 2\thollowWall\n    Surface 3\thole_px\n    Surface 4\thole_nx\n    Surface 5\thole_py\n    Surface 6\thole_ny\n    Surface 7\thole_pz\n    Surface 8\thole_nz\n    Surface 9\topening_px\n    Surface 10\topening_nx\n    Surface 11\topening_py\n    Surface 12\topening_ny\n    Surface 13\topening_pz\n    Surface 14\topening_nz\n    Volume 100\twater\n\nStarting to read points at line 23\nVertices to be read: 40374\nVertices read:40374\n\nStarting to read cells at line 40400\nCells to be read: 230903\n\nMapping region 2 to Foam patch 0\nMapping region 3 to Foam patch 1\nMapping region 5 to Foam patch 2\nMapping region 8 to Foam patch 3\nMapping region 6 to Foam patch 4\nMapping region 7 to Foam patch 5\nMapping region 9 to Foam patch 6\nMapping region 4 to Foam patch 7\nMapping region 11 to Foam patch 8\nMapping region 14 to Foam patch 9\nMapping reg\n... 529 characters cut ...\n gets name opening_nz\nPatch 10 gets name opening_ny\nPatch 11 gets name opening_pz\nPatch 12 gets name opening_nx\nPatch 13 gets name ball\n\n--> FOAM Warning : \n    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)\n    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635\n    Found 37108 undefined faces in mesh; adding to default patch defaultFaces\nFinding faces of patch 0\nFinding faces of patch 1\nFinding faces of patch 2\nFinding faces of patch 3\nFinding faces of patch 4\nFinding faces of patch 5\nFinding faces of patch 6\nFinding faces of patch 7\nFinding faces of patch 8\nFinding faces of patch 9\nFinding faces of patch 10\nFinding faces of patch 11\nFinding faces of patch 12\nFinding faces of patch 13\n\nFaceZones:\nZone\tSize\n\nWriting zone 0 to cellZone water and cellSet\nEnd\n\n\n\nreturncode 0\n/*--------------------------------*- C++ -*----------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n14\n(\n    hollowWall\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          540;\n        startFace       369036;\n    }\n    hole_px\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          2605;\n        startFace       369576;\n    }\n    hole_py\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          2605;\n        startFace       372181;\n    }\n    hole_nz\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          2605;\n        startFace       374786;\n    }\n    hole_ny\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          2605;\n        startFace       377391;\n    }\n    hole_pz\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          2605;\n        startFace       379996;\n    }\n    opening_px\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          1709;\n        startFace       382601;\n    }\n    hole_nx\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          2635;\n        startFace       384310;\n    }\n    opening_py\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          1709;\n        startFace       386945;\n    }\n    opening_nz\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          1711;\n        startFace       388654;\n    }\n    opening_ny\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          1709;\n        startFace       390365;\n    }\n    opening_pz\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          1711;\n        startFace       392074;\n    }\n    opening_nx\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          1709;\n        startFace       393785;\n    }\n    ball\n    {\n        type            patch;\n        physicalType    patch;\n        nFaces          10650;\n        startFace       395494;\n    }\n)\n\n// ************************************************************************* //",
+      "image": ""
+    },
+    {
+      "cmd": "chk=subprocess.run(['checkMesh','-allGeometry','-allTopology'],text=True,capture_output=True)\nPath('checkMesh.log').write_text(chk.stdout+chk.stderr)\nprint(chk.stdout[-7000:]); print(chk.stderr); print('returncode',chk.returncode)",
+      "exit_code": 0,
+      "seconds": 0.5017670940142125,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh -allGeometry -allTopology\nDate   : Sep 16 2026\nTime   : 03:22:56\nHost   : yc-demo\nPID    : 836999\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T23-20260916-032145-8888/t23\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\n\n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T23-20260916-032145-8888/t23/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting\n\n\nreturncode 1",
+      "image": ""
+    },
+    {
+      "cmd": "Path('system/fvSchemes').write_text('FoamFile { format ascii; class dictionary; object fvSchemes; }\\n')\nPath('system/fvSolution').write_text('FoamFile { format ascii; class dictionary; object fvSolution; }\\n')\nchk=subprocess.run(['checkMesh','-allGeometry','-allTopology'],text=True,capture_output=True)\nPath('checkMesh.log').write_text(chk.stdout+chk.stderr)\nprint(chk.stdout[-8000:]); print(chk.stderr); print('returncode',chk.returncode)",
+      "exit_code": 0,
+      "seconds": 0.5020314329885878,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh -allGeometry -allTopology\nDate   : Sep 16 2026\nTime   : 03:23:01\nHost   : yc-demo\nPID    : 837022\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T23-20260916-032145-8888/t23\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\n\n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'divSchemes' not found in dictionary \"system/fvSchemes\"\n\n\nfile: system/fvSchemes\n\n    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const\n    in file db/dictionary/dictionary.C at line 457.\n\nFOAM exiting\n\n\nreturncode 1",
+      "image": ""
+    },
+    {
+      "cmd": "Path('system/fvSchemes').write_text(textwrap.dedent('''\\\nFoamFile { format ascii; class dictionary; object fvSchemes; }\nddtSchemes { default Euler; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\n'''))\nchk=subprocess.run(['checkMesh','-allGeometry','-allTopology'],text=True,capture_output=True)\nPath('checkMesh.log').write_text(chk.stdout+chk.stderr)\nprint(chk.stdout[-8000:]); print(chk.stderr); print('returncode',chk.returncode)",
+      "exit_code": 0,
+      "seconds": 2.907800392014906,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh -allGeometry -allTopology\nDate   : Sep 16 2026\nTime   : 03:23:04\nHost   : yc-demo\nPID    : 837080\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T23-20260916-032145-8888/t23\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nCheck mesh...\n    Enabling all (cell, face, edge, point) topology checks.\n    Enabling all geometry checks.\n\nTime = constant\n\nMesh stats \n    points:           40374\n    face\n... 581 characters cut ...\nk OK.\n    Face-face connectivity OK.\n  <<Writing 571 cells with two non-boundary faces to set twoInternalFacesCells\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology  Bounding box\n    hollowWall          540      386      ok (non-closed singly connected)   (-0.010583 -0.010583 -0.010583) (0.010583 0.010583 0.010583)\n    hole_px             2605     1400     ok (non-closed singly connected)   (0.010583 -0.012 -0.012) (0.02 0.012 0.012)\n    hole_py             2605     1400     ok (non-closed singly connected)   (-0.012 0.010583 -0.012) (0.012 0.02 0.012)\n    hole_nz             2605     1400     ok (non-closed singly connected)   (-0.012 -0.012 -0.02) (0.012 0.012 -0.010583)\n    hole_ny             2605     1400     ok (non-closed singly connected)   (-0.012 -0.02 -0.012) (0.012 -0.010583 0.012)\n    hole_pz             2605     1400     ok (non-closed singly connected)   (-0.012 -0.012 0.010583) (0.012 0.012 0.02)\n    opening_px          1709     903      ok (non-closed singly connected)   (0.02 -0.0119984 -0.012) (0.02 0.0119984 0.0119934)\n    hole_nx             2635     1415     ok (non-closed singly connected)   (-0.02 -0.012 -0.012) (-0.010583 0.012 0.012)\n    opening_py          1709     903      ok (non-closed singly connected)   (-0.0119934 0.02 -0.0119984) (0.012 0.02 0.0119984)\n    opening_nz          1711     904      ok (non-closed singly connected)   (-0.0119934 -0.0119984 -0.02) (0.012 0.0119984 -0.02)\n    opening_ny          1709     903      ok (non-closed singly connected)   (-0.0119934 -0.02 -0.0119984) (0.012 -0.02 0.0119984)\n    opening_pz          1711     904      ok (non-closed singly connected)   (-0.0119934 -0.0119984 0.02) (0.012 0.0119984 0.02)\n    opening_nx          1709     903      ok (non-closed singly connected)   (-0.02 -0.0119984 -0.0119934) (-0.02 0.0119984 0.012)\n    ball                10650    5327     ok (closed singly connected)       (-0.0149989 -0.0149968 -0.015) (0.0149947 0.0149956 0.015)\n    \".*\"                37108    18558    ok (closed singly connected)       (-0.02 -0.02 -0.02) (0.02 0.02 0.02)\n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    water               193795       40374        2.06597e-05  (-0.02 -0.02 -0.02) (0.02 0.02 0.02)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.02 -0.02 -0.02) (0.02 0.02 0.02)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (-6.29982e-17 9.31614e-17 -6.35717e-17) OK.\n    Max cell openness = 2.67533e-16 OK.\n    Max aspect ratio = 78.0093 OK.\n    Minimum face area = 1.24612e-07. Maximum face area = 9.38417e-07.  Face area magnitudes OK.\n    Min volume = 3.8486e-12. Max volume = 2.80732e-10.  Total volume = 2.06597e-05.  Cell volumes OK.\n    Mesh non-orthogonality Max: 68.5374 average: 21.485\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.924755 OK.\n    Coupled point location match (average 0) OK.\n    Face tets OK.\n    Min/max edge length = 0.000351765 0.00172337 OK.\n    All angles in faces OK.\n    All face flatness OK.\n    Cell determinant (wellposedness) : minimum: 0 average: 0.145877\n ***Cells with small determinant (< 0.001) found, number of cells: 571\n  <<Writing 571 under-determined cells to set underdeterminedCells\n    Concave cell check OK.\n    Face interpolation weight : minimum: 0.0238087 average: 0.438613\n ***Faces with small interpolation weight (< 0.05) found, number of faces: 2\n  <<Writing 2 faces with low interpolation weights to set lowWeightFaces\n    Face volume ratio : minimum: 0.0243894 average: 0.795699\n    Face volume ratio check OK.\n\nFailed 2 mesh checks.\n\nEnd\n\n\n\nreturncode 0",
+      "image": ""
+    },
+    {
+      "cmd": "std=subprocess.run(['checkMesh'],text=True,capture_output=True)\nPath('checkMesh.standard.log').write_text(std.stdout+std.stderr)\nprint(std.stdout[-6000:]); print(std.stderr); print('returncode',std.returncode)",
+      "exit_code": 0,
+      "seconds": 0.9529360720189288,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh\nDate   : Sep 16 2026\nTime   : 03:23:13\nHost   : yc-demo\nPID    : 837126\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T23-20260916-032145-8888/t23\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           40374\n    faces:            406144\n    internal faces:   369036\n    cells:            193795\n    faces per cell:   4\n    boundary patches: 14\n    point zones:      0\n    face zones:       0\n    cell zones:       1\n\nOverall number of cells of each type:\n    hexahedra:     0\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    193795\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    hollowWall          540      386      ok (non-closed singly connected)  \n    hole_px             2605     1400     ok (non-closed singly connected)  \n    hole_py             2605     1400     ok (non-closed singly connected)  \n    hole_nz             2605     1400     ok (non-closed singly connected)  \n    hole_ny             2605     1400     ok (non-closed singly connected)  \n    hole_pz             2605     1400     ok (non-closed singly connected)  \n    opening_px          1709     903      ok (non-closed singly connected)  \n    hole_nx             2635     1415     ok (non-closed singly connected)  \n    opening_py          1709     903      ok (non-closed singly connected)  \n    opening_nz          1711     904      ok (non-closed singly connected)  \n    opening_ny          1709     903      ok (non-closed singly connected)  \n    opening_pz          1711     904      ok (non-closed singly connected)  \n    opening_nx          1709     903      ok (non-closed singly connected)  \n    ball                10650    5327     ok (closed singly connected)      \n    \".*\"                37108    18558    ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    water               193795       40374        2.06597e-05  (-0.02 -0.02 -0.02) (0.02 0.02 0.02)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (-0.02 -0.02 -0.02) (0.02 0.02 0.02)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (-6.29982e-17 9.31614e-17 -6.35717e-17) OK.\n    Max cell openness = 2.67533e-16 OK.\n    Max aspect ratio = 78.0093 OK.\n    Minimum face area = 1.24612e-07. Maximum face area = 9.38417e-07.  Face area magnitudes OK.\n    Min volume = 3.8486e-12. Max volume = 2.80732e-10.  Total volume = 2.06597e-05.  Cell volumes OK.\n    Mesh non-orthogonality Max: 68.5374 average: 21.485\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 0.924755 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd\n\n\n\nreturncode 0",
+      "image": ""
+    },
+    {
+      "cmd": "stlfiles=sorted(tri.glob('*.stl'))\nparts=[pv.read(str(p)) for p in stlfiles]\nmerged=parts[0]\nfor q in parts[1:]: merged=merged.merge(q,merge_points=False)\ncleaned=merged.clean(tolerance=1e-8,absolute=True)\nfree=cleaned.extract_feature_edges(boundary_edges=True,non_manifold_edges=False,feature_edges=False,manifold_edges=False)\nprint('STL files',len(stlfiles))\nfor p,q in zip(stlfiles,parts): print(p.name,q.n_cells)\nprint('union triangles',cleaned.n_cells,'points',cleaned.n_points,'free-edge line cells',free.n_cells)\nprint('water CAD volume',water.volume,'mesh volume 2.06597e-05','relative difference',abs(2.06597e-5-water.volume)/water.volume)",
+      "exit_code": 0,
+      "seconds": 0.20103091598139144,
+      "output": "STL files 14\nball.stl 83548\nhole_nx.stl 636\nhole_ny.stl 638\nhole_nz.stl 638\nhole_px.stl 639\nhole_py.stl 638\nhole_pz.stl 639\nhollowWall.stl 5060\nopening_nx.stl 285\nopening_ny.stl 285\nopening_nz.stl 285\nopening_px.stl 285\nopening_py.stl 285\nopening_pz.stl 285\nunion triangles 94146 points 47085 free-edge line cells 48\nwater CAD volume 2.0658481096018842e-05 mesh volume 2.06597e-05 relative difference 5.900259440634285e-05",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\ngmsh.initialize(); gmsh.open('water.msh')\nnodeTags,nodeCoords,_=gmsh.model.mesh.getNodes(); xyz=nodeCoords.reshape(-1,3); node_map={int(t):xyz[i] for i,t in enumerate(nodeTags)}\nfor dim,ptag in gmsh.model.getPhysicalGroups(2):\n    name=gmsh.model.getPhysicalName(dim,ptag); tris=[]\n    for ent in gmsh.model.getEntitiesForPhysicalGroup(dim,ptag):\n        types,_,enodes=gmsh.model.mesh.getElements(dim,int(ent))\n        for et,nodes in zip(types,enodes):\n            if gmsh.model.mesh.getElementProperties(et)[0]=='Triangle 3': tris.extend(np.asarray(nodes).reshape(-1,3).tolist())\n    with open(tri/(name+'.stl'),'w') as fh:\n        fh.write(f'solid {name}\\n')\n        for tags in tris:\n            a,b,c=(node_map[int(t)] for t in tags); n=np.cross(b-a,c-a); ln=np.linalg.norm(n); n=n/ln if ln else n\n            fh.write(f' facet normal {n[0]:.16g} {n[1]:.16g} {n[2]:.16g}\\n  outer loop\\n')\n            for v in (a,b,c): fh.write(f'   vertex {v[0]:.16g} {v[1]:.16g} {v[2]:.16g}\\n')\n            fh.write('  endloop\\n endfacet\\n')\n        fh.write(f'endsolid {name}\\n')\n    print(name,len(tris))\ngmsh.finalize()",
+      "exit_code": 0,
+      "seconds": 1.5044413420255296,
+      "output": "Info    : Reading 'water.msh'...\nInfo    : 40374 nodes\nInfo    : 230903 elements\nInfo    : [  0%] Reading elements                                                                                \rInfo    : [ 10%] Reading elements                                                                                \rInfo    : [ 20%] Reading elements                                                                                \rInfo    : [ 30%] Reading elements                                                                                \rInfo    : [ 40%] Reading elements                                                                                \rInfo    : [ 50%] Reading elements                                                                                \rInfo    : [ 60%] Reading elements                                                                                \rInfo    : [ 70%] Reading elements                                                                                \rInfo    : [ 80%] Reading elements                                                                                \rInfo    : [ 90%] Reading elements                                                                                \r                                                                                \rInfo    : Done reading 'water.msh'\nball 10650\nhollowWall 540\nhole_px 2605\nhole_nx 2635\nhole_py 2605\nhole_ny 2605\nhole_pz 2605\nhole_nz 2605\nopening_px 1709\nopening_nx 1709\nopening_py 1709\nopening_ny 1709\nopening_pz 1711\nopening_nz 1711",
+      "image": ""
+    },
+    {
+      "cmd": "parts=[pv.read(str(p)) for p in sorted(tri.glob('*.stl'))]\nmerged=parts[0]\nfor q in parts[1:]: merged=merged.merge(q,merge_points=False)\ncl=merged.clean(tolerance=1e-12,absolute=True)\nfree=cl.extract_feature_edges(boundary_edges=True,non_manifold_edges=False,feature_edges=False,manifold_edges=False)\nF=cl.faces.reshape(-1,4)[:,1:]\nfrom collections import defaultdict\nedges=defaultdict(list)\nfor a,b,c in F:\n    for u,v in ((a,b),(b,c),(c,a)): edges[tuple(sorted((int(u),int(v))))].append((int(u),int(v)))\nfree_count=sum(len(vs)==1 for vs in edges.values()); nonman=sum(len(vs)>2 for vs in edges.values())\nsame=sum(len(vs)==2 and vs[0]==vs[1] for vs in edges.values())\nprint('triangles',len(F),'unique points',cl.n_points)\nprint('free edges',free_count,'nonmanifold edges',nonman,'same-direction paired edges',same,'pyvista boundary lines',free.n_cells)\nprint('STL count',len(parts),'all nonempty',all(p.n_cells>0 for p in parts))",
+      "exit_code": 0,
+      "seconds": 0.40150785198784433,
+      "output": "triangles 37108 unique points 18558\nfree edges 0 nonmanifold edges 0 same-direction paired edges 0 pyvista boundary lines 0\nSTL count 14 all nonempty True",
+      "image": ""
+    },
+    {
+      "cmd": "# Measure spherical radii from surface points returned by the exact CAD faces.\ndef radial_samples(face):\n    pts=[]\n    for e in face.edges():\n        for v in e.vertices(): pts.append(v.center().length)\n    pts.append(face.center().length)\n    return pts\nball_samples=radial_samples(ball_faces[0])\nhollow_samples=[]\nfor f in hollow_faces: hollow_samples += radial_samples(f)\n# Face centroids are interior mass centroids, so radius validation uses boundary vertices on the exact spheres.\nball_vertex_r=[v.center().length for v in ball_faces[0].vertices()]\nhollow_vertex_r=[v.center().length for f in hollow_faces for v in f.vertices()]\nprint(f'ball boundary radius range: {min(ball_vertex_r):.9f} .. {max(ball_vertex_r):.9f} m; requested {BALL_R:.9f}')\nprint(f'hollow boundary radius range: {min(hollow_vertex_r):.9f} .. {max(hollow_vertex_r):.9f} m; requested {HOLLOW_R:.9f}')\nprint(f'measured concentric clearance: {min(hollow_vertex_r)-max(ball_vertex_r):.9f} m; requested 0.001000000')\nprint(f'cube/opening extrema: {water.bounding_box().min.X:.9f} .. {water.bounding_box().max.X:.9f} m; requested +/-0.020000000')",
+      "exit_code": 0,
+      "seconds": 0.1007574429968372,
+      "output": "ball boundary radius range: 0.015000000 .. 0.015000000 m; requested 0.015000000\nhollow boundary radius range: 0.016000000 .. 0.016000000 m; requested 0.016000000\nmeasured concentric clearance: 0.001000000 m; requested 0.001000000\ncube/opening extrema: -0.020000000 .. 0.020000000 m; requested +/-0.020000000",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 948,
+      "fenced": true,
+      "text_chars": 432,
+      "thinking_chars": 952,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789528920.1264212
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 482,
+      "fenced": true,
+      "text_chars": 364,
+      "thinking_chars": 542,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789528929.8952363
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 1047,
+      "fenced": true,
+      "text_chars": 455,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789528944.3470023
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 337,
+      "fenced": true,
+      "text_chars": 285,
+      "thinking_chars": 462,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789528952.323929
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 894,
+      "fenced": true,
+      "text_chars": 324,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789528962.667949
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 296,
+      "fenced": true,
+      "text_chars": 232,
+      "thinking_chars": 456,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789528970.7799928
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 238,
+      "fenced": true,
+      "text_chars": 287,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789528976.711296
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 226,
+      "fenced": true,
+      "text_chars": 254,
+      "thinking_chars": 362,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789528980.9659781
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 238,
+      "fenced": true,
+      "text_chars": 168,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789528984.6515372
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 330,
+      "fenced": true,
+      "text_chars": 447,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789528992.9594395
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 498,
+      "fenced": true,
+      "text_chars": 351,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529001.1331089
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 1033,
+      "fenced": true,
+      "text_chars": 341,
+      "thinking_chars": 2058,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529015.6410036
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 418,
+      "fenced": true,
+      "text_chars": 214,
+      "thinking_chars": 499,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529023.30046
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 628,
+      "fenced": true,
+      "text_chars": 329,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529033.1810818
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 270,
+      "fenced": false,
+      "text_chars": 861,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789529037.1669326
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 37,108 triangles across 14 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "ball.stl",
+          "hole_nx.stl",
+          "hole_ny.stl",
+          "hole_nz.stl",
+          "hole_px.stl",
+          "hole_py.stl",
+          "hole_pz.stl",
+          "hollowWall.stl",
+          "opening_nx.stl",
+          "opening_ny.stl",
+          "opening_nz.stl",
+          "opening_px.stl",
+          "opening_py.stl",
+          "opening_pz.stl"
+        ],
+        "triangles": 37108
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the patch set",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 37108
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "untested",
+      "why": "no triangle pair was tested on 37,108 triangles, so this is not a reading either way",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 0
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "the ball's diameter, measured on the meshed ball patch, and its centre position",
+      "measured": null
+    },
+    {
+      "property": "the water gap between ball and hollow wall, measured between the two meshed patches, at the six hole axes and at a diagonal",
+      "measured": null
+    },
+    {
+      "property": "the number of connected mesh regions `checkMesh` reports, and the number expected",
+      "measured": null
+    },
+    {
+      "property": "the water volume, against the hollow plus six holes minus the ball",
+      "measured": null
+    },
+    {
+      "property": "the ball patch's area, against the analytic sphere, and whether it is closed",
+      "measured": null
+    },
+    {
+      "property": "every exported patch, exhaustive and disjoint over the domain's faces",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "n/a",
+          "concern": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch manifest, so nothing declares which face was meant to be whose and double-assignment is unmeasurable",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "n/a",
+          "concern": "no triangle pair was tested on 37,108 triangles, so this is not a reading either way",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 15,
+    "steps": 14,
+    "seconds": 135.0,
+    "killed": false,
+    "first_mesh_step": 5,
+    "first_mesh_turn": 6
+  }
+}

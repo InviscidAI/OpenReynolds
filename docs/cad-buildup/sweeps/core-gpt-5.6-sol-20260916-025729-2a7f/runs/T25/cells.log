@@ -1,0 +1,12 @@
+# -- cell 1 (0.1s, exit 0)
+from pathlib import Path
+case = Path.cwd()
+contents = sorted(p.name for p in case.iterdir() if p.name != '.reference')
+print(f"Case: {case}")
+print(f"User-created contents: {contents}")
+print("No geometry created: the request specifies no dimensions or length scale.")
+# -- output
+Case: /home/qiuzi/.openreynolds-buildup/work/T25-20260916-032434-68c9/t25
+User-created contents: []
+No geometry created: the request specifies no dimensions or length scale.
+
