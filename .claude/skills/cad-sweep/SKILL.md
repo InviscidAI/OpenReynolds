@@ -144,9 +144,24 @@ pass rate.
    which number, and what could not be established. This is the section that catches
    silent failures — the probes did not, in the sweep that established this corpus, and
    two of the eight runs were wrong in ways no instrument could see.
-6. **Properties**: per case, whether each named property was measured **and printed**,
-   quoting the number. A property you cannot find a printed number for was not measured,
-   whatever the closing prose claims.
+6. **Properties**: read this out of `record.json`, not out of `cells.log`. The supervisor
+   measures each named property off the delivered artifacts and writes its own answer with
+   `cad_supervise.py grade`, so the record carries `measured`, `source`, `verdict` and
+   `desk` per property. Report two numbers per case and keep them apart:
+
+   - **does the property hold** — `holds` / `differs` / `unmeasurable`, which is about the
+     geometry;
+   - **did the desk measure it** — `printed` / `absent` / `printed-from-input`, which is
+     about the run.
+
+   They diverge constantly and that divergence is the finding: a property can hold on a
+   mesh the desk never measured. `printed-from-input` is the corpus's most common failure
+   and no instrument catches it — a `requested / measured` pair whose two sides derive
+   from the same constant cannot disagree with itself, whatever was built.
+
+   Before this existed the field was inert on every sweep on disk — 136 of 136 here —
+   so if a record you are reading still carries `measured: null` throughout, the run was
+   never graded and the section says that rather than inferring from `cells.log`.
 7. **Candidate corpus cases**: failures the corpus does not currently cover. A failure
    without a case is a case, not a tool.
 
