@@ -22,6 +22,16 @@ with three things or it does not arrive.
 **One addition at a time.** Two changes in one sweep is a sweep that cannot say which one
 did anything.
 
+**`checkMesh -allGeometry` is a reference reading, not a pass criterion.** The binding gate
+is a bare `checkMesh`. `-allGeometry` runs checks the bare form does not run at all -- cell
+determinant, face interpolation weight, concave cells, face tets -- and fails 14 of the 22
+meshes the gate passes on this corpus, at 1.7-6% of cells. Nine of those were put through
+`simpleFoam`: four converged, four were still converging at the iteration cap, none
+diverged. snappyHexMesh made 5 of the 14 and gmsh 6. Report the **fraction of cells** it
+flags where that is informative -- 12 faces of 678,227 and 6.14% of cells both print
+`Failed N mesh checks.` -- and never rank a case as failed on it, or count it against the
+pass rate.
+
 ## Making it
 
 Read the finding and the runs it names before writing anything — the evidence lines, the
