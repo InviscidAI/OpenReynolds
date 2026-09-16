@@ -598,13 +598,31 @@ def _self_intersection(case: Path, spec: dict[str, Any]) -> ProbeResult:
     crossings = cad_audit.crossing_pairs(triangles, corners)
     measured = {"pairs": len(crossings["pairs"]),
                 "triangles": len(crossings["triangles"]),
-                "pairs_tested": crossings["tested"]}
-    if not crossings["tested"]:
+                "pairs_tested": crossings["tested"],
+                "candidate_pairs": crossings["candidates"]}
+    if not crossings["tested"] and not crossings["candidates"]:
         # Zero of zero is not a clean surface, and reporting it as one put a 20,480
         # triangle sphere in the same state and shape as a real 1,448-pair clean read.
         return ProbeResult("self_intersection", UNTESTED,
                            f"no triangle pair was tested on {len(triangles):,} "
                            "triangles, so this is not a reading either way", measured)
+    if not crossings["tested"]:
+        # Candidates but nothing left to test is a different answer from no candidates,
+        # and the two were returning the same `untested` -- on 8 of 26 runs of the sol
+        # corpus, across surfaces from 768 to 77,848 triangles, which read as a probe
+        # that tests nothing at any size. It is not: the broad phase found 14,048
+        # overlapping boxes on that 768-triangle surface and every one was a pair sharing
+        # a welded vertex. Adjacent triangles are excluded because they touch by
+        # construction, so nothing remaining means no two *non-adjacent* triangles even
+        # have overlapping bounds -- which is a proof of no self-intersection, not an
+        # absence of one. What it does not cover is a pair that shares one vertex and
+        # folds back to cross elsewhere; the reading says so rather than implying it.
+        return ProbeResult("self_intersection", MEASURED,
+                           f"0 crossings on {len(triangles):,} triangles: all "
+                           f"{crossings['candidates']:,} pairs with overlapping bounds "
+                           "share a vertex, so no two non-adjacent triangles can cross "
+                           "(a pair sharing one vertex and folding back is not covered)",
+                           measured)
     # Coincident faces where two parts touch cross too, so a non-zero count is a number
     # to read against the geometry rather than a verdict on it.
     return ProbeResult("self_intersection", MEASURED,

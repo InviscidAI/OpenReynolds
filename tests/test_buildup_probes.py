@@ -417,3 +417,38 @@ def test_open_edges_are_located_rather_than_only_counted(tmp_path):
     assert lower == [0.0, 0.0, 0.0] and upper == [1.0, 1.0, 0.0], (
         "the hole is the z = 0 face and the bounds should say so")
     assert "walls.stl" in closure.why
+
+
+def test_a_surface_whose_overlapping_pairs_are_all_adjacent_reads_clean(tmp_path):
+    """Two triangles sharing an edge: the one pair with overlapping bounds shares welded
+    vertices, so the broad phase finds candidates and the narrow phase has nothing left to
+    test. That is a proof of no self-intersection among non-adjacent triangles, not an
+    absence of a reading, and it used to return `untested` -- on 8 of 26 runs of the sol
+    corpus, across surfaces from 768 to 77,848 triangles, which read in the report as a
+    probe that tests nothing at any size."""
+    result = one(probes.run_all(case(tmp_path, triangles=CUBE[:2]), {}),
+                 "self_intersection")
+    assert result.state == probes.MEASURED
+    assert result.measured["pairs"] == 0
+    assert result.measured["pairs_tested"] == 0
+    assert result.measured["candidate_pairs"] > 0
+    assert "share a vertex" in result.why
+
+
+def test_the_reading_says_what_an_all_adjacent_result_does_not_cover(tmp_path):
+    """Two triangles sharing a single vertex and folding back to cross each other are
+    excluded as adjacent, so this result cannot see them. Said in the reading rather than
+    left for a reader to assume it is a clean bill of health."""
+    result = one(probes.run_all(case(tmp_path, triangles=CUBE[:2]), {}),
+                 "self_intersection")
+    assert "folding back is not covered" in result.why
+
+
+def test_no_candidates_at_all_is_still_not_a_reading(tmp_path):
+    """The distinction the old behaviour was reaching for, kept: nothing to test because
+    there is nothing there is not the same as nothing to test because everything that
+    overlaps is adjacent."""
+    root = tmp_path / "empty"
+    (root / "constant" / "triSurface").mkdir(parents=True)
+    result = one(probes.run_all(root, {}), "self_intersection")
+    assert result.state != probes.MEASURED
