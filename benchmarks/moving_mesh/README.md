@@ -78,8 +78,17 @@ The grader reproduces these from the raw output of those runs.
 **Couette, one 50 x 240 mesh.** Taylor number 64, well below the 1,708 onset. Inner-wall
 torque 1.21154e-3 N m/m against an exact 1.20637e-3, +0.43% (pass). Inner/outer
 imbalance -0.911% of the inner torque (fail), against +0.011% on the conformal control,
-85 times smaller. AMI weights between 1.0 and 1.0000428 (pass). No grid convergence: the
-refinement runs that were launched diverged, so +0.43% is a single-mesh measurement.
+85 times smaller. AMI weights between 1.0 and 1.0000428 (pass).
+
+**Grid convergence, added 2026-09-15.** Three meshes per case at 2,880, 11,520 and 46,080
+cells with the time step scaled with the cell size (Courant 0.255 throughout, and four
+pressure correctors per step: at two, halving the cells doubles the cell diffusion number
+`nu*dt/dr^2` and the run diverges, which is what killed the first attempt). The control
+converges at observed order 1.93 and extrapolates to within 0.0004% of the exact torque;
+the sliding interface converges at 0.79. Holding the time step and multiplying the cells by
+four moves the interface's torque error from 0.2174% to 0.2205%, so what it is first order
+in is the angular slide per step `omega*dt`, not the cell size. Grade any rerun of this case
+at a stated `omega*dt`, not at a stated cell count.
 
 **VIV.** Fixed cylinder St = 0.166141 over 7 cycles, +1.31% on 0.164 (pass), mean Cd
 1.3555. Released with loose coupling: A/D 0.640, f/f_n 0.976, locked in, and net fluid
