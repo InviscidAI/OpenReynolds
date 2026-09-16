@@ -298,13 +298,27 @@ class Supervisor:
 
         Contamination first, because a contaminated run is not a measurement of anything
         and its own ending is beside the point. Then the alarm, because an aborted run's
-        `stopped` field says whatever it had got to. Then the run's own word."""
+        `stopped` field says whatever it had got to. Then the run's own word.
+
+        **The run's own word means all of it.** This tested `stopped in ("steps", "time",
+        "provider")` and fell through to `done` for everything else, which silently
+        rewrote `refused` -- the one ending only the runner can know, because it is the
+        desk declining rather than anything observable from outside. `observe` runs after
+        the runner has scored and saves the whole record, so the rewrite landed on disk
+        underneath a `passed` the runner had computed from the real value: T6 and T25 of
+        the sol corpus each read `stopped: done`, `expects: refused`, `passed: true`,
+        which is self-contradictory and re-grades to a failure. The record is supposed to
+        be re-gradeable from disk alone.
+
+        So the observer now fills `stopped` only where the runner left it empty. It is
+        still the observer's job to override for contamination and for an alarm, because
+        those are things the run cannot see about itself."""
         if data.get("contaminated"):
             return "contaminated"
         if watch is not None and watch.alarm is not None:
             return watch.alarm.name
         stopped = str(data.get("stopped") or "")
-        if stopped in ("steps", "time", "provider"):
+        if stopped in record.TERMINAL:
             return stopped
         return "done"
 

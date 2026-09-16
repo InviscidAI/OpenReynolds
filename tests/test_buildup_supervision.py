@@ -481,3 +481,159 @@ def test_a_run_that_took_no_group_is_killed_on_its_own_and_nothing_elses(tmp_pat
     assert supervise.Supervisor(run).group() == 0
     (run / "run.pgid").write_text(f"{os.getpgid(0)}\n", encoding="utf-8")
     assert supervise.Supervisor(run).group() == 0, "never this process's own group"
+
+
+def test_the_observer_keeps_the_runners_own_ending_including_refused():
+    """`ending` tested `stopped in ("steps", "time", "provider")` and fell through to
+    `done` for everything else, which silently rewrote `refused` -- the one ending only
+    the runner can know, because it is the desk declining rather than anything visible
+    from outside.
+
+    It landed on disk because `observe` saves the whole record after the runner has
+    already scored: T6 and T25 of the sol corpus each read `stopped: done`,
+    `expects: refused`, `passed: true`, which is self-contradictory and re-grades to a
+    failure against `cad_buildup.py`'s own rule. The record is meant to be re-gradeable
+    from disk alone."""
+    from openreynolds.buildup import record, supervise
+
+    observer = supervise.Supervisor.__new__(supervise.Supervisor)
+    for state in record.TERMINAL:
+        assert observer.ending({"stopped": state}, None) == state, state
+    assert observer.ending({"stopped": ""}, None) == "done"
+
+
+def test_the_observer_still_overrides_for_what_a_run_cannot_see_about_itself():
+    """Honouring the runner's word is not the same as deferring to it. Contamination and
+    an alarm are the two things the run genuinely cannot observe, and they still win."""
+    from openreynolds.buildup import supervise
+
+    observer = supervise.Supervisor.__new__(supervise.Supervisor)
+    assert observer.ending({"stopped": "refused", "contaminated": True}, None) == "contaminated"
+
+    class Alarmed:
+        alarm = type("A", (), {"name": "wedged"})()
+
+    assert observer.ending({"stopped": "done"}, Alarmed()) == "wedged"
+
+
+# -- grading the named properties ------------------------------------------------
+
+
+def _graded_run(tmp_path, properties):
+    from openreynolds.buildup import record
+
+    run = tmp_path / "run"
+    entry = record.Record(run_id="r", case="T7", arm="core", model="m",
+                          stopped="done", expects="done", passed=True,
+                          properties=[{"property": p, "measured": None}
+                                      for p in properties])
+    record.save(run, entry)
+    return run
+
+
+def _grade(run, payload, *, partial=False):
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    grades = Path(run) / "grades.json"
+    grades.write_text(json.dumps(payload), encoding="utf-8")
+    argv = [sys.executable, str(root / "scripts" / "cad_supervise.py"), "grade",
+            str(run), "--grades", str(grades)]
+    if partial:
+        argv.append("--partial")
+    done = subprocess.run(argv, capture_output=True, text=True)
+    return done.returncode, json.loads(done.stdout or "{}")
+
+
+def test_the_grader_writes_its_own_measurement_into_the_record(tmp_path):
+    """`properties[].measured` was initialised to None by `cad_buildup.py` and written by
+    nothing, on 136 of 136 properties here and on every case of every sweep on disk. It
+    looked like a grading result and was an unfilled template; two subagents began citing
+    it as evidence a property went unmeasured before checking, which it never was in
+    either direction.
+
+    The measuring belongs outside the run. A desk that measures its own geometry is
+    grading itself, and eleven of twenty-six cases did exactly what that permits: printed
+    a `requested / measured` pair whose two sides come from the same constant."""
+    from openreynolds.buildup import record
+
+    run = _graded_run(tmp_path, ["cavity dimensions, 100 x 60 x 40 mm"])
+    code, out = _grade(run, [{"property": "cavity dimensions, 100 x 60 x 40 mm",
+                              "measured": "0.1 x 0.06 x 0.04 m",
+                              "source": "checkMesh bounding box",
+                              "verdict": "holds", "desk": "printed"}])
+    assert code == 0 and out["graded"] == 1 and out["holds"] == 1
+    written = record.load(run)["properties"][0]
+    assert written["measured"] == "0.1 x 0.06 x 0.04 m"
+    assert written["verdict"] == "holds" and written["desk"] == "printed"
+
+
+def test_whether_the_property_holds_is_separate_from_whether_the_desk_measured_it(tmp_path):
+    """The distinction the sol sweep needed and could not record. T7's cell zones are
+    genuinely 20 mm cubes on the mesh and the desk never computed either centroid: the
+    geometry is right and the job was not done. One field cannot say that."""
+    from openreynolds.buildup import record
+
+    run = _graded_run(tmp_path, ["zone size, 20 mm cube each"])
+    code, _ = _grade(run, [{"property": "zone size, 20 mm cube each",
+                            "measured": "8e-06 m3 each = 0.02^3",
+                            "source": "checkMesh cellZone volumes",
+                            "verdict": "holds", "desk": "absent"}])
+    assert code == 0
+    written = record.load(run)["properties"][0]
+    assert written["verdict"] == "holds" and written["desk"] == "absent"
+
+
+def test_a_property_no_delivered_artifact_carries_is_unmeasurable_not_silent(tmp_path):
+    """T4 names a wall thickness "measured, as the minimum over the solid" while its
+    request says to mesh the water side only, so nothing delivered carries it. That is an
+    answer, and it is the one the case needs to hear."""
+    from openreynolds.buildup import record
+
+    run = _graded_run(tmp_path, ["wall thickness between passes, minimum over the solid"])
+    code, out = _grade(run, [{"property": "wall thickness between passes, minimum over the solid",
+                              "verdict": "unmeasurable", "desk": "printed-from-input",
+                              "note": "only the water is meshed; the solid is never built"}])
+    assert code == 0 and out["unmeasurable"] == 1
+    assert out["desk_printed_from_input"] == 1
+
+
+def test_a_verdict_without_a_measurement_is_refused(tmp_path):
+    """A grade that asserts a property holds and shows no number is the thing this
+    replaces, so it is refused rather than written."""
+    run = _graded_run(tmp_path, ["cavity dimensions, 100 x 60 x 40 mm"])
+    code, out = _grade(run, [{"property": "cavity dimensions, 100 x 60 x 40 mm",
+                              "verdict": "holds", "desk": "printed"}])
+    assert code == 2 and "no measurement" in out["why"]
+
+
+def test_an_ungraded_property_is_refused_unless_the_gap_is_owned(tmp_path):
+    """Skipping is what the inert field already gave us. A grader that cannot answer a
+    property says `unmeasurable`; one that simply did not get to it passes --partial and
+    the record shows the gap."""
+    from openreynolds.buildup import record
+
+    run = _graded_run(tmp_path, ["one", "two"])
+    payload = [{"property": "one", "measured": "1", "verdict": "holds", "desk": "printed"}]
+    code, out = _grade(run, payload)
+    assert code == 2 and out["missing"] == ["two"]
+
+    code, out = _grade(run, payload, partial=True)
+    assert code == 0 and out["ungraded"] == 1
+    assert record.load(run)["properties"][1]["measured"] is None
+
+
+def test_grading_touches_properties_and_nothing_else(tmp_path):
+    """The observer used to recompute `stopped` and save the whole record over the top,
+    which rewrote `refused` on every refusal case in every sweep on disk. This writer
+    merges."""
+    from openreynolds.buildup import record
+
+    run = _graded_run(tmp_path, ["one"])
+    before = record.load(run)
+    _grade(run, [{"property": "one", "measured": "1", "verdict": "holds", "desk": "printed"}])
+    after = record.load(run)
+    assert [k for k in set(before) | set(after) if before.get(k) != after.get(k)] == ["properties"]
