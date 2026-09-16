@@ -150,9 +150,21 @@ When the geometry is built and the mesh exists, call the `declare_complete` tool
 `outcome: "complete"`, and put your closing summary in the prose beside it: what you \
 built, the numbers you measured against the request, what you could not check.
 
-That call runs the checks. **`checkMesh` is the binding one** -- it runs per region, and \
-a run that declares complete over a mesh it refuses is handed the refusal and keeps \
-working. The others are advisory in one specific sense: being right about your geometry \
+That call runs the checks. **`checkMesh` is the binding one** -- the bare form, run per \
+region -- and a run that declares complete over a mesh it refuses is handed the refusal \
+and keeps working. The others are advisory in one specific sense: being right about your \
+geometry is enough to get past them.
+
+**`checkMesh -allGeometry` is a reference reading, not the bar.** It adds checks the bare \
+form does not run at all -- cell determinant, face interpolation weight, concave cells, \
+face tets -- so it will fail meshes that are entirely usable: on this corpus it failed 14 \
+of the 22 meshes the gate passed, at 1.7-6% of cells, and nine of those were put through \
+`simpleFoam`, where eight converged or were still converging and none diverged. \
+snappyHexMesh and gmsh both routinely produce meshes that fail it. Run it if you want the \
+extra information and say what it told you, but **do not treat it as a defect to chase, \
+and do not rebuild a working mesh because of it** -- a corpus run lost its whole step \
+budget doing exactly that. What you must not do is the converse: run the stricter form, \
+see it fail, and re-run the barer one as though that repaired something. The others are advisory in one specific sense: being right about your geometry \
 is enough to get past them. **A warning you neither fix nor waive means the declare is \
 not accepted, exactly as a failing `checkMesh` is not accepted, and it comes back to \
 you.**
@@ -234,7 +246,32 @@ def check_command(region: str) -> str:
     `-region` rather than a region loop in the shell, because a conjugate case's regions
     are separate meshes and OpenFOAM's own verdict is per mesh. The output is taken whole:
     it already carries the cell, face and point counts and the bounding box, so there is
-    nothing to ask a second tool for."""
+    nothing to ask a second tool for.
+
+    **Why the bare form and not `-allGeometry`.** `-allGeometry` was binding here briefly
+    on 2026-09-16 and was reverted the same day on solver evidence. It is not a stricter
+    setting of the same checks -- it adds checks the bare form does not run at all (cell
+    determinant, face interpolation weight, concave cells, face tets), so a mesh the bare
+    form calls `Mesh OK.` has not passed them, it has not been asked. On the sol corpus it
+    failed 14 of the 22 meshes the bare form passed, at 1.7-6% of cells.
+
+    Those meshes solve. `simpleFoam`, laminar, on the nine of eleven newly-failing cases
+    that have an inlet and an outlet: four converged to 1e-5 on p and U (T2, T4, T14,
+    T18), four more were still descending at the 300-iteration cap (T23 275x over the run,
+    T12 88x, T17 45x, T11 18x), and none diverged, hit a floating-point exception, or
+    errored. Only T16 stalled, at 2.2e-3 -- and T16 was already failing on other grounds.
+
+    OpenFOAM's own meshers produce meshes that fail it: snappyHexMesh made 5 of those 14
+    and gmsh 6. There is also no single vendor verdict to defer to -- bare, `-meshQuality`
+    with the shipped `meshQualityDict`, and `-allGeometry` score this corpus 21, 13 and 10
+    of 26, and they disagree in both directions (T19 passes `-allGeometry` and fails
+    `-meshQuality`; T2, T14, T15, T16 and T24 do the reverse).
+
+    So `-allGeometry` is **a reference reading, not a gate**. Run it, record what it says,
+    rank failures with it -- and do not fail a run on it. It measures how much concavity a
+    cut-cell mesher leaves near curved surfaces, which is a property of snappyHexMesh and
+    gmsh rather than of the desk's work.
+    """
     flag = f" -region {shlex.quote(region)}" if region else ""
     return f"checkMesh{flag} 2>&1 | tail -n 200"
 

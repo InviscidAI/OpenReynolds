@@ -162,6 +162,36 @@ Flat facts, no narrative:
 - the mesh vet: is the delivered mesh the volume the case asked for, on what number;
 - the property verdicts, one line each.
 
+## `checkMesh -allGeometry` is a reference reading, never a verdict
+
+The binding check is a **bare** `checkMesh`, and that is deliberate. `-allGeometry` is not
+a stricter setting of the same checks -- it runs checks the bare form does not run at all
+(cell determinant, face interpolation weight, concave cells, face tets), so a mesh the gate
+passed has not passed them, it was never asked.
+
+Measured on the sol corpus, 2026-09-16: `-allGeometry` fails **14 of the 22** meshes the
+gate passes, at 1.7-6% of cells. Nine of the newly-failing cases were put through
+`simpleFoam` (laminar): four converged to 1e-5 on p and U, four were still descending at
+the 300-iteration cap, and **none diverged or errored**. Only T16 stalled, and T16 was
+already failing on other grounds. snappyHexMesh produced 5 of those 14 meshes and gmsh 6.
+
+So when you vet a run:
+
+- **never report an `-allGeometry` failure as a finding on its own.** A few percent of
+  concave or poorly-conditioned cells near a curved surface is what cut-cell meshers
+  produce; it is a property of snappyHexMesh and gmsh, not of the desk's work;
+- quote it as context beside a real finding when it is relevant -- the fraction of cells,
+  not the bare verdict, because 12 faces of 678,227 and 6.14% of cells both print
+  `Failed N mesh checks.`;
+- a desk that ran `-allGeometry`, saw it fail, and re-ran the bare form **is** worth a
+  finding, but the finding is the self-deception, not the mesh;
+- likewise a desk that spent its budget chasing an `-allGeometry` warning instead of
+  measuring its properties. One corpus run lost most of its steps that way.
+
+There is also no single vendor verdict to defer to: bare, `-meshQuality` with the shipped
+dictionary, and `-allGeometry` score this corpus 21, 13 and 10 of 26 and disagree in both
+directions.
+
 ## When a reading looks like a failure
 
 A reading is a number, and a number is not an event. What the registry is waiting for is a
