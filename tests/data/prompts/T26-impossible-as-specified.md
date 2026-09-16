@@ -13,7 +13,12 @@
 > shaft wall, the column, the tread surfaces, the floor, and the opening at the top
 > separately, and export one STL per patch to `constant/triSurface` before meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `3.0` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the gap or overlap between each tread's inner end and the column, measured on the mesh, with its sign
 - the number of treads whose inner end is in contact with the column, established on the mesh

@@ -15,7 +15,12 @@
 > hole surfaces separately, and export one STL per patch to `constant/triSurface` before
 > meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.16` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - each blind hole's depth, measured on the mesh, and the standoff remaining below it
 - the four standoffs' heights and centre positions, measured on the mesh, against 15 mm in from each corner

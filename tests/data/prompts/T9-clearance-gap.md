@@ -15,7 +15,12 @@
 > the spinner's wetted face, and the ring's two annular end faces separately, and
 > **export one STL per patch to `constant/triSurface` before meshing.**
 
-## Properties the desk must measure and print
+**Largest extent:** `0.044` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the radial clearance, measured between the two meshed wall patches, not restated from the input
 - how many cells span the clearance, counted on the mesh

@@ -9,7 +9,12 @@
 > other way is diverted into the loops and opposes itself. Channel width 6 mm, overall length
 > about 120 mm, plane (2D). Inlet at one end, outlet at the other.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.12` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - number of bypass loops, 4, counted on the mesh
 - channel width, 6 mm, measured on the mesh in the main channel and in a loop

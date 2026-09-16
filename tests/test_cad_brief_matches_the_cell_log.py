@@ -201,3 +201,31 @@ def test_every_reader_of_the_verdict_is_told_allgeometry_is_reference_only():
                  ".claude/skills/cad-addition/SKILL.md"):
         text = (root / name).read_text(encoding="utf-8")
         assert "-allGeometry" in text and "reference reading" in text, name
+
+
+def test_every_meshing_case_states_the_extent_the_scale_probe_needs():
+    """`_scale` reads `spec["extent_m"]`, `cad_sweep.py` passes `--spec` only when
+    `<run-dir>/spec.json` exists, and nothing wrote that file -- so the probe returned
+    `n/a` on every case of every sweep on disk, six reports deep, while appearing in the
+    probe column as though it had screened something. It is the one probe aimed at a
+    failure this corpus has actually seen: a STEP whose `LENGTH_UNIT` is empty, where the
+    desk chose millimetres and shipped a mesh `checkMesh` passed.
+
+    The number lives in the case file, not the run, because a desk that stated its own
+    extent would state one agreeing with the unit it had just guessed."""
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
+    from cad_buildup import cases
+
+    corpus = cases()
+    stated = {name: case.get("extent_m") for name, case in corpus.items()}
+    refusals = {name for name, case in corpus.items() if case.get("expects") == "refused"}
+
+    for name, case in corpus.items():
+        if name in refusals:
+            # Nothing is ever exported, so there is no union to measure and no number to
+            # state. `n/a` here is the correct reading, not a gap.
+            assert not stated[name], f"{name} is a refusal case and states an extent"
+        else:
+            assert stated[name] and stated[name] > 0, f"{name} states no extent_m"

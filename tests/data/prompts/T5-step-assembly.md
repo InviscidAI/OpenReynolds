@@ -10,7 +10,12 @@
 
 `geometry`: the committed fixture path.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.2` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - extracted fluid volume, against the enclosure minus the solids
 - the capping faces, each planar, with its area, measured on the meshed patches

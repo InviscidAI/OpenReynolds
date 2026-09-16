@@ -16,7 +16,12 @@
 > Name the inlet, the radial outlet, the blade surfaces, the backplate, the hub and the
 > shroud separately.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.116` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the number of blade passages meshed, counted on the mesh, against the 7 the request names
 - the blade thickness and the blade wrap angle, measured on the meshed blade patches

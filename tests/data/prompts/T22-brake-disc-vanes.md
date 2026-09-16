@@ -13,7 +13,12 @@
 > friction-face inner surfaces, the vane surfaces, the inner inlet and the outer outlet
 > separately, and export one STL per patch to `constant/triSurface` before meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.32` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the number of open passages, counted on the mesh, against the 36 the request names
 - one passage's width at the inner diameter and at the outer diameter, measured on the meshed vane patches

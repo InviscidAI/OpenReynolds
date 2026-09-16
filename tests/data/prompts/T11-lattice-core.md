@@ -13,7 +13,12 @@
 > volume with the honeycomb walls subtracted. Name the inlet, the outlet, the duct walls
 > and the honeycomb walls separately.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.14` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the number of open honeycomb cells through the core, counted on the mesh, against the number the geometry should give
 - the cell width across the flats and the wall thickness, measured on the meshed honeycomb patches
