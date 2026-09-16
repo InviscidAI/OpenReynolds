@@ -162,6 +162,51 @@ Flat facts, no narrative:
 - the mesh vet: is the delivered mesh the volume the case asked for, on what number;
 - the property verdicts, one line each.
 
+## Grading the case's named properties
+
+**You do the measuring, not the desk.** The case names a handful of properties; you answer
+each one off the delivered artifacts -- `constant/polyMesh`, the exported STLs, `checkMesh`
+output -- and write the answer into the record with
+
+```
+python3 scripts/cad_supervise.py grade <run-dir> --grades <file.json>
+```
+
+Why it moved here. The desk measuring its own geometry is the desk grading itself, and
+eleven of twenty-six cases in the sol sweep did what that permits: printed a
+`requested / measured` pair whose two sides come from the same constant, so it cannot
+disagree with itself whatever was built -- `FIN_PITCH - FIN_T` printed as a fin gap,
+`math.pi*m - (th_p + th_w)` printed as backlash. You cannot make that mistake, because you
+never see the script's constants. You have a mesh.
+
+It is not a structured comparison against numbers in the case file, and cannot be: the
+desk chooses its own node ordering, patch ordering and tessellation, so anything keyed on
+those measures its incidentals. Measure the property afresh.
+
+One object per named property, and the `property` text must match the record's exactly:
+
+```json
+{"property": "zone size, 20 mm cube each, and their positions relative to floor and ceiling",
+ "measured": "8e-06 m3 each = 0.02^3 exactly; heater z 0..0.02, cooler z 0.02..0.04",
+ "source": "checkMesh cellZone volumes and bounds",
+ "verdict": "holds", "desk": "absent",
+ "note": "true on the mesh, but the desk never stated floor/ceiling adjacency as such"}
+```
+
+- `verdict` is about **the geometry**: `holds`, `differs`, or `unmeasurable`. The last is a
+  real answer -- T4 names a wall thickness "measured, as the minimum over the solid" while
+  its request says to mesh the water side only, so nothing delivered carries it.
+- `desk` is about **the run**, which is a separate question: `printed`, `absent`, or
+  `printed-from-input` for the tautology above. A property can hold while the desk never
+  measured it; that is the commonest outcome in this corpus and one field cannot say it.
+- `measured` is required unless the verdict is `unmeasurable`. A verdict with no number is
+  the thing this replaces.
+- Every named property needs a verdict. If you genuinely could not get to one, pass
+  `--partial` and the record shows the gap rather than hiding it.
+
+Measure it yourself rather than reading what the desk printed. What the desk printed goes
+in `desk`, and checking it is a second, cheaper pass.
+
 ## `checkMesh -allGeometry` is a reference reading, never a verdict
 
 The binding check is a **bare** `checkMesh`, and that is deliberate. `-allGeometry` is not

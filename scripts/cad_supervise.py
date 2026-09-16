@@ -72,6 +72,107 @@ def cmd_probe(args) -> int:
                  "probes": [result.as_dict() for result in results]}, 0)
 
 
+VERDICTS = ("holds", "differs", "unmeasurable")
+"""What the grader can conclude about one named property.
+
+`unmeasurable` is a real answer and not a failure to try: T4 names a wall thickness
+"measured, as the minimum over the solid" while its request says to mesh the water side
+only, so no delivered artifact carries it. Saying so beats both guessing and silence."""
+
+DESK = ("printed", "printed-from-input", "absent")
+"""What the desk did about the property, which is a separate question from whether the
+property holds. `printed-from-input` is the corpus's most common failure and the one no
+instrument catches: eleven of twenty-six cases in the sol sweep printed a
+`requested / measured` pair whose two sides derive from the same constant, so the pair
+cannot disagree with itself whatever was built."""
+
+
+def cmd_grade(args) -> int:
+    """Write the supervisor's own property measurements into a finished run's record.
+
+    The measuring is done by whatever is reading the delivered mesh -- in practice the
+    `cad-supervisor` subagent, which did exactly this by hand across the sol corpus:
+    slicing T11 to count 105 open cells, reading T19's radii off `constant/polyMesh/points`,
+    measuring T23's gap on an axis and on a diagonal. This is only the writer.
+
+    It is a *writer* and not a grader because the alternative was structured targets in
+    the case files, and those cannot be made to work here: the desk chooses its own node
+    ordering, patch ordering and tessellation, so a numeric comparison keyed on any of
+    them measures the desk's incidentals rather than its geometry. A reader that measures
+    the property afresh off the delivered artifacts does not care how they are ordered.
+
+    The record is merged rather than rewritten, and only `properties` is touched. The
+    observer used to recompute `stopped` and save the whole record over the top of it,
+    which silently rewrote `refused` on every refusal case in every sweep on disk.
+    """
+    run = Path(args.run)
+    data = record.load(run)
+    if not data:
+        return emit({"why": f"no {record.RECORD} under {run}"}, 2)
+    named = data.get("properties") or []
+    if not named:
+        return emit({"why": f"{run} names no properties, so there is nothing to grade"}, 2)
+
+    try:
+        raw = (sys.stdin.read() if args.grades in ("-", "") else
+               Path(args.grades).read_text(encoding="utf-8"))
+        given = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        return emit({"why": f"could not read the grades: {exc}"}, 2)
+    if isinstance(given, dict):
+        given = given.get("properties") or []
+    if not isinstance(given, list):
+        return emit({"why": "the grades should be a list, or an object carrying one "
+                            "under `properties`"}, 2)
+
+    wanted = [str(entry.get("property") or "") for entry in named]
+    by_text = {text: i for i, text in enumerate(wanted)}
+    seen: dict[int, dict] = {}
+    for entry in given:
+        if not isinstance(entry, dict):
+            return emit({"why": f"a grade is not an object: {entry!r}"}, 2)
+        text = str(entry.get("property") or "")
+        index = by_text.get(text)
+        if index is None:
+            return emit({"why": f"no such property on this run: {text!r}",
+                         "named": wanted}, 2)
+        verdict = str(entry.get("verdict") or "")
+        if verdict not in VERDICTS:
+            return emit({"why": f"verdict {verdict!r} is not one of {VERDICTS}"}, 2)
+        desk = str(entry.get("desk") or "")
+        if desk not in DESK:
+            return emit({"why": f"desk {desk!r} is not one of {DESK}"}, 2)
+        if verdict != "unmeasurable" and not str(entry.get("measured") or "").strip():
+            return emit({"why": f"{text!r} is graded {verdict!r} with no measurement; "
+                                "a verdict without a number is the thing this replaces"},
+                        2)
+        seen[index] = {"measured": entry.get("measured"),
+                       "source": entry.get("source") or "",
+                       "verdict": verdict, "desk": desk,
+                       "note": entry.get("note") or ""}
+
+    missing = [wanted[i] for i in range(len(wanted)) if i not in seen]
+    if missing and not args.partial:
+        # Silence is what the inert field already gave us. A grader that skips a property
+        # has to say so with `unmeasurable`, or pass --partial and own the gap.
+        return emit({"why": "these properties were not graded; grade them or pass "
+                            "--partial", "missing": missing}, 2)
+
+    for index, found in seen.items():
+        named[index].update(found)
+    data["properties"] = named
+    record.save(run, data)
+    graded = sum(1 for entry in named if entry.get("verdict"))
+    return emit({"run": str(run), "named": len(named), "graded": graded,
+                 "holds": sum(1 for e in named if e.get("verdict") == "holds"),
+                 "differs": sum(1 for e in named if e.get("verdict") == "differs"),
+                 "unmeasurable": sum(1 for e in named
+                                     if e.get("verdict") == "unmeasurable"),
+                 "desk_printed_from_input": sum(1 for e in named
+                                                if e.get("desk") == "printed-from-input"),
+                 "ungraded": len(named) - graded}, 0)
+
+
 def cmd_contamination(args) -> int:
     found = isolation.scan_run(Path(args.run), expected=args.expected or [])
     return emit({**found.as_dict(), "lines": found.lines()},
@@ -167,6 +268,16 @@ def main(argv: list[str] | None = None) -> int:
     five.add_argument("--spec", default="")
     five.add_argument("--expected", action="append")
     five.set_defaults(run_command=cmd_observe)
+
+    grade = subs.add_parser(
+        "grade", help="write the supervisor's own property measurements into a record")
+    grade.add_argument("run")
+    grade.add_argument("--grades", default="-",
+                       help="a JSON file of measurements, or `-` for stdin")
+    grade.add_argument("--partial", action="store_true",
+                       help="accept a run where some named properties are ungraded; "
+                            "without it, every property must carry a verdict")
+    grade.set_defaults(run_command=cmd_grade)
 
     six = subs.add_parser("registry", help="the probes and their states")
     six.set_defaults(run_command=cmd_registry)
