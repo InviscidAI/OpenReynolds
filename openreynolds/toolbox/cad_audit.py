@@ -57,6 +57,8 @@ import surfaces  # noqa: E402  (sibling script, not a package)
 Finding = preflight.Finding
 
 MANIFEST_NAME = "patches.json"
+DERIVED_SOURCE = "derived-from-directory"
+"""`source` on a manifest composed from the directory rather than read from it."""
 """I3's manifest. Its absence is a refusal rather than a finding: without it there is
 no patch set, only a directory with some triangles in it, and which of those files the
 mesher will read is not a thing to guess at."""
@@ -125,6 +127,29 @@ def read_manifest(directory: Path) -> dict[str, Any]:
             '"patches": [...] as I3 describes.'
         )
     return data
+
+
+def derived_manifest(directory: Path) -> dict[str, Any]:
+    """The patch set a directory declares by its own contents, when no manifest does.
+
+    One STL per patch *is* an assignment: the file is the patch and its stem is the
+    name. `union_closure` and `normals` have always read the directory this way -- a
+    run whose `snappyHexMeshDict` names one of five files still gets all five welded,
+    because dropping the rest opens the surface. `coverage` refused the same directory
+    for want of a `patches.json` nobody writes, so it read nothing on any case of any
+    sweep on disk.
+
+    What a derived manifest still decides: a face exported into two patches, a region
+    in no patch at all, and a patch carrying no triangles. What it cannot decide is
+    whether a file on disk was one somebody meant to export -- it declares whatever is
+    there. That question belongs to `manifest_finding` and stays unanswered without a
+    real manifest, so the reading says which kind it is rather than implying the other.
+    """
+    return {
+        "source": DERIVED_SOURCE,
+        "patches": [{"name": path.stem, "file": path.name}
+                    for path in surface_files(directory)],
+    }
 
 
 def manifest_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -735,11 +760,17 @@ def surface_check_finding(union: Union) -> tuple[Finding, dict[str, Any]]:
 
 
 def audit(directory: Path, surface_check: bool = False,
-          limit: int | None = None) -> dict[str, Any]:
-    """The I2 envelope for one triSurface directory. Raises `Refused` on bad inputs."""
+          limit: int | None = None,
+          manifest: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The I2 envelope for one triSurface directory. Raises `Refused` on bad inputs.
+
+    `manifest` overrides the one on disk. It exists for `derived_manifest`, so a
+    directory with no `patches.json` can still be asked the coverage question the
+    files themselves answer, rather than refusing and reading nothing.
+    """
     directory = Path(directory)
     limit = preflight.TOPOLOGY_TRIANGLE_LIMIT if limit is None else int(limit)
-    manifest = read_manifest(directory)
+    manifest = read_manifest(directory) if manifest is None else manifest
     union, complaints = load_union(directory, manifest)
 
     topology = preflight.surface_topology(union.triangles if len(union.triangles) else None)

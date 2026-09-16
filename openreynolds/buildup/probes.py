@@ -520,20 +520,39 @@ def _normals(case: Path, spec: dict[str, Any]) -> ProbeResult:
 
 
 def _coverage(case: Path, spec: dict[str, Any]) -> ProbeResult:
+    """Is every face of the exported surface in exactly one patch?
+
+    Was gated on a `patches.json` the core desk does not write, so it returned `n/a`
+    on 26 of 26 cases in this corpus and on every case of every sweep before it -- a
+    column of probe ids that read as coverage and screened nothing. The manifest is
+    not what makes the question askable: one STL per patch is already an assignment,
+    and `union_closure` and `normals` have always read the directory on exactly that
+    basis. So a directory with no manifest is audited against a manifest derived from
+    it, and the reading says which kind it was, because the two answer different
+    questions -- a derived one cannot know that a file on disk was never meant to be
+    a patch.
+    """
     cad_audit, _domain, _preflight, _surfaces = _toolbox()
     directory = tri_surface(case)
-    if not (directory / "patches.json").is_file():
-        return ProbeResult("coverage", NOT_APPLICABLE,
-                           "no patch manifest, so nothing declares which face was meant "
-                           "to be whose and double-assignment is unmeasurable")
+    declared = (directory / "patches.json").is_file()
     try:
-        report = cad_audit.audit(directory)
+        manifest = None if declared else cad_audit.derived_manifest(directory)
+        if manifest is not None and not manifest.get("patches"):
+            return ProbeResult("coverage", NOT_APPLICABLE,
+                               f"no patch files under {directory}, so there is no "
+                               "partition to check")
+        report = cad_audit.audit(directory, manifest=manifest)
     except Exception as exc:  # noqa: BLE001
         return ProbeResult("coverage", NOT_APPLICABLE, f"{type(exc).__name__}: {exc}")
+    source = ("the patch set declared in patches.json" if declared
+              else "the patch set the directory itself declares, one STL per patch; "
+                   "whether every file there was meant to be a patch is not read here")
     for row in report.get("findings", []):
         if row.get("check") == "coverage":
-            return ProbeResult("coverage", MEASURED, str(row.get("measured", "")),
-                               dict(row))
+            measured = dict(row)
+            measured["manifest"] = "declared" if declared else cad_audit.DERIVED_SOURCE
+            return ProbeResult("coverage", MEASURED,
+                               _joined(str(row.get("measured", "")), source), measured)
     return ProbeResult("coverage", NOT_APPLICABLE,
                        "the audit reported no coverage finding")
 
