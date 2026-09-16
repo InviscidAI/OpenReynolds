@@ -19,6 +19,7 @@ ENV_KEYS = (
     "OPENREYNOLDS_LLM_API_KEY",
     "OPENREYNOLDS_CONTEXT_WINDOW",
     "OPENREYNOLDS_MODEL",
+    "OPENREYNOLDS_DESK_MODEL",
     "OPENREYNOLDS_EFFORT",
     "OPENREYNOLDS_LLM_BASE_URL",
     "OPENREYNOLDS_MAX_TOOL_OUTPUT",
@@ -197,6 +198,45 @@ def test_explicit_choices_survive_a_preset(clean_env):
 def test_an_unknown_endpoint_gets_the_conservative_window(clean_env):
     cfg = Config(provider="openai", llm_api_key="k", llm_base_url="https://gateway.example/v1")
     assert cfg.context_window == 200_000
+
+
+def test_a_model_named_beside_a_preset_is_the_one_that_loads(clean_env, monkeypatch):
+    """`reynolds` runs Sonnet by default and meters Opus too, so asking for Opus on it
+    is an ordinary thing to do -- it is what the hosted app's chooser sends. The
+    preset swap ate it: every such session, new or resumed, came up on Sonnet while
+    the app's ledger row and model chooser said Opus."""
+    monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "reynolds")
+    monkeypatch.setenv("OPENREYNOLDS_MODEL", "claude-opus-5")
+    assert Config.load().model == "claude-opus-5"
+
+
+def test_a_gateway_keeps_both_models_it_was_given(clean_env, monkeypatch):
+    """A proxy that speaks the OpenAI dialect and serves Anthropic ids is configured as
+    `openai` with an endpoint. Both ids named here happen to be the harness's own
+    defaults, which is exactly what the swap could not tell apart from naming nothing:
+    the session came up asking that gateway for gpt-5 and a gpt desk."""
+    monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "openai")
+    monkeypatch.setenv("OPENREYNOLDS_LLM_BASE_URL", "https://gateway.example/v1")
+    monkeypatch.setenv("OPENREYNOLDS_MODEL", "claude-opus-5")
+    monkeypatch.setenv("OPENREYNOLDS_DESK_MODEL", "claude-haiku-4-5")
+    cfg = Config.load()
+    assert (cfg.model, cfg.desk_model) == ("claude-opus-5", "claude-haiku-4-5")
+
+
+def test_a_file_that_names_a_model_beside_a_preset_is_read_the_same_way(clean_env):
+    write_config(clean_env, provider="openai", llm_base_url="https://gateway.example/v1",
+                 model="claude-opus-5")
+    assert Config.load().model == "claude-opus-5"
+
+
+def test_a_provider_named_on_its_own_still_arrives_at_its_presets_model(clean_env, monkeypatch):
+    """The swap is for this case and keeps it: a provider chosen with no model must
+    not be asked for another vendor's default."""
+    monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "reynolds")
+    cfg = Config.load()
+    assert (cfg.model, cfg.desk_model) == ("claude-sonnet-5", "claude-haiku-4-5")
+    monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "zai")
+    assert Config.load().model == "glm-4.6"
 
 
 def test_the_provider_and_its_vendor_key_come_from_the_environment(clean_env, monkeypatch):

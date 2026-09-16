@@ -193,6 +193,27 @@ Earlier thinking blocks are dropped from the thread, a thread too large for the 
 model's window (the one known for that model, otherwise the provider's) is refreshed
 first, and the prompt cache is written once more, so the first
 request after a switch costs more. Effort is read on every request and applies at once.
+
+A switch outlives the session: `session.json` records the model, the provider that
+served it and the endpoint it was served from, and `--study <id>` carries on on that
+record, so a study moved to Opus for the hard part is still on Opus tomorrow. `--model`
+or `OPENREYNOLDS_MODEL` still wins. Here the record is restored whenever the provider
+that served it can be reached from this machine, switching provider if that is what the
+record says and bringing that provider's key, endpoint, window and desk model with it;
+on the provider this machine is already configured for, this run must also point at the
+endpoint the model was served from, because a vendor's own key and a gateway in front
+of it answer to different model ids. When the record cannot be honoured the session
+says so in a line and runs on the configured model, and the study keeps what it
+recorded, so a resume where the key is set carries on there.
+
+Two limits. The record is the study's own `session.json` on this machine, so a study
+resumed where it has never run (opened in the browser, or on another laptop) starts on
+the configured model; nothing is fetched to stand in for it. And naming a provider is
+not naming a model: only `--model` and `OPENREYNOLDS_MODEL` count as asking for one, so
+`OPENREYNOLDS_PROVIDER` on its own does not hold a resume to that provider. A study
+recorded before the provider was kept names a model and no provider, and starts on the
+configured model as it always did: an id does not name a provider on its own, and
+`claude-opus-5` is valid on `anthropic` and on `reynolds`.
 [docs/switching-models.md](docs/switching-models.md) has the detail.
 
 ## Bring your own model
@@ -277,7 +298,7 @@ costs nothing and a rule that is enforced costs everything.
 | `openreynolds` | Start a study. `--study <id>` resumes one, `--instance <id>` attaches to a particular workspace. |
 | `-p "..."` | Run non-interactively and exit. Exit code `0` done, `1` the model API failed or the session crashed, `2` hit `--max-wait` with work still running. With a mode other than `auto` it is refused as a usage error, also exit `2`. |
 | `--mode auto\|partial\|structured` | How much the agent does before asking you. See *Modes*. |
-| `--model <id>` / `--effort low\|medium\|high` | The model and reasoning effort for this session. `/model` and `/effort` change either mid-study. |
+| `--model <id>` / `--effort low\|medium\|high` | The model and reasoning effort for this session; the model is recorded on the study, so a resume carries on on it unless one is named again. `/model` and `/effort` change either mid-study. |
 | `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies` or `doctor` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
 | `openreynolds login` | Sign in; this machine gets its own service key. `--browser` for the device-code flow. |
 | `openreynolds config` | Provider, key, model, context window. `--key-file` and `--from-env` keep keys out of shell history. |
@@ -354,9 +375,9 @@ containers want:
 
 | Variable | Meaning |
 | --- | --- |
-| `OPENREYNOLDS_PROVIDER` | A preset name, or `reynolds` for the metered model. |
+| `OPENREYNOLDS_PROVIDER` | A preset name, or `reynolds` for the metered model. It does not hold a resume to that provider: a study restores the provider it recorded, so name a model too if you mean to move one. |
 | `OPENREYNOLDS_LLM_API_KEY` | The model key. The vendor's own name (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) is read too. |
-| `OPENREYNOLDS_MODEL` / `OPENREYNOLDS_EFFORT` | Which model, and how hard it is asked to think (`low`, `medium` or `high`). |
+| `OPENREYNOLDS_MODEL` / `OPENREYNOLDS_EFFORT` | Which model, and how hard it is asked to think (`low`, `medium` or `high`). A resumed study keeps the model it was last running unless `OPENREYNOLDS_MODEL` names one. |
 | `OPENREYNOLDS_MODE` | `auto`, `partial` or `structured`, or an alias. A value that is not a mode is ignored with a warning: the config file's `mode` applies, or full auto, and a resumed study keeps its stored mode. |
 | `FOAMD_URL` / `FOAMD_API_KEY` | The workspace service and this machine's key. |
 | `OPENREYNOLDS_MIRROR_INTERVAL_S` | How often files come home. `0` turns it off. |

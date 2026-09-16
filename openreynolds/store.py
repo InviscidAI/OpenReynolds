@@ -43,6 +43,21 @@ class Session:
     remote_study_id: str = ""
     """Id assigned by the capture plane, when capture is on."""
     model: str = ""
+    provider: str = ""
+    """Whose model that was (`llm/presets.py`). Empty on studies made before the
+    provider was recorded, and a resume reads that as a model it cannot place: an id
+    does not name a provider on its own -- `claude-opus-5` is valid on `anthropic` and
+    on `reynolds` -- so those studies carry on on whatever the configuration says."""
+    base_url: str = ""
+    """Where that model was served from: `llm_base_url` as configured, empty for the
+    preset's own endpoint.
+
+    The pair alone is not enough. Two bring-your-own keys of one family -- a vendor's
+    own and a gateway or router in front of it -- list different model ids, so a pair
+    restored across endpoints asks a vendor for a model it has never heard of and fails
+    a turn later with its 400. A study written before this was recorded has no
+    `base_url` key at all, which a resume reads as "not recorded" rather than guessing
+    an endpoint for it."""
     mode: str = ""
     """How much the person chose to be consulted (`modes.py`). Empty on studies made
     before modes existed, which a resume reads as whatever the configuration says."""

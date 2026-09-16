@@ -72,9 +72,50 @@ and half another:
 - **The prompt cache is written once more** for the new model, so the first request
   after a switch costs more than the ones after it.
 
-The study's `session.json` records the model in use. A resume does not read it back: it
-starts on the model the configuration or `--model` names (in the hosted app, the one the
-study is resumed with), and `/model` switches again.
+### Resuming
+
+The study's `session.json` records three things: the model in use, the provider that
+served it, and the endpoint it was served from (`llm_base_url` as configured, empty for
+the preset's own). `--study <id>` carries on on that record -- the model `/model` last
+left the study on, even when the configured default has changed since -- unless
+`--model` or `OPENREYNOLDS_MODEL` names one, which wins here as it does at the start.
+
+The record is restored whole or not at all, and the terminal's test is whether this
+machine can serve it:
+
+- **The provider must be reachable here**, by the same rule `/model` applies to a
+  switch: a key for it in the environment, this machine's service key for `reynolds`,
+  or a preset that needs no key. A record naming another provider than the configured
+  one is restored by switching to it, bringing that provider's key, endpoint, context
+  window and desk model with it, exactly as `/model <provider>:<model>` does.
+- **On the configured provider, the endpoint must match too.** A provider name is not
+  an endpoint: two keys of one family, a vendor's own and a gateway or router in front
+  of it, answer to different model ids, so `anthropic/claude-sonnet-4.5` restored onto a
+  direct Anthropic key would be accepted here and refused by the vendor mid-turn with a
+  400 about a model that does not exist. The stored endpoint is compared with this run's
+  configured one, and a study recorded before the endpoint was kept has none: that is
+  refused rather than guessed at.
+
+When the record cannot be honoured, this run falls back to the configured model and says
+so in one line. **The study keeps what it recorded.** The run that could not serve the
+pair is the last one that should forget it, so nothing is overwritten and a resume where
+that key is set carries on there.
+
+Two limits worth knowing:
+
+- **A study resumed where it has never run starts on the configured model.** The record
+  is the local `session.json`, and a study opened in the browser or last run on another
+  laptop has none here; what the platform is asked for on a resume (`_recover_session`)
+  is the study's home and its id, not its model.
+- **`OPENREYNOLDS_PROVIDER` is not an explicit signal.** Only `--model` and
+  `OPENREYNOLDS_MODEL` count as somebody asking for this model, so naming a provider on
+  its own does not hold a resume to it: the recorded pair is restored over it. Name a
+  model as well to move a study.
+
+A model id does not name a provider on its own -- `claude-opus-5` is valid on
+`anthropic` and on `reynolds`, and OpenRouter's ids look like Anthropic's -- so a study
+recorded before the provider was kept names a model and no provider, and starts on the
+configured model as it always did.
 
 ### The mesh desk and the front desk
 
@@ -99,9 +140,13 @@ agent may do.
 
 ## At the start
 
-`--model <id>` and `--effort <level>` set both for one session, as do
-`OPENREYNOLDS_MODEL` and `OPENREYNOLDS_EFFORT`. The agent's own default effort is
-`high`; the hosted app starts studies at `medium`.
+`--model <id>` and `--effort <level>` set both for the session, as do
+`OPENREYNOLDS_MODEL` and `OPENREYNOLDS_EFFORT`, and either beats what the study has
+stored. The model is recorded on the study with the provider and the endpoint that
+served it, so the one named here is also the one a later resume carries on with.
+`OPENREYNOLDS_PROVIDER` is not one of these: it sets which provider a new session
+starts on, and a resume still restores the provider the study recorded. The agent's own
+default effort is `high`; the hosted app starts studies at `medium`.
 
 ## In the hosted app
 
@@ -110,6 +155,16 @@ Under the composer, a model chooser and an effort chooser for the running sessio
 use: for Reynolds' model, the two the service meters; for a key of your own, the models
 that key was connected with, because a hosted session carries one provider's key. The
 top bar shows the model and effort as the session reports them.
+
+Resuming a study there reads the same record, and applies its own half of the gate: the
+key the resume is starting with must belong to the provider that served the model and to
+the same endpoint as the record, and must be able to answer to that id (Reynolds' model
+is metered rather than a key, so it serves only the two models the service prices; a key
+of your own serves any id its vendor answers to). A record with no endpoint is refused
+rather than guessed at. That is a narrower test than the terminal's: the app never
+switches provider to honour a record, because a hosted session carries one key. When it
+fails, the study starts on the account's configured model, with nothing on the page to
+say so.
 
 ## For a program
 

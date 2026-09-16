@@ -287,6 +287,11 @@ def _model_topic() -> list[str]:
         "provider's.",
         "A provider needs its key in the environment (for example ANTHROPIC_API_KEY); "
         "openreynolds config --provider <name> sets one up.",
+        "A resumed study carries on on the model it was last running, together with the "
+        "provider that served it, unless --model or OPENREYNOLDS_MODEL names one, that "
+        "provider has no key here, or it was served through an endpoint this run does "
+        "not point at. A model id belongs to the endpoint that served it: a key and a "
+        "gateway in front of the same vendor list different ids.",
         "Effort is read on every request, so /effort applies from the next one.",
     ]
 

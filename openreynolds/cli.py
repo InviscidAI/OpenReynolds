@@ -190,6 +190,11 @@ def main(
     cfg = Config.load()
     if model:
         cfg.model = model
+    # The model: --model, then OPENREYNOLDS_MODEL, then the config file -- the same
+    # order as the mode, and told apart here for the same reason. By the time `session`
+    # runs they are all one string on `cfg`, and a resumed study needs to know whether
+    # anybody asked for this one (`session`).
+    model_explicit = bool(model) or bool((os.environ.get("OPENREYNOLDS_MODEL") or "").strip())
     # The mode: --mode, then OPENREYNOLDS_MODE, then the config file. A resumed study
     # keeps the mode it was started in unless one of the first two says otherwise.
     raw_mode = os.environ.get("OPENREYNOLDS_MODE")
@@ -227,6 +232,7 @@ def main(
         max_wait=max_wait,
         output_format=output_format,
         mode_explicit=mode_explicit,
+        model_explicit=model_explicit,
     )
     code = ONE_SHOT_EXIT_CODES.get(outcome or "ok", 0)
     if code:
@@ -1122,6 +1128,7 @@ def session(
     output_format: str = "text",
     interface: Any = None,
     mode_explicit: bool | None = None,
+    model_explicit: bool | None = None,
 ) -> str | None:
     """Run one study to its end.
 
@@ -1168,6 +1175,71 @@ def session(
             "pass --mode auto."
         )
     store.session.mode = cfg.mode
+    # Which model it runs on. A resumed study carries on on the model it was last
+    # running -- the one `/model` left it on -- exactly as it carries on in its own
+    # mode, and so a study started on Sonnet and moved to Opus for the hard part is
+    # still on Opus tomorrow, whatever the configured default has become since.
+    # `--model` and OPENREYNOLDS_MODEL still win. `model_explicit` is None from an
+    # embedder that sets only the environment, and the hosted runner is one: it names a
+    # model on every session it starts -- the one the app chose, which is the one its
+    # ledger row and its model chooser show -- so its environment counts as a choice
+    # and the agent must not quietly run another.
+    if model_explicit is None:
+        model_explicit = bool((os.environ.get("OPENREYNOLDS_MODEL") or "").strip())
+    stored_model = (store.session.model or "").strip()
+    stored_provider = (store.session.provider or "").strip()
+    stored_base_url = (store.session.base_url or "").strip()
+    restore_refused = False
+    """Whether this run could not honour the pair the study recorded.
+
+    The study's own record is then left exactly as it is. It used to be overwritten
+    with the configured pair a few lines later, which meant the one run that could not
+    serve what the study remembered was also the run that destroyed the memory: resume
+    on the laptop with the key and there was nothing left to carry on with."""
+    if (
+        resuming
+        and stored_model
+        and stored_provider
+        and not model_explicit
+        and (stored_provider, stored_model) != (cfg.provider, cfg.model)
+    ):
+        # The pair is restored together or not at all, and a key for the provider that
+        # served it is the whole of the test: an id says nothing about who can answer
+        # to it, so a model remembered from a provider that is gone from this machine
+        # would be this provider being asked for another vendor's model, and would fail
+        # a turn later with a message about a model that does not exist.
+        key = switch.key_for(stored_provider, cfg)
+        here = cfg.llm_base_url or ""
+        if key is None:
+            restore_refused = True
+            console.print(
+                f"[yellow]This study was last on {stored_model} ({stored_provider}), "
+                f"and there is no key for {stored_provider} here, so this run falls "
+                f"back to {cfg.model} ({cfg.provider}). The study still records "
+                f"{stored_model} ({stored_provider}): resume it where that key is set "
+                f"and it carries on there.[/]"
+            )
+        elif stored_provider == cfg.provider and stored_base_url != here:
+            # The same provider name is not the same endpoint. Two bring-your-own keys
+            # of one family -- a vendor's own and a gateway or router in front of it --
+            # list different model ids, so restoring `anthropic/claude-sonnet-4.5` onto
+            # a direct Anthropic key would be accepted here and refused by the vendor
+            # mid-turn with a 400 about a model that does not exist. The endpoint is
+            # recorded beside the pair for this; a study that recorded none is refused
+            # rather than guessed at. Compared against the configured URL, never the
+            # preset's: a provider left on its preset's endpoint records no URL, and
+            # comparing that to the preset's would refuse every one of its own resumes.
+            restore_refused = True
+            was = stored_base_url or "an endpoint it did not record"
+            now = here or "this provider's own endpoint"
+            console.print(
+                f"[yellow]This study was last on {stored_model} ({stored_provider}) "
+                f"through {was}, and this run points at {now}. A model id belongs to "
+                f"the endpoint that served it, so this run falls back to {cfg.model}. "
+                f"The study keeps what it recorded.[/]"
+            )
+        else:
+            switch.restore(cfg, stored_provider, stored_model, key)
     known_here = (store.dir / "session.json").is_file()
     """Whether this machine already held the study before this run. A resume without
     it is a study opened somewhere else, and it is named by its id rather than
@@ -1199,7 +1271,15 @@ def session(
             _join_notice(resolved_instance, getattr(backend, "instances_held", 0))
         )
     store.session.instance_id = resolved_instance
-    store.session.model = cfg.model
+    if not restore_refused:
+        # Only a run that is actually running what the study recorded -- or had nothing
+        # to honour -- may write the record. See `restore_refused`.
+        store.session.model = cfg.model
+        # And who served it, and where, because the next resume reads the three
+        # together: an id alone could be any provider's, and a provider name alone
+        # could be a vendor's key or a router standing in front of it.
+        store.session.provider = cfg.provider
+        store.session.base_url = cfg.llm_base_url or ""
     if resuming:
         # A study this machine has never seen -- opened in the browser, or on another
         # laptop -- knows nothing about itself until the platform is asked.

@@ -31,6 +31,21 @@ All notable changes to this project are recorded here. The format follows
   where it differs from the preset's, as for `claude-haiku-4-5`) is refreshed on the
   current model first. `/effort low|medium|high` applies from the next request, and
   `--effort` sets it at the start. The mesh desk and the front desk follow the switch.
+  A resumed study carries on on the model it was last running: `session.json` now
+  records the provider and the endpoint beside the model, and `--study <id>` restores
+  the record unless `--model` or `OPENREYNOLDS_MODEL` names a model, or this machine
+  cannot serve it -- in which case the configured model runs and the session says why.
+  Serving it means a key for the recorded provider here, switching provider if the
+  record says another one (it brings that provider's key, endpoint, window and desk
+  model with it), and on the configured provider the same endpoint as well, because a
+  gateway or router in front of one family answers to other vendors' ids and a pair
+  restored across endpoints fails a turn later with the vendor's 400. A study that
+  recorded no provider or no endpoint is refused rather than guessed at, and starts as
+  it did before. A refused restore does not rewrite the study's record: the run that
+  cannot serve the pair is the last one that should forget it, and the next resume
+  where the key is set carries on there. The record is the local `session.json`, so a
+  study resumed where it has never run starts on the configured model, and
+  `OPENREYNOLDS_PROVIDER` on its own does not hold a resume to that provider.
 - **`/help` with topics.** `/help commands`, `/help modes`, `/help model`,
   `/help tools` and `/help keys`. Every command lives in one registry,
   `commands.COMMANDS`, which the parser, the help text, the terminal's completion and
@@ -43,6 +58,16 @@ All notable changes to this project are recorded here. The format follows
 - **New stream events.** `approval`, `approval_done`, `model` and `mode` on
   `--output-format stream-json`. A question is answered by sending `/yes`, `/no ...` or
   `/all` as an ordinary `user` line.
+
+### Fixed
+
+- **A named model is no longer swapped for a preset's default.** A provider named on
+  its own still arrives at its preset's model, but `OPENREYNOLDS_PROVIDER=reynolds`
+  with `OPENREYNOLDS_MODEL=claude-opus-5` -- one of the two models that service meters,
+  and what the hosted app sends when someone picks Opus -- loaded as Sonnet, on new
+  sessions as well as resumes, and `/model claude-opus-5` on `reynolds` was undone the
+  same way. What was asked for is re-asserted after the preset fills its blanks
+  (`Config.load`, `switch.candidate`), for the desk model too.
 
 ### Changed
 

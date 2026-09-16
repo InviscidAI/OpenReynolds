@@ -224,6 +224,10 @@ class Config:
             or str(stored.get("anthropic_api_key") or "")
         )
         llm_base_url = pick("OPENREYNOLDS_LLM_BASE_URL", "llm_base_url") or None
+        # What was actually named, with no preset standing in for it. Re-asserted after
+        # construction below, where `__post_init__` can no longer swap it.
+        named_model = pick("OPENREYNOLDS_MODEL", "model")
+        named_desk = pick("OPENREYNOLDS_DESK_MODEL", "desk_model")
         window = pick("OPENREYNOLDS_CONTEXT_WINDOW", "context_window")
         max_output = os.environ.get("OPENREYNOLDS_MAX_TOOL_OUTPUT")
         timeout = os.environ.get("OPENREYNOLDS_LLM_TIMEOUT_S")
@@ -240,7 +244,7 @@ class Config:
 
         from .modes import normalize as normal_mode
 
-        return cls(
+        cfg = cls(
             preferences=preferences,
             # Each source is checked on its own, so a bad OPENREYNOLDS_MODE falls through
             # to the config file's mode rather than hiding it.
@@ -249,10 +253,7 @@ class Config:
             or "auto",
             capture=not switched_off("OPENREYNOLDS_CAPTURE"),
             desk=not switched_off("OPENREYNOLDS_DESK"),
-            desk_model=pick(
-                "OPENREYNOLDS_DESK_MODEL", "desk_model",
-                preset.desk_model if preset else DEFAULT_DESK_MODEL,
-            ),
+            desk_model=named_desk or (preset.desk_model if preset else DEFAULT_DESK_MODEL),
             mesher_model=pick("OPENREYNOLDS_MESHER_MODEL", "mesher_model"),
             mesher_effort=pick("OPENREYNOLDS_MESHER_EFFORT", "mesher_effort", "high"),
             mesh_tool=str(pick("OPENREYNOLDS_MESH_TOOL", "mesh_tool", "1")).strip().lower()
@@ -265,7 +266,7 @@ class Config:
             llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,
             context_window=int(window) if window else 0,
-            model=pick("OPENREYNOLDS_MODEL", "model", preset.model if preset else DEFAULT_MODEL),
+            model=named_model or (preset.model if preset else DEFAULT_MODEL),
             effort=pick("OPENREYNOLDS_EFFORT", "effort", DEFAULT_EFFORT),
             max_tool_output=int(max_output) if max_output else DEFAULT_MAX_TOOL_OUTPUT,
             llm_timeout_s=float(timeout) if timeout else DEFAULT_LLM_TIMEOUT_S,
@@ -276,6 +277,19 @@ class Config:
                 float(narrate_every) if narrate_every else DEFAULT_NARRATE_EVERY_S
             ),
         )
+        # `__post_init__` swaps `claude-opus-5` for the preset's model, so that a
+        # provider named on its own arrives with a model that provider serves. A model
+        # named here is the opposite case, and the swap was eating it:
+        # `OPENREYNOLDS_PROVIDER=reynolds` with `OPENREYNOLDS_MODEL=claude-opus-5` --
+        # one of the two models that service meters, and what the hosted app's chooser
+        # sends when someone picks Opus -- loaded as Sonnet, silently, on every new
+        # session as well as on every resume. The default is above; what was asked for
+        # wins here.
+        if named_model:
+            cfg.model = named_model
+        if named_desk:
+            cfg.desk_model = named_desk
+        return cfg
 
     def save(self) -> Path:
         """Write the credential fields back, readable only by this user."""

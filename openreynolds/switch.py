@@ -75,15 +75,23 @@ def key_for(provider: str, cfg: Any, env: Mapping[str, str] | None = None) -> st
     """The model key a provider would use from here, or None when there is none.
 
     "" is a real answer: the preset needs no key of its own (a local model, or
-    `reynolds`, where the service key stands in)."""
+    `reynolds`, where the service key stands in), or the provider asked about is the
+    one this session is already running and an explicit endpoint stands in for a key.
+    That last case is `Config.model_key_missing`'s rule, and it has to be the same
+    rule: a gateway configuration with an endpoint and no key is legal -- `missing()`
+    says so and the session is running on it -- so answering None for the provider in
+    use would refuse a switch, or a resume, onto the very provider about to be used."""
     env = os.environ if env is None else env
     preset = preset_for(provider)
     if preset is None:
         return cfg.llm_api_key if provider == cfg.provider else None
     if preset.name == REYNOLDS:
         return "" if cfg.foamd_api_key else None
-    if preset.name == cfg.provider and cfg.llm_api_key:
-        return cfg.llm_api_key
+    if preset.name == cfg.provider:
+        if cfg.llm_api_key:
+            return cfg.llm_api_key
+        if cfg.llm_base_url:
+            return ""
     if preset.key_env and env.get(preset.key_env):
         return env[preset.key_env]
     if not preset.needs_key:
@@ -119,6 +127,15 @@ def candidate(cfg: Any, provider: str, model: str, key: str) -> Any:
     known = context_window_for(model)
     if provider == cfg.provider:
         new = replace(cfg, model=model)
+        # `replace` re-runs `__post_init__`, which swaps `claude-opus-5` for the
+        # preset's model on a non-anthropic preset. That swap is for a provider named
+        # on its own; a model named here is the opposite of that, and without this line
+        # `/model claude-opus-5` on `reynolds` -- one of the two models that service
+        # meters -- quietly stayed on Sonnet, as did a resume restoring it. The model
+        # asked for wins, exactly as it does across providers below. Nothing about the
+        # desk was asked for, so it keeps the one the session already had.
+        new.model = model
+        new.desk_model = cfg.desk_model
         if known:
             new.context_window = known
         elif context_window_for(cfg.model):
@@ -133,6 +150,25 @@ def candidate(cfg: Any, provider: str, model: str, key: str) -> Any:
     if preset is not None:
         new.desk_model = preset.desk_model
     return new
+
+
+def restore(cfg: Any, provider: str, model: str, key: str) -> None:
+    """Put a configuration onto a (provider, model) pair recorded earlier.
+
+    What `apply` does between turns, done before a session has started: there is no
+    client to rebuild, no thread to strip and nothing on screen to correct, because
+    none of them exists yet. It goes through `candidate` for the same reason `/model`
+    does -- a pair from another provider has to bring that provider's key, endpoint,
+    window and desk model with it, and a model id set on its own would leave this
+    provider being asked for another vendor's model.
+    """
+    new = candidate(cfg, provider, model, key)
+    cfg.provider = new.provider
+    cfg.model = new.model
+    cfg.llm_api_key = new.llm_api_key
+    cfg.llm_base_url = new.llm_base_url
+    cfg.context_window = new.context_window
+    cfg.desk_model = new.desk_model
 
 
 def request(loop: Any, text: str, env: Mapping[str, str] | None = None) -> list[str]:
@@ -228,6 +264,13 @@ def apply(loop: Any) -> bool:
     if model_changed:
         strip_thinking(loop.messages)
     loop.store.session.model = cfg.model
+    # With the model, because neither is worth anything without the other: a resume
+    # reads the pair back, and an id alone could be any provider's.
+    loop.store.session.provider = cfg.provider
+    # And where it was served from. A provider name is not an endpoint: a gateway or a
+    # router in front of one family lists other vendors' ids, so a pair restored onto a
+    # direct vendor key of the same family fails a turn later with that vendor's 400.
+    loop.store.session.base_url = cfg.llm_base_url or ""
     loop.store.save()
     loop.view.model(cfg.model, cfg.effort, cfg.provider)
     loop.view.info(f"now on {cfg.model} ({cfg.provider})")
