@@ -14,7 +14,12 @@
 > throttle inlet, the plenum walls, the runner walls, and each of the eight port faces
 > separately, and export one STL per patch to `constant/triSurface` before meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.34` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the number of runners open to the plenum, established on the mesh — one connected region does not establish it
 - each runner's cross-sectional area at its port face, measured on the mesh, and the spread across the eight

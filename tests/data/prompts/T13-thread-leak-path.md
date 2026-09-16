@@ -14,7 +14,12 @@
 > the inner end of the helix and the outer end separately, and export one STL per patch to
 > `constant/triSurface` before meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.039` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the flank gap, measured between the two meshed flank patches, at three positions a third of a turn apart
 - the number of connected mesh regions `checkMesh` reports, and the number expected — a groove stack reads more than one

@@ -111,12 +111,56 @@ def load_prompts() -> dict[str, dict[str, Any]]:
             "file": str(path.relative_to(ROOT)),
             "title": text.splitlines()[0].lstrip("# ").strip(),
             "request": _blockquote(text, "## Request"),
-            "properties": _bullets(text, "## Properties the desk must measure and print"),
+            "properties": _bullets(text, PROPERTIES_HEADING),
             "false_pass": _section(text, "## A pass that is really a failure"),
             "expects": _expects(text),
+            "extent_m": _extent_m(text),
             "geometry": _geometry_for(name),
         }
     return out
+
+
+PROPERTIES_HEADING = "## Properties, measured on the delivered mesh"
+"""The heading the corpus lists its named properties under.
+
+It read "Properties the desk must measure and print" until the measuring moved to the
+supervisor. The desk is still told to measure them -- that instruction is in the brief,
+and it is there so a desk does not believe a picture -- but it is no longer the thing
+being graded on them, so the heading no longer says it is. `measured on the delivered
+mesh` is also the constraint the list was pruned against: a property that cannot be
+answered from `constant/polyMesh` and the exported surfaces does not belong in it.
+"""
+
+
+_EXTENT = re.compile(r"^\*\*Largest extent:\*\*\s*`([0-9.eE+-]+)`", re.M)
+
+
+def _extent_m(text: str) -> float:
+    """The largest dimension the delivered surface should span, in metres, or 0.
+
+    This is what the `scale` probe measures against, and it has to come from the case
+    rather than from the run. The probe exists for a STEP whose `LENGTH_UNIT` is empty,
+    where the desk chose millimetres and shipped a mesh `checkMesh` passed: a desk that
+    stated its own extent would state one consistent with the choice it had just made,
+    and the probe would read clean on the run it was built to fail.
+
+    Nothing wrote it until now. `_scale` reads `spec["extent_m"]`, `cad_sweep.py` passes
+    `--spec` only when `<run-dir>/spec.json` already exists, and no code produced that
+    file -- so the probe returned `n/a` on every case of every sweep on disk, six reports
+    deep, while reading as coverage in the probe column.
+
+    It is the largest extent of the **whole exported union**, not of the part: an
+    external-flow case exports its far-field box too, so T2's 40 mm sphere in a
+    0.8 x 0.4 x 0.4 m domain states 0.8. Order of magnitude is enough -- the probe fires
+    outside a factor of a hundred, because what it hunts is a factor of a thousand.
+    """
+    found = _EXTENT.search(text or "")
+    if not found:
+        return 0.0
+    try:
+        return float(found.group(1))
+    except ValueError:
+        return 0.0
 
 
 _EXPECTS = re.compile(r"^\*\*Passes as:\*\*\s*`([a-z-]+)`", re.M)

@@ -9,7 +9,12 @@
 > and below. Name the inlet, the outlet, the far field and the sphere separately. Resolve the
 > boundary layer on the sphere with prism layers.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.8` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - sphere diameter, 40 mm, measured on the meshed sphere patch
 - achieved layer coverage on the sphere, as a percentage, **read off the mesh**

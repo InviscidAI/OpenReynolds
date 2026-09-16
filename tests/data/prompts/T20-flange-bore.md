@@ -13,7 +13,12 @@
 > the two flange bore walls and the gasket's inner face separately, and export one STL per
 > patch to `constant/triSurface` before meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.06` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the bore diameter, measured on each of the two meshed flange bore patches separately
 - the face-to-face length, measured on the mesh, and the gasket face's axial position within it

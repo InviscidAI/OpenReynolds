@@ -12,7 +12,12 @@
 > Name the wing surface, the root wall, the inlet, the outlet and the far field separately,
 > and export one STL per patch to `constant/triSurface` before meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `1.56` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the chord at root and at tip, measured on the meshed wing patch
 - the maximum thickness at those same stations, measured on the meshed wing patch, and the thickness-to-chord ratio

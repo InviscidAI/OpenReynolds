@@ -14,7 +14,12 @@
 > and flanks, the bore surface, the high-pressure end face and the low-pressure end face
 > separately, and export one STL per patch to `constant/triSurface` before meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.06` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the radial clearance, measured between the meshed shaft and bore patches, at three angular positions away from the keyway
 - how many cells span the 0.05 mm clearance, counted on the mesh

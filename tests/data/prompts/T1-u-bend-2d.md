@@ -9,7 +9,12 @@
 > 15 mm. The inlet is the open end of the lower leg and the outlet is the open end of the
 > upper leg. Mesh it for an incompressible solve.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.14` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - passage width, 10 mm, measured on the mesh at the inlet and at the crown of the bend
 - centreline bend radius, 15 mm, measured on the mesh

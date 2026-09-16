@@ -13,7 +13,12 @@
 > ball's surface, the hollow's wall, the six hole walls and the six outer openings
 > separately, and export one STL per patch to `constant/triSurface` before meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.04` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the ball's diameter, measured on the meshed ball patch, and its centre position
 - the water gap between ball and hollow wall, measured between the two meshed patches, at a hole axis and at a diagonal

@@ -10,7 +10,12 @@ is elsewhere.
 > cell zones I can put a heat source and a heat sink on: a 20 mm cube near the floor at one
 > end called `heater`, and a matching one near the ceiling at the other end called `cooler`.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.1` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - cavity dimensions, 100 x 60 x 40 mm, measured on the mesh
 - both cell zones present by name, with their cell counts

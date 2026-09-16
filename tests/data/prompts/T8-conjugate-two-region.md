@@ -9,7 +9,12 @@
 > fluid and the solid as separate mesh regions with a conformal interface between them, so I
 > can run `chtMultiRegionFoam` on it. Inlet and outlet at the two ends of the duct.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.2` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - both regions present, named, with their cell counts
 - the interface between them is conformal — matching faces, no gap and no overlap, measured on the mesh

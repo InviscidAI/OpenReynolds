@@ -153,6 +153,21 @@ def prepare(case: str, parent: Path, run_dir: Path,
         handed.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, handed)
         print(f"  reference {name} -> {handed}")
+
+    # The case's own numbers, beside the record rather than in the workspace: this is
+    # what the supervisor is judged against and the desk must not be able to reach it.
+    # `cad_sweep` passes `--spec <run-dir>/spec.json` only when that file exists, and
+    # until now nothing wrote one, so `scale` returned `n/a` on every case of every
+    # sweep on disk while appearing in the probe column as though it had screened
+    # something. Written from the case file for the same reason the extent is stated
+    # there: a desk that supplied its own extent would supply one agreeing with the unit
+    # it had just guessed, which is exactly the run this probe exists to fail.
+    spec = {"case": case, "extent_m": float(prompt.get("extent_m") or 0.0)}
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "spec.json").write_text(json.dumps(spec, indent=2), encoding="utf-8")
+    if spec["extent_m"]:
+        print(f"  spec extent_m={spec['extent_m']} -> {run_dir / 'spec.json'}")
+
     return workspace, geometry, prompt
 
 

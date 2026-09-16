@@ -14,7 +14,12 @@
 > cylinder wall, the floor, the top and the four duct walls separately, and export one STL
 > per patch to `constant/triSurface` before meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.2` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - each inlet port's face normal, and the angle between it and the local tangent at that port, measured on the mesh
 - each inlet's area and its height above the floor, measured on the mesh

@@ -9,7 +9,12 @@
 > of metal between passes. Mesh the water side only. Inlet and outlet are the two open ends
 > of the channel.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.06` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - channel width 4 mm and depth 5 mm, measured on the meshed channel walls at more than one station
 - number of passes, 3, counted on the mesh

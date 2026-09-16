@@ -14,7 +14,12 @@
 > duct walls, the inlet and the outlet separately, and export one STL per patch to
 > `constant/triSurface` before meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.62` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the fin gap, measured between two adjacent meshed fin patches, at the innermost and outermost radius
 - the number of fins, counted on the meshed fin patch

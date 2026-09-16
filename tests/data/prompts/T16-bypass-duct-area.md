@@ -14,7 +14,12 @@
 > the nozzle outlet separately, and export one STL per patch to `constant/triSurface` before
 > meshing.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.9` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the hub and tip radius at three equally spaced axial stations, measured on the two meshed cowl patches
 - the flow area at each of those stations, measured on the mesh, and the area ratio nozzle to inlet

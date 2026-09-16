@@ -15,7 +15,12 @@
 > faces, the hub, the shroud, the inlet, the outlet, and the two periodic side faces
 > separately.
 
-## Properties the desk must measure and print
+**Largest extent:** `0.063` m — the largest dimension the exported surface should
+span, for the `scale` probe. The whole union, not the part: an external-flow case
+exports its far-field box too. Order of magnitude is enough; the probe fires
+outside a factor of a hundred.
+
+## Properties, measured on the delivered mesh
 
 - the blade chord and maximum thickness, measured on the meshed blade patches at root and at tip
 - the trailing edge thickness, and how many cells resolve it, counted on the mesh
