@@ -77,14 +77,27 @@ so each classification reads one record rather than the whole sweep:
  "steps_burned": 9, "case": "T1", "run": "<run-dir>"}
 ```
 
-Three rules on `failure_id`, all of which decide whether the report is readable:
+Four rules on `failure_id`, all of which decide whether the report is readable:
 
-- **Reuse an existing id wherever one fits.** Read `findings.jsonl` from previous sweeps
-  first. The same failure under three names never clusters, and a report that does not
-  cluster cannot be ranked.
+- **An id names a cause, not a symptom.** This is the one that decides whether the report
+  is actionable, and it is the easy one to get wrong, because the symptom is what the
+  evidence shows you. Three runs that each ended on the step budget while chasing a
+  warning look identical in the record and are not one failure: one had a mesh it could
+  never clean, one diagnosed a 51.7 µm tangency correctly and ran out applying the fix,
+  one chased a cosmetic winding warning it should have waived and made it worse. Those
+  need three ids, because an addition that closes any one of them closes neither other.
+  **Before reusing an id, check the cause matches, not just the symptom** — and before
+  coining one, check you are not splitting a single cause across two names.
+- **Reuse an existing id wherever the cause is the same.** Read `findings.jsonl` from
+  previous sweeps first. The same cause under three names never clusters, and a report
+  that does not cluster cannot be ranked.
 - **The id names the failure, never the remedy.** `block_topology_not_closed`, not
   `needs_blockmesh_helper`.
-- **A new id is a claim that nothing seen before matches.** Say why in the statement.
+- **A new id is a claim that no known cause matches.** Say why in the statement, in terms
+  of the cause — "this is X rather than Y because ..." — not in terms of the case.
+
+When one run's symptom has two causes behind it, file two findings against that run. A run
+is not limited to one.
 
 Write them to `<sweep-dir>/findings.jsonl`, one per line.
 
@@ -96,6 +109,26 @@ Write them to `<sweep-dir>/findings.jsonl`, one per line.
    passed `checkMesh`, total cells, total spend. From `python3 scripts/cad_sweep.py table
    <sweep-id>`. If this sweep has a baseline, that same command also prints the paired
    comparison against it — put it here, and read the sign test rather than any row.
+
+   **The harness's pass count is not this section's headline, and must never be stated
+   without the vetted count beside it.** `passed` means the run ended `done` and a bare
+   `checkMesh` liked the mesh. It does not mean the case was satisfied: on the sol corpus
+   21 of 26 passed and the vets in §5 broke three of those outright. Write §1 last, after
+   §5 and §6 exist, and give the number as a pair — *"21 of 26 by the harness; N of 26 survive
+   the vet"* — with the vetted figure carrying the emphasis. A reader who stops after §1
+   must not come away with a number the rest of the report takes back. The same rule
+   governs how the sweep is reported to the person in conversation: lead with what
+   survived, not with what the gate said.
+**`checkMesh -allGeometry` is a reference reading, not a pass criterion.** The binding gate
+is a bare `checkMesh`. `-allGeometry` runs checks the bare form does not run at all -- cell
+determinant, face interpolation weight, concave cells, face tets -- and fails 14 of the 22
+meshes the gate passes on this corpus, at 1.7-6% of cells. Nine of those were put through
+`simpleFoam`: four converged, four were still converging at the iteration cap, none
+diverged. snappyHexMesh made 5 of the 14 and gmsh 6. Report the **fraction of cells** it
+flags where that is informative -- 12 faces of 678,227 and 6.14% of cells both print
+`Failed N mesh checks.` -- and never rank a case as failed on it, or count it against the
+pass rate.
+
 2. **Contamination**: the rate. If it is not zero, stop here — the numbers are not
    measuring what they claim, and the rest of the report is void.
 3. **Failures, ranked by cost** — cases hit × cells burned × spend. Each one: the id, the
