@@ -176,11 +176,52 @@ def test_scale_needs_a_stated_dimension_and_the_case_that_matters_has_none(tmp_p
     assert result.state == probes.NOT_APPLICABLE and "state" in result.why
 
 
-def test_coverage_without_a_manifest_is_skipped_rather_than_guessed(tmp_path):
-    """Nothing declares which face was meant to be whose, so double-assignment is
-    unmeasurable -- and saying so beats reporting a pass nobody earned."""
-    assert one(probes.run_all(case(tmp_path), {}),
-               "coverage").state == probes.NOT_APPLICABLE
+def test_coverage_reads_the_partition_the_directory_itself_declares(tmp_path):
+    """This test used to assert the opposite, on the grounds that without a manifest
+    "double-assignment is unmeasurable". That premise was wrong about the mechanism:
+    `coverage_finding` finds a doubled face geometrically, off welded corners, and uses
+    the manifest only to name the patches it landed in. The cost of the old reading was
+    total -- `coverage` returned n/a on 26 of 26 cases of the sol corpus and on every
+    case of every sweep before it, so a probe id appeared in the reports screening
+    nothing."""
+    result = one(probes.run_all(case(tmp_path), {}), "coverage")
+    assert result.state == probes.MEASURED
+    assert "every face in exactly one patch" in result.why
+    assert result.measured["manifest"] == "derived-from-directory"
+
+
+def test_a_stale_whole_surface_stl_beside_the_patches_reads_as_double_assigned(tmp_path):
+    """Why deriving the manifest is not merely a way to get a reading: this is a real
+    failure already on the corpus -- `exported_surface_duplicated_in_trisurface`, where
+    T22 and T25 each left a whole-surface STL from an abandoned route beside the live
+    per-patch files. Every face is then exported twice. The manifest-gated probe could
+    never see it, because the core desk writes no manifest; derived from the directory
+    it is exactly what the check is for."""
+    root = case(tmp_path)
+    surface = root / "constant" / "triSurface"
+    (surface / "whole.stl").write_text(stl(CUBE), encoding="utf-8")
+    result = one(probes.run_all(root, {}), "coverage")
+    assert result.state == probes.MEASURED
+    assert "double-assigned" in result.why
+
+
+def test_a_derived_manifest_says_it_cannot_vouch_for_which_files_were_meant(tmp_path):
+    """The one question a derived manifest genuinely cannot answer, said out loud in the
+    reading rather than implied by a state. A declared manifest can tell you a file on
+    disk was never meant to be a patch; the directory cannot, because it is the thing
+    being asked."""
+    result = one(probes.run_all(case(tmp_path), {}), "coverage")
+    assert "whether every file there was meant to be a patch is not read here" in result.why
+
+
+def test_coverage_stays_n_a_when_there_is_no_patch_set_at_all(tmp_path):
+    """A gmsh-native route that goes straight to polyMesh writes no STLs -- T12 of the
+    sol corpus. There is no partition to check, and inventing a pass for one is the
+    thing the old test was right to guard against."""
+    root = tmp_path / "bare"
+    (root / "constant" / "triSurface").mkdir(parents=True)
+    result = one(probes.run_all(root, {}), "coverage")
+    assert result.state == probes.NOT_APPLICABLE and "no patch files" in result.why
 
 
 def test_a_probe_that_throws_is_a_probe_result_and_not_a_dead_supervisor(tmp_path, monkeypatch):
