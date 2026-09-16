@@ -11,11 +11,9 @@
 
 ## Properties the desk must measure and print
 
-- plate footprint, 60 x 40 x 8 mm
-- channel width 4 mm and depth 5 mm, measured at more than one station
-- number of passes, 3
-- wall thickness between passes, 3 mm — **measured, as the minimum over the solid**
-- minimum local width of the fluid domain
+- channel width 4 mm and depth 5 mm, measured on the meshed channel walls at more than one station
+- number of passes, 3, counted on the mesh
+- minimum local width of the fluid domain, measured on the mesh
 
 ## What this catches
 

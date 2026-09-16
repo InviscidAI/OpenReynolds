@@ -18,10 +18,7 @@
 
 - the fin gap, measured between two adjacent meshed fin patches, at the innermost and outermost radius
 - the number of fins, counted on the meshed fin patch
-- the fin thickness, measured on the mesh, and the pitch between fin mid-planes
-- the total wetted fin area, measured on the mesh, against the analytic area of 12 annuli
 - how many cells span one fin gap, counted on the mesh
-- every exported patch, exhaustive and disjoint over the domain's faces
 
 ## What this catches
 

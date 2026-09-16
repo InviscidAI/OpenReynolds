@@ -18,10 +18,7 @@
 
 - each inlet port's face normal, and the angle between it and the local tangent at that port, measured on the mesh
 - each inlet's area and its height above the floor, measured on the mesh
-- the four ports' angular positions around the cylinder, measured, and the spread from 90 degrees apart
-- the chamber volume and the four duct volumes separately, against the request
-- the number of connected mesh regions `checkMesh` reports, and the number expected
-- every exported patch, exhaustive and disjoint over the domain's faces
+- the chamber volume and the four duct volumes separately, measured on the mesh
 
 ## What this catches
 

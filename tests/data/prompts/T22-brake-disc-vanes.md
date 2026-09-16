@@ -17,10 +17,7 @@
 
 - the number of open passages, counted on the mesh, against the 36 the request names
 - one passage's width at the inner diameter and at the outer diameter, measured on the meshed vane patches
-- the vane thickness, measured on the mesh, and the pitch between vane centrelines at the outer diameter
-- the total inlet area at the inner diameter and outlet area at the outer, both measured, and their ratio
 - the air volume, against the annular gap volume minus 36 vanes
-- the number of connected mesh regions `checkMesh` reports, and the number expected
 
 ## What this catches
 

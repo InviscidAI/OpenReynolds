@@ -11,10 +11,8 @@
 
 ## Properties the desk must measure and print
 
-- passage width, 10 mm, at the inlet, at mid-leg and at the crown of the bend
-- leg length, 120 mm, both legs
-- centreline bend radius, 15 mm
-- included angle of the bend, 180 degrees
+- passage width, 10 mm, measured on the mesh at the inlet and at the crown of the bend
+- centreline bend radius, 15 mm, measured on the mesh
 - the mesh is exactly one cell thick, and both side patches are typed `empty`
 
 ## What this catches

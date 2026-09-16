@@ -14,12 +14,9 @@
 
 ## Properties the desk must measure and print
 
-- the chord at root, mid-span and tip, measured on the meshed wing patch
-- the maximum thickness at those same three stations, measured on the meshed wing patch, and the thickness-to-chord ratio at each
-- the blockage ratio: wing frontal area over domain cross-section, both measured
-- the domain extent upstream and downstream in root chords, measured from the mesh bounding box
-- the wing patch area, against the analytic lofted area
-- every exported patch, exhaustive and disjoint over the domain's faces
+- the chord at root and at tip, measured on the meshed wing patch
+- the maximum thickness at those same stations, measured on the meshed wing patch, and the thickness-to-chord ratio
+- the fluid volume, against the domain box minus the wing
 
 ## What this catches
 

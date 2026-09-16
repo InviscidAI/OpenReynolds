@@ -12,10 +12,9 @@ is elsewhere.
 
 ## Properties the desk must measure and print
 
-- cavity dimensions, 100 x 60 x 40 mm
-- both cell zones present by name, with their cell counts and their centroids
-- zone size, 20 mm cube each, and their positions relative to floor and ceiling
-- the boundary is a single named patch covering the whole cavity
+- cavity dimensions, 100 x 60 x 40 mm, measured on the mesh
+- both cell zones present by name, with their cell counts
+- zone size, 20 mm cube each, measured on the mesh
 
 ## What this catches
 

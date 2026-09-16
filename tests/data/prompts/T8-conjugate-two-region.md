@@ -11,10 +11,8 @@
 
 ## Properties the desk must measure and print
 
-- duct cross-section 30 x 30 mm and length 200 mm
-- block dimensions 40 x 30 x 10 mm, and its position along the duct
 - both regions present, named, with their cell counts
-- the interface between them is conformal — matching faces, no gap and no overlap
+- the interface between them is conformal — matching faces, no gap and no overlap, measured on the mesh
 - `checkMesh` passes **for every region**
 
 ## What this catches

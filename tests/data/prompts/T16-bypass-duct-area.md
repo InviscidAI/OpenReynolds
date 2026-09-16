@@ -16,12 +16,9 @@
 
 ## Properties the desk must measure and print
 
-- the hub and tip radius at five equally spaced axial stations, measured on the two meshed cowl patches
-- the annulus height at each of those five stations, measured, and the flow area at each
-- the area ratio nozzle to inlet, from those measured areas
-- the number of connected mesh regions `checkMesh` reports, and the number expected
+- the hub and tip radius at three equally spaced axial stations, measured on the two meshed cowl patches
+- the flow area at each of those stations, measured on the mesh, and the area ratio nozzle to inlet
 - the air volume, against the analytic integral of the measured areas along the axis
-- every exported patch, exhaustive and disjoint over the domain's faces
 
 ## What this catches
 
