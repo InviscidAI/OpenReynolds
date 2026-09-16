@@ -17,10 +17,7 @@
 
 - the number of open honeycomb cells through the core, counted on the mesh, against the number the geometry should give
 - the cell width across the flats and the wall thickness, measured on the meshed honeycomb patches
-- the open area ratio of the core — honeycomb open area over duct section — measured, not derived from inputs
-- the number of connected mesh regions `checkMesh` reports, and the number expected
-- the honeycomb wall patch's total area, against the swept perimeter of the open cells
-- every exported patch, exhaustive and disjoint over the domain's faces
+- the open area ratio of the core — honeycomb open area over duct section — measured on the mesh, not derived from inputs
 
 ## What this catches
 

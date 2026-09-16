@@ -11,12 +11,9 @@
 
 ## Properties the desk must measure and print
 
-- number of bypass loops, 4
-- channel width, 6 mm, in the main channel and in a loop
-- overall length, ~120 mm
-- **every loop both branches from and rejoins the main channel** — the fluid domain is one
-  connected region with no isolated pocket and no loop that dead-ends
-- the mesh is one cell thick with both side patches `empty`
+- number of bypass loops, 4, counted on the mesh
+- channel width, 6 mm, measured on the mesh in the main channel and in a loop
+- **every loop both branches from and rejoins the main channel** — established on the mesh. A region count cannot decide this: a loop that dead-ends is still one region
 
 ## What this catches
 

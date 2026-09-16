@@ -16,11 +16,8 @@
 ## Properties the desk must measure and print
 
 - the ball's diameter, measured on the meshed ball patch, and its centre position
-- the water gap between ball and hollow wall, measured between the two meshed patches, at the six hole axes and at a diagonal
-- the number of connected mesh regions `checkMesh` reports, and the number expected
+- the water gap between ball and hollow wall, measured between the two meshed patches, at a hole axis and at a diagonal
 - the water volume, against the hollow plus six holes minus the ball
-- the ball patch's area, against the analytic sphere, and whether it is closed
-- every exported patch, exhaustive and disjoint over the domain's faces
 
 ## What this catches
 

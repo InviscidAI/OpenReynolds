@@ -16,12 +16,9 @@
 
 ## Properties the desk must measure and print
 
-- the number of runners open to the plenum, established on the mesh
-- each runner's cross-sectional area at its port face, measured, and the spread across the eight
-- the centreline length of each runner from plenum wall to port face, measured
-- the plenum volume and the total runner volume, separately, against the request
-- the number of connected mesh regions `checkMesh` reports, and the number expected
-- every exported patch, exhaustive and disjoint over the domain's faces
+- the number of runners open to the plenum, established on the mesh — one connected region does not establish it
+- each runner's cross-sectional area at its port face, measured on the mesh, and the spread across the eight
+- the plenum volume and the total runner volume, separately, measured on the mesh
 
 ## What this catches
 

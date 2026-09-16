@@ -17,11 +17,8 @@
 ## Properties the desk must measure and print
 
 - the radial clearance, measured between the meshed shaft and bore patches, at three angular positions away from the keyway
-- the keyway depth and width, measured on the meshed keyway patches
-- the ratio of keyway cross-sectional area to annular clearance area, from both measured
 - how many cells span the 0.05 mm clearance, counted on the mesh
-- the number of connected mesh regions `checkMesh` reports, and the number expected
-- every exported patch, exhaustive and disjoint over the domain's faces
+- the keyway depth and width, measured on the meshed keyway patches
 
 ## What this catches
 

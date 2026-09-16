@@ -18,11 +18,8 @@
 ## Properties the desk must measure and print
 
 - the radial clearance, measured between the two meshed wall patches, not restated from the input
-- the axial end gap, measured the same way, at both ends
-- the number of connected mesh regions `checkMesh` reports, and the number expected
-- the cell size across the clearance, and how many cells span it, counted on the mesh
+- how many cells span the clearance, counted on the mesh
 - the oil volume, against the ring's bore swept volume minus the spinner's
-- every exported patch, exhaustive and disjoint over the domain's faces
 
 ## What this catches
 

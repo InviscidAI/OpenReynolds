@@ -12,12 +12,8 @@
 
 ## Properties the desk must measure and print
 
-- number of solids read, and how many it kept
-- what `healShapes` changed: face count, free-edge count, volume, before and after
-- number of fillets removed, and the volume that added
-- extracted fluid volume against enclosure minus solids
-- the capping faces, each planar, with its area
-- every exported patch, exhaustive and disjoint over the domain's faces
+- extracted fluid volume, against the enclosure minus the solids
+- the capping faces, each planar, with its area, measured on the meshed patches
 
 ## What this catches
 

@@ -17,12 +17,9 @@
 
 ## Properties the desk must measure and print
 
-- the blade chord and maximum thickness, measured on the meshed blade patches at root, mid-span and tip
-- the trailing edge thickness, and the cell size there, and how many cells resolve it
-- the passage pitch at the hub and at the tip, measured between the two periodic faces
-- the blade twist from root to tip, in degrees, measured off the geometry
+- the blade chord and maximum thickness, measured on the meshed blade patches at root and at tip
+- the trailing edge thickness, and how many cells resolve it, counted on the mesh
 - the two periodic faces, each with its area, and whether they match face for face
-- every exported patch, exhaustive and disjoint over the domain's faces
 
 ## What this catches
 

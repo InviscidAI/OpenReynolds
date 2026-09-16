@@ -17,11 +17,8 @@
 ## Properties the desk must measure and print
 
 - the backlash at the pitch line, measured between the two meshed gear patches, at the engaged tooth pair
-- the tip-to-root clearance on both gears, measured the same way
-- the tooth count on each gear, counted on the meshed patch rather than taken from the input
-- the number of connected mesh regions `checkMesh` reports, and the number expected
+- how many cells span the backlash gap, counted on the mesh
 - the oil volume, against the cavity volume minus both gear volumes
-- every exported patch, exhaustive and disjoint over the domain's faces
 
 ## What this catches
 

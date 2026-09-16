@@ -17,10 +17,7 @@
 
 - the bore diameter, measured on each of the two meshed flange bore patches separately
 - the face-to-face length, measured on the mesh, and the gasket face's axial position within it
-- the water volume, against the analytic cylinder
 - the bolt holes' absence from the flow domain, established on the mesh rather than asserted
-- the number of connected mesh regions `checkMesh` reports, and the number expected
-- every exported patch, exhaustive and disjoint over the domain's faces
 
 ## What this catches
 

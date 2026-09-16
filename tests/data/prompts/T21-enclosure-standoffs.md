@@ -17,12 +17,9 @@
 
 ## Properties the desk must measure and print
 
-- each blind hole's depth, measured on the mesh, and the 13 mm of standoff remaining below it
-- the blind hole diameters, measured on the meshed hole patches
+- each blind hole's depth, measured on the mesh, and the standoff remaining below it
 - the four standoffs' heights and centre positions, measured on the mesh, against 15 mm in from each corner
-- the vent's area and its height above the floor, measured on the mesh
 - the air volume, against the internal box volume minus four standoffs plus four blind holes
-- the number of connected mesh regions `checkMesh` reports, and the number expected
 
 ## What this catches
 

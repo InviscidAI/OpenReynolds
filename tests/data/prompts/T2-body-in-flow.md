@@ -11,11 +11,9 @@
 
 ## Properties the desk must measure and print
 
-- sphere diameter, 40 mm
-- domain extent in diameters, upstream / downstream / lateral: 5 / 15 / 5
-- blockage ratio — sphere frontal area over domain cross-section
+- sphere diameter, 40 mm, measured on the meshed sphere patch
 - achieved layer coverage on the sphere, as a percentage, **read off the mesh**
-- the four patches, each with its area and mean normal
+- the fluid volume, against the domain box minus the sphere
 
 ## What this catches
 

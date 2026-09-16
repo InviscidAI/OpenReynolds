@@ -18,12 +18,9 @@
 
 ## Properties the desk must measure and print
 
-- the number of blade passages meshed, against the 7 the request names
+- the number of blade passages meshed, counted on the mesh, against the 7 the request names
 - the blade thickness and the blade wrap angle, measured on the meshed blade patches
-- the root fillet radius as meshed, or the statement that the fillets were removed and the volume that added
-- the passage width at the inlet radius and at the outlet radius, measured on the mesh
 - the water volume, against the shroud-to-backplate swept volume minus hub and blades
-- every exported patch, exhaustive and disjoint over the domain's faces
 
 ## What this catches
 

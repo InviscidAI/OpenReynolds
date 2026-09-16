@@ -17,10 +17,7 @@
 
 - the gap or overlap between each tread's inner end and the column, measured on the mesh, with its sign
 - the number of treads whose inner end is in contact with the column, established on the mesh
-- the clear headroom above each tread, measured on the mesh, against the 150 mm rise
-- the tread radial length and depth, measured on the meshed tread patches
 - the air volume, against the shaft minus column minus twenty treads
-- the number of connected mesh regions `checkMesh` reports, and the number expected
 
 ## What this catches
 

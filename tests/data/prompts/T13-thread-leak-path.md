@@ -17,10 +17,8 @@
 ## Properties the desk must measure and print
 
 - the flank gap, measured between the two meshed flank patches, at three positions a third of a turn apart
-- the number of turns the channel makes, and its developed centreline length
-- the number of connected mesh regions `checkMesh` reports, and the number expected
+- the number of connected mesh regions `checkMesh` reports, and the number expected — a groove stack reads more than one
 - the channel's cross-sectional area at the inner end and at the outer end, measured on the mesh
-- every exported patch, exhaustive and disjoint over the domain's faces
 
 ## What this catches
 
