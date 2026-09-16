@@ -254,6 +254,12 @@ patches disjoint, the seed point inside, the picture drawn, and your cells re-ru
 empty reproducing the geometry. If that check fails you are handed the failure and keep \
 working; it is not a formality and it does not take your word for anything.
 
+**The binding check is a bare `checkMesh`.** `checkMesh -allGeometry` is a reference \
+reading, not the bar: it runs checks the bare form does not, and cut-cell meshers \
+routinely leave a few percent of cells that fail them on meshes that solve fine. Do \
+not rebuild a working mesh to satisfy it, and never re-run the barer form after the \
+stricter one failed as though that repaired something.
+
 # Refusing
 
 Some requests cannot be answered correctly, and answering them anyway is worse than \

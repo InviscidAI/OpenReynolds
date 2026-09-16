@@ -17,6 +17,7 @@ So the rule is pinned from both ends here rather than inside either chunk's own 
 
 from __future__ import annotations
 
+import pathlib
 import re
 
 from openreynolds.cad import brief
@@ -163,3 +164,40 @@ def test_the_desk_takes_the_path_from_its_backend_rather_than_from_the_constant(
     assert desk.toolbox == "/srv/box/.toolbox"
     assert "/srv/box/.toolbox/" in system_prompt(280, toolbox=desk.toolbox)
     assert "/srv/box/.toolbox/templates/" in cadagent.NUDGE.format(toolbox=desk.toolbox)
+
+
+def test_the_binding_gate_is_a_bare_checkmesh_and_stays_one():
+    """`-allGeometry` was binding for a few hours on 2026-09-16 and was reverted on solver
+    evidence. It is not a stricter setting of the same checks -- it runs checks the bare
+    form does not run at all -- and it failed 14 of the 22 meshes the gate passed. Nine of
+    the newly-failing cases went through `simpleFoam`: four converged to 1e-5 on p and U,
+    four were still descending at the 300-iteration cap, none diverged. snappyHexMesh made
+    5 of those 14 meshes and gmsh 6, so it is measuring the mesher, not the desk.
+
+    Pinned as a test because the argument for adding it is genuinely appealing -- the
+    numbers look like defects -- and because the same reasoning will come back."""
+    from openreynolds.buildup import core as buildup_core
+
+    assert buildup_core.check_command("") == "checkMesh 2>&1 | tail -n 200"
+    assert buildup_core.check_command("fluid").startswith("checkMesh -region fluid")
+    assert "-allGeometry" not in buildup_core.check_command("")
+    assert "-meshQuality" not in buildup_core.check_command("")
+
+
+def test_every_reader_of_the_verdict_is_told_allgeometry_is_reference_only():
+    """The desk, the production desk, its declare tool, the supervisor and both skills all
+    make decisions off `checkMesh`. A corpus run lost most of its step budget chasing an
+    advisory warning, and two desks re-ran the barer form after the stricter one failed as
+    though that repaired something. Each reader has to carry the caveat, so this asserts
+    per file rather than once."""
+    from openreynolds.buildup import core as buildup_core
+    from openreynolds.cad import brief as cad_brief
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    assert "reference reading, not the bar" in buildup_core.CORE_SYSTEM
+    assert "reference reading" in cad_brief.CAD_SYSTEM
+    for name in (".claude/agents/cad-supervisor.md",
+                 ".claude/skills/cad-sweep/SKILL.md",
+                 ".claude/skills/cad-addition/SKILL.md"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert "-allGeometry" in text and "reference reading" in text, name

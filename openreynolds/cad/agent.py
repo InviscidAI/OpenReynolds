@@ -177,7 +177,7 @@ DECLARE_TOOL: dict[str, Any] = {
     "name": DECLARE_NAME,
     "description": (
         "Declare this case finished, or declare that it cannot be answered correctly. "
-        "Calling this runs the checks. checkMesh is the binding one. The others are "
+        "Calling this runs the checks. A bare checkMesh is the binding one -- checkMesh -allGeometry is a reference reading, not the bar, and a mesh that fails it is usually still a good mesh. The others are "
         "advisory in that being right about your geometry is enough to get past them -- "
         "but a warning you neither fix nor waive means the declare is not accepted, the same as a failing checkMesh, and it comes back to you.\n\n"
         "If you already know a check is going to flag something that is correct -- an "
