@@ -8,8 +8,8 @@
 > Mesh the air passage between two blades of an axial turbine stage. The blades sit on a
 > hub of 45 mm radius and stand 45 mm tall radially, so the tip is at 90 mm. There are 28
 > blades evenly spaced around the hub, each a cambered aerofoil of 22 mm chord and 6%
-> maximum thickness, staggered 30 degrees at the root and twisting a further 35 degrees
-> from root to tip. Mesh the volume of one passage: bounded by the pressure side of one
+> maximum thickness closing on a 0.4 mm blunt trailing edge, staggered 30 degrees at the
+> root and twisting a further 35 degrees from root to tip. Mesh the volume of one passage: bounded by the pressure side of one
 > blade, the suction side of its neighbour, the hub below, a shroud at 90 mm radius, and
 > inlet and outlet planes one chord upstream and one chord downstream. Name the two blade
 > faces, the hub, the shroud, the inlet, the outlet, and the two periodic side faces

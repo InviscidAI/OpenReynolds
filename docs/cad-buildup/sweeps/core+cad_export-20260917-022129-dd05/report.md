@@ -1,8 +1,16 @@
 # core+cad_export-20260917-022129-dd05
 
 The addition is `cad_export.export_patches`, handed to the core desk as its second
-reference file. **20 of 26 survive the mesh vet, against 16 in the baseline.** Every run
-was vetted individually, including all 23 that ended green.
+reference file. **23 of 26 survive the vet.** Every run was vetted individually, including
+all 23 that ended green.
+
+**Revised 2026-09-17, and the revision is the more useful half of this report.** The first
+pass broke three runs -- T4, T10, T26 -- and all three findings were wrong. They graded the
+case files' `## What this catches` sections, which are provenance notes citing the plan,
+against runs whose delivered geometry matched the request. §9 has them. The number above
+was 20 before that was caught, and **not one of the six failures in this sweep turns out to
+be the desk's**: two are the harness's, one is a case that has never been satisfiable, and
+three were my own reading.
 
 **This sweep carries two changes and cannot separate them.** The addition, and the
 `-allGeometry` paragraph added to the brief at `115da52` the day before. The chain was
@@ -21,12 +29,13 @@ survive that and which do not.
 | ended `done` | 22 / 26 |
 | `checkmesh_ok` | 23 / 26 |
 | passed, by the gate | 23 / 26 |
-| **passed, and the vet agrees** | **20 / 26** |
+| **passed, and the vet agrees** | **23 / 26** |
 | total cells | 404 |
 | total spend | **$9.76** |
 
-Broken by the vet: **T4, T10, T26**. Not passed: **T5** (a wrong refusal), **T15**
-(nothing meshed), **T12** — whose mesh is correct and whose failure is §3.1, ours.
+Broken by the vet: **none**. Not passed: **T12** (§3.1, our gate), **T15** (§3.4, our
+parameter name), **T5** — a case no run has satisfied in ten attempts across every sweep on
+record, which is now a question about the case rather than about any desk.
 
 ### Against the baseline
 
@@ -41,9 +50,14 @@ sign test over the cases that moved: p = 0.549
 ```
 
 **Read the sign test: p = 0.549 is not a cell-count result.** The corpus is the unit and
-four cases moving one way against seven is sampling. The comparison that does hold is the
-vetted one, 16 → 20, because both numbers were produced the same way by the same method
-two days apart.
+four cases moving one way against seven is sampling.
+
+**And the vetted comparison does not hold either, which the first draft of this report got
+wrong.** The baseline's 16 was scored through the same over-strict lens this report has
+since withdrawn -- two of its five broken runs were T4 and T26, on the same reasoning -- so
+16 → 23 is not a measurement, it is two different methods. Re-scoring the baseline against
+request text alone is what would make the pair comparable, and until that is done **this
+sweep has no pass-rate result at all.** What it has is §4.
 
 Three of the four runs that exhausted the step budget in the baseline — T10, T22, T24 —
 finished this time, and T9 with them. T22 went from 27 cells to 11.
@@ -158,9 +172,9 @@ the same constants. A green probe column on those two runs is a reading about an
 
 | id | case | note |
 |---|---|---|
-| `boolean_subtraction_named_then_never_run` | T4 | Second sweep running. `PLATE_W`, `aluminium` and any subtraction absent from `build.py`; the fluid is a pure union. The one operation the case exists to test was not attempted. |
-| `trailing_edge_property_erased_not_measured` | T10 | New. Replaced the section with a sharp-edge law forcing the TE to exactly zero width, so the thickness the case demands be counted does not exist to count. |
-| `single_coarse_void_probe_taken_as_proof_of_no_passage` | T5 | New. Refused on a padded-bounding-box subtraction — the construction the case names as its own trap. 10 of 10 T5 runs have never reached `checkmesh_ok`. |
+| ~~`boolean_subtraction_named_then_never_run`~~ | T4 | **Withdrawn, §9.** |
+| ~~`trailing_edge_property_erased_not_measured`~~ | T10 | **Withdrawn, §9.** |
+| `single_coarse_void_probe_taken_as_proof_of_no_passage` | T5 | Refused on a padded-bounding-box subtraction, concluding no internal passage exists. Kept, but see §9: **no run has reached `checkmesh_ok` on T5 in ten attempts across every sweep on record**, which is a question about the case or the fixture before it is one about a desk. |
 | `passage_width_property_conflated_with_vane_width` | T22 | New. Printed the vane's width at one azimuth for a passage width that varies with radius. |
 | `region_count_cannot_distinguish_rejoin_from_dead_end` | T3, T17 | Recurs, both times as the only connectivity evidence for a property the case says it cannot decide. |
 | `probe_reads_one_path_and_calls_every_miss_na` | T7, T8 | Correct this time: T8 took `splitMeshRegions -cellZones` and wrote no `triSurface`, so six probes read `n/a` on the best-audited mesh in the corpus. |
@@ -212,15 +226,9 @@ All 26 vetted. **Volume is again the good news**: where a mesh was delivered it 
 volume asked for, on every case, several confirmed against an independent calculation
 rather than against the desk's own.
 
-Three did not survive:
-
-- **T4** — `grep -n 'PLATE_W|aluminium|subtract' build.py` returns **0 hits**. The case
-  purpose is unmet for the second sweep running.
-- **T10** — the trailing edge forced to zero width by construction. Watertight mesh,
-  erased subject.
-- **T26** — the tread is a box from the shaft axis fused with the column, so the tangency
-  the case exists to surface is decided by boolean order. The desk's own prose says so.
-  Gap sign, contact count and volume comparison all `null`.
+**None did not survive.** The first pass broke T4, T10 and T26 and §9 withdraws all three:
+each delivered the geometry its request describes, and each was failed against a note
+explaining why the case was written rather than against the request or the property list.
 
 Four are worth naming for the opposite reason:
 
@@ -261,3 +269,56 @@ named requirement without mentioning it.
   water side. This is a corpus defect, not a desk one, and no addition can close it.
 - A case where the exported surface and the meshed geometry can be made to disagree on
   purpose, to give §3.6 a probe rather than a reading.
+
+## 9. Corrections
+
+Three of this report's own findings were wrong, and the way they were wrong is worth more
+than the findings were.
+
+**The case files have three kinds of prose and only one is an acceptance test.** `## Request`
+is what the desk is judged against; `## Properties, measured on the delivered mesh` is the
+checklist. `## What this catches` and `## A pass that is really a failure` are **provenance**
+— they cite plan sections and name kernel weaknesses, recording why the author wrote the
+case. The first pass of this vet graded against them, and that is where all three errors
+came from. `tests/data/prompts/README.md` now says so.
+
+**T4 — withdrawn.** Failed for building the water volume as a union of channel boxes rather
+than by subtracting a channel from a solid. The request's own words are *"Mesh the water side
+only"*; the demand for a subtraction came from a note citing OCCT's thin-wall boolean, which
+is the harness's interest and not the requester's. T4's three named properties say nothing
+about the aluminium block and the desk answered two of them. What it actually failed to do is
+print the minimum local width — `named_requirement_dropped_without_mention`, already filed.
+
+**T10 — withdrawn.** Failed for a sharp trailing edge. The request states *"a cambered
+aerofoil of 22 mm chord and 6% maximum thickness"* and states **no trailing-edge thickness at
+all**; a sharp-closing section satisfies every word of it. The real failure is that the case
+names TE thickness as a property and the desk printed no answer, sharp or otherwise — again
+`named_requirement_dropped_without_mention`.
+
+**T26 — re-read.** Failed for deciding the tangency by construction. The tread is built from
+the shaft axis and fused with the column, which puts the excess *inside* the column where the
+boolean removes it, so **the delivered wetted surface is what a tangent tread would give,
+with the zero-area contact removed.** That is a good answer to a spec that cannot be built,
+and the desk said so: *"without a zero-area tangent contact."* What remains is that none of
+its three named properties was measured, which is the ordinary failure.
+
+**The pattern I proposed does not exist.** I claimed these three shared a cause — the desk
+routing around the hard operation rather than performing it. Read against the request text
+they are three defensible engineering choices, two of them stated out loud. There is no
+fourth failure mode; there is the measurement gap and nothing else.
+
+### What was done about it
+
+T4 and T10 have had their **requests** rewritten to ask, in the requester's own voice, for
+what the notes were wishing for. T4 now says *"Build the aluminium block and cut the channel
+out of it… I want the solid to exist, because the 3 mm webs are where I expect trouble"*, and
+gains a fourth property — the metal web, measured on the solid the channel was cut from. T10
+now specifies *"closing on a 0.4 mm blunt trailing edge"*, so there is a number to measure
+and a sharp section no longer satisfies it.
+
+A requester with an opinion about method is an ordinary customer, and a case that wants a
+route exercised has to ask for it. The fix for an over-strict vet is a clearer request, not
+a stricter reading.
+
+**Both cases are unpaired against this sweep**, and the table will exclude them next time.
+That is the cost, and it is worth paying once.

@@ -121,3 +121,37 @@ with the property named.
 Wall clock and token spend are recorded for every run, passing or not. The desk being
 replaced finished its successes in 1.9 to 5.2 minutes, with one 10.6-minute aerofoil as the
 longest success on record and one 942-second failure that produced nothing at all.
+
+## What a case may grade, and what it may not
+
+Settled on 2026-09-17, after a re-vet threw out two findings of its own.
+
+A case has three kinds of prose and only one of them is an acceptance test.
+
+**`## Request` is what the desk is judged against.** Everything it is allowed to want goes
+in here, including an opinion about *how* -- a requester who says "build the block and cut
+the channel out of it, the 3 mm webs are where I expect trouble" is an ordinary customer
+with a view, and a desk that ignores it has ignored the request. If a case wants a
+particular route exercised, **the request has to ask for it in words.**
+
+**`## Properties, measured on the delivered mesh` is the checklist**, and each bullet has
+to be answerable from the request plus the delivered mesh. A property naming a quantity the
+request never mentions is either an engineering property of any mesh -- cells across a gap,
+one cell thick, layer coverage -- or it is the case wanting something it did not ask for.
+
+**`## What this catches` and `## A pass that is really a failure` are neither.** They are
+provenance: why the case was written, which section of the plan it answers, what the author
+was afraid of. They cite plan sections and name kernel weaknesses. **They are not criteria
+and must not be graded against.**
+
+That distinction was not written down, and the cost of leaving it implicit is on record.
+The `core+cad_export` vet failed T4 for building the water volume as a union rather than
+by subtraction -- against a request whose own words are "Mesh the water side only", on the
+authority of a `What this catches` note citing OCCT's thin-wall boolean. It failed T10 for
+a sharp trailing edge, against a request that stated no trailing-edge thickness at all.
+Both findings were withdrawn. Three of the six failures in that sweep were the harness's
+or the corpus's, and **none of the three was the desk's**.
+
+T4 and T10 have since had their requests rewritten to ask, in the requester's own voice,
+for the thing the notes were wishing for. That is the fix: not a stricter vet, a clearer
+request.

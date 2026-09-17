@@ -251,12 +251,27 @@ class KernelChannel:
             time.sleep(POLL_INTERVAL_S)
 
     def poll(self) -> CellResult:
-        """Where the current cell is, and what it has printed since the last look."""
+        """Where the current cell is, and what it has printed since the last look.
+
+        **A poll that catches the cell finishing returns the whole of its output**, not
+        the delta, which is what `run()` returns on the same event and for the same
+        reason: that result is the cell's result, and it is the only one anybody gets.
+        `done-N.json` and `out-N.txt` are separate files written by the driver, so a poll
+        can see the first before the last flush of the second is visible -- and with a
+        delta the tail is then lost for good, because the caller takes the completed
+        result and stops asking. It showed up as a 1-in-3 flake in
+        `test_a_cell_that_outruns_the_window_is_not_killed`, where the poll that saw the
+        cell finish came back without the `print('done')` that finished it.
+
+        The cost is that output already shown in an earlier still-running poll is shown
+        again in the final one. That is the right way round: repetition is visible and
+        loss is not, and the desk reading this has just been told the cell is done.
+        """
         self._require()
         if self._seq == 0:
             return CellResult(ok=True)
         done = self._read_json(f"done-{self._seq}.json")
-        return self._gather(self._seq, done, whole=False)
+        return self._gather(self._seq, done, whole=done is not None)
 
     def interrupt(self) -> None:
         """Interrupt whatever is running. An agent action, not a reflex.
