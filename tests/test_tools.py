@@ -200,6 +200,104 @@ def test_read_file_window_reports_what_remains(ctx, backend):
     assert content.endswith("234")
 
 
+class _StillWriting:
+    """A solver appending to its output between the calls a read makes.
+
+    The reads are the FakeBackend's own; only the writer is new. A chunk lands after
+    each fetch, which is what a `postProcessing` forces file or a solver log does while
+    the case is running."""
+
+    def __init__(self, backend, path, chunks):
+        self.backend, self.path, self.chunks = backend, path, list(chunks)
+        self.inner = backend.get_file
+        self.reads = 0
+
+    def __call__(self, path, *args, **kwargs):
+        data = self.inner(path, *args, **kwargs)
+        if path == self.path:
+            self.reads += 1
+            if self.chunks:
+                self.backend.files[path] += self.chunks.pop(0)
+        return data
+
+
+def test_a_file_written_under_the_read_is_read_again(ctx, backend):
+    """`_read_file` stats the path, asks for that many bytes and is handed exactly that
+    many, so the short-read guard that covers images cannot fire on a `.dat`, a `.csv`
+    or a log: a file caught mid-write comes back looking whole, and a forces file cut
+    short is a number the model will happily average (F-64). A second stat catches it,
+    and one more read lands on the finished file."""
+    backend.files["/work/forces.dat"] = b"# Time Cd\n0.1 1.0\n"
+    backend.get_file = _StillWriting(backend, "/work/forces.dat", [b"0.2 1.1\n"])
+
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/forces.dat"})
+
+    assert not is_error
+    assert backend.get_file.reads == 2, "the first read was taken mid-write"
+    assert content.endswith("0.2 1.1\n"), "the whole file, not the part that existed"
+    assert "bytes 0–26 of 26" in content
+    assert "Still being written" not in content, "it settled; there is nothing to warn about"
+
+
+def test_a_file_that_never_settles_says_so_rather_than_looking_whole(ctx, backend):
+    """A read again is not always enough -- a solver writing every timestep is still
+    writing on the second look. Nothing here can make it stop, so what comes back names
+    the three sizes and says the snapshot may stop part-way through a record. The
+    alternative is a truncated column that reads exactly like a complete one."""
+    backend.files["/work/live.dat"] = b"1\n"
+    backend.get_file = _StillWriting(backend, "/work/live.dat", [b"2\n", b"3\n", b"4\n"])
+
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/live.dat"})
+
+    assert not is_error, "a growing file is a fact about the file, not a failed call"
+    assert backend.get_file.reads == 2, "read again once, not until it settles"
+    assert "Still being written: 2 bytes when it was measured, 4 after the first read, " \
+           "6 after the second" in content
+    assert "part-way through a line or a record" in content
+
+
+def test_a_settled_file_costs_one_extra_round_trip_and_no_words(ctx, backend):
+    """The check is a stat on a path that already makes several calls, and the common
+    case -- a file nothing is writing to -- pays for that stat and nothing else."""
+    backend.files["/work/quiet.txt"] = b"hello"
+    stats, reads = [], []
+    inner_stat, inner_get = backend.stat, backend.get_file
+    backend.stat = lambda path, **kw: (stats.append(path), inner_stat(path, **kw))[1]
+    backend.get_file = lambda path, *a, **kw: (reads.append(path), inner_get(path, *a, **kw))[1]
+
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/quiet.txt"})
+
+    assert not is_error
+    assert stats == ["/work/quiet.txt"] * 2 and reads == ["/work/quiet.txt"]
+    assert "bytes 0–5 of 5" in content and content.endswith("hello")
+
+
+def test_a_file_that_disappears_under_the_check_still_hands_back_what_was_read(ctx, backend):
+    """The bytes are in hand and they were real when they were fetched. A path removed
+    by whatever was writing it -- a script clearing its own scratch -- must not turn a
+    successful read into a failed tool call: that trades a rare inaccuracy for a common
+    one."""
+    from openreynolds.backend.base import BackendError
+
+    backend.files["/work/temp.csv"] = b"a,b\n1,2\n"
+    inner = backend.stat
+    calls = []
+
+    def vanishing(path, **kwargs):
+        calls.append(path)
+        if len(calls) > 1:
+            raise BackendError(f"no such path: {path}", code="not_found", status=404)
+        return inner(path, **kwargs)
+
+    backend.stat = vanishing
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/temp.csv"})
+
+    assert not is_error
+    assert len(calls) == 2, "the check ran and was refused, which is the case under test"
+    assert content.endswith("a,b\n1,2\n")
+    assert "Still being written" not in content, "a check that cannot run makes no claim"
+
+
 def test_read_file_on_a_directory_lists_it(ctx, backend):
     backend.dirs["/work/case"] = ["0", "constant", "system"]
     content, is_error = dispatch(ctx, "read_file", {"path": "/work/case"})

@@ -119,6 +119,16 @@ All notable changes to this project are recorded here. The format follows
   `_RETRY_STATUSES`: that set is keyed on the status alone and would cover
   `POST .../jobs` too, and a retried job start once produced five duplicate running
   jobs. `job_start` needs an idempotency key before it can be sent twice.
+- **A file read back mid-write is no longer handed over as though it were whole.**
+  `read_file` stats the path, asks for exactly that many bytes and is given exactly
+  that many, so the short-read guard could never fire: a `postProcessing` forces file,
+  a `.dat`, a `.csv` or a log read while the solver is still appending came back
+  looking complete, and a file cut short is a number the model will happily average
+  (F-64). Pictures were covered when a half-written PNG ended two sessions; the text
+  the conclusions are drawn from was not. The path is re-stated after the read -- one
+  round trip on a path that already makes several -- read once more if the size moved,
+  and if it is still moving the answer says so and names the three sizes rather than
+  presenting a snapshot as the file.
 - **A named model is no longer swapped for a preset's default.** A provider named on
   its own still arrives at its preset's model, but `OPENREYNOLDS_PROVIDER=reynolds`
   with `OPENREYNOLDS_MODEL=claude-opus-5` -- one of the two models that service meters,

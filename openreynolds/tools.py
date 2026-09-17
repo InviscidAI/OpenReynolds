@@ -611,16 +611,65 @@ def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, A
     limit = int(args.get("limit") or ctx.max_output)
     raw = ctx.backend.get_file(path, offset=offset, limit=limit,
                                timeout=READ_TIMEOUT_S, max_attempts=READ_ATTEMPTS)
+    raw, size, moving = _read_again_if_it_moved(ctx, path, info.size, raw, offset, limit)
     text = raw.decode("utf-8", errors="replace")
     body, clipped = _clip(text, ctx.max_output)
 
     end = offset + len(raw)
-    header = f"{path} — bytes {offset}–{end} of {info.size}"
+    header = f"{path} — bytes {offset}–{end} of {size}"
     if clipped:
         header += f" (shown to {offset + len(body.encode('utf-8'))}; raise offset for more)"
-    elif end < info.size:
-        header += f"; {info.size - end} bytes remain past this window"
-    return f"{header}\n\n{body}"
+    elif end < size:
+        header += f"; {size - end} bytes remain past this window"
+    return f"{header}{moving}\n\n{body}"
+
+
+def _size_now(ctx: ToolContext, path: str) -> int | None:
+    """What the path measures at this moment, or nothing if it cannot be asked.
+
+    A file that vanished between the read and the check is a race worth surviving
+    quietly: the bytes are in hand and they were real when they were fetched. Turning
+    that into a failed tool call would trade a rare inaccuracy for a common one."""
+    try:
+        return ctx.backend.stat(path, timeout=READ_TIMEOUT_S,
+                                max_attempts=READ_ATTEMPTS).size
+    except Exception:  # noqa: BLE001 - a check that cannot run makes no claim
+        return None
+
+
+def _read_again_if_it_moved(ctx: ToolContext, path: str, size: int, raw: bytes,
+                            offset: int, limit: int) -> tuple[bytes, int, str]:
+    """Read once more when the file grew under the read, and say so if it is still growing.
+
+    `_read_file` stats the path, asks for exactly that many bytes and is handed exactly
+    that many, so the short-read guard that covers pictures -- `len(data) < info.size`
+    in `_read_image` -- cannot fire on anything else. A `postProcessing` forces file, a
+    `.dat`, a `.csv` or a solver log read while OpenFOAM is still appending to it comes
+    back agreeing with itself all the way up, and a file cut short is a number the model
+    will happily average (F-64). Images were given their own answer after a half-written
+    PNG ended two sessions -- `images.incomplete` refuses one with no end marker -- and
+    the text that the conclusions are actually drawn from had nothing.
+
+    A second stat is the whole check. If the size moved, the writer was mid-flight while
+    the bytes were being fetched, and one more read usually lands on a finished file; it
+    costs one round trip on a path that already makes several. If the size is still
+    moving after that, no number of reads will settle it, so what comes back says which
+    of the two it is rather than looking whole either way.
+    """
+    grown = _size_now(ctx, path)
+    if grown is None or grown == size:
+        return raw, size, ""
+    raw = ctx.backend.get_file(path, offset=offset, limit=limit,
+                               timeout=READ_TIMEOUT_S, max_attempts=READ_ATTEMPTS)
+    settled = _size_now(ctx, path)
+    if settled is None or settled == grown:
+        return raw, grown if settled is None else settled, ""
+    return raw, settled, (
+        f"\nStill being written: {size} bytes when it was measured, {grown} after the "
+        f"first read, {settled} after the second. What follows is a snapshot of a file "
+        "something is still appending to, so it may stop part-way through a line or a "
+        "record; the path read again once the writer has finished gives the whole of it."
+    )
 
 
 def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | list[dict[str, Any]]:
