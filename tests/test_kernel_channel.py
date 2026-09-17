@@ -418,3 +418,42 @@ def test_the_hosted_backend_really_did_go_through_its_own_client(hosted):
     assert hosted._kernel()._dir.startswith("/work/.kernel/"), (
         "the hosted backend addressed the workspace the way the service does"
     )
+
+
+def test_a_poll_that_catches_the_cell_finishing_carries_the_whole_of_its_output(desk):
+    """The completed result is the only one anybody gets, so it has to be complete.
+
+    `done-N.json` and `out-N.txt` are separate files. A poll can see the first before the
+    last flush of the second is visible, and with a delta the tail is then lost for good,
+    because the caller takes the completed result and stops asking. It showed up as a
+    1-in-3 flake in `test_a_cell_that_outruns_the_window_is_not_killed`, where the poll
+    that caught the cell finishing came back without the `print('done')` that finished it.
+
+    The desk now has a `poll_cell` tool hanging off this, so the failure would have been
+    a cell reported finished with nothing in it -- which is the confusion the tool exists
+    to end.
+    """
+    expired = desk.kernel_run(
+        "import time\n"
+        "print('first', flush=True)\n"
+        "time.sleep(4)\n"
+        "print('last')\n",
+        1,
+    )
+    assert expired.still_running is True and "first" in expired.stdout
+
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        look = desk.kernel_poll()
+        if not look.still_running:
+            break
+        time.sleep(0.1)
+    else:  # pragma: no cover - the cell sleeps four seconds
+        pytest.fail("the cell never finished")
+
+    assert look.ok
+    # Both halves, including the one printed before the last still-running poll: the
+    # completed result repeats rather than resumes, because repetition is visible and
+    # loss is not.
+    assert "last" in look.stdout
+    assert "first" in look.stdout

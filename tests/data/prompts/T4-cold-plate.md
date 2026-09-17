@@ -6,7 +6,9 @@
 
 > A liquid cold plate: a 60 mm x 40 mm x 8 mm aluminium block with a serpentine channel
 > milled through it, 4 mm wide and 5 mm deep, making three passes across the plate with 3 mm
-> of metal between passes. Mesh the water side only. Inlet and outlet are the two open ends
+> of metal between passes. Build the aluminium block and cut the channel out of it, then take
+> the water as what the cut removed -- I want the solid to exist, because the 3 mm webs are
+> where I expect trouble. Mesh the water side only. Inlet and outlet are the two open ends
 > of the channel.
 
 **Largest extent:** `0.06` m — the largest dimension the exported surface should
@@ -19,6 +21,8 @@ outside a factor of a hundred.
 - channel width 4 mm and depth 5 mm, measured on the meshed channel walls at more than one station
 - number of passes, 3, counted on the mesh
 - minimum local width of the fluid domain, measured on the mesh
+- the metal web between adjacent passes, 3 mm, measured on the aluminium solid the
+  channel was cut from
 
 ## What this catches
 
