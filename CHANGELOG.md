@@ -6,6 +6,8 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-17
+
 ### Added
 
 - **Three modes: full auto, ask before compute, structured.** `--mode`,
@@ -58,6 +60,49 @@ All notable changes to this project are recorded here. The format follows
 - **New stream events.** `approval`, `approval_done`, `model` and `mode` on
   `--output-format stream-json`. A question is answered by sending `/yes`, `/no ...` or
   `/all` as an ordinary `user` line.
+- **The moving-mesh benchmarks are in the repository.** `benchmarks/moving_mesh/`
+  carries the two prompts run end to end on 2026-09-12 -- a `cyclicAMI` sliding
+  interface through a circular-Couette annulus, and a cylinder on a spring free to move
+  at Re = 100 -- and `grade.py`, which grades a rerun the same way. What was graded
+  lived outside this repository, so nobody could reproduce it. The grader reads only
+  raw solver output and never the run's own analysis, because grading those two by hand
+  found four summary numbers that disagreed with their own files and one analysis
+  script that read a torque at t = 13 and called it t = 20, having never opened the
+  restart directory. Restart directories are stitched and each cut at the start of the
+  next, columns are found by header name, and every physical constant comes off a case
+  file or the grade stops and names the flag that supplies it. Two checks are the
+  findings themselves: the interface's torque imbalance, which conservation fixes at
+  exactly zero and which the solver's own `sum(weights)` cannot see, and the VIV energy
+  audit. The known result now carries its grid convergence (three meshes per case,
+  observed order 1.93 conformal and 0.79 with the interface) and the separation that
+  matters for a rerun: at a fixed time step, four times the cells moves the interface's
+  torque error from 0.2174% to 0.2205%, so the quantity to converge is `omega*dt` and
+  not the cell count. The two nearest published amplitudes are named with the
+  parameters that differ, and A/D is still reported without a verdict.
+- **The moving-mesh field note carries those two runs.** "When the mesh moves" had been
+  written from the Wigley free-surface hull alone. It now also records the cell
+  diffusion number `nu*dt/dr^2` as what a diffusion-dominated refinement is limited by
+  (stable at 3.1 on two correctors, divergent at 6.25 and 12.5, stable to 11.5 on
+  four), that holding Courant fixed under refinement doubles it every level, that a
+  sliding interface's error is first order in the angular slide per step, that the two
+  wall torques' imbalance is a free check the `sum(weights)` health check misses
+  (0.91% against a conformal control's 0.011% on a case whose weights were perfect to
+  43 ppm), and the energy audit that moved a VIV amplitude from 0.640 to 0.567 after
+  every conventional convergence test had passed it.
+- **The mesh desk's finish check asks whether anything changed.** Asked to make a
+  channel 30 mm tall instead of 20, the desk rebuilt it, ran its own look, reported a
+  clean rebuild -- and the channel was still 20 mm, with identical bounds and an
+  identical cell count. Every clause the check had passed, because after a no-op there
+  is a valid mesh of the right rough size and nothing compared what was asked against
+  what changed.
+- **One tag publishes both registries.** `publish.yml` sends the Python package to PyPI
+  and the launcher to npm from the same tag, by trusted publishing on both sides, and
+  refuses before publishing anything if the tag, `__version__` and
+  `launcher/package.json` disagree or if the tag falls outside the launcher's
+  `PYTHON_PACKAGE_SPEC`. 0.2.0 reached PyPI while npm still shipped a launcher pinned
+  `>=0.1,<0.2`, which does not half-ship a release, it mis-ships one: every
+  `npm install -g openreynolds` keeps installing the old version and `upgrade` keeps
+  agreeing it is current. `workflow_dispatch` catches one registry up on its own.
 
 ### Fixed
 
@@ -68,6 +113,32 @@ All notable changes to this project are recorded here. The format follows
   sessions as well as resumes, and `/model claude-opus-5` on `reynolds` was undone the
   same way. What was asked for is re-asserted after the preset fills its blanks
   (`Config.load`, `switch.candidate`), for the desk model too.
+- **Piped output stops folding long lines.** `rich` folds at the width it is given,
+  however wide, so a message longer than `PIPED_WIDTH` arrived at a pipe with a newline
+  in the middle of it -- a broken path for any program or agent reading the CLI through
+  one, and the last of Windows CI's red. `soft_wrap` on the non-terminal console.
+- **`job_kill`'s docstring stops promising a `killed` status for a kill that did
+  nothing.** The service no longer marks a job killed whether or not the signal reached
+  anything (F-63): it records a real ending for a job that had already ended, and
+  refuses with `409 kill_not_delivered` for one that may still be running. Callers
+  already treated a `BackendError` as a failed kill, so only the promise changed.
+- **The dev extra installs `pyvista`.** Six toolbox tests read measurements through
+  `mesh_look.py` and got empty values back instead of a loud `ModuleNotFoundError`.
+  The symlink test also measured the fixture rather than the link, and failed on a
+  `disk.py` that was already correct (#28, #29).
+- **The README's images load, and the eighth tool is the one that exists.** All five
+  figures had been 404 since tryreynolds.com moved them into a hashed asset bundle, so
+  the repository front page, the PyPI page and the npm page had shown broken images
+  through a release of each. The eighth tool has been `mesh`, not `geometry`, since
+  2026-09-07, and `fetch` copies files out of the workspace rather than reading the
+  open web.
+- **The README says how to get in and what it costs.** Sign-in was described as email
+  and password only; an account created with Google has no password at all, and
+  `login --browser` is the way in for one. A company email address starts the account
+  with $10 of credit, once, which the CLI already printed and the README did not
+  mention. The hosted app's mesh editor and `benchmarks/moving_mesh/` are named, and
+  `doctor --json` and `studies --json` are documented where a program looks for them
+  rather than in the last clause of a table row.
 
 ### Changed
 
@@ -542,5 +613,7 @@ on 2026-08-24:
 - A duplicate copy of the architecture notes at the repository root is gone; the one
   under the toolbox notes is the one that ships.
 
-[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/InviscidAI/OpenReynolds/releases/tag/v0.1.0
