@@ -1,0 +1,597 @@
+{
+  "run_id": "20260917-030436-b798",
+  "case": "T8",
+  "arm": "core",
+  "model": "gpt-5.6-sol",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8",
+  "started_at": "2026-09-17T03:04:37",
+  "ended_at": "2026-09-17T03:07:08",
+  "seconds": 146.1,
+  "n_turns": 24,
+  "n_steps": 23,
+  "first_mesh_step": 7,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.403,
+  "given": [
+    "b123d_api.md",
+    "cad_export.py"
+  ],
+  "tokens": {
+    "input": 22490,
+    "cache_read": 342234,
+    "cache_write": 0,
+    "output": 8805
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import build123d as bd\n# All dimensions are in metres.\nL, W, H = 0.200, 0.030, 0.030\nblock_L, block_W, block_H = 0.040, 0.030, 0.010\nblock_x0 = (L - block_L) / 2\n\nduct_volume = bd.Box(L, W, H)\ncopper = bd.Pos(block_x0, 0, 0) * bd.Box(block_L, block_W, block_H)\nfluid = duct_volume - copper\n\nprint(f\"Duct extent requested/measured: {L:.3f} / {duct_volume.bounding_box().size.X:.3f} m long, {W:.3f} / {duct_volume.bounding_box().size.Y:.3f} m wide, {H:.3f} / {duct_volume.bounding_box().size.Z:.3f} m high\")\nprint(f\"Copper requested/measured: {block_L:.3f} / {copper.bounding_box().size.X:.3f} m long, {block_W:.3f} / {copper.bounding_box().size.Y:.3f} m wide, {block_H:.3f} / {copper.bounding_box().size.Z:.3f} m thick\")\nprint(f\"Copper x-range: requested centered; measured {copper.bounding_box().min.X:.3f} to {copper.bounding_box().max.X:.3f} m\")\nprint(f\"Volumes: fluid={fluid.volume:.9e} m^3 (expected {L*W*H-block_L*block_W*block_H:.9e}), solid={copper.volume:.9e} m^3 (expected {block_L*block_W*block_H:.9e})\")",
+      "exit_code": 0,
+      "seconds": 2.2586463390034623,
+      "output": "Duct extent requested/measured: 0.200 / 0.200 m long, 0.030 / 0.030 m wide, 0.030 / 0.030 m high\nCopper requested/measured: 0.040 / 0.040 m long, 0.030 / 0.030 m wide, 0.010 / 0.010 m thick\nCopper x-range: requested centered; measured 0.060 to 0.100 m\nVolumes: fluid=1.680000000e-04 m^3 (expected 1.680000000e-04), solid=1.200000000e-05 m^3 (expected 1.200000000e-05)",
+      "image": ""
+    },
+    {
+      "cmd": "amin = (bd.Align.MIN, bd.Align.MIN, bd.Align.MIN)\nduct_volume = bd.Box(L, W, H, align=amin)\ncopper = bd.Pos(block_x0, 0, 0) * bd.Box(block_L, block_W, block_H, align=amin)\nfluid = duct_volume - copper\nprint(f\"Duct bounds: x={duct_volume.bounding_box().min.X:.3f}..{duct_volume.bounding_box().max.X:.3f}, y={duct_volume.bounding_box().min.Y:.3f}..{duct_volume.bounding_box().max.Y:.3f}, z={duct_volume.bounding_box().min.Z:.3f}..{duct_volume.bounding_box().max.Z:.3f} m\")\nprint(f\"Copper x-range requested/measured: 0.080..0.120 / {copper.bounding_box().min.X:.3f}..{copper.bounding_box().max.X:.3f} m\")\nprint(f\"Fluid/solid overlap volume: {fluid.intersect(copper).volume:.3e} m^3\")",
+      "exit_code": 1,
+      "seconds": 0.20105260601849295,
+      "output": "Duct bounds: x=0.000..0.200, y=0.000..0.030, z=0.000..0.030 m\nCopper x-range requested/measured: 0.080..0.120 / 0.080..0.120 m\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[2]\u001b[39m\u001b[32m, line 7\u001b[39m\n\u001b[32m      3\u001b[39m copper = bd.Pos(block_x0, \u001b[32m0\u001b[39m, \u001b[32m0\u001b[39m) * bd.Box(block_L, block_W, block_H, align=amin)\n\u001b[32m      4\u001b[39m fluid = duct_volume - copper\n\u001b[32m      5\u001b[39m print(f\"Duct bounds: x={duct_volume.bounding_box().min.X:.3f}..{duct_volume.bounding_box().max.X:.3f}, y={duct_volume.bounding_box().min.Y:.3f}..{duct_volume.bounding_box().max.Y:.3f}, z={duct_volume.bounding_box().min.Z:.3f}..{duct_volume.bounding_box().max.Z:.3f} m\")\n\u001b[32m      6\u001b[39m print(f\"Copper x-range requested/measured: 0.080..0.120 / {copper.bounding_box().min.X:.3f}..{copper.bounding_box().max.X:.3f} m\")\n\u001b[32m----> \u001b[39m\u001b[32m7\u001b[39m print(f\"Fluid/solid overlap volume: {fluid.intersect(copper).volume:.3e} m^3\")\n\n\u001b[31mAttributeError\u001b[39m: 'NoneType' object has no attribute 'volume'",
+      "image": ""
+    },
+    {
+      "cmd": "amin = (bd.Align.MIN, bd.Align.MIN, bd.Align.MIN)\nduct_volume = bd.Box(L, W, H, align=amin)\ncopper = bd.Pos(block_x0, 0, 0) * bd.Box(block_L, block_W, block_H, align=amin)\nfluid = duct_volume - copper\noverlap = fluid.intersect(copper)\noverlap_volume = 0.0 if overlap is None else overlap.volume\nprint(f\"Duct bounds: x={duct_volume.bounding_box().min.X:.3f}..{duct_volume.bounding_box().max.X:.3f}, y={duct_volume.bounding_box().min.Y:.3f}..{duct_volume.bounding_box().max.Y:.3f}, z={duct_volume.bounding_box().min.Z:.3f}..{duct_volume.bounding_box().max.Z:.3f} m\")\nprint(f\"Copper x-range requested/measured: 0.080..0.120 / {copper.bounding_box().min.X:.3f}..{copper.bounding_box().max.X:.3f} m\")\nprint(f\"Fluid/solid overlap volume: {overlap_volume:.3e} m^3\")",
+      "exit_code": 0,
+      "seconds": 0.050687626004219055,
+      "output": "Duct bounds: x=0.000..0.200, y=0.000..0.030, z=0.000..0.030 m\nCopper x-range requested/measured: 0.080..0.120 / 0.080..0.120 m\nFluid/solid overlap volume: 0.000e+00 m^3",
+      "image": ""
+    },
+    {
+      "cmd": "from pathlib import Path\nimport pyvista as pv\ngeom_dir = Path(\"geometry\"); geom_dir.mkdir(exist_ok=True)\nbd.export_step(fluid, geom_dir / \"fluid.step\")\nbd.export_step(copper, geom_dir / \"copper.step\")\nbd.export_stl(fluid, geom_dir / \"fluid_preview.stl\", tolerance=2.5e-4)\nbd.export_stl(copper, geom_dir / \"copper_preview.stl\", tolerance=2.5e-4)\np = pv.Plotter(off_screen=True, window_size=(1000, 600))\np.add_mesh(pv.read(geom_dir / \"fluid_preview.stl\"), color=\"lightskyblue\", opacity=0.28, show_edges=True)\np.add_mesh(pv.read(geom_dir / \"copper_preview.stl\"), color=\"peru\", opacity=1.0, show_edges=True)\np.add_axes(); p.view_isometric(); p.camera.zoom(1.25)\np.show(screenshot=\"geometry_preview.png\")",
+      "exit_code": 0,
+      "seconds": 0.5521987609972712,
+      "output": "/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-17 03:05:29.169 (   0.267s) [    729741A60780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 03:05:29.169 (   0.268s) [    729741A60780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 03:05:29.183 (   0.281s) [    729741A60780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_2025567/3130962863.py:12: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  p.show(screenshot=\"geometry_preview.png\")",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "case_system = Path(\"system\"); case_system.mkdir(exist_ok=True)\nxs, ys, zs = [0.0, 0.08, 0.12, 0.20], [0.0, 0.03], [0.0, 0.01, 0.03]\ndef vi(i,j,k): return i + 4*j + 8*k\nvertices = [(x,y,z) for z in zs for y in ys for x in xs]\nlines = [\"FoamFile { format ascii; class dictionary; object blockMeshDict; }\", \"convertToMeters 1;\", \"vertices\", \"(\"]\nlines += [f\"    ({x:.6g} {y:.6g} {z:.6g})\" for x,y,z in vertices]\nlines += [\");\", \"blocks\", \"(\"]\nxcells, zcells = [16,8,16], [2,4]\nfor i in range(3):\n    for k in range(2):\n        vv = [vi(i,0,k),vi(i+1,0,k),vi(i+1,1,k),vi(i,1,k),vi(i,0,k+1),vi(i+1,0,k+1),vi(i+1,1,k+1),vi(i,1,k+1)]\n        zone = \"solid\" if (i==1 and k==0) else \"fluid\"\n        lines.append(f\"    hex ({' '.join(map(str,vv))}) {zone} ({xcells[i]} 6 {zcells[k]}) simpleGrading (1 1 1)\")\nlines += [\");\", \"edges ();\", \"boundary\", \"(\"]\ninlet_faces = [[vi(0,0,k),vi(0,0,k+1),vi(0,1,k+1),vi(0,1,k)] for k in range(2)]\noutlet_faces = [[vi(3,0,k),vi(3,1,k),vi(3,1,k+1),vi(3,0,k+1)] for k in range(2)]\nwall_faces = []\nfor i in range(3):\n    for k in range(2):\n        wall_faces += [[vi(i,0,k),vi(i+1,0,k),vi(i+1,0,k+1),vi(i,0,k+1)], [vi(i,1,k),vi(i,1,k+1),vi(i+1,1,k+1),vi(i+1,1,k)]]\n    wall_faces += [[vi(i,0,0),vi(i,1,0),vi(i+1,1,0),vi(i+1,0,0)], [vi(i,0,2),vi(i+1,0,2),vi(i+1,1,2),vi(i,1,2)]]\nfor name, ptype, faces in [(\"inlet\",\"patch\",inlet_faces),(\"outlet\",\"patch\",outlet_faces),(\"walls\",\"wall\",wall_faces)]:\n    lines += [f\"    {name}\", \"    {\", f\"        type {ptype};\", \"        faces\", \"        (\"] + [\"            (\"+\" \".join(map(str,f))+\")\" for f in faces] + [\"        );\", \"    }\"]\nlines += [\");\", \"mergePatchPairs ();\" ]\n(case_system / \"blockMeshDict\").write_text(\"\\n\".join(lines)+\"\\n\")\nprint(\"Wrote system/blockMeshDict with\", len(vertices), \"vertices, 6 blocks, and\", sum(xcells)*6*sum(zcells), \"cells\")",
+      "exit_code": 0,
+      "seconds": 0.05063825601246208,
+      "output": "Wrote system/blockMeshDict with 24 vertices, 6 blocks, and 1440 cells",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\nbm = subprocess.run([\"blockMesh\"], text=True, capture_output=True)\nprint(bm.stdout[-3500:])\nif bm.returncode != 0:\n    print(bm.stderr)\n    raise RuntimeError(f\"blockMesh failed with code {bm.returncode}\")",
+      "exit_code": 1,
+      "seconds": 0.25121207200572826,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : blockMesh\nDate   : Sep 17 2026\nTime   : 03:05:52\nHost   : yc-demo\nPID    : 2027856\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n\n\n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/system/controlDict\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mRuntimeError\u001b[39m                              Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[6]\u001b[39m\u001b[32m, line 6\u001b[39m\n\u001b[32m      2\u001b[39m bm = subprocess.run([\u001b[33m\"blockMesh\"\u001b[39m], text=\u001b[38;5;28;01mTrue\u001b[39;00m, capture_output=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m      3\u001b[39m print(bm.stdout[-\u001b[32m3500\u001b[39m:])\n\u001b[32m      4\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m bm.returncode != \u001b[32m0\u001b[39m:\n\u001b[32m      5\u001b[39m     print(bm.stderr)\n\u001b[32m----> \u001b[39m\u001b[32m6\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m RuntimeError(f\"blockMesh failed with code {bm.returncode}\")\n\n\u001b[31mRuntimeError\u001b[39m: blockMesh failed with code 1",
+      "image": ""
+    },
+    {
+      "cmd": "control = \"\"\"FoamFile\n{\n    format ascii;\n    class dictionary;\n    object controlDict;\n}\napplication blockMesh;\nstartFrom startTime;\nstartTime 0;\nstopAt endTime;\nendTime 1;\ndeltaT 1;\nwriteControl timeStep;\nwriteInterval 1;\nrunTimeModifiable true;\n\"\"\"\n(case_system / \"controlDict\").write_text(control)\nprint(\"Wrote system/controlDict\")",
+      "exit_code": 0,
+      "seconds": 0.050616035994607955,
+      "output": "Wrote system/controlDict",
+      "image": ""
+    },
+    {
+      "cmd": "bm = subprocess.run([\"blockMesh\"], text=True, capture_output=True)\nprint(bm.stdout[-3000:])\nif bm.returncode != 0:\n    print(bm.stderr)\n    raise RuntimeError(f\"blockMesh failed with code {bm.returncode}\")",
+      "exit_code": 0,
+      "seconds": 0.20099503500387073,
+      "output": "A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : blockMesh\nDate   : Sep 17 2026\nTime   : 03:05:57\nHost   : yc-demo\nPID    : 2027901\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreating block mesh from \"system/blockMeshDict\"\nCreating block edges\nNo non-planar block faces defined\nCreating topology blocks\n\nCreating topology patches - from boundary section\n\nCreating block mesh topology\n\nCheck topology\n\n\tBasic statistics\n\t\tNumber of internal faces : 7\n\t\tNumber of boundary faces : 22\n\t\tNumber of defined boundary faces : 22\n\t\tNumber of undefined boundary faces : 0\n\tChecking patch -> block consistency\n\nCreating block offsets\nCreating merge list (topological search)...\n\nCreating polyMesh from blockMesh\nCreating patches\nCreating cells\nCreating points with scale (1 1 1)\n    Block 0 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\n    Block 1 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\n    Block 2 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\n    Block 3 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\n    Block 4 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\n    Block 5 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\nAdding cell zones\n    0\tfluid\n    1\tsolid\nNo patch pairs to merge\n\nWriting polyMesh with 2 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (0 0 0) (0.2 0.03 0.03)\n  nPoints: 2009\n  nCells: 1440\n  nFaces: 4836\n  nInternalFaces: 3804\n----------------\nCell Zones\n----------------\n  zone 0 (size: 1344) name: fluid\n  zone 1 (size: 96) name: solid\n----------------\nPatches\n----------------\n  patch 0 (start: 3804 size: 36) name: inlet\n  patch 1 (start: 3840 size: 36) name: outlet\n  patch 2 (start: 3876 size: 960) name: walls\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess\nbm = subprocess.run([\"blockMesh\"], text=True, capture_output=True)\nprint(bm.stdout[-3000:])\nif bm.returncode != 0:\n    print(bm.stderr)\n    raise RuntimeError(f\"blockMesh failed with code {bm.returncode}\")",
+      "exit_code": 0,
+      "seconds": 0.20100680601899512,
+      "output": "|\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : blockMesh\nDate   : Sep 17 2026\nTime   : 03:05:59\nHost   : yc-demo\nPID    : 2027923\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreating block mesh from \"system/blockMeshDict\"\nCreating block edges\nNo non-planar block faces defined\nCreating topology blocks\n\nCreating topology patches - from boundary section\n\nCreating block mesh topology\n\nCheck topology\n\n\tBasic statistics\n\t\tNumber of internal faces : 7\n\t\tNumber of boundary faces : 22\n\t\tNumber of defined boundary faces : 22\n\t\tNumber of undefined boundary faces : 0\n\tChecking patch -> block consistency\n\nCreating block offsets\nCreating merge list (topological search)...\nDeleting polyMesh directory \"constant/polyMesh\"\n\nCreating polyMesh from blockMesh\nCreating patches\nCreating cells\nCreating points with scale (1 1 1)\n    Block 0 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\n    Block 1 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\n    Block 2 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\n    Block 3 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\n    Block 4 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\n    Block 5 cell size :\n        i : 0.005 .. 0.005\n        j : 0.005 .. 0.005\n        k : 0.005 .. 0.005\n\nAdding cell zones\n    0\tfluid\n    1\tsolid\nNo patch pairs to merge\n\nWriting polyMesh with 2 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (0 0 0) (0.2 0.03 0.03)\n  nPoints: 2009\n  nCells: 1440\n  nFaces: 4836\n  nInternalFaces: 3804\n----------------\nCell Zones\n----------------\n  zone 0 (size: 1344) name: fluid\n  zone 1 (size: 96) name: solid\n----------------\nPatches\n----------------\n  patch 0 (start: 3804 size: 36) name: inlet\n  patch 1 (start: 3840 size: 36) name: outlet\n  patch 2 (start: 3876 size: 960) name: walls\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "smr = subprocess.run([\"splitMeshRegions\", \"-cellZones\", \"-overwrite\"], text=True, capture_output=True)\nprint(smr.stdout[-5000:])\nif smr.returncode != 0:\n    print(smr.stderr)\n    raise RuntimeError(f\"splitMeshRegions failed with code {smr.returncode}\")",
+      "exit_code": 1,
+      "seconds": 0.2511101230047643,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : splitMeshRegions -cellZones -overwrite\nDate   : Sep 17 2026\nTime   : 03:06:02\nHost   : yc-demo\nPID    : 2027926\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\n\n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mRuntimeError\u001b[39m                              Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[10]\u001b[39m\u001b[32m, line 5\u001b[39m\n\u001b[32m      1\u001b[39m smr = subprocess.run([\u001b[33m\"splitMeshRegions\"\u001b[39m, \u001b[33m\"-cellZones\"\u001b[39m, \u001b[33m\"-overwrite\"\u001b[39m], text=\u001b[38;5;28;01mTrue\u001b[39;00m, capture_output=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m      2\u001b[39m print(smr.stdout[-\u001b[32m5000\u001b[39m:])\n\u001b[32m      3\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m smr.returncode != \u001b[32m0\u001b[39m:\n\u001b[32m      4\u001b[39m     print(smr.stderr)\n\u001b[32m----> \u001b[39m\u001b[32m5\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m RuntimeError(f\"splitMeshRegions failed with code {smr.returncode}\")\n\n\u001b[31mRuntimeError\u001b[39m: splitMeshRegions failed with code 1",
+      "image": ""
+    },
+    {
+      "cmd": "(case_system / \"fvSchemes\").write_text(\"FoamFile { format ascii; class dictionary; object fvSchemes; }\\n\")\n(case_system / \"fvSolution\").write_text(\"FoamFile { format ascii; class dictionary; object fvSolution; }\\n\")\nprint(\"Wrote utility-only empty fvSchemes and fvSolution dictionaries\")",
+      "exit_code": 0,
+      "seconds": 0.05076365600689314,
+      "output": "Wrote utility-only empty fvSchemes and fvSolution dictionaries",
+      "image": ""
+    },
+    {
+      "cmd": "smr = subprocess.run([\"splitMeshRegions\", \"-cellZones\", \"-overwrite\"], text=True, capture_output=True)\nprint(smr.stdout[-5000:])\nif smr.returncode != 0:\n    print(smr.stderr)\n    raise RuntimeError(f\"splitMeshRegions failed with code {smr.returncode}\")",
+      "exit_code": 1,
+      "seconds": 0.20123628500732593,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : splitMeshRegions -cellZones -overwrite\nDate   : Sep 17 2026\nTime   : 03:06:08\nHost   : yc-demo\nPID    : 2028024\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\n\n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'divSchemes' not found in dictionary \"system/fvSchemes\"\n\n\nfile: system/fvSchemes\n\n    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const\n    in file db/dictionary/dictionary.C at line 457.\n\nFOAM exiting\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mRuntimeError\u001b[39m                              Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[12]\u001b[39m\u001b[32m, line 5\u001b[39m\n\u001b[32m      1\u001b[39m smr = subprocess.run([\u001b[33m\"splitMeshRegions\"\u001b[39m, \u001b[33m\"-cellZones\"\u001b[39m, \u001b[33m\"-overwrite\"\u001b[39m], text=\u001b[38;5;28;01mTrue\u001b[39;00m, capture_output=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m      2\u001b[39m print(smr.stdout[-\u001b[32m5000\u001b[39m:])\n\u001b[32m      3\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m smr.returncode != \u001b[32m0\u001b[39m:\n\u001b[32m      4\u001b[39m     print(smr.stderr)\n\u001b[32m----> \u001b[39m\u001b[32m5\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m RuntimeError(f\"splitMeshRegions failed with code {smr.returncode}\")\n\n\u001b[31mRuntimeError\u001b[39m: splitMeshRegions failed with code 1",
+      "image": ""
+    },
+    {
+      "cmd": "schemes = \"\"\"FoamFile { format ascii; class dictionary; object fvSchemes; }\nddtSchemes { default Euler; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\nwallDist { method meshWave; }\n\"\"\"\n(case_system / \"fvSchemes\").write_text(schemes)\nprint(\"Added standard parser-complete fvSchemes entries\")",
+      "exit_code": 0,
+      "seconds": 0.05062070599524304,
+      "output": "Added standard parser-complete fvSchemes entries",
+      "image": ""
+    },
+    {
+      "cmd": "smr = subprocess.run([\"splitMeshRegions\", \"-cellZones\", \"-overwrite\"], text=True, capture_output=True)\nprint(smr.stdout[-5000:])\nif smr.returncode != 0:\n    print(smr.stderr)\n    raise RuntimeError(f\"splitMeshRegions failed with code {smr.returncode}\")",
+      "exit_code": 0,
+      "seconds": 0.20121986599406227,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : splitMeshRegions -cellZones -overwrite\nDate   : Sep 17 2026\nTime   : 03:06:14\nHost   : yc-demo\nPID    : 2028344\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nCreating single patch per inter-region interface.\n\nTrying to match regions to existing cell zones.\n\n\nNumber of regions:2\n\nWriting region per cell file (for manual decomposition) to \"/home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/cellToRegion\"\n\nWriting region per cell as volScalarField to \"/home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/0/cellToRegion\"\n\nRegion\tCells\n------\t-----\n0\t1344\n1\t96\n\nRegion\tZone\tName\n------\t----\t----\n0\t(0)\tfluid\n1\t(1)\tsolid\n\nSizes of interfaces between regions:\n\nInterface\tRegion\tRegion\tFaces\n---------\t------\t------\t-----\n0\t\t0\t1\t72\n\nReading volScalarField: cellToRegion\n\n\nAdding patches\n\n\nAdding patches\n\nFor interface between region fluid and solid added patches\n    3\tfluid_to_solid\n    4\tsolid_to_fluid\n\nRegion 0\n-------- \nCreating mesh for region 0 fluid\nWriting dummy \"fluid/fvSchemes\"\nWriting dummy \"fluid/fvSolution\"\nMapping fields\nMapping field cellToRegion\nDeleting empty patches\nWriting new mesh\nWriting addressing to base mesh\nWriting map pointRegionAddressing from region0 points back to base mesh.\nWriting map faceRegionAddressing from region0 faces back to base mesh.\nWriting map cellRegionAddressing from region0 cells back to base mesh.\nWriting map boundaryRegionAddressing from region0 boundary back to base mesh.\n\nRegion 1\n-------- \nCreating mesh for region 1 solid\nWriting dummy \"solid/fvSchemes\"\nWriting dummy \"solid/fvSolution\"\nMapping fields\nMapping field cellToRegion\nDeleting empty patches\nWriting new mesh\nWriting addressing to base mesh\nWriting map pointRegionAddressing from region1 points back to base mesh.\nWriting map faceRegionAddressing from region1 faces back to base mesh.\nWriting map cellRegionAddressing from region1 cells back to base mesh.\nWriting map boundaryRegionAddressing from region1 boundary back to base mesh.\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "for f in [Path(\"constant/regionProperties\"), Path(\"constant/fluid/polyMesh/boundary\"), Path(\"constant/solid/polyMesh/boundary\")]:\n    print(f\"\\n--- {f} ---\")\n    print(f.read_text()[-2600:])",
+      "exit_code": 1,
+      "seconds": 0.20173491598688997,
+      "output": "--- constant/regionProperties ---\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mFileNotFoundError\u001b[39m                         Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[15]\u001b[39m\u001b[32m, line 3\u001b[39m\n\u001b[32m      1\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m [Path(\u001b[33m\"constant/regionProperties\"\u001b[39m), Path(\u001b[33m\"constant/fluid/polyMesh/boundary\"\u001b[39m), Path(\u001b[33m\"constant/solid/polyMesh/boundary\"\u001b[39m)]:\n\u001b[32m      2\u001b[39m     print(f\"\\n--- {f} ---\")\n\u001b[32m----> \u001b[39m\u001b[32m3\u001b[39m     print(f.read_text()[-\u001b[32m2600\u001b[39m:])\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/pathlib/_local.py:546\u001b[39m, in \u001b[36mPath.read_text\u001b[39m\u001b[34m(self, encoding, errors, newline)\u001b[39m\n\u001b[32m    543\u001b[39m \u001b[38;5;66;03m# Call io.text_encoding() here to ensure any warning is raised at an\u001b[39;00m\n\u001b[32m    544\u001b[39m \u001b[38;5;66;03m# appropriate stack level.\u001b[39;00m\n\u001b[32m    545\u001b[39m encoding = io.text_encoding(encoding)\n\u001b[32m--> \u001b[39m\u001b[32m546\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mPathBase\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mread_text\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mself\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mencoding\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43merrors\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mnewline\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/pathlib/_abc.py:632\u001b[39m, in \u001b[36mPathBase.read_text\u001b[39m\u001b[34m(self, encoding, errors, newline)\u001b[39m\n\u001b[32m    628\u001b[39m \u001b[38;5;28;01mdef\u001b[39;00m\u001b[38;5;250m \u001b[39m\u001b[34mread_text\u001b[39m(\u001b[38;5;28mself\u001b[39m, encoding=\u001b[38;5;28;01mNone\u001b[39;00m, errors=\u001b[38;5;28;01mNone\u001b[39;00m, newline=\u001b[38;5;28;01mNone\u001b[39;00m):\n\u001b[32m    629\u001b[39m \u001b[38;5;250m    \u001b[39m\u001b[33;03m\"\"\"\u001b[39;00m\n\u001b[32m    630\u001b[39m \u001b[33;03m    Open the file in text mode, read it, and close the file.\u001b[39;00m\n\u001b[32m    631\u001b[39m \u001b[33;03m    \"\"\"\u001b[39;00m\n\u001b[32m--> \u001b[39m\u001b[32m632\u001b[39m     \u001b[38;5;28;01mwith\u001b[39;00m \u001b[30;43mself\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mopen\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mmode\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43m'\u001b[39;49m\u001b[30;43mr\u001b[39;49m\u001b[30;43m'\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mencoding\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mencoding\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43merrors\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43merrors\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mnewline\u001b[39;49m\u001b[30;43m=\u001b[39;49m\u001b[30;43mnewline\u001b[39;49m\u001b[30;43m)\u001b[39;49m \u001b[38;5;28;01mas\u001b[39;00m f:\n\u001b[32m    633\u001b[39m         \u001b[38;5;28;01mreturn\u001b[39;00m f.read()\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/pathlib/_local.py:537\u001b[39m, in \u001b[36mPath.open\u001b[39m\u001b[34m(self, mode, buffering, encoding, errors, newline)\u001b[39m\n\u001b[32m    535\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[33m\"\u001b[39m\u001b[33mb\u001b[39m\u001b[33m\"\u001b[39m \u001b[38;5;129;01mnot\u001b[39;00m \u001b[38;5;129;01min\u001b[39;00m mode:\n\u001b[32m    536\u001b[39m     encoding = io.text_encoding(encoding)\n\u001b[32m--> \u001b[39m\u001b[32m537\u001b[39m \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mio\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mopen\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mself\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mmode\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mbuffering\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mencoding\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43merrors\u001b[39;49m\u001b[30;43m,\u001b[39;49m\u001b[30;43m \u001b[39;49m\u001b[30;43mnewline\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\n\u001b[31mFileNotFoundError\u001b[39m: [Errno 2] No such file or directory: 'constant/regionProperties'",
+      "image": ""
+    },
+    {
+      "cmd": "constant_dir = Path(\"constant\")\nregion_props = \"\"\"FoamFile\n{\n    format ascii;\n    class dictionary;\n    object regionProperties;\n}\nregions\n(\n    fluid (fluid)\n    solid (solid)\n);\n\"\"\"\n(constant_dir / \"regionProperties\").write_text(region_props)\nfor f in [constant_dir / \"regionProperties\", constant_dir / \"fluid/polyMesh/boundary\", constant_dir / \"solid/polyMesh/boundary\"]:\n    print(f\"\\n--- {f} ---\")\n    print(f.read_text()[-2600:])",
+      "exit_code": 0,
+      "seconds": 0.050735096010612324,
+      "output": "--- constant/regionProperties ---\nFoamFile\n{\n    format ascii;\n    class dictionary;\n    object regionProperties;\n}\nregions\n(\n    fluid (fluid)\n    solid (solid)\n);\n\n\n--- constant/fluid/polyMesh/boundary ---\n/*--------------------------------*- C++ -*----------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/fluid/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n4\n(\n    inlet\n    {\n        type            patch;\n        nFaces          36;\n        startFace       3520;\n    }\n    outlet\n    {\n        type            patch;\n        nFaces          36;\n        startFace       3556;\n    }\n    walls\n    {\n        type            wall;\n        inGroups        1(wall);\n        nFaces          880;\n        startFace       3592;\n    }\n    fluid_to_solid\n    {\n        type            mappedWall;\n        inGroups        1(wall);\n        nFaces          72;\n        startFace       4472;\n        sampleMode      nearestPatchFace;\n        sampleRegion    solid;\n        samplePatch     solid_to_fluid;\n    }\n)\n\n// ************************************************************************* //\n\n\n--- constant/solid/polyMesh/boundary ---\n/*--------------------------------*- C++ -*----------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    arch        \"LSB;label=32;scalar=64\";\n    class       polyBoundaryMesh;\n    location    \"constant/solid/polyMesh\";\n    object      boundary;\n}\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n2\n(\n    walls\n    {\n        type            wall;\n        inGroups        1(wall);\n        nFaces          80;\n        startFace       212;\n    }\n    solid_to_fluid\n    {\n        type            mappedWall;\n        inGroups        1(wall);\n        nFaces          72;\n        startFace       292;\n        sampleMode      nearestPatchFace;\n        sampleRegion    fluid;\n        samplePatch     fluid_to_solid;\n    }\n)\n\n// ************************************************************************* //",
+      "image": ""
+    },
+    {
+      "cmd": "check_outputs = {}\nfor region in (\"fluid\", \"solid\"):\n    cm = subprocess.run([\"checkMesh\", \"-region\", region], text=True, capture_output=True)\n    check_outputs[region] = cm.stdout\n    print(f\"\\n===== checkMesh {region} =====\\n{cm.stdout[-3500:]}\")\n    if cm.returncode != 0 or \"Mesh OK.\" not in cm.stdout:\n        print(cm.stderr)\n        raise RuntimeError(f\"checkMesh failed for {region}\")",
+      "exit_code": 0,
+      "seconds": 0.4015268119983375,
+      "output": "===== checkMesh fluid =====\nnipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh -region fluid\nDate   : Sep 17 2026\nTime   : 03:06:27\nHost   : yc-demo\nPID    : 2028507\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nCheck mesh...\n\nTime = 0\n\nMesh stats fluid\n    points:           1911\n    faces:            4544\n    internal faces:   3520\n    cells:            1344\n    faces per cell:   6\n    boundary patches: 4\n    point zones:      0\n    face zones:       0\n    cell zones:       2\n\nOverall number of cells of each type:\n    hexahedra:     1344\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    inlet               36       4\n... 1056 characters cut ...\ne-17 4.04988e-17) OK.\n    Max cell openness = 1.35525e-16 OK.\n    Max aspect ratio = 1 OK.\n    Minimum face area = 2.5e-05. Maximum face area = 2.5e-05.  Face area magnitudes OK.\n    Min volume = 1.25e-07. Max volume = 1.25e-07.  Total volume = 0.000168.  Cell volumes OK.\n    Mesh non-orthogonality Max: 0 average: 0\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 3.33067e-14 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd\n\n\n\n===== checkMesh solid =====\ntion     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh -region solid\nDate   : Sep 17 2026\nTime   : 03:06:27\nHost   : yc-demo\nPID    : 2028509\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nCheck mesh...\n\nTime = 0\n\nMesh stats solid\n    points:           189\n    faces:            364\n    internal faces:   212\n    cells:            96\n    faces per cell:   6\n    boundary patches: 2\n    point zones:      0\n    face zones:       0\n    cell zones:       2\n\nOverall number of cells of each type:\n    hexahedra:     96\n    prisms:        0\n    wedges:        0\n    pyramids:      0\n    tet wedges:    0\n    tetrahedra:    0\n    polyhedra:     0\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n    Patch               Faces    Points     Surface topology\n    walls               80       99       ok (non-closed singly connected)  \n    solid_to_fluid      72       91       ok (non-closed singly connected)  \n    \".*\"                152      154      ok (closed singly connected)      \n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    CellZone            Cells        Points       Volume       BoundingBox\n    fluid               0            0            0            (1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)\n    solid               96           189          1.2e-05      (0.08 0 0) (0.12 0.03 0.01)\n\nChecking basic pointZone addressing...\n    No pointZones found.\n\nChecking geometry...\n    Overall domain bounding box (0.08 0 0) (0.12 0.03 0.01)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (1.1591e-17 8.91614e-18 1.35525e-16) OK.\n    Max cell openness = 1.35525e-16 OK.\n    Max aspect ratio = 1 OK.\n    Minimum face area = 2.5e-05. Maximum face area = 2.5e-05.  Face area magnitudes OK.\n    Min volume = 1.25e-07. Max volume = 1.25e-07.  Total volume = 1.2e-05.  Cell volumes OK.\n    Mesh non-orthogonality Max: 0 average: 0\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 2.15526e-14 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "Path(\"t8.foam\").touch()\nreader = pv.OpenFOAMReader(\"t8.foam\")\nreader.set_active_time_value(0.0)\nmesh_data = reader.read()\nprint(mesh_data)\nprint(\"Top-level blocks:\", mesh_data.keys())",
+      "exit_code": 0,
+      "seconds": 0.1509760799817741,
+      "output": "MultiBlock (0x7295dc1296c0)\n  N Blocks:   3\n  X Bounds:   0.000e+00, 2.000e-01\n  Y Bounds:   0.000e+00, 3.000e-02\n  Z Bounds:   0.000e+00, 3.000e-02\nTop-level blocks: ['defaultRegion', 'fluid', 'solid']",
+      "image": ""
+    },
+    {
+      "cmd": "print(\"fluid:\", mesh_data[\"fluid\"])\nprint(\"fluid keys:\", mesh_data[\"fluid\"].keys())\nprint(\"solid:\", mesh_data[\"solid\"])\nprint(\"solid keys:\", mesh_data[\"solid\"].keys())",
+      "exit_code": 0,
+      "seconds": 0.05063040598179214,
+      "output": "fluid: MultiBlock (0x729654305e40)\n  N Blocks:   2\n  X Bounds:   0.000e+00, 2.000e-01\n  Y Bounds:   0.000e+00, 3.000e-02\n  Z Bounds:   0.000e+00, 3.000e-02\nfluid keys: ['internalMesh', 'boundary']\nsolid: MultiBlock (0x7296543063e0)\n  N Blocks:   2\n  X Bounds:   8.000e-02, 1.200e-01\n  Y Bounds:   0.000e+00, 3.000e-02\n  Z Bounds:   0.000e+00, 1.000e-02\nsolid keys: ['internalMesh', 'boundary']",
+      "image": ""
+    },
+    {
+      "cmd": "fluid_grid = mesh_data[\"fluid\"][\"internalMesh\"]\nsolid_grid = mesh_data[\"solid\"][\"internalMesh\"]\nmp = pv.Plotter(off_screen=True, window_size=(1100, 650))\nmp.add_mesh(fluid_grid, color=\"lightskyblue\", opacity=0.22, show_edges=True, edge_color=\"steelblue\", line_width=1)\nmp.add_mesh(solid_grid, color=\"peru\", opacity=1.0, show_edges=True, edge_color=\"black\", line_width=1)\nmp.add_axes(); mp.view_isometric(); mp.camera.zoom(1.25)\nmp.show(screenshot=\"coarse_multiregion_mesh.png\")\nprint(f\"Rendered actual region meshes: fluid={fluid_grid.n_cells} cells, solid={solid_grid.n_cells} cells\")",
+      "exit_code": 0,
+      "seconds": 0.2654649609758053,
+      "output": "Rendered actual region meshes: fluid=1344 cells, solid=96 cells\n\n\u001b[0m\u001b[33m2026-09-17 03:06:38.709 (  69.807s) [    729741A60780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 03:06:38.710 (  69.808s) [    729741A60780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_2025567/1163399506.py:7: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  mp.show(screenshot=\"coarse_multiregion_mesh.png\")",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "fb = mesh_data[\"fluid\"][\"boundary\"]\nsb = mesh_data[\"solid\"][\"boundary\"]\nprint(\"Fluid boundary keys:\", fb.keys())\nprint(\"Solid boundary keys:\", sb.keys())\nfint = fb[\"fluid_to_solid\"]\nsint = sb[\"solid_to_fluid\"]\nfc = fint.cell_centers().points\nsc = sint.cell_centers().points\nfc_sorted = fc[np.lexsort((fc[:,2],fc[:,1],fc[:,0]))]\nsc_sorted = sc[np.lexsort((sc[:,2],sc[:,1],sc[:,0]))]\nprint(f\"Interface faces fluid/solid: {fint.n_cells}/{sint.n_cells}\")\nprint(f\"Interface area expected/measured fluid/solid: 0.001800 / {fint.area:.6f} / {sint.area:.6f} m^2\")\nprint(f\"Maximum paired face-centre mismatch: {np.max(np.linalg.norm(fc_sorted-sc_sorted, axis=1)):.3e} m\")",
+      "exit_code": 1,
+      "seconds": 0.05065187599393539,
+      "output": "Fluid boundary keys: ['inlet', 'outlet', 'walls', 'fluid_to_solid']\nSolid boundary keys: ['walls', 'solid_to_fluid']\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mNameError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[21]\u001b[39m\u001b[32m, line 9\u001b[39m\n\u001b[32m      5\u001b[39m fint = fb[\u001b[33m\"fluid_to_solid\"\u001b[39m]\n\u001b[32m      6\u001b[39m sint = sb[\u001b[33m\"solid_to_fluid\"\u001b[39m]\n\u001b[32m      7\u001b[39m fc = fint.cell_centers().points\n\u001b[32m      8\u001b[39m sc = sint.cell_centers().points\n\u001b[32m----> \u001b[39m\u001b[32m9\u001b[39m fc_sorted = fc[np.lexsort((fc[:,\u001b[32m2\u001b[39m],fc[:,\u001b[32m1\u001b[39m],fc[:,\u001b[32m0\u001b[39m]))]\n\u001b[32m     10\u001b[39m sc_sorted = sc[np.lexsort((sc[:,\u001b[32m2\u001b[39m],sc[:,\u001b[32m1\u001b[39m],sc[:,\u001b[32m0\u001b[39m]))]\n\u001b[32m     11\u001b[39m print(f\"Interface faces fluid/solid: {fint.n_cells}/{sint.n_cells}\")\n\u001b[32m     12\u001b[39m print(f\"Interface area expected/measured fluid/solid: 0.001800 / {fint.area:.6f} / {sint.area:.6f} m^2\")\n\n\u001b[31mNameError\u001b[39m: name 'np' is not defined",
+      "image": ""
+    },
+    {
+      "cmd": "import numpy as np\nfb = mesh_data[\"fluid\"][\"boundary\"]\nsb = mesh_data[\"solid\"][\"boundary\"]\nfint = fb[\"fluid_to_solid\"]\nsint = sb[\"solid_to_fluid\"]\nfc = fint.cell_centers().points\nsc = sint.cell_centers().points\nfc_sorted = fc[np.lexsort((fc[:,2],fc[:,1],fc[:,0]))]\nsc_sorted = sc[np.lexsort((sc[:,2],sc[:,1],sc[:,0]))]\nprint(f\"Interface faces fluid/solid: {fint.n_cells}/{sint.n_cells}\")\nprint(f\"Interface area expected/measured fluid/solid: 0.001800 / {fint.area:.6f} / {sint.area:.6f} m^2\")\nprint(f\"Maximum paired face-centre mismatch: {np.max(np.linalg.norm(fc_sorted-sc_sorted, axis=1)):.3e} m\")",
+      "exit_code": 0,
+      "seconds": 0.050613915984285995,
+      "output": "Interface faces fluid/solid: 72/72\nInterface area expected/measured fluid/solid: 0.001800 / 0.001800 / 0.001800 m^2\nMaximum paired face-centre mismatch: 0.000e+00 m",
+      "image": ""
+    },
+    {
+      "cmd": "import shutil\nfor stl in geom_dir.glob(\"*_preview.stl\"):\n    stl.unlink()\nif Path(\"0\").exists():\n    shutil.rmtree(\"0\")\nprint(\"Retained STEP geometry and constant region meshes; removed temporary STL previews and generated field files\")",
+      "exit_code": 0,
+      "seconds": 0.050674347003223374,
+      "output": "Retained STEP geometry and constant region meshes; removed temporary STL previews and generated field files",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 1285,
+      "fenced": true,
+      "text_chars": 489,
+      "thinking_chars": 2018,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614297.4254315
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 472,
+      "fenced": true,
+      "text_chars": 320,
+      "thinking_chars": 515,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614314.0757363
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 361,
+      "fenced": true,
+      "text_chars": 212,
+      "thinking_chars": 436,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614318.5638535
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 439,
+      "fenced": true,
+      "text_chars": 168,
+      "thinking_chars": 502,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614328.8750002
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 1669,
+      "fenced": true,
+      "text_chars": 335,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614348.97314
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 122,
+      "fenced": true,
+      "text_chars": 103,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614352.4193277
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 183,
+      "fenced": true,
+      "text_chars": 176,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614355.3927019
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 112,
+      "fenced": true,
+      "text_chars": 81,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614357.3394349
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 133,
+      "fenced": true,
+      "text_chars": 136,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614359.6874363
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 189,
+      "fenced": true,
+      "text_chars": 263,
+      "thinking_chars": 425,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614362.436726
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 173,
+      "fenced": true,
+      "text_chars": 228,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614366.1440213
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 147,
+      "fenced": true,
+      "text_chars": 84,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614368.6403553
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 263,
+      "fenced": true,
+      "text_chars": 192,
+      "thinking_chars": 511,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614372.7891912
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 123,
+      "fenced": true,
+      "text_chars": 60,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614374.6487532
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 249,
+      "fenced": true,
+      "text_chars": 167,
+      "thinking_chars": 582,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614379.9064462
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 256,
+      "fenced": true,
+      "text_chars": 215,
+      "thinking_chars": 419,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614383.8076339
+    },
+    {
+      "turn": 17,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 264,
+      "fenced": true,
+      "text_chars": 222,
+      "thinking_chars": 485,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614387.5330043
+    },
+    {
+      "turn": 18,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 243,
+      "fenced": true,
+      "text_chars": 244,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614392.500824
+    },
+    {
+      "turn": 19,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 148,
+      "fenced": true,
+      "text_chars": 168,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614395.112653
+    },
+    {
+      "turn": 20,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 278,
+      "fenced": true,
+      "text_chars": 157,
+      "thinking_chars": 422,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614398.6761348
+    },
+    {
+      "turn": 21,
+      "steps": 20,
+      "stop_reason": "tool_use",
+      "output_tokens": 449,
+      "fenced": true,
+      "text_chars": 303,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614404.5687678
+    },
+    {
+      "turn": 22,
+      "steps": 21,
+      "stop_reason": "tool_use",
+      "output_tokens": 279,
+      "fenced": true,
+      "text_chars": 149,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614407.5281398
+    },
+    {
+      "turn": 23,
+      "steps": 22,
+      "stop_reason": "tool_use",
+      "output_tokens": 588,
+      "fenced": true,
+      "text_chars": 284,
+      "thinking_chars": 410,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614417.383743
+    },
+    {
+      "turn": 24,
+      "steps": 23,
+      "stop_reason": "tool_use",
+      "output_tokens": 380,
+      "fenced": false,
+      "text_chars": 1044,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614422.2309663
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch files under /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface, so there is no partition to check",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "both regions present, named, with their cell counts",
+      "measured": null
+    },
+    {
+      "property": "the interface between them is conformal \u2014 matching faces, no gap and no overlap, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "`checkMesh` passes **for every region**",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "n/a",
+          "concern": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/t",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/t",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "n/a",
+          "concern": "no patch files under /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface, so there is no partition to check",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "n/a",
+          "concern": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T8-20260917-030436-b798/t8/constant/t",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 24,
+    "steps": 23,
+    "seconds": 150.0,
+    "killed": false,
+    "first_mesh_step": 7,
+    "first_mesh_turn": 8
+  }
+}

@@ -115,9 +115,30 @@ def concern_of(probe: dict[str, Any]) -> str:
             return ("the meshing point is outside the exported surface by "
                     f"{float(m.get('clearance_m') or 0.0):.4g} m")
         return ""
-    if pid in ("coverage", "scale"):
-        # Neither has ever returned a verdict; when one does, its own words are the
-        # concern, because there is no measured shape to read yet.
+    if pid == "coverage":
+        # `cad_audit`'s own verdict, not the fact that it had one. This branch used to
+        # return `why` unconditionally, written when `coverage` could never read
+        # anything at all -- it refused without a `patches.json` the core desk never
+        # wrote, so the branch was dead and its unconditional return was invisible.
+        #
+        # `cad_export.export_patches` writes that manifest, and the first sweep in which
+        # `coverage` could measure is the sweep in which this fired on **19 of 20 runs**,
+        # every one of them on an exhaustive, disjoint, entirely correct partition.
+        # Eighteen desks spent a declare turn waiving it. T12's only declare landed on
+        # turn 30 of 30, was bounced for want of a waiver it had no turn left to give,
+        # and a correct 29,831-cell mesh at the requested volume scored `passed: false`.
+        return "" if str(m.get("status") or "") == "ok" else str(probe.get("why") or "")
+    if pid == "scale":
+        # The probe fires outside a factor of `probes.SCALE_FACTOR`; inside it, a ratio
+        # near 1 is the answer and not a concern. Read as a band rather than as a
+        # verdict because `_scale` returns no status field -- it returns the ratio, and
+        # the ratio is the finding.
+        try:
+            ratio = float(m.get("ratio") or 0.0)
+        except (TypeError, ValueError):
+            return str(probe.get("why") or "")
+        if ratio and 0.01 <= ratio <= 100.0:
+            return ""
         return str(probe.get("why") or "")
     return ""
 

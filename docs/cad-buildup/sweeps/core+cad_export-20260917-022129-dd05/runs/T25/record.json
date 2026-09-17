@@ -1,0 +1,114 @@
+{
+  "run_id": "20260917-025737-150c",
+  "case": "T25",
+  "arm": "core",
+  "model": "gpt-5.6-sol",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T25-20260917-025737-150c",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T25-20260917-025737-150c/t25",
+  "started_at": "2026-09-17T02:57:38",
+  "ended_at": "2026-09-17T02:57:49",
+  "seconds": 7.4,
+  "n_turns": 2,
+  "n_steps": 0,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0.0076,
+  "given": [
+    "b123d_api.md",
+    "cad_export.py"
+  ],
+  "tokens": {
+    "input": 280,
+    "cache_read": 6687,
+    "cache_write": 0,
+    "output": 189
+  },
+  "stopped": "refused",
+  "expects": "refused",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 78,
+      "fenced": false,
+      "text_chars": 156,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613863.5006385
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 111,
+      "fenced": false,
+      "text_chars": 0,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613865.9305313
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T25-20260917-025737-150c/t25/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T25-20260917-025737-150c/t25/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T25-20260917-025737-150c/t25/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T25-20260917-025737-150c/t25/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch files under /home/qiuzi/.openreynolds-buildup/work/T25-20260917-025737-150c/t25/constant/triSurface, so there is no partition to check",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T25-20260917-025737-150c/t25/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T25-20260917-025737-150c/t25/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 2,
+    "steps": 0,
+    "seconds": 10.0,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

@@ -1,0 +1,389 @@
+{
+  "run_id": "20260917-023251-722f",
+  "case": "T15",
+  "arm": "core",
+  "model": "gpt-5.6-sol",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15",
+  "started_at": "2026-09-17T02:32:52",
+  "ended_at": "2026-09-17T02:49:18",
+  "seconds": 981.1,
+  "n_turns": 15,
+  "n_steps": 14,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0.4139,
+  "given": [
+    "b123d_api.md",
+    "cad_export.py"
+  ],
+  "tokens": {
+    "input": 17269,
+    "cache_read": 182245,
+    "cache_write": 0,
+    "output": 13598
+  },
+  "stopped": "time",
+  "expects": "done",
+  "passed": false,
+  "why": "nothing in the case directory has been meshed yet",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import os, sys, inspect, subprocess\nimport build123d as bd\nprint('cwd:', os.getcwd())\nprint('build123d:', bd.__version__ if hasattr(bd,'__version__') else 'installed')\nfor name in ['loft','Solid','Face','Wire','Polygon','Plane','Axis','Box','Cylinder','Cone']:\n    obj=getattr(bd,name,None)\n    print(name, inspect.signature(obj) if callable(obj) else obj)\nprint('cad_export exists:', os.path.exists('.reference/cad_export.py'))",
+      "exit_code": 0,
+      "seconds": 2.2063831929990556,
+      "output": "cwd: /home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15\nbuild123d: 0.11.1\nloft (sections: 'Face | Sketch | Iterable[Vertex | Face | Sketch] | None' = None, ruled: 'bool' = False, clean: 'bool' = True, mode: 'Mode' = <Mode.ADD>) -> 'Part'\nSolid (obj: 'TopoDS_Solid | Shell | None' = None, label: 'str' = '', color: 'Color | None' = None, material: 'str' = '', joints: 'dict[str, Joint] | None' = None, parent: 'Compound | None' = None)\nFace (*args: 'Any', **kwargs: 'Any')\nWire (*args, **kwargs)\nPolygon (*pts: 'VectorLike | Iterable[VectorLike]', rotation: 'float' = 0, align: 'Align | tuple[Align, Align] | None' = (<Align.NONE>, <Align.NONE>), mode: 'Mode' = <Mode.ADD>)\nPlane (*args: 'Any', **kwargs: 'Any') -> 'None'\nAxis (*args: 'Any', **kwargs: 'Any') -> 'None'\nBox (length: 'float', width: 'float', height: 'float', rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)\nCylinder (radius: 'float', height: 'float', arc_size: 'float' = 360, rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)\nCone (bottom_radius: 'float', top_radius: 'float', height: 'float', arc_size: 'float' = 360, rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)\ncad_export exists: True",
+      "image": ""
+    },
+    {
+      "cmd": "import math\n# All dimensions are metres.\nMODULE=0.003; Z_PINION=20; Z_WHEEL=30; PRESSURE_ANGLE=math.radians(20.0)\nBACKLASH=0.0003; FACE_WIDTH=0.018; SHAFT_RADIUS=0.008\nR_CONE=0.5*MODULE*math.sqrt(Z_PINION**2+Z_WHEEL**2)\nDELTA_PINION=math.atan(Z_PINION/Z_WHEEL); DELTA_WHEEL=math.atan(Z_WHEEL/Z_PINION)\n\ndef tooth_section(z, delta, teeth, backlash_share, scale):\n    rp=z*math.tan(delta)\n    add=MODULE*scale; ded=1.25*MODULE*scale\n    rr=rp-ded; rt=rp+add\n    half_pitch=0.5*(math.pi*rp/teeth-backlash_share)\n    half_root=half_pitch+(rp-rr)*math.tan(PRESSURE_ANGLE)\n    half_tip=half_pitch-(rt-rp)*math.tan(PRESSURE_ANGLE)\n    pts=[]\n    for r,t in [(rr,-half_root),(rt,-half_tip),(rt,half_tip),(rr,half_root)]:\n        a=t/r; pts.append((r*math.cos(a),r*math.sin(a)))\n    return bd.Face(bd.Polygon(*pts)), (rr,rp,rt,half_root,half_pitch,half_tip)\n\ns0=R_CONE-FACE_WIDTH; s1=R_CONE\nu0=s0*math.cos(DELTA_PINION); u1=s1*math.cos(DELTA_PINION)\nf0,d0=tooth_section(u0,DELTA_PINION,Z_PINION,BACKLASH/2,s0/R_CONE)\nf1,d1=tooth_section(u1,DELTA_PINION,Z_PINION,BACKLASH/2,1.0)\nf0=bd.Pos(0,0,u0)*f0; f1=bd.Pos(0,0,u1)*f1\npinion_tooth0=bd.loft([f0,f1],ruled=True)\nprint(f'cone distance requested/derived: {R_CONE*1000:.6f} mm')\nprint(f'pinion pitch angle: {math.degrees(DELTA_PINION):.6f} deg')\nprint(f'wheel pitch angle: {math.degrees(DELTA_WHEEL):.6f} deg; sum={math.degrees(DELTA_PINION+DELTA_WHEEL):.6f} deg')\nprint(f'outer pitch radius pinion: {d1[1]*1000:.6f} mm (target {MODULE*Z_PINION/2*1000:.6f})')\nprint(f'outer tooth full thickness: {2*d1[4]*1000:.6f} mm; nominal minus share={math.pi*MODULE/2-BACKLASH/2:.6f} m')\nprint(f'constructed flank angle: {math.degrees(math.atan((d1[3]-d1[4])/(d1[1]-d1[0]))):.6f} deg (target 20)')\nprint('tooth volume mm^3:', pinion_tooth0.volume*1e9)",
+      "exit_code": 1,
+      "seconds": 0.3012281990086194,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mValueError\u001b[39m                                Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[2]\u001b[39m\u001b[32m, line 24\u001b[39m\n\u001b[32m     20\u001b[39m s0=R_CONE-FACE_WIDTH; s1=R_CONE\n\u001b[32m     21\u001b[39m u0=s0*math.cos(DELTA_PINION); u1=s1*math.cos(DELTA_PINION)\n\u001b[32m     22\u001b[39m f0,d0=tooth_section(u0,DELTA_PINION,Z_PINION,BACKLASH/\u001b[32m2\u001b[39m,s0/R_CONE)\n\u001b[32m     23\u001b[39m f1,d1=tooth_section(u1,DELTA_PINION,Z_PINION,BACKLASH/\u001b[32m2\u001b[39m,\u001b[32m1.0\u001b[39m)\n\u001b[32m---> \u001b[39m\u001b[32m24\u001b[39m f0=bd.Pos(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,u0)*f0; f1=bd.Pos(\u001b[32m0\u001b[39m,\u001b[32m0\u001b[39m,u1)*f1\n\u001b[32m     25\u001b[39m pinion_tooth0=bd.loft([f0,f1],ruled=\u001b[38;5;28;01mTrue\u001b[39;00m)\n\u001b[32m     26\u001b[39m print(f'cone distance requested/derived: {R_CONE*\u001b[32m1000\u001b[39m:.6f} mm')\n\u001b[32m     27\u001b[39m print(f'pinion pitch angle: {math.degrees(DELTA_PINION):.6f} deg')\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:1087\u001b[39m, in \u001b[36mShape.__rmul__\u001b[39m\u001b[34m(self, other)\u001b[39m\n\u001b[32m   1085\u001b[39m \u001b[38;5;250m\u001b[39m\u001b[33;03m\"\"\"right multiply for positioning operator *\"\"\"\u001b[39;00m\n\u001b[32m   1086\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28misinstance\u001b[39m(other, Location | Plane):\n\u001b[32m-> \u001b[39m\u001b[32m1087\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m \u001b[30;43mself\u001b[39;49m\u001b[30;43m.\u001b[39;49m\u001b[30;43mmoved\u001b[39;49m\u001b[30;43m(\u001b[39;49m\u001b[30;43mother\u001b[39;49m\u001b[30;43m)\u001b[39;49m\n\u001b[32m   1088\u001b[39m \u001b[38;5;28;01mtry\u001b[39;00m:\n\u001b[32m   1089\u001b[39m     \u001b[38;5;28;01mreturn\u001b[39;00m [\u001b[38;5;28mself\u001b[39m.moved(loc) \u001b[38;5;28;01mfor\u001b[39;00m loc \u001b[38;5;129;01min\u001b[39;00m all_location_like(other)]\n\n\u001b[36mFile \u001b[39m\u001b[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:1682\u001b[39m, in \u001b[36mShape.moved\u001b[39m\u001b[34m(self, loc)\u001b[39m\n\u001b[32m   1680\u001b[39m     loc = loc.location\n\u001b[32m   1681\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28mself\u001b[39m._wrapped \u001b[38;5;129;01mis\u001b[39;00m \u001b[38;5;28;01mNone\u001b[39;00m:\n\u001b[32m-> \u001b[39m\u001b[32m1682\u001b[39m     \u001b[38;5;28;01mraise\u001b[39;00m \u001b[38;5;167;01mValueError\u001b[39;00m(\u001b[33m\"\u001b[39m\u001b[33mCannot move an empty shape\u001b[39m\u001b[33m\"\u001b[39m)\n\u001b[32m   1683\u001b[39m shape_copy: Shape = copy.deepcopy(\u001b[38;5;28mself\u001b[39m, \u001b[38;5;28;01mNone\u001b[39;00m)\n\u001b[32m   1684\u001b[39m shape_copy.wrapped = tcast(TOPODS, downcast(\u001b[38;5;28mself\u001b[39m.wrapped.Moved(loc.wrapped)))\n\n\u001b[31mValueError\u001b[39m: Cannot move an empty shape",
+      "image": ""
+    },
+    {
+      "cmd": "def tooth_section(z, delta, teeth, backlash_share, scale):\n    rp=z*math.tan(delta)\n    add=MODULE*scale; ded=1.25*MODULE*scale\n    rr=rp-ded; rt=rp+add\n    half_pitch=0.5*(math.pi*rp/teeth-backlash_share)\n    half_root=half_pitch+(rp-rr)*math.tan(PRESSURE_ANGLE)\n    half_tip=half_pitch-(rt-rp)*math.tan(PRESSURE_ANGLE)\n    pts=[]\n    for r,t in [(rr,-half_root),(rt,-half_tip),(rt,half_tip),(rr,half_root)]:\n        a=t/r; pts.append((r*math.cos(a),r*math.sin(a)))\n    return bd.Polygon(*pts), (rr,rp,rt,half_root,half_pitch,half_tip)\n\nf0,d0=tooth_section(u0,DELTA_PINION,Z_PINION,BACKLASH/2,s0/R_CONE)\nf1,d1=tooth_section(u1,DELTA_PINION,Z_PINION,BACKLASH/2,1.0)\nprint(type(f0), len(f0.faces()), f0.area)\nf0=bd.Pos(0,0,u0)*f0; f1=bd.Pos(0,0,u1)*f1\npinion_tooth0=bd.loft([f0,f1],ruled=True)\nconstructed_alpha=math.degrees(math.atan((d1[3]-d1[4])/(d1[1]-d1[0])))\nprint(f'cone distance: {R_CONE*1000:.6f} mm')\nprint(f'pitch angles: {math.degrees(DELTA_PINION):.6f} + {math.degrees(DELTA_WHEEL):.6f} = {math.degrees(DELTA_PINION+DELTA_WHEEL):.6f} deg')\nprint(f'pinion outer pitch radius: {d1[1]*1000:.6f} mm (target {MODULE*Z_PINION/2*1000:.6f})')\nprint(f'pinion outer pitch tooth thickness: {2*d1[4]*1000:.6f} mm (target {(math.pi*MODULE/2-BACKLASH/2)*1000:.6f})')\nprint(f'constructed flank angle: {constructed_alpha:.6f} deg (target 20.000000)')\nprint(f'tooth volume: {pinion_tooth0.volume*1e9:.3f} mm^3')",
+      "exit_code": 0,
+      "seconds": 0.050616525986697525,
+      "output": "<class 'build123d.objects_sketch.Polygon'> 1 1.4749823106003473e-05\ncone distance: 54.083269 mm\npitch angles: 33.690068 + 56.309932 = 90.000000 deg\npinion outer pitch radius: 30.000000 mm (target 30.000000)\npinion outer pitch tooth thickness: 4.562389 mm (target 4.562389)\nconstructed flank angle: 20.000000 deg (target 20.000000)\ntooth volume: 353.010 mm^3",
+      "image": ""
+    },
+    {
+      "cmd": "import math\n# Requested dimensions, in metres/radians.\nMODULE=0.003; Z_PINION=20; Z_WHEEL=30; PRESSURE_ANGLE=math.radians(20.0); BACKLASH=0.0003\n# Assumptions necessitated by unspecified dimensions.\nFACE_WIDTH=0.018; SHAFT_RADIUS=0.008\nR_CONE=0.5*MODULE*math.sqrt(Z_PINION**2+Z_WHEEL**2)\nDELTA_PINION=math.atan(Z_PINION/Z_WHEEL); DELTA_WHEEL=math.atan(Z_WHEEL/Z_PINION)\ns0=R_CONE-FACE_WIDTH; s1=R_CONE\nu0=s0*math.cos(DELTA_PINION); u1=s1*math.cos(DELTA_PINION)\n\ndef tooth_section(z, delta, teeth, backlash_share, scale):\n    rp=z*math.tan(delta); add=MODULE*scale; ded=1.25*MODULE*scale\n    rr=rp-ded; rt=rp+add\n    half_pitch=0.5*(math.pi*rp/teeth-backlash_share)\n    half_root=half_pitch+(rp-rr)*math.tan(PRESSURE_ANGLE)\n    half_tip=half_pitch-(rt-rp)*math.tan(PRESSURE_ANGLE)\n    pts=[]\n    for r,t in [(rr,-half_root),(rt,-half_tip),(rt,half_tip),(rr,half_root)]:\n        a=t/r; pts.append((r*math.cos(a),r*math.sin(a)))\n    return bd.Polygon(*pts), (rr,rp,rt,half_root,half_pitch,half_tip)\n\nf0,d0=tooth_section(u0,DELTA_PINION,Z_PINION,BACKLASH/2,s0/R_CONE)\nf1,d1=tooth_section(u1,DELTA_PINION,Z_PINION,BACKLASH/2,1.0)\nf0=bd.Pos(0,0,u0)*f0; f1=bd.Pos(0,0,u1)*f1\npinion_tooth0=bd.loft([f0,f1],ruled=True)\nconstructed_alpha=math.degrees(math.atan((d1[3]-d1[4])/(d1[1]-d1[0])))\nprint(f'cone distance: {R_CONE*1000:.6f} mm')\nprint(f'pitch angles: {math.degrees(DELTA_PINION):.6f} + {math.degrees(DELTA_WHEEL):.6f} = {math.degrees(DELTA_PINION+DELTA_WHEEL):.6f} deg')\nprint(f'pinion outer pitch radius: {d1[1]*1000:.6f} mm (target {MODULE*Z_PINION/2*1000:.6f})')\nprint(f'pinion outer pitch tooth thickness: {2*d1[4]*1000:.6f} mm (target {(math.pi*MODULE/2-BACKLASH/2)*1000:.6f})')\nprint(f'constructed flank angle: {constructed_alpha:.6f} deg (target 20.000000)')\nprint(f'tooth volume: {pinion_tooth0.volume*1e9:.3f} mm^3')",
+      "exit_code": 0,
+      "seconds": 0.050618936016689986,
+      "output": "cone distance: 54.083269 mm\npitch angles: 33.690068 + 56.309932 = 90.000000 deg\npinion outer pitch radius: 30.000000 mm (target 30.000000)\npinion outer pitch tooth thickness: 4.562389 mm (target 4.562389)\nconstructed flank angle: 20.000000 deg (target 20.000000)\ntooth volume: 353.010 mm^3",
+      "image": ""
+    },
+    {
+      "cmd": "def make_local_gear(teeth, delta, phase, wall_distance):\n    si=R_CONE-FACE_WIDTH; so=R_CONE\n    ui=si*math.cos(delta); uo=so*math.cos(delta)\n    sec_i,di=tooth_section(ui,delta,teeth,BACKLASH/2,si/R_CONE)\n    sec_o,do=tooth_section(uo,delta,teeth,BACKLASH/2,1.0)\n    tooth=bd.loft([bd.Pos(0,0,ui)*sec_i,bd.Pos(0,0,uo)*sec_o],ruled=True)\n    teeth_solids=[bd.Rot(0,0,math.degrees(phase+2*math.pi*k/teeth))*tooth for k in range(teeth)]\n    root=bd.Pos(0,0,(ui+uo)/2)*bd.Cone(di[0],do[0],uo-ui)\n    geared=root\n    for t in teeth_solids: geared=geared+t\n    shaft_start=uo-0.002\n    shaft=bd.Pos(0,0,(shaft_start+wall_distance+0.005)/2)*bd.Cylinder(SHAFT_RADIUS,wall_distance+0.005-shaft_start)\n    return geared+shaft, (ui,uo,di,do)\n\npinion_local,pdat=make_local_gear(Z_PINION,DELTA_PINION,0.0,0.080)\nwheel_local,wdat=make_local_gear(Z_WHEEL,DELTA_WHEEL,math.pi/Z_WHEEL,0.060)\npinion_solid=bd.Rot(0,90,0)*pinion_local\nwheel_solid=wheel_local\ncommon=pinion_solid & wheel_solid\nprint(f'pinion volume: {pinion_solid.volume*1e6:.6f} L; wheel volume: {wheel_solid.volume*1e6:.6f} L')\nprint(f'gear solid overlap: {common.volume*1e9:.6f} mm^3 (target 0)')\nprint('pinion bbox m:', pinion_solid.bounding_box().min, pinion_solid.bounding_box().max)\nprint('wheel bbox m:', wheel_solid.bounding_box().min, wheel_solid.bounding_box().max)",
+      "exit_code": 0,
+      "seconds": 4.4754949019989,
+      "output": "pinion volume: 37.674896 L; wheel volume: 51.439645 L\ngear solid overlap: 11.331035 mm^3 (target 0)\npinion bbox m: Vector: (X=0.030023, Y=-0.032979, Z=-0.032979) Vector: (X=0.085, Y=0.032979, Z=0.032979)\nwheel bbox m: Vector: (X=-0.047847, Y=-0.047985, Z=0.020015) Vector: (X=0.047847, Y=0.047985, Z=0.065)",
+      "image": ""
+    },
+    {
+      "cmd": "def involute_tooth_section(z, delta, teeth, backlash_share, scale, samples=7):\n    rp=z*math.tan(delta); add=MODULE*scale; ded=1.25*MODULE*scale\n    rr=rp-ded; rt=rp+add; rb=rp*math.cos(PRESSURE_ANGLE)\n    half_angle=0.5*(math.pi/teeth-backlash_share/rp)\n    inv_pitch=math.tan(PRESSURE_ANGLE)-PRESSURE_ANGLE\n    t_tip=math.sqrt((rt/rb)**2-1.0)\n    ts=[t_tip*i/(samples-1) for i in range(samples)]\n    flank=[]\n    for t in ts:\n        r=rb*math.sqrt(1+t*t); inv=t-math.atan(t)\n        theta=half_angle-(inv-inv_pitch)\n        flank.append((r,theta))\n    theta_base=flank[0][1]\n    pts=[(rr*math.cos(-theta_base),rr*math.sin(-theta_base))]\n    pts += [(r*math.cos(-a),r*math.sin(-a)) for r,a in flank]\n    pts += [(r*math.cos(a),r*math.sin(a)) for r,a in reversed(flank)]\n    pts += [(rr*math.cos(theta_base),rr*math.sin(theta_base))]\n    return bd.Polygon(*pts), (rr,rp,rt,rb,half_angle)\n\ndef make_involute_gear(teeth, delta, phase, wall_distance):\n    si=R_CONE-FACE_WIDTH; so=R_CONE; ui=si*math.cos(delta); uo=so*math.cos(delta)\n    sec_i,di=involute_tooth_section(ui,delta,teeth,BACKLASH/2,si/R_CONE)\n    sec_o,do=involute_tooth_section(uo,delta,teeth,BACKLASH/2,1.0)\n    tooth=bd.loft([bd.Pos(0,0,ui)*sec_i,bd.Pos(0,0,uo)*sec_o],ruled=True)\n    root=bd.Pos(0,0,(ui+uo)/2)*bd.Cone(di[0],do[0],uo-ui)\n    geared=root\n    for k in range(teeth):\n        geared=geared+(bd.Rot(0,0,math.degrees(phase+2*math.pi*k/teeth))*tooth)\n    shaft_start=uo-0.002\n    shaft=bd.Pos(0,0,(shaft_start+wall_distance+0.005)/2)*bd.Cylinder(SHAFT_RADIUS,wall_distance+0.005-shaft_start)\n    return geared+shaft, (ui,uo,di,do)\n\npinion_local,pdat=make_involute_gear(Z_PINION,DELTA_PINION,0.0,0.080)\nwheel_local,wdat=make_involute_gear(Z_WHEEL,DELTA_WHEEL,math.pi/Z_WHEEL,0.060)\npinion_solid=bd.Rot(0,90,0)*pinion_local; wheel_solid=wheel_local\ncommon=pinion_solid & wheel_solid\npinion_pitch_thickness=(math.pi*MODULE/2-BACKLASH/2)\nwheel_pitch_thickness=(math.pi*MODULE/2-BACKLASH/2)\nprint(f'pinion pitch tooth thickness: {pinion_pitch_thickness*1000:.6f} mm')\nprint(f'wheel pitch tooth thickness: {wheel_pitch_thickness*1000:.6f} mm')\nprint(f'combined pitch-line backlash: {(math.pi*MODULE-pinion_pitch_thickness-wheel_pitch_thickness)*1000:.6f} mm (target 0.300000)')\nprint(f'involute gear overlap: {common.volume*1e9:.9f} mm^3 (target 0)')\nprint(f'actual gear volumes: {pinion_solid.volume*1000:.6f} L, {wheel_solid.volume*1000:.6f} L')",
+      "exit_code": 0,
+      "seconds": 25.846259357989766,
+      "output": "pinion pitch tooth thickness: 4.562389 mm\nwheel pitch tooth thickness: 4.562389 mm\ncombined pitch-line backlash: 0.300000 mm (target 0.300000)\ninvolute gear overlap: 3.582760708 mm^3 (target 0)\nactual gear volumes: 0.036860 L, 0.050877 L",
+      "image": ""
+    },
+    {
+      "cmd": "if common.volume>0:\n    bb=common.bounding_box()\n    print('interference bbox min/max (mm):',tuple(round(v*1000,4) for v in bb.min),tuple(round(v*1000,4) for v in bb.max))\n    print('interference components:',len(common.solids()))\n    vols=sorted([s.volume*1e9 for s in common.solids()],reverse=True)\n    print('largest component volumes mm^3:',[round(v,6) for v in vols[:10]])\n    for i,s in enumerate(common.solids()[:3]):\n        c=s.center()\n        print(i,'center mm',tuple(round(v*1000,4) for v in c))",
+      "exit_code": 0,
+      "seconds": 0.05061203602235764,
+      "output": "interference bbox min/max (mm): (30.023, -0.9885, 21.8349) (41.2501, 0.9885, 30.0001)\ninterference components: 1\nlargest component volumes mm^3: [3.582761]\n0 center mm (36.151, 0.0, 26.3941)",
+      "image": ""
+    },
+    {
+      "cmd": "print('offset signature:',inspect.signature(bd.offset))\nprint('Shape offset methods:',[n for n in dir(pinion_solid) if 'offset' in n.lower()])",
+      "exit_code": 0,
+      "seconds": 0.050639675988350064,
+      "output": "offset signature: (objects: build123d.topology.one_d.Edge | build123d.topology.two_d.Face | build123d.topology.three_d.Solid | build123d.topology.composite.Compound | collections.abc.Iterable[build123d.topology.one_d.Edge | build123d.topology.two_d.Face | build123d.topology.three_d.Solid | build123d.topology.composite.Compound] | None = None, amount: float = 0, openings: build123d.topology.two_d.Face | list[build123d.topology.two_d.Face] | None = None, kind: build123d.build_enums.Kind = <Kind.ARC>, side: build123d.build_enums.Side = <Side.BOTH>, closed: bool = True, min_edge_length: float | None = None, mode: build123d.build_enums.Mode = <Mode.REPLACE>) -> build123d.topology.composite.Curve | build123d.topology.composite.Sketch | build123d.topology.composite.Part | build123d.topology.composite.Compound\nShape offset methods: ['offset_3d']",
+      "image": ""
+    },
+    {
+      "cmd": "def make_involute_gear_b(teeth, delta, phase, wall_distance, backlash_on_gear):\n    si=R_CONE-FACE_WIDTH; so=R_CONE; ui=si*math.cos(delta); uo=so*math.cos(delta)\n    sec_i,di=involute_tooth_section(ui,delta,teeth,backlash_on_gear,si/R_CONE)\n    sec_o,do=involute_tooth_section(uo,delta,teeth,backlash_on_gear,1.0)\n    tooth=bd.loft([bd.Pos(0,0,ui)*sec_i,bd.Pos(0,0,uo)*sec_o],ruled=True)\n    root=bd.Pos(0,0,(ui+uo)/2)*bd.Cone(di[0],do[0],uo-ui)\n    geared=root\n    for k in range(teeth): geared=geared+(bd.Rot(0,0,math.degrees(phase+2*math.pi*k/teeth))*tooth)\n    shaft_start=uo-0.002\n    shaft=bd.Pos(0,0,(shaft_start+wall_distance+0.005)/2)*bd.Cylinder(SHAFT_RADIUS,wall_distance+0.005-shaft_start)\n    return geared+shaft\n\npinion_local=make_involute_gear_b(Z_PINION,DELTA_PINION,0.0,0.080,0.0)\nwheel_local=make_involute_gear_b(Z_WHEEL,DELTA_WHEEL,math.pi/Z_WHEEL,0.060,BACKLASH)\npinion_solid=bd.Rot(0,90,0)*pinion_local; wheel_solid=wheel_local\ncommon=pinion_solid & wheel_solid\nprint(f'combined pitch-line backlash: {(BACKLASH)*1000:.6f} mm (pinion nominal, wheel reduced)')\nprint(f'gear overlap: {common.volume*1e9:.9f} mm^3')\nif common.volume: print('overlap bbox mm:',tuple(v*1000 for v in common.bounding_box().min),tuple(v*1000 for v in common.bounding_box().max))",
+      "exit_code": 0,
+      "seconds": 26.352843651984585,
+      "output": "combined pitch-line backlash: 0.300000 mm (pinion nominal, wheel reduced)\ngear overlap: 3.890673405 mm^3\noverlap bbox mm: (30.022994701918815, -1.0681028308372287, 21.834877965031872) (41.25010000000001, 1.0681028308372251, 30.000100000000007)",
+      "image": ""
+    },
+    {
+      "cmd": "FLANK_RELIEF=0.00010\n\ndef relieved_tooth_section(z, delta, teeth, backlash_share, scale, samples=9):\n    rp=z*math.tan(delta); add=MODULE*scale; ded=1.25*MODULE*scale\n    rr=rp-ded; rt=rp+add; rb=rp*math.cos(PRESSURE_ANGLE)\n    half_angle=0.5*(math.pi/teeth-backlash_share/rp)\n    inv_pitch=math.tan(PRESSURE_ANGLE)-PRESSURE_ANGLE\n    t_tip=math.sqrt((rt/rb)**2-1.0)\n    ts=[t_tip*i/(samples-1) for i in range(samples)]\n    flank=[]\n    for t in ts:\n        r=rb*math.sqrt(1+t*t); inv=t-math.atan(t)\n        denom=(rp-rb) if r<rp else (rt-rp)\n        relief=FLANK_RELIEF*scale*abs(r-rp)/denom\n        theta=half_angle-(inv-inv_pitch)-relief/r\n        flank.append((r,theta))\n    theta_base=flank[0][1]\n    pts=[(rr*math.cos(-theta_base),rr*math.sin(-theta_base))]\n    pts += [(r*math.cos(-a),r*math.sin(-a)) for r,a in flank]\n    pts += [(r*math.cos(a),r*math.sin(a)) for r,a in reversed(flank)]\n    pts += [(rr*math.cos(theta_base),rr*math.sin(theta_base))]\n    return bd.Polygon(*pts), (rr,rp,rt,rb,half_angle)\n\ndef make_final_gear(teeth, delta, phase, wall_distance):\n    si=R_CONE-FACE_WIDTH; so=R_CONE; ui=si*math.cos(delta); uo=so*math.cos(delta)\n    sec_i,di=relieved_tooth_section(ui,delta,teeth,BACKLASH/2,si/R_CONE)\n    sec_o,do=relieved_tooth_section(uo,delta,teeth,BACKLASH/2,1.0)\n    tooth=bd.loft([bd.Pos(0,0,ui)*sec_i,bd.Pos(0,0,uo)*sec_o],ruled=True)\n    root=bd.Pos(0,0,(ui+uo)/2)*bd.Cone(di[0],do[0],uo-ui)\n    geared=root\n    for k in range(teeth): geared=geared+(bd.Rot(0,0,math.degrees(phase+2*math.pi*k/teeth))*tooth)\n    shaft_start=uo-0.002\n    shaft=bd.Pos(0,0,(shaft_start+wall_distance+0.005)/2)*bd.Cylinder(SHAFT_RADIUS,wall_distance+0.005-shaft_start)\n    return geared+shaft\n\npinion_local=make_final_gear(Z_PINION,DELTA_PINION,0.0,0.080)\nwheel_local=make_final_gear(Z_WHEEL,DELTA_WHEEL,math.pi/Z_WHEEL,0.060)\npinion_solid=bd.Rot(0,90,0)*pinion_local; wheel_solid=wheel_local\ncommon=pinion_solid & wheel_solid\nprint(f'pitch-line backlash: {BACKLASH*1000:.6f} mm (target 0.300000)')\nprint(f'off-pitch relief per flank: {FLANK_RELIEF*1000:.3f} mm; zero at pitch radius')\nprint(f'gear overlap after relief: {common.volume*1e9:.9f} mm^3')",
+      "exit_code": 0,
+      "seconds": 35.25401577199227,
+      "output": "pitch-line backlash: 0.300000 mm (target 0.300000)\noff-pitch relief per flank: 0.100 mm; zero at pitch radius\ngear overlap after relief: 3.290894414 mm^3",
+      "image": ""
+    },
+    {
+      "cmd": "def local_root(teeth,delta):\n    si=R_CONE-FACE_WIDTH; so=R_CONE; ui=si*math.cos(delta); uo=so*math.cos(delta)\n    _,di=relieved_tooth_section(ui,delta,teeth,BACKLASH/2,si/R_CONE)\n    _,do=relieved_tooth_section(uo,delta,teeth,BACKLASH/2,1.0)\n    return bd.Pos(0,0,(ui+uo)/2)*bd.Cone(di[0],do[0],uo-ui)\np_root=bd.Rot(0,90,0)*local_root(Z_PINION,DELTA_PINION)\nw_root=local_root(Z_WHEEL,DELTA_WHEEL)\nprint('pinion root vs wheel total mm3:',(p_root & wheel_solid).volume*1e9)\nprint('wheel root vs pinion total mm3:',(w_root & pinion_solid).volume*1e9)\nprint('root vs root mm3:',(p_root & w_root).volume*1e9)",
+      "exit_code": 0,
+      "seconds": 1.0054881190008018,
+      "output": "pinion root vs wheel total mm3: 0.0\nwheel root vs pinion total mm3: 3.2909427688391086\nroot vs root mm3: 0.0",
+      "image": ""
+    },
+    {
+      "cmd": "ADDENDUM_COEFF=0.8; DEDENDUM_COEFF=1.25\n\ndef final_tooth_section(z, delta, teeth, backlash_share, scale, samples=9):\n    rp=z*math.tan(delta); add=ADDENDUM_COEFF*MODULE*scale; ded=DEDENDUM_COEFF*MODULE*scale\n    rr=rp-ded; rt=rp+add; rb=rp*math.cos(PRESSURE_ANGLE)\n    half_angle=0.5*(math.pi/teeth-backlash_share/rp)\n    inv_pitch=math.tan(PRESSURE_ANGLE)-PRESSURE_ANGLE\n    t_tip=math.sqrt((rt/rb)**2-1.0)\n    ts=[t_tip*i/(samples-1) for i in range(samples)]\n    flank=[]\n    for t in ts:\n        r=rb*math.sqrt(1+t*t); inv=t-math.atan(t)\n        theta=half_angle-(inv-inv_pitch)\n        flank.append((r,theta))\n    theta_base=flank[0][1]\n    pts=[(rr*math.cos(-theta_base),rr*math.sin(-theta_base))]\n    pts += [(r*math.cos(-a),r*math.sin(-a)) for r,a in flank]\n    pts += [(r*math.cos(a),r*math.sin(a)) for r,a in reversed(flank)]\n    pts += [(rr*math.cos(theta_base),rr*math.sin(theta_base))]\n    return bd.Polygon(*pts), (rr,rp,rt,rb,half_angle)\n\ndef build_gear(teeth, delta, phase, wall_distance):\n    si=R_CONE-FACE_WIDTH; so=R_CONE; ui=si*math.cos(delta); uo=so*math.cos(delta)\n    sec_i,di=final_tooth_section(ui,delta,teeth,BACKLASH/2,si/R_CONE)\n    sec_o,do=final_tooth_section(uo,delta,teeth,BACKLASH/2,1.0)\n    tooth=bd.loft([bd.Pos(0,0,ui)*sec_i,bd.Pos(0,0,uo)*sec_o],ruled=True)\n    root=bd.Pos(0,0,(ui+uo)/2)*bd.Cone(di[0],do[0],uo-ui)\n    geared=root\n    for k in range(teeth): geared=geared+(bd.Rot(0,0,math.degrees(phase+2*math.pi*k/teeth))*tooth)\n    shaft_start=uo-0.002\n    shaft=bd.Pos(0,0,(shaft_start+wall_distance+0.005)/2)*bd.Cylinder(SHAFT_RADIUS,wall_distance+0.005-shaft_start)\n    return geared+shaft\n\npinion_local=build_gear(Z_PINION,DELTA_PINION,0.0,0.080)\nwheel_local=build_gear(Z_WHEEL,DELTA_WHEEL,math.pi/Z_WHEEL,0.060)\npinion_solid=bd.Rot(0,90,0)*pinion_local; wheel_solid=wheel_local\ncommon=pinion_solid & wheel_solid\nprint(f'addendum/dedendum coefficients assumed: {ADDENDUM_COEFF:.2f}/{DEDENDUM_COEFF:.2f}')\nprint(f'outer addendum: {ADDENDUM_COEFF*MODULE*1000:.3f} mm')\nprint(f'pitch-line backlash: {BACKLASH*1000:.6f} mm')\nprint(f'gear overlap: {common.volume*1e9:.9f} mm^3')",
+      "exit_code": 0,
+      "seconds": 35.14149307998014,
+      "output": "addendum/dedendum coefficients assumed: 0.80/1.25\nouter addendum: 2.400 mm\npitch-line backlash: 0.300000 mm\ngear overlap: 0.000000000 mm^3",
+      "image": ""
+    },
+    {
+      "cmd": "import sys\nsys.path.insert(0,'.reference')\nfrom cad_export import export_patches\nCAVITY_X=0.160; CAVITY_Y=0.140; CAVITY_Z=0.120\ncavity=bd.Box(CAVITY_X,CAVITY_Y,CAVITY_Z)\nfluid=cavity-pinion_solid-wheel_solid\nfaces=list(fluid.faces())\n# Map each resulting face to the source that generated it. Cylinders of the assumed\n# shaft radius are named as bores first; box-source faces are cavity walls.\npin_bore=[]; wheel_bore=[]; walls=[]; pinion_faces=[]; wheel_faces=[]\nfor f in faces:\n    gt=str(f.geom_type)\n    if 'CYLINDER' in gt and abs(f.radius-SHAFT_RADIUS)<1e-7:\n        ax=f.axis_of_rotation.direction\n        if abs(ax.X)>0.9: pin_bore.append(f)\n        elif abs(ax.Z)>0.9: wheel_bore.append(f)\n    elif min(f.distance_to(cf) for cf in cavity.faces())<1e-8:\n        walls.append(f)\n    elif f.distance_to(pinion_solid)<1e-8:\n        pinion_faces.append(f)\n    elif f.distance_to(wheel_solid)<1e-8:\n        wheel_faces.append(f)\n    else:\n        print('UNCLASSIFIED',f.geom_type,f.area,f.center())\nprint('fluid volume L:',fluid.volume*1000,'connected solids:',len(fluid.solids()))\nprint('patch face counts:',{'pinion':len(pinion_faces),'wheel':len(wheel_faces),'cavity_walls':len(walls),'pinion_shaft_bore':len(pin_bore),'wheel_shaft_bore':len(wheel_bore)},'total',len(faces))\nos.makedirs('constant/triSurface',exist_ok=True)\nexport_patches(fluid,{'pinion':pinion_faces,'wheel':wheel_faces,'cavity_walls':walls,'pinion_shaft_bore':pin_bore,'wheel_shaft_bore':wheel_bore},tolerance=2.5e-4,directory='constant/triSurface')",
+      "exit_code": 0,
+      "seconds": 240.00198622202151,
+      "output": "",
+      "image": ""
+    },
+    {
+      "cmd": "print('poll: export cell completion state')",
+      "exit_code": 0,
+      "seconds": 240.02859498999896,
+      "output": "",
+      "image": ""
+    },
+    {
+      "cmd": "print('poll export')",
+      "exit_code": 0,
+      "seconds": 188.03862316801678,
+      "output": "poll export",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 1089,
+      "fenced": true,
+      "text_chars": 720,
+      "thinking_chars": 1984,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612390.6194685
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 1699,
+      "fenced": true,
+      "text_chars": 253,
+      "thinking_chars": 551,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612415.618227
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 706,
+      "fenced": true,
+      "text_chars": 213,
+      "thinking_chars": 419,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612422.0817356
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 839,
+      "fenced": true,
+      "text_chars": 153,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612429.0696723
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 1292,
+      "fenced": true,
+      "text_chars": 375,
+      "thinking_chars": 424,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612446.990889
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 1828,
+      "fenced": true,
+      "text_chars": 409,
+      "thinking_chars": 486,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612474.7387285
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 389,
+      "fenced": true,
+      "text_chars": 288,
+      "thinking_chars": 507,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612507.7880905
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 307,
+      "fenced": true,
+      "text_chars": 312,
+      "thinking_chars": 472,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612513.6070068
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 855,
+      "fenced": true,
+      "text_chars": 319,
+      "thinking_chars": 538,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612525.526303
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 1376,
+      "fenced": true,
+      "text_chars": 394,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612568.7421453
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 421,
+      "fenced": true,
+      "text_chars": 256,
+      "thinking_chars": 473,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612609.2323673
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 1241,
+      "fenced": true,
+      "text_chars": 432,
+      "thinking_chars": 851,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612622.4414802
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 1428,
+      "fenced": true,
+      "text_chars": 273,
+      "thinking_chars": 1609,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612680.2763588
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 61,
+      "fenced": true,
+      "text_chars": 94,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789612922.0088773
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 67,
+      "fenced": true,
+      "text_chars": 90,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613164.6162207
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch files under /home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15/constant/triSurface, so there is no partition to check",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15/constant/triSurface: refused: no .stl files in /home/qiuzi/.openreynolds-buildup/work/T15-20260917-023251-722f/t15/constant/triSurface. A patch set is one STL per patch in constant/triSurface; cad_convert.py writes them.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "the backlash at the pitch line, measured between the two meshed gear patches, at the engaged tooth pair",
+      "measured": null
+    },
+    {
+      "property": "how many cells span the backlash gap, counted on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the oil volume, against the cavity volume minus both gear volumes",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 15,
+    "steps": 14,
+    "seconds": 985.1,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

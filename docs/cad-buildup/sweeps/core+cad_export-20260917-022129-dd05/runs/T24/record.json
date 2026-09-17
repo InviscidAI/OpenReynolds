@@ -1,0 +1,621 @@
+{
+  "run_id": "20260917-025508-c90c",
+  "case": "T24",
+  "arm": "core",
+  "model": "gpt-5.6-sol",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T24-20260917-025508-c90c",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T24-20260917-025508-c90c/t24",
+  "started_at": "2026-09-17T02:55:09",
+  "ended_at": "2026-09-17T02:59:20",
+  "seconds": 246.4,
+  "n_turns": 21,
+  "n_steps": 19,
+  "first_mesh_step": 9,
+  "mesh_exists": true,
+  "checkmesh_ok": true,
+  "usd": 0.6155,
+  "given": [
+    "b123d_api.md",
+    "cad_export.py"
+  ],
+  "tokens": {
+    "input": 33452,
+    "cache_read": 407249,
+    "cache_write": 0,
+    "output": 15938
+  },
+  "stopped": "done",
+  "expects": "done",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "import math, sys\nfrom pathlib import Path\nimport build123d as bd\nimport pyvista as pv\n\n# All dimensions are metres.\nR, H = 0.060, 0.200\nD_OUT = 0.040\nPORT_W, PORT_H = 0.020, 0.030\nPORT_Z = 0.040                 # assumed port centre height\nDUCT_EXT, DUCT_INTERNAL = 0.050, 0.035\nSWIRL_ANGLE = math.radians(15.0)\n\nchamber = bd.Cylinder(R, H)\nducts = []\nduct_axes = []\nfor i in range(4):\n    theta = i * math.pi / 2\n    er = (math.cos(theta), math.sin(theta))\n    et = (-math.sin(theta), math.cos(theta))\n    d = (math.cos(SWIRL_ANGLE)*et[0] - math.sin(SWIRL_ANGLE)*er[0],\n         math.cos(SWIRL_ANGLE)*et[1] - math.sin(SWIRL_ANGLE)*er[1])\n    pwall = (R*er[0], R*er[1])\n    pin = (pwall[0] - DUCT_EXT*d[0], pwall[1] - DUCT_EXT*d[1])\n    phi = math.degrees(math.atan2(d[1], d[0]))\n    blank = bd.Box(DUCT_EXT + DUCT_INTERNAL, PORT_W, PORT_H,\n                   align=(bd.Align.MIN, bd.Align.CENTER, bd.Align.CENTER))\n    duct = bd.Pos(pin[0], pin[1], PORT_Z) * bd.Rot(0, 0, phi) * blank\n    ducts.append(duct)\n    duct_axes.append((theta, d, pwall, pin, phi))\n\nfluid = chamber\nfor duct in ducts:\n    fluid = fluid + duct\n\nbd.export_stl(fluid, \"coarse-fluid-preview.stl\", tolerance=8e-4, angular_tolerance=0.25)\nmesh = pv.read(\"coarse-fluid-preview.stl\")\nplotter = pv.Plotter(off_screen=True, window_size=(900, 700))\nplotter.add_mesh(mesh, color=\"lightsteelblue\", show_edges=True)\nplotter.view_isometric(); plotter.camera.zoom(1.15)\nplotter.show(screenshot=\"coarse-fluid-preview.png\")\nprint(f\"fluid solids={len(fluid.solids())}, volume={fluid.volume:.9g} m^3\")\nprint(f\"extent={tuple(round(x,6) for x in fluid.bounding_box().min.to_tuple())} to {tuple(round(x,6) for x in fluid.bounding_box().max.to_tuple())} m\")\nfor i, (_, d, pwall, pin, phi) in enumerate(duct_axes, 1):\n    measured = math.degrees(math.acos(abs(d[0]*(-math.sin((i-1)*math.pi/2)) + d[1]*math.cos((i-1)*math.pi/2))))\n    print(f\"inlet{i}: external axis length={math.dist(pin,pwall)*1000:.3f} mm (asked 50), off tangent={measured:.3f} deg (asked 15), axis azimuth={phi:.3f} deg\")\nprint(\"preview: coarse-fluid-preview.png\")",
+      "exit_code": 0,
+      "seconds": 2.7586649940058123,
+      "output": "fluid solids=1, volume=0.00240479736 m^3\nextent=(-0.0826, -0.0826, -0.1) to (0.0826, 0.0826, 0.1) m\ninlet1: external axis length=50.000 mm (asked 50), off tangent=15.000 deg (asked 15), axis azimuth=105.000 deg\ninlet2: external axis length=50.000 mm (asked 50), off tangent=15.000 deg (asked 15), axis azimuth=-165.000 deg\ninlet3: external axis length=50.000 mm (asked 50), off tangent=15.000 deg (asked 15), axis azimuth=-75.000 deg\ninlet4: external axis length=50.000 mm (asked 50), off tangent=15.000 deg (asked 15), axis azimuth=15.000 deg\npreview: coarse-fluid-preview.png\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-17 02:55:42.286 (   0.333s) [    7C5B156EF780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 02:55:42.287 (   0.333s) [    7C5B156EF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 02:55:42.300 (   0.346s) [    7C5B156EF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_2006501/776316839.py:41: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  plotter.show(screenshot=\"coarse-fluid-preview.png\")\n/tmp/ipykernel_2006501/776316839.py:43: DeprecationWarning: to_tuple is deprecated and will be removed in a future version.  Use 'tuple(Vector)' instead.\n  print(f\"extent={tuple(round(x,6) for x in fluid.bounding_box().min.to_tuple())} to {tuple(round(x,6) for x in fluid.bounding_box().max.to_tuple())} m\")",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "import subprocess, inspect\ntext = subprocess.run([\"grep\", \"-n\", \"split_by_perimeter\\|split.*perimeter\\|make_splitter\", \".reference/b123d_api.md\"], capture_output=True, text=True).stdout\nprint(text if text else \"No perimeter split entry in reading list\")\nfor name in [\"split_by_perimeter\", \"split\"]:\n    obj = getattr(bd.Shape, name, None)\n    if obj:\n        print(name, inspect.signature(obj))\n        print((inspect.getdoc(obj) or \"\")[:900])",
+      "exit_code": 0,
+      "seconds": 0.050814486981835216,
+      "output": "No perimeter split entry in reading list\nsplit_by_perimeter (self, perimeter: 'Edge | Wire', keep: 'Keep' = <Keep.INSIDE>)\nsplit_by_perimeter\n\nDivide the faces of this object into those within the perimeter\nand those outside the perimeter.\n\nNote: this method may fail if the perimeter intersects shape edges.\n\nArgs:\n    perimeter (Union[Edge,Wire]): closed perimeter\n    keep (Keep, optional): which object(s) to return. Defaults to Keep.INSIDE.\n\nRaises:\n    ValueError: perimeter must be closed\n    ValueError: keep must be one of Keep.INSIDE|OUTSIDE|BOTH\n\nReturns:\n    Union[Face | Shell | ShapeList[Face] | None,\n    Tuple[Face | Shell | ShapeList[Face] | None]: The result of the split operation.\n\n    - **Keep.INSIDE**: Returns the inside part as a `Shell` or `Face`, or `None`\n      if no inside part is found.\n    - **Keep.OUTSIDE**: Returns the outside part as a `Shell` or `Face`, or `None`\n      if no outside part is found.\n    - **Keep.BOTH**: Returns a tuple `(inside, outside)` where each element is\n      eit\nsplit (self, tool: 'TrimmingTool', keep: 'Keep' = <Keep.TOP>)\nsplit\n\nSplit this shape by the provided plane or face.\n\nArgs:\n    surface (Plane | Face): surface to segment shape\n    keep (Keep, optional): which object(s) to save. Defaults to Keep.TOP.\n\nReturns:\n    Shape: result of split\nReturns:\n    Self | list[Self] | None,\n    Tuple[Self | list[Self] | None]: The result of the split operation.\n\n    - **Keep.TOP**: Returns the top as a `Self` or `list[Self]`, or `None`\n      if no top is found.\n    - **Keep.BOTTOM**: Returns the bottom as a `Self` or `list[Self]`, or `None`\n      if no bottom is found.\n    - **Keep.BOTH**: Returns a tuple `(inside, outside)` where each element is\n      either a `Self` or `list[Self]`, or `None` if no corresponding part is found.\n\n<>:2: SyntaxWarning: invalid escape sequence '\\|'\n<>:2: SyntaxWarning: invalid escape sequence '\\|'\n/tmp/ipykernel_2006501/365107891.py:2: SyntaxWarning: invalid escape sequence '\\|'\n  text = subprocess.run([\"grep\", \"-n\", \"split_by_perimeter\\|split.*perimeter\\|make_splitter\", \".reference/b123d_api.md\"], capture_output=True, text=True).stdout",
+      "image": ""
+    },
+    {
+      "cmd": "import inspect\nprint(\"Shell\", inspect.signature(bd.Shell))\nprint(\"Solid\", inspect.signature(bd.Solid))\nprint(\"Solid.make_solid\", inspect.signature(bd.Solid.make_solid))\nprint(\"Wire.make_circle\", inspect.signature(bd.Wire.make_circle))",
+      "exit_code": 1,
+      "seconds": 0.201228675985476,
+      "output": "Shell (obj: 'TopoDS_Shell | Face | Iterable[Face] | None' = None, label: 'str' = '', color: 'Color | None' = None, parent: 'Compound | None' = None)\nSolid (obj: 'TopoDS_Solid | Shell | None' = None, label: 'str' = '', color: 'Color | None' = None, material: 'str' = '', joints: 'dict[str, Joint] | None' = None, parent: 'Compound | None' = None)\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[3]\u001b[39m\u001b[32m, line 4\u001b[39m\n\u001b[32m      1\u001b[39m \u001b[38;5;28;01mimport\u001b[39;00m inspect\n\u001b[32m      2\u001b[39m print(\u001b[33m\"Shell\"\u001b[39m, inspect.signature(bd.Shell))\n\u001b[32m      3\u001b[39m print(\u001b[33m\"Solid\"\u001b[39m, inspect.signature(bd.Solid))\n\u001b[32m----> \u001b[39m\u001b[32m4\u001b[39m print(\u001b[33m\"Solid.make_solid\"\u001b[39m, inspect.signature(bd.Solid.make_solid))\n\u001b[32m      5\u001b[39m print(\u001b[33m\"Wire.make_circle\"\u001b[39m, inspect.signature(bd.Wire.make_circle))\n\n\u001b[31mAttributeError\u001b[39m: type object 'Solid' has no attribute 'make_solid'",
+      "image": ""
+    },
+    {
+      "cmd": "# Rebuild with the vessel floor at z=0.\nchamber = bd.Cylinder(R, H, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nducts = []\nfor _, d, pwall, pin, phi in duct_axes:\n    blank = bd.Box(DUCT_EXT + DUCT_INTERNAL, PORT_W, PORT_H,\n                   align=(bd.Align.MIN, bd.Align.CENTER, bd.Align.CENTER))\n    ducts.append(bd.Pos(pin[0], pin[1], PORT_Z) * bd.Rot(0, 0, phi) * blank)\nfluid_unsplit = chamber\nfor duct in ducts:\n    fluid_unsplit = fluid_unsplit + duct\n\nz_faces = [f for f in fluid_unsplit.faces() if isinstance(f.geom_type, bd.GeomType.__class__) or True]\ntop_whole = [f for f in fluid_unsplit.faces()\n             if f.geom_type == bd.GeomType.PLANE and abs(f.center().Z-H) < 1e-8\n             and abs(f.normal_at().Z) > 0.999][0]\noutlet_perimeter = bd.Wire.make_circle(D_OUT/2, plane=bd.Plane.XY.offset(H))\noutlet_face, top_face = top_whole.split_by_perimeter(outlet_perimeter, keep=bd.Keep.BOTH)\nother_faces = [f for f in fluid_unsplit.faces() if not f.is_same(top_whole)]\nfluid = bd.Solid(bd.Shell(other_faces + [outlet_face, top_face]))\nprint(f\"valid={fluid.is_valid()}, solids={len(fluid.solids())}, shells={len(fluid.shells())}, faces={len(fluid.faces())}\")\nprint(f\"z extent={fluid.bounding_box().min.Z:.6f} to {fluid.bounding_box().max.Z:.6f} m (asked 0 to 0.200)\")\nprint(f\"volume before/after split={fluid_unsplit.volume:.12g} / {fluid.volume:.12g} m^3\")\nprint(f\"outlet diameter from area={2*math.sqrt(outlet_face.area/math.pi)*1000:.3f} mm (asked 40)\")\nprint(f\"top annulus area={top_face.area:.9g} m^2; expected={math.pi*(R*R-(D_OUT/2)**2):.9g}\")",
+      "exit_code": 1,
+      "seconds": 0.10091442300472409,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mTypeError\u001b[39m                                 Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[4]\u001b[39m\u001b[32m, line 20\u001b[39m\n\u001b[32m     16\u001b[39m outlet_perimeter = bd.Wire.make_circle(D_OUT/\u001b[32m2\u001b[39m, plane=bd.Plane.XY.offset(H))\n\u001b[32m     17\u001b[39m outlet_face, top_face = top_whole.split_by_perimeter(outlet_perimeter, keep=bd.Keep.BOTH)\n\u001b[32m     18\u001b[39m other_faces = [f \u001b[38;5;28;01mfor\u001b[39;00m f \u001b[38;5;28;01min\u001b[39;00m fluid_unsplit.faces() \u001b[38;5;28;01mif\u001b[39;00m \u001b[38;5;28;01mnot\u001b[39;00m f.is_same(top_whole)]\n\u001b[32m     19\u001b[39m fluid = bd.Solid(bd.Shell(other_faces + [outlet_face, top_face]))\n\u001b[32m---> \u001b[39m\u001b[32m20\u001b[39m print(f\"valid={fluid.is_valid()}, solids={len(fluid.solids())}, shells={len(fluid.shells())}, faces={len(fluid.faces())}\")\n\u001b[32m     21\u001b[39m print(f\"z extent={fluid.bounding_box().min.Z:.6f} to {fluid.bounding_box().max.Z:.6f} m (asked 0 to 0.200)\")\n\u001b[32m     22\u001b[39m print(f\"volume before/after split={fluid_unsplit.volume:.12g} / {fluid.volume:.12g} m^3\")\n\u001b[32m     23\u001b[39m print(f\"outlet diameter from area={\u001b[32m2\u001b[39m*math.sqrt(outlet_face.area/math.pi)*\u001b[32m1000\u001b[39m:.3f} mm (asked 40)\")\n\n\u001b[31mTypeError\u001b[39m: 'bool' object is not callable",
+      "image": ""
+    },
+    {
+      "cmd": "# Rebuild with the vessel floor at z=0 and split the flush top boundary.\nchamber = bd.Cylinder(R, H, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nducts = []\nfor _, d, pwall, pin, phi in duct_axes:\n    blank = bd.Box(DUCT_EXT + DUCT_INTERNAL, PORT_W, PORT_H,\n                   align=(bd.Align.MIN, bd.Align.CENTER, bd.Align.CENTER))\n    ducts.append(bd.Pos(pin[0], pin[1], PORT_Z) * bd.Rot(0, 0, phi) * blank)\nfluid_unsplit = chamber\nfor duct in ducts:\n    fluid_unsplit = fluid_unsplit + duct\n\ntop_whole = [f for f in fluid_unsplit.faces()\n             if f.geom_type == bd.GeomType.PLANE and abs(f.center().Z-H) < 1e-8\n             and abs(f.normal_at().Z) > 0.999][0]\noutlet_perimeter = bd.Wire.make_circle(D_OUT/2, plane=bd.Plane.XY.offset(H))\noutlet_face, top_face = top_whole.split_by_perimeter(outlet_perimeter, keep=bd.Keep.BOTH)\nother_faces = [f for f in fluid_unsplit.faces() if not f.is_same(top_whole)]\nfluid = bd.Solid(bd.Shell(other_faces + [outlet_face, top_face]))\nprint(f\"valid={fluid.is_valid}, solids={len(fluid.solids())}, shells={len(fluid.shells())}, faces={len(fluid.faces())}\")\nprint(f\"z extent={fluid.bounding_box().min.Z:.6f} to {fluid.bounding_box().max.Z:.6f} m (asked 0 to 0.200)\")\nprint(f\"volume before/after split={fluid_unsplit.volume:.12g} / {fluid.volume:.12g} m^3\")\nprint(f\"outlet diameter from area={2*math.sqrt(outlet_face.area/math.pi)*1000:.3f} mm (asked 40)\")\nprint(f\"top annulus area={top_face.area:.9g} m^2; expected={math.pi*(R*R-(D_OUT/2)**2):.9g}\")",
+      "exit_code": 0,
+      "seconds": 0.10085449300822802,
+      "output": "valid=True, solids=1, shells=1, faces=28\nz extent=0.000000 to 0.200000 m (asked 0 to 0.200)\nvolume before/after split=0.00240479736391 / 0.00240479736391 m^3\noutlet diameter from area=40.000 mm (asked 40)\ntop annulus area=0.0100530965 m^2; expected=0.0100530965",
+      "image": ""
+    },
+    {
+      "cmd": "for j, f in enumerate(fluid.faces()):\n    c, n = f.center(), f.normal_at()\n    print(f\"{j:02d} {str(f.geom_type):9s} A={f.area:.8f} C=({c.X:+.4f},{c.Y:+.4f},{c.Z:+.4f}) N=({n.X:+.3f},{n.Y:+.3f},{n.Z:+.3f})\")",
+      "exit_code": 0,
+      "seconds": 0.050629156990908086,
+      "output": "00 GeomType.CYLINDER A=0.06837655 C=(-0.0600,+0.0000,+0.1000) N=(-1.000,+0.000,+0.000)\n01 GeomType.PLANE A=0.00119042 C=(+0.0660,-0.0145,+0.0250) N=(-0.000,-0.000,-1.000)\n02 GeomType.PLANE A=0.01130973 C=(+0.0000,-0.0000,+0.0000) N=(-0.000,-0.000,-1.000)\n03 GeomType.PLANE A=0.00033608 C=(+0.0552,+0.0349,+0.0400) N=(-0.259,+0.966,+0.000)\n04 GeomType.PLANE A=0.00119042 C=(+0.0660,-0.0145,+0.0550) N=(+0.000,+0.000,+1.000)\n05 GeomType.PLANE A=0.00088410 C=(+0.0595,-0.0367,+0.0400) N=(-0.966,-0.259,+0.000)\n06 GeomType.PLANE A=0.00033608 C=(-0.0349,+0.0552,+0.0400) N=(-0.966,-0.259,+0.000)\n07 GeomType.PLANE A=0.00119042 C=(+0.0145,+0.0660,+0.0250) N=(-0.000,-0.000,-1.000)\n08 GeomType.PLANE A=0.00119042 C=(+0.0145,+0.0660,+0.0550) N=(+0.000,+0.000,+1.000)\n09 GeomType.PLANE A=0.00088410 C=(+0.0367,+0.0595,+0.0400) N=(+0.259,-0.966,-0.000)\n10 GeomType.PLANE A=0.00033608 C=(-0.0552,-0.0349,+0.0400) N=(+0.259,-0.966,+0.000)\n11 GeomType.PLANE A=0.00119042 C=(-0.0660,+0.0145,+0.0250) N=(+0.000,-0.000,-1.000)\n12 GeomType.PLANE A=0.00119042 C=(-0.0660,+0.0145,+0.0550) N=(-0.000,+0.000,+1.000)\n13 GeomType.PLANE A=0.00088410 C=(-0.0595,+0.0367,+0.0400) N=(+0.966,+0.259,-0.000)\n14 GeomType.PLANE A=0.00033608 C=(+0.0349,-0.0552,+0.0400) N=(+0.966,+0.259,-0.000)\n15 GeomType.PLANE A=0.00119042 C=(-0.0145,-0.0660,+0.0550) N=(+0.000,-0.000,+1.000)\n16 GeomType.PLANE A=0.00088410 C=(-0.0367,-0.0595,+0.0400) N=(-0.259,+0.966,+0.000)\n17 GeomType.PLANE A=0.00119042 C=(-0.0145,-0.0660,+0.0250) N=(-0.000,+0.000,-1.000)\n18 GeomType.PLANE A=0.00255000 C=(+0.0716,-0.0047,+0.0400) N=(+0.966,+0.259,-0.000)\n19 GeomType.PLANE A=0.00060000 C=(+0.0729,-0.0483,+0.0400) N=(+0.259,-0.966,-0.000)\n20 GeomType.PLANE A=0.00255000 C=(+0.0047,+0.0716,+0.0400) N=(-0.259,+0.966,+0.000)\n21 GeomType.PLANE A=0.00060000 C=(+0.0483,+0.0729,+0.0400) N=(+0.966,+0.259,-0.000)\n22 GeomType.PLANE A=0.00255000 C=(-0.0716,+0.0047,+0.0400) N=(-0.966,-0.259,+0.000)\n23 GeomType.PLANE A=0.00060000 C=(-0.0729,+0.0483,+0.0400) N=(-0.259,+0.966,-0.000)\n24 GeomType.PLANE A=0.00255000 C=(-0.0047,-0.0716,+0.0400) N=(+0.259,-0.966,-0.000)\n25 GeomType.PLANE A=0.00060000 C=(-0.0483,-0.0729,+0.0400) N=(-0.966,-0.259,+0.000)\n26 GeomType.PLANE A=0.01005310 C=(+0.0000,-0.0000,+0.2000) N=(+0.000,+0.000,+1.000)\n27 GeomType.PLANE A=0.00125664 C=(-0.0000,-0.0000,+0.2000) N=(+0.000,+0.000,+1.000)",
+      "image": ""
+    },
+    {
+      "cmd": "import sys\nsys.path.insert(0, \".reference\")\nfrom cad_export import export_patches\n\nDUCT_INTERNAL = R * math.sin(SWIRL_ANGLE)\nchamber = bd.Cylinder(R, H, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))\nducts = []\nfor _, d, pwall, pin, phi in duct_axes:\n    blank = bd.Box(DUCT_EXT + DUCT_INTERNAL, PORT_W, PORT_H,\n                   align=(bd.Align.MIN, bd.Align.CENTER, bd.Align.CENTER))\n    ducts.append(bd.Pos(pin[0], pin[1], PORT_Z) * bd.Rot(0, 0, phi) * blank)\nfluid_unsplit = chamber\nfor duct in ducts:\n    fluid_unsplit = fluid_unsplit + duct\n\ntop_whole = [f for f in fluid_unsplit.faces() if f.geom_type == bd.GeomType.PLANE\n             and abs(f.center().Z-H) < 1e-8 and f.normal_at().Z > 0.999][0]\noutlet_perimeter = bd.Wire.make_circle(D_OUT/2, plane=bd.Plane.XY.offset(H))\noutlet_face, top_face = top_whole.split_by_perimeter(outlet_perimeter, keep=bd.Keep.BOTH)\nfluid = bd.Solid(bd.Shell([f for f in fluid_unsplit.faces() if not f.is_same(top_whole)] + [outlet_face, top_face]))\n\nfaces = list(fluid.faces())\ncylinder_wall = [f for f in faces if f.geom_type == bd.GeomType.CYLINDER]\nfloor_faces = [f for f in faces if f.geom_type == bd.GeomType.PLANE and f.normal_at().Z < -0.999 and abs(f.center().Z) < 1e-8]\ntop_faces = [f for f in faces if f.is_same(top_face)]\noutlet_faces = [f for f in faces if f.is_same(outlet_face)]\nreserved = cylinder_wall + floor_faces + top_faces + outlet_faces\ninlet_faces = [[] for _ in range(4)]\nduct_wall_faces = [[] for _ in range(4)]\nfor f in faces:\n    if any(f.is_same(g) for g in reserved):\n        continue\n    c = f.center(); n = f.normal_at()\n    candidates = []\n    for i, (_, d, _, pin, _) in enumerate(duct_axes):\n        qdir = (-d[1], d[0])\n        rx, ry = c.X-pin[0], c.Y-pin[1]\n        s, q, zz = rx*d[0]+ry*d[1], rx*qdir[0]+ry*qdir[1], c.Z-PORT_Z\n        plane_error = min(abs(s), abs(s-(DUCT_EXT+DUCT_INTERNAL)),\n                          abs(abs(q)-PORT_W/2), abs(abs(zz)-PORT_H/2))\n        candidates.append((plane_error, i, s, n.X*d[0]+n.Y*d[1]))\n    err, i, s, nd = min(candidates)\n    if err > 1e-6:\n        raise RuntimeError(f\"Unclassified face at {tuple(f.center())}, local plane error {err}\")\n    if abs(s) < 1e-6 and nd < -0.999:\n        inlet_faces[i].append(f)\n    else:\n        duct_wall_faces[i].append(f)\n\npatches = {f\"inlet{i+1}\": inlet_faces[i] for i in range(4)}\npatches.update({\"outlet\": outlet_faces, \"cylinderWall\": cylinder_wall,\n                \"floor\": floor_faces, \"top\": top_faces})\npatches.update({f\"duct{i+1}Walls\": duct_wall_faces[i] for i in range(4)})\nPath(\"constant/triSurface\").mkdir(parents=True, exist_ok=True)\nexport_patches(fluid, patches, tolerance=2.5e-4)\nprint(f\"valid={fluid.is_valid}, faces classified={sum(len(v) for v in patches.values())}/{len(faces)}\")\nfor name, fs in patches.items():\n    print(f\"{name:14s}: faces={len(fs):2d}, area={sum(f.area for f in fs):.9g} m^2\")",
+      "exit_code": 0,
+      "seconds": 0.15110789000755176,
+      "output": "constant/triSurface  <-  28 faces, one tessellation\n  tolerance           0.00025 m chord deviation, 0.1 rad angular\n    inlet1                    1 faces          2 triangles  0.0006 m^2  -> inlet1.stl\n    inlet2                    1 faces          2 triangles  0.0006 m^2  -> inlet2.stl\n    inlet3                    1 faces          2 triangles  0.0006 m^2  -> inlet3.stl\n    inlet4                    1 faces          2 triangles  0.0006 m^2  -> inlet4.stl\n    outlet                    1 faces        124 triangles  0.00125612 m^2  -> outlet.stl\n    cylinderWall              1 faces        374 triangles  0.0707488 m^2  -> cylinderWall.stl\n    floor                     1 faces        124 triangles  0.011305 m^2  -> floor.stl\n    top                       1 faces        252 triangles  0.0100489 m^2  -> top.stl\n    duct1Walls               12 faces        130 triangles  0.0114484 m^2  -> duct1Walls.stl\n    duct2Walls                3 faces          6 triangles  0.00308864 m^2  -> duct2Walls.stl\n    duct3Walls                2 faces          4 triangles  0.00284997 m^2  -> duct3Walls.stl\n    duct4Walls                3 faces          6 triangles  0.00308864 m^2  -> duct4Walls.stl\n  extent              0.1652 x 0.1652 x 0.2 m   <- metres, so check these against the request\n  union               1,028 triangles, 0 open edges, 0 flipped, 0 non-manifold\n  location_in_mesh    not given\n  manifest            constant/triSurface/patches.json\nvalid=True, faces classified=28/28\ninlet1        : faces= 1, area=0.0006 m^2\ninlet2        : faces= 1, area=0.0006 m^2\ninlet3        : faces= 1, area=0.0006 m^2\ninlet4        : faces= 1, area=0.0006 m^2\noutlet        : faces= 1, area=0.00125663706 m^2\ncylinderWall  : faces= 1, area=0.0707561329 m^2\nfloor         : faces= 1, area=0.0113097336 m^2\ntop           : faces= 1, area=0.0100530965 m^2\nduct1Walls    : faces=12, area=0.0114447404 m^2\nduct2Walls    : faces= 3, area=0.00308863932 m^2\nduct3Walls    : faces= 2, area=0.00284997283 m^2\nduct4Walls    : faces= 3, area=0.00308863932 m^2",
+      "image": ""
+    },
+    {
+      "cmd": "# Diagnose local ownership of non-reserved planar faces before correcting patch tags.\nfor j, f in enumerate(faces):\n    if any(f.is_same(g) for g in reserved) or any(f.is_same(g) for group in inlet_faces for g in group):\n        continue\n    c=f.center(); n=f.normal_at(); rows=[]\n    for i, (_, d, _, pin, _) in enumerate(duct_axes):\n        qdir=(-d[1],d[0]); rx,ry=c.X-pin[0],c.Y-pin[1]\n        s=rx*d[0]+ry*d[1]; q=rx*qdir[0]+ry*qdir[1]\n        inside=(-1e-6 <= s <= DUCT_EXT+DUCT_INTERNAL+1e-6 and abs(q)<=PORT_W/2+1e-6)\n        align=max(abs(n.X*d[0]+n.Y*d[1]),abs(n.X*qdir[0]+n.Y*qdir[1]),abs(n.Z))\n        if inside: rows.append((i+1,round(s,5),round(q,5),round(align,3)))\n    print(j, tuple(round(x,4) for x in c), \"candidates\", rows)",
+      "exit_code": 0,
+      "seconds": 0.05067711599986069,
+      "output": "1 (0.0673, -0.0216, 0.025) candidates [(1, 0.02721, -0.0015, 1.0)]\n3 (0.0618, 0.0166, 0.04) candidates [(1, 0.06553, -0.00602, 1.0)]\n4 (0.0673, -0.0216, 0.055) candidates [(1, 0.02721, -0.0015, 1.0)]\n5 (0.0595, -0.0367, 0.04) candidates [(1, 0.01473, 0.01, 1.0)]\n6 (-0.0166, 0.0618, 0.04) candidates [(2, 0.06553, -0.00602, 1.0)]\n7 (0.0216, 0.0673, 0.025) candidates [(2, 0.02721, -0.0015, 1.0)]\n8 (0.0216, 0.0673, 0.055) candidates [(2, 0.02721, -0.0015, 1.0)]\n9 (0.0367, 0.0595, 0.04) candidates [(2, 0.01473, 0.01, 1.0)]\n10 (-0.0618, -0.0166, 0.04) candidates [(3, 0.06553, -0.00602, 1.0)]\n11 (-0.0673, 0.0216, 0.025) candidates [(3, 0.02721, -0.0015, 1.0)]\n12 (-0.0673, 0.0216, 0.055) candidates [(3, 0.02721, -0.0015, 1.0)]\n13 (-0.0595, 0.0367, 0.04) candidates [(3, 0.01473, 0.01, 1.0)]\n14 (0.0166, -0.0618, 0.04) candidates [(4, 0.06553, -0.00602, 1.0)]\n15 (-0.0216, -0.0673, 0.055) candidates [(4, 0.02721, -0.0015, 1.0)]\n16 (-0.0367, -0.0595, 0.04) candidates [(4, 0.01473, 0.01, 1.0)]\n17 (-0.0216, -0.0673, 0.025) candidates [(4, 0.02721, -0.0015, 1.0)]\n18 (0.0741, -0.0141, 0.04) candidates [(1, 0.03276, -0.01, 1.0)]\n20 (0.0141, 0.0741, 0.04) candidates [(2, 0.03276, -0.01, 1.0)]\n22 (-0.0741, 0.0141, 0.04) candidates [(3, 0.03276, -0.01, 1.0)]\n24 (-0.0141, -0.0741, 0.04) candidates [(4, 0.03276, -0.01, 1.0)]",
+      "image": ""
+    },
+    {
+      "cmd": "inlet_faces = [[] for _ in range(4)]\nduct_wall_faces = [[] for _ in range(4)]\nfor f in faces:\n    if any(f.is_same(g) for g in reserved):\n        continue\n    c, n = f.center(), f.normal_at()\n    owners=[]\n    for i, (_, d, _, pin, _) in enumerate(duct_axes):\n        qdir=(-d[1],d[0]); rx,ry=c.X-pin[0],c.Y-pin[1]\n        s=rx*d[0]+ry*d[1]; q=rx*qdir[0]+ry*qdir[1]\n        if -1e-6 <= s <= DUCT_EXT+DUCT_INTERNAL+1e-6 and abs(q) <= PORT_W/2+1e-6:\n            owners.append((i,s,n.X*d[0]+n.Y*d[1]))\n    if len(owners) != 1:\n        raise RuntimeError(f\"Face ownership is not unique: {owners}\")\n    i,s,nd=owners[0]\n    (inlet_faces[i] if abs(s)<1e-6 and nd < -0.999 else duct_wall_faces[i]).append(f)\npatches = {f\"inlet{i+1}\": inlet_faces[i] for i in range(4)}\npatches.update({\"outlet\": outlet_faces, \"cylinderWall\": cylinder_wall,\n                \"floor\": floor_faces, \"top\": top_faces})\npatches.update({f\"duct{i+1}Walls\": duct_wall_faces[i] for i in range(4)})\nexport_patches(fluid, patches, tolerance=2.5e-4)\nprint(\"corrected patch symmetry:\")\nfor i in range(4):\n    fs=duct_wall_faces[i]\n    print(f\"duct{i+1}Walls faces={len(fs)}, area={sum(f.area for f in fs):.9g} m^2\")",
+      "exit_code": 0,
+      "seconds": 0.10081346199149266,
+      "output": "constant/triSurface  <-  28 faces, one tessellation\n  tolerance           0.00025 m chord deviation, 0.1 rad angular\n    inlet1                    1 faces          2 triangles  0.0006 m^2  -> inlet1.stl\n    inlet2                    1 faces          2 triangles  0.0006 m^2  -> inlet2.stl\n    inlet3                    1 faces          2 triangles  0.0006 m^2  -> inlet3.stl\n    inlet4                    1 faces          2 triangles  0.0006 m^2  -> inlet4.stl\n    outlet                    1 faces        124 triangles  0.00125612 m^2  -> outlet.stl\n    cylinderWall              1 faces        374 triangles  0.0707488 m^2  -> cylinderWall.stl\n    floor                     1 faces        124 triangles  0.011305 m^2  -> floor.stl\n    top                       1 faces        252 triangles  0.0100489 m^2  -> top.stl\n    duct1Walls                5 faces         38 triangles  0.00511882 m^2  -> duct1Walls.stl\n    duct2Walls                5 faces         36 triangles  0.00511895 m^2  -> duct2Walls.stl\n    duct3Walls                5 faces         36 triangles  0.00511895 m^2  -> duct3Walls.stl\n    duct4Walls                5 faces         36 triangles  0.00511895 m^2  -> duct4Walls.stl\n  extent              0.1652 x 0.1652 x 0.2 m   <- metres, so check these against the request\n  union               1,028 triangles, 0 open edges, 0 flipped, 0 non-manifold\n  location_in_mesh    not given\n  manifest            constant/triSurface/patches.json\ncorrected patch symmetry:\nduct1Walls faces=5, area=0.00511799797 m^2\nduct2Walls faces=5, area=0.00511799797 m^2\nduct3Walls faces=5, area=0.00511799797 m^2\nduct4Walls faces=5, area=0.00511799797 m^2",
+      "image": ""
+    },
+    {
+      "cmd": "import subprocess, textwrap\nPath(\"system\").mkdir(exist_ok=True)\nPath(\"constant\").mkdir(exist_ok=True)\nPath(\"system/controlDict\").write_text(textwrap.dedent('''\nFoamFile { format ascii; class dictionary; object controlDict; }\napplication snappyHexMesh;\nstartFrom startTime; startTime 0; stopAt endTime; endTime 1;\ndeltaT 1; writeControl timeStep; writeInterval 1;\n'''))\nPath(\"system/blockMeshDict\").write_text(textwrap.dedent('''\nFoamFile { format ascii; class dictionary; object blockMeshDict; }\nconvertToMeters 1;\nvertices\n(\n (-0.09 -0.09 -0.005) (0.09 -0.09 -0.005) (0.09 0.09 -0.005) (-0.09 0.09 -0.005)\n (-0.09 -0.09 0.205) (0.09 -0.09 0.205) (0.09 0.09 0.205) (-0.09 0.09 0.205)\n);\nblocks (hex (0 1 2 3 4 5 6 7) (30 30 35) simpleGrading (1 1 1));\nedges ();\nboundary (background { type patch; faces ((0 4 7 3) (1 2 6 5) (0 1 5 4) (3 7 6 2) (0 3 2 1) (4 5 6 7)); });\nmergePatchPairs ();\n'''))\nresult=subprocess.run([\"blockMesh\"], text=True, capture_output=True)\nprint(result.stdout[-2500:]); print(result.stderr[-1000:])\nif result.returncode: raise RuntimeError(\"blockMesh failed\")",
+      "exit_code": 0,
+      "seconds": 0.3516452159965411,
+      "output": "========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : blockMesh\nDate   : Sep 17 2026\nTime   : 02:57:36\nHost   : yc-demo\nPID    : 2009760\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T24-20260917-025508-c90c/t24\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreating block mesh from \"system/blockMeshDict\"\nCreating block edges\nNo non-planar block faces defined\nCreating topology blocks\n\nCreating topology patches - from boundary section\n\nCreating block mesh topology\n\nCheck topology\n\n\tBasic statistics\n\t\tNumber of internal faces : 0\n\t\tNumber of boundary faces : 6\n\t\tNumber of defined boundary faces : 6\n\t\tNumber of undefined boundary faces : 0\n\tChecking patch -> block consistency\n\nCreating block offsets\nCreating merge list (topological search)...\n\nCreating polyMesh from blockMesh\nCreating patches\nCreating cells\nCreating points with scale (1 1 1)\n    Block 0 cell size :\n        i : 0.006 .. 0.006\n        j : 0.006 .. 0.006\n        k : 0.006 .. 0.006\n\nNo patch pairs to merge\n\nWriting polyMesh with 0 cellZones\n----------------\nMesh Information\n----------------\n  boundingBox: (-0.09 -0.09 -0.005) (0.09 0.09 0.205)\n  nPoints: 34596\n  nCells: 31500\n  nFaces: 97500\n  nInternalFaces: 91500\n----------------\nPatches\n----------------\n  patch 0 (start: 91500 size: 6000) name: background\n\nEnd\n\n\n--> FOAM IOWarning :\n    Found [v1012] 'convertToMeters' entry instead of 'scale' in dictionary \"system/blockMeshDict\"\n\n    This keyword is 180 months old.",
+      "image": ""
+    },
+    {
+      "cmd": "surface_names=[f\"inlet{i}\" for i in range(1,5)]+[\"outlet\",\"cylinderWall\",\"floor\",\"top\"]+[f\"duct{i}Walls\" for i in range(1,5)]\ngeom=\"\\n\".join(f'    {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in surface_names)\nrefs=\"\\n\".join(f'        {n} {{ level (1 1); patchInfo {{ type patch; }} }}' for n in surface_names)\nsnappy=f'''FoamFile {{ format ascii; class dictionary; object snappyHexMeshDict; }}\ncastellatedMesh true;\nsnap true;\naddLayers false;\ngeometry\n{{\n{geom}\n}}\ncastellatedMeshControls\n{{\n    maxLocalCells 500000;\n    maxGlobalCells 1000000;\n    minRefinementCells 0;\n    nCellsBetweenLevels 2;\n    features ();\n    refinementSurfaces\n    {{\n{refs}\n    }}\n    resolveFeatureAngle 30;\n    refinementRegions {{}}\n    locationInMesh (0 0 0.1);\n    allowFreeStandingZoneFaces true;\n}}\nsnapControls\n{{\n    nSmoothPatch 5;\n    tolerance 2.0;\n    nSolveIter 50;\n    nRelaxIter 8;\n    nFeatureSnapIter 10;\n    implicitFeatureSnap true;\n    explicitFeatureSnap false;\n    multiRegionFeatureSnap false;\n}}\naddLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 20; }}\nmeshQualityControls\n{{\n    #includeEtc \"caseDicts/mesh/generation/meshQualityDict\"\n}}\nmergeTolerance 1e-6;\n'''\nPath(\"system/snappyHexMeshDict\").write_text(snappy)\nresult=subprocess.run([\"snappyHexMesh\",\"-overwrite\"], text=True, capture_output=True, timeout=230)\nprint(result.stdout[-7000:]); print(result.stderr[-1500:])\nif result.returncode: raise RuntimeError(\"snappyHexMesh failed\")",
+      "exit_code": 1,
+      "seconds": 0.3516343549999874,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh -overwrite\nDate   : Sep 17 2026\nTime   : 02:57:47\nHost   : yc-demo\nPID    : 2010481\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T24-20260917-025508-c90c/t24\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\n\n\n--> FOAM FATAL ERROR: (openfoam-2512)\ncannot find file \"/home/qiuzi/.openreynolds-buildup/work/T24-20260917-025508-c90c/t24/system/fvSchemes\"\n\n    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const\n    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.\n\nFOAM exiting\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mRuntimeError\u001b[39m                              Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[11]\u001b[39m\u001b[32m, line 49\u001b[39m\n\u001b[32m     45\u001b[39m '''\n\u001b[32m     46\u001b[39m Path(\u001b[33m\"system/snappyHexMeshDict\"\u001b[39m).write_text(snappy)\n\u001b[32m     47\u001b[39m result=subprocess.run([\u001b[33m\"snappyHexMesh\"\u001b[39m,\u001b[33m\"-overwrite\"\u001b[39m], text=\u001b[38;5;28;01mTrue\u001b[39;00m, capture_output=\u001b[38;5;28;01mTrue\u001b[39;00m, timeout=\u001b[32m230\u001b[39m)\n\u001b[32m     48\u001b[39m print(result.stdout[-\u001b[32m7000\u001b[39m:]); print(result.stderr[-\u001b[32m1500\u001b[39m:])\n\u001b[32m---> \u001b[39m\u001b[32m49\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m result.returncode: \u001b[38;5;28;01mraise\u001b[39;00m RuntimeError(\u001b[33m\"snappyHexMesh failed\"\u001b[39m)\n\n\u001b[31mRuntimeError\u001b[39m: snappyHexMesh failed",
+      "image": ""
+    },
+    {
+      "cmd": "Path(\"system/fvSchemes\").write_text('FoamFile { format ascii; class dictionary; object fvSchemes; }\\n')\nPath(\"system/fvSolution\").write_text('FoamFile { format ascii; class dictionary; object fvSolution; }\\n')\nsurface_names=[f\"inlet{i}\" for i in range(1,5)]+[\"outlet\",\"cylinderWall\",\"floor\",\"top\"]+[f\"duct{i}Walls\" for i in range(1,5)]\ngeom=\"\\n\".join(f'    {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in surface_names)\nrefs=\"\\n\".join(f'        {n} {{ level (1 1); patchInfo {{ type patch; }} }}' for n in surface_names)\nPath(\"system/snappyHexMeshDict\").write_text(f'''FoamFile {{ format ascii; class dictionary; object snappyHexMeshDict; }}\ncastellatedMesh true; snap true; addLayers false;\ngeometry {{\n{geom}\n}}\ncastellatedMeshControls {{ maxLocalCells 500000; maxGlobalCells 1000000; minRefinementCells 0; nCellsBetweenLevels 2; features (); refinementSurfaces {{\n{refs}\n}} resolveFeatureAngle 30; refinementRegions {{}} locationInMesh (0 0 0.1); allowFreeStandingZoneFaces true; }}\nsnapControls {{ nSmoothPatch 5; tolerance 2.0; nSolveIter 50; nRelaxIter 8; nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}\naddLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 20; }}\nmeshQualityControls {{ #includeEtc \"caseDicts/mesh/generation/meshQualityDict\" }}\nmergeTolerance 1e-6;\n''')\nresult=subprocess.run([\"snappyHexMesh\",\"-overwrite\"], text=True, capture_output=True, timeout=230)\nprint(result.stdout[-7000:]); print(result.stderr[-1500:])\nif result.returncode: raise RuntimeError(\"snappyHexMesh failed\")",
+      "exit_code": 1,
+      "seconds": 0.30192642798647285,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh -overwrite\nDate   : Sep 17 2026\nTime   : 02:57:57\nHost   : yc-demo\nPID    : 2011270\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T24-20260917-025508-c90c/t24\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\n\n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nEntry 'divSchemes' not found in dictionary \"system/fvSchemes\"\n\n\nfile: system/fvSchemes\n\n    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const\n    in file db/dictionary/dictionary.C at line 457.\n\nFOAM exiting\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mRuntimeError\u001b[39m                              Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[12]\u001b[39m\u001b[32m, line 21\u001b[39m\n\u001b[32m     17\u001b[39m mergeTolerance \u001b[32m1e-6\u001b[39m;\n\u001b[32m     18\u001b[39m ''')\n\u001b[32m     19\u001b[39m result=subprocess.run([\u001b[33m\"snappyHexMesh\"\u001b[39m,\u001b[33m\"-overwrite\"\u001b[39m], text=\u001b[38;5;28;01mTrue\u001b[39;00m, capture_output=\u001b[38;5;28;01mTrue\u001b[39;00m, timeout=\u001b[32m230\u001b[39m)\n\u001b[32m     20\u001b[39m print(result.stdout[-\u001b[32m7000\u001b[39m:]); print(result.stderr[-\u001b[32m1500\u001b[39m:])\n\u001b[32m---> \u001b[39m\u001b[32m21\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m result.returncode: \u001b[38;5;28;01mraise\u001b[39;00m RuntimeError(\u001b[33m\"snappyHexMesh failed\"\u001b[39m)\n\n\u001b[31mRuntimeError\u001b[39m: snappyHexMesh failed",
+      "image": ""
+    },
+    {
+      "cmd": "Path(\"system/fvSchemes\").write_text('''FoamFile { format ascii; class dictionary; object fvSchemes; }\nddtSchemes { default Euler; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\nwallDist { method meshWave; }\n''')\nPath(\"system/fvSolution\").write_text('''FoamFile { format ascii; class dictionary; object fvSolution; }\nsolvers { }\n''')\nsurface_names=[f\"inlet{i}\" for i in range(1,5)]+[\"outlet\",\"cylinderWall\",\"floor\",\"top\"]+[f\"duct{i}Walls\" for i in range(1,5)]\ngeom=\"\\n\".join(f'    {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in surface_names)\nrefs=\"\\n\".join(f'        {n} {{ level (1 1); patchInfo {{ type patch; }} }}' for n in surface_names)\nPath(\"system/snappyHexMeshDict\").write_text(f'''FoamFile {{ format ascii; class dictionary; object snappyHexMeshDict; }}\ncastellatedMesh true; snap true; addLayers false;\ngeometry {{ {geom} }}\ncastellatedMeshControls {{ maxLocalCells 500000; maxGlobalCells 1000000; minRefinementCells 0; nCellsBetweenLevels 2; features (); refinementSurfaces {{ {refs} }} resolveFeatureAngle 30; refinementRegions {{}} locationInMesh (0 0 0.1); allowFreeStandingZoneFaces true; }}\nsnapControls {{ nSmoothPatch 5; tolerance 2.0; nSolveIter 50; nRelaxIter 8; nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}\naddLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 20; }}\nmeshQualityControls {{ #includeEtc \"caseDicts/mesh/generation/meshQualityDict\" }}\nmergeTolerance 1e-6;\n''')\nresult=subprocess.run([\"snappyHexMesh\",\"-overwrite\"], text=True, capture_output=True, timeout=230)\nprint(result.stdout[-7000:]); print(result.stderr[-1500:])\nif result.returncode: raise RuntimeError(\"snappyHexMesh failed\")",
+      "exit_code": 1,
+      "seconds": 0.3515984749828931,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : snappyHexMesh -overwrite\nDate   : Sep 17 2026\nTime   : 02:58:07\nHost   : yc-demo\nPID    : 2011645\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T24-20260917-025508-c90c/t24\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nCreate mesh for time = 0\n\nRead mesh in = 0.11 s\n\n\n\n--> FOAM FATAL IO ERROR: (openfoam-2512)\nCannot open etc file \"caseDicts/mesh/generation/meshQualityDict\" while reading dictionary \"system/snappyHexMeshDict/meshQualityControls\"\n\nfile: system/snappyHexMeshDict at line 29.\n\n    From static bool Foam::functionEntries::includeEtcEntry::execute(bool, Foam::dictionary&, Foam::Istream&)\n    in file db/dictionary/functionEntries/includeEtcEntry/includeEtcEntry.C at line 153.\n\nFOAM exiting\n\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mRuntimeError\u001b[39m                              Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[13]\u001b[39m\u001b[32m, line 27\u001b[39m\n\u001b[32m     23\u001b[39m mergeTolerance \u001b[32m1e-6\u001b[39m;\n\u001b[32m     24\u001b[39m ''')\n\u001b[32m     25\u001b[39m result=subprocess.run([\u001b[33m\"snappyHexMesh\"\u001b[39m,\u001b[33m\"-overwrite\"\u001b[39m], text=\u001b[38;5;28;01mTrue\u001b[39;00m, capture_output=\u001b[38;5;28;01mTrue\u001b[39;00m, timeout=\u001b[32m230\u001b[39m)\n\u001b[32m     26\u001b[39m print(result.stdout[-\u001b[32m7000\u001b[39m:]); print(result.stderr[-\u001b[32m1500\u001b[39m:])\n\u001b[32m---> \u001b[39m\u001b[32m27\u001b[39m \u001b[38;5;28;01mif\u001b[39;00m result.returncode: \u001b[38;5;28;01mraise\u001b[39;00m RuntimeError(\u001b[33m\"snappyHexMesh failed\"\u001b[39m)\n\n\u001b[31mRuntimeError\u001b[39m: snappyHexMesh failed",
+      "image": ""
+    },
+    {
+      "cmd": "import os\nprint(\"WM_PROJECT_DIR=\",os.environ.get(\"WM_PROJECT_DIR\"))\nr=subprocess.run([\"find\",os.environ.get(\"WM_PROJECT_DIR\",\"/usr\"),\"-iname\",\"*meshQuality*\",\"-type\",\"f\"],capture_output=True,text=True)\nprint(r.stdout[:5000])",
+      "exit_code": 0,
+      "seconds": 0.20141227598651312,
+      "output": "WM_PROJECT_DIR= /usr/lib/openfoam/openfoam2512\n/usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/bin/improveMeshQuality\n/usr/lib/openfoam/openfoam2512/etc/caseDicts/annotated/meshQualityDict-collapseEdges\n/usr/lib/openfoam/openfoam2512/etc/caseDicts/mesh/generation/meshQualityDict.cfg\n/usr/lib/openfoam/openfoam2512/etc/caseDicts/meshQualityDict\n/usr/lib/openfoam/openfoam2512/etc/templates/compressibleInflowOutflow/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/etc/templates/inflowOutflowRotating/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/etc/templates/closedVolumeRotating/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/etc/templates/inflowOutflow/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/etc/templates/closedVolume/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/applications/utilities/mesh/manipulation/checkMesh/checkMeshQuality.C\n/usr/lib/openfoam/openfoam2512/applications/utilities/mesh/manipulation/checkMesh/checkMeshQuality.H\n/usr/lib/openfoam/openfoam2512/applications/test/zoneDistribute/case1/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/compressible/rhoSimpleFoam/gasMixing/injectorPipe/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/preProcessing/createZeroDirectory/motorBike/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/combustion/reactingFoam/RAS/membrane/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/combustion/XiDyMFoam/annularCombustorTurbine/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/distributedTriSurfaceMesh/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/block_with_curvature/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/addLayersToFaceZone/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/iglooWithFridgesDirectionalRefinement/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/gap_detection/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/opposite_walls/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/airfoilWithLayers/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/sphere_multiRegion/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/insidePoints/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/rotated_block/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/faceZoneRegions/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/motorBike_leakDetection/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/flange/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/snappyHexMesh/aerofoilNACA0012_directionalRefinement/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/foamyHexMesh/mixerVessel/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/foamyHexMesh/simpleShapes/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/foamyHexMesh/blob/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/foamyHexMesh/flange/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/mesh/moveDynamicMesh/rotorDisk_inclined/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/heatTransfer/chtMultiRegionSimpleFoam/cpuCabinet/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/heatTransfer/chtMultiRegionFoam/snappyMultiRegionHeater/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/heatTransfer/chtMultiRegionFoam/snappyMultiRegionHeaterImplicit/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/heatTransfer/buoyantBoussinesqSimpleFoam/iglooWithFridges/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/heatTransfer/buoyantSimpleFoam/simpleCarSolarPanel/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/multiphase/interFoam/RAS/electrostaticDeposition/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/multiphase/interFoam/RAS/motorBike/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/multiphase/interFoam/RAS/DTCHullMoving/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/multiphase/interFoam/RAS/DTCHull/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/multiphase/interFoam/laminar/sloshingCylinder/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/incompressible/lumpedPointMotion/bridge/steady/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/incompressible/lumpedPointMotion/building/steady/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/incompressible/adjointOptimisationFoam/shapeOptimisation/motorBike/system/meshQualityDict\n/usr/lib/openfoam/openfoam2512/tutorials/incompressible/adjointOptimisationFoam/sensitivityMaps/motorBike/system/meshQualityDict\n/usr/l",
+      "image": ""
+    },
+    {
+      "cmd": "# Keep the accepted dictionary setup reproducible, now with the installed quality-template filename.\nPath(\"system/fvSchemes\").write_text('''FoamFile { format ascii; class dictionary; object fvSchemes; }\nddtSchemes { default Euler; } gradSchemes { default Gauss linear; } divSchemes { default none; }\nlaplacianSchemes { default Gauss linear corrected; } interpolationSchemes { default linear; }\nsnGradSchemes { default corrected; } wallDist { method meshWave; }\n''')\nPath(\"system/fvSolution\").write_text('FoamFile { format ascii; class dictionary; object fvSolution; }\\nsolvers {}\\n')\nsurface_names=[f\"inlet{i}\" for i in range(1,5)]+[\"outlet\",\"cylinderWall\",\"floor\",\"top\"]+[f\"duct{i}Walls\" for i in range(1,5)]\ngeom=\"\\n\".join(f'    {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in surface_names)\nrefs=\"\\n\".join(f'        {n} {{ level (1 1); patchInfo {{ type patch; }} }}' for n in surface_names)\nPath(\"system/snappyHexMeshDict\").write_text(f'''FoamFile {{ format ascii; class dictionary; object snappyHexMeshDict; }}\ncastellatedMesh true; snap true; addLayers false;\ngeometry {{ {geom} }}\ncastellatedMeshControls {{ maxLocalCells 500000; maxGlobalCells 1000000; minRefinementCells 0; nCellsBetweenLevels 2; features (); refinementSurfaces {{ {refs} }} resolveFeatureAngle 30; refinementRegions {{}} locationInMesh (0 0 0.1); allowFreeStandingZoneFaces true; }}\nsnapControls {{ nSmoothPatch 5; tolerance 2.0; nSolveIter 50; nRelaxIter 8; nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false; }}\naddLayersControls {{ relativeSizes true; layers {{}} expansionRatio 1; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedialAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 20; }}\nmeshQualityControls {{ #includeEtc \"caseDicts/mesh/generation/meshQualityDict.cfg\" }}\nmergeTolerance 1e-6;\n''')\nresult=subprocess.run([\"snappyHexMesh\",\"-overwrite\"], text=True, capture_output=True, timeout=230)\nprint(result.stdout[-7000:]); print(result.stderr[-1500:])\nif result.returncode: raise RuntimeError(\"snappyHexMesh failed\")",
+      "exit_code": 0,
+      "seconds": 8.85765194002306,
+      "output": "th determinant < 0.001                : 0\n\nIteration 4\nMoving mesh using displacement scaling : min:0.316406 max:1\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 32\n    faces with face-decomposition tet quality < 1e-15      : 54\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\n\nIteration 5\nMoving mesh using displacement scaling : min:0.237305 max:1\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 32\n    faces with face-decomposition tet quality < 1e-15      : 54\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\n\nIteration 6\nMoving mesh using displacement scaling : min:0.177979 max:1\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 32\n    faces with face-decomposition tet quality < 1e-15      : 46\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cell\n... 998 characters cut ...\nes with face-decomposition tet quality < 1e-15      : 54\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\n\nIteration 9\nMoving mesh using displacement scaling : min:0 max:1\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nSuccessfully moved mesh\nMoved mesh in = 0.65 s\n\n\nRepatching faces according to nearest surface ...\nRepatched 140 faces in = 0.04 s\n\n\nEdge intersection testing:\n    Number of edges             : 111436\n    Number of edges to retest   : 48444\n    Number of intersected edges : 15344\nMerging 3420 sets of faces.\n\nEdge intersection testing:\n    Number of edges             : 107920\n    Number of edges to retest   : 13688\n    Number of intersected edges : 11828\n\nUndo iteration 0\n----------------\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\n\nMerging all points on surface that\n- are used by only two boundary faces and\n- make an angle with a cosine of more than 0.866025.\n\nRemoving 3396 straight edge points ...\n\nEdge intersection testing:\n    Number of edges             : 107920\n    Number of edges to retest   : 13688\n    Number of intersected edges : 11828\n\nUndo iteration 0\n----------------\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nSnapped mesh : cells:33108  faces:107920  points:41840\nCells per refinement level:\n    0\t7828\n    1\t25280\nWriting mesh to time constant\nWrote mesh in = 0.09 s.\nMesh snapped in = 6.01 s.\nChecking final mesh ...\nChecking faces in error :\n    non-orthogonality > 65  degrees                        : 0\n    faces with face pyramid volume < 1e-13                 : 0\n    faces with face-decomposition tet quality < 1e-15      : 0\n    faces with concavity > 80  degrees                     : 0\n    faces with skewness > 4   (internal) or 20  (boundary) : 0\n    faces with interpolation weights (0..1)  < 0.05        : 0\n    faces with volume ratio of neighbour cells < 0.01      : 0\n    faces with face twist < 0.02                           : 0\n    faces on cells with determinant < 0.001                : 0\nFinished meshing without any errors\nFinished meshing in = 8.56 s.\nEnd",
+      "image": ""
+    },
+    {
+      "cmd": "cm=subprocess.run([\"checkMesh\"],text=True,capture_output=True)\nprint(cm.stdout[-6500:]); print(cm.stderr[-1000:])\nif cm.returncode: raise RuntimeError(\"checkMesh failed\")\nprint(\"\\nBoundary patch summary:\")\nbtxt=Path(\"constant/polyMesh/boundary\").read_text()\nfor n in surface_names:\n    k=btxt.find(\"\\n    \"+n+\"\\n\")\n    print(n, \"present\" if k>=0 else \"MISSING\")",
+      "exit_code": 0,
+      "seconds": 0.45205424798768945,
+      "output": "/*---------------------------------------------------------------------------*\\\n| =========                 |                                                 |\n| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |\n|  \\\\    /   O peration     | Version:  2512                                  |\n|   \\\\  /    A nd           | Website:  www.openfoam.com                      |\n|    \\\\/     M anipulation  |                                                 |\n\\*---------------------------------------------------------------------------*/\nBuild  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : checkMesh\nDate   : Sep 17 2026\nTime   : 02:58:30\nHost   : yc-demo\nPID    : 2011934\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T24-20260917-025508-c90c/t24\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\n--> FOAM Warning : \n    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)\n    in file db/Time/timeSelector.C at line 284\n    No time specified or available, selecting 'constant'\nCreate mesh for time = constant\n\nCheck mesh...\n\nTime = constant\n\nMesh stats \n    points:           41840\n    faces:            107920\n    internal faces:   96092\n    cells:            33108\n    faces per cell:   6.16202\n    boundary patches: 12\n    point zones:      1\n    face zones:       0\n    cell zones:       0\n\nOverall number of cells of each type:\n    hexahedra:     27112\n    prisms:        3288\n    wedges:        0\n    pyramids:      0\n    tet wedges:    4\n    tetrahedra:    0\n    polyhedra:     2704\n    Breakdown of polyhedra by number of faces:\n        faces   number of cells\n            4   92\n            5   36\n            6   612\n            9   1096\n           12   756\n           15   96\n           18   16\n\nChecking topology...\n    Boundary definition OK.\n    Cell to face addressing OK.\n    Point usage OK.\n    Upper triangular ordering OK.\n    Face vertices OK.\n    Number of regions: 1 (OK).\n\nChecking patch topology for multiply connected surfaces...\n                   Patch    Faces   Points  Surface topology\n                  inlet1       60       77  ok (non-closed singly connected)\n                  inlet2       60       77  ok (non-closed singly connected)\n                  inlet3       60       77  ok (non-closed singly connected)\n                  inlet4       60       77  ok (non-closed singly connected)\n                  outlet      140      169  ok (non-closed singly connected)\n            cylinderWall     6912     7228  ok (non-closed singly connected)\n                   floor     1212     1293  ok (non-closed singly connected)\n                     top     1076     1184  ok (non-closed singly connected)\n              duct1Walls      562      594  ok (non-closed singly connected)\n              duct2Walls      562      594  ok (non-closed singly connected)\n              duct3Walls      562      594  ok (non-closed singly connected)\n              duct4Walls      562      594  ok (non-closed singly connected)\n                    \".*\"    11828    11854      ok (closed singly connected)\n\n\nChecking faceZone topology for multiply connected surfaces...\n    No faceZones found.\n\nChecking basic cellZone addressing...\n    No cellZones found.\n\nChecking basic pointZone addressing...\n               PointZone  PointsBoundingBox\n            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)\n\nChecking geometry...\n    Overall domain bounding box (-0.0826002 -0.0826002 -1.69407e-21) (0.0826002 0.0826002 0.200024)\n    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n    Mesh has 3 solution (non-empty) directions (1 1 1)\n    Boundary openness (3.21702e-17 -3.96433e-16 -2.46543e-16) OK.\n    Max cell openness = 2.99651e-16 OK.\n    Max aspect ratio = 7.28147 OK.\n    Minimum face area = 1.89033e-06. Maximum face area = 4.48552e-05.  Face area magnitudes OK.\n    Min volume = 2.57598e-09. Max volume = 2.77587e-07.  Total volume = 0.00238145.  Cell volumes OK.\n    Mesh non-orthogonality Max: 58.7618 average: 10.6381\n    Non-orthogonality check OK.\n    Face pyramids OK.\n    Max skewness = 2.72914 OK.\n    Coupled point location match (average 0) OK.\n\nMesh OK.\n\nEnd\n\n\n\n\nBoundary patch summary:\ninlet1 present\ninlet2 present\ninlet3 present\ninlet4 present\noutlet present\ncylinderWall present\nfloor present\ntop present\nduct1Walls present\nduct2Walls present\nduct3Walls present\nduct4Walls present",
+      "image": ""
+    },
+    {
+      "cmd": "vtk=subprocess.run([\"foamToVTK\",\"-constant\"],text=True,capture_output=True,timeout=120)\nprint(vtk.stdout[-1800:]); print(vtk.stderr[-500:])\nfiles=list(Path(\"VTK\").rglob(\"*.vtk\"))+list(Path(\"VTK\").rglob(\"*.vtu\"))\nprint(\"VTK files\",[str(x) for x in files[:8]])\nvol=pv.read(str(next(x for x in files if \"boundary\" not in str(x).lower())))\nclip=vol.clip(normal=(1,-1,0), origin=(0,0,0.1), invert=False)\np=pv.Plotter(off_screen=True,window_size=(950,720))\np.add_mesh(clip,style=\"wireframe\",color=\"navy\",line_width=0.6,opacity=0.55)\np.add_mesh(clip.extract_surface(),color=\"lightsteelblue\",opacity=0.35,show_edges=False)\np.view_isometric(); p.camera.zoom(1.25)\np.show(screenshot=\"final-mesh-clipped.png\")\nprint(f\"rendered cells={vol.n_cells}, clipped cells={clip.n_cells} -> final-mesh-clipped.png\")",
+      "exit_code": 0,
+      "seconds": 0.8037404629867524,
+      "output": "Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512\nArch   : \"LSB;label=32;scalar=64\"\nExec   : foamToVTK -constant\nDate   : Sep 17 2026\nTime   : 02:58:41\nHost   : yc-demo\nPID    : 2012035\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nI/O    : uncollated\n--> FOAM Warning : \n    From Foam::fileName Foam::cwd_L()\n    in file POSIX.C at line 554\n    PWD is not the cwd() - reverting to physical description\nCase   : /home/qiuzi/.openreynolds-buildup/work/T24-20260917-025508-c90c/t24\nnProcs : 1\ntrapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\nmemory pool : not available\nfileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)\nallowSystemOperations : Allowing user-supplied system call operations\n\n// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\nCreate time\n\nInitial memory 223680 kB\nCreate mesh for time = constant\n\nVTK mesh topology: 0.12 s, 230584 kB\nTime: constant\n    Internal  : \"VTK/t24_0/internal.vtu\"\n    Boundary  : \"VTK/t24_0/boundary/inlet1.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/inlet2.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/inlet3.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/inlet4.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/outlet.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/cylinderWall.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/floor.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/top.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/duct1Walls.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/duct2Walls.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/duct3Walls.vtp\"\n    Boundary  : \"VTK/t24_0/boundary/duct4Walls.vtp\"\nWrote in 0.1 s, 251456 kB\n\nEnd: 0.22 s, 285784 kB (peak)\n\n\n\nVTK files ['VTK/t24_0/internal.vtu']\nrendered cells=33108, clipped cells=18626 -> final-mesh-clipped.png\n\n\u001b[0m\u001b[33m2026-09-17 02:58:41.898 ( 179.945s) [    7C5B156EF780]vtkTableBasedClipDataSe:1410  WARN| vtkTableBasedClipDataSet (0x64875751b070): Output points used by cells not supported by vtkTableBasedClipDataSet will appear twice. To avoid this, consider using vtkClipDataSet directly\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 02:58:41.919 ( 179.965s) [    7C5B156EF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 02:58:41.920 ( 179.966s) [    7C5B156EF780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_2006501/1431369771.py:9: PyVistaFutureWarning: The default value of `algorithm` for the filter\n`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to\n`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to\nsilence this warning.\n  p.add_mesh(clip.extract_surface(),color=\"lightsteelblue\",opacity=0.35,show_edges=False)\n/tmp/ipykernel_2006501/1431369771.py:11: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  p.show(screenshot=\"final-mesh-clipped.png\")",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "# Direct measurements from the authored faces and solids.\ncb=chamber.bounding_box()\nprint(f\"vessel internal diameter measured={cb.size.X*1000:.3f} mm (asked 120)\")\nprint(f\"vessel height measured={cb.size.Z*1000:.3f} mm (asked 200)\")\nprint(f\"floor/top measured z={cb.min.Z*1000:.3f}/{cb.max.Z*1000:.3f} mm\")\nfor i,fs in enumerate(inlet_faces):\n    f=fs[0]; verts=list(f.vertices()); _,d,pwall,pin,_=duct_axes[i]; qdir=(-d[1],d[0])\n    qs=[v.X*qdir[0]+v.Y*qdir[1] for v in verts]; zs=[v.Z for v in verts]\n    tangent=(-math.sin(i*math.pi/2),math.cos(i*math.pi/2))\n    angle=math.degrees(math.acos(max(-1,min(1,d[0]*tangent[0]+d[1]*tangent[1]))))\n    print(f\"inlet{i+1}: {((max(qs)-min(qs))*1000):.3f} x {((max(zs)-min(zs))*1000):.3f} mm (asked 20 x 30), center z={f.center().Z*1000:.3f} mm, axis={math.dist(pin,pwall)*1000:.3f} mm, angle={angle:.3f} deg\")\nprint(f\"outlet diameter measured={2*math.sqrt(outlet_face.area/math.pi)*1000:.3f} mm (asked 40)\")\nmesh_vol=0.00238145\nprint(f\"CAD/mesh volume={fluid.volume:.9g}/{mesh_vol:.9g} m^3; coarse mesh volume difference={(mesh_vol/fluid.volume-1)*100:.3f}%\")\nprint(\"export_patches signature:\",inspect.signature(export_patches))",
+      "exit_code": 0,
+      "seconds": 0.050790856999810785,
+      "output": "vessel internal diameter measured=120.000 mm (asked 120)\nvessel height measured=200.000 mm (asked 200)\nfloor/top measured z=0.000/200.000 mm\ninlet1: 20.000 x 30.000 mm (asked 20 x 30), center z=40.000 mm, axis=50.000 mm, angle=15.000 deg\ninlet2: 20.000 x 30.000 mm (asked 20 x 30), center z=40.000 mm, axis=50.000 mm, angle=15.000 deg\ninlet3: 20.000 x 30.000 mm (asked 20 x 30), center z=40.000 mm, axis=50.000 mm, angle=15.000 deg\ninlet4: 20.000 x 30.000 mm (asked 20 x 30), center z=40.000 mm, axis=50.000 mm, angle=15.000 deg\noutlet diameter measured=40.000 mm (asked 40)\nCAD/mesh volume=0.00238370823/0.00238145 m^3; coarse mesh volume difference=-0.095%\nexport_patches signature: (shape, patches: 'dict', out_dir='constant/triSurface', *, tolerance: 'float | None' = None, angular_tolerance: 'float' = 0.1, location_in_mesh=None, binary: 'bool' = True, clean: 'bool' = True, quiet: 'bool' = False) -> 'dict'",
+      "image": ""
+    },
+    {
+      "cmd": "export_patches(fluid, patches, tolerance=2.5e-4, location_in_mesh=(0.0,0.0,0.1))\nprint(\"Recorded location_in_mesh=(0,0,0.1) m in the surface manifest; STL geometry unchanged.\")",
+      "exit_code": 0,
+      "seconds": 0.05066047701984644,
+      "output": "constant/triSurface  <-  28 faces, one tessellation\n  tolerance           0.00025 m chord deviation, 0.1 rad angular\n    inlet1                    1 faces          2 triangles  0.0006 m^2  -> inlet1.stl\n    inlet2                    1 faces          2 triangles  0.0006 m^2  -> inlet2.stl\n    inlet3                    1 faces          2 triangles  0.0006 m^2  -> inlet3.stl\n    inlet4                    1 faces          2 triangles  0.0006 m^2  -> inlet4.stl\n    outlet                    1 faces        124 triangles  0.00125612 m^2  -> outlet.stl\n    cylinderWall              1 faces        374 triangles  0.0707488 m^2  -> cylinderWall.stl\n    floor                     1 faces        124 triangles  0.011305 m^2  -> floor.stl\n    top                       1 faces        252 triangles  0.0100489 m^2  -> top.stl\n    duct1Walls                5 faces         38 triangles  0.00511882 m^2  -> duct1Walls.stl\n    duct2Walls                5 faces         36 triangles  0.00511895 m^2  -> duct2Walls.stl\n    duct3Walls                5 faces         36 triangles  0.00511895 m^2  -> duct3Walls.stl\n    duct4Walls                5 faces         36 triangles  0.00511895 m^2  -> duct4Walls.stl\n  extent              0.1652 x 0.1652 x 0.2 m   <- metres, so check these against the request\n  union               1,028 triangles, 0 open edges, 0 flipped, 0 non-manifold\n  location_in_mesh    0, 0, 0.1\n  manifest            constant/triSurface/patches.json\nRecorded location_in_mesh=(0,0,0.1) m in the surface manifest; STL geometry unchanged.",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 1774,
+      "fenced": true,
+      "text_chars": 555,
+      "thinking_chars": 524,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613739.7728503
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 978,
+      "fenced": true,
+      "text_chars": 429,
+      "thinking_chars": 549,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613757.1265724
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 354,
+      "fenced": true,
+      "text_chars": 312,
+      "thinking_chars": 594,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613762.8172147
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 935,
+      "fenced": true,
+      "text_chars": 288,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613774.3740811
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 622,
+      "fenced": true,
+      "text_chars": 297,
+      "thinking_chars": 388,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613780.4759579
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 444,
+      "fenced": true,
+      "text_chars": 341,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613788.7751439
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 2733,
+      "fenced": true,
+      "text_chars": 608,
+      "thinking_chars": 3101,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613824.6755505
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 620,
+      "fenced": true,
+      "text_chars": 473,
+      "thinking_chars": 417,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613833.9745533
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 804,
+      "fenced": true,
+      "text_chars": 269,
+      "thinking_chars": 418,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613844.2587445
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 859,
+      "fenced": true,
+      "text_chars": 360,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613856.0321734
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 726,
+      "fenced": true,
+      "text_chars": 183,
+      "thinking_chars": 462,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613867.202247
+    },
+    {
+      "turn": 12,
+      "steps": 11,
+      "stop_reason": "tool_use",
+      "output_tokens": 720,
+      "fenced": true,
+      "text_chars": 205,
+      "thinking_chars": 446,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613877.5289817
+    },
+    {
+      "turn": 13,
+      "steps": 12,
+      "stop_reason": "tool_use",
+      "output_tokens": 883,
+      "fenced": true,
+      "text_chars": 200,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613887.335443
+    },
+    {
+      "turn": 14,
+      "steps": 13,
+      "stop_reason": "tool_use",
+      "output_tokens": 186,
+      "fenced": true,
+      "text_chars": 226,
+      "thinking_chars": 442,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613890.9183056
+    },
+    {
+      "turn": 15,
+      "steps": 14,
+      "stop_reason": "tool_use",
+      "output_tokens": 772,
+      "fenced": true,
+      "text_chars": 167,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613898.0286329
+    },
+    {
+      "turn": 16,
+      "steps": 15,
+      "stop_reason": "tool_use",
+      "output_tokens": 212,
+      "fenced": true,
+      "text_chars": 226,
+      "thinking_chars": 417,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613910.1887875
+    },
+    {
+      "turn": 17,
+      "steps": 16,
+      "stop_reason": "tool_use",
+      "output_tokens": 557,
+      "fenced": true,
+      "text_chars": 396,
+      "thinking_chars": 523,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613921.4193482
+    },
+    {
+      "turn": 18,
+      "steps": 17,
+      "stop_reason": "tool_use",
+      "output_tokens": 940,
+      "fenced": true,
+      "text_chars": 407,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613934.594777
+    },
+    {
+      "turn": 19,
+      "steps": 18,
+      "stop_reason": "tool_use",
+      "output_tokens": 324,
+      "fenced": true,
+      "text_chars": 313,
+      "thinking_chars": 489,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613940.0274744
+    },
+    {
+      "turn": 20,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 319,
+      "fenced": false,
+      "text_chars": 883,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613944.755743
+    },
+    {
+      "turn": 21,
+      "steps": 19,
+      "stop_reason": "tool_use",
+      "output_tokens": 176,
+      "fenced": false,
+      "text_chars": 308,
+      "thinking_chars": 442,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789613954.5218112
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "measured",
+      "why": "the meshing point from system/snappyHexMeshDict is inside the exported surface, 0.05997 m clear",
+      "measured": {
+        "point": [
+          0.0,
+          0.0,
+          0.1
+        ],
+        "source": "system/snappyHexMeshDict",
+        "classification": "inside",
+        "clearance_m": 0.05996746775771145
+      }
+    },
+    {
+      "id": "union_closure",
+      "state": "measured",
+      "why": "0 free edges on the welded union of 1,028 triangles across 12 file(s)",
+      "measured": {
+        "open_edges": 0,
+        "files": [
+          "cylinderWall.stl",
+          "duct1Walls.stl",
+          "duct2Walls.stl",
+          "duct3Walls.stl",
+          "duct4Walls.stl",
+          "floor.stl",
+          "inlet1.stl",
+          "inlet2.stl",
+          "inlet3.stl",
+          "inlet4.stl",
+          "outlet.stl",
+          "top.stl"
+        ],
+        "triangles": 1028
+      }
+    },
+    {
+      "id": "normals",
+      "state": "measured",
+      "why": "0 edges walked twice the same way on the welded union of the patch set",
+      "measured": {
+        "flipped_edges": 0,
+        "triangles": 1028
+      }
+    },
+    {
+      "id": "coverage",
+      "state": "measured",
+      "why": "12 patches over 1,028 triangles (inlet1 2, inlet2 2, inlet3 2, inlet4 2, outlet 124, cylinderWall 374, floor 124, top 252, duct1Walls 38, duct2Walls 36, duct3Walls 36, duct4Walls 36); every face in exactly one patch (the patch set declared in patches.json)",
+      "measured": {
+        "check": "coverage",
+        "status": "ok",
+        "measured": "12 patches over 1,028 triangles (inlet1 2, inlet2 2, inlet3 2, inlet4 2, outlet 124, cylinderWall 374, floor 124, top 252, duct1Walls 38, duct2Walls 36, duct3Walls 36, duct4Walls 36); every face in exactly one patch",
+        "means": "the partition is exhaustive and disjoint, so every face of the meshed domain takes the boundary condition somebody chose for it",
+        "repair": "",
+        "manifest": "declared"
+      }
+    },
+    {
+      "id": "scale",
+      "state": "measured",
+      "why": "the surface spans 0.2 m against 0.2 m stated -- a factor of 1",
+      "measured": {
+        "extent_m": 0.20000000298023224,
+        "stated_m": 0.2,
+        "ratio": 1.0000000149011612
+      }
+    },
+    {
+      "id": "self_intersection",
+      "state": "measured",
+      "why": "0 of 75 tested triangle pairs cross",
+      "measured": {
+        "pairs": 0,
+        "triangles": 0,
+        "pairs_tested": 75,
+        "candidate_pairs": 29905
+      }
+    }
+  ],
+  "properties": [
+    {
+      "property": "each inlet port's face normal, and the angle between it and the local tangent at that port, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "each inlet's area and its height above the floor, measured on the mesh",
+      "measured": null
+    },
+    {
+      "property": "the chamber volume and the four duct volumes separately, measured on the mesh",
+      "measured": null
+    }
+  ],
+  "declares": [
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "warned",
+          "concern": "12 patches over 1,028 triangles (inlet1 2, inlet2 2, inlet3 2, inlet4 2, outlet 124, cylinderWall 374, floor 124, top 252, duct1Walls 38, duct2Walls 36, duct3Walls 36, duct4Walls 36); every face in exactly one patch (the patch set declared in patches.json)",
+          "because": ""
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        }
+      ]
+    },
+    {
+      "outcome": "complete",
+      "reason": "",
+      "checkmesh_ok": true,
+      "states": [
+        {
+          "check": "location_in_mesh",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "union_closure",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "normals",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        },
+        {
+          "check": "coverage",
+          "state": "waived",
+          "concern": "12 patches over 1,028 triangles (inlet1 2, inlet2 2, inlet3 2, inlet4 2, outlet 124, cylinderWall 374, floor 124, top 252, duct1Walls 38, duct2Walls 36, duct3Walls 36, duct4Walls 36); every face in exactly one patch (the patch set declared in patches.json)",
+          "because": "All 1,028 surface triangles are covered exactly once; the 12-way partition is intentional and directly matches the requested four inlets, outlet, vessel surfaces, and four separately named duct-wall patches."
+        },
+        {
+          "check": "scale",
+          "state": "n/a",
+          "concern": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's numbe",
+          "because": ""
+        },
+        {
+          "check": "self_intersection",
+          "state": "clean",
+          "concern": "",
+          "because": ""
+        }
+      ]
+    }
+  ],
+  "watch": {
+    "alarm": null,
+    "turns": 21,
+    "steps": 19,
+    "seconds": 250.0,
+    "killed": false,
+    "first_mesh_step": 9,
+    "first_mesh_turn": 10
+  }
+}

@@ -1,0 +1,8 @@
+T17: run 20260917-023551-bed9
+  workspace /home/qiuzi/.openreynolds-buildup/work/T17-20260917-023551-bed9 clean (0 entries, 40 house names, no toolbox)
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T17-20260917-023551-bed9/t17/.reference/b123d_api.md
+  reference cad_export.py -> /home/qiuzi/.openreynolds-buildup/work/T17-20260917-023551-bed9/t17/.reference/cad_export.py
+  spec extent_m=0.34 -> /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+cad_export-20260917-022129-dd05/runs/T17/spec.json
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+cad_export-20260917-022129-dd05/runs/T17
+  done in 228.9s, 20 cells, $0.56, checkMesh ok, passed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core+cad_export-20260917-022129-dd05/runs/T17 --case /home/qiuzi/.openreynolds-buildup/work/T17-20260917-023551-bed9/t17

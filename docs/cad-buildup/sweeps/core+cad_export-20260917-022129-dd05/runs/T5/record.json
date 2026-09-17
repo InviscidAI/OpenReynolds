@@ -1,0 +1,302 @@
+{
+  "run_id": "20260917-030245-0ec8",
+  "case": "T5",
+  "arm": "core",
+  "model": "gpt-5.6-sol",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/t5",
+  "started_at": "2026-09-17T03:02:45",
+  "ended_at": "2026-09-17T03:04:36",
+  "seconds": 109.3,
+  "n_turns": 11,
+  "n_steps": 10,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0.2226,
+  "given": [
+    "b123d_api.md",
+    "cad_export.py"
+  ],
+  "tokens": {
+    "input": 15211,
+    "cache_read": 78120,
+    "cache_write": 0,
+    "output": 6523
+  },
+  "stopped": "refused",
+  "expects": "done",
+  "passed": false,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "from pathlib import Path\nimport build123d as bd\nSTEP_PATH = Path('/home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/geometry/assembly.step')\nheader = STEP_PATH.read_text(errors='ignore')[:20000]\nunit_lines = [ln.strip() for ln in header.splitlines() if 'SI_UNIT' in ln or 'CONVERSION_BASED_UNIT' in ln]\nassembly = bd.import_step(STEP_PATH)\nprint('STEP unit declarations:')\nprint('\\n'.join(unit_lines[:20]) or '(none found in first 20 kB)')\nprint(f'imported type: {type(assembly).__name__}')\nprint(f'solids: {len(assembly.solids())}, shells: {len(assembly.shells())}, faces: {len(assembly.faces())}')\nprint(f'OCCT valid: {assembly.is_valid}')\nprint(f'bbox min: {assembly.bounding_box().min}, max: {assembly.bounding_box().max}, size: {assembly.bounding_box().size}')\nprint(f'volume: {assembly.volume}')",
+      "exit_code": 0,
+      "seconds": 2.6078280440124217,
+      "output": "STEP unit declarations:\n(none found in first 20 kB)\nimported type: Compound\nsolids: 3, shells: 3, faces: 78\nOCCT valid: True\nbbox min: (-26.97500010000001, -19.418991148451138, -1.0000001421085471e-07), max: (26.975000099999995, 26.87100895154889, 31.300000100000002), size: (53.950000200000005, 46.29000010000003, 31.300000200000017)\nvolume: 41194.13918234188",
+      "image": ""
+    },
+    {
+      "cmd": "import re\nstep_text = STEP_PATH.read_text(errors='ignore')\nunit_records = sorted(set(re.findall(r'#[0-9]+\\s*=\\s*(?:SI_UNIT|CONVERSION_BASED_UNIT|LENGTH_MEASURE_WITH_UNIT)\\([^;]*;', step_text, flags=re.I)))\nprint('Unit-related STEP records:')\nprint('\\n'.join(unit_records) or '(none)')\nfor i, solid in enumerate(assembly.solids(), 1):\n    bb = solid.bounding_box()\n    print(f'solid {i}: valid={solid.is_valid}, volume={solid.volume:.6g}, faces={len(solid.faces())}, bbox=({bb.min}) to ({bb.max}), size={bb.size}')\nprint('labels:', assembly.label, [s.label for s in assembly.solids()])",
+      "exit_code": 0,
+      "seconds": 0.2013072359841317,
+      "output": "Unit-related STEP records:\n(none)\nsolid 1: valid=True, volume=2552.27, faces=34, bbox=((-26.97500010000001, -19.418991148451138, -1.0000001421085471e-07)) to ((26.975000099999995, 26.87100895154889, 3.5000001)), size=(53.950000200000005, 46.29000010000003, 3.500000200000014)\nsolid 2: valid=True, volume=12186.1, faces=29, bbox=((-18.803761107113118, -18.900923129868957, 20.099999999999998)) to ((18.803772054759477, 18.70661003200359, 31.300000100000002)), size=(37.607533161872595, 37.607533161872546, 11.200000100000004)\nsolid 3: valid=True, volume=26455.7, faces=15, bbox=((-19.258335315798973, -19.355498235001544, 1.4999999999999982)) to ((19.258346263445333, 19.161183344242726, 20.10000000000001)), size=(38.516681579244306, 38.51668157924427, 18.60000000000001)\nlabels: LD19 ['', '', '']",
+      "image": ""
+    },
+    {
+      "cmd": "for token in ['MILLI', 'METRE', 'LENGTH_UNIT', 'GLOBAL_UNIT_ASSIGNED_CONTEXT']:\n    hits = [ln.strip() for ln in step_text.splitlines() if token in ln.upper()]\n    print(f'[{token}]', *(hits[:12] or ['(none)']), sep='\\n  ')\nimport pyvista as pv\npv.OFF_SCREEN = True\npl = pv.Plotter(off_screen=True, window_size=(900,700))\ncolors = ['tomato','seagreen','royalblue']\nfor solid, color in zip(assembly.solids(), colors):\n    vs, fs = solid.tessellate(0.15)\n    pts = [[v.X, v.Y, v.Z] for v in vs]\n    cells = []\n    for f in fs: cells.extend([3, f[0], f[1], f[2]])\n    pl.add_mesh(pv.PolyData(pts, cells), color=color, opacity=0.65, show_edges=True)\npl.add_axes(); pl.view_isometric(); pl.show(screenshot='assembly_overview.png')\nprint('wrote assembly_overview.png')",
+      "exit_code": 0,
+      "seconds": 1.0540922750078607,
+      "output": "[MILLI]\n  (none)\n[METRE]\n  SI_UNIT($,.METRE.)\n[LENGTH_UNIT]\n  LENGTH_UNIT()\n[GLOBAL_UNIT_ASSIGNED_CONTEXT]\n  GLOBAL_UNIT_ASSIGNED_CONTEXT((#2301,#2300,#2299))\n  GLOBAL_UNIT_ASSIGNED_CONTEXT((#2301,#2300,#2299))\n  GLOBAL_UNIT_ASSIGNED_CONTEXT((#2301,#2300,#2299))\n  GLOBAL_UNIT_ASSIGNED_CONTEXT((#2301,#2300,#2299))\nwrote assembly_overview.png\n\n/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html\n  from .autonotebook import tqdm as notebook_tqdm\n\u001b[0m\u001b[33m2026-09-17 03:03:05.458 (   0.254s) [    74A3D24B0780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 03:03:05.459 (   0.255s) [    74A3D24B0780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 03:03:05.472 (   0.268s) [    74A3D24B0780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_2021082/2724190939.py:14: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  pl.add_axes(); pl.view_isometric(); pl.show(screenshot='assembly_overview.png')",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "pl = pv.Plotter(shape=(1,3), off_screen=True, window_size=(1500,520))\nfor j, (solid, color) in enumerate(zip(assembly.solids(), colors)):\n    pl.subplot(0,j)\n    vs, fs = solid.tessellate(0.08)\n    pts = [[v.X,v.Y,v.Z] for v in vs]; cells=[]\n    for f in fs: cells.extend([3,*f])\n    mesh = pv.PolyData(pts,cells)\n    pl.add_mesh(mesh, color=color, opacity=1, show_edges=True)\n    pl.add_text(f'Solid {j+1}\\nV={solid.volume:.1f} mm^3', font_size=11)\n    pl.add_axes(); pl.view_isometric()\npl.show(screenshot='solids_separate.png')\nprint('wrote solids_separate.png')",
+      "exit_code": 0,
+      "seconds": 0.5596337309980299,
+      "output": "wrote solids_separate.png\n\n\u001b[0m\u001b[33m2026-09-17 03:03:15.267 (  10.062s) [    74A3D24B0780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 03:03:15.268 (  10.063s) [    74A3D24B0780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_2021082/4272627766.py:11: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  pl.show(screenshot='solids_separate.png')",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "solids = list(assembly.solids())\nfor i in range(3):\n    for j in range(i+1,3):\n        common = solids[i] & solids[j]\n        print(f'{i+1}-{j+1}: common volume={common.volume:.9g} mm^3, common faces={len(common.faces()) if common else 0}')\nfluid_native = solids[0] + solids[1] + solids[2]\nprint(f'fused result: type={type(fluid_native).__name__}, solids={len(fluid_native.solids())}, valid={fluid_native.is_valid}, volume={fluid_native.volume:.9g}')\nprint(f'sum volume={sum(s.volume for s in solids):.9g}, fuse faces={len(fluid_native.faces())}')",
+      "exit_code": 1,
+      "seconds": 0.20132596499752253,
+      "output": "\u001b[31m---------------------------------------------------------------------------\u001b[39m\n\u001b[31mAttributeError\u001b[39m                            Traceback (most recent call last)\n\u001b[36mCell\u001b[39m\u001b[36m \u001b[39m\u001b[32mIn[5]\u001b[39m\u001b[32m, line 5\u001b[39m\n\u001b[32m      1\u001b[39m solids = list(assembly.solids())\n\u001b[32m      2\u001b[39m \u001b[38;5;28;01mfor\u001b[39;00m i \u001b[38;5;28;01min\u001b[39;00m range(\u001b[32m3\u001b[39m):\n\u001b[32m      3\u001b[39m     \u001b[38;5;28;01mfor\u001b[39;00m j \u001b[38;5;28;01min\u001b[39;00m range(i+\u001b[32m1\u001b[39m,\u001b[32m3\u001b[39m):\n\u001b[32m      4\u001b[39m         common = solids[i] & solids[j]\n\u001b[32m----> \u001b[39m\u001b[32m5\u001b[39m         print(f'{i+\u001b[32m1\u001b[39m}-{j+\u001b[32m1\u001b[39m}: common volume={common.volume:.9g} mm^3, common faces={len(common.faces()) \u001b[38;5;28;01mif\u001b[39;00m common \u001b[38;5;28;01melse\u001b[39;00m \u001b[32m0\u001b[39m}')\n\u001b[32m      6\u001b[39m fluid_native = solids[\u001b[32m0\u001b[39m] + solids[\u001b[32m1\u001b[39m] + solids[\u001b[32m2\u001b[39m]\n\u001b[32m      7\u001b[39m print(f'fused result: type={type(fluid_native).__name__}, solids={len(fluid_native.solids())}, valid={fluid_native.is_valid}, volume={fluid_native.volume:.9g}')\n\u001b[32m      8\u001b[39m print(f'sum volume={sum(s.volume \u001b[38;5;28;01mfor\u001b[39;00m s \u001b[38;5;28;01min\u001b[39;00m solids):.9g}, fuse faces={len(fluid_native.faces())}')\n\n\u001b[31mAttributeError\u001b[39m: 'NoneType' object has no attribute 'volume'",
+      "image": ""
+    },
+    {
+      "cmd": "solids = list(assembly.solids())\nfor i in range(3):\n    for j in range(i+1,3):\n        common_ij = solids[i] & solids[j]\n        cv = 0.0 if common_ij is None else common_ij.volume\n        cf = 0 if common_ij is None else len(common_ij.faces())\n        print(f'{i+1}-{j+1}: common volume={cv:.9g} mm^3, common faces={cf}')\nfluid_native = solids[0] + solids[1] + solids[2]\nprint(f'fused result: type={type(fluid_native).__name__}, solids={len(fluid_native.solids())}, valid={fluid_native.is_valid}, volume={fluid_native.volume:.9g}')\nprint(f'sum volume={sum(s.volume for s in solids):.9g}, fuse faces={len(fluid_native.faces())}')",
+      "exit_code": 0,
+      "seconds": 0.35158702498301864,
+      "output": "1-2: common volume=0 mm^3, common faces=0\n1-3: common volume=0 mm^3, common faces=0\n2-3: common volume=0 mm^3, common faces=0\nfused result: type=Compound, solids=2, valid=True, volume=41193.8719\nsum volume=41194.1392, fuse faces=79",
+      "image": ""
+    },
+    {
+      "cmd": "pl = pv.Plotter(shape=(1,2), off_screen=True, window_size=(1200,600))\nallmeshes=[]\nfor solid, color in zip(solids, colors):\n    vs, fs = solid.tessellate(0.06); pts=[[v.X,v.Y,v.Z] for v in vs]; cells=[]\n    for f in fs: cells.extend([3,*f])\n    allmeshes.append((pv.PolyData(pts,cells),color))\nfor k, normal in enumerate([(1,0,0),(0,1,0)]):\n    pl.subplot(0,k)\n    for mesh,color in allmeshes:\n        clipped=mesh.clip(normal=normal, origin=(0,0,0), invert=False)\n        pl.add_mesh(clipped,color=color,show_edges=True)\n    pl.add_text('Cutaway at '+('x=0' if k==0 else 'y=0'),font_size=12)\n    pl.add_axes()\n    if k==0: pl.view_yz()\n    else: pl.view_xz()\npl.show(screenshot='central_cutaways.png')\nprint('wrote central_cutaways.png')",
+      "exit_code": 0,
+      "seconds": 0.5606756809866056,
+      "output": "wrote central_cutaways.png\n\n\u001b[0m\u001b[33m2026-09-17 03:03:40.130 (  34.925s) [    74A3D24B0780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n\u001b[0m\u001b[33m2026-09-17 03:03:40.131 (  34.926s) [    74A3D24B0780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.\u001b[0m\n/tmp/ipykernel_2021082/1702716901.py:16: UserWarning: Using static image for notebook display.\nInstall trame for interactive backends: pip install \"pyvista[jupyter]\"\n  pl.show(screenshot='central_cutaways.png')",
+      "image": "1 picture"
+    },
+    {
+      "cmd": "product_lines=[ln.strip() for ln in step_text.splitlines() if 'PRODUCT(' in ln or 'MANIFOLD_SOLID_BREP' in ln]\nprint('\\n'.join(product_lines[:30]))\nfor i in range(3):\n    for j in range(i+1,3):\n        d,p1,p2 = solids[i].distance_to_with_closest_points(solids[j])\n        print(f'distance solid {i+1}-{j+1}: {d:.9g} mm at {p1} / {p2}')\nfor i,s in enumerate(solids,1):\n    zfaces=sorted([(f.center().Z, f.area, type(f.geom_type).__name__ if hasattr(f,'geom_type') else '') for f in s.faces()])\n    print(f'solid {i} lowest/highest face centers/areas:', zfaces[:3], zfaces[-3:])",
+      "exit_code": 0,
+      "seconds": 0.5521319800172932,
+      "output": "#1323=MANIFOLD_SOLID_BREP('LD19_BASE',#1298);\n#1324=MANIFOLD_SOLID_BREP('LD19_EMITTER',#1299);\n#1325=MANIFOLD_SOLID_BREP('LD19_BODY',#1300);\n#2325=PRODUCT('LD19','LD19','LD19',(#2333));\n#2326=PRODUCT('LD19_BASE','LD19_BASE','LD19_BASE',(#2334));\n#2327=PRODUCT('LD19_EMITTER','LD19_EMITTER','LD19_EMITTER',(#2335));\n#2328=PRODUCT('LD19_BODY','LD19_BODY','LD19_BODY',(#2336));\ndistance solid 1-2: 16.6309652 mm at (1.2136868789286193e-14, 19.72100885154889, 3.5) / (1.2136869132861432e-14, 18.70661003200359, 20.1)\ndistance solid 1-3: 1.77635684e-15 mm at (-4.003622288675469, 19.134349641170992, 1.5) / (-4.003622288675469, 19.134349641170992, 1.4999999999999982)\ndistance solid 2-3: 0 mm at (-18.803761107113118, 13.708102583097592, 20.1) / (-18.80376110711302, 13.70810258309759, 20.1)\nsolid 1 lowest/highest face centers/areas: [(0.0, 1573.9253101527515, 'GeomType'), (0.7471642767629435, 2.6653111350349206, 'GeomType'), (0.7471642767629435, 2.6653111350349294, 'GeomType')] [(3.5, 35.24277908705198, 'GeomType'), (3.5, 35.24277908705198, 'GeomType'), (3.5, 35.24277908705199, 'GeomType')]\nsolid 2 lowest/highest face centers/areas: [(20.1, 1392.8833993494347, 'GeomType'), (21.604765904671446, 82.97186505417702, 'GeomType'), (21.60476590467145, 82.97186505417719, 'GeomType')] [(31.270710678118654, 0.4281800107555825, 'GeomType'), (31.27071067811866, 0.4281800107555226, 'GeomType'), (31.3, 886.9765578306806, 'GeomType')]\nsolid 3 lowest/highest face centers/areas: [(1.4999999999999982, 1462.0916087049789, 'GeomType'), (3.271365676730579, 21.61999999999971, 'GeomType'), (5.392626874884571, 40.42000000000003, 'GeomType')] [(10.825201231268448, 146.11573882024805, 'GeomType'), (11.194556157929474, 481.7465920567396, 'GeomType'), (20.1, 1392.883399349435, 'GeomType')]",
+      "image": ""
+    },
+    {
+      "cmd": "bb=assembly.bounding_box(); margin=5.0\nprobe_box = bd.Pos(bb.min.X-margin,bb.min.Y-margin,bb.min.Z-margin) * bd.Box(bb.size.X+2*margin,bb.size.Y+2*margin,bb.size.Z+2*margin)\nvoid_probe = probe_box - assembly\nprobe_solids=list(void_probe.solids())\nprint(f'void components after subtracting assembly from surrounding box: {len(probe_solids)}')\nfor i,s in enumerate(probe_solids,1):\n    print(f'  component {i}: volume={s.volume:.6g} mm^3, bbox={s.bounding_box().size}')\nprint('Interpretation: one component means all non-material space is connected to the exterior; no sealed internal cavity exists.')",
+      "exit_code": 0,
+      "seconds": 0.2019852850062307,
+      "output": "void components after subtracting assembly from surrounding box: 1\n  component 1: volume=141826 mm^3, bbox=(63.950000200000005, 56.29000010000003, 41.30000020000002)\nInterpretation: one component means all non-material space is connected to the exterior; no sealed internal cavity exists.",
+      "image": ""
+    },
+    {
+      "cmd": "for i,s in enumerate(solids,1):\n    V,E,F=len(s.vertices()),len(s.edges()),len(s.faces())\n    chi=V-E+F\n    genus=(2-chi)/2\n    print(f'solid {i} ({[\"BASE\",\"EMITTER\",\"BODY\"][i-1]}): V={V}, E={E}, F={F}, Euler={chi}, closed-shell genus={genus:g}')",
+      "exit_code": 0,
+      "seconds": 0.050606095988769084,
+      "output": "solid 1 (BASE): V=61, E=90, F=34, Euler=5, closed-shell genus=-1.5\nsolid 2 (EMITTER): V=38, E=63, F=29, Euler=4, closed-shell genus=-1\nsolid 3 (BODY): V=24, E=36, F=15, Euler=3, closed-shell genus=-0.5",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 410,
+      "fenced": true,
+      "text_chars": 177,
+      "thinking_chars": 473,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614173.225077
+    },
+    {
+      "turn": 2,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 320,
+      "fenced": true,
+      "text_chars": 261,
+      "thinking_chars": 473,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614180.2610126
+    },
+    {
+      "turn": 3,
+      "steps": 2,
+      "stop_reason": "tool_use",
+      "output_tokens": 362,
+      "fenced": true,
+      "text_chars": 255,
+      "thinking_chars": 446,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614185.164182
+    },
+    {
+      "turn": 4,
+      "steps": 3,
+      "stop_reason": "tool_use",
+      "output_tokens": 540,
+      "fenced": true,
+      "text_chars": 446,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614195.2407005
+    },
+    {
+      "turn": 5,
+      "steps": 4,
+      "stop_reason": "tool_use",
+      "output_tokens": 802,
+      "fenced": true,
+      "text_chars": 445,
+      "thinking_chars": 1603,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614207.919472
+    },
+    {
+      "turn": 6,
+      "steps": 5,
+      "stop_reason": "tool_use",
+      "output_tokens": 280,
+      "fenced": true,
+      "text_chars": 165,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614211.915548
+    },
+    {
+      "turn": 7,
+      "steps": 6,
+      "stop_reason": "tool_use",
+      "output_tokens": 467,
+      "fenced": true,
+      "text_chars": 342,
+      "thinking_chars": 479,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614220.1023254
+    },
+    {
+      "turn": 8,
+      "steps": 7,
+      "stop_reason": "tool_use",
+      "output_tokens": 511,
+      "fenced": true,
+      "text_chars": 459,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614228.6857936
+    },
+    {
+      "turn": 9,
+      "steps": 8,
+      "stop_reason": "tool_use",
+      "output_tokens": 1998,
+      "fenced": true,
+      "text_chars": 454,
+      "thinking_chars": 2037,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614260.7637055
+    },
+    {
+      "turn": 10,
+      "steps": 9,
+      "stop_reason": "tool_use",
+      "output_tokens": 314,
+      "fenced": true,
+      "text_chars": 322,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614267.2928057
+    },
+    {
+      "turn": 11,
+      "steps": 10,
+      "stop_reason": "tool_use",
+      "output_tokens": 519,
+      "fenced": false,
+      "text_chars": 798,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789614275.3048227
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/t5/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/t5/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/t5/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/t5/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch files under /home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/t5/constant/triSurface, so there is no partition to check",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/t5/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/t5/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/t5/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T5-20260917-030245-0ec8/t5/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [
+    {
+      "property": "extracted fluid volume, against the enclosure minus the solids",
+      "measured": null
+    },
+    {
+      "property": "the capping faces, each planar, with its area, measured on the meshed patches",
+      "measured": null
+    }
+  ],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 11,
+    "steps": 10,
+    "seconds": 110.0,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

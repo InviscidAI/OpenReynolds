@@ -1,0 +1,1030 @@
+# -- cell 1 (2.3s, exit 0)
+import build123d as bd, inspect
+PITCH=0.002; THREAD_DEPTH=0.001; GAP=0.0002; THREADED_HEIGHT=0.012
+NECK_OD=0.040; CREST_R=NECK_OD/2; ROOT_R=CREST_R-THREAD_DEPTH
+FLANK_INCLUDED_ANGLE=30.0  # assumption: standard metric trapezoidal profile
+print('turns =', THREADED_HEIGHT/PITCH)
+print('Helix:', inspect.signature(bd.Helix))
+print('sweep:', inspect.signature(bd.sweep))
+print('Plane:', inspect.signature(bd.Plane))
+# -- output
+turns = 6.0
+Helix: (pitch: 'float', height: 'float', radius: 'float', center: 'VectorLike' = (0, 0, 0), direction: 'VectorLike' = (0, 0, 1), cone_angle: 'float' = 0, lefthand: 'bool' = False, mode: 'Mode' = <Mode.ADD>)
+sweep: (sections: build123d.topology.composite.Compound | build123d.topology.one_d.Edge | build123d.topology.one_d.Wire | build123d.topology.two_d.Face | build123d.topology.three_d.Solid | collections.abc.Iterable[build123d.topology.composite.Compound | build123d.topology.one_d.Edge | build123d.topology.one_d.Wire | build123d.topology.two_d.Face | build123d.topology.three_d.Solid] | None = None, path: build123d.topology.composite.Curve | build123d.topology.one_d.Edge | build123d.topology.one_d.Wire | collections.abc.Iterable[build123d.topology.one_d.Edge] | None = None, multisection: bool = False, is_frenet: bool = False, transition: build123d.build_enums.Transition = <Transition.TRANSFORMED>, normal: build123d.geometry.Vector | tuple[float, float] | tuple[float, float, float] | collections.abc.Sequence[float] | None = None, binormal: build123d.topology.one_d.Edge | build123d.topology.one_d.Wire | None = None, clean: bool = True, mode: build123d.build_enums.Mode = <Mode.ADD>) -> build123d.topology.composite.Part | build123d.topology.composite.Sketch
+Plane: (*args: 'Any', **kwargs: 'Any') -> 'None'
+
+# -- cell 2 (0.8s, exit 0)
+import numpy as np, matplotlib.pyplot as plt, pyvista as pv
+alpha=np.deg2rad(FLANK_INCLUDED_ANGLE/2)
+R_PATH=(ROOT_R+CREST_R)/2
+helix=bd.Helix(PITCH, THREADED_HEIGHT, R_PATH)
+tangent=bd.Vector(0, 2*np.pi*R_PATH, PITCH).normalized()
+radial=bd.Vector(1,0,0)
+section_plane=bd.Plane(origin=(R_PATH,0,0), x_dir=radial, z_dir=tangent)
+profile=section_plane * bd.Rectangle(THREAD_DEPTH/np.cos(alpha), GAP)
+fluid=bd.sweep(profile, helix, is_frenet=True)
+print('requested turns:',THREADED_HEIGHT/PITCH,' measured helix length [mm]:',helix.length*1000)
+print('requested radial depth [mm]:',THREAD_DEPTH*1000,' requested gap [mm]:',GAP*1000)
+print('fluid volume [mm3]:',fluid.volume*1e9,' faces:',len(fluid.faces()))
+print('bounds [mm]:',tuple(round(v*1000,3) for v in (*fluid.bounding_box().min,*fluid.bounding_box().max)))
+bd.export_stl(fluid,'coarse_preview.stl',tolerance=5e-5,angular_tolerance=0.2)
+m=pv.read('coarse_preview.stl'); p=pv.Plotter(off_screen=True,window_size=(900,700)); p.add_mesh(m,color='lightsteelblue',show_edges=True); p.view_isometric(); p.show(screenshot='coarse_preview.png')
+from IPython.display import display, Image
+display(Image('coarse_preview.png'))
+# -- output
+requested turns: 6.0  measured helix length [mm]: 735.2306157282705
+requested radial depth [mm]: 1.0  requested gap [mm]: 0.2
+fluid volume [mm3]: 152.19052441243522  faces: 6
+bounds [mm]: (-20.024, -20.066, -0.1, 20.024, 20.066, 12.1)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-17 02:30:32.406 (   0.520s) [    7BC8DE6EB780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-17 02:30:32.407 (   0.521s) [    7BC8DE6EB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-17 02:30:32.420 (   0.534s) [    7BC8DE6EB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_1953927/3049360270.py:15: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  m=pv.read('coarse_preview.stl'); p=pv.Plotter(off_screen=True,window_size=(900,700)); p.add_mesh(m,color='lightsteelblue',show_edges=True); p.view_isometric(); p.show(screenshot='coarse_preview.png')
+
+# -- cell 3 (0.1s, exit 0)
+for i,f in enumerate(fluid.faces()):
+    c=f.center(); print(i, 'area_mm2=',round(f.area*1e6,4),'center_mm=',tuple(round(v*1000,4) for v in c),'geom=',f.geom_type)
+print('expected end area mm2:',THREAD_DEPTH/np.cos(alpha)*GAP*1e6)
+print('expected broad flank area mm2 ~',helix.length*THREAD_DEPTH/np.cos(alpha)*1e6)
+print('expected edge-strip area mm2 ~',helix.length*GAP*1e6)
+# -- output
+0 area_mm2= 143.1457 center_mm= (18.9824, 0.0, 6.0) geom= GeomType.BSPLINE
+1 area_mm2= 761.0432 center_mm= (19.5, -0.0016, 6.1) geom= GeomType.BSPLINE
+2 area_mm2= 150.9505 center_mm= (20.0176, -0.0, 6.0) geom= GeomType.BSPLINE
+3 area_mm2= 761.0432 center_mm= (19.5, 0.0016, 5.9) geom= GeomType.BSPLINE
+4 area_mm2= 0.2071 center_mm= (19.5, -0.0, -0.0) geom= GeomType.PLANE
+5 area_mm2= 0.2071 center_mm= (19.5, -0.0, 12.0) geom= GeomType.PLANE
+expected end area mm2: 0.20705523608201662
+expected broad flank area mm2 ~ 761.1667435717175
+expected edge-strip area mm2 ~ 147.04612314565412
+
+# -- cell 4 (0.3s, exit 1)
+import os, sys
+sys.path.insert(0,'.reference')
+from cad_export import export_patches
+faces=list(fluid.faces())
+edge_faces=sorted([f for f in faces if 1e-5 < f.area < 3e-4], key=lambda f:f.center().X)
+broad_faces=sorted([f for f in faces if f.area > 3e-4], key=lambda f:f.center().Z)
+cap_faces=sorted([f for f in faces if f.area < 1e-5], key=lambda f:f.center().Z)
+# lower offset broad face + inner strip bound the neck side; opposite pair bound the lid side
+neck_faces=[broad_faces[0],edge_faces[0]]
+lid_faces=[broad_faces[1],edge_faces[1]]
+inner_end=[cap_faces[0]]; outer_end=[cap_faces[1]]
+os.makedirs('constant/triSurface',exist_ok=True)
+export_patches(fluid,{'neck_flank':neck_faces,'lid_flank':lid_faces,'inner_end':inner_end,'outer_end':outer_end},tolerance=2.5e-5,directory='constant/triSurface')
+bd.export_step(fluid,'helical_gap.step')
+print('patch areas [mm2]:', {k:round(sum(f.area for f in v)*1e6,4) for k,v in {'neck_flank':neck_faces,'lid_flank':lid_faces,'inner_end':inner_end,'outer_end':outer_end}.items()})
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 13[39m
+[32m      9[39m neck_faces=[broad_faces[[32m0[39m],edge_faces[[32m0[39m]]
+[32m     10[39m lid_faces=[broad_faces[[32m1[39m],edge_faces[[32m1[39m]]
+[32m     11[39m inner_end=[cap_faces[[32m0[39m]]; outer_end=[cap_faces[[32m1[39m]]
+[32m     12[39m os.makedirs([33m'constant/triSurface'[39m,exist_ok=[38;5;28;01mTrue[39;00m)
+[32m---> [39m[32m13[39m export_patches(fluid,{[33m'neck_flank'[39m:neck_faces,[33m'lid_flank'[39m:lid_faces,[33m'inner_end'[39m:inner_end,[33m'outer_end'[39m:outer_end},tolerance=[32m2.5e-5[39m,directory=[33m'constant/triSurface'[39m)
+[32m     14[39m bd.export_step(fluid,[33m'helical_gap.step'[39m)
+[32m     15[39m print([33m'patch areas [mm2]:'[39m, {k:round(sum(f.area [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m v)*[32m1e6[39m,[32m4[39m) [38;5;28;01mfor[39;00m k,v [38;5;28;01min[39;00m {[33m'neck_flank'[39m:neck_faces,[33m'lid_flank'[39m:lid_faces,[33m'inner_end'[39m:inner_end,[33m'outer_end'[39m:outer_end}.items()})
+
+[31mTypeError[39m: export_patches() got an unexpected keyword argument 'directory'
+
+# -- cell 5 (0.1s, exit 0)
+import inspect
+print(inspect.signature(export_patches))
+print(export_patches.__doc__)
+# -- output
+(shape, patches: 'dict', out_dir='constant/triSurface', *, tolerance: 'float | None' = None, angular_tolerance: 'float' = 0.1, location_in_mesh=None, binary: 'bool' = True, clean: 'bool' = True, quiet: 'bool' = False) -> 'dict'
+One shape to one STL per named patch, tessellated once, with the numbers printed.
+
+    export_patches(fluid, {"inlet": ins, "outlet": outs, "walls": ...},
+                   tolerance=2.5e-4)
+
+`shape`      one build123d shape -- the solid whose surface is the mesh boundary.
+`patches`    patch name -> the faces of `shape` in it. Exactly one patch may be
+             `...`, meaning every face the others did not name.
+`out_dir`    `constant/triSurface` unless you say otherwise.
+`tolerance`  max chord deviation in **metres**: how far a facet may sit from the
+             surface it stands for. Follow the mesh -- roughly a quarter of the
+             finest surface cell -- and no default is offered, because faceting
+             coarser than the mesh becomes the geometry and reaches the pressure
+             field looking like physics.
+`clean`      clear STLs this call did not write out of `out_dir`. A file left from
+             an abandoned route is welded in by every downstream reader as though
+             it were part of the surface.
+
+Returns the report and prints it. Raises `Refused` -- never a silent guess.
+
+# -- cell 6 (0.6s, exit 0)
+import os, sys
+sys.path.insert(0,'.reference')
+from cad_export import export_patches
+faces=list(fluid.faces())
+edge_faces=sorted([f for f in faces if 1e-5 < f.area < 3e-4], key=lambda f:f.center().X)
+broad_faces=sorted([f for f in faces if f.area > 3e-4], key=lambda f:f.center().Z)
+cap_faces=sorted([f for f in faces if f.area < 1e-5], key=lambda f:f.center().Z)
+neck_faces=[broad_faces[0],edge_faces[0]]
+lid_faces=[broad_faces[1],edge_faces[1]]
+inner_end=[cap_faces[0]]; outer_end=[cap_faces[1]]
+os.makedirs('constant/triSurface',exist_ok=True)
+report=export_patches(fluid,{'neck_flank':neck_faces,'lid_flank':lid_faces,'inner_end':inner_end,'outer_end':outer_end},tolerance=2.5e-5)
+bd.export_step(fluid,'helical_gap.step')
+print('patch areas [mm2]:', {k:round(sum(f.area for f in v)*1e6,4) for k,v in {'neck_flank':neck_faces,'lid_flank':lid_faces,'inner_end':inner_end,'outer_end':outer_end}.items()})
+# -- output
+constant/triSurface  <-  6 faces, one tessellation
+  tolerance           2.5e-05 m chord deviation, 0.1 rad angular
+    neck_flank                2 faces      3,241 triangles  0.000903866 m^2  -> neck_flank.stl
+    lid_flank                 2 faces      3,283 triangles  0.000911669 m^2  -> lid_flank.stl
+    inner_end                 1 faces          2 triangles  2.07055e-07 m^2  -> inner_end.stl
+    outer_end                 1 faces          2 triangles  2.07056e-07 m^2  -> outer_end.stl
+  extent              0.0400461 x 0.040131 x 0.0122 m   <- metres, so check these against the request
+  union               6,528 triangles, 0 open edges, 0 flipped, 0 non-manifold
+  location_in_mesh    not given
+  manifest            constant/triSurface/patches.json
+patch areas [mm2]: {'neck_flank': 904.1889, 'lid_flank': 911.9937, 'inner_end': 0.2071, 'outer_end': 0.2071}
+
+# -- cell 7 (0.2s, exit 0)
+import gmsh
+gmsh.initialize(); gmsh.model.add('helical_gap')
+vols=gmsh.model.occ.importShapes('helical_gap.step'); gmsh.model.occ.synchronize()
+surfs=gmsh.model.getEntities(2)
+for dim,tag in surfs:
+    a=gmsh.model.occ.getMass(dim,tag); c=gmsh.model.occ.getCenterOfMass(dim,tag)
+    print(tag,'area_mm2',round(a*1e6,4),'center_mm',tuple(round(x*1000,4) for x in c))
+print('volumes:',vols,'volume_mm3',gmsh.model.occ.getMass(3,vols[0][1])*1e9)
+gmsh.finalize()
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+1 area_mm2 143.1457 center_mm (0.0061, 0.0, 6.0)
+2 area_mm2 761.0432 center_mm (0.0065, -0.0, 6.1)
+3 area_mm2 150.9505 center_mm (0.0064, 0.0, 6.0)
+4 area_mm2 761.0432 center_mm (0.0065, 0.0, 5.9)
+5 area_mm2 0.2071 center_mm (19.5, -0.0, -0.0)
+6 area_mm2 0.2071 center_mm (19.5, -0.0, 12.0)
+volumes: [(3, 1)] volume_mm3 152.1905244125444
+
+# -- cell 8 (10.8s, exit 0)
+import gmsh, subprocess, os
+gmsh.initialize(); gmsh.model.add('helical_gap')
+gmsh.model.occ.importShapes('helical_gap.step'); gmsh.model.occ.synchronize()
+groups={'neck_flank':[1,4],'lid_flank':[2,3],'inner_end':[5],'outer_end':[6]}
+for name,tags in groups.items():
+    pg=gmsh.model.addPhysicalGroup(2,tags); gmsh.model.setPhysicalName(2,pg,name)
+vg=gmsh.model.addPhysicalGroup(3,[1]); gmsh.model.setPhysicalName(3,vg,'fluid')
+gmsh.option.setNumber('Mesh.MeshSizeMin',8e-5); gmsh.option.setNumber('Mesh.MeshSizeMax',2e-4)
+gmsh.option.setNumber('Mesh.Algorithm',6); gmsh.option.setNumber('Mesh.Algorithm3D',1)
+gmsh.option.setNumber('Mesh.MshFileVersion',2.2); gmsh.option.setNumber('Mesh.Binary',0)
+gmsh.model.mesh.generate(3); gmsh.write('helical_gap.msh')
+print('gmsh nodes',len(gmsh.model.mesh.getNodes()[0]),'3D elements',sum(len(x) for x in gmsh.model.mesh.getElements(3)[1]))
+gmsh.finalize()
+os.makedirs('system',exist_ok=True)
+r=subprocess.run(['gmshToFoam','helical_gap.msh'],text=True,capture_output=True)
+print(r.stdout[-2500:]); print(r.stderr[-1000:]); print('return',r.returncode)
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (BSpline)
+Info    : [ 10%] Meshing curve 2 (BSpline)
+Info    : [ 20%] Meshing curve 3 (BSpline)
+Info    : [ 30%] Meshing curve 4 (BSpline)
+Info    : [ 40%] Meshing curve 5 (BSpline)
+Info    : [ 50%] Meshing curve 6 (BSpline)
+Info    : [ 60%] Meshing curve 7 (BSpline)
+Info    : [ 60%] Meshing curve 8 (BSpline)
+Info    : [ 70%] Meshing curve 9 (BSpline)
+Info    : [ 80%] Meshing curve 10 (BSpline)
+Info    : [ 90%] Meshing curve 11 (BSpline)
+Info    : [100%] Meshing curve 12 (BSpline)
+Info    : Done meshing 1D (Wall 0.28698s, CPU 0.286845s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (BSpline surface, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 2 (BSpline surface, Frontal-Delaunay)
+Info    : [ 40%] Meshing surface 3 (BSpline surface, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 4 (BSpline surface, Frontal-Delaunay)
+Info    : [ 70%] Meshing surface 5 (Plane, Frontal-Delaunay)
+Info    : [ 90%] Meshing surface 6 (Plane, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 5.65242s, CPU 5.63791s)
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Tetrahedrizing 53028 nodes...
+Info    : Done tetrahedrizing 53036 nodes (Wall 1.116s, CPU 1.05653s)
+Info    : Reconstructing mesh...
+Info    :  - Creating surface mesh
+Info    :  - Identifying boundary edges
+Info    :  - Recovering boundary
+Info    : Done reconstructing mesh (Wall 2.63649s, CPU 2.49673s)
+Info    : Found volume 1
+Info    : It. 0 - 0 nodes created - worst tet radius 1.49088 (nodes removed 0 0)
+Info    : 3D refinement terminated (53036 nodes total):
+Info    :  - 0 Delaunay cavities modified for star shapeness
+Info    :  - 6 nodes could not be inserted
+Info    :  - 143577 tetrahedra created in 0.046555 sec. (3084026 tets/s)
+Info    : 0 node relocations
+Info    : Done meshing 3D (Wall 3.9246s, CPU 3.78642s)
+Info    : Optimizing mesh...
+Info    : Optimizing vo
+... 227 characters cut ...
+< quality < 0.30 :      1089 elements
+Info    : 0.30 < quality < 0.40 :       977 elements
+Info    : 0.40 < quality < 0.50 :       790 elements
+Info    : 0.50 < quality < 0.60 :      1492 elements
+Info    : 0.60 < quality < 0.70 :      7077 elements
+Info    : 0.70 < quality < 0.80 :     51719 elements
+Info    : 0.80 < quality < 0.90 :     68408 elements
+Info    : 0.90 < quality < 1.00 :      7642 elements
+Info    : 5061 edge swaps, 0 node relocations (volume = 1.5218e-07): worst = 0.000136048 / average = 0.784811 (Wall 0.0884396s, CPU 0.088751s)
+Info    : 5252 edge swaps, 0 node relocations (volume = 1.5218e-07): worst = 0.000165125 / average = 0.785444 (Wall 0.113247s, CPU 0.113635s)
+Info    : 5277 edge swaps, 0 node relocations (volume = 1.5218e-07): worst = 0.000170248 / average = 0.785504 (Wall 0.135166s, CPU 0.135618s)
+Info    : 5285 edge swaps, 0 node relocations (volume = 1.5218e-07): worst = 0.000170248 / average = 0.785522 (Wall 0.156913s, CPU 0.157431s)
+Info    : 0.00 < quality < 0.10 :       387 elements
+Info    : 0.10 < quality < 0.20 :        49 elements
+Info    : 0.20 < quality < 0.30 :       104 elements
+Info    : 0.30 < quality < 0.40 :      1025 elements
+Info    : 0.40 < quality < 0.50 :       699 elements
+Info    : 0.50 < quality < 0.60 :      1072 elements
+Info    : 0.60 < quality < 0.70 :      6137 elements
+Info    : 0.70 < quality < 0.80 :     54056 elements
+Info    : 0.80 < quality < 0.90 :     67854 elements
+Info    : 0.90 < quality < 1.00 :      7489 elements
+Info    : Done optimizing mesh (Wall 0.307519s, CPU 0.308926s)
+Info    : 53036 nodes 259672 elements
+Info    : Writing 'helical_gap.msh'...
+Info    : Done writing 'helical_gap.msh'
+gmsh nodes 53036 3D elements 138876
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : gmshToFoam helical_gap.msh
+Date   : Sep 17 2026
+Time   : 02:31:31
+Host   : yc-demo
+PID    : 1957455
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260917-023004-2b6a/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T13-20260917-023004-2b6a/t13/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+return 1
+
+Warning : 101 ill-shaped tets are still in the mesh
+Warning : ------------------------------
+Warning : Mesh generation error summary
+Warning :     1 warning
+Warning :     0 errors
+Warning : Check the full log for details
+Warning : ------------------------------
+
+# -- cell 9 (1.6s, exit 0)
+from pathlib import Path
+Path('system/controlDict').write_text('''FoamFile\n{\n    format ascii;\n    class dictionary;\n    object controlDict;\n}\napplication checkMesh;\nstartFrom startTime;\nstartTime 0;\nstopAt endTime;\nendTime 1;\ndeltaT 1;\nwriteControl timeStep;\nwriteInterval 1;\n''')
+r=subprocess.run(['gmshToFoam','helical_gap.msh'],text=True,capture_output=True)
+print('gmshToFoam return',r.returncode); print(r.stdout[-1800:]); print(r.stderr[-500:])
+c=subprocess.run(['checkMesh'],text=True,capture_output=True)
+print('checkMesh return',c.returncode); print(c.stdout[-3500:]); print(c.stderr[-500:])
+# -- output
+gmshToFoam return 0
+60917-023004-2b6a/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:5
+    Surface 1	neck_flank
+    Surface 2	lid_flank
+    Surface 3	inner_end
+    Surface 4	outer_end
+    Volume 5	fluid
+
+Starting to read points at line 13
+Vertices to be read: 53036
+Vertices read:53036
+
+Starting to read cells at line 53052
+Cells to be read: 244928
+
+Mapping region 1 to Foam patch 0
+Mapping region 2 to Foam patch 1
+Mapping region 3 to Foam patch 2
+Mapping region 4 to Foam patch 3
+Mapping region 5 to Foam cellZone 0
+Cells:
+    total:138876
+    hex  :0
+    prism:0
+    pyr  :0
+    tet  :138876
+
+CellZones:
+Zone	Size
+    0	138876
+
+Patch 0 gets name neck_flank
+Patch 1 gets name lid_flank
+Patch 2 gets name inner_end
+Patch 3 gets name outer_end
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 106052 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone fluid and cellSet
+End
+
+
+
+checkMesh return 1
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 02:31:37
+Host   : yc-demo
+PID    : 1957469
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260917-023004-2b6a/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T13-20260917-023004-2b6a/t13/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 10 (0.5s, exit 0)
+Path('system/fvSchemes').write_text('''FoamFile\n{ format ascii; class dictionary; object fvSchemes; }\n''')
+Path('system/fvSolution').write_text('''FoamFile\n{ format ascii; class dictionary; object fvSolution; }\n''')
+c=subprocess.run(['checkMesh'],text=True,capture_output=True)
+print('checkMesh return',c.returncode); print(c.stdout[-5000:]); print(c.stderr[-500:])
+print('\nBoundary file tail:\n',Path('constant/polyMesh/boundary').read_text()[-1800:])
+# -- output
+checkMesh return 1
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 02:31:40
+Host   : yc-demo
+PID    : 1958060
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260917-023004-2b6a/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+
+
+Boundary file tail:
+ /*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+4
+(
+    neck_flank
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          52804;
+        startFace       224726;
+    }
+    lid_flank
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          53196;
+        startFace       277530;
+    }
+    inner_end
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          26;
+        startFace       330726;
+    }
+    outer_end
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          26;
+        startFace       330752;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 11 (1.0s, exit 0)
+Path('system/fvSchemes').write_text('''FoamFile\n{ format ascii; class dictionary; object fvSchemes; }\nddtSchemes { default Euler; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\nwallDist { method meshWave; }\n''')
+Path('system/fvSolution').write_text('''FoamFile\n{ format ascii; class dictionary; object fvSolution; }\nsolvers {}\n''')
+c=subprocess.run(['checkMesh'],text=True,capture_output=True)
+print('checkMesh return',c.returncode); print(c.stdout[-6000:]); print(c.stderr[-500:])
+# -- output
+checkMesh return 0
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 02:31:45
+Host   : yc-demo
+PID    : 1958081
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260917-023004-2b6a/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           53036
+    faces:            330778
+    internal faces:   224726
+    cells:            138876
+    faces per cell:   4
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    138876
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    neck_flank          52804    30087    ok (non-closed singly connected)  
+    lid_flank           53196    30283    ok (non-closed singly connected)  
+    inner_end           26       22       ok (non-closed singly connected)  
+    outer_end           26       22       ok (non-closed singly connected)  
+    ".*"                106052   53028    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               138876       53036        1.5218e-07   (-0.0200237 -0.0200655 -9.99867e-05) (0.0200237 0.0200655 0.0121)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.0200237 -0.0200655 -9.99867e-05) (0.0200237 0.0200655 0.0121)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-4.61889e-18 -5.45609e-19 -2.19905e-15) OK.
+ ***High aspect ratio cells found, Max aspect ratio: 6732.7, number of cells 38
+  <<Writing 38 cells with high aspect ratio to set highAspectRatioCells
+    Minimum face area = 5.03259e-09. Maximum face area = 3.6619e-08.  Face area magnitudes OK.
+    Min volume = 2.29226e-16. Max volume = 1.88197e-12.  Total volume = 1.5218e-07.  Cell volumes OK.
+    Mesh non-orthogonality Max: 64.8842 average: 23.4309
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.654466 OK.
+    Coupled point location match (average 0) OK.
+
+Failed 1 mesh checks.
+
+End
+
+# -- cell 12 (19.7s, exit 0)
+import gmsh
+gmsh.initialize(); gmsh.model.add('helical_gap')
+gmsh.model.occ.importShapes('helical_gap.step'); gmsh.model.occ.synchronize()
+for name,tags in {'neck_flank':[1,4],'lid_flank':[2,3],'inner_end':[5],'outer_end':[6]}.items():
+    pg=gmsh.model.addPhysicalGroup(2,tags); gmsh.model.setPhysicalName(2,pg,name)
+vg=gmsh.model.addPhysicalGroup(3,[1]); gmsh.model.setPhysicalName(3,vg,'fluid')
+gmsh.option.setNumber('Mesh.MeshSizeMin',8e-5); gmsh.option.setNumber('Mesh.MeshSizeMax',2e-4)
+gmsh.option.setNumber('Mesh.Algorithm',6); gmsh.option.setNumber('Mesh.Algorithm3D',10)
+gmsh.option.setNumber('Mesh.MshFileVersion',2.2); gmsh.option.setNumber('Mesh.Binary',0)
+gmsh.model.mesh.generate(3)
+gmsh.model.mesh.optimize('Netgen')
+gmsh.write('helical_gap.msh')
+print('optimized nodes',len(gmsh.model.mesh.getNodes()[0]),'tets',sum(len(x) for x in gmsh.model.mesh.getElements(3)[1]))
+gmsh.finalize()
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (BSpline)
+Info    : [ 10%] Meshing curve 2 (BSpline)
+Info    : [ 20%] Meshing curve 3 (BSpline)
+Info    : [ 30%] Meshing curve 4 (BSpline)
+Info    : [ 40%] Meshing curve 5 (BSpline)
+Info    : [ 50%] Meshing curve 6 (BSpline)
+Info    : [ 60%] Meshing curve 7 (BSpline)
+Info    : [ 60%] Meshing curve 8 (BSpline)
+Info    : [ 70%] Meshing curve 9 (BSpline)
+Info    : [ 80%] Meshing curve 10 (BSpline)
+Info    : [ 90%] Meshing curve 11 (BSpline)
+Info    : [100%] Meshing curve 12 (BSpline)
+Info    : Done meshing 1D (Wall 0.287505s, CPU 0.288353s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (BSpline surface, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 2 (BSpline surface, Frontal-Delaunay)
+Info    : [ 40%] Meshing surface 3 (BSpline surface, Frontal-Delaunay)
+Info    : [ 60%] Meshing surface 4 (BSpline surface, Frontal-Delaunay)
+Info    : [ 70%] Meshing surface 5 (Plane, Frontal-Delaunay)
+Info    : [ 90%] Meshing surface 6 (Plane, Frontal-Delaunay)
+Info    : Done meshing 2D (Wall 5.61169s, CPU 5.61345s)
+Info    : Meshing 3D...
+Info    : 3D Meshing 1 volume with 1 connected component
+Info    : Input mesh hash 5ac238acad58f835
+Info    : Creating an empty mesh with 53028 vertices
+Info    : Initialization of tet. mesh
+Info    : Delaunay of      53024 points on   1 threads - mesh.nvert: 4         
+Info    : Recovering 28 missing facet(s)
+Info    : Recover Delaunay
+Info    : All volumes of the BRep were found and colorized accordingly
+Info    : Computing interpolated mesh sizes...
+Info    : Done computing interpolated mesh sizes
+Info    : Improving      11652 tet. on   1 thrd (S & ER)
+Info    : Improving       1184 tet. on   1 thrd (S & ER)
+Info    : Improving        829 tet. on   1 thrd (S & ER)
+Info    : Improving        791 tet. on   1 thrd (S & ER)
+Info    : Improving        790 tet. on   1 thrd (S & ER)
+Info    : Improving        789 tet. on   1 thrd (GSC)
+In
+... 121 characters cut ...
+ Improving         18 tet. on   1 thrd (S & ER)
+Info    : Improving         18 tet. on   1 thrd (GSC)
+Info    : Improving          3 tet. on   1 thrd (S & ER)
+Info    : Improving          3 tet. on   1 thrd (S & ER)
+Info    : Improving          3 tet. on   1 thrd (GSC)
+Info    :  	Final tet. mesh contains 489943 tetrahedra
+Info    :  	Final tet. mesh contains 53028 vertices
+Info    : tEmptyMesh  	 = 	    0.146
+Info    : tVerifyBnd  	 = 	    0.071
+Info    : tBndRecovery	 = 	    0.698
+Info    : tConvertMesh	 = 	    0.097
+Info    : tRefine     	 = 	    0.025
+Info    : tOptimize   	 = 	    0.147
+Info    : Done meshing 3D (Wall 1.33019s, CPU 1.21089s)
+Info    : 53028 nodes 258514 elements
+Info    : Optimizing mesh (Netgen)...
+Info    : Optimizing volume 1
+Info    : CalcLocalH: 53028 Points 137718 Elements 106052 Surface Elements 
+Info    : Remove Illegal Elements 
+Info    : 24842 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 10.6741 
+Info    : 4547 splits performed 
+Info    : SwapImprove  
+Info    : 1506 swaps performed 
+Info    : SwapImprove2  
+Info    : 40 swaps performed 
+Info    : 20305 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 9427.25 
+Info    : 4986 splits performed 
+Info    : SwapImprove  
+Info    : 1556 swaps performed 
+Info    : SwapImprove2  
+Info    : 34 swaps performed 
+Info    : 7763 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 7239.74 
+Info    : 2290 splits performed 
+Info    : SwapImprove  
+Info    : 776 swaps performed 
+Info    : SwapImprove2  
+Info    : 14 swaps performed 
+Info    : 816 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 3966.18 
+Info    : 267 splits performed 
+Info    : SwapImprove  
+Info    : 38 swaps performed 
+Info    : SwapImprove2  
+Info    : 2 swaps performed 
+Info    : 51 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 3550.05 
+Info    : 18 splits performed 
+Info    : SwapImprove  
+Info    : 2 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : 2 illegal tets 
+Info    : SplitImprove 
+Info    : badmax = 945.663 
+Info    : 1 splits performed 
+Info    : SwapImprove  
+Info    : 0 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : 0 illegal tets 
+Info    : Volume Optimization 
+Info    : CombineImprove 
+Info    : 4006 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 265591 
+Info    : Total badness = 262757 
+Info    : SplitImprove 
+Info    : badmax = 22.6746 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 262757 
+Info    : Total badness = 262650 
+Info    : SwapImprove  
+Info    : 11274 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 256235 
+Info    : Total badness = 253688 
+Info    : CombineImprove 
+Info    : 1 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 253678 
+Info    : Total badness = 253659 
+Info    : SplitImprove 
+Info    : badmax = 13.5352 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 253659 
+Info    : Total badness = 253658 
+Info    : SwapImprove  
+Info    : 1972 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 252966 
+Info    : Total badness = 252466 
+Info    : CombineImprove 
+Info    : 0 elements combined 
+Info    : ImproveMesh 
+Info    : Total badness = 252466 
+Info    : Total badness = 252463 
+Info    : SplitImprove 
+Info    : badmax = 13.4976 
+Info    : 0 splits performed 
+Info    : ImproveMesh 
+Info    : Total badness = 252463 
+Info    : Total badness = 252463 
+Info    : SwapImprove  
+Info    : 371 swaps performed 
+Info    : SwapImprove2  
+Info    : 0 swaps performed 
+Info    : ImproveMesh 
+Info    : Total badness = 252342 
+Info    : Total badness = 252253 
+Info    : Done optimizing mesh (Wall 11.8481s, CPU 11.7853s)
+Info    : Writing 'helical_gap.msh'...
+Info    : Done writing 'helical_gap.msh'
+optimized nodes 61130 tets 184287
+
+# -- cell 13 (2.4s, exit 0)
+import shutil
+shutil.rmtree('constant/polyMesh',ignore_errors=True)
+r=subprocess.run(['gmshToFoam','helical_gap.msh'],text=True,capture_output=True)
+print('convert return',r.returncode, r.stdout[-900:])
+c=subprocess.run(['checkMesh'],text=True,capture_output=True)
+print('checkMesh return',c.returncode); print(c.stdout[-5000:]); print(c.stderr[-400:])
+# -- output
+convert return 0 gion 3 to Foam patch 2
+Mapping region 4 to Foam patch 3
+Mapping region 5 to Foam cellZone 0
+Cells:
+    total:184287
+    hex  :0
+    prism:0
+    pyr  :0
+    tet  :184287
+
+CellZones:
+Zone	Size
+    0	184287
+
+Patch 0 gets name neck_flank
+Patch 1 gets name lid_flank
+Patch 2 gets name inner_end
+Patch 3 gets name outer_end
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 106052 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone fluid and cellSet
+End
+
+
+checkMesh return 0
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 02:32:20
+Host   : yc-demo
+PID    : 1958766
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260917-023004-2b6a/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           61130
+    faces:            421600
+    internal faces:   315548
+    cells:            184287
+    faces per cell:   4
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    184287
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    neck_flank          52804    30087    ok (non-closed singly connected)  
+    lid_flank           53196    30283    ok (non-closed singly connected)  
+    inner_end           26       22       ok (non-closed singly connected)  
+    outer_end           26       22       ok (non-closed singly connected)  
+    ".*"                106052   53028    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               184287       61130        1.5218e-07   (-0.0200237 -0.0200655 -9.99867e-05) (0.0200237 0.0200655 0.0121)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.0200237 -0.0200655 -9.99867e-05) (0.0200237 0.0200655 0.0121)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.00845e-16 1.84577e-16 -2.69563e-15) OK.
+    Max cell openness = 2.8926e-16 OK.
+    Max aspect ratio = 6.36162 OK.
+    Minimum face area = 3.23579e-09. Maximum face area = 3.57561e-08.  Face area magnitudes OK.
+    Min volume = 9.95175e-14. Max volume = 2.1116e-12.  Total volume = 1.5218e-07.  Cell volumes OK.
+    Mesh non-orthogonality Max: 60.7538 average: 22.6655
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.603041 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 14 (0.5s, exit 0)
+import pyvista as pv
+Path('t13.foam').touch()
+reader=pv.OpenFOAMReader('t13.foam'); reader.set_active_time_value(reader.time_values[-1] if reader.time_values else 0); data=reader.read()
+print('OpenFOAM blocks:',data.keys())
+internal=data['internalMesh']; surf=internal.extract_surface()
+p=pv.Plotter(off_screen=True,window_size=(900,700)); p.add_mesh(surf,color='lightcyan',show_edges=True,line_width=0.3); p.view_isometric(); p.show(screenshot='final_mesh.png')
+from IPython.display import display,Image
+display(Image('final_mesh.png'))
+# -- output
+OpenFOAM blocks: ['internalMesh', 'boundary']
+
+/tmp/ipykernel_1953927/4143207432.py:5: PyVistaFutureWarning: The default value of `algorithm` for the filter
+`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to
+`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to
+silence this warning.
+  internal=data['internalMesh']; surf=internal.extract_surface()
+[0m[33m2026-09-17 02:32:31.258 ( 119.372s) [    7BC8DE6EB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-17 02:32:31.258 ( 119.372s) [    7BC8DE6EB780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_1953927/4143207432.py:6: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p=pv.Plotter(off_screen=True,window_size=(900,700)); p.add_mesh(surf,color='lightcyan',show_edges=True,line_width=0.3); p.view_isometric(); p.show(screenshot='final_mesh.png')
+

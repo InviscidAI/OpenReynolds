@@ -1,0 +1,931 @@
+# -- cell 1 (2.4s, exit 0)
+import build123d as bd, inspect
+print('Polygon', inspect.signature(bd.Polygon))
+print('Circle', inspect.signature(bd.Circle))
+print('extrude', inspect.signature(bd.extrude))
+print('fuse', inspect.signature(bd.Shape.fuse))
+# -- output
+Polygon (*pts: 'VectorLike | Iterable[VectorLike]', rotation: 'float' = 0, align: 'Align | tuple[Align, Align] | None' = (<Align.NONE>, <Align.NONE>), mode: 'Mode' = <Mode.ADD>)
+Circle (radius: 'float', arc_size: 'float' = 360.0, align: 'Align | tuple[Align, Align] | None' = (<Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)
+extrude (to_extrude: 'Face | Sketch | None' = None, amount: 'float | None' = None, dir: 'VectorLike | None' = None, until: 'Until | None' = None, target: 'Compound | Solid | None' = None, both: 'bool' = False, taper: 'float' = 0.0, clean: 'bool' = True, mode: 'Mode' = <Mode.ADD>) -> 'Part'
+fuse (self, *to_fuse: 'Shape', glue: 'bool' = False, tol: 'float | None' = None) -> 'Self | Compound'
+
+# -- cell 2 (3.2s, exit 0)
+import numpy as np
+# Requested dimensions (metres)
+L = 0.120
+W = 0.006
+N_LOOPS = 4
+# Assumptions needed to define the otherwise unspecified teardrops
+T = 0.001              # 2D extrusion thickness
+BRANCH_W = 0.006       # bypass width, assumed equal to main channel
+CELL_PITCH = 0.026
+LOOP_SPAN = 0.022
+LOOP_RISE = 0.014
+X0 = 0.008
+SAMPLES = 25
+
+def capsule_tube(points, radius):
+    pieces = []
+    for p in points:
+        pieces.append(bd.Pos(float(p[0]), float(p[1])) * bd.Circle(radius))
+    for a, b in zip(points[:-1], points[1:]):
+        d = b-a; n = radius*np.array([-d[1], d[0]])/np.linalg.norm(d)
+        pieces.append(bd.Polygon(tuple(a+n), tuple(b+n), tuple(b-n), tuple(a-n)))
+    out = pieces[0]
+    for piece in pieces[1:]: out = out.fuse(piece)
+    return out
+
+main_2d = bd.Pos(0, -W/2) * bd.Rectangle(L, W, align=(bd.Align.MIN, bd.Align.MIN))
+branch_2d = []
+branch_centerlines = []
+for i in range(N_LOOPS):
+    xa = X0 + i*CELL_PITCH; xb = xa + LOOP_SPAN; sgn = 1 if i%2 == 0 else -1
+    p0=np.array([xa,0.0]); p1=np.array([xa+0.002,sgn*LOOP_RISE]); p2=np.array([xb-0.008,sgn*LOOP_RISE]); p3=np.array([xb,0.0])
+    ts=np.linspace(0,1,SAMPLES)
+    pts=np.array([(1-t)**3*p0+3*(1-t)**2*t*p1+3*(1-t)*t*t*p2+t**3*p3 for t in ts])
+    branch_centerlines.append(pts)
+    branch_2d.append(capsule_tube(pts, BRANCH_W/2))
+fluid_2d = main_2d
+for branch in branch_2d: fluid_2d = fluid_2d.fuse(branch)
+fluid = bd.extrude(fluid_2d, amount=T)
+bb=fluid.bounding_box()
+print('solids:', len(fluid.solids()), 'faces:', len(fluid.faces()))
+print('extent [m]:', bb.min, bb.max)
+print('overall length measured/requested [m]:', bb.size.X, L)
+print('main width requested [m]:', W, 'extrusion assumed [m]:', T)
+print('fluid volume [m3]:', fluid.volume)
+# -- output
+solids: 101 faces: 846
+extent [m]: Vector: (X=0, Y=-0.0135, Z=-0.001) Vector: (X=0.12, Y=0.0135, Z=0.001)
+overall length measured/requested [m]: 0.12 0.12
+main width requested [m]: 0.006 extrusion assumed [m]: 0.001
+fluid volume [m3]: 1.3424879735566137e-06
+
+# -- cell 3 (0.1s, exit 0)
+print(type(main_2d), len(main_2d.faces()), type(main_2d.faces()[0]))
+print(type(branch_2d[0]), len(branch_2d[0].faces()))
+print('first branch area sum', sum(f.area for f in branch_2d[0].faces()))
+# -- output
+<class 'build123d.objects_sketch.Rectangle'> 1 <class 'build123d.topology.two_d.Face'>
+<class 'build123d.topology.composite.Compound'> 26
+first branch area sum 0.00022388628159591625
+
+# -- cell 4 (1.7s, exit 0)
+tube_faces=[]
+for pts in branch_centerlines:
+    for p in pts:
+        tube_faces.append((bd.Pos(float(p[0]), float(p[1])) * bd.Circle(BRANCH_W/2)).faces()[0])
+    for a,b in zip(pts[:-1],pts[1:]):
+        d=b-a; n=(BRANCH_W/2)*np.array([-d[1],d[0]])/np.linalg.norm(d)
+        tube_faces.append(bd.Polygon(tuple(a+n),tuple(b+n),tuple(b-n),tuple(a-n)).faces()[0])
+fluid_face = main_2d.faces()[0].fuse(*tube_faces, tol=1e-9)
+print(type(fluid_face), 'faces', len(fluid_face.faces()), 'area', fluid_face.area)
+print('wires per face:', [len(f.wires()) for f in fluid_face.faces()])
+fluid = bd.extrude(fluid_face, amount=T, dir=(0,0,1))
+bb=fluid.bounding_box()
+print('solid count',len(fluid.solids()),'z extent',bb.min.Z,bb.max.Z,'volume',fluid.volume)
+# -- output
+<class 'build123d.topology.composite.Sketch'> faces 97 area 0.0013424879735566566
+wires per face: [5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+solid count 97 z extent 0.0 0.001 volume 1.3424879735565203e-06
+
+# -- cell 5 (0.2s, exit 0)
+areas=sorted([(f.area, len(f.wires()),j) for j,f in enumerate(fluid_face.faces())], reverse=True)
+print('largest ten (area, wires, index):')
+for row in areas[:10]: print(row)
+largest_face=fluid_face.faces()[areas[0][2]]
+clean_fluid=bd.extrude(largest_face, amount=T, dir=(0,0,1))
+print('clean solids/faces/volume:',len(clean_fluid.solids()),len(clean_fluid.faces()),clean_fluid.volume)
+print('clean planar area:',largest_face.area,'holes:',len(largest_face.wires())-1)
+# -- output
+largest ten (area, wires, index):
+(0.001337391954021088, 5, 0)
+(5.05969515134549e-07, 1, 26)
+(5.059695151337969e-07, 1, 3)
+(5.059695151333835e-07, 1, 74)
+(5.059695151333479e-07, 1, 51)
+(9.066873194722552e-08, 1, 71)
+(9.066873194722192e-08, 1, 23)
+(9.066873194722107e-08, 1, 47)
+(9.06687319472145e-08, 1, 95)
+(7.668430146113062e-08, 1, 94)
+clean solids/faces/volume: 1 182 1.337391954020953e-06
+clean planar area: 0.001337391954021088 holes: 4
+
+# -- cell 6 (0.3s, exit 1)
+import matplotlib.pyplot as plt
+fig,ax=plt.subplots(figsize=(12,4))
+# Plot all boundary wires of the clean planar face
+for wire in largest_face.wires():
+    pts=[]
+    for edge in wire.edges():
+        pts.extend([(v.X,v.Y) for v in edge.distribute_locations(12)])
+    # draw individual edges to avoid ordering assumptions
+    for edge in wire.edges():
+        ep=np.array([(loc.position.X,loc.position.Y) for loc in edge.distribute_locations(20)])
+        ax.plot(ep[:,0]*1000,ep[:,1]*1000,'k-',lw=1.3)
+for i,pts in enumerate(branch_centerlines):
+    ax.plot(pts[:,0]*1000,pts[:,1]*1000,'--',lw=.8,label='bypass centerline' if i==0 else None)
+ax.set_aspect('equal'); ax.set_xlabel('x [mm]'); ax.set_ylabel('y [mm]')
+ax.set_title('Coarse Tesla-valve fluid region (top view)'); ax.grid(True,alpha=.25); ax.legend(loc='upper right')
+plt.tight_layout(); plt.show()
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 7[39m
+[32m      3[39m [38;5;66;03m# Plot all boundary wires of the clean planar face[39;00m
+[32m      4[39m [38;5;28;01mfor[39;00m wire [38;5;28;01min[39;00m largest_face.wires():
+[32m      5[39m     pts=[]
+[32m      6[39m     [38;5;28;01mfor[39;00m edge [38;5;28;01min[39;00m wire.edges():
+[32m----> [39m[32m7[39m         pts.extend([(v.X,v.Y) [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m edge.distribute_locations([32m12[39m)])
+[32m      8[39m     [38;5;66;03m# draw individual edges to avoid ordering assumptions[39;00m
+[32m      9[39m     [38;5;28;01mfor[39;00m edge [38;5;28;01min[39;00m wire.edges():
+[32m     10[39m         ep=np.array([(loc.position.X,loc.position.Y) [38;5;28;01mfor[39;00m loc [38;5;28;01min[39;00m edge.distribute_locations([32m20[39m)])
+
+[31mAttributeError[39m: 'Location' object has no attribute 'X'
+
+# -- cell 7 (0.9s, exit 0)
+import matplotlib.pyplot as plt
+fig,ax=plt.subplots(figsize=(12,4))
+for wire in largest_face.wires():
+    for edge in wire.edges():
+        ep=np.array([(loc.position.X,loc.position.Y) for loc in edge.distribute_locations(20)])
+        ax.plot(ep[:,0]*1000,ep[:,1]*1000,'k-',lw=1.3)
+for i,pts in enumerate(branch_centerlines):
+    ax.plot(pts[:,0]*1000,pts[:,1]*1000,'--',lw=.8,label='bypass centerline' if i==0 else None)
+ax.set_aspect('equal'); ax.set_xlabel('x [mm]'); ax.set_ylabel('y [mm]')
+ax.set_title('Coarse Tesla-valve fluid region (top view)'); ax.grid(True,alpha=.25); ax.legend(loc='upper right')
+plt.tight_layout(); plt.show()
+# -- output
+
+
+# -- cell 8 (0.1s, exit 0)
+import sys; sys.path.insert(0,'.reference')
+from cad_export import export_patches
+import inspect
+print(inspect.signature(export_patches))
+for j,f in enumerate(clean_fluid.faces()):
+    n=f.normal_at(); c=f.center()
+    if abs(n.X)>.9 or abs(n.Z)>.9:
+        print(j,'area',f.area,'normal',tuple(round(q,3) for q in (n.X,n.Y,n.Z)),'center',tuple(round(q,5) for q in (c.X,c.Y,c.Z)))
+# -- output
+(shape, patches: 'dict', out_dir='constant/triSurface', *, tolerance: 'float | None' = None, angular_tolerance: 'float' = 0.1, location_in_mesh=None, binary: 'bool' = True, clean: 'bool' = True, quiet: 'bool' = False) -> 'dict'
+0 area 6e-06 normal (-1.0, -0.0, 0.0) center (0.0, -0.0, 0.0005)
+1 area 0.0013373919540210816 normal (0.0, 0.0, 1.0) center (0.05856, -0.0, 0.001)
+2 area 1.0627798942047992e-06 normal (0.928, 0.374, -0.0) center (0.08997, -0.00347, 0.0005)
+40 area 1.0627798942048068e-06 normal (0.928, -0.374, -0.0) center (0.06397, 0.00347, 0.0005)
+42 area 1.0627798942048246e-06 normal (0.928, 0.374, -0.0) center (0.03797, -0.00347, 0.0005)
+80 area 1.0627798942048313e-06 normal (0.928, -0.374, -0.0) center (0.01197, 0.00347, 0.0005)
+83 area 1.800309644023698e-06 normal (-0.959, 0.284, -0.0) center (0.00582, 0.00406, 0.0005)
+84 area 1.7173012927726923e-06 normal (-0.929, 0.37, -0.0) center (0.0064, 0.0057, 0.0005)
+107 area 1.8003096440237114e-06 normal (-0.959, 0.284, -0.0) center (0.05782, 0.00406, 0.0005)
+108 area 1.7173012927727262e-06 normal (-0.929, 0.37, -0.0) center (0.0584, 0.0057, 0.0005)
+130 area 6e-06 normal (1.0, 0.0, -0.0) center (0.12, -0.0, 0.0005)
+152 area 1.717301292772703e-06 normal (-0.929, -0.37, 0.0) center (0.0844, -0.0057, 0.0005)
+153 area 1.8003096440237497e-06 normal (-0.959, -0.284, 0.0) center (0.08382, -0.00406, 0.0005)
+176 area 1.7173012927726913e-06 normal (-0.929, -0.37, 0.0) center (0.0324, -0.0057, 0.0005)
+177 area 1.8003096440237127e-06 normal (-0.959, -0.284, 0.0) center (0.03182, -0.00406, 0.0005)
+179 area 0.0013373919540210807 normal (-0.0, -0.0, -1.0) center (0.05856, -0.0, 0.0)
+
+# -- cell 9 (0.3s, exit 0)
+fluid = clean_fluid
+all_faces=list(fluid.faces())
+inlet=[f for f in all_faces if f.area>5.9e-6 and f.normal_at().X < -0.999]
+outlet=[f for f in all_faces if f.area>5.9e-6 and f.normal_at().X > 0.999]
+front_back=[f for f in all_faces if abs(f.normal_at().Z)>0.999]
+used_ids={id(f) for f in inlet+outlet+front_back}
+walls=[f for f in all_faces if id(f) not in used_ids]
+print('patch face counts:',len(inlet),len(outlet),len(front_back),len(walls))
+patch_report=export_patches(fluid, {'inlet':inlet,'outlet':outlet,'frontAndBack':front_back,'walls':walls}, tolerance=2.5e-4)
+# -- output
+patch face counts: 1 1 2 178
+constant/triSurface  <-  182 faces, one tessellation
+  tolerance           0.00025 m chord deviation, 0.1 rad angular
+    inlet                     1 faces          2 triangles  6e-06 m^2  -> inlet.stl
+    outlet                    1 faces          2 triangles  6e-06 m^2  -> outlet.stl
+    frontAndBack              2 faces      2,996 triangles  0.00267455 m^2  -> frontAndBack.stl
+    walls                   178 faces      2,980 triangles  0.000395027 m^2  -> walls.stl
+  extent              0.12 x 0.027 x 0.001 m   <- metres, so check these against the request
+  union               5,980 triangles, 0 open edges, 0 flipped, 0 non-manifold
+  location_in_mesh    not given
+  manifest            constant/triSurface/patches.json
+
+# -- cell 10 (0.2s, exit 0)
+import gmsh, os
+gmsh.initialize(); gmsh.model.add('teslaValve')
+occ=gmsh.model.occ
+# Main rectangle and four polygonal tubes from the validated centerline offsets
+surfs=[(2,occ.addRectangle(0,-W/2,0,L,W))]
+for pts in branch_centerlines:
+    left=[]; right=[]
+    for j,p in enumerate(pts):
+        if j==0: d=pts[1]-pts[0]
+        elif j==len(pts)-1: d=pts[-1]-pts[-2]
+        else: d=pts[j+1]-pts[j-1]
+        n=(BRANCH_W/2)*np.array([-d[1],d[0]])/np.linalg.norm(d)
+        left.append(p+n); right.append(p-n)
+    poly=np.vstack([left,right[::-1]])
+    pTags=[occ.addPoint(float(x),float(y),0) for x,y in poly]
+    lTags=[occ.addLine(pTags[j],pTags[(j+1)%len(pTags)]) for j in range(len(pTags))]
+    loop=occ.addCurveLoop(lTags)
+    surfs.append((2,occ.addPlaneSurface([loop])))
+occ.synchronize()
+fused,_=occ.fuse([surfs[0]],surfs[1:],removeObject=True,removeTool=True)
+occ.synchronize()
+plane_surfs=[tag for dim,tag in fused if dim==2]
+print('fused planar surfaces:',plane_surfs)
+extr=occ.extrude([(2,plane_surfs[0])],0,0,T,numElements=[1],recombine=True)
+occ.synchronize()
+vols=[tag for dim,tag in extr if dim==3]
+all_s=gmsh.model.getEntities(2)
+in_s=[]; out_s=[]; fb_s=[]; wall_s=[]
+for _,tag in all_s:
+    area=occ.getMass(2,tag); com=occ.getCenterOfMass(2,tag)
+    # Surface type and extents distinguish broad 2D planes from vertical sides
+    box=gmsh.model.getBoundingBox(2,tag); dx=box[3]-box[0]; dy=box[4]-box[1]; dz=box[5]-box[2]
+    if dz < 1e-8: fb_s.append(tag)
+    elif area > 5.9e-6 and dx < 1e-8:
+        (in_s if com[0] < L/2 else out_s).append(tag)
+    else: wall_s.append(tag)
+for dim,tags,name in [(3,vols,'fluid'),(2,in_s,'inlet'),(2,out_s,'outlet'),(2,fb_s,'frontAndBack'),(2,wall_s,'walls')]:
+    pg=gmsh.model.addPhysicalGroup(dim,tags); gmsh.model.setPhysicalName(dim,pg,name)
+gmsh.option.setNumber('Mesh.MeshSizeMin',0.0015); gmsh.option.setNumber('Mesh.MeshSizeMax',0.0015)
+gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3)
+gmsh.write('teslaValve.msh')
+print('surface groups:',{'inlet':in_s,'outlet':out_s,'frontAndBack':len(fb_s),'walls':len(wall_s)})
+print('mesh nodes/elements:',len(gmsh.model.mesh.getNodes()[0]),sum(len(a) for a in gmsh.model.mesh.getElements(3)[1]))
+gmsh.finalize()
+# -- output
+Info    : [  0%] Union                                                                                  Info    : [ 10%] Union                                                                                  Info    : [ 20%] Union                                                                                  Info    : [ 30%] Union                                                                                  Info    : [ 40%] Union                                                                                  Info    : [ 50%] Union                                                                                  Info    : [ 60%] Union                                                                                  Info    : [ 70%] Union - Filling splits of edges                                                                                Info    : [ 80%] Union                                                                                  Info    : [ 90%] Union                                                                                  fused planar surfaces: [1, 2, 3, 4, 5]
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Line)
+Info    : [ 10%] Meshing curve 5 (Line)
+Info    : [ 10%] Meshing curve 6 (Line)
+Info    : [ 10%] Meshing curve 7 (Line)
+Info    : [ 10%] Meshing curve 8 (Line)
+Info    : [ 10%] Meshing curve 9 (Line)
+Info    : [ 10%] Meshing curve 10 (Line)
+Info    : [ 10%] Meshing curve 11 (Line)
+Info    : [ 10%] Meshing curve 12 (Line)
+Info    : [ 10%] Meshing curve 13 (Line)
+Info    : [ 10%] Meshing curve 14 (Line)
+Info    : [ 10%] Meshing curve 15 (Line)
+Info    : [ 10%] Meshing curve 16 (Line)
+Info    : [ 10%] Meshing curve 17 (Line)
+Info    : [ 10%] Meshing curve 18 (Line)
+Info    : [ 10%] Meshing curve 19 (Line)
+Info    : [ 10%] Meshing curve 20 (Line)
+Info    : [ 10%] Meshing curve 21 (Line)
+Info    : [
+... 6625 characters cut ...
+Line)
+Info    : [ 80%] Meshing curve 182 (Line)
+Info    : [ 80%] Meshing curve 183 (Line)
+Info    : [ 90%] Meshing curve 184 (Line)
+Info    : [ 90%] Meshing curve 185 (Line)
+Info    : [ 90%] Meshing curve 186 (Line)
+Info    : [ 90%] Meshing curve 187 (Line)
+Info    : [ 90%] Meshing curve 188 (Line)
+Info    : [ 90%] Meshing curve 189 (Extruded)
+Info    : [ 90%] Meshing curve 190 (Extruded)
+Info    : [ 90%] Meshing curve 191 (Extruded)
+Info    : [ 90%] Meshing curve 192 (Extruded)
+Info    : [ 90%] Meshing curve 193 (Extruded)
+Info    : [ 90%] Meshing curve 194 (Extruded)
+Info    : [ 90%] Meshing curve 195 (Extruded)
+Info    : [ 90%] Meshing curve 196 (Extruded)
+Info    : [ 90%] Meshing curve 197 (Extruded)
+Info    : [ 90%] Meshing curve 198 (Extruded)
+Info    : [ 90%] Meshing curve 199 (Extruded)
+Info    : [ 90%] Meshing curve 200 (Extruded)
+Info    : [ 90%] Meshing curve 201 (Extruded)
+Info    : [ 90%] Meshing curve 202 (Extruded)
+Info    : [ 90%] Meshing curve 203 (Extruded)
+Info    : [ 90%] Meshing curve 204 (Extruded)
+Info    : [ 90%] Meshing curve 205 (Extruded)
+Info    : [ 90%] Meshing curve 206 (Extruded)
+Info    : [100%] Meshing curve 207 (Extruded)
+Info    : [100%] Meshing curve 208 (Extruded)
+Info    : [100%] Meshing curve 209 (Extruded)
+Info    : [100%] Meshing curve 210 (Extruded)
+Info    : [100%] Meshing curve 211 (Extruded)
+Info    : [100%] Meshing curve 212 (Extruded)
+Info    : [100%] Meshing curve 213 (Extruded)
+Info    : [100%] Meshing curve 214 (Extruded)
+Info    : [100%] Meshing curve 215 (Extruded)
+Info    : [100%] Meshing curve 216 (Extruded)
+Info    : [100%] Meshing curve 217 (Extruded)
+Info    : [100%] Meshing curve 218 (Extruded)
+Info    : [100%] Meshing curve 219 (Extruded)
+Info    : [100%] Meshing curve 220 (Extruded)
+Info    : [100%] Meshing curve 221 (Extruded)
+Info    : [100%] Meshing curve 222 (Extruded)
+Info    : [100%] Meshing curve 223 (Extruded)
+Info    : [100%] Meshing curve 224 (Extruded)
+Info    : [100%] Meshing curve 225 (Extruded)
+Info    : [100%] Meshing curve 226 (Extruded)
+Info    : [100%] Meshing curve 227 (Extruded)
+Info    : [100%] Meshing curve 228 (Extruded)
+Info    : Done meshing 1D (Wall 0.0189903s, CPU 0.237883s)
+Info    : Meshing 2D...
+Info    : [  0%] Meshing surface 1 (Plane, Frontal-Delaunay)
+Info    : [ 10%] Meshing surface 2 (Plane, Frontal-Delaunay)
+Info    : [ 10%] Meshing surface 3 (Plane, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 4 (Plane, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 5 (Plane, Frontal-Delaunay)
+Info    : [ 20%] Meshing surface 6 (Extruded)
+Info    : [ 30%] Meshing surface 7 (Extruded)
+Info    : [ 30%] Meshing surface 8 (Extruded)
+Info    : [ 40%] Meshing surface 9 (Extruded)
+Info    : [ 40%] Meshing surface 10 (Extruded)
+Info    : [ 40%] Meshing surface 11 (Extruded)
+Info    : [ 50%] Meshing surface 12 (Extruded)
+Info    : [ 50%] Meshing surface 13 (Extruded)
+Info    : [ 60%] Meshing surface 14 (Extruded)
+Info    : [ 60%] Meshing surface 15 (Extruded)
+Info    : [ 60%] Meshing surface 16 (Extruded)
+Info    : [ 70%] Meshing surface 17 (Extruded)
+Info    : [ 70%] Meshing surface 18 (Extruded)
+Info    : [ 70%] Meshing surface 19 (Extruded)
+Info    : [ 80%] Meshing surface 20 (Extruded)
+Info    : [ 80%] Meshing surface 21 (Extruded)
+Info    : [ 90%] Meshing surface 22 (Extruded)
+Info    : [ 90%] Meshing surface 23 (Extruded)
+Info    : [ 90%] Meshing surface 24 (Extruded)
+Info    : [100%] Meshing surface 25 (Extruded)
+Info    : [100%] Meshing surface 26 (Extruded)
+Info    : Done meshing 2D (Wall 0.0340781s, CPU 0.157219s)
+Info    : Meshing 3D...
+Info    : Meshing volume 1 (Extruded)
+Info    : Done meshing 3D (Wall 0.00149319s, CPU 0.001523s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 2.483e-05s, CPU 4e-05s)
+Info    : 2000 nodes 5294 elements
+Info    : Writing 'teslaValve.msh'...
+surface groups: {'inlet': [], 'outlet': [], 'frontAndBack': 0, 'walls': 26}
+Info    : Done writing 'teslaValve.msh'
+mesh nodes/elements: 2000 852
+
+# -- cell 11 (0.3s, exit 1)
+gmsh.initialize(); gmsh.model.add('teslaValve'); occ=gmsh.model.occ
+objects=[(2,occ.addRectangle(0,-W/2,0,L,W))]
+for pts in branch_centerlines:
+    left=[]; right=[]
+    for j,p in enumerate(pts):
+        d=pts[1]-pts[0] if j==0 else (pts[-1]-pts[-2] if j==len(pts)-1 else pts[j+1]-pts[j-1])
+        n=(BRANCH_W/2)*np.array([-d[1],d[0]])/np.linalg.norm(d)
+        left.append(p+n); right.append(p-n)
+    poly=np.vstack([left,right[::-1]])
+    pTags=[occ.addPoint(float(x),float(y),0) for x,y in poly]
+    lTags=[occ.addLine(pTags[j],pTags[(j+1)%len(pTags)]) for j in range(len(pTags))]
+    objects.append((2,occ.addPlaneSurface([occ.addCurveLoop(lTags)])))
+    objects.append((2,occ.addDisk(float(pts[0,0]),float(pts[0,1]),0,BRANCH_W/2,BRANCH_W/2)))
+    objects.append((2,occ.addDisk(float(pts[-1,0]),float(pts[-1,1]),0,BRANCH_W/2,BRANCH_W/2)))
+occ.synchronize(); fused,_=occ.fuse([objects[0]],objects[1:],removeObject=True,removeTool=True); occ.synchronize()
+plane_surfs=[tag for dim,tag in fused if dim==2]
+print('connected planar surfaces:',plane_surfs)
+if len(plane_surfs)!=1: raise RuntimeError('Tesla profile did not union to one surface')
+extr=occ.extrude([(2,plane_surfs[0])],0,0,T,numElements=[1],recombine=True); occ.synchronize()
+vols=[tag for dim,tag in extr if dim==3]
+in_s=[]; out_s=[]; fb_s=[]; wall_s=[]
+for _,tag in gmsh.model.getEntities(2):
+    area=occ.getMass(2,tag); com=occ.getCenterOfMass(2,tag); box=gmsh.model.getBoundingBox(2,tag)
+    dx=box[3]-box[0]
+    if area > 1e-4: fb_s.append(tag)
+    elif area > 5.5e-6 and dx < 1e-6:
+        (in_s if com[0] < L/2 else out_s).append(tag)
+    else: wall_s.append(tag)
+if not (len(in_s)==len(out_s)==1 and len(fb_s)==2): raise RuntimeError((in_s,out_s,fb_s))
+for dim,tags,name in [(3,vols,'fluid'),(2,in_s,'inlet'),(2,out_s,'outlet'),(2,fb_s,'frontAndBack'),(2,wall_s,'walls')]:
+    pg=gmsh.model.addPhysicalGroup(dim,tags); gmsh.model.setPhysicalName(dim,pg,name)
+gmsh.option.setNumber('Mesh.MeshSizeMin',0.0015); gmsh.option.setNumber('Mesh.MeshSizeMax',0.0015); gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3); gmsh.write('teslaValve.msh')
+n3=sum(len(a) for a in gmsh.model.mesh.getElements(3)[1]); nn=len(gmsh.model.mesh.getNodes()[0])
+print('groups:',{'inlet':in_s,'outlet':out_s,'frontAndBack':fb_s,'walls':len(wall_s)})
+print('nodes / 3D cells:',nn,n3)
+gmsh.finalize()
+# -- output
+Info    : [  0%] Union                                                                                  Info    : [ 10%] Union                                                                                  Info    : [ 20%] Union                                                                                  Info    : [ 30%] Union                                                                                  Info    : [ 40%] Union                                                                                  Info    : [ 50%] Union                                                                                  Info    : [ 60%] Union                                                                                  Info    : [ 70%] Union - Filling splits of edges                                                                                Info    : [ 80%] Union - Making faces                                                                                Info    : [ 90%] Union                                                                                                                                                                  Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 3
+Info    : Could not preserve tag of 2D object 3 (->1)
+Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 4
+Info    : Could not preserve tag of 2D object 4 (->1)
+Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 6
+Info    : Could not preserve tag of 2D object 6 (->1)
+Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 7
+Info    : Could not preserve tag of 2D object 7 (->1)
+Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 9
+Info    : Could not preserve tag of 2D object 9 (->1)
+Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 10
+Info    : Could not preserve tag of 2D object 10 (->1)
+Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 12
+Info    : Could not preserve tag of 2D object 12 (->1)
+Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 13
+Info    : Could not preserve tag of 2D object 13 (->1)
+connected planar surfaces: [1, 2, 3, 4, 5]
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[11][39m[32m, line 18[39m
+[32m     14[39m     objects.append(([32m2[39m,occ.addDisk(float(pts[-[32m1[39m,[32m0[39m]),float(pts[-[32m1[39m,[32m1[39m]),[32m0[39m,BRANCH_W/[32m2[39m,BRANCH_W/[32m2[39m)))
+[32m     15[39m occ.synchronize(); fused,_=occ.fuse([objects[[32m0[39m]],objects[[32m1[39m:],removeObject=[38;5;28;01mTrue[39;00m,removeTool=[38;5;28;01mTrue[39;00m); occ.synchronize()
+[32m     16[39m plane_surfs=[tag [38;5;28;01mfor[39;00m dim,tag [38;5;28;01min[39;00m fused [38;5;28;01mif[39;00m dim==[32m2[39m]
+[32m     17[39m print([33m'connected planar surfaces:'[39m,plane_surfs)
+[32m---> [39m[32m18[39m [38;5;28;01mif[39;00m len(plane_surfs)!=[32m1[39m: [38;5;28;01mraise[39;00m RuntimeError([33m'Tesla profile did not union to one surface'[39m)
+[32m     19[39m extr=occ.extrude([([32m2[39m,plane_surfs[[32m0[39m])],[32m0[39m,[32m0[39m,T,numElements=[[32m1[39m],recombine=[38;5;28;01mTrue[39;00m); occ.synchronize()
+[32m     20[39m vols=[tag [38;5;28;01mfor[39;00m dim,tag [38;5;28;01min[39;00m extr [38;5;28;01mif[39;00m dim==[32m3[39m]
+[32m     21[39m in_s=[]; out_s=[]; fb_s=[]; wall_s=[]
+
+[31mRuntimeError[39m: Tesla profile did not union to one surface
+
+# -- cell 12 (0.2s, exit 0)
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize(); gmsh.model.add('teslaTopology'); occ=gmsh.model.occ
+main_tag=occ.addRectangle(0,-W/2,0,L,W)
+branch_tags=[]
+for pts in branch_centerlines:
+    left=[]; right=[]
+    for j,p in enumerate(pts):
+        d=pts[1]-pts[0] if j==0 else (pts[-1]-pts[-2] if j==len(pts)-1 else pts[j+1]-pts[j-1])
+        n=(BRANCH_W/2)*np.array([-d[1],d[0]])/np.linalg.norm(d); left.append(p+n); right.append(p-n)
+    poly=np.vstack([left,right[::-1]])
+    pp=[occ.addPoint(float(x),float(y),0) for x,y in poly]
+    ll=[occ.addLine(pp[j],pp[(j+1)%len(pp)]) for j in range(len(pp))]
+    tube=occ.addPlaneSurface([occ.addCurveLoop(ll)])
+    d0=occ.addDisk(float(pts[0,0]),float(pts[0,1]),0,BRANCH_W/2,BRANCH_W/2)
+    d1=occ.addDisk(float(pts[-1,0]),float(pts[-1,1]),0,BRANCH_W/2,BRANCH_W/2)
+    br,_=occ.fuse([(2,tube)],[(2,d0),(2,d1)],removeObject=True,removeTool=True)
+    branch_tags.extend([t for dim,t in br if dim==2])
+occ.synchronize()
+current=[(2,main_tag)]
+for bt in branch_tags:
+    current,_=occ.fuse(current,[(2,bt)],removeObject=True,removeTool=True); occ.synchronize()
+plane_surfs=[t for d,t in current if d==2]
+print('branch pieces after local unions:',len(branch_tags),'final surfaces:',plane_surfs)
+print('surface masses:',[occ.getMass(2,t) for t in plane_surfs])
+gmsh.finalize()
+# -- output
+Info    : [  0%] Union                                                                                  Info    : [ 10%] Union                                                                                  Info    : [ 20%] Union                                                                                  Info    : [ 30%] Union                                                                                  Info    : [ 40%] Union                                                                                  Info    : [ 50%] Union                                                                                  Info    : [ 60%] Union                                                                                  Info    : [ 70%] Union - Filling splits of edges                                                                                Info    : [ 80%] Union                                                                                  Info    : [ 90%] Union                                                                                  Info    : [  0%] Union                                                                                  Info    : [ 10%] Union                                                                                  Info    : [ 20%] Union                                                                                  Info    : [ 30%] Union                                                                                  Info    : [ 40%] Union                                                                                  Info    : [ 50%] Union                                                                                  Info    : [ 60%] Union                                                                                  Info    : [ 70%] Union - Filling splits of edges                                                                                Info    : [ 80%] Union                                        
+... 13039 characters cut ...
+                                            Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 10
+Info    : Could not preserve tag of 2D object 10 (->1)
+Info    : [  0%] Union                                                                                  Info    : [ 10%] Union                                                                                  Info    : [ 20%] Union                                                                                  Info    : [ 30%] Union                                                                                  Info    : [ 40%] Union                                                                                  Info    : [ 50%] Union                                                                                  Info    : [ 60%] Union                                                                                  Info    : [ 70%] Union                                                                                  Info    : [ 80%] Union                                                                                  Info    : [ 90%] Union                                                                                                                                                                  Info    : [  0%] Union                                                                                  Info    : [ 10%] Union                                                                                  Info    : [ 20%] Union                                                                                  Info    : [ 30%] Union                                                                                  Info    : [ 40%] Union                                                                                  Info    : [ 50%] Union                                                                                  Info    : [ 60%] Union                                                                                  Info    : [ 70%] Union - Performing intersection of shapes                                                                                Info    : [ 80%] Union - Making faces                                                                                Info    : [ 90%] Union                                                                                  Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 12
+Info    : Could not preserve tag of 2D object 12 (->1)
+Info    : [  0%] Union                                                                                  Info    : [ 10%] Union                                                                                  Info    : [ 20%] Union                                                                                  Info    : [ 30%] Union                                                                                  Info    : [ 40%] Union                                                                                  Info    : [ 50%] Union                                                                                  Info    : [ 60%] Union                                                                                  Info    : [ 70%] Union                                                                                  Info    : [ 80%] Union - Making faces                                                                                Info    : [ 90%] Union                                                                                                                                                                  Info    : Cannot bind existing OpenCASCADE surface 1 to second tag 13
+Info    : Could not preserve tag of 2D object 13 (->1)
+branch pieces after local unions: 12 final surfaces: [1, 14, 15, 16, 17]
+surface masses: [0.0007199999999999999, 0.00015540358425322138, 0.00015540358425322138, 0.00015540358425322135, 0.00015540358425322135]
+
+# -- cell 13 (0.6s, exit 0)
+bd.export_step(largest_face,'teslaProfile.step')
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize(); gmsh.model.add('teslaValve'); occ=gmsh.model.occ
+imp=occ.importShapes('teslaProfile.step'); occ.synchronize()
+ps=[t for d,t in imp if d==2]
+print('imported surfaces:',ps,'area:',[occ.getMass(2,t) for t in ps])
+if len(ps)!=1: raise RuntimeError('STEP profile is not one surface')
+extr=occ.extrude([(2,ps[0])],0,0,T,numElements=[1],recombine=True); occ.synchronize()
+vols=[t for d,t in extr if d==3]; in_s=[]; out_s=[]; fb_s=[]; wall_s=[]
+for _,tag in gmsh.model.getEntities(2):
+    area=occ.getMass(2,tag); com=occ.getCenterOfMass(2,tag); box=gmsh.model.getBoundingBox(2,tag); dx=box[3]-box[0]
+    if area>1e-4: fb_s.append(tag)
+    elif area>5.5e-6 and dx<1e-6: (in_s if com[0]<L/2 else out_s).append(tag)
+    else: wall_s.append(tag)
+print('patch counts:',len(in_s),len(out_s),len(fb_s),len(wall_s))
+for dim,tags,name in [(3,vols,'fluid'),(2,in_s,'inlet'),(2,out_s,'outlet'),(2,fb_s,'frontAndBack'),(2,wall_s,'walls')]:
+    pg=gmsh.model.addPhysicalGroup(dim,tags); gmsh.model.setPhysicalName(dim,pg,name)
+gmsh.option.setNumber('Mesh.MeshSizeMin',0.0015); gmsh.option.setNumber('Mesh.MeshSizeMax',0.0015); gmsh.option.setNumber('Mesh.MshFileVersion',2.2)
+gmsh.model.mesh.generate(3); gmsh.write('teslaValve.msh')
+print('nodes/cells:',len(gmsh.model.mesh.getNodes()[0]),sum(len(a) for a in gmsh.model.mesh.getElements(3)[1]))
+gmsh.finalize()
+# -- output
+Info    :  - Label 'Shapes/FACE' (2D)
+imported surfaces: [1] area: [0.0013373919539923843]
+patch counts: 1 1 2 370
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Line)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Circle)
+Info    : [ 10%] Meshing curve 5 (Circle)
+Info    : [ 10%] Meshing curve 6 (Circle)
+Info    : [ 10%] Meshing curve 7 (Circle)
+Info    : [ 10%] Meshing curve 8 (Circle)
+Info    : [ 10%] Meshing curve 9 (Circle)
+Info    : [ 10%] Meshing curve 10 (Circle)
+Info    : [ 10%] Meshing curve 11 (Circle)
+Info    : [ 10%] Meshing curve 12 (Circle)
+Info    : [ 10%] Meshing curve 13 (Circle)
+Info    : [ 10%] Meshing curve 14 (Circle)
+Info    : [ 10%] Meshing curve 15 (Circle)
+Info    : [ 10%] Meshing curve 16 (Circle)
+Info    : [ 10%] Meshing curve 17 (Circle)
+Info    : [ 10%] Meshing curve 18 (Circle)
+Info    : [ 10%] Meshing curve 19 (Circle)
+Info    : [ 10%] Meshing curve 20 (Circle)
+Info    : [ 10%] Meshing curve 21 (Circle)
+Info    : [ 10%] Meshing curve 22 (Circle)
+Info    : [ 10%] Meshing curve 23 (Circle)
+Info    : [ 10%] Meshing curve 24 (Circle)
+Info    : [ 10%] Meshing curve 25 (Circle)
+Info    : [ 10%] Meshing curve 26 (Circle)
+Info    : [ 10%] Meshing curve 27 (Circle)
+Info    : [ 10%] Meshing curve 28 (Circle)
+Info    : [ 10%] Meshing curve 29 (Circle)
+Info    : [ 10%] Meshing curve 30 (Circle)
+Info    : [ 10%] Meshing curve 31 (Circle)
+Info    : [ 10%] Meshing curve 32 (Circle)
+Info    : [ 10%] Meshing curve 33 (Circle)
+Info    : [ 10%] Meshing curve 34 (Circle)
+Info    : [ 10%] Meshing curve 35 (Circle)
+Info    : [ 10%] Meshing curve 36 (Circle)
+Info    : [ 10%] Meshing curve 37 (Circle)
+Info    : [ 10%] Meshing curve 38 (Circle)
+Info    : [ 10%] Meshing curve 39 (Circle)
+Info    : [ 10%] Meshing curve 40 (Circle)
+Info    : [ 10%] Meshing curve 41 (Circle)
+Info    : [ 10%] Meshing curve 42 (Circle)
+Info    : [ 10%] Meshing curve 43 (Circle)
+Info    : [ 10%] Meshing cu
+... 63034 characters cut ...
+: [ 80%] Meshing surface 300 (Extruded)
+Info    : [ 90%] Meshing surface 301 (Extruded)
+Info    : [ 90%] Meshing surface 302 (Extruded)
+Info    : [ 90%] Meshing surface 303 (Extruded)
+Info    : [ 90%] Meshing surface 304 (Extruded)
+Info    : [ 90%] Meshing surface 305 (Extruded)
+Info    : [ 90%] Meshing surface 306 (Extruded)
+Info    : [ 90%] Meshing surface 307 (Extruded)
+Info    : [ 90%] Meshing surface 308 (Extruded)
+Info    : [ 90%] Meshing surface 309 (Extruded)
+Info    : [ 90%] Meshing surface 310 (Extruded)
+Info    : [ 90%] Meshing surface 311 (Extruded)
+Info    : [ 90%] Meshing surface 312 (Extruded)
+Info    : [ 90%] Meshing surface 313 (Extruded)
+Info    : [ 90%] Meshing surface 314 (Extruded)
+Info    : [ 90%] Meshing surface 315 (Extruded)
+Info    : [ 90%] Meshing surface 316 (Extruded)
+Info    : [ 90%] Meshing surface 317 (Extruded)
+Info    : [ 90%] Meshing surface 318 (Extruded)
+Info    : [ 90%] Meshing surface 319 (Extruded)
+Info    : [ 90%] Meshing surface 320 (Extruded)
+Info    : [ 90%] Meshing surface 321 (Extruded)
+Info    : [ 90%] Meshing surface 322 (Extruded)
+Info    : [ 90%] Meshing surface 323 (Extruded)
+Info    : [ 90%] Meshing surface 324 (Extruded)
+Info    : [ 90%] Meshing surface 325 (Extruded)
+Info    : [ 90%] Meshing surface 326 (Extruded)
+Info    : [ 90%] Meshing surface 327 (Extruded)
+Info    : [ 90%] Meshing surface 328 (Extruded)
+Info    : [ 90%] Meshing surface 329 (Extruded)
+Info    : [ 90%] Meshing surface 330 (Extruded)
+Info    : [ 90%] Meshing surface 331 (Extruded)
+Info    : [ 90%] Meshing surface 332 (Extruded)
+Info    : [ 90%] Meshing surface 333 (Extruded)
+Info    : [ 90%] Meshing surface 334 (Extruded)
+Info    : [ 90%] Meshing surface 335 (Extruded)
+Info    : [ 90%] Meshing surface 336 (Extruded)
+Info    : [ 90%] Meshing surface 337 (Extruded)
+Info    : [100%] Meshing surface 338 (Extruded)
+Info    : [100%] Meshing surface 339 (Extruded)
+Info    : [100%] Meshing surface 340 (Extruded)
+Info    : [100%] Meshing surface 341 (Extruded)
+Info    : [100%] Meshing surface 342 (Extruded)
+Info    : [100%] Meshing surface 343 (Extruded)
+Info    : [100%] Meshing surface 344 (Extruded)
+Info    : [100%] Meshing surface 345 (Extruded)
+Info    : [100%] Meshing surface 346 (Extruded)
+Info    : [100%] Meshing surface 347 (Extruded)
+Info    : [100%] Meshing surface 348 (Extruded)
+Info    : [100%] Meshing surface 349 (Extruded)
+Info    : [100%] Meshing surface 350 (Extruded)
+Info    : [100%] Meshing surface 351 (Extruded)
+Info    : [100%] Meshing surface 352 (Extruded)
+Info    : [100%] Meshing surface 353 (Extruded)
+Info    : [100%] Meshing surface 354 (Extruded)
+Info    : [100%] Meshing surface 355 (Extruded)
+Info    : [100%] Meshing surface 356 (Extruded)
+Info    : [100%] Meshing surface 357 (Extruded)
+Info    : [100%] Meshing surface 358 (Extruded)
+Info    : [100%] Meshing surface 359 (Extruded)
+Info    : [100%] Meshing surface 360 (Extruded)
+Info    : [100%] Meshing surface 361 (Extruded)
+Info    : [100%] Meshing surface 362 (Extruded)
+Info    : [100%] Meshing surface 363 (Extruded)
+Info    : [100%] Meshing surface 364 (Extruded)
+Info    : [100%] Meshing surface 365 (Extruded)
+Info    : [100%] Meshing surface 366 (Extruded)
+Info    : [100%] Meshing surface 367 (Extruded)
+Info    : [100%] Meshing surface 368 (Extruded)
+Info    : [100%] Meshing surface 369 (Extruded)
+Info    : [100%] Meshing surface 370 (Extruded)
+Info    : [100%] Meshing surface 371 (Extruded)
+Info    : [100%] Meshing surface 372 (Extruded)
+Info    : [100%] Meshing surface 373 (Extruded)
+Info    : [100%] Meshing surface 374 (Extruded)
+Info    : Done meshing 2D (Wall 0.16962s, CPU 0.171896s)
+Info    : Meshing 3D...
+Info    : Meshing volume 1 (Extruded)
+Info    : Done meshing 3D (Wall 0.012159s, CPU 0.012172s)
+Info    : Optimizing mesh...
+Info    : Done optimizing mesh (Wall 0.000131631s, CPU 0.000154s)
+Info    : 6010 nodes 19164 elements
+Info    : Writing 'teslaValve.msh'...
+Info    : Done writing 'teslaValve.msh'
+nodes/cells: 6010 5518
+
+# -- cell 14 (0.5s, exit 0)
+import subprocess, pathlib, re, os
+pathlib.Path('system').mkdir(exist_ok=True)
+pathlib.Path('system/controlDict').write_text('''FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }\napplication checkMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n''')
+r=subprocess.run(['gmshToFoam','teslaValve.msh'],text=True,capture_output=True)
+print(r.stdout[-2500:]); print(r.stderr[-1000:])
+if r.returncode: raise RuntimeError('gmshToFoam failed')
+bp=pathlib.Path('constant/polyMesh/boundary'); txt=bp.read_text()
+# Physical group is already named; only set the 2D patch type.
+pos=txt.find('frontAndBack'); start=txt.find('{',pos); end=txt.find('}',start)
+block=txt[start:end+1]; block=re.sub(r'type\s+patch\s*;', 'type empty;', block)
+txt=txt[:start]+block+txt[end+1:]; bp.write_text(txt)
+cm=subprocess.run(['checkMesh'],text=True,capture_output=True)
+print(cm.stdout[-4000:]); print(cm.stderr)
+print('checkMesh return code:',cm.returncode)
+# -- output
+\\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : gmshToFoam teslaValve.msh
+Date   : Sep 17 2026
+Time   : 03:02:04
+Host   : yc-demo
+PID    : 2018543
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T3-20260917-025920-2d85/t3
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Starting to read mesh format at line 2
+Read format version 2.2  ascii 0
+
+Starting to read physical names at line 5
+Physical names:5
+    Surface 2	inlet
+    Surface 3	outlet
+    Surface 4	frontAndBack
+    Surface 5	walls
+    Volume 1	fluid
+
+Starting to read points at line 13
+Vertices to be read: 6010
+Vertices read:6010
+
+Starting to read cells at line 6026
+Cells to be read: 17052
+
+Mapping region 4 to Foam patch 0
+Mapping region 2 to Foam patch 1
+Mapping region 5 to Foam patch 2
+Mapping region 3 to Foam patch 3
+Mapping region 1 to Foam cellZone 0
+Cells:
+    total:5518
+    hex  :0
+    prism:5518
+    pyr  :0
+    tet  :0
+
+CellZones:
+Zone	Size
+    0	5518
+
+Patch 0 gets name frontAndBack
+Patch 1 gets name inlet
+Patch 2 gets name walls
+Patch 3 gets name outlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 11534 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone fluid and cellSet
+End
+
+
+
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 03:02:04
+Host   : yc-demo
+PID    : 2018553
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T3-20260917-025920-2d85/t3
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T3-20260917-025920-2d85/t3/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+checkMesh return code: 1
+
+# -- cell 15 (0.3s, exit 0)
+pathlib.Path('system/fvSchemes').write_text('''FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }\nddtSchemes { default steadyState; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\n''')
+pathlib.Path('system/fvSolution').write_text('''FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }\nsolvers {}\n''')
+cm=subprocess.run(['checkMesh'],text=True,capture_output=True)
+print(cm.stdout[-5000:]); print(cm.stderr); print('return code',cm.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 03:02:09
+Host   : yc-demo
+PID    : 2018587
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T3-20260917-025920-2d85/t3
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           6010
+    internal points:  0
+    faces:            19562
+    internal faces:   8028
+    cells:            5518
+    faces per cell:   5
+    boundary patches: 4
+    point zones:      0
+    face zones:       0
+    cell zones:       1
+
+Overall number of cells of each type:
+    hexahedra:     0
+    prisms:        5518
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    frontAndBack        11036    6010     ok (non-closed singly connected)  
+    inlet               4        10       ok (non-closed singly connected)  
+    walls               490      984      ok (non-closed singly connected)  
+    outlet              4        10       ok (non-closed singly connected)  
+    ".*"                11534    6010     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               5518         6010         1.33401e-06  (0 -0.0134931 0) (0.12 0.0134931 0.001)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 -0.0134931 0) (0.12 0.0134931 0.001)
+    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+    Mesh has 2 solution (non-empty) directions (1 1 0)
+    All edges aligned with or perpendicular to non-empty directions.
+    Boundary openness (-5.51006e-19 9.98698e-19 1.47975e-20) OK.
+    Max cell openness = 2.47518e-16 OK.
+    Max aspect ratio = 26.1782 OK.
+    Minimum face area = 1.67095e-09. Maximum face area = 1.80066e-06.  Face area magnitudes OK.
+    Min volume = 1.67095e-12. Max volume = 1.20683e-09.  Total volume = 1.33401e-06.  Cell volumes OK.
+    Mesh non-orthogonality Max: 56.5213 average: 7.07232
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.3878 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+
+
+return code 0
+
+# -- cell 16 (0.3s, exit 0)
+if gmsh.isInitialized(): gmsh.finalize()
+gmsh.initialize(); gmsh.open('teslaValve.msh')
+node_tags,coords,_=gmsh.model.mesh.getNodes(); xyz=np.asarray(coords).reshape(-1,3); idx={int(t):i for i,t in enumerate(node_tags)}
+types,_,conns=gmsh.model.mesh.getElements(3)
+pr=np.asarray(conns[list(types).index(6)]).reshape(-1,6)
+tri=np.array([[idx[int(a)],idx[int(b)],idx[int(c)]] for a,b,c in pr[:,:3]])
+gmsh.finalize()
+fig,ax=plt.subplots(figsize=(12,4))
+ax.triplot(xyz[:,0]*1000,xyz[:,1]*1000,tri,lw=.22,color='#1f4e79')
+ax.set_aspect('equal'); ax.set_xlim(-2,122); ax.set_xlabel('x [mm]'); ax.set_ylabel('y [mm]')
+ax.set_title('Coarse OpenFOAM mesh: 5,518 one-layer triangular prisms'); ax.grid(True,alpha=.15)
+plt.tight_layout(); plt.show()
+# -- output
+Info    : Reading 'teslaValve.msh'...
+Info    : 6010 nodes
+Info    : 17052 elements
+Info    : Done reading 'teslaValve.msh'
+

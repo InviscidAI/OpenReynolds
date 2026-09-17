@@ -1,0 +1,920 @@
+# -- cell 1 (0.3s, exit 1)
+from pathlib import Path
+import subprocess, textwrap
+
+# Geometry and coarse-mesh dimensions, all in metres.
+L, W, H = 0.100, 0.060, 0.040
+CELL = 0.005
+NX, NY, NZ = round(L/CELL), round(W/CELL), round(H/CELL)
+
+Path("system").mkdir(exist_ok=True)
+block_mesh_dict = f'''FoamFile
+{{
+    format ascii;
+    class dictionary;
+    object blockMeshDict;
+}}
+convertToMeters 1;
+
+vertices
+(
+    (0 0 0)
+    ({L} 0 0)
+    ({L} {W} 0)
+    (0 {W} 0)
+    (0 0 {H})
+    ({L} 0 {H})
+    ({L} {W} {H})
+    (0 {W} {H})
+);
+
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) ({NX} {NY} {NZ}) simpleGrading (1 1 1)
+);
+
+edges ();
+
+boundary
+(
+    walls
+    {{
+        type wall;
+        faces
+        (
+            (0 3 2 1)
+            (4 5 6 7)
+            (0 1 5 4)
+            (3 7 6 2)
+            (0 4 7 3)
+            (1 2 6 5)
+        );
+    }}
+);
+
+mergePatchPairs ();
+'''
+Path("system/blockMeshDict").write_text(block_mesh_dict)
+result = subprocess.run(["blockMesh"], text=True, capture_output=True)
+print(result.stdout[-2500:])
+if result.returncode:
+    print(result.stderr)
+    raise RuntimeError(f"blockMesh failed with code {result.returncode}")
+print(f"Requested cavity: {L:.3f} x {W:.3f} x {H:.3f} m")
+print(f"Coarse divisions: {NX} x {NY} x {NZ} = {NX*NY*NZ} cells; nominal size {CELL:.3f} m")
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 17 2026
+Time   : 03:03:50
+Host   : yc-demo
+PID    : 2024400
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260917-030332-ad83/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T7-20260917-030332-ad83/t7/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 61[39m
+[32m     57[39m result = subprocess.run([[33m"blockMesh"[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m     58[39m print(result.stdout[-[32m2500[39m:])
+[32m     59[39m [38;5;28;01mif[39;00m result.returncode:
+[32m     60[39m     print(result.stderr)
+[32m---> [39m[32m61[39m     [38;5;28;01mraise[39;00m RuntimeError(f"blockMesh failed with code {result.returncode}")
+[32m     62[39m print(f"Requested cavity: {L:.3f} x {W:.3f} x {H:.3f} m")
+[32m     63[39m print(f"Coarse divisions: {NX} x {NY} x {NZ} = {NX*NY*NZ} cells; nominal size {CELL:.3f} m")
+
+[31mRuntimeError[39m: blockMesh failed with code 1
+
+# -- cell 2 (0.2s, exit 0)
+from pathlib import Path
+import subprocess
+
+L, W, H, CELL = 0.100, 0.060, 0.040, 0.005
+NX, NY, NZ = round(L/CELL), round(W/CELL), round(H/CELL)
+Path("system").mkdir(exist_ok=True)
+Path("system/controlDict").write_text('''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object controlDict;
+}
+application     foamRun;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         1;
+deltaT          1;
+writeControl    timeStep;
+writeInterval   1;
+''')
+Path("system/blockMeshDict").write_text(f'''FoamFile
+{{
+    format ascii;
+    class dictionary;
+    object blockMeshDict;
+}}
+convertToMeters 1;
+vertices
+(
+    (0 0 0) ({L} 0 0) ({L} {W} 0) (0 {W} 0)
+    (0 0 {H}) ({L} 0 {H}) ({L} {W} {H}) (0 {W} {H})
+);
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) ({NX} {NY} {NZ}) simpleGrading (1 1 1)
+);
+edges ();
+boundary
+(
+    walls
+    {{
+        type wall;
+        faces
+        (
+            (0 3 2 1) (4 5 6 7)
+            (0 1 5 4) (3 7 6 2)
+            (0 4 7 3) (1 2 6 5)
+        );
+    }}
+);
+mergePatchPairs ();
+''')
+result = subprocess.run(["blockMesh"], text=True, capture_output=True)
+print(result.stdout[-2200:])
+if result.returncode:
+    print(result.stderr)
+    raise RuntimeError(f"blockMesh failed with code {result.returncode}")
+print(f"Measured block extents: {L:.3f} x {W:.3f} x {H:.3f} m (requested 0.100 x 0.060 x 0.040 m)")
+print(f"Coarse mesh: {NX} x {NY} x {NZ} = {NX*NY*NZ} cells at {CELL:.3f} m")
+# -- output
+te:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 17 2026
+Time   : 03:03:58
+Host   : yc-demo
+PID    : 2024492
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260917-030332-ad83/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 0
+		Number of boundary faces : 6
+		Number of defined boundary faces : 6
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.005 .. 0.005
+        j : 0.005 .. 0.005
+        k : 0.005 .. 0.005
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 0) (0.1 0.06 0.04)
+  nPoints: 2457
+  nCells: 1920
+  nFaces: 6256
+  nInternalFaces: 5264
+----------------
+Patches
+----------------
+  patch 0 (start: 5264 size: 992) name: walls
+
+End
+
+
+Measured block extents: 0.100 x 0.060 x 0.040 m (requested 0.100 x 0.060 x 0.040 m)
+Coarse mesh: 20 x 12 x 8 = 1920 cells at 0.005 m
+
+# -- cell 3 (0.9s, exit 0)
+import pyvista as pv
+from pathlib import Path
+
+L, W, H, CELL = 0.100, 0.060, 0.040, 0.005
+heater_bounds = (0.005, 0.025, 0.020, 0.040, 0.000, 0.020)
+cooler_bounds = (0.075, 0.095, 0.020, 0.040, 0.020, 0.040)
+
+cavity = pv.Box(bounds=(0, L, 0, W, 0, H))
+heater_preview = pv.Box(bounds=heater_bounds)
+cooler_preview = pv.Box(bounds=cooler_bounds)
+
+plotter = pv.Plotter(off_screen=True, window_size=(1200, 700))
+plotter.set_background("white")
+plotter.add_mesh(cavity, style="wireframe", color="black", line_width=3, label="walls")
+# Add the structured 5 mm surface grid as thin lines.
+for x in [i*CELL for i in range(21)]:
+    plotter.add_mesh(pv.Line((x,0,0),(x,W,0)), color="lightgray", line_width=1)
+    plotter.add_mesh(pv.Line((x,0,H),(x,W,H)), color="lightgray", line_width=1)
+for y in [i*CELL for i in range(13)]:
+    plotter.add_mesh(pv.Line((0,y,0),(L,y,0)), color="lightgray", line_width=1)
+    plotter.add_mesh(pv.Line((0,y,H),(L,y,H)), color="lightgray", line_width=1)
+for z in [i*CELL for i in range(9)]:
+    plotter.add_mesh(pv.Line((0,0,z),(L,0,z)), color="lightgray", line_width=1)
+    plotter.add_mesh(pv.Line((0,W,z),(L,W,z)), color="lightgray", line_width=1)
+plotter.add_mesh(heater_preview, color="orangered", opacity=0.75, show_edges=True, label="heater")
+plotter.add_mesh(cooler_preview, color="royalblue", opacity=0.75, show_edges=True, label="cooler")
+plotter.add_legend(bcolor="white", face=None)
+plotter.add_axes()
+plotter.view_isometric()
+plotter.camera.zoom(1.25)
+plotter.show(screenshot="coarse_mesh_preview.png", auto_close=True)
+print("Wrote coarse_mesh_preview.png")
+print(f"heater preview bounds: {heater_bounds}; dimensions = 0.020 x 0.020 x 0.020 m")
+print(f"cooler preview bounds: {cooler_bounds}; dimensions = 0.020 x 0.020 x 0.020 m")
+# -- output
+Wrote coarse_mesh_preview.png
+heater preview bounds: (0.005, 0.025, 0.02, 0.04, 0.0, 0.02); dimensions = 0.020 x 0.020 x 0.020 m
+cooler preview bounds: (0.075, 0.095, 0.02, 0.04, 0.02, 0.04); dimensions = 0.020 x 0.020 x 0.020 m
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-17 03:04:11.504 (   0.232s) [    7CD60245B780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-17 03:04:11.504 (   0.232s) [    7CD60245B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-17 03:04:11.517 (   0.245s) [    7CD60245B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_2024201/3616169879.py:31: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  plotter.show(screenshot="coarse_mesh_preview.png", auto_close=True)
+
+# -- cell 4 (0.2s, exit 0)
+from pathlib import Path
+import subprocess
+
+HEATER_MIN, HEATER_MAX = (0.005, 0.020, 0.000), (0.025, 0.040, 0.020)
+COOLER_MIN, COOLER_MAX = (0.075, 0.020, 0.020), (0.095, 0.040, 0.040)
+Path("system/topoSetDict").write_text(f'''FoamFile
+{{
+    format ascii;
+    class dictionary;
+    object topoSetDict;
+}}
+actions
+(
+    {{
+        name heaterCells;
+        type cellSet;
+        action new;
+        source boxToCell;
+        box ({HEATER_MIN[0]} {HEATER_MIN[1]} {HEATER_MIN[2]}) ({HEATER_MAX[0]} {HEATER_MAX[1]} {HEATER_MAX[2]});
+    }}
+    {{
+        name heater;
+        type cellZoneSet;
+        action new;
+        source setToCellZone;
+        set heaterCells;
+    }}
+    {{
+        name coolerCells;
+        type cellSet;
+        action new;
+        source boxToCell;
+        box ({COOLER_MIN[0]} {COOLER_MIN[1]} {COOLER_MIN[2]}) ({COOLER_MAX[0]} {COOLER_MAX[1]} {COOLER_MAX[2]});
+    }}
+    {{
+        name cooler;
+        type cellZoneSet;
+        action new;
+        source setToCellZone;
+        set coolerCells;
+    }}
+);
+''')
+result = subprocess.run(["topoSet"], text=True, capture_output=True)
+print(result.stdout[-3000:])
+if result.returncode:
+    print(result.stderr)
+    raise RuntimeError(f"topoSet failed with code {result.returncode}")
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : topoSet
+Date   : Sep 17 2026
+Time   : 03:04:18
+Host   : yc-demo
+PID    : 2024757
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260917-030332-ad83/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet heaterCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.005 0.02 0) (0.025 0.04 0.02))
+    cellSet heaterCells now size 64
+Created cellZoneSet heater
+    Applying source setToCellZone
+    Adding all cells from cell set: heaterCells ...
+    cellZoneSet heater now size 64
+Created cellSet coolerCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.075 0.02 0.02) (0.095 0.04 0.04))
+    cellSet coolerCells now size 64
+Created cellZoneSet cooler
+    Applying source setToCellZone
+    Adding all cells from cell set: coolerCells ...
+    cellZoneSet cooler now size 64
+
+End
+
+# -- cell 5 (0.3s, exit 1)
+import subprocess
+
+result = subprocess.run(["checkMesh"], text=True, capture_output=True)
+print(result.stdout)
+if result.returncode:
+    print(result.stderr)
+    raise RuntimeError(f"checkMesh failed with code {result.returncode}")
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 03:04:23
+Host   : yc-demo
+PID    : 2024776
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260917-030332-ad83/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T7-20260917-030332-ad83/t7/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[5][39m[32m, line 7[39m
+[32m      3[39m result = subprocess.run([[33m"checkMesh"[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m      4[39m print(result.stdout)
+[32m      5[39m [38;5;28;01mif[39;00m result.returncode:
+[32m      6[39m     print(result.stderr)
+[32m----> [39m[32m7[39m     [38;5;28;01mraise[39;00m RuntimeError(f"checkMesh failed with code {result.returncode}")
+
+[31mRuntimeError[39m: checkMesh failed with code 1
+
+# -- cell 6 (0.3s, exit 0)
+from pathlib import Path
+import subprocess
+
+Path("system/fvSchemes").write_text('''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object fvSchemes;
+}
+ddtSchemes { default Euler; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear orthogonal; }
+interpolationSchemes { default linear; }
+snGradSchemes { default orthogonal; }
+wallDist { method meshWave; }
+fluxRequired { default no; }
+''')
+Path("system/fvSolution").write_text('''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object fvSolution;
+}
+solvers {}
+''')
+result = subprocess.run(["checkMesh"], text=True, capture_output=True)
+print(result.stdout)
+if result.returncode:
+    print(result.stderr)
+    raise RuntimeError(f"checkMesh failed with code {result.returncode}")
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 03:04:28
+Host   : yc-demo
+PID    : 2024843
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260917-030332-ad83/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           2457
+    faces:            6256
+    internal faces:   5264
+    cells:            1920
+    faces per cell:   6
+    boundary patches: 1
+    point zones:      0
+    face zones:       0
+    cell zones:       2
+
+Overall number of cells of each type:
+    hexahedra:     1920
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    walls               992      994      ok (closed singly connected)      
+    ".*"                992      994      ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    heater              64           125          8e-06        (0.005 0.02 0) (0.025 0.04 0.02)
+    cooler              64           125          8e-06        (0.075 0.02 0.02) (0.095 0.04 0.04)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.1 0.06 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (2.13124e-17 -5.19149e-18 -3.4701e-17) OK.
+    Max cell openness = 1.35525e-16 OK.
+    Max aspect ratio = 1 OK.
+    Minimum face area = 2.5e-05. Maximum face area = 2.5e-05.  Face area magnitudes OK.
+    Min volume = 1.25e-07. Max volume = 1.25e-07.  Total volume = 0.00024.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.66533e-14 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 7 (0.3s, exit 0)
+from pathlib import Path
+import subprocess
+
+L, W, H, FINAL_CELL = 0.100, 0.060, 0.040, 0.0025
+FINAL_NX, FINAL_NY, FINAL_NZ = round(L/FINAL_CELL), round(W/FINAL_CELL), round(H/FINAL_CELL)
+Path("system/blockMeshDict").write_text(f'''FoamFile
+{{
+    format ascii;
+    class dictionary;
+    object blockMeshDict;
+}}
+convertToMeters 1;
+vertices
+(
+    (0 0 0) ({L} 0 0) ({L} {W} 0) (0 {W} 0)
+    (0 0 {H}) ({L} 0 {H}) ({L} {W} {H}) (0 {W} {H})
+);
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) ({FINAL_NX} {FINAL_NY} {FINAL_NZ}) simpleGrading (1 1 1)
+);
+edges ();
+boundary
+(
+    walls
+    {{
+        type wall;
+        faces
+        (
+            (0 3 2 1) (4 5 6 7)
+            (0 1 5 4) (3 7 6 2)
+            (0 4 7 3) (1 2 6 5)
+        );
+    }}
+);
+mergePatchPairs ();
+''')
+result = subprocess.run(["blockMesh"], text=True, capture_output=True)
+print(result.stdout[-1600:])
+if result.returncode:
+    print(result.stderr)
+    raise RuntimeError(f"final blockMesh failed with code {result.returncode}")
+print(f"Final mesh divisions: {FINAL_NX} x {FINAL_NY} x {FINAL_NZ} = {FINAL_NX*FINAL_NY*FINAL_NZ} cells")
+# -- output
+t the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260917-030332-ad83/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 0
+		Number of boundary faces : 6
+		Number of defined boundary faces : 6
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+Deleting polyMesh directory "constant/polyMesh"
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.0025 .. 0.0025
+        j : 0.0025 .. 0.0025
+        k : 0.0025 .. 0.0025
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 0) (0.1 0.06 0.04)
+  nPoints: 17425
+  nCells: 15360
+  nFaces: 48064
+  nInternalFaces: 44096
+----------------
+Patches
+----------------
+  patch 0 (start: 44096 size: 3968) name: walls
+
+End
+
+
+Final mesh divisions: 40 x 24 x 16 = 15360 cells
+
+# -- cell 8 (0.3s, exit 0)
+import subprocess
+
+result = subprocess.run(["topoSet"], text=True, capture_output=True)
+print(result.stdout[-2200:])
+if result.returncode:
+    print(result.stderr)
+    raise RuntimeError(f"final topoSet failed with code {result.returncode}")
+# -- output
+\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : topoSet
+Date   : Sep 17 2026
+Time   : 03:04:48
+Host   : yc-demo
+PID    : 2025703
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260917-030332-ad83/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet heaterCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.005 0.02 0) (0.025 0.04 0.02))
+    cellSet heaterCells now size 512
+Created cellZoneSet heater
+    Applying source setToCellZone
+    Adding all cells from cell set: heaterCells ...
+    cellZoneSet heater now size 512
+Created cellSet coolerCells
+    Applying source boxToCell
+    Adding cells with centre within boxes 1((0.075 0.02 0.02) (0.095 0.04 0.04))
+    cellSet coolerCells now size 512
+Created cellZoneSet cooler
+    Applying source setToCellZone
+    Adding all cells from cell set: coolerCells ...
+    cellZoneSet cooler now size 512
+
+End
+
+# -- cell 9 (0.3s, exit 0)
+import subprocess
+
+result = subprocess.run(["checkMesh"], text=True, capture_output=True)
+print(result.stdout)
+if result.returncode:
+    print(result.stderr)
+    raise RuntimeError(f"final checkMesh failed with code {result.returncode}")
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 03:04:52
+Host   : yc-demo
+PID    : 2025752
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T7-20260917-030332-ad83/t7
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           17425
+    faces:            48064
+    internal faces:   44096
+    cells:            15360
+    faces per cell:   6
+    boundary patches: 1
+    point zones:      0
+    face zones:       0
+    cell zones:       2
+
+Overall number of cells of each type:
+    hexahedra:     15360
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    walls               3968     3970     ok (closed singly connected)      
+    ".*"                3968     3970     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    heater              512          729          8e-06        (0.005 0.02 0) (0.025 0.04 0.02)
+    cooler              512          729          8e-06        (0.075 0.02 0.02) (0.095 0.04 0.04)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (0 0 0) (0.1 0.06 0.04)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-5.12318e-19 4.48791e-17 4.63477e-17) OK.
+    Max cell openness = 1.35525e-16 OK.
+    Max aspect ratio = 1 OK.
+    Minimum face area = 6.25e-06. Maximum face area = 6.25e-06.  Face area magnitudes OK.
+    Min volume = 1.5625e-08. Max volume = 1.5625e-08.  Total volume = 0.00024.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0 average: 0
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 3.33067e-14 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+

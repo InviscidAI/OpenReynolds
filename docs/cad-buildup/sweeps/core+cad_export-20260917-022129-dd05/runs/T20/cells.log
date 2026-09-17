@@ -1,0 +1,908 @@
+# -- cell 1 (2.7s, exit 0)
+from build123d import Cylinder, Pos, export_stl
+import pyvista as pv
+# Requested dimensions, converted from mm to metres
+BORE_D = 0.060
+FLANGE_T = 0.020
+GASKET_T = 0.002
+TOTAL_L = 2*FLANGE_T + GASKET_T
+R = BORE_D/2
+# Keep axial seams by forming one solid from three touching axial segments
+left_seg = Cylinder(R, FLANGE_T)
+gasket_seg = Pos(0, 0, FLANGE_T) * Cylinder(R, GASKET_T)
+right_seg = Pos(0, 0, FLANGE_T + GASKET_T) * Cylinder(R, FLANGE_T)
+fluid = left_seg + gasket_seg + right_seg
+print(f"Requested/measured bore diameter: {BORE_D:.6f} / {2*R:.6f} m")
+print(f"Requested/measured face-to-face length: {TOTAL_L:.6f} / {fluid.bounding_box().size.Z:.6f} m")
+print(f"Fluid volume: {fluid.volume:.9e} m^3; CAD faces: {len(fluid.faces())}")
+export_stl(fluid, "fluid_preview.stl", tolerance=5e-4, angular_tolerance=0.2)
+mesh_preview = pv.read("fluid_preview.stl")
+plotter = pv.Plotter(off_screen=True, window_size=(700, 520))
+plotter.add_mesh(mesh_preview, color="deepskyblue", show_edges=True)
+plotter.camera_position = [(0.10, -0.10, 0.09), (0, 0, TOTAL_L/2), (0, 0, 1)]
+plotter.show(screenshot="fluid_preview.png")
+print("Preview written: fluid_preview.png")
+# -- output
+Requested/measured bore diameter: 0.060000 / 0.060000 m
+Requested/measured face-to-face length: 0.042000 / 0.042000 m
+Fluid volume: 1.130973355e-04 m^3; CAD faces: 6
+Preview written: fluid_preview.png
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-17 02:50:41.363 (   0.328s) [    7530E377B780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-17 02:50:41.363 (   0.328s) [    7530E377B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-17 02:50:41.377 (   0.342s) [    7530E377B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_1987134/2357808124.py:22: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  plotter.show(screenshot="fluid_preview.png")
+
+# -- cell 2 (0.1s, exit 0)
+for i, face in enumerate(fluid.faces()):
+    c = face.center()
+    print(i, face.geom_type, f"area={face.area:.9e}", f"center=({c.X:.6f},{c.Y:.6f},{c.Z:.6f})")
+# -- output
+0 GeomType.CYLINDER area=3.769911184e-03 center=(-0.030000,0.000000,0.022000)
+1 GeomType.PLANE area=2.827433388e-03 center=(0.000000,-0.000000,0.012000)
+2 GeomType.PLANE area=2.827433388e-03 center=(0.000000,-0.000000,0.032000)
+3 GeomType.CYLINDER area=3.769911184e-03 center=(-0.030000,0.000000,0.000000)
+4 GeomType.PLANE area=2.827433388e-03 center=(0.000000,-0.000000,-0.010000)
+5 GeomType.PLANE area=2.827433388e-03 center=(0.000000,-0.000000,0.010000)
+
+# -- cell 3 (0.1s, exit 0)
+from build123d import Align
+left_seg = Cylinder(R, FLANGE_T, align=(Align.CENTER, Align.CENTER, Align.MIN))
+gasket_seg = Pos(0, 0, FLANGE_T) * Cylinder(R, GASKET_T, align=(Align.CENTER, Align.CENTER, Align.MIN))
+right_seg = Pos(0, 0, FLANGE_T + GASKET_T) * Cylinder(R, FLANGE_T, align=(Align.CENTER, Align.CENTER, Align.MIN))
+fluid = left_seg + gasket_seg + right_seg
+expected_volume = 3.141592653589793 * R**2 * TOTAL_L
+print(f"Requested/measured axial extent: {TOTAL_L:.6f} / {fluid.bounding_box().size.Z:.6f} m")
+print(f"Expected/measured volume: {expected_volume:.9e} / {fluid.volume:.9e} m^3")
+print(f"Solids={len(fluid.solids())}, faces={len(fluid.faces())}")
+for i, face in enumerate(fluid.faces()):
+    c=face.center()
+    print(i, face.geom_type, f"area={face.area:.9e}", f"z={c.Z:.6f}")
+# -- output
+Requested/measured axial extent: 0.042000 / 0.042000 m
+Expected/measured volume: 1.187522023e-04 / 1.187522023e-04 m^3
+Solids=1, faces=3
+0 GeomType.CYLINDER area=7.916813487e-03 z=0.021000
+1 GeomType.PLANE area=2.827433388e-03 z=0.042000
+2 GeomType.PLANE area=2.827433388e-03 z=0.000000
+
+# -- cell 4 (0.1s, exit 0)
+from build123d import Shell, GeomType
+# Patch faces are named directly from the primitives that create them.
+left_cyl = left_seg.faces().filter_by(GeomType.CYLINDER)[0]
+left_planes = sorted(left_seg.faces().filter_by(GeomType.PLANE), key=lambda f: f.center().Z)
+inlet_face = left_planes[0]
+left_wall_face = left_cyl
+gasket_wall_face = gasket_seg.faces().filter_by(GeomType.CYLINDER)[0]
+right_wall_face = right_seg.faces().filter_by(GeomType.CYLINDER)[0]
+right_planes = sorted(right_seg.faces().filter_by(GeomType.PLANE), key=lambda f: f.center().Z)
+outlet_face = right_planes[-1]
+fluid = Shell([inlet_face, left_wall_face, gasket_wall_face, right_wall_face, outlet_face])
+print(f"Closed shell faces: {len(fluid.faces())}; extent Z={fluid.bounding_box().size.Z:.6f} m")
+for name, face, expected in [
+    ("inlet", inlet_face, 3.141592653589793*R**2),
+    ("outlet", outlet_face, 3.141592653589793*R**2),
+    ("flange1_bore_wall", left_wall_face, 2*3.141592653589793*R*FLANGE_T),
+    ("gasket_inner_face", gasket_wall_face, 2*3.141592653589793*R*GASKET_T),
+    ("flange2_bore_wall", right_wall_face, 2*3.141592653589793*R*FLANGE_T)]:
+    print(f"{name}: expected/measured area = {expected:.9e} / {face.area:.9e} m^2")
+# -- output
+Closed shell faces: 5; extent Z=0.042000 m
+inlet: expected/measured area = 2.827433388e-03 / 2.827433388e-03 m^2
+outlet: expected/measured area = 2.827433388e-03 / 2.827433388e-03 m^2
+flange1_bore_wall: expected/measured area = 3.769911184e-03 / 3.769911184e-03 m^2
+gasket_inner_face: expected/measured area = 3.769911184e-04 / 3.769911184e-04 m^2
+flange2_bore_wall: expected/measured area = 3.769911184e-03 / 3.769911184e-03 m^2
+
+# -- cell 5 (0.1s, exit 0)
+import sys
+sys.path.insert(0, ".reference")
+from cad_export import export_patches
+help(export_patches)
+# -- output
+Help on function export_patches in module cad_export:
+
+export_patches(
+    shape,
+    patches: 'dict',
+    out_dir='constant/triSurface',
+    *,
+    tolerance: 'float | None' = None,
+    angular_tolerance: 'float' = 0.1,
+    location_in_mesh=None,
+    binary: 'bool' = True,
+    clean: 'bool' = True,
+    quiet: 'bool' = False
+) -> 'dict'
+    One shape to one STL per named patch, tessellated once, with the numbers printed.
+
+        export_patches(fluid, {"inlet": ins, "outlet": outs, "walls": ...},
+                       tolerance=2.5e-4)
+
+    `shape`      one build123d shape -- the solid whose surface is the mesh boundary.
+    `patches`    patch name -> the faces of `shape` in it. Exactly one patch may be
+                 `...`, meaning every face the others did not name.
+    `out_dir`    `constant/triSurface` unless you say otherwise.
+    `tolerance`  max chord deviation in **metres**: how far a facet may sit from the
+                 surface it stands for. Follow the mesh -- roughly a quarter of the
+                 finest surface cell -- and no default is offered, because faceting
+                 coarser than the mesh becomes the geometry and reaches the pressure
+                 field looking like physics.
+    `clean`      clear STLs this call did not write out of `out_dir`. A file left from
+                 an abandoned route is welded in by every downstream reader as though
+                 it were part of the surface.
+
+    Returns the report and prints it. Raises `Refused` -- never a silent guess.
+
+# -- cell 6 (0.3s, exit 1)
+patch_report = export_patches(
+    fluid,
+    {"inlet": inlet_face, "outlet": outlet_face,
+     "flange1_bore_wall": left_wall_face,
+     "gasket_inner_face": gasket_wall_face,
+     "flange2_bore_wall": right_wall_face},
+    tolerance=1.0e-4,
+    angular_tolerance=0.08)
+print(patch_report)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mRefused[39m                                   Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 1[39m
+[32m----> [39m[32m1[39m patch_report = export_patches(
+[32m      2[39m     fluid,
+[32m      3[39m     {"inlet": inlet_face, "outlet": outlet_face,
+[32m      4[39m      [33m"flange1_bore_wall"[39m: left_wall_face,
+
+[36mFile [39m[32m~/.openreynolds-buildup/work/T20-20260917-025024-8ecd/t20/.reference/cad_export.py:497[39m, in [36mexport_patches[39m[34m(shape, patches, out_dir, tolerance, angular_tolerance, location_in_mesh, binary, clean, quiet)[39m
+[32m    486[39m     [38;5;28;01mraise[39;00m Refused(
+[32m    487[39m         [33m"[39m[33mrefused: no `tolerance` given, and there is no default worth guessing.[39m[38;5;130;01m\n[39;00m[38;5;130;01m\n[39;00m[33m"[39m
+[32m    488[39m         [33m"[39m[33mIt is the largest distance a facet may sit from the surface it stands for, [39m[33m"[39m
+[32m   (...)[39m[32m    493[39m         [33m"[39m[33mphysics. A quarter of the finest surface cell is a reasonable start.[39m[33m"[39m
+[32m    494[39m     )
+[32m    496[39m mapping = _index(shape)
+[32m--> [39m[32m497[39m assignment = [30;43m_assign[39;49m[30;43m([39;49m[30;43mshape[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mpatches[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mmapping[39;49m[30;43m)[39;49m
+[32m    498[39m _triangulate(shape, [38;5;28mfloat[39m(tolerance), [38;5;28mfloat[39m(angular_tolerance))
+[32m    500[39m everything = _faces_from(mapping)
+
+[36mFile [39m[32m~/.openreynolds-buildup/work/T20-20260917-025024-8ecd/t20/.reference/cad_export.py:218[39m, in [36m_assign[39m[34m(shape, patches, mapping)[39m
+[32m    196[39m     hint = [33m"[39m[33m"[39m [38;5;28;01mif[39;00m near [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m [38;5;28;01melse[39;00m (
+[32m    197[39m         [33mf[39m[33m"[39m[33m The nearest face of the shape is [39m[38;5;132;01m{[39;00mnear[[32m0[39m][38;5;132;01m:[39;00m[33m.6g[39m[38;5;132;01m}[39;00m[33m m away.[39m[33m"[39m
+[32m    198[39m     )
+[32m    199[39m     why = (
+[32m    200[39m         [38;5;66;03m# Distance zero and still a different face: same model, different[39;00m
+[32m    201[39m         [38;5;66;03m# build. A desk that rebuilds a shape in a later cell and keeps the[39;00m
+[32m   (...)[39m[32m    216[39m         [33m"[39m[33m`shape.faces()`, not a rectangle drawn where the inlet is.[39m[33m"[39m
+[32m    217[39m     )
+[32m--> [39m[32m218[39m     [38;5;28;01mraise[39;00m Refused(
+[32m    219[39m         [33mf[39m[33m"[39m[33mrefused: patch [39m[38;5;132;01m{[39;00mname[38;5;132;01m!r}[39;00m[33m was given a face at [39m[33m"[39m
+[32m    220[39m         [33mf[39m[33m"[39m[33m([39m[38;5;132;01m{[39;00m[33m'[39m[33m, [39m[33m'[39m.join([33mf[39m[33m'[39m[38;5;132;01m{[39;00mv[38;5;132;01m:[39;00m[33m.6g[39m[38;5;132;01m}[39;00m[33m'[39m[38;5;250m [39m[38;5;28;01mfor[39;00m[38;5;250m [39mv[38;5;250m [39m[38;5;129;01min[39;00m[38;5;250m [39mwhere)[38;5;132;01m}[39;00m[33m) that is not a face of the [39m[33m"[39m
+[32m    221[39m         [33mf[39m[33m"[39m[33mshape being exported.[39m[38;5;132;01m{[39;00mhint[38;5;132;01m}[39;00m[38;5;130;01m\n[39;00m[38;5;130;01m\n[39;00m[38;5;132;01m{[39;00mwhy[38;5;132;01m}[39;00m[33m"[39m
+[32m    222[39m     )
+[32m    223[39m [38;5;28;01mif[39;00m position [38;5;129;01min[39;00m claimed:
+[32m    224[39m     [38;5;28;01mraise[39;00m Refused(
+[32m    225[39m         [33mf[39m[33m"[39m[33mrefused: the face at [39m[33m"[39m
+[32m    226[39m         [33mf[39m[33m"[39m[33m([39m[38;5;132;01m{[39;00m[33m'[39m[33m, [39m[33m'[39m.join([33mf[39m[33m'[39m[38;5;132;01m{[39;00mv[38;5;132;01m:[39;00m[33m.6g[39m[38;5;132;01m}[39;00m[33m'[39m[38;5;250m [39m[38;5;28;01mfor[39;00m[38;5;250m [39mv[38;5;250m [39m[38;5;129;01min[39;00m[38;5;250m [39m_centre(face))[38;5;132;01m}[39;00m[33m) is in both [39m[33m"[39m
+[32m    227[39m         [33mf[39m[33m"[39m[38;5;132;01m{[39;00mclaimed[position][38;5;132;01m!r}[39;00m[33m and [39m[38;5;132;01m{[39;00mname[38;5;132;01m!r}[39;00m[33m. A face in two patches is two [39m[33m"[39m
+[32m    228[39m         [33m"[39m[33msurfaces in one place.[39m[33m"[39m
+[32m    229[39m     )
+
+[31mRefused[39m: refused: patch 'flange1_bore_wall' was given a face at (-0.03, 3.67394e-18, 0.01) that is not a face of the shape being exported. The nearest face of the shape is 0 m away.
+
+That face is in the same place as one of this shape's and is still not it, which means you are holding faces from an earlier build of the same model -- the shape was rebuilt, or this is a copy. Face identity does not survive that, and it is why selectors are re-derived rather than recorded. Select the patches off the very object you are passing as `shape`, in the same cell.
+
+# -- cell 7 (0.1s, exit 0)
+fluid_cyls = sorted(fluid.faces().filter_by(GeomType.CYLINDER), key=lambda f: f.center().Z)
+fluid_planes = sorted(fluid.faces().filter_by(GeomType.PLANE), key=lambda f: f.center().Z)
+left_wall_face, gasket_wall_face, right_wall_face = fluid_cyls
+inlet_face, outlet_face = fluid_planes
+print("Shell face z-centres:", [round(f.center().Z, 6) for f in [inlet_face,left_wall_face,gasket_wall_face,right_wall_face,outlet_face]])
+patch_report = export_patches(
+    fluid,
+    {"inlet": inlet_face, "outlet": outlet_face,
+     "flange1_bore_wall": left_wall_face,
+     "gasket_inner_face": gasket_wall_face,
+     "flange2_bore_wall": right_wall_face},
+    tolerance=1.0e-4, angular_tolerance=0.08)
+print(patch_report)
+# -- output
+Shell face z-centres: [0.0, 0.01, 0.021, 0.032, 0.042]
+constant/triSurface  <-  5 faces, one tessellation
+  tolerance           0.0001 m chord deviation, 0.08 rad angular
+    inlet                     1 faces        156 triangles  0.00282669 m^2  -> inlet.stl
+    outlet                    1 faces        156 triangles  0.00282669 m^2  -> outlet.stl
+    flange1_bore_wall         1 faces        316 triangles  0.00376966 m^2  -> flange1_bore_wall.stl
+    gasket_inner_face         1 faces        316 triangles  0.000376966 m^2  -> gasket_inner_face.stl
+    flange2_bore_wall         1 faces        316 triangles  0.00376966 m^2  -> flange2_bore_wall.stl
+  extent              0.06 x 0.0599881 x 0.042 m   <- metres, so check these against the request
+  union               1,260 triangles, 0 open edges, 0 flipped, 0 non-manifold
+  location_in_mesh    not given
+  manifest            constant/triSurface/patches.json
+{'out_dir': 'constant/triSurface', 'tolerance': 0.0001, 'angular_tolerance': 0.08, 'faces': 5, 'removed': [], 'patches': [{'name': 'inlet', 'file': 'inlet.stl', 'faces': 1, 'triangles': 156, 'area_m2': 0.0028266881841137372, 'degenerate_dropped': 0, 'bytes': 7884}, {'name': 'outlet', 'file': 'outlet.stl', 'faces': 1, 'triangles': 156, 'area_m2': 0.0028266881841137372, 'degenerate_dropped': 0, 'bytes': 7884}, {'name': 'flange1_bore_wall', 'file': 'flange1_bore_wall.stl', 'faces': 1, 'triangles': 316, 'area_m2': 0.003769662670849007, 'degenerate_dropped': 0, 'bytes': 15884}, {'name': 'gasket_inner_face', 'file': 'gasket_inner_face.stl', 'faces': 1, 'triangles': 316, 'area_m2': 0.00037696633730034115, 'degenerate_dropped': 0, 'bytes': 15884}, {'name': 'flange2_bore_wall', 'file': 'flange2_bore_wall.stl', 'faces': 1, 'triangles': 316, 'area_m2': 0.003769662670849007, 'degenerate_dropped': 0, 'bytes': 15884}], 'triangles': 1260, 'degenerate_dropped': 0, 'area_m2': 0.01356966804722583, 'bounds_m': [-0.029999999329, -0.02999407053, 0.0, 0.029999999329, 0.02999407053, 0.041999999434], 'extent_m': [0.059999998659, 0.05998814106, 0.041999999434], 'union': {'vertices': 632, 'open_edges': 0, 'non_manifold_edges': 0, 'flipped_edges': 0}, 'location_in_mesh': None, 'manifest': 'constant/triSurface/patches.json'}
+
+# -- cell 8 (0.4s, exit 1)
+from pathlib import Path
+import math, subprocess
+Path("system").mkdir(exist_ok=True)
+RI = 0.012
+s = RI/math.sqrt(2); q = R/math.sqrt(2)
+zplanes = [0.0, FLANGE_T, FLANGE_T+GASKET_T, TOTAL_L]
+xy = [(s,s),(-s,s),(-s,-s),(s,-s),(q,q),(-q,q),(-q,-q),(q,-q)]
+verts = [(x,y,z) for z in zplanes for x,y in xy]
+blocks2d = [(2,3,0,1),(3,7,4,0),(0,4,5,1),(1,5,6,2),(2,6,7,3)]
+axial_cells = [8,1,8]
+lines = ["FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }", "scale 1;", "vertices ("]
+lines += [f"    ({x:.12g} {y:.12g} {z:.12g})" for x,y,z in verts]
+lines += [");", "blocks ("]
+for k,nz in enumerate(axial_cells):
+    for bi,b in enumerate(blocks2d):
+        lo=[8*k+i for i in b]; hi=[8*(k+1)+i for i in b]
+        cells=(8,8,nz) if bi==0 else (5,8,nz)
+        lines.append(f"    hex ({' '.join(map(str,lo+hi))}) ({cells[0]} {cells[1]} {cells[2]}) simpleGrading (1 1 1)")
+lines += [");", "edges ("]
+for p,z in enumerate(zplanes):
+    base=8*p
+    for a,b,mx,my in [(7,4,R,0),(4,5,0,R),(5,6,-R,0),(6,7,0,-R)]:
+        lines.append(f"    arc {base+a} {base+b} ({mx:.12g} {my:.12g} {z:.12g})")
+lines += [");", "boundary ("]
+# End patches: one face from each cross-sectional block.
+for name,k,top in [("inlet",0,False),("outlet",2,True)]:
+    lines += [f"    {name} {{ type patch; faces ("]
+    for b in blocks2d:
+        ids=[8*(k+(1 if top else 0))+i for i in b]
+        if not top: ids=list(reversed(ids))
+        lines.append(f"        ({' '.join(map(str,ids))})")
+    lines += ["    ); }"]
+# Four curved outer faces per axial wall segment.
+outer_pairs=[(7,4),(4,5),(5,6),(6,7)]
+for k,name in enumerate(["flange1_bore_wall","gasket_inner_face","flange2_bore_wall"]):
+    lines += [f"    {name} {{ type wall; faces ("]
+    for a,b in outer_pairs:
+        lines.append(f"        ({8*k+a} {8*k+b} {8*(k+1)+b} {8*(k+1)+a})")
+    lines += ["    ); }"]
+lines += [");", "mergePatchPairs ();", ""]
+Path("system/blockMeshDict").write_text("\n".join(lines))
+res=subprocess.run(["blockMesh"], text=True, capture_output=True)
+print(res.stdout[-3000:])
+print(res.stderr)
+res.check_returncode()
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 17 2026
+Time   : 02:51:46
+Host   : yc-demo
+PID    : 1990636
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T20-20260917-025024-8ecd/t20
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T20-20260917-025024-8ecd/t20/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mCalledProcessError[39m                        Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[8][39m[32m, line 45[39m
+[32m     41[39m Path([33m"system/blockMeshDict"[39m).write_text([33m"\n"[39m.join(lines))
+[32m     42[39m res=subprocess.run([[33m"blockMesh"[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m     43[39m print(res.stdout[-[32m3000[39m:])
+[32m     44[39m print(res.stderr)
+[32m---> [39m[32m45[39m res.check_returncode()
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/subprocess.py:508[39m, in [36mCompletedProcess.check_returncode[39m[34m(self)[39m
+[32m    506[39m [38;5;250m[39m[33;03m"""Raise CalledProcessError if the exit code is non-zero."""[39;00m
+[32m    507[39m [38;5;28;01mif[39;00m [38;5;28mself[39m.returncode:
+[32m--> [39m[32m508[39m     [38;5;28;01mraise[39;00m CalledProcessError([38;5;28mself[39m.returncode, [38;5;28mself[39m.args, [38;5;28mself[39m.stdout,
+[32m    509[39m                              [38;5;28mself[39m.stderr)
+
+[31mCalledProcessError[39m: Command '['blockMesh']' returned non-zero exit status 1.
+
+# -- cell 9 (0.1s, exit 0)
+Path("system/controlDict").write_text("""FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application blockMesh;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 1;
+deltaT 1;
+writeControl timeStep;
+writeInterval 1;
+""")
+print("Wrote minimal system/controlDict")
+# -- output
+Wrote minimal system/controlDict
+
+# -- cell 10 (0.1s, exit 0)
+from pathlib import Path
+Path("system").mkdir(exist_ok=True)
+Path("system/controlDict").write_text("""FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application blockMesh;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 1;
+deltaT 1;
+writeControl timeStep;
+writeInterval 1;
+""")
+print("Wrote minimal system/controlDict")
+# -- output
+Wrote minimal system/controlDict
+
+# -- cell 11 (0.1s, exit 0)
+import math
+RI=0.012; s=RI/math.sqrt(2); q=R/math.sqrt(2)
+zplanes=[0.0,FLANGE_T,FLANGE_T+GASKET_T,TOTAL_L]
+xy=[(s,s),(-s,s),(-s,-s),(s,-s),(q,q),(-q,q),(-q,-q),(q,-q)]
+b2=[(2,3,0,1),(3,7,4,0),(0,4,5,1),(1,5,6,2),(2,6,7,3)]
+L=["FoamFile { version 2.0; format ascii; class dictionary; object blockMeshDict; }","scale 1;","vertices ("]
+L += [f"({x:.12g} {y:.12g} {z:.12g})" for z in zplanes for x,y in xy] + [");","blocks ("]
+for k,nz in enumerate([8,1,8]):
+    for j,b in enumerate(b2):
+        lo=[8*k+i for i in b]; hi=[8*(k+1)+i for i in b]; n=(8,8,nz) if j==0 else (5,8,nz)
+        L.append(f"hex ({' '.join(map(str,lo+hi))}) ({n[0]} {n[1]} {n[2]}) simpleGrading (1 1 1)")
+L += [");","edges ("]
+for p,z in enumerate(zplanes):
+    for a,b,x,y in [(7,4,R,0),(4,5,0,R),(5,6,-R,0),(6,7,0,-R)]: L.append(f"arc {8*p+a} {8*p+b} ({x:.12g} {y:.12g} {z:.12g})")
+L += [");","boundary ("]
+for name,p,rev in [("inlet",0,True),("outlet",3,False)]:
+    L += [f"{name} {{ type patch; faces ("]
+    for b in b2:
+        ids=[8*p+i for i in b]; ids=ids[::-1] if rev else ids; L.append(f"({' '.join(map(str,ids))})")
+    L += ["); }"]
+for k,name in enumerate(["flange1_bore_wall","gasket_inner_face","flange2_bore_wall"]):
+    L += [f"{name} {{ type wall; faces ("]
+    for a,b in [(7,4),(4,5),(5,6),(6,7)]: L.append(f"({8*k+a} {8*k+b} {8*(k+1)+b} {8*(k+1)+a})")
+    L += ["); }"]
+L += [");","mergePatchPairs ();",""]
+Path("system/blockMeshDict").write_text("\n".join(L))
+print("Wrote 15-block cylindrical O-grid dictionary")
+# -- output
+Wrote 15-block cylindrical O-grid dictionary
+
+# -- cell 12 (0.3s, exit 0)
+import subprocess
+bm=subprocess.run(["blockMesh"],text=True,capture_output=True)
+print(bm.stdout[-3500:]); print(bm.stderr)
+bm.check_returncode()
+# -- output
+is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T20-20260917-025024-8ecd/t20
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 34
+		Number of boundary faces : 22
+		Number of defined boundary faces : 22
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.00212132 .. 0.00212132
+        j : 0.00212132 .. 0.00212132
+        k : 0.0025 .. 0.0025
+
+    Block 1 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.0025 .. 0.0025
+
+    Block 2 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.0025 .. 0.0025
+
+    Block 3 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.0025 .. 0.0025
+
+    Block 4 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.0025 .. 0.0025
+
+    Block 5 cell size :
+        i : 0.00212132 .. 0.00212132
+        j : 0.00212132 .. 0.00212132
+        k : 0.002 .. 0.002
+
+    Block 6 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.002 .. 0.002
+
+    Block 7 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.002 .. 0.002
+
+    Block 8 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.002 .. 0.002
+
+    Block 9 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.002 .. 0.002
+
+    Block 10 cell size :
+        i : 0.00212132 .. 0.00212132
+        j : 0.00212132 .. 0.00212132
+        k : 0.0025 .. 0.0025
+
+    Block 11 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.0025 .. 0.0025
+
+    Block 12 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.0025 .. 0.0025
+
+    Block 13 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.0025 .. 0.0025
+
+    Block 14 cell size :
+        i : 0.0036 .. 0.0036
+        j : 0.00212132 .. 0.00212132
+        k : 0.0025 .. 0.0025
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.03 -0.03 0) (0.03 0.03 0.042)
+  nPoints: 4338
+  nCells: 3808
+  nFaces: 11920
+  nInternalFaces: 10928
+----------------
+Patches
+----------------
+  patch 0 (start: 10928 size: 224) name: inlet
+  patch 1 (start: 11152 size: 224) name: outlet
+  patch 2 (start: 11376 size: 256) name: flange1_bore_wall
+  patch 3 (start: 11632 size: 32) name: gasket_inner_face
+  patch 4 (start: 11664 size: 256) name: flange2_bore_wall
+
+End
+
+# -- cell 13 (0.3s, exit 1)
+vtkres=subprocess.run(["foamToVTK","-constant"],text=True,capture_output=True)
+print(vtkres.stdout[-1200:]); vtkres.check_returncode()
+import glob
+vtu=glob.glob("VTK/*_0/*.vtu")+glob.glob("VTK/*.vtu")
+print("VTU candidates:",vtu[:3])
+# -- output
+anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : foamToVTK -constant
+Date   : Sep 17 2026
+Time   : 02:52:13
+Host   : yc-demo
+PID    : 1991941
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T20-20260917-025024-8ecd/t20
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Initial memory 223680 kB
+Create mesh for time = constant
+[31m---------------------------------------------------------------------------[39m
+[31mCalledProcessError[39m                        Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[13][39m[32m, line 2[39m
+[32m      1[39m vtkres=subprocess.run([[33m"foamToVTK"[39m,[33m"-constant"[39m],text=[38;5;28;01mTrue[39;00m,capture_output=[38;5;28;01mTrue[39;00m)
+[32m----> [39m[32m2[39m print(vtkres.stdout[-[32m1200[39m:]); vtkres.check_returncode()
+[32m      3[39m [38;5;28;01mimport[39;00m glob
+[32m      4[39m vtu=glob.glob([33m"VTK/*_0/*.vtu"[39m)+glob.glob([33m"VTK/*.vtu"[39m)
+[32m      5[39m print([33m"VTU candidates:"[39m,vtu[:[32m3[39m])
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/subprocess.py:508[39m, in [36mCompletedProcess.check_returncode[39m[34m(self)[39m
+[32m    506[39m [38;5;250m[39m[33;03m"""Raise CalledProcessError if the exit code is non-zero."""[39;00m
+[32m    507[39m [38;5;28;01mif[39;00m [38;5;28mself[39m.returncode:
+[32m--> [39m[32m508[39m     [38;5;28;01mraise[39;00m CalledProcessError([38;5;28mself[39m.returncode, [38;5;28mself[39m.args, [38;5;28mself[39m.stdout,
+[32m    509[39m                              [38;5;28mself[39m.stderr)
+
+[31mCalledProcessError[39m: Command '['foamToVTK', '-constant']' returned non-zero exit status 1.
+
+# -- cell 14 (0.1s, exit 0)
+Path("case.foam").touch()
+reader=pv.OpenFOAMReader("case.foam")
+reader.set_active_time_value(0.0)
+mb=reader.read()
+print(mb.keys())
+print(mb)
+# -- output
+['internalMesh', 'boundary']
+MultiBlock (0x752f8eaf2620)
+  N Blocks:   2
+  X Bounds:   -3.000e-02, 3.000e-02
+  Y Bounds:   -3.000e-02, 3.000e-02
+  Z Bounds:   0.000e+00, 4.200e-02
+
+# -- cell 15 (0.2s, exit 0)
+ug=mb["internalMesh"]
+clipped=ug.clip(normal=(0,1,0),origin=(0,0,0),invert=False,crinkle=True)
+p= pv.Plotter(off_screen=True,window_size=(760,540))
+p.add_mesh(clipped,color="lightblue",show_edges=True,edge_color="navy",line_width=1)
+p.camera_position=[(0.10,-0.12,0.075),(0,0,0.021),(0,0,1)]
+p.show(screenshot="coarse_mesh.png")
+print(f"Rendered clipped mesh: {clipped.n_cells} of {ug.n_cells} cells; coarse_mesh.png")
+# -- output
+Rendered clipped mesh: 2142 of 3808 cells; coarse_mesh.png
+
+[0m[33m2026-09-17 02:52:21.188 ( 100.153s) [    7530E377B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-17 02:52:21.189 ( 100.154s) [    7530E377B780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_1987134/11585498.py:6: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.show(screenshot="coarse_mesh.png")
+
+# -- cell 16 (0.3s, exit 1)
+cm=subprocess.run(["checkMesh"],text=True,capture_output=True)
+print(cm.stdout[-5000:]); print(cm.stderr)
+cm.check_returncode()
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 02:52:24
+Host   : yc-demo
+PID    : 1992051
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T20-20260917-025024-8ecd/t20
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T20-20260917-025024-8ecd/t20/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mCalledProcessError[39m                        Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[16][39m[32m, line 3[39m
+[32m      1[39m cm=subprocess.run([[33m"checkMesh"[39m],text=[38;5;28;01mTrue[39;00m,capture_output=[38;5;28;01mTrue[39;00m)
+[32m      2[39m print(cm.stdout[-[32m5000[39m:]); print(cm.stderr)
+[32m----> [39m[32m3[39m cm.check_returncode()
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/subprocess.py:508[39m, in [36mCompletedProcess.check_returncode[39m[34m(self)[39m
+[32m    506[39m [38;5;250m[39m[33;03m"""Raise CalledProcessError if the exit code is non-zero."""[39;00m
+[32m    507[39m [38;5;28;01mif[39;00m [38;5;28mself[39m.returncode:
+[32m--> [39m[32m508[39m     [38;5;28;01mraise[39;00m CalledProcessError([38;5;28mself[39m.returncode, [38;5;28mself[39m.args, [38;5;28mself[39m.stdout,
+[32m    509[39m                              [38;5;28mself[39m.stderr)
+
+[31mCalledProcessError[39m: Command '['checkMesh']' returned non-zero exit status 1.
+
+# -- cell 17 (0.1s, exit 0)
+Path("system/fvSchemes").write_text("FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }\n")
+Path("system/fvSolution").write_text("FoamFile { version 2.0; format ascii; class dictionary; object fvSolution; }\n")
+print("Wrote mesh-check support dictionaries")
+# -- output
+Wrote mesh-check support dictionaries
+
+# -- cell 18 (0.3s, exit 1)
+cm=subprocess.run(["checkMesh"],text=True,capture_output=True)
+print(cm.stdout[-5000:]); print(cm.stderr)
+cm.check_returncode()
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 02:52:31
+Host   : yc-demo
+PID    : 1992081
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T20-20260917-025024-8ecd/t20
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mCalledProcessError[39m                        Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[18][39m[32m, line 3[39m
+[32m      1[39m cm=subprocess.run([[33m"checkMesh"[39m],text=[38;5;28;01mTrue[39;00m,capture_output=[38;5;28;01mTrue[39;00m)
+[32m      2[39m print(cm.stdout[-[32m5000[39m:]); print(cm.stderr)
+[32m----> [39m[32m3[39m cm.check_returncode()
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/subprocess.py:508[39m, in [36mCompletedProcess.check_returncode[39m[34m(self)[39m
+[32m    506[39m [38;5;250m[39m[33;03m"""Raise CalledProcessError if the exit code is non-zero."""[39;00m
+[32m    507[39m [38;5;28;01mif[39;00m [38;5;28mself[39m.returncode:
+[32m--> [39m[32m508[39m     [38;5;28;01mraise[39;00m CalledProcessError([38;5;28mself[39m.returncode, [38;5;28mself[39m.args, [38;5;28mself[39m.stdout,
+[32m    509[39m                              [38;5;28mself[39m.stderr)
+
+[31mCalledProcessError[39m: Command '['checkMesh']' returned non-zero exit status 1.
+
+# -- cell 19 (0.1s, exit 0)
+Path("system/fvSchemes").write_text("""FoamFile { version 2.0; format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default Euler; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+wallDist { method meshWave; }
+""")
+print("Completed minimal fvSchemes structure")
+# -- output
+Completed minimal fvSchemes structure
+
+# -- cell 20 (0.2s, exit 0)
+cm=subprocess.run(["checkMesh"],text=True,capture_output=True)
+print(cm.stdout[-5000:]); print(cm.stderr)
+cm.check_returncode()
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 17 2026
+Time   : 02:52:37
+Host   : yc-demo
+PID    : 1992159
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T20-20260917-025024-8ecd/t20
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           4338
+    faces:            11920
+    internal faces:   10928
+    cells:            3808
+    faces per cell:   6
+    boundary patches: 5
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     3808
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    inlet               224      241      ok (non-closed singly connected)  
+    outlet              224      241      ok (non-closed singly connected)  
+    flange1_bore_wall   256      288      ok (non-closed singly connected)  
+    gasket_inner_face   32       64       ok (non-closed singly connected)  
+    flange2_bore_wall   256      288      ok (non-closed singly connected)  
+    ".*"                992      994      ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.03 -0.03 0) (0.03 0.03 0.042)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (3.5453e-17 3.52025e-17 2.26498e-16) OK.
+    Max cell openness = 1.46181e-16 OK.
+    Max aspect ratio = 2.46175 OK.
+    Minimum face area = 4.24264e-06. Maximum face area = 2.3456e-05.  Face area magnitudes OK.
+    Min volume = 9e-09. Max volume = 5.864e-08.  Total volume = 0.000117991.  Cell volumes OK.
+    Mesh non-orthogonality Max: 24.3697 average: 6.40655
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.452982 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 21 (0.1s, exit 0)
+reader=pv.OpenFOAMReader("case.foam"); mb=reader.read(); bdry=mb["boundary"]
+print("Boundary blocks:",bdry.keys())
+for key in bdry.keys():
+    surf=bdry[key]
+    print(key, "faces=",surf.n_cells,"area=",f"{surf.area:.9e}","bounds=",tuple(round(v,6) for v in surf.bounds))
+# -- output
+Boundary blocks: ['inlet', 'outlet', 'flange1_bore_wall', 'gasket_inner_face', 'flange2_bore_wall']
+inlet faces= 224 area= 2.809300591e-03 bounds= (-0.03, 0.03, -0.03, 0.03, 0.0, 0.0)
+outlet faces= 224 area= 2.809300591e-03 bounds= (-0.03, 0.03, -0.03, 0.03, 0.042, 0.042)
+flange1_bore_wall faces= 256 area= 3.763858074e-03 bounds= (-0.03, 0.03, -0.03, 0.03, 0.0, 0.02)
+gasket_inner_face faces= 32 area= 3.763858775e-04 bounds= (-0.03, 0.03, -0.03, 0.03, 0.02, 0.022)
+flange2_bore_wall faces= 256 area= 3.763858074e-03 bounds= (-0.03, 0.03, -0.03, 0.03, 0.022, 0.042)
+

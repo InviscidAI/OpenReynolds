@@ -452,3 +452,50 @@ def test_no_candidates_at_all_is_still_not_a_reading(tmp_path):
     (root / "constant" / "triSurface").mkdir(parents=True)
     result = one(probes.run_all(root, {}), "self_intersection")
     assert result.state != probes.MEASURED
+
+
+def test_a_clean_coverage_reading_is_not_a_concern():
+    """`coverage` said "warned" on every correct partition it ever read.
+
+    `gate.concern_of` returned the probe's own prose for `coverage` and `scale`
+    unconditionally, on the stated grounds that "neither has ever returned a verdict" --
+    true when it was written, because `coverage` refused without a `patches.json` the
+    core desk never wrote. The branch was dead code, and its unconditional return was
+    invisible for as long as it stayed dead.
+
+    `core+cad_export-20260917-022129-dd05` is the sweep in which the desk started writing
+    that manifest, and `coverage` warned on **19 of the 20 runs that measured it** -- every
+    one an exhaustive, disjoint, entirely correct partition. Eighteen desks spent a
+    declare turn waiving it. T12's only declare landed on turn 30 of 30, was bounced for
+    want of a waiver it had no turn left to give, and a 29,831-cell mesh at the requested
+    volume scored `passed: false`.
+    """
+    from openreynolds.buildup import gate
+
+    clean = {"id": "coverage", "state": "measured",
+             "why": "6 patches over 7,634 triangles; every face in exactly one patch",
+             "measured": {"status": "ok"}}
+    assert gate.concern_of(clean) == ""
+
+    doubled = {"id": "coverage", "state": "measured",
+               "why": "a face is claimed by two patches",
+               "measured": {"status": "fail"}}
+    assert "two patches" in gate.concern_of(doubled)
+
+
+def test_a_scale_ratio_inside_the_band_is_not_a_concern():
+    """`scale` fires outside a factor of `SCALE_FACTOR`; inside it, 1 is the answer.
+
+    It escaped the `coverage` bug only by accident: the declare runs its probes with an
+    empty spec, so `scale` was `n/a` there and never reached the branch. Give it the
+    spec -- which the supervisor now does -- and it would have warned on all 20.
+    """
+    from openreynolds.buildup import gate
+
+    right = {"id": "scale", "state": "measured", "why": "a factor of 1",
+             "measured": {"extent_m": 0.116, "stated_m": 0.116, "ratio": 1.0}}
+    assert gate.concern_of(right) == ""
+
+    millimetres = {"id": "scale", "state": "measured", "why": "a factor of 1000",
+                   "measured": {"extent_m": 116.0, "stated_m": 0.116, "ratio": 1000.0}}
+    assert "1000" in gate.concern_of(millimetres)
