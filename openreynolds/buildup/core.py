@@ -97,8 +97,11 @@ something exists, then ask the kernel what it takes -- \
 library actually installed and cannot go stale. \
 `subprocess.run(["grep", "-n", "fillet", "{{reference_dir}}/b123d_api.md"], \
 capture_output=True, text=True)` is the search. A name in there with no `()` after it is a \
-property and takes none. It is the only file of ours you have; there is nothing else to \
-look for.
+property and takes none.
+
+`{{reference_dir}}/cad_export.py` is the other one, and it is code rather than reading -- \
+`export_patches`, below, is what it is for, and `help(export_patches)` is its argument in \
+full. Those two files are all you have of ours; there is nothing else to look for.
 
 # The rules of this desk
 
@@ -128,9 +131,24 @@ and print each next to the number that was asked for. A property you did not mea
 property you did not build.
 
 **Name the patches where you create the surfaces.** A patch name is decided on the face as \
-it is made or selected, and each named group is exported to its own STL. Never assign a \
-patch by asking where a face sits in the bounding box -- on any bend or elbow that labels \
-the wrong end and says nothing while it does it.
+it is made or selected. Never assign a patch by asking where a face sits in the bounding \
+box -- on any bend or elbow that labels the wrong end and says nothing while it does it.
+
+**Export the named patches with `export_patches`, in one call.**
+
+    import sys; sys.path.insert(0, "{{reference_dir}}")
+    from cad_export import export_patches
+    export_patches(fluid, {{{{"inlet": ins, "outlet": outs, "walls": ...}}}}, tolerance=2.5e-4)
+
+One shape, its own faces, one patch may be `...` for the rest, `tolerance` in metres. It \
+refuses a face that is in two patches, in none, or not a face of that shape, and it prints \
+what it wrote -- triangles and area per patch, the extent in metres, and the open-edge and \
+winding counts of the union. **Do not export the patches one at a time with `export_stl`.** \
+It meshes whatever you hand it, so patch-by-patch each one discretises the shared edges \
+separately and the union has a torn seam along every patch boundary -- holes snappyHexMesh \
+reads as leaks, under a `checkMesh` that passes anyway. `export_patches` tessellates the \
+shape once and cuts the patches out of that, so the seams weld by construction. \
+`export_stl` is still the right call for a preview of one shape you are looking at.
 
 **Metres, always.** OpenFOAM has no units: it reads the mesh's numbers as metres, and a \
 74 mm duct built in millimetres becomes a 74 m duct, at a thousandth of the Reynolds \
@@ -388,15 +406,29 @@ Not `.toolbox`: that name is itself a house surface (`isolation.TOOLBOX_NAME`), 
 desk that writes it has found us whether or not the directory exists. This one is the
 arm's own, holds only what the arm was given, and is named in the brief."""
 
-REFERENCE_FILES = ("b123d_api.md",)
-"""What the core desk is handed, and the whole of it.
+REFERENCE_FILES = ("b123d_api.md", "cad_export.py")
+"""What the core desk is handed, and the whole of it. Two files, each on its own evidence.
 
-One file, added on measured evidence rather than because it seemed useful: in
-`core+declare_gate-20260913-124524-aa21`, 27 of the 36 cells that raised a named
-exception were the desk calling something that does not exist, across 15 of 26 cases,
-and 17 of those 27 were build123d -- exactly this file's subject. Nothing else from the
-toolbox comes with it: `house_names` still covers every other name in there, so a run
-that reaches for `cad_convert.py` still grades contaminated."""
+`b123d_api.md`, the reading: in `core+declare_gate-20260913-124524-aa21`, 27 of the 36
+cells that raised a named exception were the desk calling something that does not exist,
+across 15 of 26 cases, and 17 of those 27 were build123d -- exactly that file's subject.
+Handing it over took `AttributeError` 11 -> 2, `NameError` 4 -> 0 and
+`ModuleNotFoundError` 1 -> 0 in `core+reference-20260914-093903-3472`.
+
+`cad_export.py`, the code: **111 of the 139 runs that delivered a mesh, across twelve
+sweeps, wrote their own per-patch STL export**, and 30 of those 111 shipped a patch set
+with open or flipped edges -- 15 of the 26 cases hit at least once, worst at 94,803
+flipped edges of 100,385 triangles. The cause is one tessellation per patch, and it is
+not even reliably wrong: OpenCASCADE caches a triangulation on the shape, so a loop of
+`export_stl` calls at one tolerance welds by luck and the same loop at two tolerances,
+or per face, or against a face built beside the solid, does not. Closes
+`exported_surface_winding_inconsistent`, `exported_surface_has_open_edges` /
+`no_closure_assertion_between_export_and_meshing`, `named_patches_land_empty_under_a_
+passing_checkmesh` and `exported_surface_duplicated_in_trisurface`.
+`tests/test_buildup_cad_export.py` demonstrates each in its absence.
+
+Nothing else from the toolbox comes with them: `house_names` still covers every other
+name in there, so a run that reaches for `cad_convert.py` still grades contaminated."""
 
 
 def brief(step_timeout: int | float = STEP_TIMEOUT_S) -> str:
@@ -425,9 +457,10 @@ class CoreDesk(CadDesk):
         """Still empty, and the reference below does not change that.
 
         `self.toolbox` is what renders a path to the *toolbox*, and this arm has none.
-        What it has is one file copied into its own workspace under `REFERENCE_DIR`,
-        which the brief names directly. The distinction is the measurement: a desk that
-        can render `/work/.toolbox` can go looking in it."""
+        What it has is `REFERENCE_FILES` copied into its own workspace under
+        `REFERENCE_DIR`, which the brief names directly. The distinction is the
+        measurement: a desk that can render `/work/.toolbox` can go looking in it, and
+        two files it was handed by name are not a catalogue it went looking for."""
         self._declares: list[dict[str, Any]] = []
         self._warned: set[str] = set()
         """Which advisory checks have raised a concern on some earlier declare. A waiver
