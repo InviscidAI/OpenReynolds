@@ -73,44 +73,68 @@ class Refused(Exception):
 # -- the partition, asserted before anything is tessellated -------------------------
 
 
-def _faces_of(shape) -> list:
-    """Every face of the shape, in OpenCASCADE's order, as build123d wraps them."""
-    try:
-        return list(shape.faces())
-    except AttributeError as exc:
-        raise Refused(
-            f"refused: {type(shape).__name__} has no .faces(). The first argument is one "
-            "build123d shape -- the solid you are about to mesh -- not a list of faces "
-            "and not a path."
-        ) from exc
-
-
 def _index(shape):
-    """A map from a face to its position in `shape`, and the identity test with it.
+    """Every face of the shape, once, and the identity test against it, in one object.
 
-    `TopTools_IndexedMapOfShape` rather than a centroid match or a face index: it answers
-    *is this face part of this shape* exactly, in one call, and returns 0 for a face that
-    is not. A centroid match would have to pick a tolerance, and a face index is
-    OpenCASCADE's own ordering, which changes when anything upstream of the shape does.
+    `TopTools_IndexedMapOfShape` rather than a centroid match or a face index:
+    `FindIndex` answers *is this face part of this shape* exactly, in one call, and
+    returns 0 for a face that is not. A centroid match would have to pick a tolerance,
+    and a bare face index is OpenCASCADE's own ordering, which changes when anything
+    upstream of the shape does.
+
+    **The face list is read back out of this same map**, by `FindKey`, rather than taken
+    from `shape.faces()`. The two agree today on everything measured. Relying on that is
+    the mistake this file exists to avoid: they are two independent traversals, one of
+    them de-duplicates a face shared by two solids and the other does not, and an export
+    keyed on their agreeing is correct until a conjugate case turns up and silently wrong
+    afterwards.
     """
     from OCP.TopAbs import TopAbs_FACE
     from OCP.TopExp import TopExp
     from OCP.TopTools import TopTools_IndexedMapOfShape
 
+    if not hasattr(shape, "wrapped"):
+        raise Refused(
+            f"refused: the first argument is a {type(shape).__name__}. It is one "
+            "build123d shape -- the solid you are about to mesh -- not a list of faces, "
+            "not a path, and not a Compound you assembled out of loose faces."
+        )
     mapping = TopTools_IndexedMapOfShape()
     TopExp.MapShapes_s(shape.wrapped, TopAbs_FACE, mapping)
+    if mapping.Extent() == 0:
+        raise Refused(
+            "refused: that shape has no faces at all, so there is nothing to tessellate."
+        )
     return mapping
 
 
+def _faces_from(mapping) -> list:
+    """The map's faces in index order, downcast from `TopoDS_Shape` to `TopoDS_Face`.
+
+    `FindKey` hands back the base class; `BRep_Tool.Triangulation_s` will not take it.
+    """
+    from OCP.TopoDS import TopoDS
+
+    return [TopoDS.Face_s(mapping.FindKey(i)) for i in range(1, mapping.Extent() + 1)]
+
+
+def _wrap(topods):
+    """A raw `TopoDS_Face` back as build123d, for the two questions only it can answer."""
+    import build123d as bd
+
+    return bd.Face(topods)
+
+
 def _centre(face) -> tuple:
+    """Centre of mass, for a refusal message. Never for deciding anything."""
     try:
-        point = face.center()
+        point = _wrap(getattr(face, "wrapped", face)).center()
         return (point.X, point.Y, point.Z)
     except Exception:  # noqa: BLE001 - only ever used to write a refusal message
         return (float("nan"),) * 3
 
 
-def _assign(shape, patches: dict) -> list[dict]:
+def _assign(shape, patches: dict, mapping=None) -> list[dict]:
     """Faces to patches: exhaustive, disjoint, and every face proved to be this shape's.
 
     Returns one entry per patch in the order given. Raises rather than guessing, in the
@@ -132,8 +156,13 @@ def _assign(shape, patches: dict) -> list[dict]:
             "whatever is left over."
         )
 
-    mapping = _index(shape)
-    everything = _faces_of(shape)
+    if mapping is None:
+        mapping = _index(shape)
+    everything = _faces_from(mapping)
+    try:
+        scale = max(abs(v) for v in shape.bounding_box().size)
+    except Exception:  # noqa: BLE001 - only ever scales a refusal's tolerance
+        scale = 1.0
     claimed: dict[int, str] = {}
     out: list[dict] = []
     remainder = None
@@ -160,21 +189,36 @@ def _assign(shape, patches: dict) -> list[dict]:
             if position == 0:
                 where = _centre(face)
                 near = min(
-                    (math.dist(where, _centre(other)), other) for other in everything
+                    (math.dist(where, _centre(other)), i)
+                    for i, other in enumerate(everything)
                 ) if everything else None
+                identical = near is not None and near[0] <= 1e-9 * (scale or 1.0)
                 hint = "" if near is None else (
                     f" The nearest face of the shape is {near[0]:.6g} m away."
                 )
-                raise Refused(
-                    f"refused: patch {name!r} was given a face at "
-                    f"({', '.join(f'{v:.6g}' for v in where)}) that is not a face of the "
-                    f"shape being exported.{hint}\n\n"
+                why = (
+                    # Distance zero and still a different face: same model, different
+                    # build. A desk that rebuilds a shape in a later cell and keeps the
+                    # face handles from the earlier one lands here, and the geometry is
+                    # right, so every message about drawn rectangles would mislead.
+                    "That face is in the same place as one of this shape's and is still "
+                    "not it, which means you are holding faces from an earlier build of "
+                    "the same model -- the shape was rebuilt, or this is a copy. Face "
+                    "identity does not survive that, and it is why selectors are "
+                    "re-derived rather than recorded. Select the patches off the very "
+                    "object you are passing as `shape`, in the same cell."
+                    if identical else
                     "A face built separately -- Face(Wire.make_polygon(...)), or a face "
                     "of some earlier shape the booleans have since replaced -- shares no "
                     "edge with this solid, so its triangles cannot weld to anything and "
                     "the union gets a hole the length of its boundary. Select the patch "
                     "off the shape you are exporting: the inlet is one of "
                     "`shape.faces()`, not a rectangle drawn where the inlet is."
+                )
+                raise Refused(
+                    f"refused: patch {name!r} was given a face at "
+                    f"({', '.join(f'{v:.6g}' for v in where)}) that is not a face of the "
+                    f"shape being exported.{hint}\n\n{why}"
                 )
             if position in claimed:
                 raise Refused(
@@ -207,7 +251,7 @@ def _assign(shape, patches: dict) -> list[dict]:
     if unclaimed:
         listed = "\n".join(
             f"  ({', '.join(f'{v:.6g}' for v in _centre(everything[i - 1]))})"
-            f"  area {everything[i - 1].area:.6g} m^2"
+            f"  area {_wrap(everything[i - 1]).area:.6g} m^2"
             for i in unclaimed[:20]
         )
         raise Refused(
@@ -249,12 +293,13 @@ def _triangles(face) -> list[tuple]:
     from OCP.TopAbs import TopAbs_REVERSED
     from OCP.TopLoc import TopLoc_Location
 
+    face = getattr(face, "wrapped", face)
     location = TopLoc_Location()
-    triangulation = BRep_Tool.Triangulation_s(face.wrapped, location)
+    triangulation = BRep_Tool.Triangulation_s(face, location)
     if triangulation is None:
         return []
     transform = location.Transformation()
-    reversed_face = face.wrapped.Orientation() == TopAbs_REVERSED
+    reversed_face = face.Orientation() == TopAbs_REVERSED
     nodes = [
         triangulation.Node(i).Transformed(transform)
         for i in range(1, triangulation.NbNodes() + 1)
@@ -268,6 +313,55 @@ def _triangles(face) -> list[tuple]:
             (nodes[k - 1].X(), nodes[k - 1].Y(), nodes[k - 1].Z()) for k in (a, b, c)
         ))
     return out
+
+
+def _f32(value: float) -> float:
+    """One coordinate as the STL will carry it.
+
+    **STL is a single-precision format** -- a binary file stores three floats per vertex
+    and nothing else -- so the surface a mesher reads is the float32 one, and that is the
+    surface every number here is about. Everything is rounded once, here, before it is
+    either written or counted, which is what keeps the printed topology and the files on
+    disk the same object.
+
+    Measured, this is not a detail. OpenCASCADE stores each face's nodes against that
+    face's own location, so the two sides of a shared seam come back as doubles that
+    differ in the last bits -- median 6.9e-18 m on a plenum with eight runners, against a
+    float32 spacing of 1.9e-9 m at that scale. Counted at double precision the union of
+    that patch set has 1,036 open edges; written to disk it has none, because the write
+    rounds them together. Reporting the first would have told the desk its surface was
+    torn while handing the mesher one that is not, and reporting it in a format-dependent
+    way -- 9 significant figures in ASCII, 24 bits in binary -- would have made the same
+    export two different surfaces depending on a flag.
+    """
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
+def _quantise(triangles: list) -> tuple[list, int]:
+    """To float32, and without the triangles that have no area once they get there.
+
+    OpenCASCADE emits a degenerate triangle at each pole of a sphere or a cone -- two of
+    its three corners are the same point -- and rounding to float32 can collapse another
+    one anywhere the mesh is finer than single precision. They carry no area and no
+    information, and every downstream count is wrong while they are in: a box with a
+    spherical void, closed by construction, reports **2 open edges and 2 non-manifold
+    edges** purely from its two pole triangles, and with them dropped reports none.
+
+    That number is not a nuisance, it is a trap. It is small, it is stable, it looks
+    exactly like a real leak, and the corpus has three runs on record that spent their
+    whole remaining step budget chasing a surface warning. A tool that manufactures one
+    is worse than no tool. So they go here, and the count goes in the report, because a
+    triangle silently discarded is its own way of lying.
+    """
+    out = []
+    dropped = 0
+    for triangle in triangles:
+        rounded = tuple(tuple(_f32(v) for v in vertex) for vertex in triangle)
+        if len(set(rounded)) < 3 or _area(rounded) == 0.0:
+            dropped += 1
+            continue
+        out.append(rounded)
+    return out, dropped
 
 
 def _normal(triangle) -> tuple:
@@ -305,7 +399,14 @@ def _write(path: Path, name: str, triangles: list, binary: bool) -> None:
         for triangle in triangles:
             handle.write("facet normal {:.9e} {:.9e} {:.9e}\n outer loop\n".format(*_normal(triangle)))
             for vertex in triangle:
-                handle.write("  vertex {:.9e} {:.9e} {:.9e}\n".format(*vertex))
+                # `%.17g`, not `%.9e`. The values are already float32, so nine
+                # significant digits reproduce the same *float32* -- but a reader parses
+                # an STL into doubles, and `preflight.read_triangles` is such a reader,
+                # so nine digits hands the probes a different set of doubles than the
+                # binary file would and the same export becomes two surfaces depending
+                # on a flag. Seventeen round-trips a double exactly, which is what makes
+                # `binary=` a choice of file format and not of geometry.
+                handle.write("  vertex {:.17g} {:.17g} {:.17g}\n".format(*vertex))
             handle.write(" endloop\nendfacet\n")
         handle.write(f"endsolid {name}\n")
 
@@ -313,32 +414,35 @@ def _write(path: Path, name: str, triangles: list, binary: bool) -> None:
 # -- what the union turned out to be -------------------------------------------------
 
 
-def _union_topology(per_patch: dict) -> dict:
+def _union_topology(per_patch: dict) -> dict:  # noqa: C901 - one pass, kept flat
     """Open edges and winding of the whole patch set, welded at exact coordinates.
 
-    Exact rather than within a tolerance, and that is the point: these triangles came
-    out of one triangulation, so a shared seam is bit-identical and no tolerance is
-    needed to see it. A non-zero count here is a real feature of the solid -- an open
-    shell, a zero-thickness baffle -- and not a seam artefact, which is what makes it
-    worth printing.
+    Exact rather than within a tolerance, and taken on the float32 values that were
+    written, so this is a statement about the files and not about an intermediate nobody
+    reads. No tolerance is needed: these triangles came out of one triangulation, so the
+    two sides of a shared seam round to the same three floats. A non-zero count is then a
+    real feature of the solid -- an open shell, a zero-thickness baffle, two solids of a
+    conjugate pair sharing a wall -- and not a seam artefact, which is what makes it
+    worth printing rather than enforcing.
     """
-    vertices: dict[tuple, int] = {}
-    edges: dict[tuple, int] = {}
-    directed: dict[tuple, int] = {}
-    for triangles in per_patch.values():
-        for triangle in triangles:
-            keys = []
-            for vertex in triangle:
-                key = vertices.setdefault(vertex, len(vertices))
-                keys.append(key)
-            for a, b in ((keys[0], keys[1]), (keys[1], keys[2]), (keys[2], keys[0])):
-                edges[(min(a, b), max(a, b))] = edges.get((min(a, b), max(a, b)), 0) + 1
-                directed[(a, b)] = directed.get((a, b), 0) + 1
+    import numpy as np
+
+    flat = [t for triangles in per_patch.values() for t in triangles]
+    if not flat:
+        return {"vertices": 0, "open_edges": 0, "non_manifold_edges": 0,
+                "flipped_edges": 0}
+    corners = np.asarray(flat, dtype=np.float32).reshape(-1, 3)
+    _, keys = np.unique(corners, axis=0, return_inverse=True)
+    keys = keys.reshape(-1, 3)
+    directed = np.concatenate([keys[:, [0, 1]], keys[:, [1, 2]], keys[:, [2, 0]]])
+    undirected = np.sort(directed, axis=1)
+    _, walks = np.unique(undirected, axis=0, return_counts=True)
+    _, same_way = np.unique(directed, axis=0, return_counts=True)
     return {
-        "vertices": len(vertices),
-        "open_edges": sum(1 for n in edges.values() if n == 1),
-        "non_manifold_edges": sum(1 for n in edges.values() if n > 2),
-        "flipped_edges": sum(1 for n in directed.values() if n > 1),
+        "vertices": int(keys.max()) + 1,
+        "open_edges": int((walks == 1).sum()),
+        "non_manifold_edges": int((walks > 2).sum()),
+        "flipped_edges": int((same_way > 1).sum()),
     }
 
 
@@ -389,25 +493,27 @@ def export_patches(
             "physics. A quarter of the finest surface cell is a reasonable start."
         )
 
-    assignment = _assign(shape, patches)
+    mapping = _index(shape)
+    assignment = _assign(shape, patches, mapping)
     _triangulate(shape, float(tolerance), float(angular_tolerance))
 
-    everything = _faces_of(shape)
+    everything = _faces_from(mapping)
     per_patch: dict[str, list] = {}
+    dropped: dict[str, int] = {}
     for entry in assignment:
         triangles: list = []
         for position in entry["indices"]:
             triangles.extend(_triangles(everything[position - 1]))
-        per_patch[entry["name"]] = triangles
+        per_patch[entry["name"]], dropped[entry["name"]] = _quantise(triangles)
 
     empty = [name for name, triangles in per_patch.items() if not triangles]
     if empty:
         raise Refused(
             f"refused: {', '.join(repr(n) for n in empty)} came out of the tessellation "
-            "with no triangles at all, so the file would be an empty patch the mesher "
-            "never finds. The faces are there and OpenCASCADE produced nothing for them "
-            "-- usually a face far below `tolerance` in every direction. Mesh finer, or "
-            "fold it into a neighbouring patch."
+            "with no triangles of any area, so the file would be an empty patch the "
+            "mesher never finds. The faces are there and the tessellation produced "
+            "nothing usable for them -- usually a face far below `tolerance` in every "
+            "direction. Mesh finer, or fold it into a neighbouring patch."
         )
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -423,7 +529,7 @@ def export_patches(
         "out_dir": str(out_dir),
         "tolerance": float(tolerance),
         "angular_tolerance": float(angular_tolerance),
-        "faces": len(everything),
+        "faces": mapping.Extent(),
         "removed": removed,
         "patches": [],
     }
@@ -445,10 +551,12 @@ def export_patches(
             "faces": len(entry["indices"]),
             "triangles": len(triangles),
             "area_m2": sum(_area(t) for t in triangles),
+            "degenerate_dropped": dropped[name],
             "bytes": path.stat().st_size,
         })
 
     report["triangles"] = sum(p["triangles"] for p in report["patches"])
+    report["degenerate_dropped"] = sum(dropped.values())
     report["area_m2"] = sum(p["area_m2"] for p in report["patches"])
     report["bounds_m"] = ([round(v, 12) for v in low + high]
                           if report["triangles"] else [])
@@ -515,6 +623,15 @@ def render(report: dict) -> str:
         lines.append(
             "                      the solid itself -- an open shell, a baffle, a "
             "self-touching boolean. Say which."
+        )
+    if report["degenerate_dropped"]:
+        lines.append(
+            f"  dropped             {report['degenerate_dropped']} degenerate triangle(s) "
+            "with no area -- OpenCASCADE puts one at each"
+        )
+        lines.append(
+            "                      pole of a sphere or cone. Not a defect in your "
+            "geometry, and not in the surface either."
         )
     if report["removed"]:
         lines.append(

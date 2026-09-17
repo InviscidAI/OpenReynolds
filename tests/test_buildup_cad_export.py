@@ -370,3 +370,140 @@ def test_reaching_for_it_is_not_contamination():
     assert not isolation.scan(used, given=core.REFERENCE_FILES).contaminated
     assert isolation.scan({"cells": "grep -n patches cad_convert.py"},
                           given=core.REFERENCE_FILES).contaminated
+
+
+# -- what the reliability battery found, before the desk could ----------------------
+
+
+@needs_cad
+def test_the_printed_topology_is_the_topology_on_disk(cad_export, tmp_path):
+    """The report and the files have to be the same surface, or the tool is a liar.
+
+    Found by running this against corpus-shaped geometry rather than a box. **STL is a
+    single-precision format**, and OpenCASCADE stores each face's nodes against that
+    face's own location, so the two sides of a shared seam come back as doubles that
+    differ in the last bits -- median 6.9e-18 m on the plenum below, against a float32
+    spacing of 1.9e-9 m at that scale. Counted at double precision this patch set had
+    **1,036 open edges**; written to disk it had none, because the write rounds them
+    together.
+
+    So the report said the surface was torn while handing the mesher one that was not.
+    Everything is rounded once now, before it is either written or counted. A regression
+    here is the tool telling the desk to chase something that is not in the file --
+    which is `warning_chased_until_the_step_budget_ran_out`, three runs, manufactured by
+    us instead of found.
+    """
+    import build123d as bd
+    import math
+
+    body = bd.Cylinder(0.03, 0.2, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))
+    for i in range(8):
+        angle = 2 * math.pi * i / 8
+        body = body + bd.Pos(0.04 * math.cos(angle), 0.04 * math.sin(angle),
+                             0.02 + 0.02 * (i % 4)) * \
+            bd.Rot(0, 90, math.degrees(angle)) * bd.Cylinder(0.006, 0.05)
+    plenum = body - bd.Cylinder(0.024, 0.19,
+                                align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))
+
+    faces = plenum.faces()
+    runners = [f for f in faces if abs(f.center().Z - 0.1) > 0.02]
+    report = cad_export.export_patches(
+        plenum, {"runners": runners, "plenum": ...}, tmp_path,
+        tolerance=5e-4, quiet=True)
+    on_disk = seams(sorted(tmp_path.glob("*.stl")))
+    assert (report["union"]["open_edges"], report["union"]["flipped_edges"]) == \
+           (on_disk["open"], on_disk["flipped"]), \
+        f"the report says {report['union']} and the files say {on_disk}"
+    assert on_disk["open"] == 0
+
+
+@needs_cad
+def test_a_sphere_does_not_manufacture_open_edges(cad_export, tmp_path):
+    """OpenCASCADE puts a degenerate triangle at each pole. They are not a leak.
+
+    Also found by the battery. A box with a spherical void is closed by construction and
+    reported **2 open edges and 2 non-manifold edges**, entirely from its two pole
+    triangles -- small, stable, and indistinguishable from a real leak by eye. Every
+    sphere, cone and revolved surface in the corpus would have carried one.
+
+    The count of what was dropped is in the report, because a triangle silently
+    discarded is its own way of lying.
+    """
+    import build123d as bd
+
+    shape = bd.Box(0.4, 0.4, 0.4) - bd.Sphere(0.1)
+    ball = [f for f in shape.faces() if f.center().length < 0.15]
+    report = cad_export.export_patches(
+        shape, {"ball": ball, "box": ...}, tmp_path,
+        tolerance=2e-4, angular_tolerance=0.05, quiet=True)
+    assert report["degenerate_dropped"] == 2
+    assert report["union"] == {"vertices": report["union"]["vertices"], **report["union"]}
+    assert report["union"]["open_edges"] == 0
+    assert report["union"]["non_manifold_edges"] == 0
+    assert seams(sorted(tmp_path.glob("*.stl")))["open"] == 0
+    assert "degenerate triangle" in cad_export.render(report)
+
+
+@needs_cad
+def test_a_face_from_an_earlier_build_is_named_as_such(cad_export, finned, tmp_path):
+    """Geometrically identical, topologically foreign: the rebuilt-shape mistake.
+
+    A desk that rebuilds a shape in a later cell and keeps the face handles from the
+    earlier one gets a face whose nearest counterpart is **0 m away** and still is not
+    it. The generic message -- "a rectangle drawn where the inlet is" -- would be
+    actively misleading there, because the geometry is right and the identity is not.
+    """
+    import build123d as bd
+
+    align = (bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN)
+    again = bd.Cylinder(0.03, 0.12, align=align)
+    for i in range(6):
+        again = again + bd.Pos(0, 0, 0.01 + i * 0.015) * bd.Cylinder(0.05, 0.003, align=align)
+    barrel, _fins = groups(finned)      # faces of the *first* build
+    with pytest.raises(cad_export.Refused, match="earlier build of the same model"):
+        cad_export.export_patches(again, {"barrel": barrel, "rest": ...}, tmp_path,
+                                  tolerance=2.5e-4, quiet=True)
+
+
+@needs_cad
+def test_the_export_is_idempotent(cad_export, finned, tmp_path):
+    """`build.py` is re-run from empty and compared against what is on disk.
+
+    A second call that produced different bytes would make every replay a false
+    mismatch, which `cad/check.py` reports as the accepted geometry not reproducing.
+    """
+    import hashlib
+
+    barrel, fins = groups(finned)
+    digests = []
+    for _ in range(2):
+        cad_export.export_patches(finned, {"barrel": barrel, "fins": fins}, tmp_path,
+                                  tolerance=2.5e-4, quiet=True)
+        digests.append({p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                        for p in sorted(tmp_path.glob("*.stl"))})
+    assert digests[0] == digests[1]
+
+
+@needs_cad
+def test_ascii_and_binary_are_the_same_surface(cad_export, tmp_path):
+    """Not merely the same topology -- the same vertices.
+
+    The values are already float32 by the time either writer sees them, and the ASCII
+    writer prints seventeen significant digits, so the flag chooses a file format and
+    never a geometry. `%.9e` was not enough and this test is what caught it: nine digits
+    reproduce the same *float32*, but a reader parses an STL into doubles -- and
+    `preflight.read_triangles`, which is what every probe welds, is such a reader -- so
+    the ASCII file and the binary file were two different sets of doubles.
+    """
+    import build123d as bd
+
+    shape = bd.Cylinder(0.02, 0.05) - bd.Box(0.01, 0.01, 0.06)
+    wall = [f for f in shape.faces() if f.center().Z == 0]
+    vertices = {}
+    for binary in (True, False):
+        out = tmp_path / ("binary" if binary else "ascii")
+        cad_export.export_patches(shape, {"wall": wall, "rest": ...}, out,
+                                  tolerance=2e-4, binary=binary, quiet=True)
+        vertices[binary] = {v for p in sorted(out.glob("*.stl"))
+                            for t in read_stl(p) for v in t}
+    assert vertices[True] == vertices[False]
