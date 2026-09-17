@@ -147,8 +147,13 @@ def prepare(case: str, parent: Path, run_dir: Path,
     for name in core.REFERENCE_FILES:
         source = TOOLBOX_DIR / name
         if not source.is_file():
+            # b123d_api.md is generated; cad_export.py is source. Say which this is
+            # rather than naming one generator for both -- a run that stops here stops
+            # before any model call, and the next thing to type should be in the message.
+            how = (f"run python3 {TOOLBOX_DIR / 'b123d_api.py'} to write it"
+                   if name.endswith(".md") else "it is source and should be in the repo")
             raise SystemExit(f"the core desk is given {name} and it is not on disk at "
-                             f"{source}; run python3 {TOOLBOX_DIR / 'b123d_api.py'}")
+                             f"{source}; {how}")
         handed = case_dir / core.REFERENCE_DIR / name
         handed.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, handed)

@@ -366,8 +366,12 @@ def test_the_toolbox_sticks_to_what_the_image_provides():
     # through `importlib.import_module` to stay inside this list while the list was
     # wrong; the list is what was wrong, so it is fixed here rather than worked around
     # there. Whether the indirection stays is that script's own business.
+    # OCP is build123d's own OCCT binding -- `import build123d` imports it -- so it is
+    # on the image wherever build123d is, and `cad_export.py` reaches through it for the
+    # one thing build123d does not expose: the triangulation already attached to a
+    # shape, which is what lets a patch set come off a single tessellation.
     third_party = {"numpy", "matplotlib", "pandas", "pyvista", "imageio", "gmsh",
-                   "build123d"}
+                   "build123d", "OCP"}
     siblings = {script.stem for script in TOOLBOX.glob("*.py")}
     allowed = set(sys.stdlib_module_names) | third_party | siblings | {"__future__"}
     for script in sorted(TOOLBOX.glob("*.py")):
