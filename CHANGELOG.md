@@ -125,7 +125,7 @@ All notable changes to this project are recorded here. The format follows
   a `.dat`, a `.csv` or a log read while the solver is still appending came back
   looking complete, and a file cut short is a number the model will happily average
   (F-64). Pictures were covered when a half-written PNG ended two sessions; the text
-  the conclusions are drawn from was not. The path is re-stated after the read -- one
+  the conclusions are drawn from was not. The path is stated a second time after the read -- one
   round trip on a path that already makes several -- read once more if the size moved,
   and if it is still moving the answer says so and names the three sizes rather than
   presenting a snapshot as the file.
