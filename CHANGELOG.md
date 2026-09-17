@@ -106,6 +106,19 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **A Sandbox that cycled under a read is waited out instead of failing the tool
+  call.** The hosted Sandbox goes away under load -- 9 of 68 tool calls in one live
+  study and 56 of 244 in another came back `409 sandbox_gone`, in bursts, three of the
+  four starting within 90 seconds of an 8-rank solve being launched (F-58). Nothing was
+  lost, because `/work` is a persistent Volume and a job restarts from the latest time,
+  but every one of them reached the model as a failed call and one run spent about 16
+  minutes improvising recovery and relaunched the same solve stage five times. The
+  service now answers that 409 with `Retry-After: 5`, and `FoamdClient.request` asks
+  again once for a method that only reads (a stat, a file, a listing, a job status),
+  honouring the header and capping what it can add at 15 seconds. 409 stays out of
+  `_RETRY_STATUSES`: that set is keyed on the status alone and would cover
+  `POST .../jobs` too, and a retried job start once produced five duplicate running
+  jobs. `job_start` needs an idempotency key before it can be sent twice.
 - **A named model is no longer swapped for a preset's default.** A provider named on
   its own still arrives at its preset's model, but `OPENREYNOLDS_PROVIDER=reynolds`
   with `OPENREYNOLDS_MODEL=claude-opus-5` -- one of the two models that service meters,

@@ -82,6 +82,42 @@ looked exactly like an agent being served a stale answer for twenty-six minutes,
 that is not what happened. Nothing here is retried in the dark now: an ambiguous failure
 on a write is handed to the caller instead of being tried again."""
 
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+"""Methods that only read, which is a stronger claim than `_REPEATABLE_METHODS`.
+
+A repeatable call may be sent again without doubling its effect; a safe one has no
+effect to double. The distinction only matters for `sandbox_gone` below, where the
+question is not "did this land?" but "is there anything here a second attempt could
+make happen twice?" -- and the only honest answer for a write is that nobody knows."""
+
+_SANDBOX_GONE_ATTEMPTS = 2
+"""How many times a read may meet `409 sandbox_gone` before the model hears about it.
+
+The hosted Sandbox cycles under load: 9 of 68 tool calls in one live study and 56 of
+244 in another came back `sandbox_gone`, in bursts, three of the four beginning within
+90 seconds of an 8-rank solve being launched (F-58). Nothing is lost when it happens --
+`/work` is a persistent Volume and a job restarts from the latest time -- but every one
+of those reached the model as a failed tool call, and one study spent about 16 minutes
+improvising recovery and relaunched the same solve stage five times.
+
+The service now answers the 409 with `Retry-After: 5`, the same number its cold-start
+503 carries, because the replacement Sandbox is up in about that long. Two attempts,
+not five: this is a read waiting for a container to come back, and if it has not by the
+second ask the model is better told plainly than left sitting.
+
+**409 is deliberately not in `_RETRY_STATUSES`, and must not be put there.** That list
+is keyed on the status alone and so answers for every route at once, including
+`job_start`: a retried POST once produced five duplicate running jobs, and `job_start`
+would need an idempotency key before it could be sent twice safely. The carve-out here
+is narrower on both axes -- one error code, and only for a method that reads."""
+
+_SANDBOX_GONE_MAX_WAIT_S = 15.0
+"""The longest a `sandbox_gone` retry may add to a call.
+
+`Retry-After` is honoured verbatim by `_retry_delay`, which is right for a header the
+service chose; this bounds what a header nobody is watching can cost a tool call that
+is already slow. At the 5 seconds foamd sends, the cap never binds."""
+
 _MAX_ATTEMPTS = 5
 _DEFAULT_RETRY_AFTER_S = 10.0
 _SERVER_ERROR_RETRY_S = 1.0
@@ -548,6 +584,11 @@ class FoamdClient:
         all) is tried again; an ambiguous one is raised, because the alternative is
         doing the work twice and never finding out.
 
+        A `409 sandbox_gone` is outside both of those rules and has its own, narrower
+        one: it is tried again only for a method that reads, only once, and only for
+        as long as the service's own `Retry-After` asks for. `_SANDBOX_GONE_ATTEMPTS`
+        says why a write is left alone.
+
         `max_attempts` overrides `_MAX_ATTEMPTS` for this call. Only a caller with a
         reason to bound its own worst case passes it -- the mirror's background
         cycles, which share the exec channel with whatever tool call is running and
@@ -560,6 +601,9 @@ class FoamdClient:
         )
         attempts = int(max_attempts) if max_attempts else _MAX_ATTEMPTS
         last_error: BackendError | None = None
+        # Counted separately from `attempt`, because a vanished Sandbox is its own
+        # kind of failure with its own much shorter patience.
+        gone_attempts = 0
         for attempt in range(attempts):
             response = None
             # Whether this failure leaves it unknown whether the service acted.
@@ -597,6 +641,29 @@ class FoamdClient:
                 # cannot reach Modal at all until somebody renews a token".
                 if last_error.code in _NO_RETRY_CODES:
                     raise last_error
+                # The other case the status cannot answer for, from the other side:
+                # `409 sandbox_gone` is the Sandbox having cycled underneath a call
+                # that was fine. For a read it means only that the answer has to be
+                # asked for again once the replacement is up, and the service says
+                # when that will be. For anything else it is unanswerable -- the
+                # container is gone, so nothing can be asked about what the request
+                # did before it went -- which is why the gate is `_SAFE_METHODS` and
+                # not `repeat_ok`, and why 409 stays out of `_RETRY_STATUSES`
+                # entirely. See `_SANDBOX_GONE_ATTEMPTS` for the duplicate jobs that
+                # settled it.
+                if response.status_code == 409 and last_error.code == "sandbox_gone":
+                    may_ask_again = (
+                        repeat_ok
+                        and method.upper() in _SAFE_METHODS
+                        and gone_attempts < _SANDBOX_GONE_ATTEMPTS - 1
+                        and attempt < attempts - 1
+                    )
+                    if not may_ask_again:
+                        raise last_error
+                    gone_attempts += 1
+                    time.sleep(min(_retry_delay(response, attempt),
+                                   _SANDBOX_GONE_MAX_WAIT_S))
+                    continue
                 # A 4xx collected through a 303 hop gets no special treatment here, and
                 # an earlier draft of the F-47 fix that gave it some was wrong: it made
                 # every 4xx behind a hop "ambiguous", which retried a 401/403/413 like a

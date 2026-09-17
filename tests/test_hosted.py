@@ -1058,6 +1058,174 @@ def test_an_ordinary_500_is_still_retried(monkeypatch):
     assert len(calls) == 3
 
 
+# -- the Sandbox cycling underneath a call (F-58) ------------------------------
+
+
+def _slept(monkeypatch) -> list[float]:
+    """Every delay the retry loop asks for, without spending any of it."""
+    waits: list[float] = []
+    monkeypatch.setattr(hosted_mod.time, "sleep", waits.append)
+    return waits
+
+
+def _gone(retry_after: str | None = "5") -> httpx.Response:
+    return response(
+        409,
+        {"error": "sandbox_gone", "message": "the sandbox for this instance is gone"},
+        headers={"Retry-After": retry_after} if retry_after else {},
+    )
+
+
+def test_a_read_waits_out_a_vanished_sandbox_instead_of_failing_the_tool_call(monkeypatch):
+    """9 of 68 tool calls in one live study and 56 of 244 in another came back
+    `sandbox_gone (409)` while the hosted Sandbox cycled under an 8-rank solve. Nothing
+    was lost -- `/work` is a persistent Volume and the job restarted from the latest
+    time -- but every one of them reached the model, which spent about 16 minutes of
+    one run improvising recovery and relaunched the same stage five times. A stat five
+    seconds later answers."""
+    waits = _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def cycling(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        if len(calls) == 1:
+            return _gone()
+        return response(200, {"ok": True})
+
+    monkeypatch.setattr(client._client, "request", cycling)
+    assert client.request("GET", "/v1/instances/i/files").json() == {"ok": True}
+    assert calls == ["GET", "GET"]
+    assert waits == [5.0], "the service says when the replacement is up; that is the wait"
+
+
+def test_a_vanished_sandbox_is_asked_again_once_and_then_reported(monkeypatch):
+    """Two attempts, not five. This is a read waiting for a container to come back,
+    and if it has not by the second ask the model is better told plainly than left
+    sitting: it can restart the job, which is what the volume makes cheap."""
+    waits = _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def always_gone(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        return _gone()
+
+    monkeypatch.setattr(client._client, "request", always_gone)
+    with pytest.raises(BackendError) as caught:
+        client.request("GET", "/v1/instances/i/files")
+
+    assert caught.value.code == "sandbox_gone"
+    assert caught.value.status == 409
+    assert len(calls) == 2, f"asked {len(calls)} times; the cap is two attempts"
+    assert waits == [5.0]
+
+
+def test_a_vanished_sandbox_is_not_a_reason_to_start_a_job_twice(monkeypatch):
+    """The negative case, and the reason 409 is not simply added to
+    `_RETRY_STATUSES`. That set is keyed on the status alone, so putting 409 in it
+    would cover `POST .../jobs` as well -- and a retried job start once produced five
+    duplicate running jobs on one instance. `job_start` needs an idempotency key
+    before it can be sent twice; until it has one it is handed to the caller on the
+    first answer."""
+    from openreynolds.backend.hosted import HostedBackend
+
+    _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def always_gone(method, path, timeout=None, **kwargs):
+        calls.append((method, path))
+        return _gone()
+
+    monkeypatch.setattr(client._client, "request", always_gone)
+    with pytest.raises(BackendError) as caught:
+        HostedBackend(client, "inst-1").job_start("mpirun -np 8 pimpleFoam -parallel")
+
+    assert caught.value.code == "sandbox_gone"
+    assert len(calls) == 1, f"the solve was launched {len(calls)} times"
+
+
+def test_a_vanished_sandbox_does_not_repeat_a_write_even_a_repeatable_one(monkeypatch):
+    """`repeatable=True` answers a different question -- whether sending the same
+    bytes twice leaves the workspace as once does -- and it is not the one asked here.
+    A gone Sandbox cannot be asked what the request did before it went, so the gate is
+    the method being one that only reads."""
+    _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def always_gone(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        return _gone()
+
+    monkeypatch.setattr(client._client, "request", always_gone)
+    with pytest.raises(BackendError):
+        client.request("POST", "/v1/instances/i/tar", repeatable=True)
+    assert len(calls) == 1
+
+
+def test_only_sandbox_gone_is_carved_out_of_the_409s(monkeypatch):
+    """One code, not the status. `409 kill_not_delivered` says a job may still be
+    running and the kill did not reach it, which is a fact about the workspace and not
+    a blink: asking again tells the model nothing new and costs it the seconds."""
+    _slept(monkeypatch)
+    from openreynolds.backend.hosted import _RETRY_STATUSES
+
+    assert 409 not in _RETRY_STATUSES
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def refused(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        return response(409, {"error": "kill_not_delivered",
+                              "message": "the signal did not reach the job"})
+
+    monkeypatch.setattr(client._client, "request", refused)
+    with pytest.raises(BackendError) as caught:
+        client.request("GET", "/v1/jobs/j")
+
+    assert caught.value.code == "kill_not_delivered"
+    assert len(calls) == 1
+
+
+def test_a_sandbox_gone_wait_is_capped(monkeypatch):
+    """`Retry-After` is honoured verbatim, which is right for a header the service
+    chose; the cap bounds what a header nobody is watching can add to a tool call that
+    is already slow. At the 5 seconds foamd sends it never binds."""
+    waits = _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def cycling(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        if len(calls) == 1:
+            return _gone("600")
+        return response(200, {"ok": True})
+
+    monkeypatch.setattr(client._client, "request", cycling)
+    assert client.request("GET", "/v1/instances").status_code == 200
+    assert waits == [15.0]
+
+
+def test_a_sandbox_gone_without_a_header_still_waits_a_little(monkeypatch):
+    """An older service, or an edge that drops the header. The general backoff applies
+    and the read is still absorbed rather than spent on a model turn."""
+    waits = _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def cycling(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        if len(calls) == 1:
+            return _gone(None)
+        return response(200, {"ok": True})
+
+    monkeypatch.setattr(client._client, "request", cycling)
+    assert client.request("GET", "/v1/instances").status_code == 200
+    assert waits == [1.0]
+
+
 # -- who owns the workspace at teardown ---------------------------------------
 
 
