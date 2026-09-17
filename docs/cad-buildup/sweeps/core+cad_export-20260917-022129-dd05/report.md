@@ -34,8 +34,7 @@ survive that and which do not.
 | total spend | **$9.76** |
 
 Broken by the vet: **none**. Not passed: **T12** (§3.1, our gate), **T15** (§3.4, our
-parameter name), **T5** — a case no run has satisfied in ten attempts across every sweep on
-record, which is now a question about the case rather than about any desk.
+parameter name), **T5** — a case that asked for a volume the fixture does not contain. §9.
 
 ### Against the baseline
 
@@ -174,7 +173,7 @@ the same constants. A green probe column on those two runs is a reading about an
 |---|---|---|
 | ~~`boolean_subtraction_named_then_never_run`~~ | T4 | **Withdrawn, §9.** |
 | ~~`trailing_edge_property_erased_not_measured`~~ | T10 | **Withdrawn, §9.** |
-| `single_coarse_void_probe_taken_as_proof_of_no_passage` | T5 | Refused on a padded-bounding-box subtraction, concluding no internal passage exists. Kept, but see §9: **no run has reached `checkmesh_ok` on T5 in ten attempts across every sweep on record**, which is a question about the case or the fixture before it is one about a desk. |
+| ~~`single_coarse_void_probe_taken_as_proof_of_no_passage`~~ | T5 | **Withdrawn, §9.** |
 | `passage_width_property_conflated_with_vane_width` | T22 | New. Printed the vane's width at one azimuth for a passage width that varies with radius. |
 | `region_count_cannot_distinguish_rejoin_from_dead_end` | T3, T17 | Recurs, both times as the only connectivity evidence for a property the case says it cannot decide. |
 | `probe_reads_one_path_and_calls_every_miss_na` | T7, T8 | Correct this time: T8 took `splitMeshRegions -cellZones` and wrote no `triSurface`, so six probes read `n/a` on the best-audited mesh in the corpus. |
@@ -322,3 +321,40 @@ a stricter reading.
 
 **Both cases are unpaired against this sweep**, and the table will exclude them next time.
 That is the cost, and it is worth paying once.
+
+## 10. T5, and a capability that left the corpus
+
+The third non-pass turned out not to be a failure at all. **The fixture has no internal
+volume**, so the request could not be satisfied by anyone. Measured:
+
+- three solids, **every one a single shell** — not one is hollow;
+- base-to-body `0.000 mm`, body-to-emitter `0.000 mm` — they touch, so no duct between them;
+- a padded box minus the assembly is **one connected region** — no sealed cavity;
+- the only cylinders are **Ø5 mm corner fillets** and **Ø5.5 / Ø2.6 mm mounting holes**
+  through a 3.5 mm plate.
+
+**Ten runs, four models, every ending the harness has, and `checkmesh_ok` zero times.** This
+run refused and scored `passed: false` because the case expected `done`. It had been
+grading the correct answer as a failure for its whole life, and the finding filed against it
+here graded the desk's *method* — a padded-box subtraction, which can only find a sealed
+cavity and never a through-passage — while its conclusion was right. Withdrawn.
+
+**The replacement search came up empty**, which is worth recording so it is not repeated.
+NIST's MBE PMI set is public domain and every one of its eleven parts is single-shell —
+FTC-07 reads as a box in a shaded view and cuts open as a C-section channel, and no
+combination of face caps seals a volume larger than an 11.7 cm³ rim recess. Ultimaker's
+printer parts include real ducts and are **CC-BY-NC**. The one genuine duct found, Prusa's
+print-fan shroud, is **GPL-2.0** and is a partly-open scoop rather than a cappable passage.
+Parts with internal flow volumes are pumps, valves and manifolds, and those are not
+published openly.
+
+So **T5 has been reposed to external flow around the same assembly** — 150 mm upstream,
+400 mm downstream, 150 mm around — which is what this fixture supports. Six of the seven
+things the case was reaching for survive: real-CAD ingest, per-component units, assembly
+structure, defeaturing (it carries r = 0.5 mm and r = 0.1 mm fillets on a 54 mm device),
+re-derived selectors, per-patch export. Its properties are now the device's measured size,
+the body count on the meshed device surface, and the fluid volume.
+
+**What did not survive is extract-the-internal-domain-by-boolean-with-capping.** It left
+with this rewrite and nothing replaced it. It is an uncovered capability and closing it
+needs a fixture nobody has yet.

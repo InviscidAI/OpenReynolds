@@ -38,7 +38,7 @@ comparable to anything published elsewhere.
 | T2 | body in a flow box | authored |
 | T3 | Tesla valve | authored |
 | T4 | cold plate with fins | authored |
-| T5 | STEP assembly, fluid domain | authored; fixture is C1's real multi-solid STEP |
+| T5 | STEP assembly in an external flow | authored; fixture is C1's real multi-solid STEP. **Reposed 2026-09-17** from an internal-domain case: the fixture has no internal volume (three single-shell solids in contact, one air region), and ten runs across every sweep reached `checkmesh_ok` zero times. Extract-by-boolean-with-capping left the corpus with it and is uncovered |
 | T6 | STEP with no declared unit | authored; fixture is C1's box-with-duct, `LENGTH_UNIT` emptied |
 | T7 | sealed cavity, cell zones | authored |
 | T8 | conjugate two-region | authored |
