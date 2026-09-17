@@ -41,7 +41,7 @@ Every one of these is from a real run, with its transcript published beside it a
 
 ```bash
 pip install openreynolds     # or: uvx openreynolds · pipx install openreynolds · npm i -g openreynolds
-openreynolds login           # email and password, the same account as app.tryreynolds.com
+openreynolds login           # email and password, or --browser for Google; the app.tryreynolds.com account
 openreynolds config          # which model, and its key — bring your own, any vendor
 openreynolds doctor          # check it can all be reached, before spending anything
 openreynolds                 # start a study
@@ -49,7 +49,18 @@ openreynolds                 # start a study
 
 `login` hands this machine its own service key, stored outside the repository, and
 offers to create an account if there is none. `--browser` approves a short code in a
-browser instead, for a terminal with no keyboard of its own.
+browser instead: that is the way in for a terminal with no keyboard of its own, and the
+only way in for **an account created with Google**, which has no password to type. A
+password sign-in for one of those fails exactly like a wrong password, and the service
+cannot tell the two apart, so the terminal names the browser flow whenever a sign-in
+fails rather than offering to create a second account for an address that already has
+one.
+
+**A company email address starts the account with $10 of credit, once**, covering the
+hosted workspace and Reynolds' own metered model together; a personal address starts at
+zero. Which addresses count is the service's rule and is never guessed at here, because
+a domain list copied into a client goes stale and starts telling people the opposite of
+what they are about to get.
 
 **Run `doctor` first.** It checks settings, the workspace service, the model API,
 capture, the toolbox, the terminal and the video encoder, and it writes nothing.
@@ -279,6 +290,24 @@ make a hundred-kilobyte picture is the wrong way round. Frames come home and
 `openreynolds video` assembles them here, where a real encoder lives. The instance
 image has no encoder on purpose.
 
+## Editing the mesh by hand — the hosted app only
+
+Asking in words is right for "make the duct wider" and wrong for "that face is the
+inlet": the second is quicker to point at than to describe, and a description is exactly
+what the agent can misread. So the mesh tab in the
+[hosted app](https://app.tryreynolds.com) is an editor. Click the mesh and the smooth
+surface under the pointer is picked, or one face, a patch, or a box; name it Inlet,
+Outlet, Wall or Symmetry, with a flow direction and a speed per inlet. Sketch a 2D domain
+in metres with bodies cut out and name its edges by clicking, and gmsh meshes it on the
+instance with one curve per drawn edge, so a name lands on exactly the faces swept from
+it. Move, scale and turn a mesh with the result shown before it applies. Every edit runs
+`createPatch` and `checkMesh` on the same instance the session is using, keeps the mesh
+it replaced so it can be undone, and refuses a page whose mesh changed underneath rather
+than editing the wrong faces; handing it back tells the session what the patches now are.
+**None of this is in this package.** It needs a pointer and a 3D view, so it lives in the
+web app, and it is mentioned here because it changes the same workspace a CLI session is
+working in.
+
 ## The toolbox
 
 Small scripts kept on the instance and **offered, never imposed**: geometry and mesh
@@ -291,6 +320,38 @@ the recipe for a genuinely 2D case and how to verify it worked.
 The agent reaches for these or does not. They exist because a hint that is available
 costs nothing and a rule that is enforced costs everything.
 
+## Benchmarks
+
+[`benchmarks/moving_mesh/`](benchmarks/moving_mesh/) holds the two cases the moving-mesh
+field note rests on, as the verbatim prompts they were run from and a grader: a
+`cyclicAMI` sliding interface cut through a circular-Couette annulus, where the torque is
+closed form, and a cylinder on a spring free to move across the stream at Re = 100, where
+no published amplitude for exactly that case has been found.
+
+```bash
+openreynolds -p "$(cat benchmarks/moving_mesh/couette_ami.txt)"
+openreynolds pull --study <study-id>
+python benchmarks/moving_mesh/grade.py couette <case> --control <the case with no interface>
+python benchmarks/moving_mesh/grade.py viv <fixed case> <released case> [<continuation> ...]
+```
+
+The grader reads only what the solver wrote — `postProcessing/*/*.dat`, `log.*`,
+`constant/` and `system/` — and never the run's own analysis, because the first time
+these were graded by hand four of the runs' own summary numbers disagreed with their raw
+files. Every physical constant comes off a case file, and a missing one stops the grade
+and names the flag that supplies it rather than being assumed. `--json` for a
+machine-readable verdict; exit `0` when every check passes, `1` when one fails, `2` when
+the case could not be read.
+
+Two of its checks are findings rather than formalities. The sliding interface held its
+**area** to 43 ppm of unity while the two wall torques, which conservation makes equal
+and opposite exactly, disagreed by **0.91%** — against 0.011% on the same annulus meshed
+conformally — so the check every rotating-zone case runs passed one whose torque was a
+percent wrong. And the freely moving cylinder settled at A/D = 0.640, stationary over 15
+cycles and spectrally clean, which an energy audit rejected: with zero structural damping
+the fluid was doing −10.4% of work per cycle, and tight coupling brought the amplitude
+down to **0.567**.
+
 ## Commands
 
 | Command | What it does |
@@ -300,7 +361,7 @@ costs nothing and a rule that is enforced costs everything.
 | `--mode auto\|partial\|structured` | How much the agent does before asking you. See *Modes*. |
 | `--model <id>` / `--effort low\|medium\|high` | The model and reasoning effort for this session; the model is recorded on the study, so a resume carries on on it unless one is named again. `/model` and `/effort` change either mid-study. |
 | `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies` or `doctor` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
-| `openreynolds login` | Sign in; this machine gets its own service key. `--browser` for the device-code flow. |
+| `openreynolds login` | Sign in; this machine gets its own service key. `--browser` approves a short code in a browser, which is the device-code flow and the only way in for a Google account. |
 | `openreynolds config` | Provider, key, model, context window. `--key-file` and `--from-env` keep keys out of shell history. |
 | `openreynolds doctor` | Check all seven surfaces. Read-only. `--json` answers in one object. |
 | `openreynolds studies` | List the studies on this machine. `--json` answers in one object. |
@@ -318,6 +379,17 @@ run without stopping it. `/help` has the rest; see *In a session: commands, help
 completion*.
 
 ## Driving it from a program
+
+Two questions come before a session, and both answer as data:
+
+    openreynolds doctor --json     # {"ok": …, "failed": […], "checks": [{"check", "ok", "detail"}, …]}
+    openreynolds studies --json    # {"dir": …, "studies": [{"study_id", "title", "instance_id", "model", …}, …]}
+
+Straight to stdout, one object, no markup, and `doctor`'s exit code is unchanged for a
+caller that only reads that. These two existed only as styled terminal lines, so the
+`study_id` that `--study` takes had to be recovered by parsing a coloured row.
+`--output-format stream-json` in front of either means the same thing as its own
+`--json`; in front of any other subcommand it is refused rather than ignored.
 
 `--output-format stream-json` puts one JSON object per line on stdout and **nothing
 else**: every notice, warning and error the terminal would have shown goes to stderr,
