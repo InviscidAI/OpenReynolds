@@ -452,8 +452,9 @@ def _union_topology(per_patch: dict) -> dict:  # noqa: C901 - one pass, kept fla
 def export_patches(
     shape,
     patches: dict,
-    out_dir=DEFAULT_OUT,
+    directory=DEFAULT_OUT,
     *,
+    out_dir=None,
     tolerance: float | None = None,
     angular_tolerance: float = ANGULAR_DEFAULT,
     location_in_mesh=None,
@@ -480,8 +481,18 @@ def export_patches(
                  it were part of the surface.
 
     Returns the report and prints it. Raises `Refused` -- never a silent guess.
+
+    `out_dir=` is accepted as a second spelling of `directory=`, because the first sweep
+    that had this tool measured which name a desk reaches for: **five of the five runs
+    that named the argument at all wrote `directory=`, and none wrote `out_dir=`**. Three
+    got an instant `TypeError` and recovered in a cell; T15 hit it at the end of a cell
+    that had already spent most of a 900 s budget on a near-contact boolean, and the run
+    ended with nothing meshed. Five independent guesses agreeing is not a coincidence,
+    it is the name -- so that is the name, and the one this file used to have still works.
     """
-    out_dir = Path(out_dir)
+    if out_dir is not None:
+        directory = out_dir
+    out_dir = Path(directory)
     if tolerance is None or tolerance <= 0:
         raise Refused(
             "refused: no `tolerance` given, and there is no default worth guessing.\n\n"

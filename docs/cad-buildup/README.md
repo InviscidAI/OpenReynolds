@@ -306,3 +306,25 @@ ignores it** (low/medium/high returned 114/73/78 reasoning tokens), which is why
 arm's meshes were wrong where Moonshot's were merely late; and **Anthropic's
 OpenAI-compatible endpoint refuses adaptive thinking outright**, which is why Opus 5 could
 not be used as the adapter control.
+
+## `core+cad_export-20260917-022129-dd05` — the export tool, and two defects of our own
+
+`cad_export.export_patches` handed to the core desk as its second reference file, named in
+the brief with its signature and the argument left to `help()`. **20 of 26 survive the mesh
+vet, against 16.** 20 of 26 runs called it; of the 22 that built anything, 20 used it, and
+**every one delivered a patch set with 0 open edges and 0 flipped edges** against a baseline
+that shipped 929, 40, 28 and 8,364. Not one cell went on surface repair. `p = 0.549` on
+cells: no cell-count result, and the sweep carries the `-allGeometry` brief paragraph as a
+second change, so nothing here is single-variable.
+
+Two defects it exposed are ours. `gate.concern_of` warned on `coverage` unconditionally --
+dead code while the probe could never read anything, live the moment `export_patches`
+wrote the manifest it needed -- and warned on **19 of 20 correct partitions**, costing
+eighteen desks a declare turn and T12 its pass on a sound 29,831-cell mesh. And the
+directory argument was `out_dir` where **five of five desks that named it wrote
+`directory`**; on T15 that `TypeError` arrived at the end of a 500 s cell and the run ended
+with nothing meshed. Both fixed.
+
+The split is the result: the addition closed the surface-delivery half completely and had
+**zero effect** on property measurement. 10 of 26 still print a constant and call it a
+measurement.

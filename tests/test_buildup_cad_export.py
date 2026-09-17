@@ -507,3 +507,29 @@ def test_ascii_and_binary_are_the_same_surface(cad_export, tmp_path):
         vertices[binary] = {v for p in sorted(out.glob("*.stl"))
                             for t in read_stl(p) for v in t}
     assert vertices[True] == vertices[False]
+
+
+@needs_cad
+def test_the_directory_argument_answers_to_the_name_the_desk_reaches_for(cad_export, tmp_path):
+    """`directory=`, because that is what five of five desks wrote.
+
+    The first sweep with this tool measured the name: of the runs that named the
+    argument at all, **five wrote `directory=` and none wrote `out_dir=`**. Three took an
+    instant `TypeError` and recovered in one cell; T15 reached it at the end of a cell
+    that had already spent most of a 900 s budget on a near-contact boolean, and the run
+    ended with nothing meshed at all. The old spelling still answers, so a script written
+    against it keeps running.
+    """
+    import build123d as bd
+
+    box = bd.Box(0.1, 0.1, 0.1)
+    reports = [
+        cad_export.export_patches(box, {"all": ...}, tmp_path / "positional",
+                                  tolerance=1e-3, quiet=True),
+        cad_export.export_patches(box, {"all": ...}, directory=tmp_path / "named",
+                                  tolerance=1e-3, quiet=True),
+        cad_export.export_patches(box, {"all": ...}, out_dir=tmp_path / "old",
+                                  tolerance=1e-3, quiet=True),
+    ]
+    assert {r["triangles"] for r in reports} == {12}
+    assert [Path(r["out_dir"]).name for r in reports] == ["positional", "named", "old"]
