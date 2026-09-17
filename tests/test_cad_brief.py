@@ -192,7 +192,12 @@ def test_the_window_expiring_does_not_kill_the_cell(brief):
     flat = normalise(brief)
     assert "That window expiring does not kill your cell." in flat
     assert "still running" in flat
-    assert "polls it or interrupts it on purpose" in flat
+    # The sentence used to say the desk could poll, and polling was not something
+    # it could do -- `core+cad_export` §3.5, where T15 answered "still running"
+    # with two `print('poll...')` cells that queued behind the very cell they
+    # asked about and spent 480 s of a 900 s budget. Now there is a tool.
+    assert "poll_cell" in flat
+    assert "queues behind it" in flat
 
 
 def test_a_mesher_still_belongs_in_the_background(brief):
@@ -250,7 +255,14 @@ def test_the_index_is_not_inlined_into_the_brief(brief, index):
     index is 17,683 bytes. The whole point of the split is that the second is not paid
     for at every step."""
     chars = len(brief)
-    assert chars < 14_000, f"the brief has grown to {chars} chars (~{chars // 4} tokens)"
+    # 14,000 until 2026-09-17, when `poll_cell` went into the brief and the brief was
+    # already at 13,866. Raised rather than paid for by trimming something unrelated,
+    # because of what this number is actually guarding: the index is 17,683 bytes and
+    # the split exists so that it is not paid for at every step. A ceiling of 14,500
+    # cannot hide an index inside it any more than 14,000 could, and the assertions
+    # below -- no index heading, no index entry, one mention of the filename -- are what
+    # do the real work. What the ceiling stops is drift, so it stays close.
+    assert chars < 14_500, f"the brief has grown to {chars} chars (~{chars // 4} tokens)"
     assert len(index) > chars, "the index is meant to be the bigger of the two"
     headings = [line for line in index.splitlines() if line.startswith("## ")]
     for heading in headings:

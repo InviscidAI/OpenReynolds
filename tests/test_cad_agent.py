@@ -33,6 +33,8 @@ from openreynolds.backend.kernel import CellResult
 from openreynolds.cad.agent import (
     KEEP_IMAGES,
     NUDGE_AT_STEP,
+    POLL_MAX_S,
+    POLL_NAME,
     STEP_TIMEOUT_S,
     CadDesk,
     _evict,
@@ -275,7 +277,7 @@ def turn_of(text, made: int = 1):
 
 
 def test_the_one_call_is_the_action():
-    ids, source, complaint, _ = parse_action(turn_of(block("x = 1", "thinking")))
+    ids, source, complaint, _, _ = parse_action(turn_of(block("x = 1", "thinking")))
     assert source == "x = 1" and complaint == "" and len(ids) == 1
     # The prose alongside is not the action and never was.
     assert parse_action(turn_of(block("x = 1")))[1] == "x = 1"
@@ -286,10 +288,10 @@ def test_no_call_and_two_calls_are_both_told_what_happened():
     about the language in the fence -- they are about the model sending one action, or
     explaining itself at length instead of acting. The channel changed underneath them
     and the discipline they ask for did not."""
-    ids, source, complaint, _ = parse_action(
+    ids, source, complaint, _, _ = parse_action(
         turn_of("I will now consider the geometry at length."))
     assert source == "" and ids == [] and "called no tool" in complaint
-    ids, source, complaint, _ = parse_action(turn_of(Cell(source="a = 1", calls=2)))
+    ids, source, complaint, _, _ = parse_action(turn_of(Cell(source="a = 1", calls=2)))
     assert source == ""
     assert "2 tool calls" in complaint and "none of them ran" in complaint
     # Every call is named, because every call has to be answered.
@@ -297,12 +299,12 @@ def test_no_call_and_two_calls_are_both_told_what_happened():
 
 
 def test_a_call_with_no_source_is_told_so_rather_than_running_nothing():
-    ids, source, complaint, _ = parse_action(turn_of(Cell(source="   ")))
+    ids, source, complaint, _, _ = parse_action(turn_of(Cell(source="   ")))
     assert source == "" and len(ids) == 1 and "no source" in complaint
 
 
 def test_a_tool_that_does_not_exist_is_named_in_the_complaint():
-    ids, source, complaint, _ = parse_action(turn_of(Cell(source="x = 1", name="bash")))
+    ids, source, complaint, _, _ = parse_action(turn_of(Cell(source="x = 1", name="bash")))
     assert source == "" and len(ids) == 1 and "bash" in complaint
 
 
@@ -1181,7 +1183,9 @@ def test_the_cell_channel_is_a_tool_the_api_enforces(backend, store, monkeypatch
     assert made.run("a duct").ok
     for call in made.provider.calls:
         names = [t["name"] for t in call["tools"]]
-        assert names == ["run_cell"], names
+        # `poll_cell` rides beside it: waiting is an act the schema decides, for the
+        # same reason running a cell is -- see `POLL_TOOL`.
+        assert names == ["run_cell", "poll_cell"], names
         schema = call["tools"][0]["input_schema"]
         assert schema["required"] == ["source"]
 
@@ -1191,7 +1195,7 @@ def test_a_fence_in_the_prose_is_prose():
     believing a cell had run. Now nothing a message *writes* runs -- only what it
     calls -- so a fenced block in the text is no more an action than a sentence is."""
     fenced = "Here is what I would run:\n```python\nblockMesh\n```"
-    ids, source, complaint, _ = parse_action(turn_of(fenced))
+    ids, source, complaint, _, _ = parse_action(turn_of(fenced))
     assert source == "" and ids == [] and "called no tool" in complaint
     assert not re.search(r"bash", parse_action(turn_of("no block"))[2])
 
@@ -1298,3 +1302,95 @@ def test_the_refusal_token_in_a_comment_is_not_a_refusal(backend, store, monkeyp
     assert _refusal('print("CAD_REFUSED")') == "no reason given"
     assert _refusal('# print("CAD_REFUSED: no unit")\nbody = 1') is None
     assert _refusal("body = 1") is None
+
+
+# -- poll_cell: waiting, as an act the desk can take --------------------------------
+
+
+def poll_turn(seconds):
+    """A turn that calls `poll_cell` with this `seconds`, as the provider hands it over."""
+    return Turn(content=[ToolUseBlock(id="call-poll", name=POLL_NAME,
+                                      input={"seconds": seconds})],
+                provider="anthropic", stop_reason="tool_use")
+
+
+def test_poll_cell_is_read_as_a_wait_and_not_as_a_cell():
+    """The schema decides it, so a poll cannot arrive as a cell that queues.
+
+    `core+cad_export-20260917-022129-dd05` §3.5: the brief said a cell that outran its
+    window could be polled, and polling was not an act the desk had. T15 was told
+    correctly that its cell was still running and answered with
+    `print('poll: export cell completion state')` and then `print('poll export')` -- 240 s
+    and 188 s queued behind the very cell it was asking about, no output from either,
+    **480 s of a 900 s budget**, and the run ended with nothing meshed.
+    """
+    ids, source, complaint, declare, seconds = parse_action(poll_turn(90))
+    assert (source, complaint, declare) == ("", "", None)
+    assert seconds == 90.0 and len(ids) == 1
+
+    # Capped rather than refused: an over-long wait is a misjudgement, not a mistake.
+    assert parse_action(poll_turn(10_000))[4] == float(POLL_MAX_S)
+
+
+@pytest.mark.parametrize("bad", [0, -5, "soon", None])
+def test_a_poll_that_is_not_a_wait_is_refused_before_it_costs_anything(bad):
+    _ids, _source, complaint, _declare, seconds = parse_action(poll_turn(bad))
+    assert seconds is None
+    assert POLL_NAME in complaint
+
+
+def test_every_desk_is_offered_the_poll_tool():
+    """Both briefs promise it, so both desks have to carry it."""
+    from openreynolds.buildup import core
+    from openreynolds.cad import brief
+
+    assert POLL_NAME in brief.system_prompt(STEP_TIMEOUT_S)
+    assert POLL_NAME in core.brief()
+    assert any(t["name"] == POLL_NAME for t in CadDesk._tools(None))
+    assert any(t["name"] == POLL_NAME for t in core.CoreDesk._tools(None))
+
+
+def test_a_poll_with_nothing_running_costs_no_time():
+    """A mistake about the kernel's state should not also be an expensive one."""
+    desk = CadDesk.__new__(CadDesk)
+    desk._pending = None
+    desk._notes = []
+    started = time.monotonic()
+    said = desk._poll(300.0, [])
+    assert time.monotonic() - started < 1.0
+    assert "Nothing is running" in said
+
+
+def test_a_poll_never_sleeps_past_the_run_s_own_budget():
+    """A desk asleep at the deadline gets no turn to say what it found."""
+    from openreynolds.cad.cells import Cell as LoggedCell
+
+    desk = CadDesk.__new__(CadDesk)
+    desk._pending = LoggedCell(source="x = 1", reasoning="")
+    desk._notes = []
+    desk.max_seconds = 900.0
+    desk._started = time.monotonic() - 899.0   # 1 s left, less than the reserve
+    started = time.monotonic()
+    said = desk._poll(600.0, [])
+    assert time.monotonic() - started < 1.0
+    assert "out of clock" in said
+
+
+def test_a_poll_reports_as_its_own_phase_so_it_does_not_read_as_a_stall():
+    """`no-progress` counts `turn` beats only, and a poll is not one.
+
+    A desk waiting on a cell that is genuinely executing has a flat step count *because
+    the step has not finished*. Three polls in a row would otherwise fire `no-progress`
+    at exactly the desk that did the right thing.
+    """
+    from openreynolds.buildup import alarms
+    from openreynolds.buildup.heartbeat import Beat
+
+    now = time.time()
+    polling = [Beat(turn=n, steps=4, phase="poll", expect_s=120.0, at=now - 1)
+               for n in (7, 8, 9)]
+    assert alarms.evaluate(polling, now=now, started_at=now - 300, k=3) is None
+
+    stalled = [Beat(turn=n, steps=4, at=now - 1) for n in (7, 8, 9)]
+    raised = alarms.evaluate(stalled, now=now, started_at=now - 300, k=3)
+    assert raised is not None and raised.name == "no-progress"

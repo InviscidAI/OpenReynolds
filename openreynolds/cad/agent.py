@@ -171,6 +171,67 @@ being something to detect and starts being something that cannot be expressed.
 """
 
 
+POLL_NAME = "poll_cell"
+
+POLL_RESERVE_S = 30.0
+"""What a poll leaves on the clock for the turn that reads its answer.
+
+A wait that runs the budget exactly to zero buys the observation and spends the turn
+that would have acted on it."""
+
+POLL_MAX_S = 600
+"""The longest one `poll_cell` may wait. Two and a half cell windows.
+
+Long enough for the operations that actually outrun one -- a near-contact boolean, a
+snappyHexMesh on a few million cells -- and short enough that a desk which polls into a
+dead kernel has spent a bounded part of its budget finding out."""
+
+POLL_TOOL: dict[str, Any] = {
+    "name": POLL_NAME,
+    "description": (
+        "Wait, then look at the cell that outran its window: what it has printed so far, "
+        "and whether it is still going. `seconds` is how long to wait before looking, up "
+        f"to {POLL_MAX_S}. This does not run anything and does not queue -- it reads a "
+        "cell that is already executing.\n\n"
+        "Use it when a cell came back still running. Sending another run_cell instead "
+        "does not poll: the kernel is sequential, so your new cell waits its turn behind "
+        "the one still going and comes back after a full window having run nothing and "
+        "told you nothing.\n\n"
+        "If the cell has finished, this returns its result and the cell is judged into "
+        "your script exactly as if you had waited for it."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "seconds": {
+                "type": "number",
+                "description": (
+                    "How long to wait before looking, in seconds. Pick it from what the "
+                    "cell is doing, not from impatience -- one long wait costs one turn "
+                    f"and three short ones cost three. Capped at {POLL_MAX_S}."),
+            },
+        },
+        "required": ["seconds"],
+    },
+}
+"""Waiting, as an act the desk can take.
+
+**The failure this closes**, from `core+cad_export-20260917-022129-dd05` §3.5. The brief
+said a cell that outruns its window "is reported back as still running ... and your next
+step either polls it or interrupts it on purpose", and polling was not something the desk
+could do. Its only action was `run_cell`, and the kernel is sequential: whatever it sent
+queued behind the cell still running and came back a full window later having executed
+nothing.
+
+T15 was told correctly that its cell was still going -- *"The conformal tessellation is
+still running; I'll poll it rather than start another operation"* -- and sent
+`print('poll: export cell completion state')`, then `print('poll export')`. 240 s and
+188 s, no output, **480 s of a 900 s budget**, and the run ended with nothing meshed.
+
+The harness has always polled the pending cell before running whatever arrived
+(`_catch_up`). What it lacked was a way for the desk to ask for that and nothing else.
+"""
+
 DECLARE_NAME = "declare_complete"
 
 DECLARE_TOOL: dict[str, Any] = {
@@ -338,6 +399,7 @@ class CadDesk:
         self.case_dir = case_dir
         self.log = CellLog()
         self._pending: Cell | None = None
+        self._started = time.monotonic()
         self._notes: list[str] = []
         """Things to tell the desk that are not a tool's result -- a human's remark, a
         kernel that had to be restarted, where the slow cell got to.
@@ -347,6 +409,10 @@ class CadDesk:
         `tool_result`. They ride out as trailing text on that same message instead."""
         """A cell that outran its window and has not been judged yet."""
         started = time.monotonic()
+        self._started = started
+        """The same clock the loop breaks on, where `_poll` can reach it: a wait the
+        desk asks for has to be measured against the run's budget and not only against
+        its own argument."""
         result = CadResult(case_rel=case_rel, case_dir=case_dir)
         try:
             self.backend.exec(f"mkdir -p {shlex.quote(case_dir)}", timeout_s=60)
@@ -416,14 +482,20 @@ class CadDesk:
             messages.append(said)
             last_text = turn.text.strip() or last_text
 
-            ids, source, complaint, declare = parse_action(turn)
+            ids, source, complaint, declare, poll_s = parse_action(turn)
             remark = self._remark(messages, result)
             # `fenced` is what the heartbeat and the `no-progress` alarm have always
             # called "this turn produced something runnable". The channel changed under
             # the name; the question it answers did not.
-            self._beat(turns, result, turn, fenced=bool(source))
+            self._beat(turns, result, turn, fenced=bool(source),
+                       phase="poll" if poll_s else "turn", expect_s=poll_s or 0.0)
             if complaint:
                 _answer(messages, ids, complaint, is_error=True, note=self._drain())
+                continue
+
+            if poll_s is not None:
+                _answer(messages, ids, self._poll(poll_s, messages),
+                        note=self._drain())
                 continue
 
             if declare is not None:
@@ -562,18 +634,29 @@ class CadDesk:
         except Exception:  # noqa: BLE001 - the watcher is not allowed to end the run
             pass
 
-    def _beat(self, turns: int, result: CadResult, turn: Any, *, fenced: bool) -> None:
+    def _beat(self, turns: int, result: CadResult, turn: Any, *, fenced: bool,
+              phase: str = "turn", expect_s: float = 0.0) -> None:
         """Report this turn to whatever is watching from outside, and carry on.
 
         Two call sites, which between them are every path a turn can take: the reply that
         was all reasoning and no words, and everything else. A turn that reported nothing
-        would look to the observer exactly like a process that had stopped."""
+        would look to the observer exactly like a process that had stopped.
+
+        **`phase` is what keeps a poll from reading as a stall.** `alarms.no_progress`
+        asks whether the step count is flat while turns climb, over `turn` beats only --
+        `Beat.phase` says in as many words that "only `turn` beats count as progress; the
+        rest are liveness". A desk waiting on a cell that is genuinely executing has a
+        flat step count *because the step has not finished*, which is the run working, so
+        a poll reports as its own phase with the wait it declared. Three polls in a row
+        would otherwise fire `no-progress` at exactly the desk that did the right thing.
+        """
         if not self.on_turn:
             return
         try:
             self._turns = turns
             self._steps = len(result.steps)
             self.on_turn(turn=turns, steps=len(result.steps),
+                         phase=phase, expect_s=float(expect_s),
                          stop_reason=getattr(turn, "stop_reason", ""),
                          output_tokens=int((getattr(turn, "tokens", None) or {}).get("output", 0)),
                          # The cumulative totals as of this turn, not this turn's alone.
@@ -676,7 +759,7 @@ class CadDesk:
         The shipped desk is handed exactly what it was handed before this existed, so the
         seam changed no behaviour here -- only where behaviour can be added without
         reaching into the loop."""
-        return [CELL_TOOL]
+        return [CELL_TOOL, POLL_TOOL]
 
     def _declare(self, payload: dict[str, Any], case_rel: str,
                  request: str) -> tuple[Any, str, list[str]]:
@@ -742,6 +825,52 @@ class CadDesk:
                 return False
         self._note(RECOVERED.format(why=why, cells=len(self.log.cells())))
         return True
+
+    def _poll(self, seconds: float, messages: list[dict[str, Any]]) -> str:
+        """Wait, then say where the cell that outran its window got to.
+
+        The desk's half of `_catch_up`. The harness has always polled the pending cell
+        before running whatever arrived; what the desk lacked was a way to ask for that
+        wait and nothing else, so it asked with a cell -- which the sequential kernel
+        queued behind the very cell it was asking about. See `POLL_TOOL`.
+
+        Two things it will not do. It does not sleep past the run's own budget: a wait
+        that would outlive the clock is cut to what is left, because a desk asleep at the
+        deadline gets no turn to say anything about what it found. And it does not sleep
+        at all when nothing is running -- that is a mistake about the state of the
+        kernel, and charging it a wait would make the mistake expensive as well as wrong.
+        """
+        if self._pending is None:
+            return ("Nothing is running, so there was nothing to poll and no time was "
+                    "spent waiting. The last cell finished and its output is above. "
+                    "Send the next cell.")
+
+        left = self.max_seconds - (time.monotonic() - self._started)
+        # Something, so that a poll at the very end still reports rather than returning
+        # instantly and inviting another; never more than the clock actually has.
+        waited = max(0.0, min(seconds, left - POLL_RESERVE_S))
+        cut = ""
+        if waited < seconds:
+            cut = (f" (asked for {seconds:.0f} s; the run has {max(left, 0.0):.0f} s "
+                   "left)")
+        if waited:
+            time.sleep(waited)
+
+        self._catch_up(messages)
+        drained = self._drain()
+        if waited <= 0:
+            # Asked for a wait and given none: the clock is the reason, and saying so is
+            # worth more than the reading, because there is no second poll to be had.
+            head = (f"the run is out of clock, so nothing was waited{cut}. "
+                    + ("The cell has finished." if self._pending is None else
+                       "The cell is still going and will not finish inside the budget."))
+        elif self._pending is None:
+            head = f"polled after {waited:.0f} s{cut}: the cell has finished."
+        else:
+            head = (f"polled after {waited:.0f} s{cut}: still running. Poll again, or "
+                    "leave it and do something that does not need it -- a cell you send "
+                    "now waits behind it.")
+        return f"{head}\n{drained}".rstrip()
 
     def _catch_up(self, messages: list[dict[str, Any]]) -> None:
         """Where the cell that outran its window got to, asked before sending another.
@@ -865,10 +994,12 @@ class CadDesk:
 # -- reading what the model sent ----------------------------------------------
 
 
-def parse_action(turn: Any) -> tuple[list[str], str, str, dict[str, Any] | None]:
+def parse_action(turn: Any) -> tuple[list[str], str, str, dict[str, Any] | None,
+                                     float | None]:
     """The one cell this turn asked for, or what to say back about it.
 
-    Returns `(ids, source, "")` or `(ids, "", complaint)`. Both complaints survived the
+    Returns `(ids, source, complaint, declare, poll_seconds)`, of which exactly one of
+    the last four is ever set. Both complaints survived the
     move off fences unchanged in substance, because both were always about the desk's
     discipline rather than about the language in the fence.
 
@@ -883,32 +1014,45 @@ def parse_action(turn: Any) -> tuple[list[str], str, str, dict[str, Any] | None]
     if not calls:
         return ids, "", ("Nothing ran: that message called no tool. Use the run_cell "
                          "tool with the cell you want run -- it is the only thing that "
-                         "executes."), None
+                         "executes."), None, None
     if len(calls) > 1:
         return ids, "", (
             f"That message made {len(calls)} tool calls and none of them ran. One cell "
             "per message: put the whole cell -- the imports, the constants, the "
             "measurement -- in a single call. The kernel is sequential and so is the "
-            "script your cells are concatenated into."), None
+            "script your cells are concatenated into."), None, None
     if calls[0].name == DECLARE_NAME:
         payload = dict(calls[0].input or {})
         outcome = str(payload.get("outcome") or "").strip()
         if outcome not in ("complete", "refuse"):
             return ids, "", (f"That {DECLARE_NAME} call gave outcome {outcome!r}. It has "
-                             "to be `complete` or `refuse`."), None
+                             "to be `complete` or `refuse`."), None, None
         if outcome == "refuse" and not str(payload.get("reason") or "").strip():
             return ids, "", ("A refusal has to say why. Call it again with `reason` set "
-                             "to the one line that explains what cannot be answered."), None
-        return ids, "", "", payload
+                             "to the one line that explains what cannot be answered."), None, None
+        return ids, "", "", payload, None
+    if calls[0].name == POLL_NAME:
+        raw = (calls[0].input or {}).get("seconds")
+        try:
+            seconds = float(raw)
+        except (TypeError, ValueError):
+            return ids, "", (f"That {POLL_NAME} call gave seconds={raw!r}, which is not a "
+                             "number of seconds to wait."), None, None
+        if seconds <= 0:
+            return ids, "", (f"That {POLL_NAME} call asked to wait {seconds:g} s, which "
+                             "is not a wait. Give it the time you actually expect the "
+                             "cell to need."), None, None
+        return ids, "", "", None, min(seconds, float(POLL_MAX_S))
     if calls[0].name != CELL_NAME:
         return ids, "", (f"There is no tool called {calls[0].name!r}. The tools are "
-                         "run_cell, which runs one cell in the kernel, and "
-                         f"{DECLARE_NAME}."), None
+                         "run_cell, which runs one cell in the kernel, "
+                         f"{POLL_NAME}, which waits and then looks at a cell that is "
+                         f"still running, and {DECLARE_NAME}."), None, None
     source = str((calls[0].input or {}).get("source") or "").strip()
     if not source:
         return ids, "", ("That run_cell call carried no source, so nothing ran. Put the "
-                         "cell in the `source` argument."), None
-    return ids, source, "", None
+                         "cell in the `source` argument."), None, None
+    return ids, source, "", None, None
 
 
 _FINISH = re.compile(rf"^print\(\s*[\"']{CAD_DONE}[\"']\s*\)$")
