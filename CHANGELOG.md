@@ -6,6 +6,21 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-17
+
+### Fixed
+
+- **A session that joins a running workspace no longer leaves it up for nobody.**
+  Joining used to decide the close-down on its own: a joined session always left the
+  workspace running, so the next `openreynolds` found it still up, printed "joining
+  the workspace already running", and left it up again -- relaunching the CLI kept an
+  idle container alive (and billing) indefinitely, with no session on the web to
+  explain it. A joined session now asks the same questions as one that started the
+  workspace -- running job rows, and the probe for another session's processes -- and
+  stops it when nobody is working on it. A sibling session that is live but idle at
+  that moment starts a fresh container on its next call; the volume is untouched.
+  Studies with no directory of their own still leave a joined workspace up.
+
 ## [0.3.0] - 2026-09-17
 
 ### Added
@@ -636,7 +651,8 @@ on 2026-08-24:
 - A duplicate copy of the architecture notes at the repository root is gone; the one
   under the toolbox notes is the one that ships.
 
-[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/InviscidAI/OpenReynolds/releases/tag/v0.1.0

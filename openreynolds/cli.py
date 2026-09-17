@@ -2078,15 +2078,15 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
         console.print(f"  [{'green' if report.clean else 'yellow'}]{line}[/]")
 
     running = _still_running_on_the_instance(backend, store)
-    # Only asked when the answer could change something. A session that joined the
-    # workspace, or that can already see somebody's job running on it, is leaving it up
-    # either way -- and the probe is a round trip to a container that is about to be
-    # let go of.
-    neighbours = _neighbour_work(backend, home) if started_it_here and not running else []
+    scoped = str(home).rstrip("/") != WORKSPACE_ROOT
+    # Only asked when the answer could change something: a session that can already see
+    # somebody's job running on it is leaving it up either way, and the probe is a round
+    # trip to a container that is about to be let go of.
+    neighbours = _neighbour_work(backend, home) if not running else []
     unanswered = neighbours is None
     """The probe could not be run at all. Not an answer, and above all not the answer
     "nobody is here" -- see `_neighbour_work`."""
-    shared = not started_it_here or bool(neighbours) or unanswered
+    shared = bool(neighbours) or unanswered or (not started_it_here and not scoped)
     """Whether anyone else is on this workspace.
 
     Who STARTED the container is the wrong question and always was: the answer that
@@ -2094,10 +2094,25 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     live session of this account makes the workspace shared whether or not this session
     was the one that brought it up -- and two sessions that list while the instance row
     still reads `stopped` both believe they started it, which is how they both arrive
-    here certain they own it."""
+    here certain they own it.
+
+    The converse holds too, and leaving it out kept workspaces up for nobody. A session
+    that joined a running workspace used to leave it up unconditionally, so the next
+    `openreynolds` found it still running, joined it, and left it up in turn: one
+    person relaunching the CLI kept an idle container alive across launch after launch,
+    with "joining the workspace already running" on every screen and no session on the
+    web to explain it (2026-09-17, instance 35c9f018; the workspace had been brought up
+    by a web session preempted hours earlier). So joining now decides nothing on its
+    own: a joined session asks the same two questions -- job rows and the neighbour
+    probe -- and puts the workspace down when both say nobody is working. What that
+    costs is a sibling session that is live but idle at this instant (waiting on the
+    model or on its person): its next call starts a fresh container, the volume and its
+    files untouched. Only a study with no directory of its own, which the probe cannot
+    tell apart from anyone else's, still leaves a joined workspace up."""
     if shared:
-        # Somebody else's session had this workspace up before this one joined it, or
-        # is working on it right now, so it is theirs to stop. `_release` has asked the
+        # Somebody else's session is working on this workspace right now (or, for a study
+        # with no directory of its own, had it up and cannot be ruled out), so it is
+        # theirs to stop. `_release` has asked the
         # first half for every read-only command since it was written; the session path
         # is the one that never asked, and the second half is what a mesh desk needs --
         # its work is execs, and an exec has no job row for the check above to find.
@@ -2137,6 +2152,11 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
             shutdown = getattr(backend, "shutdown", None)
             if shutdown is not None:
                 shutdown()
+                if not started_it_here:
+                    console.print(
+                        "[dim]this session joined a running workspace, and nothing else "
+                        "is working on it[/]"
+                    )
                 console.print("[dim]instance stopped; the workspace volume is untouched[/]")
         except BackendError as exc:
             console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")

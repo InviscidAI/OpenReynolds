@@ -990,12 +990,12 @@ def test_an_instance_somebody_else_started_is_left_alone(quiet_console):
     assert backend.stopped == 0
 
 
-def test_a_session_does_not_stop_a_workspace_it_merely_joined(store, monkeypatch):
-    """The session path never asked the question `_release` has always asked.
-
-    An account is capped at one instance and `acquire()` joins the existing one, so an
-    ordinary `/exit` in a second terminal stopped the container out from under the first
-    one's solve. `_release` forty lines away already had the rule."""
+def test_a_joined_study_with_no_directory_of_its_own_leaves_the_workspace_up(
+        store, monkeypatch):
+    """A study that predates homes lives at /work, which is every study's directory at
+    once, so the neighbour probe cannot tell its own work from anyone else's. Joined,
+    it cannot rule another session out, and leaves the workspace to whoever started it.
+    `_release` forty lines away has the same rule for read-only commands."""
     import io as _io
 
     from rich.console import Console
@@ -1005,7 +1005,7 @@ def test_a_session_does_not_stop_a_workspace_it_merely_joined(store, monkeypatch
     backend = Stoppable(already_running=True)
     cli._close_down(backend, store)
 
-    assert backend.stopped == 0, "it belongs to whoever started it"
+    assert backend.stopped == 0, "it cannot tell whether somebody else is using it"
     assert "left up" in said.getvalue(), "and the person is told why it is still running"
 
 
@@ -1245,6 +1245,61 @@ def test_a_workspace_someone_else_is_working_on_is_shared_whoever_started_it(
 
     assert backend.stopped == 0
     assert "another session is working on this workspace" in out.getvalue()
+
+
+def test_joining_a_workspace_nobody_is_working_on_still_puts_it_down(store, monkeypatch):
+    """Joining used to decide the close-down on its own: a joined session always left
+    the workspace up. So the next `openreynolds` found it running, joined it, and left
+    it up again -- one person relaunching the CLI kept an idle container alive launch
+    after launch, each screen saying "joining the workspace already running" and no
+    session anywhere on the web to explain it (instance 35c9f018, 2026-09-17)."""
+    out = _said(monkeypatch)
+    backend = Neighboured(rows=[], processes=[], already_running=True)
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.probes, "joining is a reason to ask, not a reason to skip asking"
+    assert backend.stopped == 1, "nobody was working on it"
+    assert "joined a running workspace" in out.getvalue()
+
+
+def test_joining_a_workspace_a_neighbour_is_meshing_in_leaves_it_up(store, monkeypatch):
+    out = _said(monkeypatch)
+    backend = Neighboured(rows=[], processes=["4021 snappyHexMesh"], already_running=True)
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.stopped == 0
+    assert "snappyHexMesh" in out.getvalue()
+
+
+def test_joining_a_workspace_with_a_detached_job_on_it_leaves_it_up(store, monkeypatch):
+    out = _said(monkeypatch)
+    backend = Neighboured(
+        rows=[{"id": "job-9", "name": "render", "status": "running"}],
+        already_running=True,
+    )
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.stopped == 0
+    assert "render" in out.getvalue()
+
+
+def test_a_joined_session_whose_probe_cannot_run_leaves_the_workspace_up(
+    store, monkeypatch, no_probe_pause
+):
+    out = _said(monkeypatch)
+    backend = Refusing(
+        BackendError("volume full", code="volume_full", status=507),
+        rows=[],
+        already_running=True,
+    )
+
+    cli._close_down(backend, _with_a_home(store))
+
+    assert backend.stopped == 0
+    assert "could not tell" in out.getvalue()
 
 
 def test_a_listing_that_fails_does_not_keep_the_workspace_up(store, monkeypatch):
