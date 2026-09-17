@@ -35,7 +35,8 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from ..cad.agent import CELL_TOOL, DECLARE_TOOL, STEP_TIMEOUT_S, CadDesk
+from ..cad.agent import (CELL_TOOL, DECLARE_TOOL, POLL_TOOL, STEP_TIMEOUT_S,
+                         CadDesk)
 from . import gate, probes
 from ..cad.brief import CAD_DONE
 from ..cad.check import Check, Finding, mesh_regions
@@ -73,8 +74,18 @@ only way you see.
 
 A cell is given {{step_timeout}} s of the conversation's attention. **That window \
 expiring does not kill your cell.** It is reported back as still running, with whatever \
-it printed so far, and your next step either polls it or interrupts it on purpose. A cell \
-that might outrun the window writes its result to disk -- `export_step(...)` for an \
+it printed so far.
+
+**When that happens, call `poll_cell` with the seconds you want to wait.** It waits, \
+then tells you what the cell has printed and whether it is still going; it runs \
+nothing and waits behind nothing. **Do not send a cell instead.** The kernel is \
+sequential, so a cell you send while one is still running queues behind it and comes \
+back a full window later having executed nothing -- a run lost 480 seconds of a 900 \
+second budget sending `print('poll...')` twice, and finished with nothing meshed. Pick \
+the wait from what the cell is doing: one long wait costs one turn and three short \
+ones cost three.
+
+A cell that might outrun the window writes its result to disk -- `export_step(...)` for an \
 expensive import or repair -- and later cells load that instead of redoing it. Pushing \
 work into a background subprocess loses the live binding; a long-running *mesher* is the \
 exception, because it communicates through files.
@@ -483,7 +494,7 @@ class CoreDesk(CadDesk):
     # -- the declared finish, and the advisory gates that run at it -------------
 
     def _tools(self) -> list[dict[str, Any]]:
-        return [CELL_TOOL, DECLARE_TOOL]
+        return [CELL_TOOL, POLL_TOOL, DECLARE_TOOL]
 
     def _declare(self, payload: dict[str, Any], case_rel: str,
                  request: str) -> tuple[Check, str, list[str]]:

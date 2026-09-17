@@ -173,17 +173,17 @@ def test_a_refusal_needs_a_reason_and_an_outcome_must_be_one_of_two():
         call = SimpleNamespace(id="c1", name="declare_complete", input=payload)
         return SimpleNamespace(tool_calls=[call], text="")
 
-    _, _, complaint, declare = parse_action(turn({"outcome": "refuse"}))
+    _, _, complaint, declare, _ = parse_action(turn({"outcome": "refuse"}))
     assert declare is None and "has to say why" in complaint
 
-    _, _, complaint, declare = parse_action(turn({"outcome": "maybe"}))
+    _, _, complaint, declare, _ = parse_action(turn({"outcome": "maybe"}))
     assert declare is None and "complete" in complaint and "refuse" in complaint
 
-    _, _, complaint, declare = parse_action(
+    _, _, complaint, declare, _ = parse_action(
         turn({"outcome": "refuse", "reason": "the file declares no length unit"}))
     assert not complaint and declare["reason"] == "the file declares no length unit"
 
-    _, _, complaint, declare = parse_action(turn({"outcome": "complete"}))
+    _, _, complaint, declare, _ = parse_action(turn({"outcome": "complete"}))
     assert not complaint and declare == {"outcome": "complete"}
 
 
@@ -195,8 +195,9 @@ def test_only_the_core_desk_is_offered_the_declare_tool():
     from openreynolds.buildup.core import CoreDesk
     from openreynolds.cad.agent import CadDesk
 
-    assert [t["name"] for t in CadDesk._tools(None)] == ["run_cell"]
-    assert [t["name"] for t in CoreDesk._tools(None)] == ["run_cell", "declare_complete"]
+    assert [t["name"] for t in CadDesk._tools(None)] == ["run_cell", "poll_cell"]
+    assert [t["name"] for t in CoreDesk._tools(None)] == [
+        "run_cell", "poll_cell", "declare_complete"]
 
 
 def test_the_core_brief_teaches_the_tool_and_the_waiver():

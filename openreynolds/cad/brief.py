@@ -93,8 +93,12 @@ only way you see.
 
 A cell is given {{step_timeout}} s of the conversation's attention. **That window \
 expiring does not kill your cell.** It is reported back to you as still running, with \
-whatever it printed so far, and your next step either polls it or interrupts it on \
-purpose. What the window is for is keeping the conversation moving, not capping compute.
+whatever it printed so far; the window keeps the conversation moving and does not cap \
+compute.
+
+**A cell still running is polled with `poll_cell`, never with another cell** -- give \
+it the seconds to wait. One sent while another runs queues behind it and comes back a \
+window later having executed nothing.
 
 **A cell that might outrun the window checkpoints to disk.** This is the one habit the \
 kernel asks for that a shell did not. Pushing work into a background subprocess loses the \
