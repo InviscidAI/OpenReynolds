@@ -113,9 +113,26 @@ def test_patches_with_no_faces_do_not_count():
     assert "one boundary patch" in count.measured and "walls" in count.measured
 
 
-def test_a_mesh_nobody_can_rebuild_is_not_finished():
+def test_a_mesh_with_no_rebuild_script_listed_is_still_a_finish():
+    """The gate that used to be here failed the desk for the harness's own omission.
+
+    The brief says the accepted cells "are concatenated into `build.py` in the case
+    directory" and nothing wrote that file -- `_replay` put it under `.replay/`, which it
+    deletes and recreates every check, and `build_files` reads only the case root. So a
+    binding gate demanded an artifact the desk was told it already had, and the desk had
+    no move: the cell log is append-only, and no later cell rewrites an earlier one.
+
+    It also passed for the wrong reason more often than it failed, because `build_files`
+    counts `system/blockMeshDict` -- present whenever blockMesh was used, and not a thing
+    that rebuilds the geometry.
+
+    What replaced it is `_leave_script`, which writes the file the brief promised. The
+    claim that rests on it is the replay, and that is where a broken script is reported.
+    """
     check = read(facts(build=[]), "mesh")
-    assert any("nothing here can be rebuilt or edited" in m for m in check.missing)
+    assert check.ok, check.missing
+    assert not any("rebuilt" in m for m in check.missing)
+    assert finding(check, "build") is None, "reported as a fact, not judged"
 
 
 def test_a_mesh_nobody_drew_is_not_finished():
@@ -262,16 +279,54 @@ def test_cellzones_nobody_read_are_skipped_rather_than_reported_as_none():
 # -- the rebuild script the bundle will take -----------------------------------
 
 
-def test_the_rebuild_script_is_checked_against_casebundles_own_set():
+def test_the_script_the_brief_promises_is_actually_left_in_the_case():
+    """The brief's sentence, made true rather than deleted.
+
+    `build.py` is in `casebundle.DEFINITION_NAMES`, so the bundle carries it, and
+    `mesh_look.build_files` reads the case root, so the check reports it. Writing it is
+    what the removed gate was reaching for and it needs no gate to happen.
+    """
+    from openreynolds.cad.check import REPLAY_SCRIPT, _leave_script
     from openreynolds.casebundle import DEFINITION_NAMES
 
-    for name in sorted(DEFINITION_NAMES - {"case.foam"}):
-        check = read(facts(build=[name]), "mesh")
-        assert check.ok, (name, check.missing)
-    check = read(facts(build=["geometry.py"]), "mesh")
-    assert not check.ok
-    assert any("captures none of those names" in m for m in check.missing)
-    assert "build.py" in finding(check, "build").repair
+    assert REPLAY_SCRIPT in DEFINITION_NAMES, "the bundle has to carry what we leave"
+
+    written: dict[str, bytes] = {}
+
+    class Workspace:
+        def put_file(self, path, data):
+            written[path] = data
+
+    _leave_script(Workspace(), "/work/s/mesh", "PLATE_L_M = 0.12\n")
+    assert written == {"/work/s/mesh/build.py": b"PLATE_L_M = 0.12\n"}
+
+    # A workspace that will not take it is not a verdict about the mesh: the replay is
+    # where a script that is missing or broken gets reported.
+    class Refuses:
+        def put_file(self, path, data):
+            raise RuntimeError("read-only")
+
+    _leave_script(Refuses(), "/work/s/mesh", "x = 1")
+
+
+def test_the_check_finds_the_script_we_leave(tmp_path):
+    """The other half: written under a name `mesh_look.build_files` reports."""
+    (tmp_path / "build.py").write_text("x = 1", encoding="utf-8")
+    assert "build.py" in mesh_look_names(tmp_path)
+
+
+def mesh_look_names(tmp: Path) -> list[str]:
+    """What `mesh_look.build_files` actually reports, run against a real directory.
+
+    Run rather than read: the point is that the file we write is the file the check
+    finds, and a regex over the source proves neither half of that.
+    """
+    import sys
+
+    sys.path.insert(0, str(TOOLBOX))
+    import mesh_look  # noqa: E402  (sibling script, not a package)
+
+    return mesh_look.build_files(tmp)
 
 
 def test_a_dictionary_under_system_is_captured_and_counts():
@@ -279,10 +334,15 @@ def test_a_dictionary_under_system_is_captured_and_counts():
     assert check.ok, check.missing
 
 
-def test_the_definition_names_are_imported_rather_than_restated():
+def test_the_definition_names_are_not_restated_here():
+    """They were imported while this module gated on them; now it does not gate at all.
+
+    What must not come back is a second copy of the list, which is what the import was
+    guarding against.
+    """
     source = (REPO / "openreynolds" / "cad" / "check.py").read_text()
-    assert "from openreynolds.casebundle import" in source
     assert '"Allmesh"' not in source and "'Allmesh'" not in source
+    assert '"Allrun"' not in source and "'Allrun'" not in source
 
 
 # -- the CAD findings are consumed, not recomputed -----------------------------
