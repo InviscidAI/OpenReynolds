@@ -428,3 +428,61 @@ def _backend_saying(checkmesh: str):
         "constant/*/polyMesh": ExecResult(0, "SINGLE:\n", False, None),
         "checkMesh": ExecResult(0, checkmesh, False, None),
     })
+
+
+def test_a_session_puts_the_reference_where_the_brief_says(tmp_path):
+    """The same reachability, through the route a person actually has.
+
+    The test above proves `scripts/cad_buildup.py` puts the files there. That is the
+    corpus's route, and for a while it was the only one: `CoreDesk` was constructed by
+    the runner, which had already staged them with `shutil` because its workspace is a
+    local directory. A session's case is on the volume, so the same `shutil` copy would
+    land on the machine holding the conversation and nowhere the desk can read -- which
+    is the first attempt's failure again, one layer down.
+
+    `CoreDesk._prepare` is that route, and this drives it against a real backend rather
+    than a stub, because what is being checked is that bytes cross the transport.
+    """
+    from openreynolds.backend.local import LocalBackend
+    from openreynolds.cad.core import CoreDesk
+    from openreynolds.config import Config
+
+    backend = LocalBackend(root=tmp_path)
+    desk = CoreDesk(Config(llm_api_key="k", model="claude-opus-5"), backend, None,
+                    f"{backend.workspace_root}/study")
+    case_dir = f"{backend.workspace_root}/study/cad"
+    desk._prepare(case_dir)
+
+    for name in core.REFERENCE_FILES:
+        as_the_brief_says = Path(case_dir) / core.REFERENCE_DIR / name
+        assert as_the_brief_says.is_file(), (
+            f"the brief tells the desk to read {core.REFERENCE_DIR}/{name} from its "
+            f"working directory and a session does not put it there")
+        assert as_the_brief_says.stat().st_size > 1000
+    # And `export_patches` imports from where the brief says it will.
+    assert f'sys.path.insert(0, "{core.REFERENCE_DIR}")' in brief()
+    assert "from cad_export import export_patches" in brief()
+
+
+def test_a_missing_reference_stops_the_run_before_any_model_call(tmp_path, monkeypatch):
+    """`b123d_api.md` is generated, so a checkout can legitimately be without it.
+
+    Finding that out on cell nine costs a model call for every cell before it, and the
+    desk cannot fix it: the file is ours to put there. So `_prepare` raises and `run`
+    turns it into an error with the generator named in it.
+    """
+    from openreynolds.backend.local import LocalBackend
+    from openreynolds.cad import core as cadcore
+    from openreynolds.cad.core import CoreDesk
+    from openreynolds.config import Config
+
+    monkeypatch.setattr(cadcore, "TOOLBOX_DIR", tmp_path / "empty")
+    backend = LocalBackend(root=tmp_path)
+    desk = CoreDesk(Config(llm_api_key="k", model="claude-opus-5"), backend, None,
+                    f"{backend.workspace_root}/study")
+    desk.provider = None  # a model call here would raise something else entirely
+
+    result = desk.run("a duct")
+    assert not result.ok
+    assert "b123d_api.md" in result.error
+    assert "b123d_api.py" in result.error, "say how to make it, not just that it is gone"
