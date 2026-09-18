@@ -357,3 +357,74 @@ def test_the_reference_the_brief_names_is_reachable_from_the_desks_own_directory
             f"the brief tells the desk to read {core.REFERENCE_DIR}/{name} from its "
             f"working directory and it is not there: {as_the_brief_says}")
         assert as_the_brief_says.stat().st_size > 1000
+
+
+# -- the floor, and what is deliberately not standing on it ---------------------
+
+
+def test_the_binding_finish_is_checkmesh_and_nothing_else():
+    """§1's floor, restated as a test after a port briefly widened it.
+
+    Between ef637d7 and this, `CoreDesk` inherited the whole of `check.verify`: the
+    render, the patch naming, the request-scale reading, the rebuild script and the
+    replay. Two of those five were then removed for failing the desk over things it had
+    no move against, and `render` for failing this desk over an artifact its brief never
+    asks for.
+
+    None of the five arrived the way an addition is supposed to -- carrying a measured
+    failure and a test that shows it in the addition's absence. They arrived as a set, in
+    a port, with no sweep between them and the corpus. So the floor is back, and each of
+    them is a candidate again rather than a fact.
+    """
+    from openreynolds.cad import check as cadcheck
+
+    verdict = core.verify(_backend_saying(MESH_OK), "/work/case")
+    assert verdict.ok
+    assert {f.check for f in verdict.findings} == {"checkMesh"}
+
+    # The wider check still exists and still raises them -- for `CadDesk`, which
+    # `scripts/cad_accept.py` drives. What changed is which desk stands on them.
+    wider = cadcheck.read({"polymesh": True, "cells": 10, "faces": 10, "points": 10,
+                           "bounds": [0, 0, 0, 1, 1, 1], "checkmesh": "Mesh OK.",
+                           "checkmesh_ok": True, "render": "", "build": [],
+                           "patches": [{"name": "inlet", "nFaces": 4}]}, "c")
+    assert "render" in {f.check for f in wider.findings}
+    assert not wider.ok, "the wider check still binds on it; this desk just is not it"
+
+
+def test_the_refusal_this_desk_reads_names_no_house_path():
+    """The half of the port that would have voided the next sweep rather than moved it.
+
+    `check.verify`'s binding findings carry repair text with the toolbox in it -- "run
+    `python3 /work/.toolbox/mesh_look.py ...`" -- and `isolation.scan_run` greps the whole
+    thread for exactly that. A run drawing one of those findings grades contaminated and
+    is discarded from the baseline, which is a failure that reads as a missing number
+    rather than as a wrong one.
+
+    `gate.scrub` covers the advisory side. Nothing covered the binding side, because until
+    the port nothing binding was ever shown to a desk that is watched.
+    """
+    from openreynolds.buildup import isolation
+
+    bad = MESH_OK.replace("Mesh OK.", "Failed 2 mesh checks.")
+    verdict = core.verify(_backend_saying(bad), "/work/case")
+    assert not verdict.ok
+
+    scan = isolation.scan({"refusal": verdict.as_refusal()},
+                          given=core.REFERENCE_FILES)
+    assert not scan.contaminated, sorted({hit.name for hit in scan.hits})
+
+
+def _backend_saying(checkmesh: str):
+    from test_cad_agent import answers
+
+    class Bare:
+        workspace_root = "/work"
+
+        def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
+            return ExecResult(0, "", False, None)
+
+    return answers(Bare(), {
+        "constant/*/polyMesh": ExecResult(0, "SINGLE:\n", False, None),
+        "checkMesh": ExecResult(0, checkmesh, False, None),
+    })

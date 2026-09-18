@@ -296,14 +296,14 @@ def open_edges(n: int, triangles: int = 100) -> Finding:
 
 
 def _desk(backend, store, turns, checkmesh=MESH_OK, monkeypatch=None, findings=()):
-    """A `CoreDesk` with a scripted model and a scripted finish verdict.
+    """A `CoreDesk` with a scripted model and scripted surface findings.
 
-    The verdict is installed rather than earned, because since 2026-09-18 `CoreDesk`
-    inherits `check.verify` -- `mesh_look.py`, `cad_audit.py`, `domain_probe.py` and the
-    replay, all over the backend -- and what these tests are about is the gate that runs
-    at the declare. `tests/test_cad_check.py` is where the check itself is the subject.
+    `checkMesh` is answered by the backend, because it is this desk's whole binding
+    finish. The advisory findings are installed at the seam that gathers them, because
+    what these tests are about is the gate that reads them -- `tests/test_cad_check.py`
+    is where the scripts behind them are the subject.
     """
-    from test_cad_agent import answers, checking, kernelled
+    from test_cad_agent import answers, kernelled
 
     from openreynolds.buildup import core
     from openreynolds.config import Config
@@ -311,12 +311,15 @@ def _desk(backend, store, turns, checkmesh=MESH_OK, monkeypatch=None, findings=(
     answers(backend, {"constant/*/polyMesh": ExecResult(0, "SINGLE:\n", False, None),
                       "checkMesh": ExecResult(0, checkmesh, False, None)})
     if monkeypatch is not None:
-        passes = "Mesh OK." in checkmesh
-        checking(monkeypatch, Check(
-            ok=passes, cells=729, regions=[""], checkmesh=checkmesh.strip().splitlines()[-2],
-            missing=[] if passes else ["checkMesh does not pass"],
-            findings=[Finding("checkMesh", "pass" if passes else "fail",
-                              checkmesh.strip().splitlines()[-2]), *findings]))
+        # Through `advisory_findings`, which is the seam the gate reads. `checkMesh` is
+        # answered by the backend above, because that half of the finish is real here --
+        # this desk's binding check is `core.verify` and nothing else.
+        # `cad.core`, not the `buildup.core` shim: the shim re-exports, so patching it
+        # rebinds a name the desk never reads.
+        from openreynolds.cad import core as cadcore
+
+        monkeypatch.setattr(cadcore, "advisory_findings",
+                            lambda backend, case_dir, toolbox="": list(findings))
     kernelled(backend)
     made = core.CoreDesk(Config(llm_api_key="k", model="claude-opus-5"), backend, store,
                          "/work/study")
