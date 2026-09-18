@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from concurrent.futures import ThreadPoolExecutor
 
 from . import __version__
 from .backend import hosted
@@ -46,6 +47,29 @@ from .watch import NOTHING, LineReader, NullReader, situation, watch
 
 TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
 TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
+
+_TIMING = bool(os.environ.get("OPENREYNOLDS_TIMING"))
+"""`OPENREYNOLDS_TIMING=1` prints one `[timing] <step> <ms>` line to stderr around each
+step of a session's start and close-down. A diagnostic, off by default: "starting takes
+forever" and "ending takes forever" are only fixable once it is known which of the
+half-dozen network steps in each is the one taking the time, and the hosted runner's
+logs are the only place to learn it from."""
+
+
+class _timed:
+    """`with _timed("acquire"):` -- a stopwatch on stderr when _TIMING is on, nothing
+    otherwise. stderr, not the console: the console is the user's transcript."""
+
+    def __init__(self, step: str) -> None:
+        self.step = step
+
+    def __enter__(self) -> None:
+        self.t0 = time.monotonic()
+
+    def __exit__(self, *_exc: object) -> None:
+        if _TIMING:
+            print(f"[timing] {self.step} {int((time.monotonic() - self.t0) * 1000)} ms",
+                  file=sys.stderr, flush=True)
 RESULTS_FILE = "results.json"
 """Picked up from the study's own directory if it happens to be there."""
 
@@ -1255,11 +1279,12 @@ def session(
             client, resolved_instance = None, "local"
             console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
         else:
-            backend, client, resolved_instance = hosted.acquire(
-                cfg.foamd_url,
-                cfg.foamd_api_key,
-                instance_id or store.session.instance_id or None,
-            )
+            with _timed("acquire"):
+                backend, client, resolved_instance = hosted.acquire(
+                    cfg.foamd_url,
+                    cfg.foamd_api_key,
+                    instance_id or store.session.instance_id or None,
+                )
     except BackendError as exc:
         console.print(f"[red]Could not reach the workspace service:[/] {exc}")
         if streaming_json:
@@ -1283,26 +1308,34 @@ def session(
     if resuming:
         # A study this machine has never seen -- opened in the browser, or on another
         # laptop -- knows nothing about itself until the platform is asked.
-        _recover_session(store, client, study_id)
-    store.session.home = _home_for(store, backend, resuming, known_here)
+        with _timed("recover_session"):
+            _recover_session(store, client, study_id)
+    with _timed("home_for"):
+        store.session.home = _home_for(store, backend, resuming, known_here)
     if not store.session.title and one_shot:
         store.session.title = one_shot[:80]
     store.save()
+
+    # The toolbox goes up in the background from here, and is waited for just before
+    # the model can run a tool (below, `toolbox_sync.result()`). It is a tar of a few
+    # dozen files and took 1.6-3.6 s in series on staging; nothing between here and the
+    # loop reads it, so that time now overlaps the capture row and the briefing probes.
+    toolbox_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="toolbox")
+    toolbox_sync = toolbox_pool.submit(_sync_toolbox_timed, backend)
 
     capture = None
     if cfg.capture and client is not None:
         if resuming and store.session.remote_study_id:
             capture = Capture(client, store.session.remote_study_id, warn=_warn)
         else:
-            capture = Capture.start(
-                client, store.session.title or store.session.study_id, resolved_instance,
-                study_id=store.session.study_id, home=store.session.home, warn=_warn,
-            )
+            with _timed("capture_start"):
+                capture = Capture.start(
+                    client, store.session.title or store.session.study_id, resolved_instance,
+                    study_id=store.session.study_id, home=store.session.home, warn=_warn,
+                )
             if capture:
                 store.session.remote_study_id = capture.study_id
                 store.save()
-
-    _sync_toolbox(backend)
 
     ctx = ToolContext(
         backend=backend,
@@ -1363,7 +1396,8 @@ def session(
             concierge.start()
         tracker.start()
         live_mirror.start()
-        view.workspace(browser)
+        with _timed("view_workspace"):
+            view.workspace(browser)
         loop = Loop(cfg, ctx, store, view, capture=capture, progress=tracker)
         # The mirror's cycles share the container with the model's commands, and a
         # command waited minutes behind a cycle's transfers. Held around each tool
@@ -1402,8 +1436,8 @@ def session(
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
         )
-        loop.brief(
-            _situation_brief(
+        with _timed("situation_brief"):
+            briefing = _situation_brief(
                 store,
                 backend,
                 resuming,
@@ -1412,7 +1446,13 @@ def session(
                 preferences=cfg.preferences,
                 mode=ctx.mode,
             )
-        )
+        with _timed("loop_brief"):
+            loop.brief(briefing)
+        # The toolbox must be on the instance before the first tool call can ask for
+        # it; by now the upload has had the whole briefing to finish.
+        with _timed("toolbox_wait"):
+            toolbox_sync.result()
+            toolbox_pool.shutdown(wait=False)
         try:
             if one_shot:
                 outcome = _run_one_shot(
@@ -1427,9 +1467,11 @@ def session(
         except KeyboardInterrupt:
             view.info(_interrupt_note(keep_alive))
         finally:
-            tracker.stop()
+            with _timed("close.tracker_stop"):
+                tracker.stop()
             if concierge is not None:
-                concierge.stop()
+                with _timed("close.concierge_stop"):
+                    concierge.stop()
 
     force_exit = False
     stream: JsonView | None = None
@@ -1464,8 +1506,8 @@ def session(
             stream.emit("error", message=f"{type(exc).__name__}: {exc}")
         raise
     finally:
-        live_mirror.stop()
-        _pickup_results(backend, capture, store.session.home or WORKSPACE_ROOT)
+        with _timed("close.mirror_stop"):
+            live_mirror.stop()
         # The interface is gone by now, so this reports to the plain console. A
         # one-shot run never had turn ends to sync at, which makes this its only one.
         # It runs before anything is stopped: the work comes home first — and it
@@ -1473,13 +1515,27 @@ def session(
         # cycle that outlived it is still writing these same files, and two syncs
         # interleaving over one path is how a local copy ends up a hybrid of two
         # versions of the file.
+        #
+        # The results pickup is one read of one file and independent of the sync, so
+        # it rides alongside rather than in front: every step of the close-down is a
+        # round trip the person is waiting on.
         live_mirror.view = None
-        _final_sync(live_mirror, ConsoleView(console))
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pickup") as pool:
+            pickup = pool.submit(
+                _pickup_results_timed, backend, capture, store.session.home or WORKSPACE_ROOT
+            )
+            with _timed("close.final_sync"):
+                _final_sync(live_mirror, ConsoleView(console))
+            pickup.result()
         if capture:
-            _capture_the_case(capture, store, ConsoleView(console))
-            capture.close()
-        _close_down(backend, store, keep_alive=keep_alive)
-        backend.close()
+            with _timed("close.capture_case"):
+                _capture_the_case(capture, store, ConsoleView(console))
+            with _timed("close.capture_close"):
+                capture.close()
+        with _timed("close.close_down"):
+            _close_down(backend, store, keep_alive=keep_alive)
+        with _timed("close.backend_close"):
+            backend.close()
         if stream is not None:
             # Last, and after the teardown that costs money has been decided: a reader
             # that stops at `session_end` has seen everything. The exit code says the
@@ -1612,22 +1668,23 @@ def _workspace_note(browser: Browser, home: str, resuming: bool) -> str:
     contents are its business. The rest of the volume gets a single line: it exists,
     it belongs to other studies, and nothing in it was written for this request.
     """
-    try:
-        entries = [
-            entry for entry in browser.tree(home, depth=1) if not entry.name.startswith(".")
-        ]
-    except BackendError:
-        return ""
-
-    if home == WORKSPACE_ROOT:
-        neighbours = ""
-    else:
+    # Two listings -- the study's directory and the volume around it -- and each is a
+    # round trip to the instance; asked together (see _situation_brief).
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="wsnote") as pool:
+        tree_future = pool.submit(browser.tree, home, 1)
         # Saying whose it is without saying what they are leaves a real question open,
         # and a live run spent turns on it: it found several near-identical studies
         # made minutes apart by a user who did not remember commissioning them, and
         # worked through whether that meant an intruder. The answer is dull and the
         # harness has always known it -- they are this same tool's other sessions.
-        neighbours = _neighbours(browser, home)
+        neighbours_future = (
+            pool.submit(_neighbours, browser, home) if home != WORKSPACE_ROOT else None
+        )
+        try:
+            entries = [entry for entry in tree_future.result() if not entry.name.startswith(".")]
+        except BackendError:
+            return ""
+        neighbours = neighbours_future.result() if neighbours_future is not None else ""
 
     if not entries:
         return f"Your directory is {home}. It is empty.{neighbours}"
@@ -1729,11 +1786,21 @@ def _situation_brief(
         lines.append(situation(store, backend))
     else:
         lines.append(f"study {store.session.study_id} on instance {store.session.instance_id}.")
-    if browser is not None:
-        note = _workspace_note(browser, store.session.home or WORKSPACE_ROOT, resuming)
-        if note:
-            lines.append(note)
-    machine = _machine_note(backend)
+    # The workspace listing and the core count are two independent questions to the
+    # instance, and each one is a full round trip through the service to a container
+    # (~1.3 s on the hosted backend). Asked in series they were most of the pause
+    # between "running" and "waiting for you" -- measured 4-13 s on staging, 2026-09-18
+    # -- so they are asked together and the briefing waits for the slower of the two.
+    home = store.session.home or WORKSPACE_ROOT
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="brief") as pool:
+        note_future = (
+            pool.submit(_workspace_note, browser, home, resuming) if browser is not None else None
+        )
+        machine_future = pool.submit(_machine_note, backend)
+        note = note_future.result() if note_future is not None else ""
+        machine = machine_future.result()
+    if note:
+        lines.append(note)
     if machine:
         lines.append(machine)
     if preferences:
@@ -2535,12 +2602,14 @@ def _run_interactive(
         else:
             if progress is not None:
                 progress.begin("waiting")
-            view.prompt()
+            with _timed("idle.prompt"):
+                view.prompt()
             line = reader.get()
             if line is None:
                 return
             loop.blocked_reason = None
-            spoken = _apply(commands.parse(line), loop, view, browser, store, progress)
+            with _timed("idle.apply"):
+                spoken = _apply(commands.parse(line), loop, view, browser, store, progress)
             if spoken is QUIT:
                 return
             if spoken is None:
@@ -2637,6 +2706,17 @@ def _sync_toolbox(backend: Backend) -> None:
         console.print(f"[yellow]toolbox sync skipped:[/] {exc}")
 
 
+def _sync_toolbox_timed(backend: Backend) -> None:
+    """`_sync_toolbox` under its stopwatch, for the background thread `session` runs
+    it on. Never raises: a toolbox that could not be pushed is reported by
+    `_sync_toolbox` itself, and the session goes on without it."""
+    try:
+        with _timed("sync_toolbox"):
+            _sync_toolbox(backend)
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        console.print(f"[yellow]toolbox sync skipped:[/] {exc}")
+
+
 def _fetch_hook(capture: Capture | None):
     """Register fetched files as artifacts, and draw them if the terminal can."""
 
@@ -2661,6 +2741,16 @@ def _pickup_results(backend: Backend, capture: Capture | None, home: str) -> Non
         capture.result(json.loads(raw.decode("utf-8")))
     except (ValueError, UnicodeDecodeError):
         return
+
+
+def _pickup_results_timed(backend: Backend, capture: Capture | None, home: str) -> None:
+    """`_pickup_results` under its stopwatch, for the close-down's side thread.
+    Never raises: nothing requires a results file, and the close-down must finish."""
+    try:
+        with _timed("close.pickup_results"):
+            _pickup_results(backend, capture, home)
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
 
 
 def _warn(message: str) -> None:
