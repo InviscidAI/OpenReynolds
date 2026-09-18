@@ -637,3 +637,56 @@ def test_grading_touches_properties_and_nothing_else(tmp_path):
     _grade(run, [{"property": "one", "measured": "1", "verdict": "holds", "desk": "printed"}])
     after = record.load(run)
     assert [k for k in set(before) | set(after) if before.get(k) != after.get(k)] == ["properties"]
+
+# -- the two ends of the wire agree -------------------------------------------
+
+
+def test_beat_accepts_every_field_the_loop_sends():
+    """The wiring test this needed, and the failure it would have caught.
+
+    `Beat` gained `phase` and `expect_s` at `0c1923f`. `agent._beat` began sending them at
+    `68b9e70`. `Heartbeat.beat` was never taught to take them -- and the runner filters
+    the loop's kwargs by `Beat.__annotations__`, which they are in, so every call raised
+    `TypeError: unexpected keyword argument 'phase'`.
+
+    `_beat` swallows what the watcher raises, on purpose: the watcher is not allowed to
+    end a run. So **no run wrote a heartbeat at all**, and the supervisor killed anything
+    past its 420 s staleness threshold as `wedged` -- eight of twenty-six in the first
+    sweep after it, and systematically the long ones, because the harder the case the
+    likelier it is to be killed for being slow rather than judged for being wrong.
+
+    A run with no beats and a run that has stopped look identical, which is the one thing
+    the heartbeat exists to tell apart. So the ends are pinned to each other here rather
+    than left to agree by inspection.
+    """
+    import inspect
+
+    from openreynolds.buildup.heartbeat import Beat, Heartbeat
+
+    accepted = set(inspect.signature(Heartbeat.beat).parameters) - {"self"}
+    declared = set(Beat.__annotations__) - {"at"}
+    missing = declared - accepted
+    assert not missing, (
+        f"{sorted(missing)} are Beat fields the runner will forward and beat() will "
+        "reject; every call raises and the heartbeat goes silent")
+
+
+def test_a_beat_the_loop_actually_sends_is_recorded_whole(tmp_path):
+    """The same guarantee from the other side: the loop's own kwargs, end to end."""
+    import json
+
+    from openreynolds.buildup.heartbeat import Beat, Heartbeat
+
+    # Exactly what `agent.CadDesk._beat` passes to `on_turn`.
+    sent = dict(turn=3, steps=2, phase="poll", expect_s=90.0, stop_reason="end_turn",
+                output_tokens=120, tokens={"input": 9}, fenced=False, text_chars=41,
+                thinking_chars=17, text="polling", block_types=["text"])
+    pulse = Heartbeat(tmp_path)
+    pulse.start()
+    pulse.beat(**{name: value for name, value in sent.items()
+                  if name in Beat.__annotations__})
+
+    written = json.loads((tmp_path / "heartbeat.jsonl").read_text().splitlines()[0])
+    assert written["phase"] == "poll", "a poll must not read as an ordinary turn"
+    assert written["expect_s"] == 90.0, "the wait it declared is what keeps it alive"
+    assert written["turn"] == 3 and written["steps"] == 2

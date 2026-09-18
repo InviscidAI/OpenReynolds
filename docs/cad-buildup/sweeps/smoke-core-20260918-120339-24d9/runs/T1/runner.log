@@ -1,8 +1,0 @@
-T1: run 20260918-120339-dcda
-  workspace /home/qiuzi/.openreynolds-buildup/work/T1-20260918-120339-dcda clean (0 entries, 40 house names, no toolbox)
-  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T1-20260918-120339-dcda/t1/.reference/b123d_api.md
-  reference cad_export.py -> /home/qiuzi/.openreynolds-buildup/work/T1-20260918-120339-dcda/t1/.reference/cad_export.py
-  spec extent_m=0.14 -> /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/smoke-core-20260918-120339-24d9/runs/T1/spec.json
-  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/smoke-core-20260918-120339-24d9/runs/T1
-  done in 163.2s, 17 cells, $0.46, checkMesh ok, passed (wants done)
-  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/smoke-core-20260918-120339-24d9/runs/T1 --case /home/qiuzi/.openreynolds-buildup/work/T1-20260918-120339-dcda/t1

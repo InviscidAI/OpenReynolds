@@ -1,8 +1,0 @@
-T7: run 20260918-120757-266b
-  workspace /home/qiuzi/.openreynolds-buildup/work/T7-20260918-120757-266b clean (0 entries, 40 house names, no toolbox)
-  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T7-20260918-120757-266b/t7/.reference/b123d_api.md
-  reference cad_export.py -> /home/qiuzi/.openreynolds-buildup/work/T7-20260918-120757-266b/t7/.reference/cad_export.py
-  spec extent_m=0.1 -> /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/smoke-gate-20260918-120757-ecf9/runs/T7/spec.json
-  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/smoke-gate-20260918-120757-ecf9/runs/T7
-  done in 88.1s, 13 cells, $0.22, checkMesh ok, passed (wants done)
-  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/smoke-gate-20260918-120757-ecf9/runs/T7 --case /home/qiuzi/.openreynolds-buildup/work/T7-20260918-120757-266b/t7
