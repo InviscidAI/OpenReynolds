@@ -217,10 +217,26 @@ TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": (
                         "Absolute path to a .step, .stp, .iges or .igs file under "
-                        f"{WORKSPACE_ROOT}, when the shape already exists as CAD. It "
-                        "is read on this machine; there is no upload here, so the "
+                        f"{WORKSPACE_ROOT}, when the shape already exists as CAD and "
+                        "the job is to prepare that part rather than to author one. "
+                        "It is read on this machine; there is no upload here, so the "
                         "file has to be on the volume already. Checked for existence "
                         "and readability before anything starts."
+                    ),
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Absolute paths under "
+                        f"{WORKSPACE_ROOT} to anything else the desk should work "
+                        "from: a floorplan or drawing to trace, a CSV of coordinates, "
+                        "a spec sheet. Any file type -- the desk opens them itself and "
+                        "sees what is in them. Use this rather than `geometry` "
+                        "whenever the file is material to work from instead of the "
+                        "part itself. Pass every file the person handed over; each is "
+                        "checked before anything starts, and each is put back beside "
+                        "the build script when it is replayed at the finish."
                     ),
                 },
             },
@@ -872,39 +888,52 @@ GEOMETRY_PROBE_BYTES = 1
 question is whether the volume will hand the bytes over, not what is in them."""
 
 
-def _refuse_geometry(ctx: ToolContext, path: str) -> str | None:
-    """Why this `geometry` path cannot be worked from, or None to go ahead.
+def refuse_input(backend: Any, path: str, brep: bool = False) -> str | None:
+    """Why this path cannot be handed over, or None to go ahead.
 
     Asked here rather than inside the desk, and before the desk is started, because
     everything the desk does costs model time: a path with a typo in it discovered on
     step nine is a refusal that took nine steps and a bill to write. This one costs a
     `stat` and one byte.
+
+    **`brep` is about what is being asked for, not about what the file is.** A
+    `geometry` is "this is the part, prepare it", and a drawing cannot be that, so the
+    suffix list applies. An `input` is "here is something to work from", and nothing
+    about a PNG, a CSV of coordinates or a spec sheet makes it unusable -- the desk
+    opens it with a cell and finds out. A whitelist there would be the harness deciding
+    which kinds of work are possible, which is how a floorplan could not be handed over
+    at all.
+
+    The one byte is not a read of the file. It asks whether the volume will hand bytes
+    over, which a `stat` does not answer.
     """
-    root = getattr(ctx.backend, "workspace_root", WORKSPACE_ROOT).rstrip("/")
+    root = getattr(backend, "workspace_root", WORKSPACE_ROOT).rstrip("/")
+    what = "geometry file" if brep else "file"
     if not path.startswith("/"):
-        return (f"{path} is not an absolute path; the geometry file is named by its "
+        return (f"{path} is not an absolute path; the {what} is named by its "
                 f"full path on the workspace, under {root}/")
     if not (path == root or path.startswith(root + "/")):
         return (f"{path} is not under {root}/, which is the only filesystem this "
                 "session can reach; there is no upload from your machine here")
     suffix = path[path.rfind("."):].lower() if "." in path.rsplit("/", 1)[-1] else ""
-    if suffix not in GEOMETRY_SUFFIXES:
+    if brep and suffix not in GEOMETRY_SUFFIXES:
         return (f"{path} is not a CAD file this reads: the suffix is "
                 f"{suffix or 'absent'} and it takes one of "
                 f"{', '.join(GEOMETRY_SUFFIXES)}. A surface that is already triangles "
-                "is work for bash and the toolbox, not for this")
+                "is work for bash and the toolbox, not for this. To hand it over as "
+                "something to work from rather than as the part, pass it in `inputs`")
     try:
-        info = ctx.backend.stat(path)
+        info = backend.stat(path)
     except BackendError as exc:
         return f"{path} could not be read: {exc}"
     except Exception as exc:  # noqa: BLE001 - the workspace answered badly; say which
         return f"{path} could not be read: {type(exc).__name__}: {exc}"
     if info.type == "directory":
-        return f"{path} is a directory, not a CAD file"
+        return f"{path} is a directory, not a file"
     if not info.size:
-        return f"{path} is empty (0 bytes), so there is no geometry in it to import"
+        return f"{path} is empty (0 bytes), so there is nothing in it to work from"
     try:
-        data = ctx.backend.get_file(path, offset=0, limit=GEOMETRY_PROBE_BYTES)
+        data = backend.get_file(path, offset=0, limit=GEOMETRY_PROBE_BYTES)
     except BackendError as exc:
         return f"{path} is there and could not be opened: {exc}"
     except Exception as exc:  # noqa: BLE001
@@ -926,13 +955,22 @@ def _cad(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         )
     geometry = str(args.get("geometry") or "").strip()
     if geometry:
-        refusal = _refuse_geometry(ctx, geometry)
+        refusal = refuse_input(ctx.backend, geometry, brep=True)
         if refusal:
             # Nothing has started: no kernel, no thread, no model call. The path and
             # what is wrong with it are the whole answer.
             return f"nothing was run: {refusal}"
+    inputs: list[str] = []
+    for item in (args.get("inputs") or []):
+        path = str(item or "").strip()
+        if not path or path == geometry:
+            continue
+        refusal = refuse_input(ctx.backend, path)
+        if refusal:
+            return f"nothing was run: {refusal}"
+        inputs.append(path)
     result = ctx.cad.run(str(args.get("request", "")), case=args.get("case"),
-                         geometry=geometry)
+                         geometry=geometry, inputs=inputs)
     if ctx.on_tokens and result.tokens:
         ctx.on_tokens(result.tokens)
     text = cad_text(result)

@@ -34,6 +34,7 @@ from __future__ import annotations
 import re
 import shlex
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -389,14 +390,28 @@ class CadDesk:
         self.max_seconds = float(cfg.mesher_max_seconds or MAX_SECONDS)
         self.log = CellLog()
         self.case_dir = ""
+        self._supplied: list[str] = []
+        """The files this run was handed, for the replay sandbox to be given back.
+
+        One geometry per `run`, set there, so a file from the last one is not staged
+        into this one's replay."""
 
     # -- the run ---------------------------------------------------------------
 
     def run(self, request: str, case: str | None = None,
-            geometry: str = "") -> CadResult:
+            geometry: str = "", inputs: Sequence[str] = ()) -> CadResult:
         case_rel = _case_name(case)
         case_dir = f"{self.home}/{case_rel}"
         self.case_dir = case_dir
+        # `geometry` first, because it is the part when there is one, and the brief
+        # names it first. Deduplicated, because a caller that passes the same file
+        # both ways means one file, and staging it twice would put the same path into
+        # the record twice for no reason.
+        self._supplied = []
+        for path in [geometry, *inputs]:
+            path = str(path or "").strip()
+            if path and path not in self._supplied:
+                self._supplied.append(path)
         self.log = CellLog()
         self._pending: Cell | None = None
         self._started = time.monotonic()
@@ -436,7 +451,9 @@ class CadDesk:
             {"role": "user",
              "content": [{"type": "text",
                           "text": task_message(request, case_dir, case_rel,
-                                               self._said(), geometry)}]}
+                                               self._said(), geometry,
+                                               [p for p in self._supplied
+                                                if p != geometry])}]}
         ]
         last_text = ""
         turns = 0
@@ -615,7 +632,8 @@ class CadDesk:
         return NUDGE.format(toolbox=self.toolbox)
 
     def _verify(self, case_rel: str, request: str, script: str) -> Check:
-        return verify(self.backend, self.case_dir, case_rel, request, script=script)
+        return verify(self.backend, self.case_dir, case_rel, request, script=script,
+                      supplied=self._supplied)
 
     def _mark(self, phase: str, expect_s: float, steps: int = -1) -> None:
         """Tell the watcher that a long, turn-free stretch is starting, and how long.

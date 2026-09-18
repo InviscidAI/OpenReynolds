@@ -635,8 +635,8 @@ def workspace(tmp_path):
     return backend, str(case)
 
 
-def replay_finding(backend, case_dir, script):
-    check = verify(backend, case_dir, "mesh", script=script)
+def replay_finding(backend, case_dir, script, supplied=()):
+    check = verify(backend, case_dir, "mesh", script=script, supplied=supplied)
     item = finding(check, "replay")
     assert item is not None, [f.check for f in check.findings]
     return item
@@ -709,6 +709,105 @@ def test_a_run_with_no_script_makes_no_replay_claim(workspace):
     backend, case_dir = workspace
     check = verify(backend, case_dir, "mesh")
     assert finding(check, "replay") is None
+
+
+# -- a build that starts from a file the requester supplied --------------------
+
+SUPPLIED_SCRIPT = f'''# --- cell 1 ---
+import pathlib
+SIDE = float(pathlib.Path("drawing.txt").read_text().split("=")[1])
+{BOX_WRITER}
+# --- cell 2 ---
+write_box(pathlib.Path("constant/triSurface/walls.stl"), SIDE)
+'''
+"""A build whose first cell reads the file the requester sent, by the relative path it
+was handed. The shape is a function of that file and of nothing else, which is the whole
+point: no later cell can embed it, because embedding it would be the desk inventing the
+input rather than reading it."""
+
+
+def build_from_supplied(backend, case_dir, name="drawing.txt"):
+    """Put the supplied file in the case and run the build against it, as a run would."""
+    backend.put_file(f"{case_dir}/{name}", b"side=0.02\n")
+    backend.put_file(f"{case_dir}/build.py", SUPPLIED_SCRIPT.encode())
+    backend.exec("python3 build.py", cwd=case_dir)
+
+
+def test_the_replay_is_given_back_the_file_the_requester_supplied(workspace):
+    backend, case_dir = workspace
+    build_from_supplied(backend, case_dir)
+    item = replay_finding(backend, case_dir, SUPPLIED_SCRIPT,
+                          supplied=[f"{case_dir}/drawing.txt"])
+    assert item.status == "ok", item
+    assert "drawing.txt" in item.measured, item.measured
+
+
+def test_without_staging_the_same_build_is_failed_for_the_gate_s_own_reason(workspace):
+    """The failure the staging closes, demonstrated in its absence.
+
+    This is the run that meshed a floorplan cleanly and then could not say done: the
+    replay's first line raises `FileNotFoundError` on a file the script was never meant
+    to write, and the desk is told its build does not re-run from empty.
+    """
+    backend, case_dir = workspace
+    build_from_supplied(backend, case_dir)
+    item = replay_finding(backend, case_dir, SUPPLIED_SCRIPT)
+    assert item.status == "fail", item
+    assert "drawing.txt" in item.measured or "FileNotFoundError" in item.measured, item
+
+
+def test_every_supplied_file_is_staged_not_only_the_first(workspace):
+    """A build can read more than one handed-over file -- a drawing and the table of
+    sizes beside it -- and a replay given only the first fails on the second."""
+    backend, case_dir = workspace
+    backend.put_file(f"{case_dir}/drawing.txt", b"side=0.02\n")
+    backend.exec("mkdir -p refs", cwd=case_dir)
+    backend.put_file(f"{case_dir}/refs/scale.txt", b"factor=1\n")
+    script = SUPPLIED_SCRIPT.replace(
+        'write_box(pathlib.Path("constant/triSurface/walls.stl"), SIDE)',
+        'FACTOR = float(pathlib.Path("refs/scale.txt").read_text().split("=")[1])\n'
+        'write_box(pathlib.Path("constant/triSurface/walls.stl"), SIDE * FACTOR)')
+    backend.put_file(f"{case_dir}/build.py", script.encode())
+    backend.exec("python3 build.py", cwd=case_dir)
+
+    both = replay_finding(backend, case_dir, script,
+                          supplied=[f"{case_dir}/drawing.txt",
+                                    f"{case_dir}/refs/scale.txt"])
+    assert both.status == "ok", both
+    assert "drawing.txt" in both.measured and "refs/scale.txt" in both.measured
+
+    only_one = replay_finding(backend, case_dir, script,
+                              supplied=[f"{case_dir}/drawing.txt"])
+    assert only_one.status == "fail", only_one
+    assert "scale.txt" in only_one.measured
+
+
+def test_a_supplied_file_under_the_case_keeps_the_path_the_script_names(workspace):
+    """`geometry/part.step` is opened as `geometry/part.step`, so it is staged there."""
+    backend, case_dir = workspace
+    backend.exec("mkdir -p geometry", cwd=case_dir)
+    script = SUPPLIED_SCRIPT.replace('"drawing.txt"', '"geometry/drawing.txt"')
+    backend.put_file(f"{case_dir}/geometry/drawing.txt", b"side=0.02\n")
+    backend.put_file(f"{case_dir}/build.py", script.encode())
+    backend.exec("python3 build.py", cwd=case_dir)
+    item = replay_finding(backend, case_dir, script,
+                          supplied=[f"{case_dir}/geometry/drawing.txt"])
+    assert item.status == "ok", item
+    assert "geometry/drawing.txt" in item.measured, item.measured
+
+
+def test_staging_an_input_cannot_pass_a_replay_that_makes_nothing(workspace):
+    """Staging is not a way through the gate: the geometry still has to be rebuilt.
+
+    The supplied file is handed back and the script no longer writes the patch set, so
+    the fingerprints disagree and the replay fails on the numbers -- exactly as it would
+    for a build with no supplied file at all."""
+    backend, case_dir = workspace
+    build_from_supplied(backend, case_dir)
+    idle = '# --- cell 1 ---\nimport pathlib\npathlib.Path("drawing.txt").read_text()\n'
+    item = replay_finding(backend, case_dir, idle,
+                          supplied=[f"{case_dir}/drawing.txt"])
+    assert item.status == "fail", item
 
 
 # -- real meshes ---------------------------------------------------------------

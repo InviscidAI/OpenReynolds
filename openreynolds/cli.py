@@ -35,7 +35,7 @@ from .progress import Tracker
 from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
-from .tools import ToolContext
+from .tools import ToolContext, cad_text, refuse_input as tools_refuse_input
 from .view import ConsoleView, View
 from .watch import NOTHING, LineReader, NullReader, situation, watch
 
@@ -1065,6 +1065,7 @@ def session(
                 _run_interactive(
                     loop, backend, store, view, browser, reader,
                     live=live_mirror, progress=tracker, concierge=concierge,
+                    cad=ctx.cad,
                 )
         except KeyboardInterrupt:
             view.info(_interrupt_note(keep_alive))
@@ -1637,6 +1638,8 @@ def _apply(
     browser: Browser,
     store: Store,
     progress: Any = None,
+    cad: Any = None,
+    backend: Backend | None = None,
 ) -> Any:
     """Act on one typed line. Returns what goes to the model, or None, or QUIT."""
     if command.kind == commands.EXIT:
@@ -1646,8 +1649,52 @@ def _apply(
             return None
         loop.say(command.text)
         return command.text
+    if command.kind == commands.MESH:
+        # Answered here, like `/status`: it is the person's own instruction to the
+        # desk, so putting a turn in front of it would be the paraphrase this exists
+        # to skip. The agent hears about it the same way it hears about anything else
+        # that happened in the workspace, at its next turn.
+        _mesh_here(command, view, cad, backend)
+        return None
     _local(command, view, browser, store, loop, progress)
     return None
+
+
+def _mesh_here(
+    command: commands.Command,
+    view: View,
+    cad: Any,
+    backend: Backend,
+) -> None:
+    """`/mesh`: the person talking to the CAD desk, with nobody paraphrasing.
+
+    Every other route to this desk goes through the session agent, which decides
+    whether to call the tool and writes the `request` itself. That is the right default
+    -- the agent knows the study -- but it means the desk the corpus measures
+    (`cad_accept.py` and `cad_buildup.py` both construct `CadDesk` and call `run`) is
+    reached by a path no person has. This is that path, and it is the same object the
+    tool calls: one desk, two callers.
+
+    The typed line is the request, word for word. Files come from the `@` handovers on
+    it, checked here so a typo costs a `stat` rather than nine steps of a build.
+    """
+    if cad is None:
+        view.warn("the CAD desk is not available in this session (it needs a model "
+                  "key of its own); build geometry with bash instead")
+        return
+    if not command.text:
+        view.warn("say what to build: /mesh a 10 mm U-bend in water, "
+                  "or /mesh prepare @/work/uploads/part.step")
+        return
+    for path in command.inputs:
+        refusal = tools_refuse_input(backend, path)
+        if refusal:
+            view.warn(f"nothing was run: {refusal}")
+            return
+    for path in command.inputs:
+        view.info(f"input: {path}")
+    result = cad.run(command.text, inputs=list(command.inputs))
+    view.info(cad_text(result))
 
 
 def _local(
@@ -1723,6 +1770,15 @@ def _typed_while_working(
             for_model.append(command.text)
             if concierge is not None:
                 concierge.ask(command.text)
+        elif command.kind == commands.MESH:
+            # Not started here, and not dropped either. The agent holds the session's
+            # one thread and may be inside a desk run of its own on the same kernel,
+            # which is sequential -- so a second desk started from under it would
+            # queue behind whatever is running and come back having done nothing.
+            # Saying so is the whole of the fix; `/btw` is the channel that works
+            # while something else is going.
+            view.warn("the agent is working; /mesh runs when the prompt is back. "
+                      "To say something now, use /btw")
         else:
             _local(command, view, browser, store, loop, progress)
     return "\n".join(for_model) or None
@@ -1851,6 +1907,7 @@ def _run_interactive(
     live: LiveMirror | None = None,
     progress: Any = None,
     concierge: Any = None,
+    cad: Any = None,
 ) -> None:
     while True:
         if store.live_jobs():
@@ -1886,7 +1943,8 @@ def _run_interactive(
                 ):
                     concierge.ask(commands.parse(wake.text).text)
                 spoken = _apply(
-                    commands.parse(wake.text), loop, view, browser, store, progress
+                    commands.parse(wake.text), loop, view, browser, store, progress,
+                    cad=cad, backend=backend,
                 )
                 if spoken is QUIT:
                     return
@@ -1903,7 +1961,8 @@ def _run_interactive(
             if line is None:
                 return
             loop.blocked_reason = None
-            spoken = _apply(commands.parse(line), loop, view, browser, store, progress)
+            spoken = _apply(commands.parse(line), loop, view, browser, store, progress,
+                            cad=cad, backend=backend)
             if spoken is QUIT:
                 return
             if spoken is None:

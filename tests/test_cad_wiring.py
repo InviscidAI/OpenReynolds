@@ -262,12 +262,79 @@ def test_the_tool_names_are_exactly_the_sorted_eight_with_cad_second():
 
 def test_the_cad_tool_takes_a_geometry_path():
     schema = next(t for t in TOOLS if t["name"] == "cad")["input_schema"]
-    assert set(schema["properties"]) == {"request", "case", "geometry"}
+    assert set(schema["properties"]) == {"request", "case", "geometry", "inputs"}
     assert schema["required"] == ["request"]
     described = schema["properties"]["geometry"]["description"]
     for suffix in (".step", ".stp", ".iges", ".igs"):
         assert suffix in described
     assert "/work" in described
+
+
+def test_the_cad_tool_takes_any_number_of_other_files_to_work_from():
+    """`geometry` is "this is the part"; `inputs` is "here is something to work from".
+
+    The difference is what is being asked for, not what the file is -- which is why
+    `inputs` carries no suffix list. A whitelist there is the harness deciding which
+    kinds of work are possible, and it is how a floorplan drawing could not be handed
+    over at all."""
+    schema = next(t for t in TOOLS if t["name"] == "cad")["input_schema"]
+    inputs = schema["properties"]["inputs"]
+    assert inputs["type"] == "array" and inputs["items"]["type"] == "string"
+    for suffix in (".step", ".stp", ".iges", ".igs"):
+        assert suffix not in inputs["description"]
+
+
+def test_an_input_is_not_held_to_the_cad_suffix_list(ctx, monkeypatch):
+    """A PNG is refused as `geometry` and taken as an `input`, in the same session."""
+    path = "/work/study-test/plan.png"
+    ctx.backend.files[path] = b"\x89PNG\r\n"
+    seen = {}
+
+    class Desk:
+        def run(self, request, case=None, geometry="", inputs=()):
+            seen.update(geometry=geometry, inputs=list(inputs))
+            return type("R", (), {"tokens": {}, "png": None, "check": None, "ok": False,
+                                  "error": "", "case_rel": "cad", "summary": "",
+                                  "steps": [], "seconds": 1.0, "stopped": "",
+                                  "remarks": []})()
+
+    ctx.cad = Desk()
+    refused, _ = dispatch(ctx, "cad", {"request": "mesh this", "geometry": path})
+    assert "not a CAD file this reads" in refused and "`inputs`" in refused
+    assert seen == {}
+
+    dispatch(ctx, "cad", {"request": "mesh this", "inputs": [path]})
+    assert seen == {"geometry": "", "inputs": [path]}
+
+
+def test_every_input_is_checked_before_anything_starts(ctx, desk):
+    """The second of three being wrong still costs a stat, not a build."""
+    good = "/work/study-test/plan.png"
+    ctx.backend.files[good] = b"\x89PNG\r\n"
+    answer, _ = dispatch(ctx, "cad", {
+        "request": "mesh this",
+        "inputs": [good, "/work/study-test/absent.csv", good]})
+    assert answer.startswith("nothing was run:")
+    assert "absent.csv" in answer
+    assert desk.calls == 0 and ctx.backend.execs == []
+
+
+def test_a_file_passed_both_ways_reaches_the_desk_once(ctx):
+    path = "/work/study-test/chassis.step"
+    ctx.backend.files[path] = b"ISO-10303-21;\n"
+    seen = {}
+
+    class Desk:
+        def run(self, request, case=None, geometry="", inputs=()):
+            seen.update(geometry=geometry, inputs=list(inputs))
+            return type("R", (), {"tokens": {}, "png": None, "check": None, "ok": False,
+                                  "error": "", "case_rel": "cad", "summary": "",
+                                  "steps": [], "seconds": 1.0, "stopped": "",
+                                  "remarks": []})()
+
+    ctx.cad = Desk()
+    dispatch(ctx, "cad", {"request": "prepare it", "geometry": path, "inputs": [path]})
+    assert seen == {"geometry": path, "inputs": []}
 
 
 class Recorder:
@@ -347,7 +414,7 @@ def test_a_good_geometry_path_reaches_the_desk(ctx, monkeypatch):
     seen = {}
 
     class Desk:
-        def run(self, request, case=None, geometry=""):
+        def run(self, request, case=None, geometry="", inputs=()):
             seen.update(request=request, case=case, geometry=geometry)
             return type("R", (), {"tokens": {}, "png": None, "check": None, "ok": False,
                                   "error": "", "case_rel": "cad", "summary": "",

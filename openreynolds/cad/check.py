@@ -52,6 +52,7 @@ import math
 import re
 import shlex
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
@@ -373,12 +374,15 @@ def _cad_command(script_path: str) -> str:
 
 
 def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
-           script: str = "") -> Check:
+           script: str = "", supplied: Sequence[str] = ()) -> Check:
     """Run the check on the workspace and read the verdict.
 
     A workspace that cannot answer at all is a failed check with the reason in it and
     `unreachable` set -- never a pass, never a verdict about the mesh, and never an
     exception into the middle of a tool call.
+
+    `supplied` is what the requester handed this run -- a STEP to prepare, a drawing to
+    work from. The replay sandbox is given those back; see `_stage_inputs`.
     """
     toolbox = toolbox_for(backend)
     try:
@@ -392,7 +396,7 @@ def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
             composite["cad"].append(
                 _cad_entry(backend, case_dir, name, f"{toolbox}/{name}.py"))
         if script:
-            composite["replay"] = _replay(backend, case_dir, script)
+            composite["replay"] = _replay(backend, case_dir, script, supplied)
     except _Unreachable as gone:
         return Check(
             ok=False, unreachable=True, error=str(gone), regions=[],
@@ -437,12 +441,17 @@ def _cad_entry(backend: Any, case_dir: str, name: str, script_path: str) -> dict
     return payload
 
 
-def _replay(backend: Any, case_dir: str, script: str) -> dict[str, Any]:
+def _replay(backend: Any, case_dir: str, script: str,
+            supplied: Sequence[str] = ()) -> dict[str, Any]:
     """Run the concatenated cell log as a script, from empty, and measure what it made.
 
     A script, through `exec`, not through a kernel. The artifact's promise is that it is
     runnable top to bottom by somebody who was not there; running it in the session that
     already holds the bindings would test the convenience instead of the claim.
+
+    **From empty of what the build made, not of what the requester supplied.** Somebody
+    who was not there still has the file they sent, so the sandbox is given it back
+    before the script runs.
     """
     out: dict[str, Any] = {"ran": False, "script": script}
     out["before"] = fingerprint(backend, case_dir)
@@ -451,6 +460,7 @@ def _replay(backend: Any, case_dir: str, script: str) -> dict[str, Any]:
         _ask(backend, f"rm -rf {shlex.quote(replay_dir)} && mkdir -p {shlex.quote(replay_dir)}",
              case_dir, timeout_s=60)
         backend.put_file(f"{replay_dir}/{REPLAY_SCRIPT}", script.encode("utf-8"))
+        out["staged"] = _stage_inputs(backend, case_dir, replay_dir, supplied)
     except Exception as exc:  # noqa: BLE001
         out["error"] = str(exc)
         return out
@@ -465,6 +475,56 @@ def _replay(backend: Any, case_dir: str, script: str) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 - the measurement is taken; tidying is not the check
         pass
     return out
+
+
+def _stage_inputs(backend: Any, case_dir: str, replay_dir: str,
+                  supplied: Sequence[str]) -> list[str]:
+    """Copy the files the requester supplied into the replay sandbox.
+
+    A build that starts from a file somebody sent opens that file in its first cell, by
+    the path it was given -- `floorplan.png`, relative to the case directory. The sandbox
+    is a fresh directory beneath the case, so that open fails, the replay exits non-zero,
+    and the desk is told its build script does not re-run from empty. It does; what is
+    missing is not something the script was ever supposed to produce.
+
+    That is not a hypothetical. A run that traced a floorplan drawing, meshed it and
+    passed `checkMesh` declined to declare done for exactly this reason, and said so:
+    "the first accepted cell reads the supplied relative PNG before any later cell can
+    embed/recreate it, while the replay sandbox copies neither the original PNG nor
+    auxiliary bootstrap files". The desk was right and the gate was wrong.
+
+    So an **input** is staged and an **output** is not. The distinction is the whole
+    check: the replay still proves the script rebuilds the geometry from nothing but the
+    request's own materials, and `fingerprint` still reads only `constant/triSurface`, so
+    a staged input cannot be mistaken for something the replay made.
+
+    A path under the case directory keeps its relative position -- `geometry/part.step`
+    stays `geometry/part.step` -- because that is the path the script will name. One from
+    outside is staged by its basename as well as being reachable where it already is.
+    Returns what was actually staged, for the finding to cite.
+    """
+    staged: list[str] = []
+    case = case_dir.rstrip("/")
+    for path in supplied:
+        source = str(path or "").strip()
+        if not source:
+            continue
+        rel = source[len(case) + 1:] if source.startswith(f"{case}/") else \
+            source.rsplit("/", 1)[-1]
+        if not rel or rel.startswith(REPLAY_REL):
+            continue
+        target = f"{replay_dir.rstrip('/')}/{rel}"
+        parent = target.rsplit("/", 1)[0]
+        try:
+            outcome = backend.exec(
+                f"if [ -e {shlex.quote(source)} ]; then mkdir -p {shlex.quote(parent)} "
+                f"&& cp -R {shlex.quote(source)} {shlex.quote(target)} && echo staged; fi",
+                cwd=case_dir, timeout_s=120)
+        except Exception:  # noqa: BLE001 - a file that will not copy is not a verdict
+            continue
+        if "staged" in (outcome.output or ""):
+            staged.append(rel)
+    return staged
 
 
 _FINGERPRINT_SNIPPET = r"""
@@ -921,11 +981,17 @@ def _replay_findings(replay: dict[str, Any]) -> list[Finding]:
     if not replay.get("ran"):
         return [Finding("replay", "skipped", "the build script was not replayed",
                         "nothing is known about whether it runs from empty")]
+    # What the sandbox was given back before the script ran, named in every answer
+    # below. A replay that was handed an input is a weaker claim than one that was
+    # handed nothing, and a reader cannot tell the two apart unless it says so.
+    staged = [str(name) for name in (replay.get("staged") or [])]
+    given = f" (with {', '.join(staged)} supplied to it)" if staged else ""
     exit_code = int(replay.get("exit_code") or 0)
     if exit_code != 0:
         return [Finding(
             "replay", "fail",
-            f"the build script did not re-run from empty: {_where_it_broke(replay)}",
+            f"the build script did not re-run from empty{given}: "
+            f"{_where_it_broke(replay)}",
             "a cell that only runs in the session that wrote it depends on a binding "
             "the log does not rebuild -- usually one defined in a cell that was never "
             "accepted",
@@ -935,15 +1001,16 @@ def _replay_findings(replay: dict[str, Any]) -> list[Finding]:
     after = replay.get("after") or {}
     if not before and not after:
         return [Finding(
-            "replay", "ok", "the build script re-ran clean from empty (exit 0)",
+            "replay", "ok",
+            f"the build script re-ran clean from empty{given} (exit 0)",
             "there is no exported patch set to compare, so this is the script running "
             "and not the geometry matching")]
     differences = _fingerprint_differences(before, after)
     if differences:
         return [Finding(
             "replay", "fail",
-            "the build script re-ran clean from empty and produced different geometry: "
-            + "; ".join(differences),
+            f"the build script re-ran clean from empty{given} and produced "
+            "different geometry: " + "; ".join(differences),
             "the script exits 0 and is still not the artifact it claims to be: what is "
             "on disk was made by a session that held state the script does not rebuild "
             "-- a cell run twice, or one that edits a file in place",
@@ -951,8 +1018,8 @@ def _replay_findings(replay: dict[str, Any]) -> list[Finding]:
             "already there, then re-run the log from empty and compare")]
     return [Finding(
         "replay", "ok",
-        "the build script re-ran clean from empty and produced the same geometry: "
-        + _fingerprint_words(after),
+        f"the build script re-ran clean from empty{given} and produced the same "
+        "geometry: " + _fingerprint_words(after),
         "the concatenated cells are runnable top to bottom by somebody who was not "
         "there, which is what makes the script the artifact")]
 

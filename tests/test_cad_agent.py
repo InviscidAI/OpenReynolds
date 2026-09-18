@@ -235,9 +235,10 @@ def checking(monkeypatch, *verdicts):
     """
     calls: list[dict] = []
 
-    def verify(backend, case_dir, case_rel, request="", script=""):
+    def verify(backend, case_dir, case_rel, request="", script="", supplied=()):
         calls.append({"case_dir": case_dir, "case_rel": case_rel,
-                      "request": request, "script": script})
+                      "request": request, "script": script,
+                      "supplied": list(supplied)})
         return verdicts[min(len(calls) - 1, len(verdicts) - 1)]
 
     monkeypatch.setattr("openreynolds.cad.agent.verify", verify)
@@ -778,6 +779,73 @@ def test_the_geometry_it_was_handed_reaches_the_desk_verbatim(backend, store, mo
     first = made.provider.calls[0]["messages"][0]["content"][0]["text"]
     assert "/work/study/uploads/chassis v2.step" in first
     assert "do not redesign it" in first.lower()
+
+
+def test_the_file_it_was_handed_reaches_the_replay_sandbox(backend, store, monkeypatch):
+    """The other end of the same path: the check has to be told what the run was given.
+
+    The replay runs the build script in a fresh directory, and a build that starts from a
+    supplied file opens that file by the path it was handed. Unless the check knows which
+    file that is, it cannot put it back, and the desk is refused for a missing input it
+    was never asked to produce -- which is how a run that traced a floorplan, meshed it
+    and passed `checkMesh` came to end without declaring done."""
+    calls = checking(monkeypatch, PASSES)
+    kernelled(backend)
+    made = desk(backend, store, [DONE])
+    made.run("prepare this", geometry="/work/study/uploads/chassis v2.step")
+    assert calls[0]["supplied"] == ["/work/study/uploads/chassis v2.step"]
+
+
+def test_every_file_handed_over_reaches_the_replay_and_the_brief(backend, store,
+                                                                 monkeypatch):
+    """A person can hand over more than one file -- a drawing and the table of room
+    sizes that goes with it -- and every one of them has to be named to the desk and
+    staged for the replay. One of three missing is the same failure as all of them."""
+    calls = checking(monkeypatch, PASSES)
+    kernelled(backend)
+    made = desk(backend, store, [DONE])
+    files = ["/work/u/plan.png", "/work/u/rooms.csv", "/work/u/notes.md"]
+    made.run("mesh this", inputs=files)
+    assert calls[0]["supplied"] == files
+    first = made.provider.calls[0]["messages"][0]["content"][0]["text"]
+    for path in files:
+        assert path in first
+    assert "files you were given" in first
+
+
+def test_the_part_comes_first_and_the_rest_follow(backend, store, monkeypatch):
+    """`geometry` is the part; the others are material. The brief says so in that
+    order, and a file passed both ways is one file."""
+    calls = checking(monkeypatch, PASSES)
+    kernelled(backend)
+    made = desk(backend, store, [DONE])
+    made.run("prepare it", geometry="/work/u/part.step",
+             inputs=["/work/u/plan.png", "/work/u/part.step"])
+    assert calls[0]["supplied"] == ["/work/u/part.step", "/work/u/plan.png"]
+    first = made.provider.calls[0]["messages"][0]["content"][0]["text"]
+    assert "do not redesign it" in first.lower()
+    assert first.count("/work/u/part.step") == 1
+
+
+def test_an_authoring_run_supplies_the_replay_with_nothing(backend, store, monkeypatch):
+    """Nothing was handed over, so nothing is staged: the replay stays the strict check
+    it already was for a build authored from the request alone."""
+    calls = checking(monkeypatch, PASSES)
+    kernelled(backend)
+    made = desk(backend, store, [DONE])
+    made.run("a plate")
+    assert calls[0]["supplied"] == []
+
+
+def test_a_second_run_does_not_stage_the_first_run_s_file(backend, store, monkeypatch):
+    """One geometry per `run`. A file from the last job staged into this one's replay
+    would let a build open something this requester never sent."""
+    calls = checking(monkeypatch, PASSES)
+    kernelled(backend)
+    made = desk(backend, store, [DONE, DONE])
+    made.run("prepare this", geometry="/work/study/uploads/chassis v2.step")
+    made.run("now author one")
+    assert calls[1]["supplied"] == []
 
 
 def test_a_session_with_no_transcript_still_builds(backend, store, monkeypatch):
