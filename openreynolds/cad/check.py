@@ -59,6 +59,8 @@ from typing import Any, NamedTuple
 from openreynolds.backend.base import WORKSPACE_ROOT
 from openreynolds.casebundle import DEFINITION_DIRS, DEFINITION_NAMES
 
+from . import gate
+
 TOOLBOX = f"{WORKSPACE_ROOT}/.toolbox"
 """The hosted workspace's toolbox directory, and the default everywhere below.
 
@@ -684,8 +686,20 @@ def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "",
     findings.extend(_replay_findings(composite.get("replay") or {}))
 
     check.findings = findings
-    check.missing = [f.measured for f in findings if f.status == "fail"]
-    check.ok = worst_status(findings) != "fail"
+    # **Advisory findings are reported and do not bind.** They used to: `ok` was
+    # `worst_status(findings) != "fail"` over this whole list, `cad_audit`'s answers are
+    # in it, and so a single open edge on a deliberate zero-thickness baffle failed the
+    # finish with nothing the desk could do about it -- there was no waiver on this desk,
+    # and declaring again unchanged got the same answer.
+    #
+    # The core desk has always had these advisory, which is why two sweeps' worth of
+    # evidence about them exists and none of it came from here: three of the six were
+    # measured defective, and `coverage` warned on 19 of 20 correct partitions. They
+    # reach the desk through `gate.evaluate` instead, where a warning costs a waiver
+    # and a line in the record rather than a mesh.
+    binding = [f for f in findings if not gate.is_advisory(f.check)]
+    check.missing = [f.measured for f in binding if f.status == "fail"]
+    check.ok = worst_status(binding) != "fail"
     return check
 
 

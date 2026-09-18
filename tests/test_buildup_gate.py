@@ -122,14 +122,26 @@ def test_checkmesh_cannot_be_waived():
 
 
 def test_the_two_copies_of_the_waivable_list_agree():
-    """`buildup.gate` cannot be imported from `cad.agent` -- `buildup` imports it -- so the
-    enum is written twice and held together here, the way `scripts/cad_probes.py` holds its
-    recorded answers against the prose ones."""
+    """The tool's enum is written out where a model reads it, and held to `cad.gate` here.
+
+    The two lists are no longer the same list. The shipped desk waives the findings
+    `check.py` gathers off `cad_audit.py` and `domain_probe.py`, which is a longer set
+    than the six probes `buildup/probes.py` runs -- `manifold`, `degenerate` and
+    `manifest` are advisory too and there was never a reason the desk could not say so
+    about them. `union_closure` rides along because it is what the core desk, both
+    briefs, the corpus and every sweep report call `closure`.
+    """
+    from openreynolds.cad import gate as cadgate
     from openreynolds.cad.agent import DECLARE_TOOL
 
     enum = (DECLARE_TOOL["input_schema"]["properties"]["waive"]["items"]
             ["properties"]["check"]["enum"])
-    assert enum == list(gate.WAIVABLE)
+    assert enum == list(cadgate.WAIVABLE) + ["union_closure"]
+    # Every name the core desk knows still forms a call the shipped desk accepts.
+    for name in gate.WAIVABLE:
+        assert cadgate.ALIASES.get(name, name) in cadgate.WAIVABLE, name
+    # `checkmesh` is binding on both, so neither will form the call.
+    assert "checkmesh" not in enum
 
 
 @pytest.mark.parametrize("text", [
@@ -187,17 +199,21 @@ def test_a_refusal_needs_a_reason_and_an_outcome_must_be_one_of_two():
     assert not complaint and declare == {"outcome": "complete"}
 
 
-def test_only_the_core_desk_is_offered_the_declare_tool():
-    """The shipped desk is handed exactly what it was handed before the seam existed.
+def test_both_desks_are_offered_the_declare_tool():
+    """The shipped desk was handed it on 2026-09-18, and the reason is not parity.
 
-    An addition is measured against the core, and a change that silently moved the shipped
-    desk at the same time would be two changes in one sweep."""
+    It gated on `cad_audit`'s findings with no way past them: `check.ok` was
+    `worst_status(findings) != "fail"` over every finding, so one open edge on a
+    deliberate zero-thickness baffle failed the finish, there was no waiver on this desk,
+    and declaring again unchanged got the same answer. A correct geometry could not be
+    delivered. The tool is how the advisory half gets a channel back instead.
+    """
     from openreynolds.buildup.core import CoreDesk
     from openreynolds.cad.agent import CadDesk
 
-    assert [t["name"] for t in CadDesk._tools(None)] == ["run_cell", "poll_cell"]
-    assert [t["name"] for t in CoreDesk._tools(None)] == [
-        "run_cell", "poll_cell", "declare_complete"]
+    for desk in (CadDesk, CoreDesk):
+        assert [t["name"] for t in desk._tools(None)] == [
+            "run_cell", "poll_cell", "declare_complete"], desk.__name__
 
 
 def test_the_core_brief_teaches_the_tool_and_the_waiver():

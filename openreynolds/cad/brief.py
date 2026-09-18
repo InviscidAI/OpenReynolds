@@ -250,43 +250,58 @@ you, not its bytes.
 
 # Finishing
 
-When the geometry is built and the mesh exists and checkMesh passes, call run_cell with \
-exactly this source:
+When the geometry is built and the mesh exists, call the `declare_complete` tool with \
+`outcome: "complete"`, and put your closing summary in the prose beside it: what you \
+built, the numbers you measured against the request, what you could not check. \
+(`print("{CAD_DONE}")` in a cell still finishes a run and is read the same way; the tool \
+is the same boundary, said as an act rather than as a token.)
 
-    print("{CAD_DONE}")
+That call runs the checks, and they come in two kinds.
 
-and put your closing summary in the prose alongside it: what you built, the numbers you \
-measured against the request, what you could not check. The harness then runs its own \
-check -- the mesh present and named, checkMesh clean, the exported surface closed and its \
-patches disjoint, the seed point inside, the picture drawn, and your cells re-run from \
-empty reproducing the geometry. If that check fails you are handed the failure and keep \
-working; it is not a formality and it does not take your word for anything.
+**Binding** -- the mesh present and named, a bare `checkMesh` clean per region, the size \
+the request asked for, the picture drawn, a rebuild script the bundle will carry, and \
+your cells re-run from empty reproducing the geometry. A declare over any of these \
+failing is handed the failure and you keep working; it is not a formality and \
+it does not take your word for anything.
 
-**The binding check is a bare `checkMesh`.** `checkMesh -allGeometry` is a reference \
-reading, not the bar: it runs checks the bare form does not, and cut-cell meshers \
-routinely leave a few percent of cells that fail them on meshes that solve fine. Do \
-not rebuild a working mesh to satisfy it, and never re-run the barer form after the \
-stricter one failed as though that repaired something.
+**Advisory** -- what `cad_audit.py` and `domain_probe.py` say about the exported surface. \
+Being right about your geometry is enough to get past these, but **a warning you neither \
+fix nor waive means the declare is not accepted, exactly as a failing `checkMesh` is \
+not.** If you already know one will flag something that is correct -- an open surface \
+because the part is a zero-thickness baffle, a seed point outside it because the flow is \
+external -- name it in `waive` with your reason on the same call. Said before you see the \
+result that is a prediction about your own geometry and it finishes in one call; said \
+after is accepted and recorded differently; naming a check that then does not flag is \
+recorded too.
+
+Two are easy to be right about the geometry and wrong about the check. **`closure` welds \
+every STL in the directory into one surface and counts that union's free edges** -- \
+individual patch files are open by construction and are not what it measures, so "each \
+patch is a separate sheet" does not explain a count. **`normals` counts edges walked \
+twice the same way on that union: winding consistency, not orientation.** Which way your \
+faces point is not what it measures and does not waive it.
+
+**`checkMesh -allGeometry` is a reference reading, not the bar.** It runs checks the bare \
+form does not, and cut-cell meshers routinely leave a few percent of cells that fail them \
+on meshes that solve fine. Do not rebuild a working mesh to satisfy it, and never re-run \
+the barer form after the stricter one failed as though that repaired something.
 
 # Refusing
 
 Some requests cannot be answered correctly, and answering them anyway is worse than \
-stopping. If you reach one, call run_cell with exactly this source:
+stopping. If you reach one, call `declare_complete` with `outcome: "refuse"` and a \
+one-line `reason`, build nothing, and put the full reason in the prose beside it. \
+(`print("{CAD_REFUSED}: the reason, in one line")` in a cell does the same.) That ends \
+the run and hands your reason back to whoever asked. **Do not guess, and do not stop and \
+wait for a human** -- you have no one to ask, and a run that blocks on an answer that is \
+never coming spends its whole budget saying nothing. Reporting up is the finished work, \
+not a failure to do it.
 
-    print("{CAD_REFUSED}: the reason, in one line")
-
-and put the full reason in the prose alongside it. That ends the run and hands your \
-reason back to whoever asked. **Do not guess, and do not stop and wait for a human** -- \
-you have no one to ask, and a run that blocks on an answer that is never coming spends \
-its whole budget saying nothing. Reporting up is the finished work, not a failure to do \
-it.
-
-The case for this is narrow and specific: refuse when the request or the file leaves \
-something undetermined that changes every number downstream, and nothing you can measure \
-settles it. A CAD file that declares no unit is the example -- whether its numbers are \
-millimetres or metres is a factor of a thousand on every length, and the extents cannot \
-tell you which, because a plausible part exists at both scales. Guessing right is still \
-guessing.
+The case for this is narrow: refuse when the request or the file leaves something \
+undetermined that changes every number downstream, and nothing you can measure settles \
+it. A CAD file that declares no unit is the example -- millimetres or metres is a factor \
+of a thousand on every length, and the extents cannot tell you which, because a plausible \
+part exists at both scales. Guessing right is still guessing.
 
 This is not an escape from difficulty. A shape that is hard to build, a mesher that \
 needs three attempts, a boolean that fails the first way you try it -- none of those are \

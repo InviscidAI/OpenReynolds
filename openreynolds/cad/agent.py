@@ -44,6 +44,7 @@ from .brief import (CAD_DONE, CAD_REFUSED, remark_message, system_prompt,
                     task_message)
 from .cells import Cell, CellLog
 from .check import Check, mesh_regions, verify
+from . import gate
 
 MAX_STEPS = 30
 """Enough for a shape, a look, two or three revisions, a mesh and a finish. A run that
@@ -273,8 +274,11 @@ DECLARE_TOOL: dict[str, Any] = {
                     "type": "object",
                     "properties": {
                         "check": {"type": "string", "enum": [
-                            "union_closure", "normals", "self_intersection",
-                            "location_in_mesh", "coverage", "scale"]},
+                            "closure", "manifold", "normals", "degenerate",
+                            "coverage", "self_intersection", "surface_scale",
+                            "manifest",
+                            "surface_check", "location_in_mesh", "min_width",
+                            "min_wall_thickness", "domain", "union_closure"]},
                         "because": {"type": "string"},
                     },
                     "required": ["check", "because"],
@@ -294,10 +298,12 @@ token is not a place to hang them.
 `checkmesh` is not in the `waive` enum. It is binding, so it cannot be waived, and a
 schema that will not form the call is better than a handler that rejects it afterwards.
 
-The enum is written out here rather than imported from `buildup.gate.WAIVABLE`, which is
-the same list: `buildup` imports this module, so importing back would be a cycle. The two
-copies are held together by a test rather than by an import, the same way
-`scripts/cad_probes.py` holds its recorded answers against the prose ones.
+The enum is `gate.WAIVABLE` plus `union_closure`, written out rather than imported
+because a tool schema read by a model should be legible where it is defined. A test holds
+the two together. `union_closure` is there because it is what `buildup/probes.py` calls
+the same check and it is the name in the corpus, both briefs and every sweep report --
+`gate.ALIASES` maps it to `closure`, so a desk that has read either forms a call that
+works rather than one it has to be corrected on.
 """
 
 
@@ -395,6 +401,14 @@ class CadDesk:
 
         One geometry per `run`, set there, so a file from the last one is not staged
         into this one's replay."""
+        self._declares: list[dict[str, Any]] = []
+        """Every `declare_complete` call this run made, and what the gates made of it."""
+        self._warned: set[str] = set()
+        """Which advisory checks have raised a concern on some earlier declare.
+
+        A waiver naming a check already in here is a reaction; one naming a check that is
+        not is a prediction. `gate.evaluate` does the labelling and the desk cannot reach
+        it."""
 
     # -- the run ---------------------------------------------------------------
 
@@ -413,6 +427,8 @@ class CadDesk:
             if path and path not in self._supplied:
                 self._supplied.append(path)
         self.log = CellLog()
+        self._declares = []
+        self._warned = set()
         self._pending: Cell | None = None
         self._started = time.monotonic()
         self._notes: list[str] = []
@@ -772,20 +788,48 @@ class CadDesk:
         raise AssertionError("unreachable")
 
     def _tools(self) -> list[dict[str, Any]]:
-        """The tools this desk is offered. A seam, because the core desk has a second.
+        """The tools this desk is offered.
 
-        The shipped desk is handed exactly what it was handed before this existed, so the
-        seam changed no behaviour here -- only where behaviour can be added without
-        reaching into the loop."""
-        return [CELL_TOOL, POLL_TOOL]
+        `print("CAD_DONE")` still finishes a run and every test that uses it still
+        passes. The declare tool is the same boundary made explicit, and the reason to
+        have it is that the boundary is where the gates belong: something has to hand the
+        advisory findings back, and a cell that happens to print a token is not a place
+        to hang them."""
+        return [CELL_TOOL, POLL_TOOL, DECLARE_TOOL]
 
     def _declare(self, payload: dict[str, Any], case_rel: str,
-                 request: str) -> tuple[Any, str, list[str]]:
-        """Handle a `declare_complete` call: `(check, advisory, fresh_warnings)`.
+                 request: str) -> tuple[Check, str, list[str]]:
+        """Run the check, bind on the binding half, hand the advisory half back.
 
-        Only a desk that offers the tool can receive the call, so the base desk's version
-        exists to be overridden and to keep the contract readable in one place."""
-        raise NotImplementedError(f"{type(self).__name__} offers no {DECLARE_NAME}")
+        The split is `gate.is_advisory` and the argument for it is in `gate.py`: this
+        desk used to gate on `cad_audit`'s findings, so a correct baffle -- open by
+        construction, which is what a zero-thickness wall is -- could not be delivered at
+        all. There was no waiver here to get past it and no amount of re-declaring
+        changed the answer.
+
+        Nothing new is measured. `check.verify` already runs `cad_audit.py` and
+        `domain_probe.py` on the backend and carries their findings through untouched;
+        what was missing was a channel that makes the desk answer for them. That is the
+        whole of what this adds, and it is the T26 lesson: `union_closure` measured 259
+        free edges, the record kept them, the run scored `passed: true`, and nothing ever
+        told the desk.
+        """
+        check = self._verify(case_rel, request, self.log.script())
+        try:
+            states = gate.evaluate(check.findings, payload.get("waive") or (),
+                                   self._warned)
+        except Exception as exc:  # noqa: BLE001 - an advisory check may not end a run
+            states = [gate.GateState("gates", gate.NOT_RUN,
+                                     f"{type(exc).__name__}: {exc}")]
+        self._declares.append(gate.Declaration(
+            outcome="complete", reason=str(payload.get("reason") or ""),
+            states=states, checkmesh_ok=bool(check.ok)).as_dict())
+        # What has already fired is what separates a prediction from a reaction on the
+        # next declare, and the desk does not get a say in it.
+        self._warned |= {s.check for s in states
+                         if s.state in (gate.WARNED, gate.XFAIL, gate.WAIVED)}
+        unresolved = [s.check for s in states if s.state == gate.WARNED]
+        return check, gate.render(states, self.case_dir), unresolved
 
     # -- the kernel ------------------------------------------------------------
 

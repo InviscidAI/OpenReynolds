@@ -43,7 +43,7 @@ from openreynolds.cad.agent import (
 )
 from openreynolds.cad.brief import CAD_DONE, system_prompt, task_message
 from openreynolds.cad.cells import CellLog, bound_names, free_names
-from openreynolds.cad.check import Check
+from openreynolds.cad.check import Check, Finding
 from openreynolds.config import Config
 from dataclasses import dataclass
 
@@ -1252,8 +1252,10 @@ def test_the_cell_channel_is_a_tool_the_api_enforces(backend, store, monkeypatch
     for call in made.provider.calls:
         names = [t["name"] for t in call["tools"]]
         # `poll_cell` rides beside it: waiting is an act the schema decides, for the
-        # same reason running a cell is -- see `POLL_TOOL`.
-        assert names == ["run_cell", "poll_cell"], names
+        # same reason running a cell is -- see `POLL_TOOL`. `declare_complete` likewise:
+        # the finish is where the advisory gates hang, and a cell that happens to print
+        # a token is not a place to hang them.
+        assert names == ["run_cell", "poll_cell", "declare_complete"], names
         schema = call["tools"][0]["input_schema"]
         assert schema["required"] == ["source"]
 
@@ -1462,3 +1464,107 @@ def test_a_poll_reports_as_its_own_phase_so_it_does_not_read_as_a_stall():
     stalled = [Beat(turn=n, steps=4, at=now - 1) for n in (7, 8, 9)]
     raised = alarms.evaluate(stalled, now=now, started_at=now - 300, k=3)
     assert raised is not None and raised.name == "no-progress"
+
+
+# -- the advisory gates, on the shipped desk ------------------------------------
+
+OPEN_EDGES = Finding("cad_audit.closure", "fail",
+                     "9 open edges in the union of 2 patch files (100 triangles)",
+                     "the exported surface has a hole in it",
+                     "close the hole in the CAD, or export the face that is missing")
+
+PASSES_BUT_OPEN = Check(ok=True, cells=3750, faces=15000, points=7600,
+                        checkmesh="Mesh OK.", regions=[""],
+                        render="cad/renders/cad_look.png",
+                        findings=[Finding("checkMesh", "pass", "Mesh OK. (3,750 cells)"),
+                                  OPEN_EDGES])
+"""A clean `checkMesh` over a surface `cad_audit` says does not close.
+
+This pairing is the whole of what changed on 2026-09-18, and before it the pairing could
+not exist: `check.ok` was `worst_status(findings) != "fail"` over every finding, so this
+Check was unconstructible -- an open surface made `ok` False and the run was over.
+"""
+
+
+def declaring(backend, store, turns, monkeypatch, *verdicts):
+    from test_buildup_gate import DeclaringProvider
+
+    checking(monkeypatch, *verdicts)
+    kernelled(backend)
+    made = CadDesk(Config(llm_api_key="k", model="claude-opus-5"), backend, store,
+                   "/work/study")
+    made.provider = DeclaringProvider(turns)
+    return made
+
+
+def test_an_advisory_warning_bounces_the_shipped_desks_declare(backend, store, monkeypatch):
+    """The channel that did not exist here, and the reason it had to.
+
+    `check.verify` has always run `cad_audit.py` and `domain_probe.py` on the backend and
+    carried their findings through. What it did with them was fail the finish outright,
+    with no waiver on this desk and no way for a correct-but-open geometry to be
+    delivered at all. Now the warning comes back as work, exactly as a failing
+    `checkMesh` does, and the run does not end until it is fixed or waived.
+    """
+    from test_buildup_gate import Declare
+
+    made = declaring(backend, store, [Declare({"outcome": "complete"})], monkeypatch,
+                     PASSES_BUT_OPEN)
+    result = made.run("a duct")
+
+    assert not result.ok, "an unresolved warning is not a finish, however many declares"
+    assert len(made._declares) >= 3, "it kept coming back rather than letting one through"
+    assert {d["states"][0]["state"] for d in made._declares} == {"warned"}
+    assert {d["states"][0]["check"] for d in made._declares} == {"closure"}
+    # And the desk was told what it actually measures, which is the misconception that
+    # went three-for-three in the first sweep that had this gate at all.
+    everything = "\n".join(said(made.provider, i)
+                           for i in range(len(made.provider.calls)))
+    assert "welds every STL" in everything
+    assert "open by construction" in everything
+
+
+def test_waiving_it_is_what_gets_the_shipped_desk_past_it(backend, store, monkeypatch):
+    """A zero-thickness baffle is open by construction, and that is a correct geometry.
+
+    Under the old arrangement this run could not finish by any route. The waiver is what
+    makes the advisory half advisory; without it the gate is just the old hard failure
+    with more words.
+    """
+    from test_buildup_gate import Declare
+
+    made = declaring(backend, store, [
+        Declare({"outcome": "complete"}),
+        Declare({"outcome": "complete",
+                 "waive": [{"check": "closure", "because": "baffle, open by design"}]}),
+    ], monkeypatch, PASSES_BUT_OPEN)
+    result = made.run("a duct")
+
+    assert result.ok
+    assert [d["states"][0]["state"] for d in made._declares] == ["warned", "waived"], (
+        "named after it fired, so it is a reaction and recorded as one")
+
+
+def test_predicting_it_finishes_in_one_call(backend, store, monkeypatch):
+    """Said before the result is in hand, so it is falsifiable and it is recorded apart."""
+    from test_buildup_gate import Declare
+
+    made = declaring(backend, store, [
+        Declare({"outcome": "complete",
+                 "waive": [{"check": "union_closure", "because": "baffle, open by design"}]}),
+    ], monkeypatch, PASSES_BUT_OPEN)
+    result = made.run("a duct")
+
+    assert result.ok
+    # One call, and `union_closure` -- the core desk's name for it -- formed the call.
+    assert [d["states"][0]["state"] for d in made._declares] == ["xfail"]
+
+
+def test_a_failing_checkmesh_still_binds_with_the_gates_in_place(backend, store, monkeypatch):
+    """The binding half, so "advisory" cannot quietly grow to mean everything."""
+    from test_buildup_gate import Declare
+
+    made = declaring(backend, store, [Declare({"outcome": "complete"})], monkeypatch,
+                     REFUSES)
+    assert not made.run("a duct").ok
+    assert [d["checkmesh_ok"] for d in made._declares][:1] == [False]

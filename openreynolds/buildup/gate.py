@@ -28,18 +28,21 @@ findings. It also makes blanket-waiving self-punishing: name all six and five co
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-CLEAN = "clean"
-WARNED = "warned"
-XFAIL = "xfail"
-WAIVED = "waived"
-XPASS = "xpass"
-NOT_RUN = "n/a"
+from ..cad.gate import (CLEAN, NOT_RUN, STATES, WAIVED, WARNED, XFAIL, XPASS,
+                        Declaration, GateState, render, scrub)
 
-STATES = (CLEAN, WARNED, XFAIL, WAIVED, XPASS, NOT_RUN)
+__all__ = ["CLEAN", "WARNED", "XFAIL", "WAIVED", "XPASS", "NOT_RUN", "STATES",
+           "WAIVABLE", "GateState", "Declaration", "concern_of", "evaluate",
+           "render", "scrub"]
+
+# The labelling, the states, the prose and the scrub are one protocol and they moved to
+# `cad/gate.py` when the shipped desk started using them too. What stays here is the only
+# half that differs: where the advisory numbers come from. This desk reads
+# `buildup/probes.py` against a local case directory; the shipped desk reads the findings
+# `check.py` already gathered over the backend, because a shipped session's case is on a
+# volume and `Path(case_dir)` does not resolve on the machine holding the conversation.
 
 WAIVABLE = ("union_closure", "normals", "self_intersection",
             "location_in_mesh", "coverage", "scale")
@@ -47,43 +50,6 @@ WAIVABLE = ("union_closure", "normals", "self_intersection",
 
 `checkmesh` is deliberately absent. It is binding, so it is not waivable, and saying so in
 the schema is better than rejecting it in the handler: the desk cannot form the call."""
-
-
-@dataclass
-class GateState:
-    """One check, after the waivers have been read against it."""
-
-    check: str
-    state: str
-    concern: str = ""
-    """The one line the probe gives when it has something to say; empty when it does not."""
-    because: str = ""
-    """The desk's reason, when it named this check."""
-
-    def as_dict(self) -> dict[str, Any]:
-        return {"check": self.check, "state": self.state,
-                "concern": self.concern, "because": self.because}
-
-
-@dataclass
-class Declaration:
-    """One `declare_complete` call and what the gates made of it."""
-
-    outcome: str = "complete"
-    reason: str = ""
-    states: list[GateState] = field(default_factory=list)
-    checkmesh_ok: bool = False
-
-    def as_dict(self) -> dict[str, Any]:
-        return {"outcome": self.outcome, "reason": self.reason,
-                "checkmesh_ok": self.checkmesh_ok,
-                "states": [s.as_dict() for s in self.states]}
-
-    def counts(self) -> dict[str, int]:
-        out: dict[str, int] = {}
-        for s in self.states:
-            out[s.state] = out.get(s.state, 0) + 1
-        return out
 
 
 def concern_of(probe: dict[str, Any]) -> str:
@@ -178,61 +144,3 @@ def evaluate(probes: Iterable[dict[str, Any]],
         else:
             out.append(GateState(pid, CLEAN))
     return out
-
-
-_HOUSE = re.compile(r"(/[^\s\"']*?)(?=/[^/\s\"']+/?(?:constant|system|0)\b|$)")
-
-
-def scrub(text: str, case_dir: str) -> str:
-    """Strip the absolute case path out of anything the desk is going to read.
-
-    **This is the one thing that voids a sweep if it is got wrong.** Probe prose names the
-    workspace by absolute path -- `no readable patch set under /home/.../work/T26-.../t26/
-    constant/triSurface` -- and until now that string only ever reached the record.
-    Showing it to the desk puts a house path into the conversation, where `scan_run` greps
-    the whole thread for exactly that, and every run of the sweep grades contaminated.
-    """
-    if not text:
-        return ""
-    out = text
-    if case_dir:
-        for form in (case_dir.rstrip("/") + "/", case_dir.rstrip("/")):
-            out = out.replace(form, "")
-    # Anything still absolute is reduced to its last two segments, which is enough to say
-    # which file is meant and not enough to say where this machine keeps it.
-    out = re.sub(r"/(?:[^\s/\"']+/){2,}([^\s/\"']+/[^\s/\"']+)", r"\1", out)
-    return out.strip()
-
-
-def render(states: Iterable[GateState], case_dir: str = "") -> str:
-    """What the desk is handed back. Empty when there is nothing to say."""
-    rows = [s for s in states if s.state in (WARNED, XFAIL, WAIVED, XPASS)]
-    if not rows:
-        return ""
-    lines = ["The gates ran. checkMesh is the binding one; these are the others:"]
-    for s in sorted(rows, key=lambda r: (r.state != WARNED, r.check)):
-        if s.state == WARNED:
-            lines.append(f"  [warned] {s.check}: {scrub(s.concern, case_dir)}")
-        elif s.state in (XFAIL, WAIVED):
-            word = "expected" if s.state == XFAIL else "waived after the fact"
-            lines.append(f"  [{word}] {s.check}: {scrub(s.concern, case_dir)}"
-                         f"  -- you said: {s.because}")
-        else:
-            lines.append(f"  [xpass] {s.check}: you expected this to flag and it did "
-                         f"not -- you said: {s.because}")
-    warned = [s.check for s in rows if s.state == WARNED]
-    if warned:
-        lines.append("")
-        lines.append("Fix these and declare again, or declare again naming them in "
-                     "`waive` with the reason each one is correct here. Until every "
-                     "warning is fixed or waived the declare is not accepted -- the same "
-                     "way a failing checkMesh is not accepted. A reason is what gets you "
-                     "past one; declaring again unchanged does not.")
-        if "union_closure" in warned:
-            lines.append("")
-            lines.append("On union_closure: it welds every STL in the directory into one "
-                         "surface and counts the free edges of that union. Individual "
-                         "patch files are open by construction and that is not what it "
-                         "measures, so 'each patch is a separate sheet' does not explain "
-                         "a non-zero count.")
-    return "\n".join(lines)
