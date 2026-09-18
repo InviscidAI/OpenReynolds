@@ -84,16 +84,32 @@ class Heartbeat:
 
     def beat(self, *, steps: int, turn: int | None = None, stop_reason: str = "",
              output_tokens: int = 0, fenced: bool = False, text_chars: int = 0,
-             thinking_chars: int = 0) -> Beat:
+             thinking_chars: int = 0, phase: str = "turn",
+             expect_s: float = 0.0) -> Beat:
         """One turn, on disk before this returns.
 
         `turn` is the loop's own index when the loop offers it, and this side's count
         otherwise -- the two agree while every turn beats exactly once, and the loop's is
-        the one worth believing if they ever stop agreeing."""
+        the one worth believing if they ever stop agreeing.
+
+        **`phase` and `expect_s` were `Beat` fields this would not accept**, from `0c1923f`
+        until 2026-09-18. `agent._beat` began sending them at `68b9e70`, the runner filters
+        its kwargs by `Beat.__annotations__` -- which they are in -- so every call raised
+        `TypeError: unexpected keyword argument 'phase'`, and `_beat` swallows what the
+        watcher raises because the watcher is not allowed to end a run.
+
+        So no run wrote a heartbeat at all, and the supervisor killed everything that took
+        longer than its 420 s staleness threshold as `wedged`. Eight of twenty-six in the
+        first sweep after it, and systematically the long ones: the harder the case, the
+        likelier it was killed for being slow rather than judged for being wrong. Nothing
+        said so, because a run with no beats and a run that has stopped look identical --
+        which is the thing the heartbeat exists to tell apart.
+        """
         self.turns += 1
         record = Beat(turn=int(turn if turn is not None else self.turns), steps=int(steps), stop_reason=stop_reason or "",
                       output_tokens=int(output_tokens), fenced=bool(fenced),
                       text_chars=int(text_chars), thinking_chars=int(thinking_chars),
+                      phase=str(phase or "turn"), expect_s=float(expect_s or 0.0),
                       at=time.time())
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(record)) + "\n")
