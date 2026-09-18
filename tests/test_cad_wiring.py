@@ -219,15 +219,21 @@ def test_a_five_megabyte_stl_under_constant_survives_the_mirror(backend, store):
 # -- the rebuild script the bundle will take ------------------------------------
 
 
-def test_the_check_reads_the_bundles_own_set_of_names(backend, store):
-    """One set, imported, not two that nearly agree.
+def test_the_script_we_leave_is_a_name_the_bundle_takes(backend, store):
+    """The risk the old import guarded, closed at the other end.
 
-    The permissive-set decision carries a known risk: a desk invents a name nobody
-    listed and the script silently does not travel. It is closed on the other side --
-    the finish check refuses a run whose rebuild script the bundle would not take --
-    and that only holds while the two are literally the same object.
+    It used to be: a desk invents a name nobody listed, and the rebuild script silently
+    does not travel with the case. The finish check closed it by refusing any run whose
+    script the bundle would not take -- which meant the two name sets had to be the same
+    object, and meant a desk could be failed for the harness's own omission, since
+    nothing ever wrote the file the brief said it would.
+
+    Now the harness writes it, under one name, and that name is the bundle's. There is no
+    set to agree on because the desk no longer chooses.
     """
-    assert cad_check.DEFINITION_NAMES is casebundle.DEFINITION_NAMES
+    assert cad_check.REPLAY_SCRIPT in casebundle.DEFINITION_NAMES
+    assert not hasattr(cad_check, "DEFINITION_NAMES"), (
+        "the check does not gate on the bundle's names any more")
 
 
 def test_the_harness_written_replay_script_lands_under_a_captured_name():

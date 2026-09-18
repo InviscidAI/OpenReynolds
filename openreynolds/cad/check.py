@@ -57,7 +57,6 @@ from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
 from openreynolds.backend.base import WORKSPACE_ROOT
-from openreynolds.casebundle import DEFINITION_DIRS, DEFINITION_NAMES
 
 from . import gate
 
@@ -420,6 +419,7 @@ def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
             composite["cad"].append(
                 _cad_entry(backend, case_dir, name, f"{toolbox}/{name}.py"))
         if script:
+            _leave_script(backend, case_dir, script)
             declare("replay", REPLAY_TIMEOUT_S)
             composite["replay"] = _replay(backend, case_dir, script, supplied)
     except _Unreachable as gone:
@@ -464,6 +464,35 @@ def _cad_entry(backend: Any, case_dir: str, name: str, script_path: str) -> dict
         return {"script": name, "unavailable": (outcome.output or "").strip()[-300:]}
     payload.setdefault("script", name)
     return payload
+
+
+def _leave_script(backend: Any, case_dir: str, script: str) -> None:
+    """Write the concatenated cell log into the case, as `build.py`.
+
+    **The brief has always said this happens** -- "your accepted cells are the script you
+    leave behind; they are concatenated into `build.py` in the case directory" -- and
+    until 2026-09-18 nothing did it. `_replay` wrote the concatenation to
+    `<case>/.replay/build.py`, a directory it deletes and recreates on every check, and
+    `mesh_look.build_files` reads only the case root. So the desk was told the harness
+    leaves the script and the harness did not.
+
+    There was a gate on top of that, failing any case without a rebuild script under a
+    name `casebundle` packs. It is gone: a check that fails a desk for the harness's own
+    omission is the floorplan refusal again, and the desk had no move against it -- the
+    cell log is append-only, so nothing it can do in a later cell rewrites the artifact
+    it was told already existed.
+
+    Writing the file is what the gate was reaching for, and it needs no gate. `build.py`
+    is in `casebundle.DEFINITION_NAMES`, so the bundle carries it; `build_files` finds it
+    at the case root, so the check reports it; and the sentence in the brief is true.
+
+    Failing to write it is not a verdict about the mesh. It is reported through the
+    replay, which is the claim that actually rests on this script.
+    """
+    try:
+        backend.put_file(f"{case_dir.rstrip('/')}/{REPLAY_SCRIPT}", script.encode("utf-8"))
+    except Exception:  # noqa: BLE001 - the replay below says whether it mattered
+        pass
 
 
 def _replay(backend: Any, case_dir: str, script: str,
@@ -909,7 +938,6 @@ def _cellzone_finding(entry: dict[str, Any], where: str) -> Finding:
 def _case_findings(check: Check, request: str, toolbox: str = TOOLBOX) -> list[Finding]:
     """What is true of the case as a whole rather than of one region's mesh."""
     findings: list[Finding] = []
-    findings.append(_build_finding(check.build))
     if check.render:
         findings.append(Finding(
             "render", "ok", f"a picture of the mesh is at {check.render}",
@@ -938,40 +966,28 @@ def _case_findings(check: Check, request: str, toolbox: str = TOOLBOX) -> list[F
     return findings
 
 
-def _build_finding(build: list[str]) -> Finding:
-    """A rebuild script that the case bundle will actually take away with it.
-
-    Checked against `casebundle.DEFINITION_NAMES` itself rather than against a second
-    list here, so a script under a name nobody captures fails the run loudly instead of
-    losing the artifact quietly.
-    """
-    if not build:
-        return Finding(
-            "build", "fail",
-            "there is no Allmesh (or build script) in the case, so nothing here can be "
-            "rebuilt or edited -- leave the script that made this mesh",
-            "a mesh that cannot be rebuilt cannot be changed, and a run's artifact is "
-            "the script rather than the polyMesh",
-            f"leave the script that built this mesh in the case under one of: "
-            f"{', '.join(sorted(DEFINITION_NAMES))}")
-    kept = [name for name in build if _captured(name)]
-    if not kept:
-        return Finding(
-            "build", "fail",
-            f"the case rebuilds with {', '.join(build)}, and the bundle captures none of "
-            "those names",
-            "a definition file under a name the bundle does not list is dropped when the "
-            "case is packed up, which loses the artifact quietly",
-            f"rename it to one of: {', '.join(sorted(DEFINITION_NAMES))}")
-    return Finding(
-        "build", "ok", "rebuilds with: " + ", ".join(kept),
-        "the bundle captures these, so the script leaves with the case")
-
-
-def _captured(name: str) -> bool:
-    """Whether `casebundle` would take this file as part of the case's definition."""
-    parts = name.replace("\\", "/").split("/")
-    return parts[-1] in DEFINITION_NAMES or any(part in DEFINITION_DIRS for part in parts[:-1])
+# `_build_finding` and `_captured` were here until 2026-09-18, and what they checked was
+# that the case carried a rebuild script under a name `casebundle` packs. Removed, and
+# the reason is not that the artifact does not matter -- it is that this check could not
+# see the artifact.
+#
+# **The brief tells the desk its accepted cells "are concatenated into `build.py` in the
+# case directory".** Nothing has ever written that file. `_replay` writes the
+# concatenation to `<case>/.replay/build.py`, a directory it `rm -rf`s and recreates on
+# every check, and `mesh_look.build_files` looks only at the case root. So the desk was
+# told the harness leaves the script, the harness does not, and a binding gate then failed
+# it for the harness's omission -- the same shape as the floorplan refusal, where the
+# record's reason was about our sandbox rather than about the geometry.
+#
+# It also passed for the wrong reason more often than it failed: `build_files` counts
+# `system/blockMeshDict` and `system/snappyHexMeshDict`, which are in the case whenever
+# either mesher was used, so the gate was satisfied by a dictionary rather than by
+# anything that rebuilds the geometry. A check that fails on the harness's omission and
+# passes on an unrelated file is not measuring what it names.
+#
+# What the artifact actually rests on is the replay: the concatenated log, run from empty,
+# producing the same geometry. `check.build` is still read off the case and still
+# reported, because "rebuilds with: Allmesh" is worth a reader's eye. It decides nothing.
 
 
 def _cad_findings(envelopes: list[Any]) -> list[Finding]:
