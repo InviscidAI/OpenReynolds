@@ -498,3 +498,53 @@ def test_a_predicted_warning_does_not_hold_the_finish(backend, store, monkeypatc
     assert result.ok
     assert len(made._declares) == 1, "a prediction finishes in one declare"
     assert made._declares[0]["states"][0]["state"] == gate.XFAIL
+
+
+def test_a_script_that_could_not_run_is_recorded_rather_than_dropped():
+    """`n/a` is not a pass, and an absent state is indistinguishable from a clean one.
+
+    Found on the first smoke run after this gate shipped. T1 is a `blockMesh` case with
+    no exported patch set, so `cad_audit.py` and `domain_probe.py` both reported
+    unavailable, and the declare recorded **zero states** -- which reads exactly like a
+    surface with nothing wrong with it.
+
+    The cause: `_cad_findings` names that finding for the script alone, `cad_audit` with
+    no check after it, and `is_advisory` matched only the dotted form. So the finding was
+    not advisory, and not binding either, and reached nothing.
+
+    "It could not be measured" and "it was measured and is fine" are the two answers this
+    layer exists to keep apart. `buildup/probes.py` records `skipped` distinctly for the
+    same reason.
+    """
+    from openreynolds.cad import gate as cadgate
+    from openreynolds.cad.check import _cad_findings
+
+    findings = _cad_findings([{"script": "cad_audit", "unavailable": "no patch set"},
+                              {"script": "domain_probe", "unavailable": "no patch set"}])
+    assert [f.check for f in findings] == ["cad_audit", "domain_probe"]
+    assert all(cadgate.is_advisory(f.check) for f in findings), (
+        "a script that could not run is advisory, or it reaches nothing at all")
+
+    states = cadgate.evaluate(findings, [])
+    assert [(s.check, s.state) for s in states] == [
+        ("cad_audit", cadgate.NOT_RUN), ("domain_probe", cadgate.NOT_RUN)]
+    # It is recorded and it does not hold the finish: `n/a` is not a warning.
+    assert not [s for s in states if s.state == cadgate.WARNED]
+    assert cadgate.render(states) == "", "n/a is not a finding and is not reported as one"
+
+
+def test_an_unavailable_script_is_not_mistaken_for_a_clean_surface():
+    """The pairing that makes the state worth recording: same gate, both answers."""
+    from openreynolds.cad import gate as cadgate
+    from openreynolds.cad.check import _cad_findings
+
+    absent = cadgate.evaluate(
+        _cad_findings([{"script": "cad_audit", "unavailable": "no patch set"}]), [])
+    clean = cadgate.evaluate(
+        _cad_findings([{"script": "cad_audit", "findings": [
+            {"check": "closure", "status": "ok", "measured": "0 open edges"}]}]), [])
+
+    assert absent[0].state == cadgate.NOT_RUN
+    assert clean[0].state == cadgate.CLEAN
+    assert absent[0].state != clean[0].state, (
+        "the whole point: not measured and measured-clean are different answers")

@@ -47,8 +47,10 @@ shipped broken:
 
 from __future__ import annotations
 
+import ast
 import json
 import math
+import pathlib
 import re
 import shlex
 import time
@@ -435,6 +437,57 @@ def _region_entry(output: str) -> dict[str, Any]:
     return entry
 
 
+GATE_DIR = ".gate"
+"""Where the advisory scripts are put to be run, and removed from again.
+
+Not `.toolbox`: that name is itself a house surface (`isolation.TOOLBOX_NAME`), and a
+desk that writes it has found us whether or not the directory exists."""
+
+TOOLBOX_SOURCE = pathlib.Path(__file__).resolve().parents[1] / "toolbox"
+"""Where they are read from, in this process. Never a path the desk is given."""
+
+GATE_ROOTS = ("cad_audit", "domain_probe")
+"""The two scripts that answer. What they need comes from `_closure`."""
+
+
+def _closure(*roots: str) -> tuple[str, ...]:
+    """Every toolbox module these reach, by walking their own imports.
+
+    Computed rather than listed, because a list is what broke this the first time. The
+    two scripts `sys.path.insert` their own directory and import siblings, and those
+    siblings import siblings: `cad_audit` -> `preflight` -> `cad_convert`, four deep and
+    nine files in total. Staging the four that were obvious got `ModuleNotFoundError` on
+    the fifth, and the gate reports that as "could not measure" -- honestly, and
+    uselessly, on every case.
+
+    So the set is read off the source. A new `import` in `preflight.py` travels with it
+    instead of silently emptying the gate, which is the whole failure mode this layer
+    keeps having.
+    """
+    local = {path.stem for path in TOOLBOX_SOURCE.glob("*.py")}
+    seen: set[str] = set()
+
+    def walk(name: str) -> None:
+        if name in seen or name not in local:
+            return
+        seen.add(name)
+        tree = ast.parse((TOOLBOX_SOURCE / f"{name}.py").read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    walk(alias.name)
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                walk(node.module or "")
+
+    for root in roots:
+        walk(root)
+    return tuple(sorted(f"{name}.py" for name in seen))
+
+
+GATE_SCRIPTS = _closure(*GATE_ROOTS)
+"""What travels to the workspace: the two that answer and everything they import."""
+
+
 def advisory_findings(backend: Any, case_dir: str,
                       toolbox: str = "") -> list[Finding]:
     """What `cad_audit.py` and `domain_probe.py` say about the exported surface.
@@ -451,7 +504,54 @@ def advisory_findings(backend: Any, case_dir: str,
     Never raises: a script that will not run is a `skipped` finding, which `gate.evaluate`
     records as `n/a` and is not a pass.
     """
-    toolbox = toolbox or toolbox_for(backend)
+    if toolbox:
+        return _ask_advisory(backend, case_dir, toolbox)
+    staged = f"{case_dir.rstrip('/')}/{GATE_DIR}"
+    try:
+        _stage_gate(backend, staged)
+    except Exception as exc:  # noqa: BLE001 - say it could not be measured, not that it passed
+        return _cad_findings([{"script": name, "unavailable": f"could not be staged: {exc}"}
+                              for name in ("cad_audit", "domain_probe")])
+    try:
+        return _ask_advisory(backend, case_dir, staged)
+    finally:
+        try:
+            backend.exec(f"rm -rf {shlex.quote(staged)}", cwd=case_dir, timeout_s=60)
+        except Exception:  # noqa: BLE001 - a leftover is not a verdict about the mesh
+            pass
+
+
+def _stage_gate(backend: Any, staged: str) -> None:
+    """Put the advisory scripts on the workspace, for as long as they are running.
+
+    **They are not there the rest of the time, and that is the point.** This desk is
+    measured on having no toolbox -- `isolation` asserts the workspace is clean before the
+    run and greps the record after it -- so the scripts cannot live there, and running
+    them from `toolbox_for(backend)` finds nothing, which is the bug this replaces: a case
+    with `inlet.stl`, `walls.stl` and a `patches.json` still came back "no patch set",
+    because `python3` could not open the file. The gate reported `n/a` on every case and
+    read exactly like a clean surface.
+
+    Staged rather than imported here, unlike `buildup/probes.py`, because that reads the
+    case with a local `Path` and a session's case is on a volume. Over the backend works
+    on both.
+
+    The window is the gate's own call, with the kernel idle -- the desk is not running a
+    cell while the harness is deciding whether its declare is accepted -- and the
+    directory is removed in a `finally`. `isolation.scan_run` reads the run record rather
+    than the workspace, and the desk is never handed a path into here: `gate.concern_of`
+    carries `measured` and `meaning`, which are prose about the geometry, and
+    `gate.render` scrubs what is left.
+    """
+    _ask(backend, f"mkdir -p {shlex.quote(staged)}", "", timeout_s=60)
+    for name in GATE_SCRIPTS:
+        source = TOOLBOX_SOURCE / name
+        if not source.is_file():
+            raise FileNotFoundError(f"{name} is not in {TOOLBOX_SOURCE}")
+        backend.put_file(f"{staged}/{name}", source.read_bytes())
+
+
+def _ask_advisory(backend: Any, case_dir: str, toolbox: str) -> list[Finding]:
     envelopes = []
     for name in ("cad_audit", "domain_probe"):
         try:

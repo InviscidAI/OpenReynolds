@@ -81,7 +81,21 @@ def is_advisory(check: str) -> bool:
     `domain_probe.location_in_mesh` are the forms that arrive here.
     """
     name = str(check or "")
-    return any(name.startswith(f"{script}.") for script in ADVISORY_SCRIPTS)
+    # The bare script name as well as its prefixed findings. When a script cannot run --
+    # no patch set exported yet, an import that failed on the workspace -- `_cad_findings`
+    # emits one `skipped` finding named for the script itself, with no check after it. On
+    # the dotted form alone that finding is not advisory, so it is not binding either, so
+    # it reaches nothing: the gate records no state and reads exactly like a clean
+    # surface. Found on the first smoke run after this gate shipped -- T1 is a `blockMesh`
+    # case with no patch set, so both scripts were unavailable and the declare recorded
+    # zero states.
+    #
+    # "It could not be measured" and "it was measured and is fine" are the two answers
+    # this whole layer exists to keep apart, which is why `buildup/probes.py` records
+    # `skipped` distinctly and why a corpus that keeps returning it is a corpus that is
+    # not exercising Layer B.
+    return name in ADVISORY_SCRIPTS or any(
+        name.startswith(f"{script}.") for script in ADVISORY_SCRIPTS)
 
 
 RENAMED = {"cad_audit.scale": "surface_scale"}
