@@ -78,18 +78,11 @@ SURFACE_REL = "constant/triSurface"
 MANIFEST_REL = f"{SURFACE_REL}/patches.json"
 RENDER_REL = "renders/mesh_look.png"
 JSON_REL = "renders/mesh_look.json"
-REPLAY_REL = ".replay"
-REPLAY_SCRIPT = "build.py"
-REPLAY_LOG_REL = "log.replay"
+BUILD_SCRIPT = "build.py"
+"""What the concatenated cell log is left in the case as."""
+
 TIMEOUT_S = 280
 """checkMesh on a few million cells is a minute; the render is seconds."""
-
-REPLAY_TIMEOUT_S = 900
-"""And how long the replay of the accepted log may take, for the watcher.
-
-Longer than a check because it is every accepted cell run again from empty --
-the geometry rebuilt, the patches re-exported -- and nobody is waiting on a
-turn while it happens."""
 
 RETRY_PAUSE_S = 10.0
 """How long to wait before asking the workspace a second time. A recycled container is
@@ -129,11 +122,6 @@ They **phrase** findings. A number past one of them goes into `measured` and int
 `meaning` so a reader sees it; it does not decide anything. `checkMesh`'s own verdict
 decides, because it already judged this mesh and a second judge only ever disagrees.
 """
-
-REPLAY_FINGERPRINT_TOL = 1e-6
-"""How close a replay's geometry has to be to the accepted one. Floating point, not
-engineering: the same script on the same inputs reproduces the same numbers."""
-
 
 class Finding(NamedTuple):
     """One check's answer. `toolbox/preflight.py:93`, re-hydrated.
@@ -382,15 +370,15 @@ def _cad_command(script_path: str) -> str:
 
 
 def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
-           script: str = "", supplied: Sequence[str] = (), mark: Any = None) -> Check:
+           script: str = "", mark: Any = None) -> Check:
     """Run the check on the workspace and read the verdict.
 
     A workspace that cannot answer at all is a failed check with the reason in it and
     `unreachable` set -- never a pass, never a verdict about the mesh, and never an
     exception into the middle of a tool call.
 
-    `supplied` is what the requester handed this run -- a STEP to prepare, a drawing to
-    work from. The replay sandbox is given those back; see `_stage_inputs`.
+    `script` is the concatenated cell log, left in the case as `build.py`. It is an
+    artifact, not a claim this checks: see `_leave_script`.
 
     `mark` declares the long turn-free stretches to whatever is watching from outside the
     run, with how long each may take. It arrived with `CoreDesk`, which is watched: a
@@ -409,7 +397,7 @@ def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
     try:
         regions = mesh_regions(backend, case_dir)
         composite: dict[str, Any] = {"regions": {}, "meshed": bool(regions),
-                                     "cad": [], "replay": {}}
+                                     "cad": []}
         for region in regions or [""]:
             declare("check", TIMEOUT_S)
             outcome = _ask(backend, _region_command(region, toolbox), case_dir)
@@ -420,8 +408,6 @@ def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
                 _cad_entry(backend, case_dir, name, f"{toolbox}/{name}.py"))
         if script:
             _leave_script(backend, case_dir, script)
-            declare("replay", REPLAY_TIMEOUT_S)
-            composite["replay"] = _replay(backend, case_dir, script, supplied)
     except _Unreachable as gone:
         return Check(
             ok=False, unreachable=True, error=str(gone), regions=[],
@@ -470,209 +456,42 @@ def _leave_script(backend: Any, case_dir: str, script: str) -> None:
     """Write the concatenated cell log into the case, as `build.py`.
 
     **The brief has always said this happens** -- "your accepted cells are the script you
-    leave behind; they are concatenated into `build.py` in the case directory" -- and
-    until 2026-09-18 nothing did it. `_replay` wrote the concatenation to
-    `<case>/.replay/build.py`, a directory it deletes and recreates on every check, and
-    `mesh_look.build_files` reads only the case root. So the desk was told the harness
-    leaves the script and the harness did not.
+    leave behind; they are concatenated into `build.py` in the case directory" -- and for
+    a long time nothing did it. Two gates stood on the claim instead, and both are gone:
+    one failed any case without a rebuild script under a name `casebundle` packs, the
+    other re-ran the concatenation from empty and compared the geometry.
 
-    There was a gate on top of that, failing any case without a rebuild script under a
-    name `casebundle` packs. It is gone: a check that fails a desk for the harness's own
-    omission is the floorplan refusal again, and the desk had no move against it -- the
-    cell log is append-only, so nothing it can do in a later cell rewrites the artifact
-    it was told already existed.
+    **The desk had no move against either.** The cell log is append-only -- `CellLog`
+    offers `propose`, `accept`, `cells`, `bound` and `script`, and nothing that edits or
+    drops a cell already in -- so a replay that breaks at cell 3 cannot be fixed by
+    writing cell 9. A gate whose failure has no answer is not work handed back; it is a
+    run that ends.
 
-    Writing the file is what the gate was reaching for, and it needs no gate. `build.py`
-    is in `casebundle.DEFINITION_NAMES`, so the bundle carries it; `build_files` finds it
-    at the case root, so the check reports it; and the sentence in the brief is true.
+    Nothing else in the product is held to it, either. The session agent works through
+    `bash`, and no one concatenates its commands and re-runs them to decide whether it
+    was really finished. The desk's cells are the same kind of thing.
 
-    Failing to write it is not a verdict about the mesh. It is reported through the
-    replay, which is the claim that actually rests on this script.
+    So the script is an artifact rather than a claim. `build.py` is in
+    `casebundle.DEFINITION_NAMES`, so the bundle carries it; `build_files` reads the case
+    root, so the check reports it; and the sentence in the brief is true. Whether it
+    re-runs is the reader's business, and `CellLog.accept` -- which refuses a cell
+    referencing a name no accepted cell binds -- is what keeps it worth reading.
+
+    Failing to write it is not a verdict about the mesh.
     """
     try:
-        backend.put_file(f"{case_dir.rstrip('/')}/{REPLAY_SCRIPT}", script.encode("utf-8"))
-    except Exception:  # noqa: BLE001 - the replay below says whether it mattered
+        backend.put_file(f"{case_dir.rstrip('/')}/{BUILD_SCRIPT}", script.encode("utf-8"))
+    except Exception:  # noqa: BLE001 - not a verdict about the mesh
         pass
-
-
-def _replay(backend: Any, case_dir: str, script: str,
-            supplied: Sequence[str] = ()) -> dict[str, Any]:
-    """Run the concatenated cell log as a script, from empty, and measure what it made.
-
-    A script, through `exec`, not through a kernel. The artifact's promise is that it is
-    runnable top to bottom by somebody who was not there; running it in the session that
-    already holds the bindings would test the convenience instead of the claim.
-
-    **From empty of what the build made, not of what the requester supplied.** Somebody
-    who was not there still has the file they sent, so the sandbox is given it back
-    before the script runs.
-    """
-    out: dict[str, Any] = {"ran": False, "script": script}
-    out["before"] = fingerprint(backend, case_dir)
-    replay_dir = f"{case_dir.rstrip('/')}/{REPLAY_REL}"
-    try:
-        _ask(backend, f"rm -rf {shlex.quote(replay_dir)} && mkdir -p {shlex.quote(replay_dir)}",
-             case_dir, timeout_s=60)
-        backend.put_file(f"{replay_dir}/{REPLAY_SCRIPT}", script.encode("utf-8"))
-        out["staged"] = _stage_inputs(backend, case_dir, replay_dir, supplied)
-    except Exception as exc:  # noqa: BLE001
-        out["error"] = str(exc)
-        return out
-    outcome = _ask(backend, f"python3 {REPLAY_SCRIPT} > ../{REPLAY_LOG_REL} 2>&1; code=$?; "
-                            f"cat ../{REPLAY_LOG_REL}; exit $code", replay_dir)
-    out["ran"] = True
-    out["exit_code"] = int(getattr(outcome, "exit_code", 0) or 0)
-    out["output"] = (outcome.output or "")[-4000:]
-    out["after"] = fingerprint(backend, replay_dir)
-    try:
-        backend.exec(f"rm -rf {shlex.quote(replay_dir)}", cwd=case_dir, timeout_s=60)
-    except Exception:  # noqa: BLE001 - the measurement is taken; tidying is not the check
-        pass
-    return out
-
-
-def _stage_inputs(backend: Any, case_dir: str, replay_dir: str,
-                  supplied: Sequence[str]) -> list[str]:
-    """Copy the files the requester supplied into the replay sandbox.
-
-    A build that starts from a file somebody sent opens that file in its first cell, by
-    the path it was given -- `floorplan.png`, relative to the case directory. The sandbox
-    is a fresh directory beneath the case, so that open fails, the replay exits non-zero,
-    and the desk is told its build script does not re-run from empty. It does; what is
-    missing is not something the script was ever supposed to produce.
-
-    That is not a hypothetical. A run that traced a floorplan drawing, meshed it and
-    passed `checkMesh` declined to declare done for exactly this reason, and said so:
-    "the first accepted cell reads the supplied relative PNG before any later cell can
-    embed/recreate it, while the replay sandbox copies neither the original PNG nor
-    auxiliary bootstrap files". The desk was right and the gate was wrong.
-
-    So an **input** is staged and an **output** is not. The distinction is the whole
-    check: the replay still proves the script rebuilds the geometry from nothing but the
-    request's own materials, and `fingerprint` still reads only `constant/triSurface`, so
-    a staged input cannot be mistaken for something the replay made.
-
-    A path under the case directory keeps its relative position -- `geometry/part.step`
-    stays `geometry/part.step` -- because that is the path the script will name. One from
-    outside is staged by its basename as well as being reachable where it already is.
-    Returns what was actually staged, for the finding to cite.
-    """
-    staged: list[str] = []
-    case = case_dir.rstrip("/")
-    for path in supplied:
-        source = str(path or "").strip()
-        if not source:
-            continue
-        rel = source[len(case) + 1:] if source.startswith(f"{case}/") else \
-            source.rsplit("/", 1)[-1]
-        if not rel or rel.startswith(REPLAY_REL):
-            continue
-        target = f"{replay_dir.rstrip('/')}/{rel}"
-        parent = target.rsplit("/", 1)[0]
-        try:
-            outcome = backend.exec(
-                f"if [ -e {shlex.quote(source)} ]; then mkdir -p {shlex.quote(parent)} "
-                f"&& cp -R {shlex.quote(source)} {shlex.quote(target)} && echo staged; fi",
-                cwd=case_dir, timeout_s=120)
-        except Exception:  # noqa: BLE001 - a file that will not copy is not a verdict
-            continue
-        if "staged" in (outcome.output or ""):
-            staged.append(rel)
-    return staged
-
-
-_FINGERPRINT_SNIPPET = r"""
-import json, math, pathlib, struct, sys
-
-def read_stl(path):
-    raw = path.read_bytes()
-    head = raw[:512].lstrip()
-    tris = []
-    if head[:5] == b"solid" and b"facet" in raw[:2048]:
-        nums = []
-        for line in raw.decode("utf-8", "replace").splitlines():
-            bits = line.split()
-            if bits[:1] == ["vertex"]:
-                nums.append([float(v) for v in bits[1:4]])
-        for i in range(0, len(nums) - 2, 3):
-            tris.append(nums[i:i + 3])
-        return tris
-    if len(raw) < 84:
-        return tris
-    count = struct.unpack("<I", raw[80:84])[0]
-    for i in range(count):
-        at = 84 + i * 50
-        if at + 50 > len(raw):
-            break
-        v = struct.unpack("<12f", raw[at:at + 48])
-        tris.append([list(v[3:6]), list(v[6:9]), list(v[9:12])])
-    return tris
-
-directory = pathlib.Path(sys.argv[1])
-out = {"patches": {}, "volume_m3": 0.0, "bounds": [], "triangles": 0}
-lo = [float("inf")] * 3
-hi = [float("-inf")] * 3
-volume = 0.0
-for path in sorted(directory.glob("*.stl")):
-    tris = read_stl(path)
-    area = 0.0
-    for a, b, c in tris:
-        u = [b[i] - a[i] for i in range(3)]
-        w = [c[i] - a[i] for i in range(3)]
-        n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
-        area += 0.5 * math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
-        volume += (a[0] * n[0] + a[1] * n[1] + a[2] * n[2]) / 6.0
-        for p in (a, b, c):
-            for i in range(3):
-                lo[i] = min(lo[i], p[i])
-                hi[i] = max(hi[i], p[i])
-    out["patches"][path.stem] = {"triangles": len(tris), "area_m2": area}
-    out["triangles"] += len(tris)
-out["volume_m3"] = abs(volume)
-if out["triangles"]:
-    out["bounds"] = [round(v, 12) for v in lo + hi]
-print("@@FINGERPRINT@@" + json.dumps(out))
-"""
-"""Measured on the instance, over the backend, never here.
-
-Geometry does not execute in the loop's process -- not build123d, not OCC, not a
-triangle read out of an STL. This is the text of a script that runs where the files
-are; what comes back is numbers.
-"""
-
-
-def fingerprint(backend: Any, case_dir: str) -> dict:
-    """What the geometry in this directory *is*, as numbers.
-
-    Per-patch triangle count and area, the volume of the closed union, and the bounds.
-    Used only to compare an accepted run against its own replay: "the accepted
-    geometry" is what is on disk now, so nothing has to be recorded at accept time.
-
-    An empty dictionary means there was nothing to measure -- no exported patch set, or
-    a workspace that would not answer. That is not a verdict either.
-    """
-    directory = f"{case_dir.rstrip('/')}/{SURFACE_REL}"
-    cmd = f"python3 - {shlex.quote(directory)} <<'ORPRINT'\n{_FINGERPRINT_SNIPPET}ORPRINT\n"
-    try:
-        outcome = backend.exec(cmd, cwd=case_dir, timeout_s=TIMEOUT_S)
-    except Exception:  # noqa: BLE001 - an unmeasurable directory is not a failed mesh
-        return {}
-    text = outcome.output or ""
-    marked = text.rpartition("@@FINGERPRINT@@")[2]
-    payload = _json_in(marked) if marked else None
-    return payload or {}
-
-
-# -- what "done" means ---------------------------------------------------------
 
 
 def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "",
          request: str = "", toolbox: str = TOOLBOX) -> Check:
     """The answers `verify` gathered, turned into a verdict.
 
-    Takes either the composite `verify` builds -- `{"regions": {...}, "cad": [...],
-    "replay": {...}}` -- or a single `mesh_look.py --json` payload, which is the
-    one-region case written the short way. Split from `verify` so the rules can be
+    Takes either the composite `verify` builds -- `{"regions": {...}, "cad": [...]}` --
+    or a single `mesh_look.py --json` payload, which is the one-region case written the
+    short way. Split from `verify` so the rules can be
     tested without a workspace: this function is the whole of what "done" means.
     """
     composite = _as_composite(payload)
@@ -735,7 +554,6 @@ def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "",
             findings.insert(0, _nothing_meshed(case_rel))
     findings.extend(_case_findings(check, request, toolbox))
     findings.extend(_cad_findings(composite.get("cad") or []))
-    findings.extend(_replay_findings(composite.get("replay") or {}))
 
     check.findings = findings
     # **Advisory findings are reported and do not bind.** They used to: `ok` was
@@ -764,7 +582,7 @@ def _as_composite(payload: dict[str, Any]) -> dict[str, Any]:
         return composite
     return {"regions": {"": {"look": payload}},
             "meshed": bool(payload.get("polymesh")),
-            "cad": payload.get("cad") or [], "replay": payload.get("replay") or {}}
+            "cad": payload.get("cad") or []}
 
 
 def _nothing_meshed(case_rel: str) -> Finding:
@@ -966,28 +784,27 @@ def _case_findings(check: Check, request: str, toolbox: str = TOOLBOX) -> list[F
     return findings
 
 
-# `_build_finding` and `_captured` were here until 2026-09-18, and what they checked was
-# that the case carried a rebuild script under a name `casebundle` packs. Removed, and
-# the reason is not that the artifact does not matter -- it is that this check could not
-# see the artifact.
+# Two checks stood here and neither does now: `_build_finding`, which required a rebuild
+# script under a name `casebundle` packs, and `_replay_findings`, which re-ran the
+# concatenated cell log from empty and compared the geometry it produced.
 #
-# **The brief tells the desk its accepted cells "are concatenated into `build.py` in the
-# case directory".** Nothing has ever written that file. `_replay` writes the
-# concatenation to `<case>/.replay/build.py`, a directory it `rm -rf`s and recreates on
-# every check, and `mesh_look.build_files` looks only at the case root. So the desk was
-# told the harness leaves the script, the harness does not, and a binding gate then failed
-# it for the harness's omission -- the same shape as the floorplan refusal, where the
-# record's reason was about our sandbox rather than about the geometry.
+# **Both failed the desk for things it could not answer.** The brief tells the desk its
+# cells "are concatenated into `build.py` in the case directory" and nothing wrote that
+# file, so the first gate failed runs for the harness's omission. The second asked the
+# cell log to be a re-runnable script, and the log is append-only -- `CellLog` has no way
+# to edit or drop a cell that is already in -- so a replay that broke at cell 3 had no
+# repair available at cell 9. A gate whose failure has no answer ends the run instead of
+# handing work back.
 #
-# It also passed for the wrong reason more often than it failed: `build_files` counts
-# `system/blockMeshDict` and `system/snappyHexMeshDict`, which are in the case whenever
-# either mesher was used, so the gate was satisfied by a dictionary rather than by
-# anything that rebuilds the geometry. A check that fails on the harness's omission and
-# passes on an unrelated file is not measuring what it names.
+# The first also passed for the wrong reason more often than it failed: `build_files`
+# counts `system/blockMeshDict`, present whenever blockMesh ran and not a thing that
+# rebuilds the geometry.
 #
-# What the artifact actually rests on is the replay: the concatenated log, run from empty,
-# producing the same geometry. `check.build` is still read off the case and still
-# reported, because "rebuilds with: Allmesh" is worth a reader's eye. It decides nothing.
+# Nothing else in the product is held to this. The session agent works through `bash` and
+# nobody concatenates its commands to re-run them as proof it finished. What remains is
+# `_leave_script`, which writes the file the brief promised, and `CellLog.accept`, which
+# refuses a cell depending on a name no accepted cell binds -- the preventive half, at the
+# moment the desk can still act on it.
 
 
 def _cad_findings(envelopes: list[Any]) -> list[Finding]:
@@ -1014,148 +831,6 @@ def _cad_findings(envelopes: list[Any]) -> list[Finding]:
             finding = Finding.from_dict(raw)
             out.append(finding._replace(check=f"{name}.{finding.check}"))
     return out
-
-
-def _replay_findings(replay: dict[str, Any]) -> list[Finding]:
-    """The concatenated cell log, re-run from empty, and what it made when it did.
-
-    Two failures, and the second is the one worth having. A script that raises has
-    named its own problem. A script that runs clean and produces a *different shape* is
-    the one that looks finished: some step mutated a file in place, or depended on a
-    binding the log does not rebuild, and only the numbers say so.
-    """
-    if not replay:
-        return []
-    if replay.get("error"):
-        return [Finding(
-            "replay", "skipped",
-            f"the build script could not be replayed: {replay['error']}",
-            "nothing is known about whether the script runs from empty")]
-    if not replay.get("ran"):
-        return [Finding("replay", "skipped", "the build script was not replayed",
-                        "nothing is known about whether it runs from empty")]
-    # What the sandbox was given back before the script ran, named in every answer
-    # below. A replay that was handed an input is a weaker claim than one that was
-    # handed nothing, and a reader cannot tell the two apart unless it says so.
-    staged = [str(name) for name in (replay.get("staged") or [])]
-    given = f" (with {', '.join(staged)} supplied to it)" if staged else ""
-    exit_code = int(replay.get("exit_code") or 0)
-    if exit_code != 0:
-        return [Finding(
-            "replay", "fail",
-            f"the build script did not re-run from empty{given}: "
-            f"{_where_it_broke(replay)}",
-            "a cell that only runs in the session that wrote it depends on a binding "
-            "the log does not rebuild -- usually one defined in a cell that was never "
-            "accepted",
-            "make the failing cell define what it uses, or accept the cell that defines "
-            "it, and check the log runs from empty before saying done")]
-    before = replay.get("before") or {}
-    after = replay.get("after") or {}
-    if not before and not after:
-        return [Finding(
-            "replay", "ok",
-            f"the build script re-ran clean from empty{given} (exit 0)",
-            "there is no exported patch set to compare, so this is the script running "
-            "and not the geometry matching")]
-    differences = _fingerprint_differences(before, after)
-    if differences:
-        return [Finding(
-            "replay", "fail",
-            f"the build script re-ran clean from empty{given} and produced "
-            "different geometry: " + "; ".join(differences),
-            "the script exits 0 and is still not the artifact it claims to be: what is "
-            "on disk was made by a session that held state the script does not rebuild "
-            "-- a cell run twice, or one that edits a file in place",
-            "make every cell rebuild its own inputs rather than modifying what is "
-            "already there, then re-run the log from empty and compare")]
-    return [Finding(
-        "replay", "ok",
-        f"the build script re-ran clean from empty{given} and produced the same "
-        "geometry: " + _fingerprint_words(after),
-        "the concatenated cells are runnable top to bottom by somebody who was not "
-        "there, which is what makes the script the artifact")]
-
-
-def _where_it_broke(replay: dict[str, Any]) -> str:
-    """The error, and the cell it came out of.
-
-    The log is cells concatenated, so a line number is a cell number if the log says
-    where its cells begin; where it does not, the line and its text still name the
-    place better than a bare traceback does.
-    """
-    output = str(replay.get("output") or "")
-    script = str(replay.get("script") or "")
-    lines = script.splitlines()
-    error = ""
-    for line in reversed(output.strip().splitlines()):
-        if line.strip():
-            error = line.strip()
-            break
-    number = 0
-    for match in re.finditer(r'File "[^"]*", line (\d+)', output):
-        number = int(match.group(1))
-    if not number or number > len(lines):
-        return f"{error} (exit {replay.get('exit_code')})"
-    source = lines[number - 1].strip()
-    cell = ""
-    for earlier in lines[:number]:
-        match = re.match(r"#\s*-*\s*cell\s+(\S+)", earlier.strip(), re.I)
-        if match:
-            cell = match.group(1).rstrip("-").strip()
-    place = f"cell {cell}, " if cell else ""
-    return f"{error} -- {place}script line {number}: {source}"
-
-
-def _fingerprint_differences(before: dict, after: dict) -> list[str]:
-    """Where two fingerprints disagree, said with both numbers."""
-    out: list[str] = []
-    names_before = set((before.get("patches") or {}))
-    names_after = set((after.get("patches") or {}))
-    if names_before != names_after:
-        gone = ", ".join(sorted(names_before - names_after)) or "none"
-        extra = ", ".join(sorted(names_after - names_before)) or "none"
-        out.append(f"patches on disk but not in the replay: {gone}; "
-                   f"in the replay but not on disk: {extra}")
-    for name in sorted(names_before & names_after):
-        was = (before["patches"] or {})[name]
-        now = (after["patches"] or {})[name]
-        if int(was.get("triangles") or 0) != int(now.get("triangles") or 0):
-            out.append(f"{name}: {was.get('triangles')} triangles on disk, "
-                       f"{now.get('triangles')} from the replay")
-        if not _close(was.get("area_m2"), now.get("area_m2")):
-            out.append(f"{name}: area {float(was.get('area_m2') or 0):.6g} m2 on disk, "
-                       f"{float(now.get('area_m2') or 0):.6g} m2 from the replay")
-    if not _close(before.get("volume_m3"), after.get("volume_m3")):
-        out.append(f"union volume {float(before.get('volume_m3') or 0):.6g} m3 on disk, "
-                   f"{float(after.get('volume_m3') or 0):.6g} m3 from the replay")
-    box_before = [float(v) for v in (before.get("bounds") or [])]
-    box_after = [float(v) for v in (after.get("bounds") or [])]
-    if len(box_before) == len(box_after) == 6:
-        if any(not _close(a, b) for a, b in zip(box_before, box_after)):
-            out.append(f"bounds {_box_words(box_before)} on disk, {_box_words(box_after)} "
-                       "from the replay")
-    elif box_before != box_after:
-        out.append("the replay's bounds and the accepted bounds are not both measurable")
-    return out
-
-
-def _fingerprint_words(fingerprint_data: dict) -> str:
-    patches = fingerprint_data.get("patches") or {}
-    return (f"{len(patches)} patch(es), {int(fingerprint_data.get('triangles') or 0):,} "
-            f"triangles, union volume {float(fingerprint_data.get('volume_m3') or 0):.6g} m3")
-
-
-def _box_words(box: list[float]) -> str:
-    return "(" + " ".join(f"{v:.4g}" for v in box) + ")"
-
-
-def _close(a: Any, b: Any, tol: float = REPLAY_FINGERPRINT_TOL) -> bool:
-    try:
-        left, right = float(a or 0.0), float(b or 0.0)
-    except (TypeError, ValueError):
-        return a == b
-    return math.isclose(left, right, rel_tol=tol, abs_tol=tol * max(1.0, abs(left), abs(right)))
 
 
 def _render_paths(look: dict[str, Any], case_rel: str, case_dir: str) -> tuple[str, str]:

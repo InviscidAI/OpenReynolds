@@ -386,6 +386,20 @@ there — and the workaround that rule invites is embedding the input in a cell,
 build carries its own copy and stops reading the one the requester sent. The brief now
 says a supplied file is an input, that it is put back for the replay, and not to embed it.
 
+**Both mechanisms in this entry are gone, 2026-09-18.** The staging was the right repair
+for the gate, and the gate itself turned out to be the thing that should not have been
+there: the desk's cell log is append-only, so a replay that breaks at cell 3 has no repair
+available at cell 9, and a gate whose failure has no answer ends a run instead of handing
+work back. Nothing else in the product is held to it — the session agent works through
+`bash`, and nobody concatenates its commands and re-runs them as proof it finished.
+
+The entry stays because what it found is still true and still worth reading: a check that
+refuses on the harness's own omission reports a verdict about us and reads as a verdict
+about the work. That is what the floorplan run hit, and it is the same shape as the
+rebuild-script gate removed in the same commit. The concatenated log is still written into
+the case as `build.py` and still travels with it. It is an artifact now, and artifacts are
+not gates.
+
 ## The desk the corpus measures is not the desk a user can reach
 
 Found while trying to hand that same drawing over. There was no way to do it. The only

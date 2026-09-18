@@ -21,9 +21,9 @@ were measured defective and a fourth was wrongly accused, and `coverage` warned 
 20 correct partitions in `core+cad_export-20260917-022129-dd05` §3.1. A gate built on
 that blocks correct work. So:
 
-* **binding** -- `checkMesh`, that a mesh exists at all, the replay of the accepted cell
-  log, the rebuild script, and the render. These are either OpenFOAM's own verdict or a
-  claim about the artifact, and none of them has ever been wrong about a correct case.
+* **binding** -- `checkMesh`, that a mesh exists at all, the size the request named, and
+  the render. OpenFOAM's own verdict, and three facts about the case that are true or
+  not. None of them has ever been wrong about a correct case.
 * **advisory** -- everything `cad_audit.py` and `domain_probe.py` say. Reported to the
   desk, waivable with a reason, recorded either way, and never a silent pass: an
   unresolved warning bounces the declare exactly as a failing `checkMesh` does.
@@ -64,9 +64,13 @@ Named by script rather than by check so a new finding from either arrives adviso
 alternative -- a whitelist of check names -- makes the *absence* of a name mean binding,
 which is the wrong default for a script whose whole job is to have opinions."""
 
-BINDING = ("mesh", "look", "checkMesh", "replay", "build", "render", "scale")
+BINDING = ("mesh", "look", "checkMesh", "render", "scale", "patches", "patch_count")
 """Kept as prose rather than used as a test: `is_advisory` decides, and this is the list
-a reader wants when asking what survived the split."""
+a reader wants when asking what survived the split.
+
+`replay` and `build` were here until 2026-09-18 and are not checks any more -- see
+`check._leave_script` for why. The cell log is still the artifact; it is simply no longer
+something the desk can fail."""
 
 
 def is_advisory(check: str) -> bool:

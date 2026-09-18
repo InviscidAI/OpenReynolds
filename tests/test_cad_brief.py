@@ -166,7 +166,7 @@ def test_the_read_only_rule_is_absent_from_the_system_prompt():
     "Do not use builder mode",                             # the rejected surface
     "named constants",                                     # §3 cell authoring
     "depend on nothing that is not bound by a cell that was accepted",
-    "re-running the concatenation must give the same answer",
+    "re-derive rather than mutate",
     "Your reasoning is carried with the cell",
     "snappyHexMesh is the default; gmsh-OCC is the quick shape check",
     "Cheap checks before expensive operations.",

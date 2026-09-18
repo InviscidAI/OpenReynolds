@@ -397,10 +397,10 @@ class CadDesk:
         self.log = CellLog()
         self.case_dir = ""
         self._supplied: list[str] = []
-        """The files this run was handed, for the replay sandbox to be given back.
+        """The files this run was handed, named to it in the task message.
 
-        One geometry per `run`, set there, so a file from the last one is not staged
-        into this one's replay."""
+        One geometry per `run`, set there, so a file from the last one is not named in
+        this one's brief."""
         self._declares: list[dict[str, Any]] = []
         """Every `declare_complete` call this run made, and what the gates made of it."""
         self._warned: set[str] = set()
@@ -659,7 +659,7 @@ class CadDesk:
 
     def _verify(self, case_rel: str, request: str, script: str) -> Check:
         return verify(self.backend, self.case_dir, case_rel, request, script=script,
-                      supplied=self._supplied, mark=self._mark)
+                      mark=self._mark)
 
     def _mark(self, phase: str, expect_s: float, steps: int = -1) -> None:
         """Tell the watcher that a long, turn-free stretch is starting, and how long.
