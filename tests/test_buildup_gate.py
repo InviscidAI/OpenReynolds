@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from openreynolds.buildup import gate
+from openreynolds.cad.check import Check, Finding
 
 ROOT = Path(__file__).resolve().parent.parent
 T26 = (ROOT / "docs" / "cad-buildup" / "sweeps"
@@ -278,14 +279,44 @@ class DeclaringProvider:
                     stop_reason="tool_use", tokens={"input": 10, "output": 5})
 
 
-def _desk(backend, store, turns, checkmesh=MESH_OK):
-    from test_cad_agent import answers, kernelled
+def open_edges(n: int, triangles: int = 100) -> Finding:
+    """An advisory `closure` finding, in the shape `check.verify` delivers it.
+
+    Probe dicts until 2026-09-18, when `CoreDesk` stopped running `buildup/probes.py` at
+    its declare and started reading the findings `check.py` gathers off `cad_audit.py`
+    over the backend. Same measurement, same number, and reachable on a hosted workspace,
+    which the probe version was not: it read the case with a local `Path`.
+    """
+    return Finding("cad_audit.closure", "fail",
+                   f"{n:,} free edges in the union of 2 patch files "
+                   f"({triangles:,} triangles)",
+                   "the exported surface has a hole in it, so snappyHexMesh cannot "
+                   "tell inside from outside and castellation leaks out through it",
+                   "close the hole in the CAD, or export the face that is missing")
+
+
+def _desk(backend, store, turns, checkmesh=MESH_OK, monkeypatch=None, findings=()):
+    """A `CoreDesk` with a scripted model and a scripted finish verdict.
+
+    The verdict is installed rather than earned, because since 2026-09-18 `CoreDesk`
+    inherits `check.verify` -- `mesh_look.py`, `cad_audit.py`, `domain_probe.py` and the
+    replay, all over the backend -- and what these tests are about is the gate that runs
+    at the declare. `tests/test_cad_check.py` is where the check itself is the subject.
+    """
+    from test_cad_agent import answers, checking, kernelled
 
     from openreynolds.buildup import core
     from openreynolds.config import Config
 
     answers(backend, {"constant/*/polyMesh": ExecResult(0, "SINGLE:\n", False, None),
                       "checkMesh": ExecResult(0, checkmesh, False, None)})
+    if monkeypatch is not None:
+        passes = "Mesh OK." in checkmesh
+        checking(monkeypatch, Check(
+            ok=passes, cells=729, regions=[""], checkmesh=checkmesh.strip().splitlines()[-2],
+            missing=[] if passes else ["checkMesh does not pass"],
+            findings=[Finding("checkMesh", "pass" if passes else "fail",
+                              checkmesh.strip().splitlines()[-2]), *findings]))
     kernelled(backend)
     made = core.CoreDesk(Config(llm_api_key="k", model="claude-opus-5"), backend, store,
                          "/work/study")
@@ -293,8 +324,8 @@ def _desk(backend, store, turns, checkmesh=MESH_OK):
     return made
 
 
-def test_declaring_complete_finishes_the_run_and_records_the_declare(backend, store):
-    made = _desk(backend, store, ["x = 1", Declare({"outcome": "complete"})])
+def test_declaring_complete_finishes_the_run_and_records_the_declare(backend, store, monkeypatch):
+    made = _desk(backend, store, ["x = 1", Declare({"outcome": "complete"})], monkeypatch=monkeypatch)
     result = made.run("a duct")
     assert result.ok and result.check.checkmesh == "Mesh OK."
     assert len(made._declares) == 1
@@ -302,10 +333,10 @@ def test_declaring_complete_finishes_the_run_and_records_the_declare(backend, st
     assert made._declares[0]["outcome"] == "complete"
 
 
-def test_declaring_over_a_bad_mesh_hands_back_checkmesh_and_carries_on(backend, store):
+def test_declaring_over_a_bad_mesh_hands_back_checkmesh_and_carries_on(backend, store, monkeypatch):
     """`checkMesh` is the only thing that can hold the run open, and it still does."""
     bad = MESH_OK.replace("Mesh OK.", " ***High aspect ratio cells found.\nFailed 1 mesh checks.")
-    made = _desk(backend, store, [Declare({"outcome": "complete"})], checkmesh=bad)
+    made = _desk(backend, store, [Declare({"outcome": "complete"})], checkmesh=bad, monkeypatch=monkeypatch)
     result = made.run("a duct")
     assert not result.ok
     from test_cad_agent import said
@@ -336,18 +367,18 @@ def test_a_waiver_for_a_check_that_never_fires_records_as_xpass(backend, store):
     assert closure is None or closure["state"] in (gate.NOT_RUN, gate.XPASS)
 
 
-def test_the_declare_conversation_stays_clean_of_house_paths(backend, store):
+def test_the_declare_conversation_stays_clean_of_house_paths(backend, store, monkeypatch):
     """The gate text goes into the thread, and the thread is what `scan_run` greps."""
     from openreynolds.buildup import isolation
 
-    made = _desk(backend, store, ["x = 1", Declare({"outcome": "complete"})])
+    made = _desk(backend, store, ["x = 1", Declare({"outcome": "complete"})], monkeypatch=monkeypatch)
     made.run("a duct")
     thread = "\n".join(str(m) for m in made.provider.calls[-1]["messages"])
     found = isolation.scan({"thread": thread})
     assert not found.contaminated, found.lines()
 
 
-def test_a_declare_does_not_advance_the_step_count(backend, store):
+def test_a_declare_does_not_advance_the_step_count(backend, store, monkeypatch):
     """Which is what bounds a declare loop, and it is the existing alarm that does it.
 
     `no-progress` fires on `K = 3` consecutive turns with a flat executed-step count, and
@@ -358,7 +389,7 @@ def test_a_declare_does_not_advance_the_step_count(backend, store):
     decision written anywhere.
     """
     bad = MESH_OK.replace("Mesh OK.", " ***High aspect ratio cells found.\nFailed 1 mesh checks.")
-    made = _desk(backend, store, [Declare({"outcome": "complete"})], checkmesh=bad)
+    made = _desk(backend, store, [Declare({"outcome": "complete"})], checkmesh=bad, monkeypatch=monkeypatch)
     result = made.run("a duct")
     assert result.steps == [], "a declare runs no cell, so it advances no step"
     assert len(made._declares) >= 2, "and it was asked again rather than ended"
@@ -378,20 +409,16 @@ def test_a_passing_checkmesh_does_not_swallow_the_advisory(backend, store, monke
 
     So: a clean `checkMesh` with an unaddressed warning must not end the run.
     """
-    from openreynolds.buildup import core
-
-    warned = [{"id": "union_closure", "state": "measured",
-               "measured": {"open_edges": 4257, "triangles": 148365}}]
-    monkeypatch.setattr(core.probes, "run_all", lambda case, spec: [
-        core.probes.ProbeResult(w["id"], w["state"], "", w["measured"]) for w in warned])
-
-    made = _desk(backend, store, [Declare({"outcome": "complete"})])
+    made = _desk(backend, store, [Declare({"outcome": "complete"})],
+                 monkeypatch=monkeypatch, findings=[open_edges(4257, 148365)])
     result = made.run("a manifold")
 
     from test_cad_agent import said
     everything = "\n".join(said(made.provider, i) for i in range(len(made.provider.calls)))
     assert "4,257 free edges" in everything, "the desk was never shown the warning"
-    assert "does not close" in everything
+    # The number and what it means, because the number alone is what the desk already
+    # has: `concern_of` carries `Finding.meaning` alongside `measured`.
+    assert "hole in it" in everything
     assert len(made._declares) > 1, "the first declare did not end the run"
     assert not result.ok, "and a warning nobody fixed or waived is not a finish"
     assert result.stopped == "steps", (
@@ -411,12 +438,8 @@ def test_an_unresolved_warning_is_returned_exactly_as_a_failing_checkmesh_is(
     every model turn including declares, and the `no-progress` alarm fires at `K = 3`
     before that -- which is exactly what already bounds a desk that keeps declaring over
     a `checkMesh` it will not fix."""
-    from openreynolds.buildup import core
-
-    monkeypatch.setattr(core.probes, "run_all", lambda case, spec: [
-        core.probes.ProbeResult("union_closure", "measured", "",
-                                {"open_edges": 9, "triangles": 100})])
-    made = _desk(backend, store, [Declare({"outcome": "complete"})])
+    made = _desk(backend, store, [Declare({"outcome": "complete"})],
+                 monkeypatch=monkeypatch, findings=[open_edges(9)])
     result = made.run("a duct")
 
     assert not result.ok, "an unresolved warning is not a finish, however many declares"
@@ -426,15 +449,11 @@ def test_an_unresolved_warning_is_returned_exactly_as_a_failing_checkmesh_is(
 
 def test_waiving_a_returned_warning_is_what_gets_past_it(backend, store, monkeypatch):
     """And the waiver is load-bearing, which is the point of the rule above."""
-    from openreynolds.buildup import core
-
-    monkeypatch.setattr(core.probes, "run_all", lambda case, spec: [
-        core.probes.ProbeResult("union_closure", "measured", "",
-                                {"open_edges": 9, "triangles": 100})])
     made = _desk(backend, store, [
         Declare({"outcome": "complete"}),
         Declare({"outcome": "complete",
-                 "waive": [{"check": "union_closure", "because": "baffle, open by design"}]})])
+                 "waive": [{"check": "union_closure", "because": "baffle, open by design"}]})],
+        monkeypatch=monkeypatch, findings=[open_edges(9)])
     result = made.run("a duct")
 
     assert result.ok
@@ -451,10 +470,8 @@ def test_the_desk_is_told_what_union_closure_actually_measures(backend, store, m
     to the desk."""
     from openreynolds.buildup import core
 
-    monkeypatch.setattr(core.probes, "run_all", lambda case, spec: [
-        core.probes.ProbeResult("union_closure", "measured", "",
-                                {"open_edges": 9, "triangles": 100})])
-    made = _desk(backend, store, [Declare({"outcome": "complete"})])
+    made = _desk(backend, store, [Declare({"outcome": "complete"})],
+                 monkeypatch=monkeypatch, findings=[open_edges(9)])
     made.run("a duct")
 
     from test_cad_agent import said
@@ -470,14 +487,10 @@ def test_the_desk_is_told_what_union_closure_actually_measures(backend, store, m
 
 def test_a_predicted_warning_does_not_hold_the_finish(backend, store, monkeypatch):
     """An `xfail` is the desk saying it already knows. It should cost nothing."""
-    from openreynolds.buildup import core
-
-    monkeypatch.setattr(core.probes, "run_all", lambda case, spec: [
-        core.probes.ProbeResult("union_closure", "measured", "",
-                                {"open_edges": 9, "triangles": 100})])
     made = _desk(backend, store, [Declare({
         "outcome": "complete",
-        "waive": [{"check": "union_closure", "because": "zero-thickness baffle"}]})])
+        "waive": [{"check": "union_closure", "because": "zero-thickness baffle"}]})],
+        monkeypatch=monkeypatch, findings=[open_edges(9)])
     result = made.run("a duct")
     assert result.ok
     assert len(made._declares) == 1, "a prediction finishes in one declare"

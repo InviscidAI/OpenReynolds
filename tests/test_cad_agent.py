@@ -235,10 +235,11 @@ def checking(monkeypatch, *verdicts):
     """
     calls: list[dict] = []
 
-    def verify(backend, case_dir, case_rel, request="", script="", supplied=()):
+    def verify(backend, case_dir, case_rel, request="", script="", supplied=(),
+               mark=None):
         calls.append({"case_dir": case_dir, "case_rel": case_rel,
                       "request": request, "script": script,
-                      "supplied": list(supplied)})
+                      "supplied": list(supplied), "mark": mark})
         return verdicts[min(len(calls) - 1, len(verdicts) - 1)]
 
     monkeypatch.setattr("openreynolds.cad.agent.verify", verify)

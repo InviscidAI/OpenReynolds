@@ -1036,7 +1036,12 @@ def session(
             # few lines below, and the desk needs the same one. It is what lets a
             # person change the shape while it is being built instead of waiting out
             # the whole call and asking the main agent to start again.
-            ctx.cad = cad.CadDesk(
+            # `CoreDesk`, which is the desk the corpus measures: the same loop and the
+            # same finish check as `CadDesk`, briefed without an instrument catalogue and
+            # handed two reference files by name instead. That configuration is the one
+            # with evidence behind it -- three times the steps on eight of eight prompts
+            # for the catalogue version, p = 0.008, and no more meshes for the cost.
+            ctx.cad = cad.CoreDesk(
                 cfg, backend, store, store.session.home,
                 interject=lambda: loop.interject() if loop.interject else None,
                 on_step=lambda step: _cad_desk_step(view, tracker, step),

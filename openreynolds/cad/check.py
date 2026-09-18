@@ -85,6 +85,13 @@ REPLAY_LOG_REL = "log.replay"
 TIMEOUT_S = 280
 """checkMesh on a few million cells is a minute; the render is seconds."""
 
+REPLAY_TIMEOUT_S = 900
+"""And how long the replay of the accepted log may take, for the watcher.
+
+Longer than a check because it is every accepted cell run again from empty --
+the geometry rebuilt, the patches re-exported -- and nobody is waiting on a
+turn while it happens."""
+
 RETRY_PAUSE_S = 10.0
 """How long to wait before asking the workspace a second time. A recycled container is
 back in seconds and the Volume under it never went anywhere."""
@@ -376,7 +383,7 @@ def _cad_command(script_path: str) -> str:
 
 
 def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
-           script: str = "", supplied: Sequence[str] = ()) -> Check:
+           script: str = "", supplied: Sequence[str] = (), mark: Any = None) -> Check:
     """Run the check on the workspace and read the verdict.
 
     A workspace that cannot answer at all is a failed check with the reason in it and
@@ -385,19 +392,35 @@ def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
 
     `supplied` is what the requester handed this run -- a STEP to prepare, a drawing to
     work from. The replay sandbox is given those back; see `_stage_inputs`.
+
+    `mark` declares the long turn-free stretches to whatever is watching from outside the
+    run, with how long each may take. It arrived with `CoreDesk`, which is watched: a
+    check is minutes of silence, the watcher's staleness threshold is 420 s, and without
+    this it would kill a run for being checked -- twice over on a conjugate case, which is
+    two `checkMesh` runs. Per region rather than once up front, for that reason. A mark is
+    liveness and not progress: it does not advance the turn and does not count toward the
+    `no-progress` alarm.
     """
     toolbox = toolbox_for(backend)
+
+    def declare(phase: str, seconds: float) -> None:
+        if mark:
+            mark(phase, seconds)
+
     try:
         regions = mesh_regions(backend, case_dir)
         composite: dict[str, Any] = {"regions": {}, "meshed": bool(regions),
                                      "cad": [], "replay": {}}
         for region in regions or [""]:
+            declare("check", TIMEOUT_S)
             outcome = _ask(backend, _region_command(region, toolbox), case_dir)
             composite["regions"][region] = _region_entry(outcome.output or "")
         for name in ("cad_audit", "domain_probe"):
+            declare("gates", TIMEOUT_S)
             composite["cad"].append(
                 _cad_entry(backend, case_dir, name, f"{toolbox}/{name}.py"))
         if script:
+            declare("replay", REPLAY_TIMEOUT_S)
             composite["replay"] = _replay(backend, case_dir, script, supplied)
     except _Unreachable as gone:
         return Check(

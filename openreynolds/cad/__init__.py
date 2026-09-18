@@ -31,12 +31,15 @@ from .agent import (
 )
 from .brief import CAD_DONE, CAD_SYSTEM, remark_message, system_prompt, task_message
 from .cells import Cell, CellLog
+from .core import CORE_SYSTEM, CoreDesk
 from .check import Check, Finding, look_command, mesh_regions, read, verify
 
 __all__ = [
     "CAD_DONE",
     "CAD_SYSTEM",
+    "CORE_SYSTEM",
     "CadDesk",
+    "CoreDesk",
     "CadResult",
     "Cell",
     "CellLog",

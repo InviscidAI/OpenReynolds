@@ -182,7 +182,16 @@ def concern_of(finding: Any) -> str:
     status = str(getattr(finding, "status", "") or "")
     if status not in ("fail", "warn"):
         return ""
-    return str(getattr(finding, "measured", "") or "")
+    measured = str(getattr(finding, "measured", "") or "")
+    # The interpretation with the number, because the number alone is what the desk
+    # already has. `9 open edges in the union of 2 patch files` states a fact; `the
+    # exported surface has a hole in it, so snappyHexMesh cannot tell inside from
+    # outside` is why that fact ends the run, and it is the half a desk acts on. The
+    # probe version of this carried both in one sentence and reading only `measured`
+    # quietly dropped the second -- a test noticed, on the wording rather than on the
+    # number, which is the only way it could have.
+    meaning = str(getattr(finding, "meaning", "") or "")
+    return f"{measured} -- {meaning}" if meaning else measured
 
 
 def evaluate(findings: Iterable[Any], waivers: Iterable[dict[str, Any]],

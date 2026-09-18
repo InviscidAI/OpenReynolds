@@ -678,8 +678,32 @@ def test_the_harness_no_longer_constructs_the_old_desk():
     `mesher/` for its tests, the session does not build one."""
     cli = (PACKAGE / "cli.py").read_text(encoding="utf-8")
     assert "mesher.Mesher(" not in cli
-    assert "cad.CadDesk(" in cli
+    # `CoreDesk` since 2026-09-18, and it is a `CadDesk` -- the same loop, the same
+    # finish check, briefed without the instrument catalogue that cost three times the
+    # steps on eight of eight prompts. What ships is now the configuration the corpus
+    # measured, by identity rather than by our asserting the two are equivalent.
+    assert "cad.CoreDesk(" in cli
+    assert "cad.CadDesk(" not in cli
     assert "from . import cad," in cli
+
+
+def test_the_session_does_not_import_the_measurement_harness():
+    """Shipping the corpus's desk must not ship the corpus.
+
+    `buildup` is the observer: `probes` `sys.path`-imports four toolbox scripts into the
+    calling process at import time, and `isolation` and `supervise` exist only to watch a
+    run from outside it. None of that belongs in a user's session, which is why the desk
+    moved to `cad/core.py` rather than being constructed where it used to live.
+    """
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "import openreynolds.cli, sys; "
+         "print([m for m in sys.modules if 'buildup' in m])"],
+        capture_output=True, text=True, cwd=ROOT, check=True)
+    assert out.stdout.strip() == "[]", f"the session pulled in {out.stdout.strip()}"
 
 
 # -- the unit leak, cured in the other place it happens -------------------------
