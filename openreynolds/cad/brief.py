@@ -141,6 +141,10 @@ reproduce what you built. So a cell is correct only if it still works in sequenc
 (`PLATE_L_M = 0.120`), not as bare numbers at the point of use;
 - depend on nothing that is not bound by a cell that was accepted -- a name you tried out \
 in a cell that errored is still live in this kernel and will not exist on replay;
+- **a file you were handed is an input, not something you have to rebuild.** It is put \
+back beside `build.py` before the replay runs, at the path you were given, so open it the \
+way you already do. Do not embed a copy of it in a cell to survive the replay -- a build \
+that carries its own input is no longer reading the one the requester sent;
 - write no cell whose effect depends on having been run once already: re-running the \
 concatenation must give the same answer, so prefer `moved()` and `located()` over the \
 in-place `move()` and `locate()`, and re-derive rather than mutate;
@@ -305,7 +309,8 @@ def system_prompt(step_timeout_s: int, toolbox: str = TOOLBOX) -> str:
 
 
 def task_message(request: str, case_dir: str, case_rel: str,
-                 said: list[str] | None = None, geometry: str = "") -> str:
+                 said: list[str] | None = None, geometry: str = "",
+                 inputs: Sequence[str] = ()) -> str:
     """The message that starts the run: the job, the file, the directory, the words.
 
     The request is written by the agent that called this desk, which makes it a
@@ -317,6 +322,12 @@ def task_message(request: str, case_dir: str, case_rel: str,
 
     `geometry` is a CAD file the person supplied, checked for existence before the run
     started. Its presence is what makes this a prep job rather than an authoring one.
+
+    `inputs` is everything else they handed over -- a drawing to trace, a table of
+    coordinates, a spec sheet. The difference from `geometry` is what is being asked
+    for, not what the file is: one says "this is the part, prepare it", the other says
+    "here is something to work from". So this says nothing about what is in them and
+    nothing about how to open them. A file is a fact, and the desk has a kernel.
     """
     parts = [f"Build this geometry and mesh it:\n\n{request.strip()}"]
     if geometry:
@@ -325,6 +336,22 @@ def task_message(request: str, case_dir: str, case_rel: str,
             "decide anything about it -- how many solids it holds, what unit it "
             "declares, and whether OCCT thinks it is valid are facts about this file, "
             "not about files in general. Prepare it; do not redesign it."
+        )
+    if inputs:
+        named = "\n".join(f"  `{path}`" for path in inputs)
+        parts.append(
+            f"{'There are files' if len(inputs) > 1 else 'There is a file'} you were "
+            f"given, in the case directory or on the workspace:\n{named}\n"
+            f"Open {'them' if len(inputs) > 1 else 'it'} before you decide anything "
+            f"about {'them' if len(inputs) > 1 else 'it'} -- what is in "
+            f"{'each' if len(inputs) > 1 else 'it'} is a fact about this file, not "
+            "about files in general. You have a kernel, so read "
+            f"{'them' if len(inputs) > 1 else 'it'} whatever way suits: a drawing is "
+            "something to look at, a table is something to parse. "
+            f"{'They are' if len(inputs) > 1 else 'It is'} put back beside `build.py` "
+            f"when it is replayed at the finish, so open "
+            f"{'them' if len(inputs) > 1 else 'it'} by the path above rather than "
+            f"embedding a copy."
         )
     if said:
         quoted = "\n".join(f'  "{line}"' for line in said)

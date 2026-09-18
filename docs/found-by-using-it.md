@@ -339,3 +339,93 @@ cell log and every captured output for house filenames, the toolbox directory na
 the repo path. A run that touched one is contaminated and is discarded from the baseline
 rather than averaged in, and the contamination rate is reported: if it is not zero, the
 numbers are not measuring what they claim.
+
+## The finish gate refused a clean mesh for a file the build was never meant to write
+
+Handed the floorplan drawing itself — a PNG, and the words "mesh this, make reasonable
+assumptions" — the desk traced the walls out of the raster with OpenCV, extruded them,
+exported the patch set and meshed it. `checkMesh` said **Mesh OK**: 32,934 cells, three
+patches, 508 m³. Then it declined to declare done, and said why:
+
+> the first accepted cell reads the supplied relative PNG before any later cell can
+> embed/recreate it, while the replay sandbox copies neither the original PNG nor
+> auxiliary bootstrap files
+
+It was right. `check._replay` makes `<case>/.replay`, drops `build.py` in it and runs it
+there. Cell 1 opens `floorplan.png` relative to the case directory, the sandbox does not
+have it, `FileNotFoundError`, exit 1 — and the desk is told its build script does not
+re-run from empty. The script does re-run from empty. What is missing is not something
+it was ever supposed to produce.
+
+So the run records as a **refusal with a finished mesh sitting on disk**, and the reason
+in the record is about our sandbox rather than about the geometry. That is the same shape
+as T6 being scored as the corpus's sixth success: a verdict that reads as being about the
+work when it is about the harness.
+
+The gate was conflating two different meanings of "from empty". Empty of what the build
+*made* is the claim worth checking. Empty of what the requester *supplied* is not a claim
+about anything — somebody who was not there still has the file they were sent.
+
+**Fix:** the desk keeps the path it was handed (`CadDesk._supplied`, one geometry per
+`run`) and passes it to `verify`, which stages those files into the sandbox before the
+script runs, at the path the script will name — `geometry/part.step` stays
+`geometry/part.step`. An **input** is staged; an **output** is not, and `fingerprint`
+still reads only `constant/triSurface`, so a staged input cannot be counted as something
+the replay built. Every replay finding now names what it was given back, because a replay
+handed an input is a weaker claim than one handed nothing and a reader cannot otherwise
+tell.
+
+Proved on the run that failed: same script, same case, staged `floorplan.png` →
+exit 0, *3 patch(es), 173,752 triangles, union volume 508.712 m³*, identical to the
+accepted geometry. Unstaged, the same call still fails with the same `FileNotFoundError`,
+which is the test that keeps it honest.
+
+One line went into the brief with it. The desk had been told to "depend on nothing that is
+not bound by a cell that was accepted", which is why it believed the file could not be
+there — and the workaround that rule invites is embedding the input in a cell, so that the
+build carries its own copy and stops reading the one the requester sent. The brief now
+says a supplied file is an input, that it is put back for the replay, and not to embed it.
+
+## The desk the corpus measures is not the desk a user can reach
+
+Found while trying to hand that same drawing over. There was no way to do it. The only
+route into the CAD desk is the session agent's `cad` tool (`tools.py:934`), the agent
+writes the `request` itself, and its `geometry` parameter took `.step`, `.stp`, `.iges`
+and `.igs` only — so a floorplan could not be passed at all, and a person could not start
+the desk, name the case or re-run it. What they could do was influence it: `_said()`
+carries their typed lines verbatim and tells the desk those outrank the agent's
+paraphrase, and `_typed_while_working` puts anything typed mid-build into its thread.
+
+The sharper version of the problem is that **every measurement of this desk bypasses the
+only route a user has**. `cad_accept.py:561` constructs `CadDesk` and calls `run`.
+`cad_buildup.py` does the same through `CoreDesk`. The one-off that produced the floorplan
+mesh did the same. None of them go through `tools.py`, because the tool path cannot be
+driven by a person — which is how the "import it, don't redesign it" wording and the
+B-rep whitelist could both be wrong for a long time without appearing in any number.
+
+**Fix, in two halves.**
+
+*The channel.* `inputs` beside `geometry` on the tool, any file type, no suffix list. The
+distinction between them is **what is being asked for, not what the file is**: `geometry`
+says "this is the part, prepare it" — which a drawing cannot be, so the suffix list stays
+there — and `inputs` says "here is something to work from". `refuse_input` checks each one
+the same cheap way, every file reaches `_supplied`, and every file is therefore staged for
+the replay. `task_message` names them without saying what is in them or how to open them:
+a file is a fact, and the desk has a kernel.
+
+*The route.* `/mesh <request>`, answered in the terminal like `/status`, calling the same
+`CadDesk` the tool calls — one desk, two callers. The typed line is the request, word for
+word, with no paraphrase in front of it. Files are marked with `@`:
+
+    /mesh mesh the air inside @/work/uploads/plan.png, 2.7 m ceilings, ignore the garage
+
+The sigil is load-bearing rather than decorative. Extracting path-shaped tokens from prose
+cannot tell a handover from a mention — "build it like the duct in /work/old/duct.step"
+names a file nobody is asking to have opened — and the cost of guessing wrong is either
+refusing a clean build or staging a file the requester never sent. With `@` there is
+nothing to infer: it is stripped before the desk sees the line, so what arrives is an
+ordinary sentence naming an ordinary path. It is not a read: the harness stats the file
+and asks for one byte to prove the volume will hand bytes over, and the desk opens it
+itself. Inlining the contents would be worse than useless for a STEP — it invites reading
+geometry out of ISO-10303 entity lines, and the thing that should read that file is OCCT,
+on the workspace where the kernel is.
