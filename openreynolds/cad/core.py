@@ -36,7 +36,9 @@ from pathlib import Path
 from typing import Any
 
 from .agent import STEP_TIMEOUT_S, CadDesk
-from .check import Check, Finding, mesh_regions
+from . import gate
+from .check import (Check, Finding, _leave_script, advisory_findings,
+                    mesh_regions)
 
 CORE_SYSTEM = f"""\
 You are the CAD desk. You build one geometry -- authored from a description, or prepared \
@@ -523,19 +525,58 @@ class CoreDesk(CadDesk):
     def _nudge(self) -> str:
         return CORE_NUDGE
 
-    # `_verify`, `_tools` and `_declare` were overridden here until 2026-09-18 and are
-    # not any more, which is the port: this desk now finishes the way the shipped one
-    # does, because the shipped one's finish is the better of the two and there is no
-    # version of "ship this desk" that keeps the weaker one.
-    #
-    # What it gains: the render, the size the request asked for, and
-    # `cad_audit.py` / `domain_probe.py` read
-    # over the backend rather than off a local `Path`. That last one is not a nicety --
-    # `probes.run_all(Path(case_dir))` reads the case with plain local file access, so on
-    # a hosted backend every probe returned `n/a`, `gate.evaluate` labelled each one
-    # `NOT_RUN`, and only `WARNED` ever reached `unresolved`. The gate would have passed
-    # everything, silently, on the one backend a user actually gets.
-    #
-    # `verify` below is the bare gate this desk used through the 2026-09-17 sweeps. It is
-    # kept, and kept tested, because it is the other arm of the comparison the next sweep
-    # makes: the richer check is a change to measure, not a change to assume.
+    def _verify(self, case_rel: str, request: str, script: str) -> Check:
+        """`checkMesh` per region, and nothing else. The floor §1 set, and still it.
+
+        This desk was briefly given the whole of `check.verify` -- the render, the patch
+        naming, the request-scale reading, the rebuild script, the replay -- on the
+        argument that the shipped desk's finish was the better of the two. Two of those
+        five were then removed for failing the desk over things it had no move against,
+        and a third (`render`) turned out to fail this desk for an artifact its brief
+        never asks for, in words that name the toolbox it is briefed as not having.
+
+        Which is the argument for coming back here rather than auditing the rest one at a
+        time. **Additions arrive when a measured failure asks for them**, carrying that
+        failure and a test. None of those five arrived that way: they came across in a
+        port, as a set, without a sweep between them and the corpus.
+
+        `request` and `script` are the wider desk's inputs. The script is written into the
+        case as the artifact it is -- that is not a check and nothing fails on it.
+        """
+        _leave_script(self.backend, self.case_dir, script)
+        return verify(self.backend, self.case_dir, case_rel, mark=self._mark)
+
+    # -- the declared finish, and the advisory gates that run at it -------------
+
+    def _declare(self, payload: dict[str, Any], case_rel: str,
+                 request: str) -> tuple[Check, str, list[str]]:
+        """Bind on `checkMesh` alone, and report the surface findings.
+
+        The gate arrived with its own measured failure and is the one part of the port
+        that stays: `union_closure` read 259 free edges on T26, the record kept them, the
+        run scored `passed: true`, and nothing told the desk. It is advisory because four
+        of the six checks behind it have been wrong at least once, so a gate built on them
+        blocks correct work while a warning costs a waiver and a line in the record.
+
+        What changed in the port and is kept: the numbers come from `cad_audit.py` and
+        `domain_probe.py` run **over the backend** rather than from `buildup/probes.py`
+        read off a local `Path`. The probe version worked only where the case is a local
+        directory, so on a hosted workspace every state came back `n/a` and the gate
+        passed everything silently.
+        """
+        check = self._verify(case_rel, request, self.log.script())
+        try:
+            self._mark("gates", GATE_TIMEOUT_S)
+            states = gate.evaluate(
+                advisory_findings(self.backend, self.case_dir),
+                payload.get("waive") or (), self._warned)
+        except Exception as exc:  # noqa: BLE001 - an advisory check may not end a run
+            states = [gate.GateState("gates", gate.NOT_RUN,
+                                     f"{type(exc).__name__}: {exc}")]
+        self._declares.append(gate.Declaration(
+            outcome="complete", reason=str(payload.get("reason") or ""),
+            states=states, checkmesh_ok=bool(check.ok)).as_dict())
+        self._warned |= {s.check for s in states
+                         if s.state in (gate.WARNED, gate.XFAIL, gate.WAIVED)}
+        unresolved = [s.check for s in states if s.state == gate.WARNED]
+        return check, gate.render(states, self.case_dir), unresolved

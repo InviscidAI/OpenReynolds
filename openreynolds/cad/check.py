@@ -435,6 +435,32 @@ def _region_entry(output: str) -> dict[str, Any]:
     return entry
 
 
+def advisory_findings(backend: Any, case_dir: str,
+                      toolbox: str = "") -> list[Finding]:
+    """What `cad_audit.py` and `domain_probe.py` say about the exported surface.
+
+    Split out of `verify` so a desk can have the advisory gate without the rest of the
+    check. `CoreDesk` is that desk: its finish is `checkMesh` per region and nothing
+    else, and these are the numbers its declare gate reads.
+
+    Over the backend, which is the whole reason this exists rather than
+    `buildup/probes.py`. The probes read the case with a local `Path`, so on a hosted
+    workspace they find nothing, every gate state comes back `n/a`, and the gate passes
+    everything in silence. These scripts run where the triangles are.
+
+    Never raises: a script that will not run is a `skipped` finding, which `gate.evaluate`
+    records as `n/a` and is not a pass.
+    """
+    toolbox = toolbox or toolbox_for(backend)
+    envelopes = []
+    for name in ("cad_audit", "domain_probe"):
+        try:
+            envelopes.append(_cad_entry(backend, case_dir, name, f"{toolbox}/{name}.py"))
+        except Exception as exc:  # noqa: BLE001 - an advisory check may not end a run
+            envelopes.append({"script": name, "unavailable": str(exc)})
+    return _cad_findings(envelopes)
+
+
 def _cad_entry(backend: Any, case_dir: str, name: str, script_path: str) -> dict[str, Any]:
     """One toolbox audit's I2 envelope, or a note saying why there is none.
 

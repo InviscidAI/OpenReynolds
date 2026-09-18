@@ -36,22 +36,26 @@ instrument catalogue and no recipe folders: those are what the desk is *told*, a
 still the floor §1 set. Additions arrive one at a time, each carrying the measured failure
 that asked for it and a test that demonstrates that failure in its absence.
 
-What it is checked by grew on 2026-09-18 and the README said otherwise until then. It was
-`checkMesh` per region and nothing else, with the rebuild-script and render gates listed
-here as deliberately absent. It now runs the shipped finish check — `checkMesh` per region,
-the render, the size the request named, and `cad_audit.py` / `domain_probe.py` over the
-backend. (The rebuild-script and replay gates went with the same change: both failed the
-desk for things it had no move against, the cell log being append-only. The concatenated
-log is still written into the case as `build.py` and still travels with it — as an
-artifact, not a gate.) **`checkMesh` is still the sole authority on mesh *quality*** and nothing
-re-decides its verdict; what the others judge is the artifact and the exported surface,
-which are different questions. The surface findings are advisory: they come back to the
-desk at its declare and are waived with a reason rather than enforced, because three of the
-six were measured defective and a gate built on them blocks correct work.
+What it is checked by is `checkMesh` per region and nothing else, which is where §1 put
+it and where it is again. It widened for part of 2026-09-18 — a port gave this desk the
+whole of `check.verify`, the render and patch naming and request-scale and rebuild-script
+and replay gates with it — and then came back. Three of those five were removed on their
+own merits: the rebuild-script gate and the replay both failed the desk over things it had
+no move against (the cell log is append-only, so a replay breaking at cell 3 has no repair
+at cell 9), and `render` failed *this* desk for an artifact its brief never asks for, in
+words naming the toolbox it is briefed as not having — which `isolation.scan` grades as
+contamination, so the cost would have been a discarded run rather than a moved number.
 
-**That is one change and the next sweep measures it**, against `core-gpt-5.6-sol-…2a7f`
-and `core+cad_export-…dd05`, which were run through the bare gate. `core.verify` is kept
-and kept tested for exactly that comparison.
+The two that survive are candidates again, not facts. **None of the five arrived the way
+an addition is supposed to** — carrying the measured failure that asked for it and a test
+that shows that failure in its absence. They arrived as a set, in a port, with no sweep
+between them and the corpus.
+
+What did stay from the port is the declare gate's transport: the advisory numbers come
+from `cad_audit.py` and `domain_probe.py` run **over the backend** rather than from
+`buildup/probes.py` read off a local `Path`. That one is not a widening, it is the same
+measurement through a channel that works — the probe version found nothing on a hosted
+workspace, so every gate state came back `n/a` and the gate passed everything in silence.
 
 **It is the desk that ships, as of 2026-09-18.** `cli.py` constructs it, and it differs
 from `CadDesk` in three places: the brief, the nudge, and the absent toolbox. Everything
