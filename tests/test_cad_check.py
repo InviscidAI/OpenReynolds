@@ -32,6 +32,7 @@ import pytest
 
 from openreynolds.backend.base import ExecResult
 from openreynolds.backend.local import LocalBackend, find_bashrc
+from openreynolds.cad import gate
 from openreynolds.cad.check import (
     ASPECT_WARN, LOOK, NON_ORTHO_FAIL, NON_ORTHO_WARN, SCALE_SLACK, SKEWNESS_FAIL,
     SKEWNESS_WARN, Check, Finding, fingerprint, largest_length, look_command,
@@ -309,10 +310,25 @@ PROBE_FAIL = {
 }
 
 
-def test_a_cad_fail_is_a_fail_here_with_its_own_words():
+def test_a_cad_fail_is_advisory_here_and_keeps_its_own_words():
+    """It used to bind, and that was the defect.
+
+    `ok` was `worst_status(findings) != "fail"` over every finding, and `cad_audit`'s are
+    in that list, so an open surface failed the finish outright. A zero-thickness baffle
+    is open by construction, `domain_probe` calls a seed point outside the surface wrong
+    when external flow puts it there on purpose, and `coverage` warned on 19 of 20
+    correct partitions in `core+cad_export-20260917-022129-dd05`. There was no waiver on
+    this desk and re-declaring changed nothing, so a correct geometry could not be
+    delivered at all.
+
+    The words still arrive verbatim -- that half was always right, and `_cad_findings`
+    carries `measured`, `means` and `repair` through without recomputing a triangle.
+    What changed is that they reach the desk through `gate.evaluate` instead of through
+    the verdict.
+    """
     check = read(composite({"": {"look": facts(), "cellzones": []}},
                            cad=[AUDIT_FAIL, PROBE_FAIL]), "mesh")
-    assert not check.ok
+    assert check.ok, "an advisory finding does not decide the finish"
     closure = finding(check, "cad_audit.closure")
     point = finding(check, "domain_probe.location_in_mesh")
     assert closure.measured == AUDIT_FAIL["findings"][0]["measured"]
@@ -320,7 +336,34 @@ def test_a_cad_fail_is_a_fail_here_with_its_own_words():
     assert closure.meaning == AUDIT_FAIL["findings"][0]["means"]
     assert point.measured == PROBE_FAIL["findings"][0]["measured"]
     assert point.repair == PROBE_FAIL["findings"][0]["repair"]
-    assert closure.measured in check.missing and point.measured in check.missing
+    # Not in `missing`, which is the list the desk is handed as the reasons it is not
+    # done. An advisory warning is not one of those.
+    assert closure.measured not in check.missing
+    assert point.measured not in check.missing
+    # It is not dropped either: unwaived, each one bounces the declare.
+    states = gate.evaluate(check.findings, [])
+    warned = {s.check: s.concern for s in states if s.state == gate.WARNED}
+    assert warned["closure"] == AUDIT_FAIL["findings"][0]["measured"]
+    assert warned["location_in_mesh"] == PROBE_FAIL["findings"][0]["measured"]
+
+
+def test_a_binding_fail_still_decides_the_finish():
+    """The other half of the split, so "advisory" cannot quietly grow to mean everything.
+
+    `scale` is the case worth pinning: `cad_audit.scale` reads the union's extent and is
+    advisory, while `check.py`'s own `scale` compares the mesh bounds to the largest
+    dimension the request names and binds. The first draft of the split made both
+    advisory and a test caught it -- that check fires only past a factor of 100, where
+    nothing legitimate lives, so what it catches is millimetres-for-metres.
+    """
+    check = read(facts(bounds=[0, 0, 0, 74, 24, 1]), "mesh", "/work/s/mesh",
+                 "a passage 8 mm wide, two legs 60 mm long")
+    assert not check.ok
+    assert not gate.is_advisory("scale")
+    assert gate.is_advisory("cad_audit.scale")
+    # And nothing binding is offered to the desk as waivable.
+    for name in gate.BINDING:
+        assert name not in gate.WAIVABLE, name
 
 
 def test_an_ok_cad_finding_comes_through_and_does_not_block():

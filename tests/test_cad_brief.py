@@ -212,8 +212,12 @@ def test_the_finish_token_is_a_request_that_is_checked(brief):
     assert CAD_DONE == "CAD_DONE"
     flat = normalise(brief)
     assert f'print("{CAD_DONE}")' in flat
-    assert "The harness then runs its own check" in flat
+    assert "That call runs the checks" in flat
     assert ("it is not a formality and it does not take your word for anything") in flat
+    # The two kinds, because the desk that does not know which is which either rebuilds a
+    # correct mesh to satisfy an advisory check or waives one it cannot waive.
+    assert "**Binding**" in flat and "**Advisory**" in flat
+    assert "a warning you neither fix nor waive means the declare is not accepted" in flat.lower()
 
 
 def test_running_out_of_budget_still_gets_checked(brief):
@@ -262,7 +266,14 @@ def test_the_index_is_not_inlined_into_the_brief(brief, index):
     # cannot hide an index inside it any more than 14,000 could, and the assertions
     # below -- no index heading, no index entry, one mention of the filename -- are what
     # do the real work. What the ceiling stops is drift, so it stays close.
-    assert chars < 14_500, f"the brief has grown to {chars} chars (~{chars // 4} tokens)"
+    #
+    # 16,000 on 2026-09-18, for the declared finish and the advisory gates. Not drift:
+    # the section it replaced described a finish that no longer exists -- it said the
+    # surface closing and the seed point were binding, and they are advisory now -- so
+    # leaving it would have been worse than the length. A desk cannot waive a check it
+    # was never told it could waive, and it cannot call a tool nobody described. The
+    # refusal section was folded into the same protocol to pay for part of it.
+    assert chars < 16_000, f"the brief has grown to {chars} chars (~{chars // 4} tokens)"
     assert len(index) > chars, "the index is meant to be the bigger of the two"
     headings = [line for line in index.splitlines() if line.startswith("## ")]
     for heading in headings:
