@@ -452,6 +452,16 @@ class CadDesk:
             result.seconds = time.monotonic() - started
             return result
         try:
+            self._prepare(case_dir)
+        except Exception as exc:  # noqa: BLE001 - a brief naming a file nobody put there
+            # Before the kernel and before any model call, because that is the whole
+            # value of failing here: a desk briefed to read a file that is not on the
+            # workspace spends cells discovering it. The repo has that measured at seven
+            # of twenty-seven.
+            result.error = f"could not prepare the case directory: {exc}"
+            result.seconds = time.monotonic() - started
+            return result
+        try:
             self.backend.kernel_start(case_dir)
         except Exception as exc:  # noqa: BLE001 - no kernel is no desk
             result.error = f"no kernel on this workspace: {exc}"
@@ -649,7 +659,7 @@ class CadDesk:
 
     def _verify(self, case_rel: str, request: str, script: str) -> Check:
         return verify(self.backend, self.case_dir, case_rel, request, script=script,
-                      supplied=self._supplied)
+                      supplied=self._supplied, mark=self._mark)
 
     def _mark(self, phase: str, expect_s: float, steps: int = -1) -> None:
         """Tell the watcher that a long, turn-free stretch is starting, and how long.
@@ -786,6 +796,15 @@ class CadDesk:
                     raise
                 time.sleep(RETRY_PAUSE_S)
         raise AssertionError("unreachable")
+
+    def _prepare(self, case_dir: str) -> None:
+        """Put anything the brief names into the case directory, before the run starts.
+
+        A seam, and empty here: this desk's brief names the toolbox, which is already on
+        the workspace. `CoreDesk` has no toolbox and is handed two files by name instead,
+        so it has something to put there. Raising is how a desk says its brief describes
+        a workspace that does not exist, and the run ends before a model is called.
+        """
 
     def _tools(self) -> list[dict[str, Any]]:
         """The tools this desk is offered.

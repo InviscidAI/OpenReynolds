@@ -415,14 +415,12 @@ def test_the_desk_declares_the_finish_check_it_is_about_to_run(backend, store):
     """End to end through the loop: the marks reach the watcher, carrying how long the
     check may take, and they do not advance the turn."""
     from openreynolds.backend.base import ExecResult
-    from openreynolds.buildup import core
-    from test_buildup_core import MESH_OK, core_desk
-    from test_cad_agent import answers, block, kernelled
+    from test_buildup_core import checked, core_desk
+    from test_cad_agent import block, kernelled
+    from openreynolds.cad import check
     from openreynolds.cad.brief import CAD_DONE
 
-    answers(backend, {"constant/*/polyMesh": ExecResult(0, "REGION:air\nREGION:solid\n",
-                                                        False, None),
-                      "checkMesh": ExecResult(0, MESH_OK, False, None)})
+    checked(backend, regions="REGION:air\nREGION:solid\n")
     kernelled(backend)
     seen: list[dict] = []
     made = core_desk(backend, store, [block("x = 1"), block(f'print("{CAD_DONE}")')])
@@ -431,7 +429,9 @@ def test_the_desk_declares_the_finish_check_it_is_about_to_run(backend, store):
 
     marks = [row for row in seen if row.get("phase") == "check"]
     assert len(marks) == 2, "one per region, so a conjugate case refreshes its allowance"
-    assert marks[0]["expect_s"] == core.CHECKMESH_TIMEOUT_S
+    # `check.TIMEOUT_S`, which is what the call is actually given. Declaring the core
+    # desk's old 600 s here would tell the watcher to allow more than the check can take.
+    assert marks[0]["expect_s"] == check.TIMEOUT_S
     assert {row["turn"] for row in marks} == {2}, "a mark is liveness, not a turn"
 
 

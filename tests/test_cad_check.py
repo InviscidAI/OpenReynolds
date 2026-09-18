@@ -343,8 +343,12 @@ def test_a_cad_fail_is_advisory_here_and_keeps_its_own_words():
     # It is not dropped either: unwaived, each one bounces the declare.
     states = gate.evaluate(check.findings, [])
     warned = {s.check: s.concern for s in states if s.state == gate.WARNED}
-    assert warned["closure"] == AUDIT_FAIL["findings"][0]["measured"]
-    assert warned["location_in_mesh"] == PROBE_FAIL["findings"][0]["measured"]
+    # The evidence and the interpretation, which is what a desk needs to act: `measured`
+    # is the number it already has, `means` is why that number ends the run.
+    for row, warning in ((AUDIT_FAIL, warned["closure"]),
+                         (PROBE_FAIL, warned["location_in_mesh"])):
+        assert row["findings"][0]["measured"] in warning
+        assert row["findings"][0]["means"] in warning
 
 
 def test_a_binding_fail_still_decides_the_finish():

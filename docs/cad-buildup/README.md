@@ -31,17 +31,37 @@ quietly become the thing doing the measuring.
 
 ## The desk under test
 
-`openreynolds/buildup/core.py` — a kernel, a cell log, a brief, and `checkMesh` per
-region. No instrument catalogue, no recipe folders, no per-patch manifest, no rebuild or
-render gates. `checkMesh` is the sole authority on mesh quality and nothing re-decides its
-verdict. Additions arrive one at a time, each carrying the measured failure that asked for
-it and a test that demonstrates that failure in its absence.
+`openreynolds/cad/core.py` — a kernel, a cell log, a brief, and the finish check. No
+instrument catalogue and no recipe folders: those are what the desk is *told*, and that is
+still the floor §1 set. Additions arrive one at a time, each carrying the measured failure
+that asked for it and a test that demonstrates that failure in its absence.
 
-It is the same loop as the shipped desk (`openreynolds/cad/agent.py`), differing in
-exactly five seams: the brief, the nudge, what verifies the finish, **the tools it is
-offered** and **what happens when it declares itself complete**. The last two arrived on
-2026-09-13 with the declare gate below; before that there were three, and the shipped desk
-is still handed exactly what it was handed then.
+What it is checked by grew on 2026-09-18 and the README said otherwise until then. It was
+`checkMesh` per region and nothing else, with the rebuild-script and render gates listed
+here as deliberately absent. It now runs the shipped finish check — `checkMesh` per region,
+the render, the size the request named, the rebuild script the bundle will carry, the
+replay of the accepted cell log from empty, and `cad_audit.py` / `domain_probe.py` over the
+backend. **`checkMesh` is still the sole authority on mesh *quality*** and nothing
+re-decides its verdict; what the others judge is the artifact and the exported surface,
+which are different questions. The surface findings are advisory: they come back to the
+desk at its declare and are waived with a reason rather than enforced, because three of the
+six were measured defective and a gate built on them blocks correct work.
+
+**That is one change and the next sweep measures it**, against `core-gpt-5.6-sol-…2a7f`
+and `core+cad_export-…dd05`, which were run through the bare gate. `core.verify` is kept
+and kept tested for exactly that comparison.
+
+**It is the desk that ships, as of 2026-09-18.** `cli.py` constructs it, and it differs
+from `CadDesk` in three places: the brief, the nudge, and the absent toolbox. Everything
+else — the loop, the kernel, the cell log, the finish check and the advisory gates — is
+inherited rather than overridden, because a desk that overrides them is a second
+implementation of the thing being measured.
+
+It moved out of `buildup/` with that change. `buildup` is the observer — `probes` imports
+four toolbox scripts into the calling process, `isolation` and `supervise` exist only to
+watch a run from outside it — and a product whose entry point imports all of that to build
+its desk has put the harness on the user's machine. `buildup/core.py` re-exports it and a
+test pins that a session pulls in no `buildup` module at all.
 
 ## Where things are
 

@@ -9,6 +9,8 @@ whose toolbox path is empty so that nothing can render one.
 
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
 import pytest
@@ -40,6 +42,38 @@ Overall domain bounding box (0 0 0) (1 1 1)
 Failed 2 mesh checks.
 End
 """
+
+
+def looks_like(checkmesh=MESH_OK, **changes):
+    """A `mesh_look.py --json` payload, the way the check reads one off the workspace.
+
+    `CoreDesk` has run the full `check.verify` since 2026-09-18 -- `mesh_look.py`,
+    `cad_audit.py`, `domain_probe.py`, and the replay -- so a fake backend that answers
+    only `checkMesh` no longer describes a finished case. It answers all of them here,
+    because what these tests are about (the marks, the region walk) needs the real check
+    to run rather than a stubbed verdict.
+    """
+    payload = {"polymesh": True, "cells": 729, "faces": 2000, "points": 1000,
+               "bounds": [0, 0, 0, 1, 1, 1], "build": ["Allmesh"],
+               "patches": [{"name": "inlet", "type": "patch", "nFaces": 20},
+                           {"name": "walls", "type": "wall", "nFaces": 400}],
+               "checkmesh": checkmesh.strip().splitlines()[-2],
+               "checkmesh_ok": "Mesh OK." in checkmesh,
+               "render": "renders/mesh_look.png"}
+    payload.update(changes)
+    return f"@@CELLZONES@@[]\n@@JSON@@{json.dumps(payload)}"
+
+
+def checked(backend, checkmesh=MESH_OK, regions="SINGLE:\n"):
+    from test_cad_agent import answers
+
+    return answers(backend, {
+        "constant/*/polyMesh": ExecResult(0, regions, False, None),
+        "mesh_look.py": ExecResult(0, looks_like(checkmesh), False, None),
+        "cad_audit.py": ExecResult(0, '@@JSON@@{"findings": []}', False, None),
+        "domain_probe.py": ExecResult(0, '@@JSON@@{"findings": []}', False, None),
+        "checkMesh": ExecResult(0, checkmesh, False, None),
+    })
 
 
 def core_desk(backend, store, texts):
@@ -179,10 +213,7 @@ def test_a_workspace_that_will_not_answer_is_unreachable_and_not_a_verdict(backe
 
 
 def test_the_core_desk_finishes_on_checkmesh_and_on_nothing_else(backend, store):
-    from test_cad_agent import answers
-
-    answers(backend, {"constant/*/polyMesh": ExecResult(0, "SINGLE:\n", False, None),
-                      "checkMesh": ExecResult(0, MESH_OK, False, None)})
+    checked(backend)
     kernelled(backend)
     made = core_desk(backend, store, [block("x = 1"), block(f'print("{CAD_DONE}")')])
     result = made.run("a duct")
@@ -191,10 +222,7 @@ def test_the_core_desk_finishes_on_checkmesh_and_on_nothing_else(backend, store)
 
 
 def test_a_desk_that_says_done_over_a_refused_mesh_is_handed_the_refusal(backend, store):
-    from test_cad_agent import answers
-
-    answers(backend, {"constant/*/polyMesh": ExecResult(0, "SINGLE:\n", False, None),
-                      "checkMesh": ExecResult(0, MESH_BAD, False, None)})
+    checked(backend, MESH_BAD)
     kernelled(backend)
     made = core_desk(backend, store, [block(f'print("{CAD_DONE}")')])
     result = made.run("a duct")
