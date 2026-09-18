@@ -231,19 +231,20 @@ def test_the_script_we_leave_is_a_name_the_bundle_takes(backend, store):
     Now the harness writes it, under one name, and that name is the bundle's. There is no
     set to agree on because the desk no longer chooses.
     """
-    assert cad_check.REPLAY_SCRIPT in casebundle.DEFINITION_NAMES
+    assert cad_check.BUILD_SCRIPT in casebundle.DEFINITION_NAMES
     assert not hasattr(cad_check, "DEFINITION_NAMES"), (
         "the check does not gate on the bundle's names any more")
 
 
-def test_the_harness_written_replay_script_lands_under_a_captured_name():
+def test_the_harness_written_script_lands_under_a_captured_name():
     """The one filename the harness itself chooses, rather than the desk.
 
-    `check.py` writes the accepted cell log out as a script and runs it from empty.
-    If that name were not in the captured set, the check would refuse the very
-    artifact the harness had just written.
+    `check._leave_script` writes the accepted cell log into the case under this name. If
+    it were not in the captured set, the script the brief promises the desk would be
+    dropped when the case is packed -- which is the artifact, and the only thing left
+    standing on the cell log now that the replay is gone.
     """
-    assert cad_check.REPLAY_SCRIPT in casebundle.DEFINITION_NAMES
+    assert cad_check.BUILD_SCRIPT in casebundle.DEFINITION_NAMES
 
 
 @pytest.mark.parametrize("name", sorted(casebundle.DEFINITION_NAMES))

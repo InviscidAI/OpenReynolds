@@ -19,8 +19,8 @@ surfaces as they are created; metres, always; coarse first; say what you did not
 
 What is new is the kernel. The desk works in one persistent IPython kernel on the machine,
 one cell a step, and the accepted cells concatenated **are** the script it leaves behind.
-That makes cell authoring a correctness condition rather than a style: the concatenation
-has to run from empty, which is checked at the end. It also makes the step window
+That makes cell authoring a matter of leaving something readable rather than a style: the
+concatenation is what somebody who was not there reads. It also makes the step window
 different from a bash timeout -- the window expiring does not kill the cell and does not
 lose the session, but backgrounding work into a subprocess *does* lose the live binding,
 so an expensive stage checkpoints its B-rep to a STEP file that later cells load.
@@ -84,8 +84,8 @@ a shape is a variable you can measure, tessellate or draw at any later step rath
 file you have to reload. Shell commands are reachable from inside a cell -- \
 `subprocess.run(["blockMesh"], check=True)` -- so there is one channel, not two. Write \
 them that way and not as `!blockMesh`: the accepted cells are concatenated into \
-`build.py` and that file is re-run as `python3 build.py`, where a `!` line is a syntax \
-error. A cell carrying one runs here and is refused from the script.
+`build.py`, which is a Python file somebody may run, and a `!` line is a syntax error in \
+it. A cell carrying one runs here and is refused from the script.
 
 Whatever a cell draws or displays comes back to you attached: a matplotlib figure, a \
 displayed image, and any `.png` a command you ran wrote. That is how you see; it is the \
@@ -134,20 +134,21 @@ track. Do not use builder mode (`with BuildPart() ...`); the two do not mix well
 ambient state is the thing being avoided.
 
 **Your accepted cells are the script you leave behind.** They are concatenated into \
-`build.py` in the case directory, and at the end that file is run from empty and has to \
-reproduce what you built. So a cell is correct only if it still works in sequence:
+`build.py` in the case directory, and that file goes with the case. Write them so they \
+read in sequence:
 
 - put parameters in named constants at the top of the cell that first needs them \
 (`PLATE_L_M = 0.120`), not as bare numbers at the point of use;
 - depend on nothing that is not bound by a cell that was accepted -- a name you tried out \
-in a cell that errored is still live in this kernel and will not exist on replay;
-- **a file you were handed is an input, not something you have to rebuild.** It is put \
-back beside `build.py` before the replay runs, at the path you were given, so open it the \
-way you already do. Do not embed a copy of it in a cell to survive the replay -- a build \
-that carries its own input is no longer reading the one the requester sent;
-- write no cell whose effect depends on having been run once already: re-running the \
-concatenation must give the same answer, so prefer `moved()` and `located()` over the \
-in-place `move()` and `locate()`, and re-derive rather than mutate;
+in a cell that errored is still live in this kernel and is not in the script. A cell that \
+does is refused when you send it, which is the point at which you can still do something \
+about it;
+- **a file you were handed is an input, not something you have to rebuild.** Open it at \
+the path you were given. Do not embed a copy of it in a cell -- a build that carries its \
+own input is no longer reading the one the requester sent;
+- prefer `moved()` and `located()` over the in-place `move()` and `locate()`, and \
+re-derive rather than mutate: a cell whose effect depends on having been run once already \
+reads as something it is not;
 - say why in the prose above the block. Your reasoning is carried with the cell, not \
 discarded -- it is the only record of why this shape is this shape.
 
@@ -259,10 +260,9 @@ is the same boundary, said as an act rather than as a token.)
 That call runs the checks, and they come in two kinds.
 
 **Binding** -- the mesh present and named, a bare `checkMesh` clean per region, the size \
-the request asked for, the picture drawn, a rebuild script the bundle will carry, and \
-your cells re-run from empty reproducing the geometry. A declare over any of these \
-failing is handed the failure and you keep working; it is not a formality and \
-it does not take your word for anything.
+the request asked for, and the picture drawn. A declare over any of these failing is \
+handed the failure and you keep working; it is not a formality and it does not take your \
+word for anything.
 
 **Advisory** -- what `cad_audit.py` and `domain_probe.py` say about the exported surface. \
 Being right about your geometry is enough to get past these, but **a warning you neither \
@@ -363,10 +363,8 @@ def task_message(request: str, case_dir: str, case_rel: str,
             "about files in general. You have a kernel, so read "
             f"{'them' if len(inputs) > 1 else 'it'} whatever way suits: a drawing is "
             "something to look at, a table is something to parse. "
-            f"{'They are' if len(inputs) > 1 else 'It is'} put back beside `build.py` "
-            f"when it is replayed at the finish, so open "
-            f"{'them' if len(inputs) > 1 else 'it'} by the path above rather than "
-            f"embedding a copy."
+            f"Open {'them' if len(inputs) > 1 else 'it'} by the path above rather than "
+            f"embedding a copy in a cell."
         )
     if said:
         quoted = "\n".join(f'  "{line}"' for line in said)

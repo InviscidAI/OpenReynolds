@@ -39,9 +39,11 @@ that asked for it and a test that demonstrates that failure in its absence.
 What it is checked by grew on 2026-09-18 and the README said otherwise until then. It was
 `checkMesh` per region and nothing else, with the rebuild-script and render gates listed
 here as deliberately absent. It now runs the shipped finish check — `checkMesh` per region,
-the render, the size the request named, the rebuild script the bundle will carry, the
-replay of the accepted cell log from empty, and `cad_audit.py` / `domain_probe.py` over the
-backend. **`checkMesh` is still the sole authority on mesh *quality*** and nothing
+the render, the size the request named, and `cad_audit.py` / `domain_probe.py` over the
+backend. (The rebuild-script and replay gates went with the same change: both failed the
+desk for things it had no move against, the cell log being append-only. The concatenated
+log is still written into the case as `build.py` and still travels with it — as an
+artifact, not a gate.) **`checkMesh` is still the sole authority on mesh *quality*** and nothing
 re-decides its verdict; what the others judge is the artifact and the exported surface,
 which are different questions. The surface findings are advisory: they come back to the
 desk at its declare and are waived with a reason rather than enforced, because three of the

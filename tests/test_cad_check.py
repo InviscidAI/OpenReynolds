@@ -35,7 +35,7 @@ from openreynolds.backend.local import LocalBackend, find_bashrc
 from openreynolds.cad import gate
 from openreynolds.cad.check import (
     ASPECT_WARN, LOOK, NON_ORTHO_FAIL, NON_ORTHO_WARN, SCALE_SLACK, SKEWNESS_FAIL,
-    SKEWNESS_WARN, Check, Finding, fingerprint, largest_length, look_command,
+    SKEWNESS_WARN, Check, Finding, largest_length, look_command,
     mesh_regions, read, scale_mismatch, verify,
 )
 
@@ -117,7 +117,7 @@ def test_a_mesh_with_no_rebuild_script_listed_is_still_a_finish():
     """The gate that used to be here failed the desk for the harness's own omission.
 
     The brief says the accepted cells "are concatenated into `build.py` in the case
-    directory" and nothing wrote that file -- `_replay` put it under `.replay/`, which it
+    directory" and nothing wrote that file -- it went under `.replay/`, which the check
     deletes and recreates every check, and `build_files` reads only the case root. So a
     binding gate demanded an artifact the desk was told it already had, and the desk had
     no move: the cell log is append-only, and no later cell rewrites an earlier one.
@@ -127,7 +127,7 @@ def test_a_mesh_with_no_rebuild_script_listed_is_still_a_finish():
     that rebuilds the geometry.
 
     What replaced it is `_leave_script`, which writes the file the brief promised. The
-    claim that rests on it is the replay, and that is where a broken script is reported.
+    file is an artifact now: it travels with the case and decides nothing.
     """
     check = read(facts(build=[]), "mesh")
     assert check.ok, check.missing
@@ -249,7 +249,7 @@ def test_no_finding_is_prose(payload):
 
 
 def composite(regions, **extra):
-    payload = {"regions": regions, "meshed": True, "cad": [], "replay": {}}
+    payload = {"regions": regions, "meshed": True, "cad": []}
     payload.update(extra)
     return payload
 
@@ -286,10 +286,10 @@ def test_the_script_the_brief_promises_is_actually_left_in_the_case():
     `mesh_look.build_files` reads the case root, so the check reports it. Writing it is
     what the removed gate was reaching for and it needs no gate to happen.
     """
-    from openreynolds.cad.check import REPLAY_SCRIPT, _leave_script
+    from openreynolds.cad.check import BUILD_SCRIPT, _leave_script
     from openreynolds.casebundle import DEFINITION_NAMES
 
-    assert REPLAY_SCRIPT in DEFINITION_NAMES, "the bundle has to carry what we leave"
+    assert BUILD_SCRIPT in DEFINITION_NAMES, "the bundle has to carry what we leave"
 
     written: dict[str, bytes] = {}
 
@@ -300,8 +300,7 @@ def test_the_script_the_brief_promises_is_actually_left_in_the_case():
     _leave_script(Workspace(), "/work/s/mesh", "PLATE_L_M = 0.12\n")
     assert written == {"/work/s/mesh/build.py": b"PLATE_L_M = 0.12\n"}
 
-    # A workspace that will not take it is not a verdict about the mesh: the replay is
-    # where a script that is missing or broken gets reported.
+    # A workspace that will not take it is not a verdict about the mesh.
     class Refuses:
         def put_file(self, path, data):
             raise RuntimeError("read-only")
@@ -468,8 +467,8 @@ def test_the_check_computes_no_geometry_of_its_own():
             calls.append(cmd)
             return ExecResult(0, "", False, None)
 
-    assert fingerprint(Recording(), "/work/s/mesh") == {}
-    assert calls and "python3" in calls[0]
+    assert read(facts(), "mesh").ok
+    assert not calls, "nothing here opens a kernel of its own"
 
 
 # -- the size the request asked for --------------------------------------------
@@ -665,256 +664,19 @@ def test_a_finding_serialises_with_means_rather_than_meaning():
     assert Finding.from_dict(item.as_dict()) == item
 
 
-# -- the script replays, and makes the same thing ------------------------------
-
-
-BOX_WRITER = '''
-def write_box(path, side):
-    """An ASCII STL of a box at the origin, written without a CAD kernel."""
-    corners = [(0, 0, 0), (side, 0, 0), (side, side, 0), (0, side, 0),
-               (0, 0, side), (side, 0, side), (side, side, side), (0, side, side)]
-    quads = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
-             (2, 3, 7, 6), (0, 4, 7, 3), (1, 2, 6, 5)]
-    lines = ["solid box"]
-    for a, b, c, d in quads:
-        for tri in ((a, b, c), (a, c, d)):
-            lines.append(" facet normal 0 0 0")
-            lines.append("  outer loop")
-            for index in tri:
-                lines.append("   vertex %.9f %.9f %.9f" % corners[index])
-            lines.append("  endloop")
-            lines.append(" endfacet")
-    lines.append("endsolid box")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\\n".join(lines))
-'''
-
-CLEAN_SCRIPT = f'''# --- cell 1 ---
-import pathlib
-SIDE = 0.02
-{BOX_WRITER}
-# --- cell 2 ---
-write_box(pathlib.Path("constant/triSurface/walls.stl"), SIDE)
-'''
-
-BROKEN_SCRIPT = f'''# --- cell 1 ---
-import pathlib
-SIDE = 0.02
-{BOX_WRITER}
-# --- cell 2 ---
-write_box(pathlib.Path("constant/triSurface/walls.stl"), SIDE)
-# --- cell 3 ---
-write_box(pathlib.Path("constant/triSurface/inner.stl"), WALL_THICKNESS)
-'''
-
-MUTATE_CELL = '''import pathlib
-target = pathlib.Path("constant/triSurface/walls.stl")
-# Doubles what is already on disk rather than rebuilding it from SIDE. Run once from
-# empty it gives 2 x SIDE; a session that ran this cell twice leaves 4 x SIDE in the
-# case, and the log says nothing about having run it twice.
-out = []
-for line in target.read_text().splitlines():
-    bits = line.split()
-    if bits[:1] == ["vertex"]:
-        out.append("   vertex %.9f %.9f %.9f" % tuple(2 * float(v) for v in bits[1:4]))
-    else:
-        out.append(line)
-target.write_text("\\n".join(out))
-'''
-
-MUTATING_SCRIPT = f'''# --- cell 1 ---
-import pathlib
-SIDE = 0.02
-{BOX_WRITER}
-# --- cell 2 ---
-write_box(pathlib.Path("constant/triSurface/walls.stl"), SIDE)
-# --- cell 3 ---
-{MUTATE_CELL}'''
-
-
-@pytest.fixture
-def workspace(tmp_path):
-    root = tmp_path / "work"
-    root.mkdir()
-    backend = LocalBackend(root=root)
-    case = root / "s" / "mesh"
-    case.mkdir(parents=True)
-    return backend, str(case)
-
-
-def replay_finding(backend, case_dir, script, supplied=()):
-    check = verify(backend, case_dir, "mesh", script=script, supplied=supplied)
-    item = finding(check, "replay")
-    assert item is not None, [f.check for f in check.findings]
-    return item
-
-
-def test_a_clean_cell_log_replays_and_matches(workspace):
-    backend, case_dir = workspace
-    backend.exec(f"mkdir -p {case_dir} && cd {case_dir} && python3 -", cwd=case_dir)
-    backend.put_file(f"{case_dir}/build.py", CLEAN_SCRIPT.encode())
-    backend.exec("python3 build.py", cwd=case_dir)
-    item = replay_finding(backend, case_dir, CLEAN_SCRIPT)
-    assert item.status == "ok", item.measured
-    assert "same geometry" in item.measured and "walls" not in item.repair
-
-
-def test_a_cell_that_needs_a_rejected_cells_binding_fails_naming_the_cell(workspace):
-    backend, case_dir = workspace
-    backend.put_file(f"{case_dir}/build.py", BROKEN_SCRIPT.encode())
-    item = replay_finding(backend, case_dir, BROKEN_SCRIPT)
-    assert item.status == "fail"
-    assert "NameError" in item.measured and "WALL_THICKNESS" in item.measured
-    assert "cell 3" in item.measured
-    assert item.repair
-
-
-def test_a_log_that_replays_clean_and_makes_a_different_shape_fails_on_the_numbers(workspace):
-    """The one an exit-status check passes. The script runs top to bottom without
-    raising; what it produces is not what is on disk, because a cell mutated a file in
-    place and the session ran it twice."""
-    backend, case_dir = workspace
-    backend.put_file(f"{case_dir}/build.py", MUTATING_SCRIPT.encode())
-    backend.exec("python3 build.py", cwd=case_dir)
-    # The desk ran the mutating cell a second time in the session that was already open.
-    # The kernel held the result; the log holds one copy of the cell.
-    backend.put_file(f"{case_dir}/again.py", MUTATE_CELL.encode())
-    backend.exec("python3 again.py && rm again.py", cwd=case_dir)
-    before = fingerprint(backend, case_dir)
-    item = replay_finding(backend, case_dir, MUTATING_SCRIPT)
-    assert item.status == "fail", item.measured
-    assert "different geometry" in item.measured
-    assert "union volume" in item.measured or "area" in item.measured
-    assert "bounds" in item.measured
-    # Not the exit code: the script itself ran clean.
-    log = (Path(backend.workspace_root) / "s" / "mesh" / "log.replay").read_text()
-    assert "Traceback" not in log
-    assert before.get("volume_m3", 0) > 0
-
-
-def test_the_replay_runs_the_script_as_a_script_not_through_a_kernel(workspace):
-    backend, case_dir = workspace
-    backend.put_file(f"{case_dir}/build.py", CLEAN_SCRIPT.encode())
-    seen: list[str] = []
-    real_exec = backend.exec
-
-    def watched(cmd, cwd=None, timeout_s=120, *, background=False):
-        seen.append(cmd)
-        return real_exec(cmd, cwd=cwd, timeout_s=timeout_s, background=background)
-
-    backend.exec = watched  # type: ignore[method-assign]
-
-    def refuse(*args, **kwargs):  # pragma: no cover - the point is that it is not called
-        raise AssertionError("the replay must not go through a kernel")
-
-    backend.kernel_run = refuse  # type: ignore[attr-defined]
-    verify(backend, case_dir, "mesh", script=CLEAN_SCRIPT)
-    assert any(cmd.strip().startswith("python3 build.py") for cmd in seen), seen
-
-
-def test_a_run_with_no_script_makes_no_replay_claim(workspace):
-    backend, case_dir = workspace
-    check = verify(backend, case_dir, "mesh")
-    assert finding(check, "replay") is None
-
-
-# -- a build that starts from a file the requester supplied --------------------
-
-SUPPLIED_SCRIPT = f'''# --- cell 1 ---
-import pathlib
-SIDE = float(pathlib.Path("drawing.txt").read_text().split("=")[1])
-{BOX_WRITER}
-# --- cell 2 ---
-write_box(pathlib.Path("constant/triSurface/walls.stl"), SIDE)
-'''
-"""A build whose first cell reads the file the requester sent, by the relative path it
-was handed. The shape is a function of that file and of nothing else, which is the whole
-point: no later cell can embed it, because embedding it would be the desk inventing the
-input rather than reading it."""
-
-
-def build_from_supplied(backend, case_dir, name="drawing.txt"):
-    """Put the supplied file in the case and run the build against it, as a run would."""
-    backend.put_file(f"{case_dir}/{name}", b"side=0.02\n")
-    backend.put_file(f"{case_dir}/build.py", SUPPLIED_SCRIPT.encode())
-    backend.exec("python3 build.py", cwd=case_dir)
-
-
-def test_the_replay_is_given_back_the_file_the_requester_supplied(workspace):
-    backend, case_dir = workspace
-    build_from_supplied(backend, case_dir)
-    item = replay_finding(backend, case_dir, SUPPLIED_SCRIPT,
-                          supplied=[f"{case_dir}/drawing.txt"])
-    assert item.status == "ok", item
-    assert "drawing.txt" in item.measured, item.measured
-
-
-def test_without_staging_the_same_build_is_failed_for_the_gate_s_own_reason(workspace):
-    """The failure the staging closes, demonstrated in its absence.
-
-    This is the run that meshed a floorplan cleanly and then could not say done: the
-    replay's first line raises `FileNotFoundError` on a file the script was never meant
-    to write, and the desk is told its build does not re-run from empty.
-    """
-    backend, case_dir = workspace
-    build_from_supplied(backend, case_dir)
-    item = replay_finding(backend, case_dir, SUPPLIED_SCRIPT)
-    assert item.status == "fail", item
-    assert "drawing.txt" in item.measured or "FileNotFoundError" in item.measured, item
-
-
-def test_every_supplied_file_is_staged_not_only_the_first(workspace):
-    """A build can read more than one handed-over file -- a drawing and the table of
-    sizes beside it -- and a replay given only the first fails on the second."""
-    backend, case_dir = workspace
-    backend.put_file(f"{case_dir}/drawing.txt", b"side=0.02\n")
-    backend.exec("mkdir -p refs", cwd=case_dir)
-    backend.put_file(f"{case_dir}/refs/scale.txt", b"factor=1\n")
-    script = SUPPLIED_SCRIPT.replace(
-        'write_box(pathlib.Path("constant/triSurface/walls.stl"), SIDE)',
-        'FACTOR = float(pathlib.Path("refs/scale.txt").read_text().split("=")[1])\n'
-        'write_box(pathlib.Path("constant/triSurface/walls.stl"), SIDE * FACTOR)')
-    backend.put_file(f"{case_dir}/build.py", script.encode())
-    backend.exec("python3 build.py", cwd=case_dir)
-
-    both = replay_finding(backend, case_dir, script,
-                          supplied=[f"{case_dir}/drawing.txt",
-                                    f"{case_dir}/refs/scale.txt"])
-    assert both.status == "ok", both
-    assert "drawing.txt" in both.measured and "refs/scale.txt" in both.measured
-
-    only_one = replay_finding(backend, case_dir, script,
-                              supplied=[f"{case_dir}/drawing.txt"])
-    assert only_one.status == "fail", only_one
-    assert "scale.txt" in only_one.measured
-
-
-def test_a_supplied_file_under_the_case_keeps_the_path_the_script_names(workspace):
-    """`geometry/part.step` is opened as `geometry/part.step`, so it is staged there."""
-    backend, case_dir = workspace
-    backend.exec("mkdir -p geometry", cwd=case_dir)
-    script = SUPPLIED_SCRIPT.replace('"drawing.txt"', '"geometry/drawing.txt"')
-    backend.put_file(f"{case_dir}/geometry/drawing.txt", b"side=0.02\n")
-    backend.put_file(f"{case_dir}/build.py", script.encode())
-    backend.exec("python3 build.py", cwd=case_dir)
-    item = replay_finding(backend, case_dir, script,
-                          supplied=[f"{case_dir}/geometry/drawing.txt"])
-    assert item.status == "ok", item
-    assert "geometry/drawing.txt" in item.measured, item.measured
-
-
-def test_staging_an_input_cannot_pass_a_replay_that_makes_nothing(workspace):
-    """Staging is not a way through the gate: the geometry still has to be rebuilt.
-
-    The supplied file is handed back and the script no longer writes the patch set, so
-    the fingerprints disagree and the replay fails on the numbers -- exactly as it would
-    for a build with no supplied file at all."""
-    backend, case_dir = workspace
-    build_from_supplied(backend, case_dir)
-    idle = '# --- cell 1 ---\nimport pathlib\npathlib.Path("drawing.txt").read_text()\n'
-    item = replay_finding(backend, case_dir, idle,
-                          supplied=[f"{case_dir}/drawing.txt"])
-    assert item.status == "fail", item
+# The replay lived here: the concatenated cell log re-run from empty, its geometry
+# fingerprinted and compared against the accepted run's. Removed on 2026-09-18 with the
+# gate itself.
+#
+# The argument is in `check._leave_script`. The short of it: the cell log is
+# append-only, so a replay that broke at cell 3 had no repair available at cell 9, and a
+# gate whose failure has no answer ends a run instead of handing work back. Nothing else
+# in the product is held to it either -- the session agent works through `bash` and
+# nobody concatenates its commands to re-run them as proof it finished.
+#
+# What the staging half of it was for went with it. `CadDesk._supplied` still exists and
+# still names the requester's files in the task message; there is no sandbox to stage
+# them into any more.
 
 
 # -- real meshes ---------------------------------------------------------------

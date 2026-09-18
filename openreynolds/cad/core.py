@@ -62,7 +62,7 @@ a shape is a variable you can measure, tessellate or draw at any later step rath
 file you have to reload. Shell commands are reachable from inside a cell -- \
 `subprocess.run(["blockMesh"], check=True)` -- so there is one channel, not two. Write \
 them that way and not as `!blockMesh`: the accepted cells are concatenated into \
-`build.py` and that file is re-run as `python3 build.py`, where a `!` line is a syntax \
+`build.py`, which is a Python file somebody may run, and a `!` line is a syntax \
 error.
 
 Whatever a cell draws or displays comes back to you attached: a matplotlib figure, a \
@@ -119,11 +119,11 @@ the ones above it. Not builder mode (`with BuildPart() ...`): the two do not mix
 the ambient state is the thing being avoided.
 
 **Your accepted cells are the script you leave behind.** They are concatenated into \
-`build.py` in the case directory, and that file has to reproduce what you built when it is \
-run from empty. So a cell is correct only if it still works in sequence: parameters as \
-named constants at the top of the cell that first needs them; no dependence on a name that \
-no accepted cell binds (a name from a cell that errored is still live in this kernel and \
-will not exist on replay); nothing whose effect depends on having been run once already -- \
+`build.py` in the case directory, and that file goes with the case. Write them so they \
+read in sequence: parameters as named constants at the top of the cell that first needs \
+them; no dependence on a name that no accepted cell binds (a name from a cell that errored \
+is still live in this kernel and is not in the script, and a cell that depends on one is \
+refused when you send it); nothing whose effect depends on having been run once already -- \
 prefer `moved()` and `located()` over the in-place `move()` and `locate()`. Say why in the \
 prose above the block; your reasoning is carried with the cell.
 
@@ -528,9 +528,8 @@ class CoreDesk(CadDesk):
     # does, because the shipped one's finish is the better of the two and there is no
     # version of "ship this desk" that keeps the weaker one.
     #
-    # What it gains: the replay of the accepted cell log from empty (with any file the
-    # requester supplied staged back), the render, the size the request asked for, the
-    # rebuild script the bundle will carry, and `cad_audit.py` / `domain_probe.py` read
+    # What it gains: the render, the size the request asked for, and
+    # `cad_audit.py` / `domain_probe.py` read
     # over the backend rather than off a local `Path`. That last one is not a nicety --
     # `probes.run_all(Path(case_dir))` reads the case with plain local file access, so on
     # a hosted backend every probe returned `n/a`, `gate.evaluate` labelled each one

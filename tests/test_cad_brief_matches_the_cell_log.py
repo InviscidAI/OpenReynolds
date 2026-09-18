@@ -52,7 +52,11 @@ def test_the_brief_says_why_the_bang_is_refused():
     """Naming the mechanism, because a bare prohibition invites working around it."""
     text = _brief_text()
     assert "build.py" in text
-    assert "python3 build.py" in text
+    # The mechanism, not the old justification. The brief used to say the file "is re-run
+    # as `python3 build.py`", which was the replay -- gone on 2026-09-18. `build.py` is
+    # still a Python file that travels with the case, and `!` is still a syntax error in
+    # one, which is the reason that survives.
+    assert "syntax error" in text
 
 
 def test_the_shell_out_the_brief_recommends_is_one_the_log_accepts():
