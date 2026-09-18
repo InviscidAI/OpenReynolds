@@ -955,3 +955,99 @@ def test_the_look_payload_keys_are_the_same_with_and_without_a_region(tmp_path):
     assert set(plain) == set(region)
     assert PAYLOAD_KEYS <= set(plain) <= PAYLOAD_KEYS | {"failing", "error", "enclosure"}
     assert region["polymesh"] and [p["name"] for p in region["patches"]] == ["walls"]
+
+
+# -- the advisory scripts reach a workspace that has no toolbox ----------------
+
+
+def test_the_staged_closure_is_enough_to_import_both_scripts(tmp_path):
+    """The failure this computes its way out of, demonstrated by staging and importing.
+
+    `cad_audit.py` and `domain_probe.py` `sys.path.insert` their own directory and import
+    siblings, and those siblings import siblings: `cad_audit` -> `preflight` ->
+    `cad_convert`, nine files deep in total. Staging the four that were obvious got
+    `ModuleNotFoundError: No module named 'cad_convert'` on the fifth -- which the gate
+    reports as "could not measure", honestly and uselessly, on every case.
+
+    So the set is read off the source rather than listed, and this runs the import in a
+    directory holding nothing but that set.
+    """
+    import subprocess
+    import sys
+
+    from openreynolds.cad.check import GATE_SCRIPTS, TOOLBOX_SOURCE
+
+    staged = tmp_path / "gate"
+    staged.mkdir()
+    for name in GATE_SCRIPTS:
+        shutil.copyfile(TOOLBOX_SOURCE / name, staged / name)
+
+    for root in ("cad_audit", "domain_probe"):
+        out = subprocess.run(
+            [sys.executable, "-c", f"import {root}"], cwd=staged,
+            capture_output=True, text=True)
+        assert out.returncode == 0, f"{root} does not import from the staged set:\n{out.stderr}"
+
+
+def test_the_closure_is_computed_rather_than_listed():
+    """A list is what broke it: a new import in a sibling emptied the gate silently."""
+    from openreynolds.cad.check import GATE_ROOTS, GATE_SCRIPTS, _closure
+
+    assert set(GATE_SCRIPTS) == set(_closure(*GATE_ROOTS))
+    assert {"cad_audit.py", "domain_probe.py"} <= set(GATE_SCRIPTS)
+    # The transitive one, named because it is the one that was missed.
+    assert "cad_convert.py" in GATE_SCRIPTS
+
+
+def test_the_staged_scripts_are_removed_even_when_they_fail(tmp_path):
+    """`.gate` is on the desk's own workspace, so it does not outlive the call.
+
+    It exists only while the harness holds the thread deciding whether a declare is
+    accepted -- the kernel is idle then, and the desk is not running a cell that could
+    look. A leftover would be a house directory sitting in a workspace that is measured
+    on not having one.
+    """
+    from openreynolds.cad.check import GATE_DIR, advisory_findings
+
+    removed: list[str] = []
+
+    class Breaks:
+        workspace_root = str(tmp_path)
+
+        def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
+            if cmd.startswith("rm -rf"):
+                removed.append(cmd)
+                return ExecResult(0, "", False, None)
+            if "mkdir" in cmd:
+                return ExecResult(0, "", False, None)
+            raise RuntimeError("the workspace went away mid-audit")
+
+        def put_file(self, path, data):
+            pass
+
+    findings = advisory_findings(Breaks(), f"{tmp_path}/case")
+    assert [f.status for f in findings] == ["skipped", "skipped"]
+    assert removed and GATE_DIR in removed[0], "the staging directory was left behind"
+
+
+def test_staging_that_fails_says_so_rather_than_reporting_a_clean_surface(tmp_path,
+                                                                         monkeypatch):
+    """The one answer this layer must never give by accident."""
+    from openreynolds.cad import check as cadcheck
+    from openreynolds.cad import gate
+
+    monkeypatch.setattr(cadcheck, "TOOLBOX_SOURCE", tmp_path / "not-here")
+
+    class Workspace:
+        workspace_root = str(tmp_path)
+
+        def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
+            return ExecResult(0, "", False, None)
+
+        def put_file(self, path, data):
+            raise AssertionError("nothing should be sent when the source is missing")
+
+    findings = cadcheck.advisory_findings(Workspace(), f"{tmp_path}/case")
+    states = gate.evaluate(findings, [])
+    assert [s.state for s in states] == [gate.NOT_RUN, gate.NOT_RUN]
+    assert all("could not be staged" in s.concern for s in states)
