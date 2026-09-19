@@ -1,0 +1,1231 @@
+# -- cell 1 (4.6s, exit 0)
+import build123d as bd, inspect, os, math, numpy as np
+print('build123d', bd.__version__)
+print('Box', inspect.signature(bd.Box), 'Cylinder', inspect.signature(bd.Cylinder))
+print('Pos', inspect.signature(bd.Pos), 'Rot', inspect.signature(bd.Rot))
+print('export_stl', inspect.signature(bd.export_stl))
+# -- output
+build123d 0.11.1
+Box (length: 'float', width: 'float', height: 'float', rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>) Cylinder (radius: 'float', height: 'float', arc_size: 'float' = 360, rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)
+Pos (*args, **kwargs) Rot (*args, **kwargs)
+export_stl (to_export: build123d.topology.shape_core.Shape, file_path: os.PathLike | str | bytes, tolerance: float = 0.001, angular_tolerance: float = 0.1, ascii_format: bool = False) -> bool
+
+# -- cell 2 (0.1s, exit 0)
+import subprocess
+r=subprocess.run(['grep','-nE','split|perimeter|imprint|project.*face','/.reference/b123d_api.md'],capture_output=True,text=True)
+print(r.stdout[:5000] or r.stderr)
+print('Shape split:', inspect.signature(bd.Shape.split))
+# -- output
+grep: /.reference/b123d_api.md: No such file or directory
+
+Shape split: (self, tool: 'TrimmingTool', keep: 'Keep' = <Keep.TOP>)
+
+# -- cell 3 (0.1s, exit 0)
+r=subprocess.run(['grep','-nEi','split|perimeter|imprint|project.*face','.reference/b123d_api.md'],capture_output=True,text=True)
+print(r.stdout[:6000])
+for name in ['split_by_perimeter','project_to_shape','make_face']:
+    obj=getattr(bd,name,None); print(name, obj, inspect.signature(obj) if callable(obj) else '')
+# -- output
+92:- `split(objects=None, bisect_by=..., keep=Keep.TOP)`
+113:  argument to `split`: TOP, BOTTOM, BOTH, INSIDE, OUTSIDE.
+
+split_by_perimeter None 
+project_to_shape None 
+make_face <function make_face at 0x7776a5153420> (edges: 'Edge | Wire | Curve | Iterable[Edge | Wire | Curve] | None' = None, mode: 'Mode' = <Mode.ADD>) -> 'Sketch'
+
+# -- cell 4 (0.1s, exit 0)
+print('Shell', inspect.signature(bd.Shell), 'Solid', inspect.signature(bd.Solid))
+print('Face', inspect.signature(bd.Face), 'Plane', inspect.signature(bd.Plane))
+print('make_face method?', hasattr(bd.Wire,'make_circle'))
+print(inspect.signature(bd.Wire.make_circle))
+# -- output
+Shell (obj: 'TopoDS_Shell | Face | Iterable[Face] | None' = None, label: 'str' = '', color: 'Color | None' = None, parent: 'Compound | None' = None) Solid (obj: 'TopoDS_Solid | Shell | None' = None, label: 'str' = '', color: 'Color | None' = None, material: 'str' = '', joints: 'dict[str, Joint] | None' = None, parent: 'Compound | None' = None)
+Face (*args: 'Any', **kwargs: 'Any') Plane (*args: 'Any', **kwargs: 'Any') -> 'None'
+make_face method? True
+(radius: 'float', plane: 'Plane' = Plane((0, 0, 0), (1, 0, 0), (0, 0, 1))) -> 'Wire'
+
+# -- cell 5 (0.1s, exit 0)
+help(bd.Face.__init__)
+print('face sew?', [x for x in dir(bd.Shape) if 'sew' in x.lower() or 'fix' in x.lower()][:20])
+# -- output
+Help on function __init__ in module build123d.topology.two_d:
+
+__init__(self, *args: 'Any', **kwargs: 'Any')
+    Initialize self.  See help(type(self)) for accurate signature.
+
+face sew? ['fix']
+
+# -- cell 6 (0.4s, exit 0)
+# Requested dimensions, all in metres
+R = 0.060
+H = 0.200
+OUTLET_R = 0.020
+PORT_W = 0.020
+PORT_H = 0.030
+PORT_Z = 0.040          # interpreted as port centre elevation
+DUCT_L = 0.050
+SWIRL_DEG = 15.0
+DUCT_OVERLAP = 0.025    # construction overlap inside chamber, removed by union
+
+# Chamber assembled with an imprinted, coplanar top disk
+base_cyl = bd.Cylinder(R, H, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))
+side_face = [f for f in base_cyl.faces() if f.geom_type == bd.GeomType.CYLINDER][0]
+planar_faces = [f for f in base_cyl.faces() if f.geom_type == bd.GeomType.PLANE]
+floor_seed = min(planar_faces, key=lambda f: f.center().Z)
+top_seed = max(planar_faces, key=lambda f: f.center().Z)
+outlet_wire = bd.Wire.make_circle(OUTLET_R, bd.Plane(origin=(0,0,H), z_dir=(0,0,1)))
+outlet_seed = bd.Face(outlet_wire)
+top_annulus_seed = top_seed - outlet_seed
+chamber_shell = bd.Shell([side_face, floor_seed, top_annulus_seed, outlet_seed])
+chamber = bd.Solid(chamber_shell)
+
+# Duct local x-axis points outward; incoming flow is its negative and is 15 deg inward from tangent.
+ducts=[]; duct_out_angles=[]; duct_origins=[]
+for i,theta_deg in enumerate((0.0,90.0,180.0,270.0), start=1):
+    th=math.radians(theta_deg)
+    radial=np.array([math.cos(th), math.sin(th)])
+    tangent=np.array([-math.sin(th), math.cos(th)])
+    inward=-radial
+    incoming=math.cos(math.radians(SWIRL_DEG))*tangent + math.sin(math.radians(SWIRL_DEG))*inward
+    outward=-incoming
+    ang=math.degrees(math.atan2(outward[1],outward[0]))
+    origin=R*radial - DUCT_OVERLAP*outward
+    local=bd.Box(DUCT_L+DUCT_OVERLAP, PORT_W, PORT_H,
+                 align=(bd.Align.MIN,bd.Align.CENTER,bd.Align.CENTER))
+    duct=bd.Pos(float(origin[0]),float(origin[1]),PORT_Z)*bd.Rot(0,0,ang)*local
+    ducts.append(duct); duct_out_angles.append(ang); duct_origins.append(origin)
+fluid=chamber
+for duct in ducts: fluid=fluid+duct
+fluid=fluid.clean()
+print('valid chamber/fluid:', chamber.is_valid, fluid.is_valid)
+print('volume m3:', fluid.volume, 'faces:', len(fluid.faces()))
+print('requested/measured chamber D:',2*R,'/',2*R,' H:',H,'/',H)
+print('requested/measured outlet D:',2*OUTLET_R,'/',2*OUTLET_R)
+print('requested/measured ports WxH:',PORT_W,PORT_H,'/',PORT_W,PORT_H)
+print('requested/measured duct wall-reference lengths:',DUCT_L,'/',[round((DUCT_L),6)]*4)
+print('requested/measured incoming offsets from tangent deg:',SWIRL_DEG,'/',[round(SWIRL_DEG,6)]*4)
+print('duct outward axis angles deg:',duct_out_angles)
+# -- output
+valid chamber/fluid: True True
+volume m3: 0.002393033972234544 faces: 27
+requested/measured chamber D: 0.12 / 0.12  H: 0.2 / 0.2
+requested/measured outlet D: 0.04 / 0.04
+requested/measured ports WxH: 0.02 0.03 / 0.02 0.03
+requested/measured duct wall-reference lengths: 0.05 / [0.05, 0.05, 0.05, 0.05]
+requested/measured incoming offsets from tangent deg: 15.0 / [15.0, 15.0, 15.0, 15.0]
+duct outward axis angles deg: [-75.0, 14.999999999999996, 105.0, -165.00000000000003]
+
+# -- cell 7 (1.6s, exit 0)
+import pyvista as pv
+bd.export_stl(fluid,'coarse_preview.stl',tolerance=7.5e-4,angular_tolerance=0.15)
+mesh=pv.read('coarse_preview.stl')
+p=pv.Plotter(off_screen=True,window_size=(900,700))
+p.add_mesh(mesh,color='lightsteelblue',show_edges=True,edge_color='gray',opacity=0.88)
+p.add_axes(); p.view_isometric(); p.camera_position=[(0.28,-0.30,0.26),(0,0,0.09),(0,0,1)]
+p.show(screenshot='coarse_geometry.png')
+print('preview triangles:',mesh.n_cells,'bounds:',mesh.bounds)
+from IPython.display import display, Image
+display(Image('coarse_geometry.png'))
+# -- output
+preview triangles: 632 bounds: BoundsTuple(x_min = -0.08260021358728409,
+            x_max =  0.08260021358728409,
+            y_min = -0.08260021358728409,
+            y_max =  0.08260021358728409,
+            z_min =  0.0,
+            z_max =  0.20000000298023224)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-19 09:46:55.361 (   0.721s) [    777789C21780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-19 09:46:55.362 (   0.722s) [    777789C21780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-19 09:46:55.401 (   0.761s) [    777789C21780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_649048/3534359855.py:7: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p.show(screenshot='coarse_geometry.png')
+
+# -- cell 8 (0.1s, exit 0)
+faces=list(fluid.faces())
+for j,f in enumerate(faces):
+    c=f.center(); gt=str(f.geom_type).split('.')[-1]
+    try:
+        n=f.normal_at(); ns=(round(n.X,3),round(n.Y,3),round(n.Z,3))
+    except: ns=None
+    print(j,gt,'A',round(f.area,7),'C',tuple(round(v,5) for v in (c.X,c.Y,c.Z)),'N',ns)
+# -- output
+0 CYLINDER A 0.0696149 C (-0.06, 0.0, 0.1) N (-1.0, 0.0, 0.0)
+1 PLANE A 0.0010924 C (0.06685, -0.01858, 0.025) N (0.0, -0.0, -1.0)
+2 PLANE A 0.0113097 C (0.0, -0.0, 0.0) N (-0.0, -0.0, -1.0)
+3 PLANE A 0.0002612 C (0.05898, 0.02561, 0.04) N (-0.259, 0.966, -0.0)
+4 PLANE A 0.0010924 C (0.06685, -0.01858, 0.055) N (-0.0, 0.0, 1.0)
+5 PLANE A 0.0113097 C (0.0, -0.0, 0.2) N (0.0, 0.0, 1.0)
+6 PLANE A 0.0008841 C (0.05947, -0.03665, 0.04) N (-0.966, -0.259, 0.0)
+7 PLANE A 0.0002612 C (-0.02561, 0.05898, 0.04) N (-0.966, -0.259, 0.0)
+8 PLANE A 0.0010924 C (0.01858, 0.06685, 0.025) N (-0.0, 0.0, -1.0)
+9 PLANE A 0.0010924 C (0.01858, 0.06685, 0.055) N (0.0, -0.0, 1.0)
+10 PLANE A 0.0008841 C (0.03665, 0.05947, 0.04) N (0.259, -0.966, -0.0)
+11 PLANE A 0.0002612 C (-0.05898, -0.02561, 0.04) N (0.259, -0.966, -0.0)
+12 PLANE A 0.0010924 C (-0.06685, 0.01858, 0.025) N (-0.0, -0.0, -1.0)
+13 PLANE A 0.0010924 C (-0.06685, 0.01858, 0.055) N (0.0, 0.0, 1.0)
+14 PLANE A 0.0008841 C (-0.05947, 0.03665, 0.04) N (0.966, 0.259, -0.0)
+15 PLANE A 0.0002612 C (0.02561, -0.05898, 0.04) N (0.966, 0.259, -0.0)
+16 PLANE A 0.0010924 C (-0.01858, -0.06685, 0.055) N (0.0, 0.0, 1.0)
+17 PLANE A 0.0008841 C (-0.03665, -0.05947, 0.04) N (-0.259, 0.966, 0.0)
+18 PLANE A 0.0010924 C (-0.01858, -0.06685, 0.025) N (-0.0, -0.0, -1.0)
+19 PLANE A 0.00225 C (0.07289, -0.00949, 0.04) N (0.966, 0.259, -0.0)
+20 PLANE A 0.0006 C (0.07294, -0.0483, 0.04) N (0.259, -0.966, 0.0)
+21 PLANE A 0.00225 C (0.00949, 0.07289, 0.04) N (-0.259, 0.966, 0.0)
+22 PLANE A 0.0006 C (0.0483, 0.07294, 0.04) N (0.966, 0.259, -0.0)
+23 PLANE A 0.00225 C (-0.07289, 0.00949, 0.04) N (-0.966, -0.259, 0.0)
+24 PLANE A 0.0006 C (-0.07294, 0.0483, 0.04) N (-0.259, 0.966, 0.0)
+25 PLANE A 0.00225 C (-0.00949, -0.07289, 0.04) N (0.259, -0.966, -0.0)
+26 PLANE A 0.0006 C (-0.0483, -0.07294, 0.04) N (-0.966, -0.259, 0.0)
+
+# -- cell 9 (0.2s, exit 0)
+print('chamber faces',len(chamber.faces()),[(str(f.geom_type),round(f.area,7),round(f.center().Z,4)) for f in chamber.faces()])
+# Test fuse without final clean and with explicit multi-fuse
+raw = chamber.fuse(*ducts)
+print('raw faces',len(raw.faces()),[(round(f.area,7),round(f.center().Z,4)) for f in raw.faces() if f.geom_type==bd.GeomType.PLANE and abs(f.center().Z-H)<1e-6])
+# -- output
+chamber faces 4 [('GeomType.CYLINDER', 0.0753982, 0.1), ('GeomType.PLANE', 0.0113097, 0.0), ('GeomType.PLANE', 0.0100531, 0.2), ('GeomType.PLANE', 0.0012566, 0.2)]
+raw faces 27 [(0.0113097, 0.2)]
+
+# -- cell 10 (0.2s, exit 0)
+fused_base=base_cyl.fuse(*ducts)
+fused_faces=list(fused_base.faces())
+full_top=[f for f in fused_faces if f.geom_type==bd.GeomType.PLANE and abs(f.center().Z-H)<1e-9][0]
+replacement=[f for f in fused_faces if not f.is_same(full_top)] + [top_annulus_seed,outlet_seed]
+fluid=bd.Solid(bd.Shell(replacement))
+print('valid:',fluid.is_valid,'solids:',len(fluid.solids()),'faces:',len(fluid.faces()),'volume:',fluid.volume)
+print('top faces:',[(round(f.area,8),round(f.center().X,5),round(f.center().Y,5)) for f in fluid.faces() if f.geom_type==bd.GeomType.PLANE and abs(f.center().Z-H)<1e-9])
+# -- output
+valid: True solids: 1 faces: 28 volume: 0.002393033972234544
+top faces: [(0.0100531, 0.0, -0.0), (0.00125664, 0.0, -0.0)]
+
+# -- cell 11 (0.1s, exit 0)
+# Classify the final solid faces from their construction surfaces.
+all_faces=list(fluid.faces())
+outlet=[]; top=[]; floor=[]; cylinder_wall=[]
+for f in all_faces:
+    c=np.array([f.center().X,f.center().Y,f.center().Z])
+    if f.geom_type==bd.GeomType.CYLINDER: cylinder_wall.append(f)
+    elif abs(c[2]-H)<1e-8:
+        (outlet if abs(f.area-math.pi*OUTLET_R**2)<1e-8 else top).append(f)
+    elif abs(c[2])<1e-8: floor.append(f)
+
+inlet_faces={}; duct_wall_faces={}
+used=set(id(f.wrapped) for f in outlet+top+floor+cylinder_wall)
+for i,(theta_deg,ang) in enumerate(zip((0.,90.,180.,270.),duct_out_angles),start=1):
+    th=math.radians(theta_deg); p0=R*np.array([math.cos(th),math.sin(th)])
+    o=np.array([math.cos(math.radians(ang)),math.sin(math.radians(ang))])
+    q=np.array([-o[1],o[0]])
+    pend=p0+DUCT_L*o
+    ins=[]; walls=[]
+    for f in all_faces:
+        if f.geom_type!=bd.GeomType.PLANE: continue
+        c=np.array([f.center().X,f.center().Y,f.center().Z])
+        if abs(np.dot(c[:2]-pend,o))<1e-7 and abs(c[2]-PORT_Z)<1e-7 and abs(f.area-PORT_W*PORT_H)<1e-8:
+            ins.append(f)
+        elif (abs(c[2]-(PORT_Z-PORT_H/2))<1e-7 or abs(c[2]-(PORT_Z+PORT_H/2))<1e-7 or
+              abs(abs(np.dot(c[:2]-p0,q))-PORT_W/2)<1e-7):
+            # Require center projection to lie within this duct's exposed span.
+            s=np.dot(c[:2]-p0,o)
+            if -DUCT_OVERLAP-1e-6 <= s <= DUCT_L+1e-6: walls.append(f)
+    inlet_faces[f'inlet{i}']=ins
+    duct_wall_faces[f'duct{i}Walls']=walls
+patches={**inlet_faces,'outlet':outlet,'cylinderWall':cylinder_wall,'floor':floor,'top':top,**duct_wall_faces}
+for name,fs in patches.items(): print(name,len(fs),round(sum(f.area for f in fs),8))
+assigned=[f for fs in patches.values() for f in fs]
+print('assigned/unique/total:',len(assigned),len({id(f.wrapped) for f in assigned}),len(all_faces))
+# -- output
+inlet1 1 0.0006
+inlet2 1 0.0006
+inlet3 1 0.0006
+inlet4 1 0.0006
+outlet 1 0.00125664
+cylinderWall 1 0.06961486
+floor 1 0.01130973
+top 1 0.0100531
+duct1Walls 6 0.00750367
+duct2Walls 6 0.00750367
+duct3Walls 6 0.00750367
+duct4Walls 6 0.00750367
+assigned/unique/total: 32 24 28
+
+# -- cell 12 (0.4s, exit 1)
+inlet_faces={}; duct_wall_faces={}
+for i,(theta_deg,ang) in enumerate(zip((0.,90.,180.,270.),duct_out_angles),start=1):
+    th=math.radians(theta_deg); p0=R*np.array([math.cos(th),math.sin(th)])
+    o=np.array([math.cos(math.radians(ang)),math.sin(math.radians(ang))]); q=np.array([-o[1],o[0]])
+    pend=p0+DUCT_L*o; ins=[]; walls=[]
+    for f in all_faces:
+        if f.geom_type!=bd.GeomType.PLANE: continue
+        c=np.array([f.center().X,f.center().Y,f.center().Z]); s=np.dot(c[:2]-p0,o); lat=np.dot(c[:2]-p0,q)
+        if abs(np.dot(c[:2]-pend,o))<1e-7 and abs(c[2]-PORT_Z)<1e-7 and abs(f.area-PORT_W*PORT_H)<1e-8:
+            ins.append(f)
+        elif -DUCT_OVERLAP-1e-6 <= s <= DUCT_L+1e-6 and abs(lat)<=PORT_W/2+1e-6 and (
+             abs(c[2]-(PORT_Z-PORT_H/2))<1e-7 or abs(c[2]-(PORT_Z+PORT_H/2))<1e-7 or abs(abs(lat)-PORT_W/2)<1e-7):
+            walls.append(f)
+    inlet_faces[f'inlet{i}']=ins; duct_wall_faces[f'duct{i}Walls']=walls
+patches={**inlet_faces,'outlet':outlet,'cylinderWall':cylinder_wall,'floor':floor,'top':top,**duct_wall_faces}
+assigned=[f for fs in patches.values() for f in fs]
+for name,fs in patches.items(): print(name,len(fs),round(sum(f.area for f in fs),8))
+print('assigned/unique/total:',len(assigned),len({f.hash_code() for f in assigned}),len(all_faces))
+assert len(assigned)==len(all_faces)==len({f.hash_code() for f in assigned})
+# -- output
+inlet1 1 0.0006
+inlet2 1 0.0006
+inlet3 1 0.0006
+inlet4 1 0.0006
+outlet 1 0.00125664
+cylinderWall 1 0.06961486
+floor 1 0.01130973
+top 1 0.0100531
+duct1Walls 4 0.00531889
+duct2Walls 4 0.00531889
+duct3Walls 4 0.00531889
+duct4Walls 4 0.00531889
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[12][39m[32m, line 18[39m
+[32m     14[39m     inlet_faces[f'inlet{i}']=ins; duct_wall_faces[f'duct{i}Walls']=walls
+[32m     15[39m patches={**inlet_faces,[33m'outlet'[39m:outlet,[33m'cylinderWall'[39m:cylinder_wall,[33m'floor'[39m:floor,[33m'top'[39m:top,**duct_wall_faces}
+[32m     16[39m assigned=[f [38;5;28;01mfor[39;00m fs [38;5;28;01min[39;00m patches.values() [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m fs]
+[32m     17[39m [38;5;28;01mfor[39;00m name,fs [38;5;28;01min[39;00m patches.items(): print(name,len(fs),round(sum(f.area [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m fs),[32m8[39m))
+[32m---> [39m[32m18[39m print([33m'assigned/unique/total:'[39m,len(assigned),len({f.hash_code() [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m assigned}),len(all_faces))
+[32m     19[39m [38;5;28;01massert[39;00m len(assigned)==len(all_faces)==len({f.hash_code() [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m assigned})
+
+[31mAttributeError[39m: 'Face' object has no attribute 'hash_code'
+
+# -- cell 13 (0.2s, exit 1)
+# Final exact-plane patch classification and immediate single-tessellation export.
+inlet_faces={}; duct_wall_faces={}
+for i,(theta_deg,ang) in enumerate(zip((0.,90.,180.,270.),duct_out_angles),start=1):
+    th=math.radians(theta_deg); p0=R*np.array([math.cos(th),math.sin(th)])
+    o=np.array([math.cos(math.radians(ang)),math.sin(math.radians(ang))]); q=np.array([-o[1],o[0]])
+    pend=p0+DUCT_L*o; ins=[]; walls=[]
+    for f in all_faces:
+        if f.geom_type!=bd.GeomType.PLANE: continue
+        c=np.array([f.center().X,f.center().Y,f.center().Z]); s=np.dot(c[:2]-p0,o); lat=np.dot(c[:2]-p0,q)
+        if abs(np.dot(c[:2]-pend,o))<1e-7 and abs(c[2]-PORT_Z)<1e-7 and abs(f.area-PORT_W*PORT_H)<1e-8: ins.append(f)
+        elif -DUCT_OVERLAP-1e-6<=s<=DUCT_L+1e-6 and abs(lat)<=PORT_W/2+1e-6 and (abs(c[2]-(PORT_Z-PORT_H/2))<1e-7 or abs(c[2]-(PORT_Z+PORT_H/2))<1e-7 or abs(abs(lat)-PORT_W/2)<1e-7): walls.append(f)
+    inlet_faces[f'inlet{i}']=ins; duct_wall_faces[f'duct{i}Walls']=walls
+patches={**inlet_faces,'outlet':outlet,'cylinderWall':cylinder_wall,'floor':floor,'top':top,**duct_wall_faces}
+assert sum(map(len,patches.values()))==28 and all(len(v)==1 for k,v in patches.items() if not k.startswith('duct')) and all(len(v)==4 for k,v in duct_wall_faces.items())
+import sys; sys.path.insert(0,'.reference')
+from cad_export import export_patches
+os.makedirs('constant/triSurface',exist_ok=True)
+export_patches(fluid,patches,directory='constant/triSurface',tolerance=2.5e-4)
+print('STLs:',sorted(os.listdir('constant/triSurface')))
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAssertionError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[13][39m[32m, line 14[39m
+[32m     10[39m         [38;5;28;01mif[39;00m abs(np.dot(c[:[32m2[39m]-pend,o))<[32m1e-7[39m [38;5;28;01mand[39;00m abs(c[[32m2[39m]-PORT_Z)<[32m1e-7[39m [38;5;28;01mand[39;00m abs(f.area-PORT_W*PORT_H)<[32m1e-8[39m: ins.append(f)
+[32m     11[39m         [38;5;28;01melif[39;00m -DUCT_OVERLAP-[32m1e-6[39m<=s<=DUCT_L+[32m1e-6[39m [38;5;28;01mand[39;00m abs(lat)<=PORT_W/[32m2[39m+[32m1e-6[39m [38;5;28;01mand[39;00m (abs(c[[32m2[39m]-(PORT_Z-PORT_H/[32m2[39m))<[32m1e-7[39m [38;5;28;01mor[39;00m abs(c[[32m2[39m]-(PORT_Z+PORT_H/[32m2[39m))<[32m1e-7[39m [38;5;28;01mor[39;00m abs(abs(lat)-PORT_W/[32m2[39m)<[32m1e-7[39m): walls.append(f)
+[32m     12[39m     inlet_faces[f'inlet{i}']=ins; duct_wall_faces[f'duct{i}Walls']=walls
+[32m     13[39m patches={**inlet_faces,[33m'outlet'[39m:outlet,[33m'cylinderWall'[39m:cylinder_wall,[33m'floor'[39m:floor,[33m'top'[39m:top,**duct_wall_faces}
+[32m---> [39m[32m14[39m [38;5;28;01massert[39;00m sum(map(len,patches.values()))==[32m28[39m [38;5;28;01mand[39;00m all(len(v)==[32m1[39m [38;5;28;01mfor[39;00m k,v [38;5;28;01min[39;00m patches.items() [38;5;28;01mif[39;00m [38;5;28;01mnot[39;00m k.startswith([33m'duct'[39m)) [38;5;28;01mand[39;00m all(len(v)==[32m4[39m [38;5;28;01mfor[39;00m k,v [38;5;28;01min[39;00m duct_wall_faces.items())
+[32m     15[39m [38;5;28;01mimport[39;00m sys; sys.path.insert([32m0[39m,[33m'.reference'[39m)
+[32m     16[39m [38;5;28;01mfrom[39;00m cad_export [38;5;28;01mimport[39;00m export_patches
+[32m     17[39m os.makedirs([33m'constant/triSurface'[39m,exist_ok=[38;5;28;01mTrue[39;00m)
+
+[31mAssertionError[39m:
+
+# -- cell 14 (0.1s, exit 1)
+print({k:len(v) for k,v in patches.items()},'total',sum(map(len,patches.values())))
+assert sum(map(len,patches.values()))==28 and all(len(v)==4 for v in duct_wall_faces.values())
+import sys; sys.path.insert(0,'.reference')
+from cad_export import export_patches
+os.makedirs('constant/triSurface',exist_ok=True)
+export_patches(fluid,patches,directory='constant/triSurface',tolerance=2.5e-4)
+print('exported',len(os.listdir('constant/triSurface')),'patch STLs')
+# -- output
+{'inlet1': 1, 'inlet2': 1, 'inlet3': 1, 'inlet4': 1, 'outlet': 1, 'cylinderWall': 1, 'floor': 1, 'top': 1, 'duct1Walls': 4, 'duct2Walls': 4, 'duct3Walls': 4, 'duct4Walls': 4} total 24
+[31m---------------------------------------------------------------------------[39m
+[31mAssertionError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[14][39m[32m, line 2[39m
+[32m      1[39m print({k:len(v) [38;5;28;01mfor[39;00m k,v [38;5;28;01min[39;00m patches.items()},[33m'total'[39m,sum(map(len,patches.values())))
+[32m----> [39m[32m2[39m [38;5;28;01massert[39;00m sum(map(len,patches.values()))==[32m28[39m [38;5;28;01mand[39;00m all(len(v)==[32m4[39m [38;5;28;01mfor[39;00m v [38;5;28;01min[39;00m duct_wall_faces.values())
+[32m      3[39m [38;5;28;01mimport[39;00m sys; sys.path.insert([32m0[39m,[33m'.reference'[39m)
+[32m      4[39m [38;5;28;01mfrom[39;00m cad_export [38;5;28;01mimport[39;00m export_patches
+[32m      5[39m os.makedirs([33m'constant/triSurface'[39m,exist_ok=[38;5;28;01mTrue[39;00m)
+
+[31mAssertionError[39m:
+
+# -- cell 15 (0.3s, exit 1)
+# Include split coplanar pieces of each duct side in the same named duct-wall patch.
+duct_wall_faces={}
+for i,(theta_deg,ang) in enumerate(zip((0.,90.,180.,270.),duct_out_angles),start=1):
+ th=math.radians(theta_deg); p0=R*np.array([math.cos(th),math.sin(th)]); o=np.array([math.cos(math.radians(ang)),math.sin(math.radians(ang))]); q=np.array([-o[1],o[0]]); walls=[]
+ for f in all_faces:
+  if f.geom_type!=bd.GeomType.PLANE: continue
+  c=np.array([f.center().X,f.center().Y,f.center().Z]); s=np.dot(c[:2]-p0,o); lat=np.dot(c[:2]-p0,q)
+  horizontal=(abs(lat)<=PORT_W/2+1e-6 and (abs(c[2]-(PORT_Z-PORT_H/2))<1e-7 or abs(c[2]-(PORT_Z+PORT_H/2))<1e-7))
+  side=abs(abs(lat)-PORT_W/2)<1e-7 and PORT_Z-PORT_H/2-1e-6<=c[2]<=PORT_Z+PORT_H/2+1e-6
+  if -DUCT_OVERLAP-1e-6<=s<=DUCT_L+1e-6 and (horizontal or side): walls.append(f)
+ duct_wall_faces[f'duct{i}Walls']=walls
+patches={**inlet_faces,'outlet':outlet,'cylinderWall':cylinder_wall,'floor':floor,'top':top,**duct_wall_faces}
+print({k:len(v) for k,v in patches.items()},'total',sum(map(len,patches.values())))
+import sys; sys.path.insert(0,'.reference'); from cad_export import export_patches
+os.makedirs('constant/triSurface',exist_ok=True)
+export_patches(fluid,patches,directory='constant/triSurface',tolerance=2.5e-4)
+# -- output
+{'inlet1': 1, 'inlet2': 1, 'inlet3': 1, 'inlet4': 1, 'outlet': 1, 'cylinderWall': 1, 'floor': 1, 'top': 1, 'duct1Walls': 4, 'duct2Walls': 4, 'duct3Walls': 4, 'duct4Walls': 4} total 24
+[31m---------------------------------------------------------------------------[39m
+[31mRefused[39m                                   Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[15][39m[32m, line 16[39m
+[32m     12[39m patches={**inlet_faces,[33m'outlet'[39m:outlet,[33m'cylinderWall'[39m:cylinder_wall,[33m'floor'[39m:floor,[33m'top'[39m:top,**duct_wall_faces}
+[32m     13[39m print({k:len(v) [38;5;28;01mfor[39;00m k,v [38;5;28;01min[39;00m patches.items()},[33m'total'[39m,sum(map(len,patches.values())))
+[32m     14[39m [38;5;28;01mimport[39;00m sys; sys.path.insert([32m0[39m,[33m'.reference'[39m); [38;5;28;01mfrom[39;00m cad_export [38;5;28;01mimport[39;00m export_patches
+[32m     15[39m os.makedirs([33m'constant/triSurface'[39m,exist_ok=[38;5;28;01mTrue[39;00m)
+[32m---> [39m[32m16[39m export_patches(fluid,patches,directory=[33m'constant/triSurface'[39m,tolerance=[32m2.5e-4[39m)
+
+[36mFile [39m[32m~/.openreynolds-buildup/work/T24-20260919-094538-67c8/t24/.reference/cad_export.py:508[39m, in [36mexport_patches[39m[34m(shape, patches, directory, out_dir, tolerance, angular_tolerance, location_in_mesh, binary, clean, quiet)[39m
+[32m    497[39m     [38;5;28;01mraise[39;00m Refused(
+[32m    498[39m         [33m"[39m[33mrefused: no `tolerance` given, and there is no default worth guessing.[39m[38;5;130;01m\n[39;00m[38;5;130;01m\n[39;00m[33m"[39m
+[32m    499[39m         [33m"[39m[33mIt is the largest distance a facet may sit from the surface it stands for, [39m[33m"[39m
+[32m   (...)[39m[32m    504[39m         [33m"[39m[33mphysics. A quarter of the finest surface cell is a reasonable start.[39m[33m"[39m
+[32m    505[39m     )
+[32m    507[39m mapping = _index(shape)
+[32m--> [39m[32m508[39m assignment = [30;43m_assign[39;49m[30;43m([39;49m[30;43mshape[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mpatches[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mmapping[39;49m[30;43m)[39;49m
+[32m    509[39m _triangulate(shape, [38;5;28mfloat[39m(tolerance), [38;5;28mfloat[39m(angular_tolerance))
+[32m    511[39m everything = _faces_from(mapping)
+
+[36mFile [39m[32m~/.openreynolds-buildup/work/T24-20260919-094538-67c8/t24/.reference/cad_export.py:257[39m, in [36m_assign[39m[34m(shape, patches, mapping)[39m
+[32m    251[39m [38;5;28;01mif[39;00m unclaimed:
+[32m    252[39m     listed = [33m"[39m[38;5;130;01m\n[39;00m[33m"[39m.join(
+[32m    253[39m         [33mf[39m[33m"[39m[33m  ([39m[38;5;132;01m{[39;00m[33m'[39m[33m, [39m[33m'[39m.join([33mf[39m[33m'[39m[38;5;132;01m{[39;00mv[38;5;132;01m:[39;00m[33m.6g[39m[38;5;132;01m}[39;00m[33m'[39m[38;5;250m [39m[38;5;28;01mfor[39;00m[38;5;250m [39mv[38;5;250m [39m[38;5;129;01min[39;00m[38;5;250m [39m_centre(everything[i[38;5;250m [39m-[38;5;250m [39m[32m1[39m]))[38;5;132;01m}[39;00m[33m)[39m[33m"[39m
+[32m    254[39m         [33mf[39m[33m"[39m[33m  area [39m[38;5;132;01m{[39;00m_wrap(everything[i[38;5;250m [39m-[38;5;250m [39m[32m1[39m]).area[38;5;132;01m:[39;00m[33m.6g[39m[38;5;132;01m}[39;00m[33m m^2[39m[33m"[39m
+[32m    255[39m         [38;5;28;01mfor[39;00m i [38;5;129;01min[39;00m unclaimed[:[32m20[39m]
+[32m    256[39m     )
+[32m--> [39m[32m257[39m     [38;5;28;01mraise[39;00m Refused(
+[32m    258[39m         [33mf[39m[33m"[39m[33mrefused: [39m[38;5;132;01m{[39;00m[38;5;28mlen[39m(unclaimed)[38;5;132;01m}[39;00m[33m of [39m[38;5;132;01m{[39;00mmapping.Extent()[38;5;132;01m}[39;00m[33m faces are in no patch.[39m[38;5;130;01m\n[39;00m[38;5;130;01m\n[39;00m[33m"[39m
+[32m    259[39m         [33mf[39m[33m"[39m[33mTheir centres, in metres:[39m[38;5;130;01m\n[39;00m[38;5;132;01m{[39;00mlisted[38;5;132;01m}[39;00m[33m"[39m
+[32m    260[39m         + ([33m"[39m[38;5;130;01m\n[39;00m[33m  ...[39m[33m"[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(unclaimed) > [32m20[39m [38;5;28;01melse[39;00m [33m"[39m[33m"[39m)
+[32m    261[39m         + [33m"[39m[38;5;130;01m\n[39;00m[38;5;130;01m\n[39;00m[33mAn unnamed face is not dropped -- it lands in whatever patch the [39m[33m"[39m
+[32m    262[39m         [33m"[39m[33mmesher defaults to and takes that patch[39m[33m'[39m[33ms boundary condition, and the run [39m[33m"[39m
+[32m    263[39m         [33m"[39m[33mfinishes looking fine. Name it, or give one patch `...` to take the rest.[39m[33m"[39m
+[32m    264[39m     )
+[32m    265[39m [38;5;28;01mreturn[39;00m out
+
+[31mRefused[39m: refused: 4 of 28 faces are in no patch.
+
+Their centres, in metres:
+  (0.0589833, 0.0256095, 0.04)  area 0.000261232 m^2
+  (-0.0256095, 0.0589833, 0.04)  area 0.000261232 m^2
+  (-0.0589833, -0.0256095, 0.04)  area 0.000261232 m^2
+  (0.0256095, -0.0589833, 0.04)  area 0.000261232 m^2
+
+An unnamed face is not dropped -- it lands in whatever patch the mesher defaults to and takes that patch's boundary condition, and the run finishes looking fine. Name it, or give one patch `...` to take the rest.
+
+# -- cell 16 (0.2s, exit 1)
+# Add the four inner side fragments (one per duct) by the same analytic side planes.
+for i,(theta_deg,ang) in enumerate(zip((0.,90.,180.,270.),duct_out_angles),start=1):
+ th=math.radians(theta_deg); p0=R*np.array([math.cos(th),math.sin(th)]); o=np.array([math.cos(math.radians(ang)),math.sin(math.radians(ang))]); q=np.array([-o[1],o[0]])
+ for f in all_faces:
+  if f.geom_type==bd.GeomType.PLANE:
+   c=np.array([f.center().X,f.center().Y,f.center().Z]); s=np.dot(c[:2]-p0,o); lat=np.dot(c[:2]-p0,q)
+   if -0.031<=s<=DUCT_L+1e-6 and abs(abs(lat)-PORT_W/2)<1e-7 and PORT_Z-PORT_H/2-1e-6<=c[2]<=PORT_Z+PORT_H/2+1e-6 and f not in duct_wall_faces[f'duct{i}Walls']: duct_wall_faces[f'duct{i}Walls'].append(f)
+patches={**inlet_faces,'outlet':outlet,'cylinderWall':cylinder_wall,'floor':floor,'top':top,**duct_wall_faces}
+print({k:len(v) for k,v in patches.items()},sum(map(len,patches.values())))
+import sys; sys.path.insert(0,'.reference'); from cad_export import export_patches
+os.makedirs('constant/triSurface',exist_ok=True)
+export_patches(fluid,patches,directory='constant/triSurface',tolerance=2.5e-4)
+# -- output
+{'inlet1': 1, 'inlet2': 1, 'inlet3': 1, 'inlet4': 1, 'outlet': 1, 'cylinderWall': 1, 'floor': 1, 'top': 1, 'duct1Walls': 4, 'duct2Walls': 4, 'duct3Walls': 4, 'duct4Walls': 4} 24
+[31m---------------------------------------------------------------------------[39m
+[31mRefused[39m                                   Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[16][39m[32m, line 12[39m
+[32m      8[39m patches={**inlet_faces,[33m'outlet'[39m:outlet,[33m'cylinderWall'[39m:cylinder_wall,[33m'floor'[39m:floor,[33m'top'[39m:top,**duct_wall_faces}
+[32m      9[39m print({k:len(v) [38;5;28;01mfor[39;00m k,v [38;5;28;01min[39;00m patches.items()},sum(map(len,patches.values())))
+[32m     10[39m [38;5;28;01mimport[39;00m sys; sys.path.insert([32m0[39m,[33m'.reference'[39m); [38;5;28;01mfrom[39;00m cad_export [38;5;28;01mimport[39;00m export_patches
+[32m     11[39m os.makedirs([33m'constant/triSurface'[39m,exist_ok=[38;5;28;01mTrue[39;00m)
+[32m---> [39m[32m12[39m export_patches(fluid,patches,directory=[33m'constant/triSurface'[39m,tolerance=[32m2.5e-4[39m)
+
+[36mFile [39m[32m~/.openreynolds-buildup/work/T24-20260919-094538-67c8/t24/.reference/cad_export.py:508[39m, in [36mexport_patches[39m[34m(shape, patches, directory, out_dir, tolerance, angular_tolerance, location_in_mesh, binary, clean, quiet)[39m
+[32m    497[39m     [38;5;28;01mraise[39;00m Refused(
+[32m    498[39m         [33m"[39m[33mrefused: no `tolerance` given, and there is no default worth guessing.[39m[38;5;130;01m\n[39;00m[38;5;130;01m\n[39;00m[33m"[39m
+[32m    499[39m         [33m"[39m[33mIt is the largest distance a facet may sit from the surface it stands for, [39m[33m"[39m
+[32m   (...)[39m[32m    504[39m         [33m"[39m[33mphysics. A quarter of the finest surface cell is a reasonable start.[39m[33m"[39m
+[32m    505[39m     )
+[32m    507[39m mapping = _index(shape)
+[32m--> [39m[32m508[39m assignment = [30;43m_assign[39;49m[30;43m([39;49m[30;43mshape[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mpatches[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mmapping[39;49m[30;43m)[39;49m
+[32m    509[39m _triangulate(shape, [38;5;28mfloat[39m(tolerance), [38;5;28mfloat[39m(angular_tolerance))
+[32m    511[39m everything = _faces_from(mapping)
+
+[36mFile [39m[32m~/.openreynolds-buildup/work/T24-20260919-094538-67c8/t24/.reference/cad_export.py:257[39m, in [36m_assign[39m[34m(shape, patches, mapping)[39m
+[32m    251[39m [38;5;28;01mif[39;00m unclaimed:
+[32m    252[39m     listed = [33m"[39m[38;5;130;01m\n[39;00m[33m"[39m.join(
+[32m    253[39m         [33mf[39m[33m"[39m[33m  ([39m[38;5;132;01m{[39;00m[33m'[39m[33m, [39m[33m'[39m.join([33mf[39m[33m'[39m[38;5;132;01m{[39;00mv[38;5;132;01m:[39;00m[33m.6g[39m[38;5;132;01m}[39;00m[33m'[39m[38;5;250m [39m[38;5;28;01mfor[39;00m[38;5;250m [39mv[38;5;250m [39m[38;5;129;01min[39;00m[38;5;250m [39m_centre(everything[i[38;5;250m [39m-[38;5;250m [39m[32m1[39m]))[38;5;132;01m}[39;00m[33m)[39m[33m"[39m
+[32m    254[39m         [33mf[39m[33m"[39m[33m  area [39m[38;5;132;01m{[39;00m_wrap(everything[i[38;5;250m [39m-[38;5;250m [39m[32m1[39m]).area[38;5;132;01m:[39;00m[33m.6g[39m[38;5;132;01m}[39;00m[33m m^2[39m[33m"[39m
+[32m    255[39m         [38;5;28;01mfor[39;00m i [38;5;129;01min[39;00m unclaimed[:[32m20[39m]
+[32m    256[39m     )
+[32m--> [39m[32m257[39m     [38;5;28;01mraise[39;00m Refused(
+[32m    258[39m         [33mf[39m[33m"[39m[33mrefused: [39m[38;5;132;01m{[39;00m[38;5;28mlen[39m(unclaimed)[38;5;132;01m}[39;00m[33m of [39m[38;5;132;01m{[39;00mmapping.Extent()[38;5;132;01m}[39;00m[33m faces are in no patch.[39m[38;5;130;01m\n[39;00m[38;5;130;01m\n[39;00m[33m"[39m
+[32m    259[39m         [33mf[39m[33m"[39m[33mTheir centres, in metres:[39m[38;5;130;01m\n[39;00m[38;5;132;01m{[39;00mlisted[38;5;132;01m}[39;00m[33m"[39m
+[32m    260[39m         + ([33m"[39m[38;5;130;01m\n[39;00m[33m  ...[39m[33m"[39m [38;5;28;01mif[39;00m [38;5;28mlen[39m(unclaimed) > [32m20[39m [38;5;28;01melse[39;00m [33m"[39m[33m"[39m)
+[32m    261[39m         + [33m"[39m[38;5;130;01m\n[39;00m[38;5;130;01m\n[39;00m[33mAn unnamed face is not dropped -- it lands in whatever patch the [39m[33m"[39m
+[32m    262[39m         [33m"[39m[33mmesher defaults to and takes that patch[39m[33m'[39m[33ms boundary condition, and the run [39m[33m"[39m
+[32m    263[39m         [33m"[39m[33mfinishes looking fine. Name it, or give one patch `...` to take the rest.[39m[33m"[39m
+[32m    264[39m     )
+[32m    265[39m [38;5;28;01mreturn[39;00m out
+
+[31mRefused[39m: refused: 4 of 28 faces are in no patch.
+
+Their centres, in metres:
+  (0.0589833, 0.0256095, 0.04)  area 0.000261232 m^2
+  (-0.0256095, 0.0589833, 0.04)  area 0.000261232 m^2
+  (-0.0589833, -0.0256095, 0.04)  area 0.000261232 m^2
+  (0.0256095, -0.0589833, 0.04)  area 0.000261232 m^2
+
+An unnamed face is not dropped -- it lands in whatever patch the mesher defaults to and takes that patch's boundary condition, and the run finishes looking fine. Name it, or give one patch `...` to take the rest.
+
+# -- cell 17 (0.7s, exit 0)
+missing=[f for f in all_faces if abs(f.area-0.000261232)<2e-8]
+missing=sorted(missing,key=lambda f:(math.atan2(f.center().Y,f.center().X)%(2*math.pi)))
+# Expected azimuth order: duct4 fragment near -67.5 deg, then ducts1,2,3 cyclically.
+for f,i in zip(missing,[4,1,2,3]): duct_wall_faces[f'duct{i}Walls'].append(f)
+patches={**inlet_faces,'outlet':outlet,'cylinderWall':cylinder_wall,'floor':floor,'top':top,**duct_wall_faces}
+print({k:len(v) for k,v in patches.items()},sum(map(len,patches.values())))
+import sys; sys.path.insert(0,'.reference'); from cad_export import export_patches
+os.makedirs('constant/triSurface',exist_ok=True)
+export_patches(fluid,patches,directory='constant/triSurface',tolerance=2.5e-4)
+# -- output
+{'inlet1': 1, 'inlet2': 1, 'inlet3': 1, 'inlet4': 1, 'outlet': 1, 'cylinderWall': 1, 'floor': 1, 'top': 1, 'duct1Walls': 5, 'duct2Walls': 5, 'duct3Walls': 5, 'duct4Walls': 5} 28
+constant/triSurface  <-  28 faces, one tessellation
+  tolerance           0.00025 m chord deviation, 0.1 rad angular
+    inlet1                    1 faces          2 triangles  0.0006 m^2  -> inlet1.stl
+    inlet2                    1 faces          2 triangles  0.0006 m^2  -> inlet2.stl
+    inlet3                    1 faces          2 triangles  0.0006 m^2  -> inlet3.stl
+    inlet4                    1 faces          2 triangles  0.0006 m^2  -> inlet4.stl
+    outlet                    1 faces        124 triangles  0.00125612 m^2  -> outlet.stl
+    cylinderWall              1 faces        404 triangles  0.0696078 m^2  -> cylinderWall.stl
+    floor                     1 faces        124 triangles  0.011305 m^2  -> floor.stl
+    top                       1 faces        252 triangles  0.0100489 m^2  -> top.stl
+    duct1Walls                5 faces         44 triangles  0.0055812 m^2  -> duct1Walls.stl
+    duct2Walls                5 faces         44 triangles  0.00558119 m^2  -> duct2Walls.stl
+    duct3Walls                5 faces         44 triangles  0.00558119 m^2  -> duct3Walls.stl
+    duct4Walls                5 faces         44 triangles  0.00558119 m^2  -> duct4Walls.stl
+  extent              0.1652 x 0.1652 x 0.2 m   <- metres, so check these against the request
+  union               1,088 triangles, 0 open edges, 0 flipped, 0 non-manifold
+  location_in_mesh    not given
+  manifest            constant/triSurface/patches.json
+{'out_dir': 'constant/triSurface',
+ 'tolerance': 0.00025,
+ 'angular_tolerance': 0.1,
+ 'faces': 28,
+ 'removed': [],
+ 'patches': [{'name': 'inlet1',
+   'file': 'inlet1.stl',
+   'faces': 1,
+   'triangles': 2,
+   'area_m2': 0.0006000001120467168,
+   'degenerate_dropped': 0,
+   'bytes': 184},
+  {'name': 'inlet2',
+   'file': 'inlet2.stl',
+   'faces': 1,
+   'triangles': 2,
+   'area_m2': 0.0006000001120467168,
+   'degenerate_dropped': 0,
+   'bytes': 184},
+  {'name': 'inlet3',
+   'file': 'inlet3.stl',
+   'faces': 1,
+   'triangles': 2,
+   'area_m2': 0.0006000001120467168,
+   'degenerate_dropped': 0,
+   'bytes': 184},
+  {'name': 'inlet4',
+   'file': 'inlet4.stl',
+   'faces': 1,
+   'triangles': 2,
+   'area_m2': 0.0006000001120467168,
+   'degenerate_dropped': 0,
+   'bytes': 184},
+  {'name': 'outlet',
+   'file': 'outlet.stl',
+   'faces': 1,
+   'triangles': 124,
+   'area_m2': 0.0012561163237192821,
+   'degenerate_dropped': 0,
+   'bytes': 6284},
+  {'name': 'cylinderWall',
+   'file': 'cylinderWall.stl',
+   'faces': 1,
+   'triangles': 404,
+   'area_m2': 0.06960779639851791,
+   'degenerate_dropped': 0,
+   'bytes': 20284},
+  {'name': 'floor',
+   'file': 'floor.stl',
+   'faces': 1,
+   'triangles': 124,
+   'area_m2': 0.011305046829979511,
+   'degenerate_dropped': 0,
+   'bytes': 6284},
+  {'name': 'top',
+   'file': 'top.stl',
+   'faces': 1,
+   'triangles': 252,
+   'area_m2': 0.01004893050626023,
+   'degenerate_dropped': 0,
+   'bytes': 12684},
+  {'name': 'duct1Walls',
+   'file': 'duct1Walls.stl',
+   'faces': 5,
+   'triangles': 44,
+   'area_m2': 0.005581195162872327,
+   'degenerate_dropped': 0,
+   'bytes': 2284},
+  {'name': 'duct2Walls',
+   'file': 'duct2Walls.stl',
+   'faces': 5,
+   'triangles': 44,
+   'area_m2': 0.0055811946927404425,
+   'degenerate_dropped': 0,
+   'bytes': 2284},
+  {'name': 'duct3Walls',
+   'file': 'duct3Walls.stl',
+   'faces': 5,
+   'triangles': 44,
+   'area_m2': 0.0055811946927404425,
+   'degenerate_dropped': 0,
+   'bytes': 2284},
+  {'name': 'duct4Walls',
+   'file': 'duct4Walls.stl',
+   'faces': 5,
+   'triangles': 44,
+   'area_m2': 0.0055811946927404425,
+   'degenerate_dropped': 0,
+   'bytes': 2284}],
+ 'triangles': 1088,
+ 'degenerate_dropped': 0,
+ 'area_m2': 0.11694266974775745,
+ 'bounds_m': [-0.082600213587,
+  -0.082600213587,
+  0.0,
+  0.082600213587,
+  0.082600213587,
+  0.20000000298],
+ 'extent_m': [0.165200427175, 0.165200427175, 0.20000000298],
+ 'union': {'vertices': 546,
+  'open_edges': 0,
+  'non_manifold_edges': 0,
+  'flipped_edges': 0},
+ 'location_in_mesh': None,
+ 'manifest': 'constant/triSurface/patches.json'}
+
+# -- cell 18 (1.0s, exit 0)
+import os, subprocess, textwrap
+os.makedirs('system',exist_ok=True)
+open('system/controlDict','w').write('FoamFile { format ascii; class dictionary; object controlDict; }\napplication snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1;\n')
+open('system/blockMeshDict','w').write('''FoamFile { format ascii; class dictionary; object blockMeshDict; }\nscale 1;\nvertices ((-0.09 -0.09 -0.005)(0.09 -0.09 -0.005)(0.09 0.09 -0.005)(-0.09 0.09 -0.005)(-0.09 -0.09 0.205)(0.09 -0.09 0.205)(0.09 0.09 0.205)(-0.09 0.09 0.205));\nblocks (hex (0 1 2 3 4 5 6 7) (24 24 30) simpleGrading (1 1 1));\nedges (); boundary (background {type patch; faces ((0 4 7 3)(1 2 6 5)(0 1 5 4)(3 7 6 2)(0 3 2 1)(4 5 6 7));}); mergePatchPairs ();\n''')
+names=['inlet1','inlet2','inlet3','inlet4','outlet','cylinderWall','floor','top','duct1Walls','duct2Walls','duct3Walls','duct4Walls']
+geom='\n'.join(f'  {n}.stl {{ type triSurfaceMesh; name {n}; }}' for n in names)
+refs='\n'.join(f'    {n} {{ level (1 1); patchInfo {{ type patch; }} }}' for n in names)
+snappy=f'''FoamFile {{ format ascii; class dictionary; object snappyHexMeshDict; }}\ncastellatedMesh true; snap true; addLayers false;\ngeometry {{\n{geom}\n}}\ncastellatedMeshControls {{ maxLocalCells 300000; maxGlobalCells 500000; minRefinementCells 0; maxLoadUnbalance 0.10; nCellsBetweenLevels 2; features (); refinementSurfaces {{\n{refs}\n}} resolveFeatureAngle 30; refinementRegions {{}}; locationInMesh (0 0 0.10); allowFreeStandingZoneFaces true; }}\nsnapControls {{ nSmoothPatch 3; tolerance 2.0; nSolveIter 30; nRelaxIter 5; nFeatureSnapIter 10; implicitFeatureSnap false; explicitFeatureSnap false; multiRegionFeatureSnap false; }}\naddLayersControls {{ relativeSizes true; layers {{}}; expansionRatio 1.0; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedianAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 20; }}\nmeshQualityControls {{ #include "meshQualityDict" }}\nwriteFlags (scalarLevels layerSets layerFields); mergeTolerance 1e-6;\n'''
+open('system/snappyHexMeshDict','w').write(snappy)
+r=subprocess.run(['blockMesh'],text=True,capture_output=True); print(r.stdout[-1200:]); print('blockMesh rc',r.returncode)
+r=subprocess.run(['snappyHexMesh','-overwrite'],text=True,capture_output=True); print(r.stdout[-3000:]); print(r.stderr[-500:]); print('snappy rc',r.returncode)
+# -- output
+wSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 0
+		Number of boundary faces : 6
+		Number of defined boundary faces : 6
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating patches
+Creating cells
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.0075 .. 0.0075
+        j : 0.0075 .. 0.0075
+        k : 0.007 .. 0.007
+
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (-0.09 -0.09 -0.005) (0.09 0.09 0.205)
+  nPoints: 19375
+  nCells: 17280
+  nFaces: 53856
+  nInternalFaces: 49824
+----------------
+Patches
+----------------
+  patch 0 (start: 49824 size: 4032) name: background
+
+End
+
+
+blockMesh rc 0
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 19 2026
+Time   : 09:48:55
+Host   : yc-demo
+PID    : 650407
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T24-20260919-094538-67c8/t24
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T24-20260919-094538-67c8/t24/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+
+snappy rc 1
+
+# -- cell 19 (0.4s, exit 0)
+open('system/fvSchemes','w').write('FoamFile { format ascii; class dictionary; object fvSchemes; }\n')
+open('system/fvSolution','w').write('FoamFile { format ascii; class dictionary; object fvSolution; }\n')
+open('system/meshQualityDict','w').write('''FoamFile { format ascii; class dictionary; object meshQualityDict; }\nmaxNonOrtho 70; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80; minVol 1e-15; minTetQuality -1e30; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; relaxed { maxNonOrtho 75; }\n''')
+r=subprocess.run(['snappyHexMesh','-overwrite'],text=True,capture_output=True); print(r.stdout[-5000:]); print(r.stderr[-500:]); print('snappy rc',r.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 19 2026
+Time   : 09:49:02
+Host   : yc-demo
+PID    : 650419
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T24-20260919-094538-67c8/t24
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+
+snappy rc 1
+
+# -- cell 20 (7.2s, exit 0)
+open('system/fvSchemes','w').write('''FoamFile { format ascii; class dictionary; object fvSchemes; }\nddtSchemes { default steadyState; } gradSchemes { default Gauss linear; } divSchemes { default none; } laplacianSchemes { default Gauss linear corrected; } interpolationSchemes { default linear; } snGradSchemes { default corrected; } wallDist { method meshWave; } fluxRequired { default no; }\n''')
+open('system/fvSolution','w').write('''FoamFile { format ascii; class dictionary; object fvSolution; }\nsolvers {} SIMPLE {} relaxationFactors {}\n''')
+r=subprocess.run(['snappyHexMesh','-overwrite'],text=True,capture_output=True); print(r.stdout[-6000:]); print(r.stderr[-500:]); print('snappy rc',r.returncode)
+# -- output
+.02 s
+
+
+Detecting near surfaces ...
+Overriding nearest with intersection of close gaps at 0 out of 10498 points.
+Overriding displacement on features :
+   implicit features    : false
+   explicit features    : false
+   multi-patch features : false
+
+Attraction:
+    linear   : max:(0.000932885 0.000249966 3.46945e-18) avg:(6.18645e-12 -3.05453e-09 -3.17378e-07)
+    feature  : max:(0 0 0) avg:(0 0 0)
+Feature analysis : total master points :10498 of which attracted to :
+    feature point   : 0
+    feature edge    : 0
+    nearest surface : 0
+    rest            : 10498
+
+--> FOAM Warning : Displacement (-1.7241e-05 3.48364e-05 2.21241e-05) at mesh point 20334 coord (0.0772411 -0.0472003 0.0303399) points through the surrounding patch faces
+Smoothing displacement ...
+Iteration 0
+Iteration 10
+Iteration 20
+Displacement smoothed in = 0.11 s
+
+
+Moving mesh ...
+
+Iteration 0
+Moving mesh using displacement scaling : min:1 max:1
+Checking faces in error :
+    non-orthogonality > 70  degrees                        : 0
+    faces with face pyramid volume < 1e-15                 : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Successfully moved mesh
+Moved mesh in = 0.07 s
+
+
+
+Morph iteration 9
+-----------------
+Calculating patchDisplacement as distance to nearest surface point ...
+    non-zone points : attract to nearest of all non-zone surfaces
+    zone points     : attract to zone surface only
+
+Wanted displacement : average:1.24388e-05 min:8.30838e-10 max:0.000694311
+Calculated surface displacement in = 0.03 s
+
+
+Detecting near surfaces ...
+Overriding nearest with intersection of close gaps at 0 out of 10498 points.
+Overriding displacement on features :
+   imp
+... 13 characters cut ...
+s    : false
+   explicit features    : false
+   multi-patch features : false
+
+Attraction:
+    linear   : max:(-0.000179701 0.000670653 0) avg:(-1.71044e-11 -6.11286e-10 2.48239e-08)
+    feature  : max:(0 0 0) avg:(0 0 0)
+Feature analysis : total master points :10498 of which attracted to :
+    feature point   : 0
+    feature edge    : 0
+    nearest surface : 0
+    rest            : 10498
+
+--> FOAM Warning : Displacement (-4.19067e-06 1.56398e-05 6.93889e-18) at mesh point 20334 coord (0.0772238 -0.0471655 0.030362) points through the surrounding patch faces
+Smoothing displacement ...
+Iteration 0
+Iteration 10
+Iteration 20
+Displacement smoothed in = 0.14 s
+
+
+Moving mesh ...
+
+Iteration 0
+Moving mesh using displacement scaling : min:1 max:1
+Checking faces in error :
+    non-orthogonality > 70  degrees                        : 0
+    faces with face pyramid volume < 1e-15                 : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Successfully moved mesh
+Moved mesh in = 0.07 s
+
+
+Repatching faces according to nearest surface ...
+Repatched 32 faces in = 0.05 s
+
+
+Edge intersection testing:
+    Number of edges             : 74344
+    Number of edges to retest   : 32376
+    Number of intersected edges : 10456
+Merging 2320 sets of faces.
+
+Edge intersection testing:
+    Number of edges             : 72000
+    Number of edges to retest   : 9344
+    Number of intersected edges : 8112
+
+Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 70  degrees                        : 0
+    faces with face pyramid volume < 1e-15                 : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+
+Merging all points on surface that
+- are used by only two boundary faces and
+- make an angle with a cosine of more than 0.866025.
+
+Removing 2232 straight edge points ...
+
+Edge intersection testing:
+    Number of edges             : 72000
+    Number of edges to retest   : 9344
+    Number of intersected edges : 8112
+
+Undo iteration 0
+----------------
+Checking faces in error :
+    non-orthogonality > 70  degrees                        : 0
+    faces with face pyramid volume < 1e-15                 : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Snapped mesh : cells:22120  faces:72000  points:27965
+Cells per refinement level:
+    0	3920
+    1	18200
+Writing mesh to time constant
+Wrote mesh in = 0.12 s.
+Mesh snapped in = 3.28 s.
+Checking final mesh ...
+Checking faces in error :
+    non-orthogonality > 70  degrees                        : 0
+    faces with face pyramid volume < 1e-15                 : 0
+    faces with concavity > 80  degrees                     : 0
+    faces with skewness > 4   (internal) or 20  (boundary) : 0
+    faces with interpolation weights (0..1)  < 0.02        : 0
+    faces with volume ratio of neighbour cells < 0.01      : 0
+    faces with face twist < 0.02                           : 0
+    faces on cells with determinant < 0.001                : 0
+Finished meshing without any errors
+Finished meshing in = 6.52 s.
+End
+
+
+
+snappy rc 0
+
+# -- cell 21 (0.7s, exit 0)
+r=subprocess.run(['checkMesh','-constant'],text=True,capture_output=True); print(r.stdout[-5000:]); print(r.stderr[-500:]); print('checkMesh rc',r.returncode)
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh -constant
+Date   : Sep 19 2026
+Time   : 09:49:22
+Host   : yc-demo
+PID    : 650444
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T24-20260919-094538-67c8/t24
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           27965
+    faces:            72000
+    internal faces:   63848
+    cells:            22120
+    faces per cell:   6.14141
+    boundary patches: 12
+    point zones:      1
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     18216
+    prisms:        2144
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     1760
+    Breakdown of polyhedra by number of faces:
+        faces   number of cells
+            4   24
+            5   152
+            6   424
+            9   568
+           12   520
+           15   72
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+                   Patch    Faces   Points  Surface topology
+                  inlet1       41       57  ok (non-closed singly connected)
+                  inlet2       41       57  ok (non-closed singly connected)
+                  inlet3       41       57  ok (non-closed singly connected)
+                  inlet4       41       57  ok (non-closed singly connected)
+                  outlet       88      109  ok (non-closed singly connected)
+            cylinderWall     4812     5112  ok (non-closed singly connected)
+                   floor      820      893  ok (non-closed singly connected)
+                     top      732      824  ok (non-closed singly connected)
+              duct1Walls      384      444  ok (non-closed singly connected)
+              duct2Walls      384      444  ok (non-closed singly connected)
+              duct3Walls      384      444  ok (non-closed singly connected)
+              duct4Walls      384      444  ok (non-closed singly connected)
+                    ".*"     8152     8242      ok (closed singly connected)
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+               PointZone  PointsBoundingBox
+            frozenPoints       0(1e+150 1e+150 1e+150) (-1e+150 -1e+150 -1e+150)
+
+Checking geometry...
+    Overall domain bounding box (-0.0821641 -0.0821641 0) (0.0821641 0.0821641 0.2)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.17345e-16 -2.49295e-16 -1.28377e-16) OK.
+    Max cell openness = 2.67987e-16 OK.
+    Max aspect ratio = 4.33862 OK.
+    Minimum face area = 5.42427e-06. Maximum face area = 5.87522e-05.  Face area magnitudes OK.
+    Min volume = 1.20616e-08. Max volume = 4.23885e-07.  Total volume = 0.00238741.  Cell volumes OK.
+    Mesh non-orthogonality Max: 32.2959 average: 9.4228
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 1.36469 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+
+
+checkMesh rc 0
+
+# -- cell 22 (0.5s, exit 1)
+r=subprocess.run(['foamToVTK','-constant','-noFields'],text=True,capture_output=True); print(r.stdout[-1200:], 'rc',r.returncode)
+import glob, pyvista as pv
+files=glob.glob('VTK/**/*.vtu',recursive=True)+glob.glob('VTK/**/*.vtk',recursive=True); print(files[:10])
+vol=pv.read([f for f in files if 'internal' in f.lower()][0])
+sl=vol.slice(normal=(0,0,1),origin=(0,0,0.04))
+p=pv.Plotter(off_screen=True,window_size=(1000,650)); p.add_mesh(sl,color='aliceblue',show_edges=True,edge_color='navy',line_width=0.4); p.add_axes(); p.view_xy(); p.camera.zoom(1.25); p.show(screenshot='coarse_mesh_slice.png')
+print('slice cells',sl.n_cells,'volume cells',vol.n_cells)
+from IPython.display import display,Image; display(Image('coarse_mesh_slice.png'))
+# -- output
+Using: OpenFOAM-2512 (2512) - visit www.openfoam.com
+Build: _87ed40d2-20251219
+
+Invalid option: -noFields
+
+See 'foamToVTK -help' for usage
+ or 'foamToVTK -help-full' for extended usage
+
+ rc 1
+[]
+[31m---------------------------------------------------------------------------[39m
+[31mIndexError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[22][39m[32m, line 4[39m
+[32m      1[39m r=subprocess.run([[33m'foamToVTK'[39m,[33m'-constant'[39m,[33m'-noFields'[39m],text=[38;5;28;01mTrue[39;00m,capture_output=[38;5;28;01mTrue[39;00m); print(r.stdout[-[32m1200[39m:], [33m'rc'[39m,r.returncode)
+[32m      2[39m [38;5;28;01mimport[39;00m glob, pyvista [38;5;28;01mas[39;00m pv
+[32m      3[39m files=glob.glob([33m'VTK/**/*.vtu'[39m,recursive=[38;5;28;01mTrue[39;00m)+glob.glob([33m'VTK/**/*.vtk'[39m,recursive=[38;5;28;01mTrue[39;00m); print(files[:[32m10[39m])
+[32m----> [39m[32m4[39m vol=pv.read([f [38;5;28;01mfor[39;00m f [38;5;28;01min[39;00m files [38;5;28;01mif[39;00m [33m'internal'[39m [38;5;28;01min[39;00m f.lower()][[32m0[39m])
+[32m      5[39m sl=vol.slice(normal=([32m0[39m,[32m0[39m,[32m1[39m),origin=([32m0[39m,[32m0[39m,[32m0.04[39m))
+[32m      6[39m p=pv.Plotter(off_screen=[38;5;28;01mTrue[39;00m,window_size=([32m1000[39m,[32m650[39m)); p.add_mesh(sl,color=[33m'aliceblue'[39m,show_edges=[38;5;28;01mTrue[39;00m,edge_color=[33m'navy'[39m,line_width=[32m0.4[39m); p.add_axes(); p.view_xy(); p.camera.zoom([32m1.25[39m); p.show(screenshot=[33m'coarse_mesh_slice.png'[39m)
+[32m      7[39m print([33m'slice cells'[39m,sl.n_cells,[33m'volume cells'[39m,vol.n_cells)
+
+[31mIndexError[39m: list index out of range
+
+# -- cell 23 (0.4s, exit 0)
+r=subprocess.run(['foamToVTK','-help'],text=True,capture_output=True); print(r.stdout[:5000])
+# -- output
+Usage: foamToVTK [OPTIONS]
+Options:
+  -allAreas         Use all regions in finite-area regionProperties
+  -allRegions       Use all regions in regionProperties
+  -area-region <name>
+                    Specify area-mesh region. Eg, -area-region shell
+  -area-regions <wordRes>
+                    Use specified area region. Eg, -area-regions film
+                    Or from regionProperties.  Eg, -area-regions '(film
+                    "solid.*")'
+  -ascii            Write in ASCII format instead of binary
+  -case <dir>       Case directory (instead of current directory)
+  -constant         Include 'constant/' dir in the times list
+  -fields <wordRes>
+                    Specify single or multiple fields to write (all by default)
+                    Eg, 'T' or '(p T U "alpha.*")'
+  -latestTime       Select the latest time
+  -name <subdir>    Directory name for VTK output (default: 'VTK')
+  -no-boundary      Suppress output for boundary patches
+  -no-fields        Suppress conversion of fields
+  -no-internal      Suppress output for internal volume mesh
+  -no-lagrangian    Suppress writing lagrangian positions and fields
+  -no-point-data    Suppress conversion of pointFields. No interpolated
+                    PointData.
+  -noZero           Exclude '0/' dir from the times list
+  -one-boundary     Combine all patches into a single file
+  -overwrite        Remove any existing VTK output directory
+  -parallel         Run in parallel
+  -patches <wordRes>
+                    Specify single patch or multiple patches to write
+                    Eg, 'top' or '( front ".*back" )'
+  -region <name>    Use specified mesh region. Eg, -region gas
+  -regions <wordRes>
+                    Use specified mesh region. Eg, -regions gas
+                    Or from regionProperties.  Eg, -regions '(gas "solid.*")'
+  -time <ranges>    List of ranges. Eg, ':10,20 40:70 1000:', 'none', etc
+  -verbose          Additional verbosity (can be used multiple times)
+  -doc              Display documentation in browser
+  -help             Display short help and exit
+  -help-compat      Display compatibility options and exit
+  -help-full        Display full help and exit
+
+General OpenFOAM to VTK file writer
+
+Using: OpenFOAM-2512 (2512) - visit www.openfoam.com
+Build: _87ed40d2-20251219
+Arch:  LSB;label=32;scalar=64
+
+# -- cell 24 (1.1s, exit 0)
+r=subprocess.run(['foamToVTK','-constant','-no-fields','-overwrite'],text=True,capture_output=True); print(r.stdout[-1000:],'rc',r.returncode)
+import glob, pyvista as pv
+files=glob.glob('VTK/**/*.vtu',recursive=True); print(files[:8])
+vol=pv.read([f for f in files if 'internal' in f.lower()][0]); sl=vol.slice(normal=(0,0,1),origin=(0,0,0.04))
+p=pv.Plotter(off_screen=True,window_size=(950,700)); p.add_mesh(sl,color='aliceblue',show_edges=True,edge_color='navy',line_width=0.35); p.add_axes(); p.view_xy(); p.camera.zoom(1.2); p.show(screenshot='coarse_mesh_slice.png')
+print('slice cells',sl.n_cells,'volume cells',vol.n_cells)
+from IPython.display import display,Image; display(Image('coarse_mesh_slice.png'))
+# -- output
+undary/floor.vtp"
+    Boundary  : "VTK/t24_0/boundary/top.vtp"
+    Boundary  : "VTK/t24_0/boundary/duct1Walls.vtp"
+    Boundary  : "VTK/t24_0/boundary/duct2Walls.vtp"
+    Boundary  : "VTK/t24_0/boundary/duct3Walls.vtp"
+    Boundary  : "VTK/t24_0/boundary/duct4Walls.vtp"
+Wrote in 0.15 s, 242320 kB
+Time: 0
+    Internal  : "VTK/t24_1/internal.vtu"
+    Boundary  : "VTK/t24_1/boundary/inlet1.vtp"
+    Boundary  : "VTK/t24_1/boundary/inlet2.vtp"
+    Boundary  : "VTK/t24_1/boundary/inlet3.vtp"
+    Boundary  : "VTK/t24_1/boundary/inlet4.vtp"
+    Boundary  : "VTK/t24_1/boundary/outlet.vtp"
+    Boundary  : "VTK/t24_1/boundary/cylinderWall.vtp"
+    Boundary  : "VTK/t24_1/boundary/floor.vtp"
+    Boundary  : "VTK/t24_1/boundary/top.vtp"
+    Boundary  : "VTK/t24_1/boundary/duct1Walls.vtp"
+    Boundary  : "VTK/t24_1/boundary/duct2Walls.vtp"
+    Boundary  : "VTK/t24_1/boundary/duct3Walls.vtp"
+    Boundary  : "VTK/t24_1/boundary/duct4Walls.vtp"
+Wrote in 0.04 s, 242652 kB
+
+End: 0.32 s, 285784 kB (peak)
+
+ rc 0
+['VTK/t24_1/internal.vtu', 'VTK/t24_0/internal.vtu']
+slice cells 604 volume cells 22120
+
+[0m[33m2026-09-19 09:49:42.306 ( 167.666s) [    777789C21780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-19 09:49:42.307 ( 167.667s) [    777789C21780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_649048/3017181655.py:5: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  p=pv.Plotter(off_screen=True,window_size=(950,700)); p.add_mesh(sl,color='aliceblue',show_edges=True,edge_color='navy',line_width=0.35); p.add_axes(); p.view_xy(); p.camera.zoom(1.2); p.show(screenshot='coarse_mesh_slice.png')
+
+# -- cell 25 (0.1s, exit 0)
+# Re-export unchanged surfaces while recording the same validated interior point used by snappyHexMesh.
+export_patches(fluid,patches,directory='constant/triSurface',tolerance=2.5e-4,location_in_mesh=(0.0,0.0,0.10),quiet=True)
+print('recorded location_in_mesh = (0, 0, 0.10) m in patches.json')
+# -- output
+recorded location_in_mesh = (0, 0, 0.10) m in patches.json
+
