@@ -1,0 +1,582 @@
+# -- cell 1 (4.3s, exit 0)
+import inspect, subprocess, sys
+import build123d as bd
+print('RegularPolygon:', inspect.signature(bd.RegularPolygon))
+print('Face:', inspect.signature(bd.Face))
+print('extrude:', inspect.signature(bd.extrude))
+print('Box:', inspect.signature(bd.Box))
+# -- output
+RegularPolygon: (radius: 'float', side_count: 'int', major_radius: 'bool' = True, rotation: 'float' = 0, align: 'tuple[Align, Align]' = (<Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)
+Face: (*args: 'Any', **kwargs: 'Any')
+extrude: (to_extrude: 'Face | Sketch | None' = None, amount: 'float | None' = None, dir: 'VectorLike | None' = None, until: 'Until | None' = None, target: 'Compound | Solid | None' = None, both: 'bool' = False, taper: 'float' = 0.0, clean: 'bool' = True, mode: 'Mode' = <Mode.ADD>) -> 'Part'
+Box: (length: 'float', width: 'float', height: 'float', rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)
+
+# -- cell 2 (0.8s, exit 1)
+import math, numpy as np
+from build123d import Box, RegularPolygon, Face, extrude, Pos, Rot, Align
+DUCT = 0.080
+UPSTREAM = 0.040
+CORE = 0.020
+DOWNSTREAM = 0.080
+CELL_AF = 0.008
+WEB = 0.001
+PITCH_AF = CELL_AF + WEB
+R_OPEN = CELL_AF / math.sqrt(3.0)
+R_PITCH = PITCH_AF / math.sqrt(3.0)
+X0, X1, X2, X3 = 0.0, UPSTREAM, UPSTREAM + CORE, UPSTREAM + CORE + DOWNSTREAM
+# Flat-topped regular hexagons in the local XY plane; after rotation, local X,Y map to global y,z.
+hex_face = Face(RegularPolygon(R_OPEN, 6, major_radius=True, rotation=0))
+base_passage = Rot(0, 90, 0) * extrude(hex_face, amount=CORE)
+centres = []
+row = 0
+z = 0.0
+while z <= DUCT/2 + 1e-12:
+    for zz in ([0.0] if row == 0 else [z, -z]):
+        yoff = 0.0 if row % 2 == 0 else 1.5 * R_PITCH
+        k = 0
+        while True:
+            ys = [yoff] if k == 0 else [yoff + 3*R_PITCH*k, yoff - 3*R_PITCH*k]
+            added = False
+            for y in ys:
+                # all six vertices must remain in the square core
+                verts = [(y + R_OPEN*math.cos(math.radians(60*j)), zz + R_OPEN*math.sin(math.radians(60*j))) for j in range(6)]
+                if max(abs(a) for p in verts for a in p) <= DUCT/2 + 1e-12:
+                    centres.append((y, zz)); added = True
+            if not added and k > 6: break
+            k += 1
+            if k > 20: break
+    row += 1
+    z = row * PITCH_AF
+passages = [Pos(X1, y, z) * base_passage for y, z in centres]
+upstream_air = Pos(X0, -DUCT/2, -DUCT/2) * Box(UPSTREAM, DUCT, DUCT, align=(Align.MIN, Align.MIN, Align.MIN))
+downstream_air = Pos(X2, -DUCT/2, -DUCT/2) * Box(DOWNSTREAM, DUCT, DUCT, align=(Align.MIN, Align.MIN, Align.MIN))
+fluid = upstream_air.fuse(*passages, downstream_air)
+ys = [p[0] for p in centres]; zs = [p[1] for p in centres]
+margin_y = DUCT/2 - (max(abs(y) for y in ys) + R_OPEN)
+margin_z = DUCT/2 - (max(abs(z) for z in zs) + CELL_AF/2)
+print(f'cells={len(centres)}, solids={len(fluid.solids())}')
+print(f'clear across flats={CELL_AF:.6f} m (requested 0.008000)')
+print(f'normal centre pitch={PITCH_AF:.6f} m; web={PITCH_AF-CELL_AF:.6f} m (requested 0.001000)')
+print(f'core streamwise extent={X2-X1:.6f} m (requested 0.020000)')
+print(f'upstream={X1-X0:.6f} m, downstream={X3-X2:.6f} m')
+print(f'edge margins: y={margin_y:.6f} m, z={margin_z:.6f} m')
+print(f'fluid volume={fluid.volume:.9e} m^3; faces={len(fluid.faces())}')
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[2][39m[32m, line 39[39m
+[32m     35[39m     z = row * PITCH_AF
+[32m     36[39m passages = [Pos(X1, y, z) * base_passage [38;5;28;01mfor[39;00m y, z [38;5;28;01min[39;00m centres]
+[32m     37[39m upstream_air = Pos(X0, -DUCT/[32m2[39m, -DUCT/[32m2[39m) * Box(UPSTREAM, DUCT, DUCT, align=(Align.MIN, Align.MIN, Align.MIN))
+[32m     38[39m downstream_air = Pos(X2, -DUCT/[32m2[39m, -DUCT/[32m2[39m) * Box(DOWNSTREAM, DUCT, DUCT, align=(Align.MIN, Align.MIN, Align.MIN))
+[32m---> [39m[32m39[39m fluid = upstream_air.fuse(*passages, downstream_air)
+[32m     40[39m ys = [p[[32m0[39m] [38;5;28;01mfor[39;00m p [38;5;28;01min[39;00m centres]; zs = [p[[32m1[39m] [38;5;28;01mfor[39;00m p [38;5;28;01min[39;00m centres]
+[32m     41[39m margin_y = DUCT/[32m2[39m - (max(abs(y) [38;5;28;01mfor[39;00m y [38;5;28;01min[39;00m ys) + R_OPEN)
+[32m     42[39m margin_z = DUCT/[32m2[39m - (max(abs(z) [38;5;28;01mfor[39;00m z [38;5;28;01min[39;00m zs) + CELL_AF/[32m2[39m)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:1411[39m, in [36mShape.fuse[39m[34m(self, glue, tol, *to_fuse)[39m
+[32m   1408[39m [38;5;28;01mif[39;00m tol:
+[32m   1409[39m     fuse_op.SetFuzzyValue(tol)
+[32m-> [39m[32m1411[39m return_value = [30;43mself[39;49m[30;43m.[39;49m[30;43m_bool_op[39;49m[30;43m([39;49m[30;43m([39;49m[30;43mself[39;49m[30;43m,[39;49m[30;43m)[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mto_fuse[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mfuse_op[39;49m[30;43m)[39;49m
+[32m   1413[39m [38;5;28;01mreturn[39;00m return_value
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/site-packages/build123d/topology/shape_core.py:2512[39m, in [36mShape._bool_op[39m[34m(self, args, tools, operation)[39m
+[32m   2510[39m tool = TopTools_ListOfShape()
+[32m   2511[39m [38;5;28;01mfor[39;00m obj [38;5;129;01min[39;00m tools:
+[32m-> [39m[32m2512[39m     [38;5;28;01mif[39;00m [30;43mobj[39;49m[30;43m.[39;49m[30;43m_wrapped[39;49m [38;5;129;01mis[39;00m [38;5;129;01mnot[39;00m [38;5;28;01mNone[39;00m:
+[32m   2513[39m         tool.Append(obj._wrapped)
+[32m   2515[39m [38;5;66;03m# Handle operations with "zero" shapes[39;00m
+
+[31mAttributeError[39m: 'list' object has no attribute '_wrapped'
+
+# -- cell 3 (0.1s, exit 0)
+import inspect, build123d as bd
+print(inspect.signature(bd.Shape.fuse))
+# -- output
+(self, *to_fuse: 'Shape', glue: 'bool' = False, tol: 'float | None' = None) -> 'Self | Compound'
+
+# -- cell 4 (0.1s, exit 0)
+print(type(base_passage), type(passages[0]), type(upstream_air), type(downstream_air))
+print('passage length if sequence:', len(passages[0]) if isinstance(passages[0], list) else 'not a list')
+# -- output
+<class 'list'> <class 'list'> <class 'build123d.objects_part.Box'> <class 'build123d.objects_part.Box'>
+passage length if sequence: 0
+
+# -- cell 5 (0.1s, exit 0)
+import inspect, build123d as bd
+print(inspect.signature(bd.Wire.make_polygon))
+print(inspect.signature(bd.Face))
+# -- output
+(vertices: 'Iterable[VectorLike]', close: 'bool' = True) -> 'Wire'
+(*args: 'Any', **kwargs: 'Any')
+
+# -- cell 6 (1.4s, exit 0)
+import math, numpy as np, build123d as bd
+from build123d import Box, Face, Wire, extrude, Pos, Align
+DUCT = 0.080
+UPSTREAM = 0.040
+CORE = 0.020
+DOWNSTREAM = 0.080
+CELL_AF = 0.008
+WEB = 0.001
+PITCH_AF = CELL_AF + WEB
+R_OPEN = CELL_AF / math.sqrt(3.0)
+R_PITCH = PITCH_AF / math.sqrt(3.0)
+X0, X1, X2, X3 = 0.0, UPSTREAM, UPSTREAM + CORE, UPSTREAM + CORE + DOWNSTREAM
+hex_vertices = [(0.0, R_OPEN*math.cos(math.radians(60*j)), R_OPEN*math.sin(math.radians(60*j))) for j in range(6)]
+hex_face = Face(Wire.make_polygon(hex_vertices, close=True))
+base_passage = extrude(hex_face, amount=CORE, dir=(1, 0, 0))
+centres = []
+for col in range(-8, 9):
+    y = 1.5 * R_PITCH * col
+    for row in range(-8, 9):
+        z = PITCH_AF * (row + 0.5*(col % 2))
+        verts = [(y + R_OPEN*math.cos(math.radians(60*j)), z + R_OPEN*math.sin(math.radians(60*j))) for j in range(6)]
+        if max(abs(a) for p in verts for a in p) <= DUCT/2 + 1e-12:
+            centres.append((y, z))
+passages = [Pos(X1, y, z) * base_passage for y, z in centres]
+upstream_air = Pos(X0, -DUCT/2, -DUCT/2) * Box(UPSTREAM, DUCT, DUCT, align=(Align.MIN, Align.MIN, Align.MIN))
+downstream_air = Pos(X2, -DUCT/2, -DUCT/2) * Box(DOWNSTREAM, DUCT, DUCT, align=(Align.MIN, Align.MIN, Align.MIN))
+fluid = upstream_air.fuse(*passages, downstream_air)
+ys = [p[0] for p in centres]; zs = [p[1] for p in centres]
+margin_y = DUCT/2 - (max(abs(y) for y in ys) + R_OPEN)
+margin_z = DUCT/2 - max(max(abs(z + R_OPEN*math.sin(math.radians(60*j))) for j in range(6)) for z in zs)
+print(f'cells={len(centres)}, connected solids={len(fluid.solids())}')
+print(f'clear across flats={CELL_AF:.6f} m (requested 0.008000)')
+print(f'normal centre pitch={PITCH_AF:.6f} m; web={PITCH_AF-CELL_AF:.6f} m (requested 0.001000)')
+print(f'core streamwise extent={X2-X1:.6f} m (requested 0.020000)')
+print(f'upstream={X1-X0:.6f} m, downstream={X3-X2:.6f} m')
+print(f'edge margins: y={margin_y:.6f} m, z={margin_z:.6f} m')
+print(f'fluid volume={fluid.volume:.9e} m^3; faces={len(fluid.faces())}')
+# -- output
+cells=77, connected solids=1
+clear across flats=0.008000 m (requested 0.008000)
+normal centre pitch=0.009000 m; web=0.001000 m (requested 0.001000)
+core streamwise extent=0.020000 m (requested 0.020000)
+upstream=0.040000 m, downstream=0.080000 m
+edge margins: y=0.004204 m, z=-0.000000 m
+fluid volume=8.533554638e-04 m^3; faces=462
+
+# -- cell 7 (4.6s, exit 0)
+candidates=[]
+for oy in np.linspace(0, 1.5*R_PITCH, 41, endpoint=False):
+    for oz in np.linspace(0, PITCH_AF, 41, endpoint=False):
+        cc=[]; margins=[]
+        for col in range(-9,10):
+            y=1.5*R_PITCH*col+oy
+            for row in range(-9,10):
+                z=PITCH_AF*(row+0.5*(col%2))+oz
+                vv=[(y+R_OPEN*math.cos(math.radians(60*j)),z+R_OPEN*math.sin(math.radians(60*j))) for j in range(6)]
+                m=DUCT/2-max(abs(a) for p in vv for a in p)
+                if m>=-1e-12: cc.append((y,z)); margins.append(m)
+        candidates.append((len(cc),min(margins),oy,oz,cc))
+best=max(candidates,key=lambda q:(q[0],q[1]))
+print(f'best cells={best[0]}, minimum vertex-to-edge clearance={best[1]:.6f} m, offset y={best[2]:.6f}, z={best[3]:.6f}')
+# -- output
+best cells=85, minimum vertex-to-edge clearance=-0.000000 m, offset y=0.003612, z=0.000000
+
+# -- cell 8 (0.1s, exit 0)
+safe=[q for q in candidates if q[1]>=0.00025]
+best_safe=max(safe,key=lambda q:(q[0],q[1]))
+print(f'selected cells={best_safe[0]}, minimum clearance={best_safe[1]:.6f} m, offset y={best_safe[2]:.6f}, z={best_safe[3]:.6f}')
+# -- output
+selected cells=72, minimum clearance=0.002195 m, offset y=0.000000, z=0.002195
+
+# -- cell 9 (1.4s, exit 0)
+LATTICE_Y_OFFSET = best_safe[2]
+LATTICE_Z_OFFSET = best_safe[3]
+centres = best_safe[4]
+passages = [Pos(X1, y, z) * base_passage for y, z in centres]
+fluid = upstream_air.fuse(*passages, downstream_air)
+actual_min_margin = min(DUCT/2-max(abs(a) for j in range(6) for a in (y+R_OPEN*math.cos(math.radians(60*j)),z+R_OPEN*math.sin(math.radians(60*j)))) for y,z in centres)
+print(f'final passages={len(centres)}, connected solids={len(fluid.solids())}, faces={len(fluid.faces())}')
+print(f'minimum core-frame margin={actual_min_margin:.6f} m')
+print(f'fluid volume={fluid.volume:.9e} m^3')
+# -- output
+final passages=72, connected solids=1, faces=444
+minimum core-frame margin=0.002195 m
+fluid volume=8.478129012e-04 m^3
+
+# -- cell 10 (1.7s, exit 0)
+import pyvista as pv
+from build123d import export_stl
+export_stl(fluid, 'fluid_preview.stl', tolerance=2.5e-4, angular_tolerance=0.15)
+pv.OFF_SCREEN=True
+surf=pv.read('fluid_preview.stl')
+cut=surf.clip(normal=(0,-1,1), origin=(0.070,0,0), invert=False)
+pl=pv.Plotter(off_screen=True, window_size=(1000,700))
+pl.add_mesh(cut, color='#79bce8', show_edges=True, edge_color='#24506c', line_width=0.5)
+pl.add_axes(); pl.view_isometric(); pl.camera.zoom(1.25)
+pl.add_text('Air volume cutaway: inlet left, outlet right', font_size=12)
+pl.show(screenshot='coarse_geometry.png')
+print(surf.n_cells, surf.bounds)
+# -- output
+2040 BoundsTuple(x_min =  0.0,
+            x_max =  0.14000000059604645,
+            y_min = -0.03999999910593033,
+            y_max =  0.03999999910593033,
+            z_min = -0.03999999910593033,
+            z_max =  0.03999999910593033)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-19 12:43:54.983 (   1.057s) [    767EE4E22780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-19 12:43:54.985 (   1.059s) [    767EE4E22780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-19 12:43:55.013 (   1.087s) [    767EE4E22780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_692158/2811781963.py:11: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  pl.show(screenshot='coarse_geometry.png')
+
+# -- cell 11 (0.2s, exit 0)
+tol=1e-8
+all_faces=list(fluid.faces())
+inlet_faces=[]; outlet_faces=[]; duct_faces=[]; honeycomb_faces=[]
+for f in all_faces:
+    verts=[v.to_tuple() for v in f.vertices()]
+    xs=[p[0] for p in verts]; ys_f=[p[1] for p in verts]; zs_f=[p[2] for p in verts]
+    if max(abs(x-X0) for x in xs)<tol:
+        inlet_faces.append(f)
+    elif max(abs(x-X3) for x in xs)<tol:
+        outlet_faces.append(f)
+    elif (max(abs(y-DUCT/2) for y in ys_f)<tol or max(abs(y+DUCT/2) for y in ys_f)<tol or
+          max(abs(z-DUCT/2) for z in zs_f)<tol or max(abs(z+DUCT/2) for z in zs_f)<tol):
+        duct_faces.append(f)
+    else:
+        honeycomb_faces.append(f)
+def area(fs): return sum(f.area for f in fs)
+print('face counts:', {k:len(v) for k,v in [('inlet',inlet_faces),('outlet',outlet_faces),('duct_walls',duct_faces),('honeycomb_walls',honeycomb_faces)]})
+print('areas m2:', {k:area(v) for k,v in [('inlet',inlet_faces),('outlet',outlet_faces),('duct_walls',duct_faces),('honeycomb_walls',honeycomb_faces)]})
+print('assigned total=',sum(map(len,[inlet_faces,outlet_faces,duct_faces,honeycomb_faces])),'of',len(all_faces))
+# -- output
+face counts: {'inlet': 1, 'outlet': 1, 'duct_walls': 8, 'honeycomb_walls': 434}
+areas m2: {'inlet': 0.0064, 'outlet': 0.0064, 'duct_walls': 0.038400000000000004, 'honeycomb_walls': 0.04472516048510956}
+assigned total= 444 of 444
+
+/tmp/ipykernel_692158/3692555969.py:5: DeprecationWarning: Use 'tuple(Vertex)' instead.
+  verts=[v.to_tuple() for v in f.vertices()]
+
+# -- cell 12 (0.3s, exit 0)
+import sys
+sys.path.insert(0,'.reference')
+from cad_export import export_patches
+export_patches(fluid, {'inlet':inlet_faces, 'outlet':outlet_faces, 'duct_walls':duct_faces, 'honeycomb_walls':honeycomb_faces}, tolerance=2.5e-4)
+# -- output
+constant/triSurface  <-  444 faces, one tessellation
+  tolerance           0.00025 m chord deviation, 0.1 rad angular
+    inlet                     1 faces          2 triangles  0.0064 m^2  -> inlet.stl
+    outlet                    1 faces          2 triangles  0.0064 m^2  -> outlet.stl
+    duct_walls                8 faces         16 triangles  0.0384 m^2  -> duct_walls.stl
+    honeycomb_walls         434 faces      2,020 triangles  0.0447252 m^2  -> honeycomb_walls.stl
+  extent              0.14 x 0.08 x 0.08 m   <- metres, so check these against the request
+  union               2,040 triangles, 0 open edges, 0 flipped, 0 non-manifold
+  location_in_mesh    not given
+  manifest            constant/triSurface/patches.json
+{'out_dir': 'constant/triSurface',
+ 'tolerance': 0.00025,
+ 'angular_tolerance': 0.1,
+ 'faces': 444,
+ 'removed': [],
+ 'patches': [{'name': 'inlet',
+   'file': 'inlet.stl',
+   'faces': 1,
+   'triangles': 2,
+   'area_m2': 0.006399999713897708,
+   'degenerate_dropped': 0,
+   'bytes': 184},
+  {'name': 'outlet',
+   'file': 'outlet.stl',
+   'faces': 1,
+   'triangles': 2,
+   'area_m2': 0.006399999713897708,
+   'degenerate_dropped': 0,
+   'bytes': 184},
+  {'name': 'duct_walls',
+   'file': 'duct_walls.stl',
+   'faces': 8,
+   'triangles': 16,
+   'area_m2': 0.03839999947547912,
+   'degenerate_dropped': 0,
+   'bytes': 884},
+  {'name': 'honeycomb_walls',
+   'file': 'honeycomb_walls.stl',
+   'faces': 434,
+   'triangles': 2020,
+   'area_m2': 0.044725159288024674,
+   'degenerate_dropped': 0,
+   'bytes': 101084}],
+ 'triangles': 2040,
+ 'degenerate_dropped': 0,
+ 'area_m2': 0.09592515819129921,
+ 'bounds_m': [0.0,
+  -0.039999999106,
+  -0.039999999106,
+  0.140000000596,
+  0.039999999106,
+  0.039999999106],
+ 'extent_m': [0.140000000596, 0.079999998212, 0.079999998212],
+ 'union': {'vertices': 880,
+  'open_edges': 0,
+  'non_manifold_edges': 0,
+  'flipped_edges': 0},
+ 'location_in_mesh': None,
+ 'manifest': 'constant/triSurface/patches.json'}
+
+# -- cell 13 (0.1s, exit 0)
+from pathlib import Path
+Path('system').mkdir(exist_ok=True); Path('constant').mkdir(exist_ok=True)
+Path('system/blockMeshDict').write_text(r'''FoamFile { format ascii; class dictionary; object blockMeshDict; }
+scale 1;
+vertices ((-0.004 -0.044 -0.044) (0.144 -0.044 -0.044) (0.144 0.044 -0.044) (-0.004 0.044 -0.044)
+          (-0.004 -0.044 0.044) (0.144 -0.044 0.044) (0.144 0.044 0.044) (-0.004 0.044 0.044));
+blocks (hex (0 1 2 3 4 5 6 7) (37 22 22) simpleGrading (1 1 1));
+edges ();
+boundary (background { type patch; faces ((0 4 7 3) (1 2 6 5) (0 1 5 4) (3 7 6 2) (0 3 2 1) (4 5 6 7)); });
+mergePatchPairs ();
+''')
+Path('system/snappyHexMeshDict').write_text(r'''FoamFile { format ascii; class dictionary; object snappyHexMeshDict; }
+castellatedMesh true; snap true; addLayers false;
+geometry {
+ inlet.stl { type triSurfaceMesh; name inlet; }
+ outlet.stl { type triSurfaceMesh; name outlet; }
+ duct_walls.stl { type triSurfaceMesh; name duct_walls; }
+ honeycomb_walls.stl { type triSurfaceMesh; name honeycomb_walls; }
+}
+castellatedMeshControls {
+ maxLocalCells 200000; maxGlobalCells 400000; minRefinementCells 0; maxLoadUnbalance 0.10; nCellsBetweenLevels 2;
+ features ();
+ refinementSurfaces {
+  inlet { level (1 1); patchInfo { type patch; } }
+  outlet { level (1 1); patchInfo { type patch; } }
+  duct_walls { level (1 1); patchInfo { type wall; } }
+  honeycomb_walls { level (1 1); patchInfo { type wall; } }
+ }
+ resolveFeatureAngle 25;
+ refinementRegions {}
+ locationInMesh (0.020 0 0);
+ allowFreeStandingZoneFaces true;
+}
+snapControls {
+ nSmoothPatch 3; tolerance 2.0; nSolveIter 50; nRelaxIter 5;
+ nFeatureSnapIter 10; implicitFeatureSnap true; explicitFeatureSnap false; multiRegionFeatureSnap false;
+}
+addLayersControls { relativeSizes true; layers {}; expansionRatio 1.0; finalLayerThickness 0.3; minThickness 0.1; nGrow 0; featureAngle 60; nRelaxIter 3; nSmoothSurfaceNormals 1; nSmoothNormals 3; nSmoothThickness 10; maxFaceThicknessRatio 0.5; maxThicknessToMedialRatio 0.3; minMedianAxisAngle 90; nBufferCellsNoExtrude 0; nLayerIter 50; }
+meshQualityControls { #include "meshQualityDict" }
+debug 0; mergeTolerance 1e-6;
+''')
+Path('system/meshQualityDict').write_text(r'''maxNonOrtho 70; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80; minVol 1e-15; minTetQuality 1e-30; minArea -1; minTwist 0.02; minDeterminant 0.001; minFaceWeight 0.02; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75; relaxed { maxNonOrtho 75; }''')
+print('wrote blockMesh and snappyHexMesh dictionaries')
+# -- output
+wrote blockMesh and snappyHexMesh dictionaries
+
+# -- cell 14 (0.5s, exit 1)
+import subprocess
+with open('log.blockMesh','w') as f: subprocess.run(['blockMesh'],stdout=f,stderr=subprocess.STDOUT,check=True)
+with open('log.snappyHexMesh','w') as f: subprocess.run(['snappyHexMesh','-overwrite'],stdout=f,stderr=subprocess.STDOUT,check=True)
+print(subprocess.run(['tail','-n','20','log.snappyHexMesh'],capture_output=True,text=True).stdout)
+# -- output
+[31m---------------------------------------------------------------------------[39m
+[31mCalledProcessError[39m                        Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[14][39m[32m, line 2[39m
+[32m      1[39m [38;5;28;01mimport[39;00m subprocess
+[32m----> [39m[32m2[39m [38;5;28;01mwith[39;00m open([33m'log.blockMesh'[39m,[33m'w'[39m) [38;5;28;01mas[39;00m f: subprocess.run([[33m'blockMesh'[39m],stdout=f,stderr=subprocess.STDOUT,check=[38;5;28;01mTrue[39;00m)
+[32m      3[39m [38;5;28;01mwith[39;00m open([33m'log.snappyHexMesh'[39m,[33m'w'[39m) [38;5;28;01mas[39;00m f: subprocess.run([[33m'snappyHexMesh'[39m,[33m'-overwrite'[39m],stdout=f,stderr=subprocess.STDOUT,check=[38;5;28;01mTrue[39;00m)
+[32m      4[39m print(subprocess.run([[33m'tail'[39m,[33m'-n'[39m,[33m'20'[39m,[33m'log.snappyHexMesh'[39m],capture_output=[38;5;28;01mTrue[39;00m,text=[38;5;28;01mTrue[39;00m).stdout)
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/subprocess.py:577[39m, in [36mrun[39m[34m(input, capture_output, timeout, check, *popenargs, **kwargs)[39m
+[32m    575[39m     retcode = process.poll()
+[32m    576[39m     [38;5;28;01mif[39;00m check [38;5;129;01mand[39;00m retcode:
+[32m--> [39m[32m577[39m         [38;5;28;01mraise[39;00m CalledProcessError(retcode, process.args,
+[32m    578[39m                                  output=stdout, stderr=stderr)
+[32m    579[39m [38;5;28;01mreturn[39;00m CompletedProcess(process.args, retcode, stdout, stderr)
+
+[31mCalledProcessError[39m: Command '['blockMesh']' returned non-zero exit status 1.
+
+# -- cell 15 (0.1s, exit 0)
+print(Path('log.blockMesh').read_text()[-4000:])
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Sep 19 2026
+Time   : 12:44:32
+Host   : yc-demo
+PID    : 694678
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T11-20260919-124205-f4a9/t11
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T11-20260919-124205-f4a9/t11/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 16 (1.0s, exit 0)
+Path('system/controlDict').write_text(r'''FoamFile { format ascii; class dictionary; object controlDict; }
+application snappyHexMesh; startFrom startTime; startTime 0; stopAt endTime; endTime 1; deltaT 1; writeControl timeStep; writeInterval 1; purgeWrite 0; writeFormat ascii; writePrecision 8; writeCompression off; timeFormat general; timePrecision 6; runTimeModifiable true;
+''')
+with open('log.blockMesh','w') as f: r1=subprocess.run(['blockMesh'],stdout=f,stderr=subprocess.STDOUT)
+print('blockMesh return',r1.returncode)
+if r1.returncode==0:
+    with open('log.snappyHexMesh','w') as f: r2=subprocess.run(['snappyHexMesh','-overwrite'],stdout=f,stderr=subprocess.STDOUT)
+    print('snappy return',r2.returncode)
+    print(Path('log.snappyHexMesh').read_text()[-1800:])
+else: print(Path('log.blockMesh').read_text()[-1800:])
+# -- output
+blockMesh return 0
+snappy return 1
+olbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 19 2026
+Time   : 12:44:38
+Host   : yc-demo
+PID    : 694684
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T11-20260919-124205-f4a9/t11
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T11-20260919-124205-f4a9/t11/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+
+# -- cell 17 (0.4s, exit 0)
+Path('system/fvSchemes').write_text('FoamFile { format ascii; class dictionary; object fvSchemes; }\n')
+Path('system/fvSolution').write_text('FoamFile { format ascii; class dictionary; object fvSolution; }\n')
+with open('log.snappyHexMesh','w') as f: r2=subprocess.run(['snappyHexMesh','-overwrite'],stdout=f,stderr=subprocess.STDOUT)
+print('snappy return',r2.returncode)
+print(Path('log.snappyHexMesh').read_text()[-2200:])
+# -- output
+snappy return 1
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : snappyHexMesh -overwrite
+Date   : Sep 19 2026
+Time   : 12:44:41
+Host   : yc-demo
+PID    : 694690
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T11-20260919-124205-f4a9/t11
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2512)
+Entry 'divSchemes' not found in dictionary "system/fvSchemes"
+
+
+file: system/fvSchemes
+
+    From const Foam::dictionary& Foam::dictionary::subDict(const Foam::word&, Foam::keyType::option) const
+    in file db/dictionary/dictionary.C at line 457.
+
+FOAM exiting
+
+# -- cell 18 (10.1s, exit -1)
+Path('system/fvSchemes').write_text(r'''FoamFile { format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+''')
+with open('log.snappyHexMesh','w') as f: r2=subprocess.run(['snappyHexMesh','-overwrite'],stdout=f,stderr=subprocess.STDOUT)
+print('snappy return',r2.returncode)
+print(Path('log.snappyHexMesh').read_text()[-2500:])
+# -- output
+kernel_gone: the kernel stopped while this cell was running; its state is gone and the cell log is what replays it
+
+# -- cell 19 (0.0s, exit -1)
+from pathlib import Path
+print(Path('log.snappyHexMesh').read_text()[-3000:] if Path('log.snappyHexMesh').exists() else 'no log')
+print('polyMesh exists:',Path('constant/polyMesh').exists())
+# -- output
+[Errno 28] No space left on device
+
+# -- cell 20 (0.0s, exit -1)
+import shutil, os
+shutil.rmtree('constant/polyMesh', ignore_errors=True)
+for p in ['log.snappyHexMesh','log.blockMesh']:
+    try: os.remove(p)
+    except FileNotFoundError: pass
+print('cleaned partial mesh')
+# -- output
+[Errno 28] No space left on device
+

@@ -1,0 +1,9 @@
+T5: run 20260919-134906-2bca
+  workspace /home/qiuzi/.openreynolds-buildup/work/T5-20260919-134906-2bca clean (0 entries, 40 house names, no toolbox)
+  fixture assembly.step -> /home/qiuzi/.openreynolds-buildup/work/T5-20260919-134906-2bca/geometry/assembly.step
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T5-20260919-134906-2bca/t5/.reference/b123d_api.md
+  reference cad_export.py -> /home/qiuzi/.openreynolds-buildup/work/T5-20260919-134906-2bca/t5/.reference/cad_export.py
+  spec extent_m=0.6 -> /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-shipped-20260919-124001-f33d/runs/T5/spec.json
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-shipped-20260919-124001-f33d/runs/T5
+  refused in 937.0s, 7 cells, $0.19, checkMesh not ok, failed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-shipped-20260919-124001-f33d/runs/T5 --case /home/qiuzi/.openreynolds-buildup/work/T5-20260919-134906-2bca/t5

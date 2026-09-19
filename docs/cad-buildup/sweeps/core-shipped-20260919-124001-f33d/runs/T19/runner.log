@@ -1,0 +1,6 @@
+T19: run 20260919-131052-841f
+  workspace /home/qiuzi/.openreynolds-buildup/work/T19-20260919-131052-841f clean (0 entries, 40 house names, no toolbox)
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T19-20260919-131052-841f/t19/.reference/b123d_api.md
+  reference cad_export.py -> /home/qiuzi/.openreynolds-buildup/work/T19-20260919-131052-841f/t19/.reference/cad_export.py
+  spec extent_m=0.06 -> /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-shipped-20260919-124001-f33d/runs/T19/spec.json
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-shipped-20260919-124001-f33d/runs/T19

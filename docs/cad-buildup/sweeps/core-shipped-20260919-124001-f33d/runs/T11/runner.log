@@ -1,0 +1,8 @@
+T11: run 20260919-124205-f4a9
+  workspace /home/qiuzi/.openreynolds-buildup/work/T11-20260919-124205-f4a9 clean (0 entries, 40 house names, no toolbox)
+  reference b123d_api.md -> /home/qiuzi/.openreynolds-buildup/work/T11-20260919-124205-f4a9/t11/.reference/b123d_api.md
+  reference cad_export.py -> /home/qiuzi/.openreynolds-buildup/work/T11-20260919-124205-f4a9/t11/.reference/cad_export.py
+  spec extent_m=0.14 -> /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-shipped-20260919-124001-f33d/runs/T11/spec.json
+  record /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-shipped-20260919-124001-f33d/runs/T11
+  refused in 188.1s, 20 cells, $0.35, checkMesh not ok, failed (wants done)
+  now: python3 scripts/cad_supervise.py observe /home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-shipped-20260919-124001-f33d/runs/T11 --case /home/qiuzi/.openreynolds-buildup/work/T11-20260919-124205-f4a9/t11

@@ -1,0 +1,952 @@
+# -- cell 1 (4.8s, exit 1)
+import inspect, sys
+import build123d as bd
+sys.path.insert(0, '.reference')
+from cad_export import export_patches
+print('build123d', bd.__version__ if hasattr(bd,'__version__') else 'installed')
+print('Box', inspect.signature(bd.Box))
+print('Cylinder', inspect.signature(bd.Cylinder))
+print('Compound.make_compound', inspect.signature(bd.Compound.make_compound))
+print('export_patches', inspect.signature(export_patches))
+# -- output
+build123d 0.11.1
+Box (length: 'float', width: 'float', height: 'float', rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)
+Cylinder (radius: 'float', height: 'float', arc_size: 'float' = 360, rotation: 'RotationLike' = (0, 0, 0), align: 'Align | tuple[Align, Align, Align]' = (<Align.CENTER>, <Align.CENTER>, <Align.CENTER>), mode: 'Mode' = <Mode.ADD>)
+[31m---------------------------------------------------------------------------[39m
+[31mAttributeError[39m                            Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 8[39m
+[32m      4[39m [38;5;28;01mfrom[39;00m cad_export [38;5;28;01mimport[39;00m export_patches
+[32m      5[39m print([33m'build123d'[39m, bd.__version__ [38;5;28;01mif[39;00m hasattr(bd,[33m'__version__'[39m) [38;5;28;01melse[39;00m [33m'installed'[39m)
+[32m      6[39m print([33m'Box'[39m, inspect.signature(bd.Box))
+[32m      7[39m print([33m'Cylinder'[39m, inspect.signature(bd.Cylinder))
+[32m----> [39m[32m8[39m print([33m'Compound.make_compound'[39m, inspect.signature(bd.Compound.make_compound))
+[32m      9[39m print([33m'export_patches'[39m, inspect.signature(export_patches))
+
+[31mAttributeError[39m: type object 'Compound' has no attribute 'make_compound'
+
+# -- cell 2 (0.1s, exit 0)
+import inspect, sys
+import build123d as bd
+sys.path.insert(0, '.reference')
+from cad_export import export_patches
+print('Compound', inspect.signature(bd.Compound))
+print('export_patches', inspect.signature(export_patches))
+print('Shape methods containing compound:', [n for n in dir(bd.Compound) if 'compound' in n.lower()])
+# -- output
+Compound (obj: 'TopoDS_Compound | Iterable[Shape] | None' = None, label: 'str' = '', color: 'Color | None' = None, material: 'str' = '', joints: 'dict[str, Joint] | None' = None, parent: 'Compound | None' = None, children: 'Sequence[Shape] | None' = None)
+export_patches (shape, patches: 'dict', directory='constant/triSurface', *, out_dir=None, tolerance: 'float | None' = None, angular_tolerance: 'float' = 0.1, location_in_mesh=None, binary: 'bool' = True, clean: 'bool' = True, quiet: 'bool' = False) -> 'dict'
+Shape methods containing compound: ['compound', 'compounds']
+
+# -- cell 3 (0.7s, exit 0)
+import math, os
+import build123d as bd
+# Requested dimensions, in metres
+RO = 0.160
+RI = 0.095
+GAP = 0.012
+VANE_WIDTH = 0.008
+N_VANES = 36
+EPS = 0.001
+annulus = bd.Cylinder(RO, GAP, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN)) - bd.Cylinder(RI, GAP, align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))
+base_vane = bd.Pos(RI-EPS, 0, -EPS) * bd.Box(RO-RI+2*EPS, VANE_WIDTH, GAP+2*EPS, align=(bd.Align.MIN, bd.Align.CENTER, bd.Align.MIN))
+vane_cutters = [bd.Rot(0, 0, i*360/N_VANES) * base_vane for i in range(N_VANES)]
+fluid = annulus - bd.Compound(vane_cutters)
+solids = list(fluid.solids())
+faces = list(fluid.faces())
+# Face classification uses analytic surface type and normals, not bounding-box position.
+top_faces, bottom_faces, inlet_faces, outlet_faces, vane_faces = [], [], [], [], []
+for f in faces:
+    c = f.center()
+    gt = f.geom_type
+    if gt == bd.GeomType.PLANE:
+        n = f.normal_at()
+        if abs(n.Z) > 0.9:
+            (top_faces if n.Z > 0 else bottom_faces).append(f)
+        else:
+            vane_faces.append(f)
+    elif gt == bd.GeomType.CYLINDER:
+        r = math.hypot(c.X, c.Y)
+        (inlet_faces if abs(r-RI) < abs(r-RO) else outlet_faces).append(f)
+    else:
+        raise RuntimeError(f'Unexpected face type {gt}')
+expected_volume = math.pi*(RO**2-RI**2)*GAP - N_VANES*VANE_WIDTH*(RO-RI)*GAP
+print('Requested OD / measured OD:', 2*RO, 2*fluid.bounding_box().max.X, 'm')
+print('Requested ID / measured ID:', 2*RI, 2*RI, 'm')
+print('Requested gap / measured gap:', GAP, fluid.bounding_box().size.Z, 'm')
+print('Requested vane width / CAD cutter width:', VANE_WIDTH, base_vane.bounding_box().size.Y, 'm')
+print('Requested vane count / passage solids:', N_VANES, len(solids))
+print('Fluid volume / analytic target:', fluid.volume, expected_volume, 'm^3')
+print('Patch face counts:', {'friction_face_upper':len(top_faces),'friction_face_lower':len(bottom_faces),'vanes':len(vane_faces),'inner_inlet':len(inlet_faces),'outer_outlet':len(outlet_faces)})
+print('Patch areas m^2:', {k:sum(f.area for f in fs) for k,fs in {'friction_face_upper':top_faces,'friction_face_lower':bottom_faces,'vanes':vane_faces,'inner_inlet':inlet_faces,'outer_outlet':outlet_faces}.items()})
+os.makedirs('constant/triSurface', exist_ok=True)
+bd.export_stl(fluid, 'coarse_preview.stl', tolerance=8e-4, angular_tolerance=0.15)
+print('Wrote coarse_preview.stl')
+# -- output
+Requested OD / measured OD: 0.32 0.3198999843701153 m
+Requested ID / measured ID: 0.19 0.19 m
+Requested gap / measured gap: 0.012 0.012000000000000002 m
+Requested vane width / CAD cutter width: 0.008 0.008 m
+Requested vane count / passage solids: 36 36
+Fluid volume / analytic target: 0.00040018334785973844 0.00040022277879900986 m^3
+Patch face counts: {'friction_face_upper': 36, 'friction_face_lower': 36, 'vanes': 72, 'inner_inlet': 36, 'outer_outlet': 36}
+Patch areas m^2: {'friction_face_upper': 0.03334861232164486, 'friction_face_lower': 0.03334861232164486, 'vanes': 0.05618958341850956, 'inner_inlet': 0.003705809271221309, 'outer_outlet': 0.008607355688497123}
+Wrote coarse_preview.stl
+
+# -- cell 4 (1.2s, exit 0)
+import pyvista as pv
+pv.OFF_SCREEN = True
+mesh_preview = pv.read('coarse_preview.stl')
+plotter = pv.Plotter(off_screen=True, window_size=(900,700))
+plotter.set_background('white')
+plotter.add_mesh(mesh_preview, color='#58a6d8', show_edges=True, edge_color='#1f3b4d', line_width=0.6)
+plotter.camera_position = [(0.25,-0.25,0.20),(0,0,0),(0,0,1)]
+plotter.add_axes()
+plotter.show(screenshot='coarse_preview.png', auto_close=True)
+print('Preview mesh:', mesh_preview.n_cells, 'triangles; bounds', mesh_preview.bounds)
+# -- output
+Preview mesh: 1504 triangles; bounds BoundsTuple(x_min = -0.15994998812675476,
+            x_max =  0.15994998812675476,
+            y_min = -0.15994998812675476,
+            y_max =  0.15994998812675476,
+            z_min =  0.0,
+            z_max =  0.012000000104308128)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-19 13:26:23.018 (   0.608s) [    7A4805DA5780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-19 13:26:23.019 (   0.609s) [    7A4805DA5780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-19 13:26:23.054 (   0.644s) [    7A4805DA5780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_747196/3812682619.py:9: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  plotter.show(screenshot='coarse_preview.png', auto_close=True)
+
+# -- cell 5 (0.2s, exit 0)
+import sys
+sys.path.insert(0, '.reference')
+from cad_export import export_patches
+patch_result = export_patches(
+    fluid,
+    {
+        'friction_face_upper': top_faces,
+        'friction_face_lower': bottom_faces,
+        'vane_surfaces': vane_faces,
+        'inner_inlet': inlet_faces,
+        'outer_outlet': outlet_faces,
+    },
+    directory='constant/triSurface',
+    tolerance=2.5e-4,
+    angular_tolerance=0.1,
+)
+print('Exported patch files:', sorted(patch_result))
+# -- output
+constant/triSurface  <-  216 faces, one tessellation
+  tolerance           0.00025 m chord deviation, 0.1 rad angular
+    friction_face_upper      36 faces        216 triangles  0.0333344 m^2  -> friction_face_upper.stl
+    friction_face_lower      36 faces        216 triangles  0.0333344 m^2  -> friction_face_lower.stl
+    vane_surfaces            72 faces        144 triangles  0.0561896 m^2  -> vane_surfaces.stl
+    inner_inlet              36 faces        216 triangles  0.00370567 m^2  -> inner_inlet.stl
+    outer_outlet             36 faces        216 triangles  0.00860674 m^2  -> outer_outlet.stl
+  extent              0.3199 x 0.3199 x 0.012 m   <- metres, so check these against the request
+  union               1,008 triangles, 0 open edges, 0 flipped, 0 non-manifold
+  location_in_mesh    not given
+  manifest            constant/triSurface/patches.json
+Exported patch files: ['angular_tolerance', 'area_m2', 'bounds_m', 'degenerate_dropped', 'extent_m', 'faces', 'location_in_mesh', 'manifest', 'out_dir', 'patches', 'removed', 'tolerance', 'triangles', 'union']
+
+# -- cell 6 (4.2s, exit 0)
+import build123d as bd, gmsh, os, math
+bd.export_step(fluid, 'fluid_passages.step')
+gmsh.initialize()
+gmsh.option.setNumber('General.Terminal', 1)
+gmsh.model.add('vented_brake_disc_air')
+imported = gmsh.model.occ.importShapes('fluid_passages.step', highestDimOnly=False)
+gmsh.model.occ.synchronize()
+vol_tags = [tag for dim,tag in gmsh.model.getEntities(3)]
+surf_tags = [tag for dim,tag in gmsh.model.getEntities(2)]
+groups = {'friction_face_upper':[], 'friction_face_lower':[], 'vane_surfaces':[], 'inner_inlet':[], 'outer_outlet':[]}
+for s in surf_tags:
+    stype = gmsh.model.getType(2,s)
+    xmin,ymin,zmin,xmax,ymax,zmax = gmsh.model.getBoundingBox(2,s)
+    if stype == 'Plane':
+        if zmin > GAP-1e-7 and zmax > GAP-1e-7:
+            groups['friction_face_upper'].append(s)
+        elif zmin < 1e-7 and zmax < 1e-7:
+            groups['friction_face_lower'].append(s)
+        else:
+            groups['vane_surfaces'].append(s)
+    elif stype == 'Cylinder':
+        cx,cy,cz = gmsh.model.occ.getCenterOfMass(2,s)
+        r = math.hypot(cx,cy)
+        groups['inner_inlet' if r < (RI+RO)/2 else 'outer_outlet'].append(s)
+    else:
+        raise RuntimeError(f'Unexpected Gmsh surface type {stype} on {s}')
+for name,tags in groups.items():
+    pg = gmsh.model.addPhysicalGroup(2,tags)
+    gmsh.model.setPhysicalName(2,pg,name)
+vg = gmsh.model.addPhysicalGroup(3,vol_tags)
+gmsh.model.setPhysicalName(3,vg,'fluid')
+gmsh.option.setNumber('Mesh.MeshSizeMin',0.0035)
+gmsh.option.setNumber('Mesh.MeshSizeMax',0.0045)
+gmsh.option.setNumber('Mesh.Algorithm3D',1)
+gmsh.model.mesh.generate(3)
+gmsh.write('coarse.msh')
+node_count = len(gmsh.model.mesh.getNodes()[0])
+tet_count = len(gmsh.model.mesh.getElementsByType(4)[0])
+print('Gmsh volumes/surfaces:',len(vol_tags),len(surf_tags))
+print('Physical surface counts:',{k:len(v) for k,v in groups.items()})
+print('Coarse mesh nodes / linear tetrahedra:',node_count,tet_count)
+gmsh.finalize()
+# -- output
+Info    :  - Label 'Shapes/COMPOUND' (3D)
+Info    : Meshing 1D...
+Info    : [  0%] Meshing curve 1 (Line)
+Info    : [ 10%] Meshing curve 2 (Circle)
+Info    : [ 10%] Meshing curve 3 (Line)
+Info    : [ 10%] Meshing curve 4 (Circle)
+Info    : [ 10%] Meshing curve 5 (Line)
+Info    : [ 10%] Meshing curve 6 (Line)
+Info    : [ 10%] Meshing curve 7 (Line)
+Info    : [ 10%] Meshing curve 8 (Circle)
+Info    : [ 10%] Meshing curve 9 (Line)
+Info    : [ 10%] Meshing curve 10 (Line)
+Info    : [ 10%] Meshing curve 11 (Line)
+Info    : [ 10%] Meshing curve 12 (Circle)
+Info    : [ 10%] Meshing curve 13 (Circle)
+Info    : [ 10%] Meshing curve 14 (Line)
+Info    : [ 10%] Meshing curve 15 (Circle)
+Info    : [ 10%] Meshing curve 16 (Line)
+Info    : [ 10%] Meshing curve 17 (Line)
+Info    : [ 10%] Meshing curve 18 (Line)
+Info    : [ 10%] Meshing curve 19 (Circle)
+Info    : [ 10%] Meshing curve 20 (Line)
+Info    : [ 10%] Meshing curve 21 (Line)
+Info    : [ 10%] Meshing curve 22 (Line)
+Info    : [ 10%] Meshing curve 23 (Circle)
+Info    : [ 10%] Meshing curve 24 (Line)
+Info    : [ 10%] Meshing curve 25 (Line)
+Info    : [ 10%] Meshing curve 26 (Circle)
+Info    : [ 10%] Meshing curve 27 (Line)
+Info    : [ 10%] Meshing curve 28 (Circle)
+Info    : [ 10%] Meshing curve 29 (Line)
+Info    : [ 10%] Meshing curve 30 (Line)
+Info    : [ 10%] Meshing curve 31 (Line)
+Info    : [ 10%] Meshing curve 32 (Circle)
+Info    : [ 10%] Meshing curve 33 (Line)
+Info    : [ 10%] Meshing curve 34 (Line)
+Info    : [ 10%] Meshing curve 35 (Line)
+Info    : [ 10%] Meshing curve 36 (Circle)
+Info    : [ 10%] Meshing curve 37 (Circle)
+Info    : [ 10%] Meshing curve 38 (Line)
+Info    : [ 10%] Meshing curve 39 (Circle)
+Info    : [ 10%] Meshing curve 40 (Line)
+Info    : [ 10%] Meshing curve 41 (Line)
+Info    : [ 10%] Meshing curve 42 (Line)
+Info    : [ 10%] Meshing curve 43 (Circle)
+Info    : [ 10%] Meshing curve 44 (Line)
+Info    : [ 20%] Meshing curve 45 (Line)
+Info    : [ 20%] Meshing curve 46 (Line)
+Info    : [ 20%] Meshing cu
+... 103347 characters cut ...
+5 elements
+Info    : 22 edge swaps, 0 node relocations (volume = 1.11157e-05): worst = 0.250943 / average = 0.735155 (Wall 0.00076372s, CPU 0.00077s)
+Info    : 23 edge swaps, 0 node relocations (volume = 1.11157e-05): worst = 0.30493 / average = 0.73595 (Wall 0.00091875s, CPU 0.000927s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :         0 elements
+Info    : 0.30 < quality < 0.40 :        17 elements
+Info    : 0.40 < quality < 0.50 :        22 elements
+Info    : 0.50 < quality < 0.60 :        71 elements
+Info    : 0.60 < quality < 0.70 :       214 elements
+Info    : 0.70 < quality < 0.80 :       259 elements
+Info    : 0.80 < quality < 0.90 :       144 elements
+Info    : 0.90 < quality < 1.00 :       105 elements
+Info    : Optimizing volume 35
+Info    : Optimization starts (volume = 1.11157e-05) with worst = 0.0111312 / average = 0.721285:
+Info    : 0.00 < quality < 0.10 :         6 elements
+Info    : 0.10 < quality < 0.20 :         9 elements
+Info    : 0.20 < quality < 0.30 :         6 elements
+Info    : 0.30 < quality < 0.40 :        14 elements
+Info    : 0.40 < quality < 0.50 :        24 elements
+Info    : 0.50 < quality < 0.60 :        78 elements
+Info    : 0.60 < quality < 0.70 :       206 elements
+Info    : 0.70 < quality < 0.80 :       277 elements
+Info    : 0.80 < quality < 0.90 :       142 elements
+Info    : 0.90 < quality < 1.00 :       102 elements
+Info    : 21 edge swaps, 0 node relocations (volume = 1.11157e-05): worst = 0.308668 / average = 0.735514 (Wall 0.00047526s, CPU 0.000424s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :         0 elements
+Info    : 0.30 < quality < 0.40 :        16 elements
+Info    : 0.40 < quality < 0.50 :        22 elements
+Info    : 0.50 < quality < 0.60 :        79 elements
+Info    : 0.60 < quality < 0.70 :       209 elements
+Info    : 0.70 < quality < 0.80 :       271 elements
+Info    : 0.80 < quality < 0.90 :       147 elements
+Info    : 0.90 < quality < 1.00 :       102 elements
+Info    : Optimizing volume 36
+Info    : Optimization starts (volume = 1.11157e-05) with worst = 0.0111312 / average = 0.723355:
+Info    : 0.00 < quality < 0.10 :         8 elements
+Info    : 0.10 < quality < 0.20 :         8 elements
+Info    : 0.20 < quality < 0.30 :         4 elements
+Info    : 0.30 < quality < 0.40 :         9 elements
+Info    : 0.40 < quality < 0.50 :        20 elements
+Info    : 0.50 < quality < 0.60 :        85 elements
+Info    : 0.60 < quality < 0.70 :       205 elements
+Info    : 0.70 < quality < 0.80 :       268 elements
+Info    : 0.80 < quality < 0.90 :       148 elements
+Info    : 0.90 < quality < 1.00 :        99 elements
+Info    : 20 edge swaps, 0 node relocations (volume = 1.11157e-05): worst = 0.308668 / average = 0.736805 (Wall 0.00043428s, CPU 0.000435s)
+Info    : No ill-shaped tets in the mesh :-)
+Info    : 0.00 < quality < 0.10 :         0 elements
+Info    : 0.10 < quality < 0.20 :         0 elements
+Info    : 0.20 < quality < 0.30 :         0 elements
+Info    : 0.30 < quality < 0.40 :        11 elements
+Info    : 0.40 < quality < 0.50 :        20 elements
+Info    : 0.50 < quality < 0.60 :        87 elements
+Info    : 0.60 < quality < 0.70 :       203 elements
+Info    : 0.70 < quality < 0.80 :       270 elements
+Info    : 0.80 < quality < 0.90 :       147 elements
+Info    : 0.90 < quality < 1.00 :        99 elements
+Info    : Done optimizing mesh (Wall 0.0984716s, CPU 0.08567s)
+Info    : 10885 nodes 53781 elements
+Info    : Writing 'coarse.msh'...
+Info    : Done writing 'coarse.msh'
+Gmsh volumes/surfaces: 36 216
+Physical surface counts: {'friction_face_upper': 0, 'friction_face_lower': 0, 'vane_surfaces': 144, 'inner_inlet': 36, 'outer_outlet': 36}
+Coarse mesh nodes / linear tetrahedra: 10885 30237
+
+# -- cell 7 (4.4s, exit 1)
+import gmsh, math
+gmsh.initialize()
+gmsh.option.setNumber('General.Terminal', 0)
+gmsh.model.add('vented_brake_disc_air_final')
+gmsh.model.occ.importShapes('fluid_passages.step', highestDimOnly=False)
+gmsh.model.occ.synchronize()
+vol_tags = [tag for dim,tag in gmsh.model.getEntities(3)]
+surf_tags = [tag for dim,tag in gmsh.model.getEntities(2)]
+groups = {'friction_face_upper':[], 'friction_face_lower':[], 'vane_surfaces':[], 'inner_inlet':[], 'outer_outlet':[]}
+for s in surf_tags:
+    stype = gmsh.model.getType(2,s)
+    cx,cy,cz = gmsh.model.occ.getCenterOfMass(2,s)
+    if stype == 'Plane':
+        if abs(cz-GAP) < 1e-6:
+            groups['friction_face_upper'].append(s)
+        elif abs(cz) < 1e-6:
+            groups['friction_face_lower'].append(s)
+        else:
+            groups['vane_surfaces'].append(s)
+    elif stype == 'Cylinder':
+        r = math.hypot(cx,cy)
+        groups['inner_inlet' if r < (RI+RO)/2 else 'outer_outlet'].append(s)
+    else:
+        raise RuntimeError(f'Unexpected Gmsh surface type {stype} on {s}')
+for name,tags in groups.items():
+    pg = gmsh.model.addPhysicalGroup(2,tags)
+    gmsh.model.setPhysicalName(2,pg,name)
+vg = gmsh.model.addPhysicalGroup(3,vol_tags)
+gmsh.model.setPhysicalName(3,vg,'fluid')
+gmsh.option.setNumber('Mesh.MeshSizeMin',0.0035)
+gmsh.option.setNumber('Mesh.MeshSizeMax',0.0045)
+gmsh.option.setNumber('Mesh.Algorithm3D',1)
+gmsh.model.mesh.generate(3)
+gmsh.write('final.msh')
+print('Corrected physical surface counts:',{k:len(v) for k,v in groups.items()})
+print('Final Gmsh nodes / tetrahedra:',len(gmsh.model.mesh.getNodes()[0]),len(gmsh.model.mesh.getElementsByType(4)[0]))
+gmsh.finalize()
+import subprocess, os, shutil
+if os.path.isdir('constant/polyMesh'):
+    shutil.rmtree('constant/polyMesh')
+res = subprocess.run(['gmshToFoam','final.msh'], text=True, capture_output=True)
+print(res.stdout[-2500:])
+if res.returncode != 0:
+    print(res.stderr)
+    raise RuntimeError('gmshToFoam failed')
+# -- output
+Corrected physical surface counts: {'friction_face_upper': 36, 'friction_face_lower': 36, 'vane_surfaces': 72, 'inner_inlet': 36, 'outer_outlet': 36}
+Final Gmsh nodes / tetrahedra: 10885 30237
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : gmshToFoam final.msh
+Date   : Sep 19 2026
+Time   : 13:27:05
+Host   : yc-demo
+PID    : 749929
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T22-20260919-132529-97a3/t22
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T22-20260919-132529-97a3/t22/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[7][39m[32m, line 45[39m
+[32m     41[39m res = subprocess.run([[33m'gmshToFoam'[39m,[33m'final.msh'[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m     42[39m print(res.stdout[-[32m2500[39m:])
+[32m     43[39m [38;5;28;01mif[39;00m res.returncode != [32m0[39m:
+[32m     44[39m     print(res.stderr)
+[32m---> [39m[32m45[39m     [38;5;28;01mraise[39;00m RuntimeError([33m'gmshToFoam failed'[39m)
+
+[31mRuntimeError[39m: gmshToFoam failed
+
+# -- cell 8 (4.8s, exit 0)
+import gmsh, math, pathlib, subprocess, os, shutil
+gmsh.initialize()
+gmsh.option.setNumber('General.Terminal', 0)
+gmsh.model.add('vented_brake_disc_air_final')
+gmsh.model.occ.importShapes('fluid_passages.step', highestDimOnly=False)
+gmsh.model.occ.synchronize()
+vol_tags = [tag for dim,tag in gmsh.model.getEntities(3)]
+surf_tags = [tag for dim,tag in gmsh.model.getEntities(2)]
+groups = {'friction_face_upper':[], 'friction_face_lower':[], 'vane_surfaces':[], 'inner_inlet':[], 'outer_outlet':[]}
+for s in surf_tags:
+    stype = gmsh.model.getType(2,s)
+    cx,cy,cz = gmsh.model.occ.getCenterOfMass(2,s)
+    if stype == 'Plane':
+        if abs(cz-GAP) < 1e-6: groups['friction_face_upper'].append(s)
+        elif abs(cz) < 1e-6: groups['friction_face_lower'].append(s)
+        else: groups['vane_surfaces'].append(s)
+    elif stype == 'Cylinder':
+        groups['inner_inlet' if math.hypot(cx,cy) < (RI+RO)/2 else 'outer_outlet'].append(s)
+    else: raise RuntimeError(f'Unexpected surface type {stype}')
+for name,tags in groups.items():
+    pg=gmsh.model.addPhysicalGroup(2,tags); gmsh.model.setPhysicalName(2,pg,name)
+vg=gmsh.model.addPhysicalGroup(3,vol_tags); gmsh.model.setPhysicalName(3,vg,'fluid')
+gmsh.option.setNumber('Mesh.MeshSizeMin',0.0035)
+gmsh.option.setNumber('Mesh.MeshSizeMax',0.0045)
+gmsh.model.mesh.generate(3)
+gmsh.write('final.msh')
+mesh_counts=(len(gmsh.model.mesh.getNodes()[0]),len(gmsh.model.mesh.getElementsByType(4)[0]))
+gmsh.finalize()
+pathlib.Path('system').mkdir(exist_ok=True)
+pathlib.Path('system/controlDict').write_text("""FoamFile\n{\n    format ascii;\n    class dictionary;\n    object controlDict;\n}\napplication checkMesh;\nstartFrom startTime;\nstartTime 0;\nstopAt endTime;\nendTime 1;\ndeltaT 1;\nwriteControl timeStep;\nwriteInterval 1;\n""")
+if os.path.isdir('constant/polyMesh'): shutil.rmtree('constant/polyMesh')
+res=subprocess.run(['gmshToFoam','final.msh'],text=True,capture_output=True)
+if res.returncode: raise RuntimeError(res.stdout+res.stderr)
+print('Corrected physical surface counts:',{k:len(v) for k,v in groups.items()})
+print('Final Gmsh nodes / tetrahedra:',mesh_counts)
+print(res.stdout[-1200:])
+print(pathlib.Path('constant/polyMesh/boundary').read_text())
+# -- output
+Corrected physical surface counts: {'friction_face_upper': 36, 'friction_face_lower': 36, 'vane_surfaces': 72, 'inner_inlet': 36, 'outer_outlet': 36}
+Final Gmsh nodes / tetrahedra: (10885, 30237)
+ertices to be read: 10885
+Vertices read: 10885
+
+Starting to read cells at line 23734
+Cells to be read:50397
+
+Mapping region 5 to Foam patch 0
+Mapping region 3 to Foam patch 1
+Mapping region 2 to Foam patch 2
+Mapping region 1 to Foam patch 3
+Mapping region 4 to Foam patch 4
+Mapping region 6 to Foam cellZone 0
+Cells:
+    total: 30237
+    hex  : 0
+    prism: 0
+    pyr  : 0
+    tet  : 30237
+
+CellZones:
+Zone	Size
+    0	30237
+
+Patch 0 gets name outer_outlet
+Patch 1 gets name vane_surfaces
+Patch 2 gets name friction_face_lower
+Patch 3 gets name friction_face_upper
+Patch 4 gets name inner_inlet
+
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::wordList&, const Foam::word&, const Foam::word&, const Foam::wordList&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 635
+    Found 20160 undefined faces in mesh; adding to default patch defaultFaces
+Finding faces of patch 0
+Finding faces of patch 1
+Finding faces of patch 2
+Finding faces of patch 3
+Finding faces of patch 4
+
+FaceZones:
+Zone	Size
+
+Writing zone 0 to cellZone fluid and cellSet
+End
+
+
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    arch        "LSB;label=32;scalar=64";
+    class       polyBoundaryMesh;
+    location    "constant/polyMesh";
+    object      boundary;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+5
+(
+    outer_outlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          1512;
+        startFace       50394;
+    }
+    vane_surfaces
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          8784;
+        startFace       51906;
+    }
+    friction_face_lower
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4572;
+        startFace       60690;
+    }
+    friction_face_upper
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          4572;
+        startFace       65262;
+    }
+    inner_inlet
+    {
+        type            patch;
+        physicalType    patch;
+        nFaces          720;
+        startFace       69834;
+    }
+)
+
+// ************************************************************************* //
+
+# -- cell 9 (0.5s, exit 1)
+import subprocess
+check = subprocess.run(['checkMesh'], text=True, capture_output=True)
+print(check.stdout)
+if check.returncode != 0:
+    print(check.stderr)
+    raise RuntimeError('checkMesh failed')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 19 2026
+Time   : 13:27:28
+Host   : yc-demo
+PID    : 749960
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T22-20260919-132529-97a3/t22
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T22-20260919-132529-97a3/t22/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[9][39m[32m, line 6[39m
+[32m      2[39m check = subprocess.run([[33m'checkMesh'[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m      3[39m print(check.stdout)
+[32m      4[39m [38;5;28;01mif[39;00m check.returncode != [32m0[39m:
+[32m      5[39m     print(check.stderr)
+[32m----> [39m[32m6[39m     [38;5;28;01mraise[39;00m RuntimeError([33m'checkMesh failed'[39m)
+
+[31mRuntimeError[39m: checkMesh failed
+
+# -- cell 10 (0.5s, exit 1)
+import pathlib, subprocess
+pathlib.Path('system/fvSchemes').write_text("""FoamFile
+{
+    format ascii;
+    class dictionary;
+    object fvSchemes;
+}
+ddtSchemes { default Euler; }
+gradSchemes { default Gauss linear; }
+divSchemes { }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+wallDist { method meshWave; }
+fluxRequired { default no; }
+""")
+check = subprocess.run(['checkMesh'], text=True, capture_output=True)
+print(check.stdout)
+if check.returncode != 0:
+    print(check.stderr)
+    raise RuntimeError('checkMesh failed')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 19 2026
+Time   : 13:27:34
+Host   : yc-demo
+PID    : 749983
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T22-20260919-132529-97a3/t22
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T22-20260919-132529-97a3/t22/system/fvSolution"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[10][39m[32m, line 21[39m
+[32m     17[39m check = subprocess.run([[33m'checkMesh'[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m     18[39m print(check.stdout)
+[32m     19[39m [38;5;28;01mif[39;00m check.returncode != [32m0[39m:
+[32m     20[39m     print(check.stderr)
+[32m---> [39m[32m21[39m     [38;5;28;01mraise[39;00m RuntimeError([33m'checkMesh failed'[39m)
+
+[31mRuntimeError[39m: checkMesh failed
+
+# -- cell 11 (0.6s, exit 0)
+import pathlib, subprocess
+pathlib.Path('system/fvSchemes').write_text("""FoamFile
+{ format ascii; class dictionary; object fvSchemes; }
+ddtSchemes { default Euler; }
+gradSchemes { default Gauss linear; }
+divSchemes { }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+wallDist { method meshWave; }
+fluxRequired { default no; }
+""")
+pathlib.Path('system/fvSolution').write_text("""FoamFile
+{ format ascii; class dictionary; object fvSolution; }
+solvers { }
+PIMPLE { }
+""")
+check = subprocess.run(['checkMesh'], text=True, capture_output=True)
+print(check.stdout)
+if check.returncode != 0:
+    print(check.stderr)
+    raise RuntimeError('checkMesh failed')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 19 2026
+Time   : 13:27:38
+Host   : yc-demo
+PID    : 749990
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T22-20260919-132529-97a3/t22
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           10885
+    faces:            70554
+    internal faces:   50394
+    cells:            30237
+    faces per cell:   4
+    boundary patches
+... 332 characters cut ...
+ addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+   *Number of regions: 36
+    The mesh has multiple regions which are not connected by any face.
+  <<Writing region information to "constant/cellToRegion"
+  <<Writing region 0 with 849 cells to cellSet region0
+  <<Writing region 1 with 849 cells to cellSet region1
+  <<Writing region 2 with 829 cells to cellSet region2
+  <<Writing region 3 with 831 cells to cellSet region3
+  <<Writing region 4 with 835 cells to cellSet region4
+  <<Writing region 5 with 854 cells to cellSet region5
+  <<Writing region 6 with 833 cells to cellSet region6
+  <<Writing region 7 with 868 cells to cellSet region7
+  <<Writing region 8 with 833 cells to cellSet region8
+  <<Writing region 9 with 842 cells to cellSet region9
+  <<Writing region 10 with 831 cells to cellSet region10
+  <<Writing region 11 with 829 cells to cellSet region11
+  <<Writing region 12 with 827 cells to cellSet region12
+  <<Writing region 13 with 858 cells to cellSet region13
+  <<Writing region 14 with 831 cells to cellSet region14
+  <<Writing region 15 with 832 cells to cellSet region15
+  <<Writing region 16 with 837 cells to cellSet region16
+  <<Writing region 17 with 849 cells to cellSet region17
+  <<Writing region 18 with 847 cells to cellSet region18
+  <<Writing region 19 with 846 cells to cellSet region19
+  <<Writing region 20 with 831 cells to cellSet region20
+  <<Writing region 21 with 831 cells to cellSet region21
+  <<Writing region 22 with 836 cells to cellSet region22
+  <<Writing region 23 with 854 cells to cellSet region23
+  <<Writing region 24 with 846 cells to cellSet region24
+  <<Writing region 25 with 837 cells to cellSet region25
+  <<Writing region 26 with 840 cells to cellSet region26
+  <<Writing region 27 with 857 cells to cellSet region27
+  <<Writing region 28 with 842 cells to cellSet region28
+  <<Writing region 29 with 839 cells to cellSet region29
+  <<Writing region 30 with 831 cells to cellSet region30
+  <<Writing region 31 with 837 cells to cellSet region31
+  <<Writing region 32 with 831 cells to cellSet region32
+  <<Writing region 33 with 832 cells to cellSet region33
+  <<Writing region 34 with 846 cells to cellSet region34
+  <<Writing region 35 with 837 cells to cellSet region35
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    outer_outlet        1512     1080     ok (non-closed singly connected)  
+    vane_surfaces       8784     5760     ok (non-closed singly connected)  
+    friction_face_lower 4572     2988     ok (non-closed singly connected)  
+    friction_face_upper 4572     2988     ok (non-closed singly connected)  
+    inner_inlet         720      576      ok (non-closed singly connected)  
+    ".*"                20160    10152    ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    CellZone            Cells        Points       Volume       BoundingBox
+    fluid               30237        10885        0.000400164  (-0.15995 -0.15995 0) (0.15995 0.15995 0.012)
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.15995 -0.15995 0) (0.15995 0.15995 0.012)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-1.51491e-17 1.86388e-18 5.41595e-16) OK.
+    Max cell openness = 2.14314e-16 OK.
+    Max aspect ratio = 8.55382 OK.
+    Minimum face area = 4.06365e-06. Maximum face area = 2.70757e-05.  Face area magnitudes OK.
+    Min volume = 2.66222e-09. Max volume = 4.16319e-08.  Total volume = 0.000400164.  Cell volumes OK.
+    Mesh non-orthogonality Max: 63.3186 average: 23.1521
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.887756 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 12 (0.3s, exit 0)
+PLATE_THICKNESS = 0.010
+lower_plate = bd.Pos(0,0,-PLATE_THICKNESS) * (bd.Cylinder(RO, PLATE_THICKNESS, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)) - bd.Cylinder(RI, PLATE_THICKNESS, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)))
+upper_plate = bd.Pos(0,0,GAP) * (bd.Cylinder(RO, PLATE_THICKNESS, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)) - bd.Cylinder(RI, PLATE_THICKNESS, align=(bd.Align.CENTER,bd.Align.CENTER,bd.Align.MIN)))
+vane_solids = [bd.Rot(0,0,i*360/N_VANES) * (bd.Pos(RI,0,0) * bd.Box(RO-RI,VANE_WIDTH,GAP,align=(bd.Align.MIN,bd.Align.CENTER,bd.Align.MIN))) for i in range(N_VANES)]
+rotor_solid = bd.Compound([lower_plate, upper_plate] + vane_solids)
+bd.export_step(rotor_solid,'vented_brake_disc_solid.step')
+print('Requested / measured plate thickness:',PLATE_THICKNESS,lower_plate.bounding_box().size.Z,'m')
+print('Requested / measured clear separation:',GAP,upper_plate.bounding_box().min.Z-lower_plate.bounding_box().max.Z,'m')
+print('Measured overall solid thickness:',rotor_solid.bounding_box().size.Z,'m')
+print('Requested / built vane solids:',N_VANES,len(vane_solids))
+print('Wrote vented_brake_disc_solid.step (reference solid; mesh remains the air domain)')
+# -- output
+Requested / measured plate thickness: 0.01 0.01 m
+Requested / measured clear separation: 0.012 0.012 m
+Measured overall solid thickness: 0.032 m
+Requested / built vane solids: 36 36
+Wrote vented_brake_disc_solid.step (reference solid; mesh remains the air domain)
+
+# -- cell 13 (0.7s, exit 0)
+import subprocess
+extra = subprocess.run(['checkMesh','-allGeometry'], text=True, capture_output=True)
+lines = extra.stdout.splitlines()
+for line in lines:
+    if any(key in line for key in ['Max aspect ratio','Minimum face area','Min volume','Mesh non-orthogonality','Max skewness','cell determinant','concave','interpolation weights','face tets','Failed','Mesh OK']):
+        print(line)
+print('checkMesh -allGeometry return code:',extra.returncode)
+# -- output
+Max aspect ratio = 8.55382 OK.
+    Minimum face area = 4.06365e-06. Maximum face area = 2.70757e-05.  Face area magnitudes OK.
+    Min volume = 2.66222e-09. Max volume = 4.16319e-08.  Total volume = 0.000400164.  Cell volumes OK.
+    Mesh non-orthogonality Max: 63.3186 average: 23.1521
+    Max skewness = 0.887756 OK.
+Failed 1 mesh checks.
+checkMesh -allGeometry return code: 0
+
+# -- cell 14 (0.1s, exit 0)
+for i,line in enumerate(lines):
+    if ('***' in line or 'Failed' in line or 'illegal' in line.lower() or 'concave' in line.lower() or 'determinant' in line.lower() or 'weight' in line.lower() or 'tet' in line.lower()):
+        print('\n'.join(lines[max(0,i-1):min(len(lines),i+3)]))
+# -- output
+pyramids:      0
+    tet wedges:    0
+    tetrahedra:    30237
+    polyhedra:     0
+    tet wedges:    0
+    tetrahedra:    30237
+    polyhedra:     0
+
+    Coupled point location match (average 0) OK.
+    Face tets OK.
+    Min/max edge length = 0.00277084 0.00881624 OK.
+    All angles in faces OK.
+    All face flatness OK.
+    Cell determinant (wellposedness) : minimum: 0 average: 0.0742677
+ ***Cells with small determinant (< 0.001) found, number of cells: 3097
+  <<Writing 3097 under-determined cells to set underdeterminedCells
+    Cell determinant (wellposedness) : minimum: 0 average: 0.0742677
+ ***Cells with small determinant (< 0.001) found, number of cells: 3097
+  <<Writing 3097 under-determined cells to set underdeterminedCells
+    Concave cell check OK.
+  <<Writing 3097 under-determined cells to set underdeterminedCells
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.121285 average: 0.42351
+    Face interpolation weight check OK.
+    Concave cell check OK.
+    Face interpolation weight : minimum: 0.121285 average: 0.42351
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.138025 average: 0.757994
+    Face interpolation weight : minimum: 0.121285 average: 0.42351
+    Face interpolation weight check OK.
+    Face volume ratio : minimum: 0.138025 average: 0.757994
+    Face volume ratio check OK.
+
+Failed 1 mesh checks.
+
+End
+

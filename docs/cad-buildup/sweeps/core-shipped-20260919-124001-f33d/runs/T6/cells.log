@@ -1,0 +1,113 @@
+# -- cell 1 (5.4s, exit 1)
+from pathlib import Path
+import re, sys
+import build123d as bd
+step_path = Path('/home/qiuzi/.openreynolds-buildup/work/T6-20260919-135229-afb8/geometry/customer_part.step')
+header = step_path.read_text(errors='ignore')[:200000]
+unit_lines = [ln.strip() for ln in header.splitlines() if 'SI_UNIT' in ln or 'CONVERSION_BASED_UNIT' in ln]
+print('STEP unit declarations:')
+print('\n'.join(unit_lines[:20]) or 'none found')
+customer = bd.import_step(str(step_path))
+print('Imported type:', type(customer).__name__)
+print('Solids:', len(customer.solids()), 'Shells:', len(customer.shells()), 'Faces:', len(customer.faces()))
+print('OCCT valid:', customer.is_valid())
+print('Volume in declared CAD units^3:', customer.volume)
+bb = customer.bounding_box()
+print('Bounds in declared CAD units:', tuple(bb.min), tuple(bb.max))
+print('Extent in declared CAD units:', bb.size.X, bb.size.Y, bb.size.Z)
+# -- output
+STEP unit declarations:
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+Imported type: Solid
+Solids: 1 Shells: 1 Faces: 7
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 12[39m
+[32m      8[39m print([33m'\n'[39m.join(unit_lines[:[32m20[39m]) [38;5;28;01mor[39;00m [33m'none found'[39m)
+[32m      9[39m customer = bd.import_step(str(step_path))
+[32m     10[39m print([33m'Imported type:'[39m, type(customer).__name__)
+[32m     11[39m print([33m'Solids:'[39m, len(customer.solids()), [33m'Shells:'[39m, len(customer.shells()), [33m'Faces:'[39m, len(customer.faces()))
+[32m---> [39m[32m12[39m print([33m'OCCT valid:'[39m, customer.is_valid())
+[32m     13[39m print([33m'Volume in declared CAD units^3:'[39m, customer.volume)
+[32m     14[39m bb = customer.bounding_box()
+[32m     15[39m print([33m'Bounds in declared CAD units:'[39m, tuple(bb.min), tuple(bb.max))
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 2 (0.1s, exit 0)
+from pathlib import Path
+import re
+import build123d as bd
+step_path = Path('/home/qiuzi/.openreynolds-buildup/work/T6-20260919-135229-afb8/geometry/customer_part.step')
+step_text = step_path.read_text(errors='ignore')
+unit_records = re.findall(r'#[0-9]+\s*=\s*[^;]*(?:LENGTH_UNIT|SI_UNIT|CONVERSION_BASED_UNIT)[^;]*;', step_text, flags=re.I)
+print('STEP unit records:')
+print('\n'.join(unit_records) or 'none found')
+customer = bd.import_step(str(step_path))
+print('Imported type:', type(customer).__name__)
+print('Solids:', len(customer.solids()), 'Shells:', len(customer.shells()), 'Faces:', len(customer.faces()))
+print('OCCT valid:', customer.is_valid)
+print('Volume in declared CAD units^3:', customer.volume)
+bb = customer.bounding_box()
+print('Bounds in declared CAD units:', tuple(bb.min), tuple(bb.max))
+print('Extent in declared CAD units:', bb.size.X, bb.size.Y, bb.size.Z)
+# -- output
+STEP unit records:
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+Imported type: Solid
+Solids: 1 Shells: 1 Faces: 7
+OCCT valid: True
+Volume in declared CAD units^3: 1748672.5877128076
+Bounds in declared CAD units: (0.0, 0.0, 0.0) (200.0, 100.0, 100.0)
+Extent in declared CAD units: 200.0 100.0 100.0
+
+# -- cell 3 (0.1s, exit 0)
+lines = step_text.splitlines()
+for i, line in enumerate(lines):
+    if '#426' in line or 'GLOBAL_UNIT_ASSIGNED_CONTEXT' in line or 'LENGTH_MEASURE_WITH_UNIT' in line:
+        print('\n'.join(lines[max(0,i-3):min(len(lines),i+4)]))
+print('\nFaces (index, geom type, area, center):')
+for i, f in enumerate(customer.faces()):
+    print(i, f.geom_type, round(f.area,6), tuple(round(v,6) for v in f.center()))
+# -- output
+#423 = EDGE_LOOP('',(#424));
+#424 = ORIENTED_EDGE('',*,*,#372,.F.);
+#425 = ( GEOMETRIC_REPRESENTATION_CONTEXT(3) 
+GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#429)) GLOBAL_UNIT_ASSIGNED_CONTEXT
+((#426,#427,#428)) REPRESENTATION_CONTEXT('Context #1',
+  '3D Context with UNIT and UNCERTAINTY') );
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#424 = ORIENTED_EDGE('',*,*,#372,.F.);
+#425 = ( GEOMETRIC_REPRESENTATION_CONTEXT(3) 
+GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#429)) GLOBAL_UNIT_ASSIGNED_CONTEXT
+((#426,#427,#428)) REPRESENTATION_CONTEXT('Context #1',
+  '3D Context with UNIT and UNCERTAINTY') );
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#429)) GLOBAL_UNIT_ASSIGNED_CONTEXT
+((#426,#427,#428)) REPRESENTATION_CONTEXT('Context #1',
+  '3D Context with UNIT and UNCERTAINTY') );
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,
+#426 = ( LENGTH_UNIT() NAMED_UNIT(*) );
+#427 = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );
+#428 = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );
+#429 = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-04),#426,
+  'distance_accuracy_value','confusion accuracy');
+#430 = PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#7));
+ENDSEC;
+
+Faces (index, geom type, area, center):
+0 GeomType.PLANE 8743.362939 (0.0, 50.0, 50.0)
+1 GeomType.PLANE 20000.0 (100.0, 0.0, 50.0)
+2 GeomType.PLANE 20000.0 (100.0, 50.0, 100.0)
+3 GeomType.PLANE 20000.0 (100.0, 50.0, 0.0)
+4 GeomType.PLANE 20000.0 (100.0, 100.0, 50.0)
+5 GeomType.CYLINDER 25132.741229 (100.0, 50.0, 30.0)
+6 GeomType.PLANE 8743.362939 (200.0, 50.0, 50.0)
+

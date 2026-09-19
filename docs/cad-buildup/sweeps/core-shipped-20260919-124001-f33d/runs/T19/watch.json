@@ -1,0 +1,13 @@
+{
+  "alarm": {
+    "alarm": "no-progress",
+    "why": "3 turns to 13 with the step count flat at 10",
+    "turn": 13
+  },
+  "turns": 13,
+  "steps": 10,
+  "seconds": 195.0,
+  "killed": false,
+  "first_mesh_step": 7,
+  "first_mesh_turn": 8
+}

@@ -1,0 +1,259 @@
+# -- cell 1 (5.0s, exit 1)
+from pathlib import Path
+import re
+import build123d as bd
+STEP_PATH = Path('/home/qiuzi/.openreynolds-buildup/work/T5-20260919-134906-2bca/geometry/assembly.step')
+header = STEP_PATH.read_text(errors='ignore')[:20000]
+unit_lines = [line.strip() for line in header.splitlines() if 'SI_UNIT' in line or 'CONVERSION_BASED_UNIT' in line]
+print('STEP unit declarations:', unit_lines[:20])
+assembly = bd.import_step(STEP_PATH)
+solids = list(assembly.solids())
+print('Imported solids:', len(solids))
+print('OCCT valid:', assembly.is_valid())
+print('Assembly type:', assembly.shape_type)
+print('Bounding box:', assembly.bounding_box())
+print('Volume:', assembly.volume)
+for i, s in enumerate(solids):
+    print(f'solid {i}: valid={s.is_valid()}, volume={s.volume:.9g}, bbox={s.bounding_box()}')
+# -- output
+STEP unit declarations: []
+Imported solids: 3
+[31m---------------------------------------------------------------------------[39m
+[31mTypeError[39m                                 Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[1][39m[32m, line 11[39m
+[32m      7[39m print([33m'STEP unit declarations:'[39m, unit_lines[:[32m20[39m])
+[32m      8[39m assembly = bd.import_step(STEP_PATH)
+[32m      9[39m solids = list(assembly.solids())
+[32m     10[39m print([33m'Imported solids:'[39m, len(solids))
+[32m---> [39m[32m11[39m print([33m'OCCT valid:'[39m, assembly.is_valid())
+[32m     12[39m print([33m'Assembly type:'[39m, assembly.shape_type)
+[32m     13[39m print([33m'Bounding box:'[39m, assembly.bounding_box())
+[32m     14[39m print([33m'Volume:'[39m, assembly.volume)
+
+[31mTypeError[39m: 'bool' object is not callable
+
+# -- cell 2 (0.7s, exit 0)
+from pathlib import Path
+import re
+import build123d as bd
+STEP_PATH = Path('/home/qiuzi/.openreynolds-buildup/work/T5-20260919-134906-2bca/geometry/assembly.step')
+step_text = STEP_PATH.read_text(errors='ignore')
+unit_lines = sorted(set(re.findall(r'[^;]*(?:SI_UNIT|CONVERSION_BASED_UNIT)[^;]*;', step_text)))
+print('STEP unit declarations:')
+for line in unit_lines[:30]: print(line.strip())
+assembly = bd.import_step(STEP_PATH)
+solids = list(assembly.solids())
+print('Imported solids:', len(solids))
+print('OCCT valid:', assembly.is_valid)
+print('Assembly type:', assembly.shape_type)
+print('Bounding box:', assembly.bounding_box())
+print('Volume:', assembly.volume)
+for i, solid in enumerate(solids):
+    print(f'solid {i}: valid={solid.is_valid}, volume={solid.volume:.9g}, bbox={solid.bounding_box()}')
+# -- output
+STEP unit declarations:
+#2299=(
+NAMED_UNIT(*)
+SI_UNIT($,.STERADIAN.)
+SOLID_ANGLE_UNIT()
+);
+#2300=(
+NAMED_UNIT(*)
+PLANE_ANGLE_UNIT()
+SI_UNIT($,.RADIAN.)
+);
+#2301=(
+LENGTH_UNIT()
+NAMED_UNIT(*)
+SI_UNIT($,.METRE.)
+);
+Imported solids: 3
+OCCT valid: True
+Assembly type: Compound
+Bounding box: bbox: -26.97500010000001 <= x <= 26.975000099999995, -19.418991148451138 <= y <= 26.87100895154889, -1.0000001421085471e-07 <= z <= 31.300000100000002
+Volume: 41194.13918234188
+solid 0: valid=True, volume=2552.26999, bbox=bbox: -26.97500010000001 <= x <= 26.975000099999995, -19.418991148451138 <= y <= 26.87100895154889, -1.0000001421085471e-07 <= z <= 3.5000001
+solid 1: valid=True, volume=12186.1299, bbox=bbox: -18.803761107113118 <= x <= 18.803772054759477, -18.900923129868957 <= y <= 18.70661003200359, 20.099999999999998 <= z <= 31.300000100000002
+solid 2: valid=True, volume=26455.7393, bbox=bbox: -19.258335315798973 <= x <= 19.258346263445333, -19.355498235001544 <= y <= 19.161183344242726, 1.4999999999999982 <= z <= 20.10000000000001
+
+# -- cell 3 (1.3s, exit 0)
+import pyvista as pv
+preview_path = Path('assembly_preview.stl')
+bd.export_stl(assembly, preview_path, tolerance=0.15, angular_tolerance=0.2)
+mesh_preview = pv.read(preview_path)
+plotter = pv.Plotter(off_screen=True, window_size=(900,700))
+plotter.add_mesh(mesh_preview, color='lightgray', show_edges=True, edge_color='gray')
+plotter.add_axes()
+plotter.view_isometric()
+plotter.show(screenshot='assembly_preview.png')
+print('Preview:', mesh_preview.n_points, 'points,', mesh_preview.n_cells, 'triangles')
+print('Dimensions in imported OCCT mm:', mesh_preview.bounds)
+# -- output
+Preview: 4985 points, 10030 triangles
+Dimensions in imported OCCT mm: BoundsTuple(x_min = -26.975000381469727,
+            x_max =  26.975000381469727,
+            y_min = -19.418991088867188,
+            y_max =  26.871007919311523,
+            z_min =   0.0,
+            z_max =  31.299999237060547)
+
+/home/qiuzi/miniforge3/lib/python3.13/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+[0m[33m2026-09-19 13:49:40.619 (   0.858s) [    7A416ACB9780]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+[0m[33m2026-09-19 13:49:40.620 (   0.858s) [    7A416ACB9780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+[0m[33m2026-09-19 13:49:40.641 (   0.880s) [    7A416ACB9780]vtkOpenGLRenderWindow.c:645   WARN| Failed to load EGL! Please install the EGL library from your distribution's package manager.[0m
+/tmp/ipykernel_775775/1537040027.py:9: UserWarning: Using static image for notebook display.
+Install trame for interactive backends: pip install "pyvista[jupyter]"
+  plotter.show(screenshot='assembly_preview.png')
+
+# -- cell 4 (0.1s, exit 0)
+from collections import Counter
+for si, solid in enumerate(solids):
+    faces = list(solid.faces())
+    types = Counter(str(face.geom_type) for face in faces)
+    print(f'solid {si}: {len(faces)} faces, types={dict(types)}')
+    curved = [(i, str(face.geom_type), face.area) for i, face in enumerate(faces) if str(face.geom_type) != 'GeomType.PLANE']
+    print(' curved faces (index,type,area mm2):', curved)
+# -- output
+solid 0: 34 faces, types={'GeomType.PLANE': 21, 'GeomType.CYLINDER': 13}
+ curved faces (index,type,area mm2): [(4, 'GeomType.CYLINDER', 60.71055055470526), (10, 'GeomType.CYLINDER', 60.71055055470525), (15, 'GeomType.CYLINDER', 60.71525941199046), (21, 'GeomType.CYLINDER', 11.780972450961725), (23, 'GeomType.CYLINDER', 28.274333882308134), (24, 'GeomType.CYLINDER', 11.780972450961725), (26, 'GeomType.CYLINDER', 28.274333882308134), (27, 'GeomType.CYLINDER', 11.780972450961725), (29, 'GeomType.CYLINDER', 28.274333882308134), (30, 'GeomType.CYLINDER', 11.783527324213605), (31, 'GeomType.CYLINDER', 11.783527324213631), (32, 'GeomType.CYLINDER', 11.78352732421356), (33, 'GeomType.CYLINDER', 11.783527324213674)]
+solid 1: 29 faces, types={'GeomType.PLANE': 11, 'GeomType.CONE': 1, 'GeomType.TORUS': 2, 'GeomType.CYLINDER': 11, 'GeomType.BSPLINE': 4}
+ curved faces (index,type,area mm2): [(6, 'GeomType.CONE', 736.2452713130245), (12, 'GeomType.TORUS', 85.92389418200193), (13, 'GeomType.CYLINDER', 21.234085746000698), (14, 'GeomType.CYLINDER', 21.234085746000737), (15, 'GeomType.CYLINDER', 21.23408574600076), (16, 'GeomType.CYLINDER', 21.23408574600071), (17, 'GeomType.TORUS', 83.3337646940129), (18, 'GeomType.CYLINDER', 23.68921553755233), (19, 'GeomType.BSPLINE', 5.796738359400488), (20, 'GeomType.CYLINDER', 23.689215537552396), (21, 'GeomType.BSPLINE', 5.7967383594009805), (22, 'GeomType.CYLINDER', 23.68921553755242), (23, 'GeomType.BSPLINE', 5.796738359411534), (24, 'GeomType.CYLINDER', 23.68921553755236), (25, 'GeomType.BSPLINE', 5.796738359404), (26, 'GeomType.CYLINDER', 0.42818001075556145), (27, 'GeomType.CYLINDER', 0.4281800107555825), (28, 'GeomType.CYLINDER', 0.4281800107555226)]
+solid 2: 15 faces, types={'GeomType.PLANE': 11, 'GeomType.CYLINDER': 4}
+ curved faces (index,type,area mm2): [(6, 'GeomType.CYLINDER', 146.11573882024865), (7, 'GeomType.CYLINDER', 146.11573882024805), (8, 'GeomType.CYLINDER', 146.11573882024788), (9, 'GeomType.CYLINDER', 146.1157388202485)]
+
+# -- cell 5 (0.2s, exit 0)
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+for si, solid in enumerate(solids):
+    print('SOLID', si)
+    for fi, face in enumerate(solid.faces()):
+        typ = str(face.geom_type)
+        if typ == 'GeomType.PLANE': continue
+        ad = BRepAdaptor_Surface(face.wrapped)
+        detail = ''
+        try:
+            if typ == 'GeomType.CYLINDER': detail = f'R={ad.Cylinder().Radius():.4g}'
+            elif typ == 'GeomType.CONE': detail = f'R0={ad.Cone().RefRadius():.4g}, angle={ad.Cone().SemiAngle():.4g}'
+            elif typ == 'GeomType.TORUS': detail = f'Rmajor={ad.Torus().MajorRadius():.4g}, Rminor={ad.Torus().MinorRadius():.4g}'
+        except Exception as exc: detail = str(exc)
+        bb = face.bounding_box()
+        print(f' face {fi:2d} {typ:17s} area={face.area:8.3f} {detail} bbox={bb}')
+# -- output
+SOLID 0
+ face  4 GeomType.CYLINDER area=  60.711 R=3.575 bbox=bbox: -26.97500010000001 <= x <= -19.82499990000001, -12.19899124845116 <= y <= -5.04899104845116, -1e-07 <= z <= 3.5000001
+ face 10 GeomType.CYLINDER area=  60.711 R=3.575 bbox=bbox: 19.824999899999995 <= x <= 26.975000099999995, -12.198991248451089 <= y <= -5.048991048451089, -1e-07 <= z <= 3.5000001
+ face 15 GeomType.CYLINDER area=  60.715 R=3.575 bbox=bbox: -3.575000099999987 <= x <= 3.575000100000013, 19.72100875154889 <= y <= 26.87100895154889, -1e-07 <= z <= 3.5000001
+ face 21 GeomType.CYLINDER area=  11.781 R=1.25 bbox=bbox: -24.65000010000001 <= x <= -22.149999900000008, -9.873991248451109 <= y <= -7.373991048451109, 1.9999999 <= z <= 3.5000001
+ face 23 GeomType.CYLINDER area=  28.274 R=2.25 bbox=bbox: -25.65000010000001 <= x <= -21.149999900000008, -10.873991248451109 <= y <= -6.373991048451109, -1.0000001421085471e-07 <= z <= 2.0000001
+ face 24 GeomType.CYLINDER area=  11.781 R=1.25 bbox=bbox: 22.149999899999994 <= x <= 24.650000099999996, -9.873991248451107 <= y <= -7.373991048451107, 1.9999999 <= z <= 3.5000001
+ face 26 GeomType.CYLINDER area=  28.274 R=2.25 bbox=bbox: 21.149999899999994 <= x <= 25.650000099999996, -10.873991248451107 <= y <= -6.373991048451107, -1.0000001421085471e-07 <= z <= 2.0000001
+ face 27 GeomType.CYLINDER area=  11.781 R=1.25 bbox=bbox: -1.2500001000000078 <= x <= 1.2500000999999923, 22.04600875154889 <= y <= 24.54600895154889, 1.9999999 <= z <= 3.5000001
+ face 29 GeomType.CYLINDER area=  28.274 R=2.25 bbox=bbox: -2.250000100000008 <= x <= 2.250000099999992, 21.04600875154889 <= y <= 25.54600895154889, -1.0000001421085471e-07 <= z <= 2.0000001
+ face 30 GeomType.CYLINDER area=  11.784 R=5 bbox=bbox: -19.294999999999995 <= x <= -14.259833340716208, -19.418991148451138 <= y <= -14.383824489167296, -3.3306690738754696e-16 <= z <= 1.5000000000000018
+ face 31 GeomType.CYLINDER area=  11.784 R=5 bbox=bbox: -19.29500000000006 <= x <= -14.259833340716165, 14.135842192265056 <=
+... 685 characters cut ...
+mType.TORUS    area=  85.924 Rmajor=18, Rminor=0.5 bbox=bbox: -18.00238603151272 <= x <= 18.00239697915908, -18.09954805426861 <= y <= 17.90523495640319, 23.5999999 <= z <= 24.0877840109236
+ face 13 GeomType.CYLINDER area=  21.234 R=0.5 bbox=bbox: -18.730144131571024 <= x <= -18.230293386680422, -13.828798705420969 <= y <= 13.634485607555597, 23.1122160890764 <= z <= 23.599999999999998
+ face 14 GeomType.CYLINDER area=  21.234 R=0.5 bbox=bbox: -13.73163668266512 <= x <= 13.73164763031148, 18.13314231157089 <= y <= 18.63299305646149, 23.1122160890764 <= z <= 23.599999999999998
+ face 15 GeomType.CYLINDER area=  21.234 R=0.5 bbox=bbox: -13.73163668266512 <= x <= 13.73164763031148, -18.82730615432691 <= y <= -18.32745540943628, 23.1122160890764 <= z <= 23.599999999999998
+ face 16 GeomType.CYLINDER area=  21.234 R=0.5 bbox=bbox: 18.23030433432678 <= x <= 18.730155079217383, -13.828798705420969 <= y <= 13.634485607555593, 23.1122160890764 <= z <= 23.599999999999998
+ face 17 GeomType.TORUS    area=  83.334 Rmajor=16.84, Rminor=0.5 bbox=bbox: -17.33819370402822 <= x <= 17.33820465167458, -17.43535572678411 <= y <= 17.24104262891869, 30.812215989076396 <= z <= 31.300000100000002
+ face 18 GeomType.CYLINDER area=  23.689 R=5 bbox=bbox: 13.731647630311432 <= x <= 18.803772054759456, -18.900923129868957 <= y <= -13.828798705420958, 20.1 <= z <= 23.117271004818
+ face 19 GeomType.BSPLINE  area=   5.797  bbox=bbox: 13.73164753031148 <= x <= 18.730155179217384, -18.82730625432691 <= y <= -13.828798605420982, 23.1122159890763 <= z <= 23.600000100000006
+ face 20 GeomType.CYLINDER area=  23.689 R=5 bbox=bbox: -18.803761107113097 <= x <= -13.73163668266505, -18.900923129868957 <= y <= -13.82879870542096, 20.099999999999998 <= z <= 23.117271004818
+ face 21 GeomType.BSPLINE  area=   5.797  bbox=bbox: -18.73014423157102 <= x <= -13.731636582665132, -18.82730625432691 <= y <= -13.828798605420959, 23.1122159890763 <= z <= 23.600000100000003
+ face 22 GeomType.CYLINDER area=  23.689 R=5 bbox=bbox: 13.731647630311409 <= x <= 18.803772054759456, 13.634485607555522 <= y <= 18.706610032003567, 20.099999999999998 <= z <= 23.117271004818
+ face 23 GeomType.BSPLINE  area=   5.797  bbox=bbox: 13.731647530311509 <= x <= 18.730155179217384, 13.634485507555594 <= y <= 18.63299315646149, 23.112215989076297 <= z <= 23.600000100000003
+ face 24 GeomType.CYLINDER area=  23.689 R=5 bbox=bbox: -18.803761107113097 <= x <= -13.731636682665073, 13.634485607555565 <= y <= 18.706610032003567, 20.1 <= z <= 23.117271004818
+ face 25 GeomType.BSPLINE  area=   5.797  bbox=bbox: -18.73014423157103 <= x <= -13.731636582665118, 13.634485507555608 <= y <= 18.63299315646148, 23.112215989076294 <= z <= 23.600000100000003
+ face 26 GeomType.CYLINDER area=   0.428 R=0.1 bbox=bbox: 13.97461731982868 <= x <= 14.07461731982868, -1.5703616296895797 <= y <= 1.3760485318241908, 31.2 <= z <= 31.3
+ face 27 GeomType.CYLINDER area=   0.428 R=0.1 bbox=bbox: 13.97461731982868 <= x <= 16.52628336966828, -0.09715654893273551 <= y <= 1.3760485318242135, 31.2 <= z <= 31.3
+ face 28 GeomType.CYLINDER area=   0.428 R=0.1 bbox=bbox: 13.97461731982868 <= x <= 16.526283369668278, -1.5703616296895828 <= y <= -0.09715654893267489, 31.2 <= z <= 31.3
+SOLID 2
+ face  6 GeomType.CYLINDER area= 146.116 R=5 bbox=bbox: -19.258335315798917 <= x <= -13.805253658207123, -19.355498235001544 <= y <= -13.902416577409737, 1.4999999999999982 <= z <= 20.10000000000001
+ face  7 GeomType.CYLINDER area= 146.116 R=5 bbox=bbox: -19.258335315798973 <= x <= -13.805253658207121, 13.708101686650892 <= y <= 19.161183344242698, 1.4999999999999982 <= z <= 20.1
+ face  8 GeomType.CYLINDER area= 146.116 R=5 bbox=bbox: 13.805264605853482 <= x <= 19.258346263445254, 13.70810168665089 <= y <= 19.161183344242726, 1.4999999999999982 <= z <= 20.100000000000005
+ face  9 GeomType.CYLINDER area= 146.116 R=5 bbox=bbox: 13.80526460585348 <= x <= 19.258346263445333, -19.355498235001516 <= y <= -13.902416577409742, 1.4999999999999982 <= z <= 20.100000000000005
+
+# -- cell 6 (0.6s, exit 1)
+import inspect
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Defeaturing
+print('Defeaturing methods:', [name for name in dir(BRepAlgoAPI_Defeaturing) if not name.startswith('_')])
+print('Build signature:', inspect.signature(BRepAlgoAPI_Defeaturing.Build))
+# -- output
+Defeaturing methods: ['AddFaceToRemove', 'AddFacesToRemove', 'Build', 'Check', 'FacesToRemove', 'FuzzyValue', 'Generated', 'HasDeleted', 'HasGenerated', 'HasHistory', 'HasModified', 'History', 'InputShape', 'IsDeleted', 'IsDone', 'Modified', 'RunParallel', 'SetFuzzyValue', 'SetRunParallel', 'SetShape', 'SetToFillHistory', 'SetUseOBB', 'Shape']
+[31m---------------------------------------------------------------------------[39m
+[31mValueError[39m                                Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 4[39m
+[32m      1[39m [38;5;28;01mimport[39;00m inspect
+[32m      2[39m [38;5;28;01mfrom[39;00m OCP.BRepAlgoAPI [38;5;28;01mimport[39;00m BRepAlgoAPI_Defeaturing
+[32m      3[39m print([33m'Defeaturing methods:'[39m, [name [38;5;28;01mfor[39;00m name [38;5;28;01min[39;00m dir(BRepAlgoAPI_Defeaturing) [38;5;28;01mif[39;00m [38;5;28;01mnot[39;00m name.startswith([33m'_'[39m)])
+[32m----> [39m[32m4[39m print([33m'Build signature:'[39m, inspect.signature(BRepAlgoAPI_Defeaturing.Build))
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/inspect.py:3386[39m, in [36msignature[39m[34m(obj, follow_wrapped, globals, locals, eval_str)[39m
+[32m   3384[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34msignature[39m(obj, *, follow_wrapped=[38;5;28;01mTrue[39;00m, [38;5;28mglobals[39m=[38;5;28;01mNone[39;00m, [38;5;28mlocals[39m=[38;5;28;01mNone[39;00m, eval_str=[38;5;28;01mFalse[39;00m):
+[32m   3385[39m [38;5;250m    [39m[33;03m"""Get a signature object for the passed callable."""[39;00m
+[32m-> [39m[32m3386[39m     [38;5;28;01mreturn[39;00m [30;43mSignature[39;49m[30;43m.[39;49m[30;43mfrom_callable[39;49m[30;43m([39;49m[30;43mobj[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mfollow_wrapped[39;49m[30;43m=[39;49m[30;43mfollow_wrapped[39;49m[30;43m,[39;49m
+[32m   3387[39m [30;43m                                   [39;49m[30;43mglobals[39;49m
+... 30 characters cut ...
+ls[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mlocals[39;49m[30;43m=[39;49m[30;43mlocals[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43meval_str[39;49m[30;43m=[39;49m[30;43meval_str[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/inspect.py:3109[39m, in [36mSignature.from_callable[39m[34m(cls, obj, follow_wrapped, globals, locals, eval_str)[39m
+[32m   3105[39m [38;5;129m@classmethod[39m
+[32m   3106[39m [38;5;28;01mdef[39;00m[38;5;250m [39m[34mfrom_callable[39m([38;5;28mcls[39m, obj, *,
+[32m   3107[39m                   follow_wrapped=[38;5;28;01mTrue[39;00m, [38;5;28mglobals[39m=[38;5;28;01mNone[39;00m, [38;5;28mlocals[39m=[38;5;28;01mNone[39;00m, eval_str=[38;5;28;01mFalse[39;00m):
+[32m   3108[39m [38;5;250m    [39m[33;03m"""Constructs Signature for the given callable object."""[39;00m
+[32m-> [39m[32m3109[39m     [38;5;28;01mreturn[39;00m [30;43m_signature_from_callable[39;49m[30;43m([39;49m[30;43mobj[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43msigcls[39;49m[30;43m=[39;49m[30;43mcls[39;49m[30;43m,[39;49m
+[32m   3110[39m [30;43m                                    [39;49m[30;43mfollow_wrapper_chains[39;49m[30;43m=[39;49m[30;43mfollow_wrapped[39;49m[30;43m,[39;49m
+[32m   3111[39m [30;43m                                    [39;49m[30;43mglobals[39;49m[30;43m=[39;49m[30;43mglobals[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mlocals[39;49m[30;43m=[39;49m[30;43mlocals[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43meval_str[39;49m[30;43m=[39;49m[30;43meval_str[39;49m[30;43m)[39;49m
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/inspect.py:2603[39m, in [36m_signature_from_callable[39m[34m(obj, follow_wrapper_chains, skip_bound_arg, globals, locals, eval_str, sigcls)[39m
+[32m   2598[39m     [38;5;28;01mreturn[39;00m _signature_from_function(sigcls, obj,
+[32m   2599[39m                                     skip_bound_arg=skip_bound_arg,
+[32m   2600[39m                                     [38;5;28mglobals[39m=[38;5;28mglobals[39m, [38;5;28mlocals[39m=[38;5;28mlocals[39m, eval_str=eval_str)
+[32m   2602[39m [38;5;28;01mif[39;00m _signature_is_builtin(obj):
+[32m-> [39m[32m2603[39m     [38;5;28;01mreturn[39;00m [30;43m_signature_from_builtin[39;49m[30;43m([39;49m[30;43msigcls[39;49m[30;43m,[39;49m[30;43m [39;49m[30;43mobj[39;49m[30;43m,[39;49m
+[32m   2604[39m [30;43m                                   [39;49m[30;43mskip_bound_arg[39;49m[30;43m=[39;49m[30;43mskip_bound_arg[39;49m[30;43m)[39;49m
+[32m   2606[39m [38;5;28;01mif[39;00m [38;5;28misinstance[39m(obj, [38;5;28mtype[39m):
+[32m   2607[39m     [38;5;66;03m# obj is a class or a metaclass[39;00m
+[32m   2608[39m 
+[32m   2609[39m     [38;5;66;03m# First, let's see if it has an overloaded __call__ defined[39;00m
+[32m   2610[39m     [38;5;66;03m# in its metaclass[39;00m
+[32m   2611[39m     call = _signature_get_user_defined_method(
+[32m   2612[39m         [38;5;28mtype[39m(obj),
+[32m   2613[39m         [33m'[39m[33m__call__[39m[33m'[39m,
+[32m   2614[39m         follow_wrapper_chains=follow_wrapper_chains,
+[32m   2615[39m     )
+
+[36mFile [39m[32m~/miniforge3/lib/python3.13/inspect.py:2389[39m, in [36m_signature_from_builtin[39m[34m(cls, func, skip_bound_arg)[39m
+[32m   2387[39m s = [38;5;28mgetattr[39m(func, [33m"[39m[33m__text_signature__[39m[33m"[39m, [38;5;28;01mNone[39;00m)
+[32m   2388[39m [38;5;28;01mif[39;00m [38;5;129;01mnot[39;00m s:
+[32m-> [39m[32m2389[39m     [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m([33m"[39m[33mno signature found for builtin [39m[38;5;132;01m{!r}[39;00m[33m"[39m.format(func))
+[32m   2391[39m [38;5;28;01mreturn[39;00m _signature_fromstr([38;5;28mcls[39m, func, s, skip_bound_arg)
+
+[31mValueError[39m: no signature found for builtin <instancemethod Build at 0x7a40dcc95f90>
+
+# -- cell 7 (240.0s, exit 0)
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Defeaturing
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+scanner = solids[1]
+blend_faces = []
+for face in scanner.faces():
+    ad = BRepAdaptor_Surface(face.wrapped)
+    typ = str(face.geom_type)
+    if typ == 'GeomType.CYLINDER' and abs(ad.Cylinder().Radius() - 0.5) < 1e-5:
+        blend_faces.append(face)
+    elif typ == 'GeomType.TORUS' and abs(ad.Torus().MinorRadius() - 0.5) < 1e-5:
+        blend_faces.append(face)
+print('Measured 0.5 mm blend faces selected:', len(blend_faces))
+defeat = BRepAlgoAPI_Defeaturing()
+defeat.SetShape(scanner.wrapped)
+for face in blend_faces: defeat.AddFaceToRemove(face.wrapped)
+defeat.Build()
+print('Defeaturing done:', defeat.IsDone())
+scanner_defeatured = bd.Solid(defeat.Shape())
+print('Before: valid', scanner.is_valid, 'faces', len(scanner.faces()), 'volume', scanner.volume, 'bbox', scanner.bounding_box())
+print('After:  valid', scanner_defeatured.is_valid, 'faces', len(scanner_defeatured.faces()), 'volume', scanner_defeatured.volume, 'bbox', scanner_defeatured.bounding_box())
+# -- output
+
+

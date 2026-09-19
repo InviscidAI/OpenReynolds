@@ -1,0 +1,859 @@
+# -- cell 1 (0.7s, exit 0)
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+# Requested dimensions, in metres
+neck_od = 40e-3
+pitch = 2e-3
+thread_depth = 1e-3
+thread_height = 12e-3
+gap = 0.2e-3
+starts = 1
+# Assumption: standard metric trapezoidal thread, 30 degree included angle
+included_angle_deg = 30.0
+half_angle = np.deg2rad(included_angle_deg / 2)
+turns = thread_height / pitch
+r_crest = neck_od / 2
+r_root = r_crest - thread_depth
+
+def helix_xyz(u, s, t):
+    """Helical clearance ribbon: u=turns, s=root-to-crest, t=neck-to-lid."""
+    u, s, t = np.broadcast_arrays(u, s, t)
+    rb = r_root + thread_depth * s
+    r = rb - gap * np.sin(half_angle) * t
+    th = 2 * np.pi * u
+    z = pitch * u + np.tan(half_angle) * (rb - r_root) + gap * np.cos(half_angle) * t
+    return r*np.cos(th), r*np.sin(th), z
+
+# Coarse preview of the two opposing flank surfaces and boundary curves
+u = np.linspace(0, turns, 145)
+s = np.linspace(0, 1, 7)
+U, S = np.meshgrid(u, s, indexing='ij')
+fig = plt.figure(figsize=(9, 7))
+ax = fig.add_subplot(111, projection='3d')
+for t, color, label in [(0, 'steelblue', 'neck flank'), (1, 'darkorange', 'lid flank')]:
+    X, Y, Z = helix_xyz(U, S, t)
+    ax.plot_surface(X*1e3, Y*1e3, Z*1e3, color=color, alpha=0.58, linewidth=0)
+    ax.plot([], [], [], color=color, lw=6, label=label)
+for sv in (0, 1):
+    for tv in (0, 1):
+        X, Y, Z = helix_xyz(u, sv, tv)
+        ax.plot(X*1e3, Y*1e3, Z*1e3, color='k', lw=.55)
+ax.set(xlabel='x [mm]', ylabel='y [mm]', zlabel='z [mm]', title='Coarse helical gap preview (6 turns)')
+ax.set_box_aspect((40, 40, 14))
+ax.legend()
+plt.tight_layout()
+plt.show()
+
+normal_gap = np.hypot(gap*np.sin(half_angle), gap*np.cos(half_angle))
+print(f'turns: measured {turns:.6g}, requested {thread_height/pitch:.6g}')
+print(f'pitch: measured {pitch*1e3:.6g} mm, requested 2 mm')
+print(f'crest diameter: measured {2*r_crest*1e3:.6g} mm, requested 40 mm')
+print(f'radial depth: measured {(r_crest-r_root)*1e3:.6g} mm, requested 1 mm')
+print(f'normal flank gap: measured {normal_gap*1e3:.6g} mm, requested 0.2 mm')
+print(f'axial helix span: measured {turns*pitch*1e3:.6g} mm, requested 12 mm')
+# -- output
+turns: measured 6, requested 6
+pitch: measured 2 mm, requested 2 mm
+crest diameter: measured 40 mm, requested 40 mm
+radial depth: measured 1 mm, requested 1 mm
+normal flank gap: measured 0.2 mm, requested 0.2 mm
+axial helix span: measured 12 mm, requested 12 mm
+
+# -- cell 2 (1.2s, exit 0)
+# Coarse structured discretisation; all patch STLs share these exact boundary vertices.
+nu, ns, nt = 192, 5, 2  # 32 circumferential cells/turn, 5 radial, 2 across clearance
+ug = np.linspace(0, turns, nu + 1)
+sg = np.linspace(0, 1, ns + 1)
+tg = np.linspace(0, 1, nt + 1)
+UU, SS, TT = np.meshgrid(ug, sg, tg, indexing='ij')
+X, Y, Z = helix_xyz(UU, SS, TT)
+points = np.column_stack((X.ravel(), Y.ravel(), Z.ravel()))
+vid = np.arange(points.shape[0]).reshape((nu + 1, ns + 1, nt + 1))
+
+# Each quad is ordered approximately outward; exact winding is corrected geometrically.
+patch_quads = {
+    'innerEnd': [[vid[0,j,k], vid[0,j,k+1], vid[0,j+1,k+1], vid[0,j+1,k]] for j in range(ns) for k in range(nt)],
+    'outerEnd': [[vid[nu,j,k], vid[nu,j+1,k], vid[nu,j+1,k+1], vid[nu,j,k+1]] for j in range(ns) for k in range(nt)],
+    'threadRoot': [[vid[i,0,k], vid[i+1,0,k], vid[i+1,0,k+1], vid[i,0,k+1]] for i in range(nu) for k in range(nt)],
+    'threadCrest': [[vid[i,ns,k], vid[i,ns,k+1], vid[i+1,ns,k+1], vid[i+1,ns,k]] for i in range(nu) for k in range(nt)],
+    'neckFlank': [[vid[i,j,0], vid[i,j+1,0], vid[i+1,j+1,0], vid[i+1,j,0]] for i in range(nu) for j in range(ns)],
+    'lidFlank': [[vid[i,j,nt], vid[i+1,j,nt], vid[i+1,j+1,nt], vid[i,j+1,nt]] for i in range(nu) for j in range(ns)],
+}
+
+def outward_quad(q, interior):
+    q = list(map(int, q)); p = points[q]
+    n = np.cross(p[1]-p[0], p[2]-p[0])
+    return q if np.dot(n, p.mean(axis=0)-interior) > 0 else q[::-1]
+
+# Correct each boundary face against an adjacent interior point.
+for name, qs in patch_quads.items():
+    fixed = []
+    for q in qs:
+        fc = points[np.asarray(q)].mean(axis=0)
+        # Global ribbon centre at the face's mean helical phase is a sufficient inward reference.
+        theta = np.unwrap(np.arctan2(points[np.asarray(q),1], points[np.asarray(q),0]))
+        um = (theta.mean()/(2*np.pi))
+        if um < -0.25: um += turns
+        rad = np.linalg.norm(fc[:2])
+        sm = np.clip((rad-r_root)/thread_depth, 0, 1)
+        interior = np.array(helix_xyz(um, sm, 0.5))
+        fixed.append(outward_quad(q, interior))
+    patch_quads[name] = fixed
+
+tri_dir = Path('constant/triSurface'); tri_dir.mkdir(parents=True, exist_ok=True)
+def write_ascii_stl(path, quads, solid_name):
+    with open(path, 'w') as f:
+        f.write(f'solid {solid_name}\n')
+        for q in quads:
+            for tri in ((q[0],q[1],q[2]), (q[0],q[2],q[3])):
+                p = points[np.asarray(tri)]; n = np.cross(p[1]-p[0], p[2]-p[0]); n /= np.linalg.norm(n)
+                f.write(f' facet normal {n[0]:.12g} {n[1]:.12g} {n[2]:.12g}\n  outer loop\n')
+                for v in p: f.write(f'   vertex {v[0]:.12g} {v[1]:.12g} {v[2]:.12g}\n')
+                f.write('  endloop\n endfacet\n')
+        f.write(f'endsolid {solid_name}\n')
+for name, qs in patch_quads.items():
+    write_ascii_stl(tri_dir/f'{name}.stl', qs, name)
+    print(f'{name:12s}: {len(qs)*2:5d} triangles -> {tri_dir/name}.stl')
+print(f'coarse volume grid: {nu*ns*nt} hexahedra; {len(points)} points')
+# -- output
+innerEnd    :    20 triangles -> constant/triSurface/innerEnd.stl
+outerEnd    :    20 triangles -> constant/triSurface/outerEnd.stl
+threadRoot  :   768 triangles -> constant/triSurface/threadRoot.stl
+threadCrest :   768 triangles -> constant/triSurface/threadCrest.stl
+neckFlank   :  1920 triangles -> constant/triSurface/neckFlank.stl
+lidFlank    :  1920 triangles -> constant/triSurface/lidFlank.stl
+coarse volume grid: 1920 hexahedra; 3474 points
+
+# -- cell 3 (1.5s, exit 0)
+# Rebuild boundary lists with exact adjacent-cell references and overwrite the STLs with robust outward winding.
+def cell_vertices(i,j,k):
+    return [vid[i,j,k],vid[i+1,j,k],vid[i+1,j+1,k],vid[i,j+1,k],
+            vid[i,j,k+1],vid[i+1,j,k+1],vid[i+1,j+1,k+1],vid[i,j+1,k+1]]
+def orient_from_cell(q, i, j, k):
+    q = list(map(int,q)); p = points[q]; cc = points[cell_vertices(i,j,k)].mean(axis=0)
+    n = np.cross(p[1]-p[0],p[2]-p[0])
+    return q if np.dot(n,p.mean(axis=0)-cc)>0 else q[::-1]
+
+patch_items = {n: [] for n in patch_quads}
+for j in range(ns):
+    for k in range(nt):
+        patch_items['innerEnd'].append((orient_from_cell([vid[0,j,k],vid[0,j,k+1],vid[0,j+1,k+1],vid[0,j+1,k]],0,j,k),(0,j,k)))
+        patch_items['outerEnd'].append((orient_from_cell([vid[nu,j,k],vid[nu,j+1,k],vid[nu,j+1,k+1],vid[nu,j,k+1]],nu-1,j,k),(nu-1,j,k)))
+for i in range(nu):
+    for k in range(nt):
+        patch_items['threadRoot'].append((orient_from_cell([vid[i,0,k],vid[i+1,0,k],vid[i+1,0,k+1],vid[i,0,k+1]],i,0,k),(i,0,k)))
+        patch_items['threadCrest'].append((orient_from_cell([vid[i,ns,k],vid[i,ns,k+1],vid[i+1,ns,k+1],vid[i+1,ns,k]],i,ns-1,k),(i,ns-1,k)))
+for i in range(nu):
+    for j in range(ns):
+        patch_items['neckFlank'].append((orient_from_cell([vid[i,j,0],vid[i,j+1,0],vid[i+1,j+1,0],vid[i+1,j,0]],i,j,0),(i,j,0)))
+        patch_items['lidFlank'].append((orient_from_cell([vid[i,j,nt],vid[i+1,j,nt],vid[i+1,j+1,nt],vid[i,j+1,nt]],i,j,nt-1),(i,j,nt-1)))
+patch_quads = {n:[q for q,_ in items] for n,items in patch_items.items()}
+for name, qs in patch_quads.items(): write_ascii_stl(tri_dir/f'{name}.stl', qs, name)
+
+# Assemble owner-oriented cell faces, deduplicating internal faces.
+face_map = {}
+for i in range(nu):
+  for j in range(ns):
+    for k in range(nt):
+      c = (i*ns+j)*nt+k
+      v = cell_vertices(i,j,k)
+      candidates = [[v[0],v[3],v[2],v[1]],[v[4],v[5],v[6],v[7]],
+                    [v[0],v[1],v[5],v[4]],[v[1],v[2],v[6],v[5]],
+                    [v[2],v[3],v[7],v[6]],[v[3],v[0],v[4],v[7]]]
+      cc = points[v].mean(axis=0)
+      for q in candidates:
+        p=points[q]; n=np.cross(p[1]-p[0],p[2]-p[0])
+        if np.dot(n,p.mean(axis=0)-cc)<0: q=q[::-1]
+        key=tuple(sorted(q))
+        if key in face_map: face_map[key]['neighbour']=c
+        else: face_map[key]={'verts':q,'owner':c,'neighbour':None}
+
+boundary_lookup = {tuple(sorted(q)):name for name,qs in patch_quads.items() for q in qs}
+internal = [f for f in face_map.values() if f['neighbour'] is not None]
+boundary_by_patch = {n:[] for n in patch_quads}
+for key,f in face_map.items():
+    if f['neighbour'] is None: boundary_by_patch[boundary_lookup[key]].append(f)
+ordered = internal + [f for n in boundary_by_patch for f in boundary_by_patch[n]]
+poly = Path('constant/polyMesh'); poly.mkdir(parents=True, exist_ok=True)
+
+def foam_header(cls,obj):
+    return f'''FoamFile\n{{\n    format ascii;\n    class {cls};\n    object {obj};\n}}\n'''
+with open(poly/'points','w') as f:
+    f.write(foam_header('vectorField','points')+f'{len(points)}\n(\n')
+    for p in points: f.write(f'({p[0]:.12g} {p[1]:.12g} {p[2]:.12g})\n')
+    f.write(')\n')
+with open(poly/'faces','w') as f:
+    f.write(foam_header('faceList','faces')+f'{len(ordered)}\n(\n')
+    for a in ordered: f.write(f"4({' '.join(map(str,a['verts']))})\n")
+    f.write(')\n')
+with open(poly/'owner','w') as f:
+    f.write(foam_header('labelList','owner')+f'{len(ordered)}\n(\n')
+    for a in ordered: f.write(f"{a['owner']}\n")
+    f.write(')\n')
+with open(poly/'neighbour','w') as f:
+    f.write(foam_header('labelList','neighbour')+f'{len(internal)}\n(\n')
+    for a in internal: f.write(f"{a['neighbour']}\n")
+    f.write(')\n')
+start=len(internal)
+with open(poly/'boundary','w') as f:
+    f.write(foam_header('polyBoundaryMesh','boundary')+f'{len(boundary_by_patch)}\n(\n')
+    for name, fs in boundary_by_patch.items():
+        f.write(f'{name}\n{{\n type patch;\n nFaces {len(fs)};\n startFace {start};\n}}\n'); start += len(fs)
+    f.write(')\n')
+print(f'wrote coarse OpenFOAM mesh: {nu*ns*nt} cells, {len(internal)} internal faces, {len(ordered)-len(internal)} boundary faces')
+# -- output
+wrote coarse OpenFOAM mesh: 1920 cells, 4406 internal faces, 2708 boundary faces
+
+# -- cell 4 (0.4s, exit 1)
+import subprocess
+cm = subprocess.run(['checkMesh'], text=True, capture_output=True)
+print(cm.stdout)
+if cm.returncode != 0:
+    print(cm.stderr)
+    raise RuntimeError(f'checkMesh returned {cm.returncode}')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 19 2026
+Time   : 12:49:58
+Host   : yc-demo
+PID    : 704286
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260919-124820-7fc7/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T13-20260919-124820-7fc7/t13/system/controlDict"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[4][39m[32m, line 6[39m
+[32m      2[39m cm = subprocess.run([[33m'checkMesh'[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m      3[39m print(cm.stdout)
+[32m      4[39m [38;5;28;01mif[39;00m cm.returncode != [32m0[39m:
+[32m      5[39m     print(cm.stderr)
+[32m----> [39m[32m6[39m     [38;5;28;01mraise[39;00m RuntimeError(f'checkMesh returned {cm.returncode}')
+
+[31mRuntimeError[39m: checkMesh returned 1
+
+# -- cell 5 (0.1s, exit 0)
+system_dir = Path('system'); system_dir.mkdir(exist_ok=True)
+(system_dir/'controlDict').write_text('''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object controlDict;
+}
+application checkMesh;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 1;
+deltaT 1;
+writeControl timeStep;
+writeInterval 1;
+purgeWrite 0;
+writeFormat ascii;
+writePrecision 8;
+writeCompression off;
+timeFormat general;
+timePrecision 6;
+runTimeModifiable false;
+''')
+print('wrote minimal system/controlDict for mesh utilities')
+# -- output
+wrote minimal system/controlDict for mesh utilities
+
+# -- cell 6 (0.3s, exit 1)
+import subprocess
+cm = subprocess.run(['checkMesh'], text=True, capture_output=True)
+print(cm.stdout)
+if cm.returncode != 0:
+    print(cm.stderr)
+    raise RuntimeError(f'checkMesh returned {cm.returncode}')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 19 2026
+Time   : 12:50:04
+Host   : yc-demo
+PID    : 704593
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260919-124820-7fc7/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+
+
+--> FOAM FATAL ERROR: (openfoam-2512)
+cannot find file "/home/qiuzi/.openreynolds-buildup/work/T13-20260919-124820-7fc7/t13/system/fvSchemes"
+
+    From virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 629.
+
+FOAM exiting
+[31m---------------------------------------------------------------------------[39m
+[31mRuntimeError[39m                              Traceback (most recent call last)
+[36mCell[39m[36m [39m[32mIn[6][39m[32m, line 6[39m
+[32m      2[39m cm = subprocess.run([[33m'checkMesh'[39m], text=[38;5;28;01mTrue[39;00m, capture_output=[38;5;28;01mTrue[39;00m)
+[32m      3[39m print(cm.stdout)
+[32m      4[39m [38;5;28;01mif[39;00m cm.returncode != [32m0[39m:
+[32m      5[39m     print(cm.stderr)
+[32m----> [39m[32m6[39m     [38;5;28;01mraise[39;00m RuntimeError(f'checkMesh returned {cm.returncode}')
+
+[31mRuntimeError[39m: checkMesh returned 1
+
+# -- cell 7 (0.1s, exit 0)
+(system_dir/'fvSchemes').write_text('''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object fvSchemes;
+}
+ddtSchemes { default steadyState; }
+gradSchemes { default Gauss linear; }
+divSchemes { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes { default corrected; }
+''')
+(system_dir/'fvSolution').write_text('''FoamFile
+{
+    format ascii;
+    class dictionary;
+    object fvSolution;
+}
+solvers {}
+''')
+print('wrote system/fvSchemes and system/fvSolution for mesh utilities')
+# -- output
+wrote system/fvSchemes and system/fvSolution for mesh utilities
+
+# -- cell 8 (0.3s, exit 0)
+import subprocess
+cm = subprocess.run(['checkMesh'], text=True, capture_output=True)
+print(cm.stdout)
+if cm.returncode != 0:
+    print(cm.stderr)
+    raise RuntimeError(f'checkMesh returned {cm.returncode}')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 19 2026
+Time   : 12:50:09
+Host   : yc-demo
+PID    : 704695
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260919-124820-7fc7/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           3474
+    faces:            7114
+    internal faces:   4406
+    cells:            1920
+    faces per cell:   6
+    boundary patches: 6
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     1920
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+ ***Faces not in upper triangular order.
+  <<Writing 1528 unordered faces to set upperTriangularFace
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    innerEnd            10       18       ok (non-closed singly connected)  
+    outerEnd            10       18       ok (non-closed singly connected)  
+    threadRoot          384      579      ok (non-closed singly connected)  
+    threadCrest         384      579      ok (non-closed singly connected)  
+    neckFlank           960      1158     ok (non-closed singly connected)  
+    lidFlank            960      1158     ok (non-closed singly connected)  
+    ".*"                2708     2710     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.02 -0.02 0) (0.02 0.02 0.012461134)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-4.8552124e-18 1.1042491e-17 -7.8616304e-16) OK.
+    Max cell openness = 3.3561781e-16 OK.
+    Max aspect ratio = 13.057332 OK.
+    Minimum face area = 2.0705524e-08. Maximum face area = 8.0420736e-07.  Face area magnitudes OK.
+    Min volume = 7.699662e-11. Max volume = 8.0332726e-11.  Total volume = 1.5103617e-07.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0.96288027 average: 0.77158712
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.24956031 OK.
+    Coupled point location match (average 0) OK.
+
+Failed 1 mesh checks.
+
+End
+
+# -- cell 9 (0.1s, exit 0)
+internal = sorted(internal, key=lambda a: (a['owner'], a['neighbour']))
+ordered = internal + [f for n in boundary_by_patch for f in boundary_by_patch[n]]
+with open(poly/'faces','w') as f:
+    f.write(foam_header('faceList','faces')+f'{len(ordered)}\n(\n')
+    for a in ordered: f.write(f"4({' '.join(map(str,a['verts']))})\n")
+    f.write(')\n')
+with open(poly/'owner','w') as f:
+    f.write(foam_header('labelList','owner')+f'{len(ordered)}\n(\n')
+    for a in ordered: f.write(f"{a['owner']}\n")
+    f.write(')\n')
+with open(poly/'neighbour','w') as f:
+    f.write(foam_header('labelList','neighbour')+f'{len(internal)}\n(\n')
+    for a in internal: f.write(f"{a['neighbour']}\n")
+    f.write(')\n')
+print('sorted internal faces into owner/neighbour upper-triangular order')
+# -- output
+sorted internal faces into owner/neighbour upper-triangular order
+
+# -- cell 10 (0.3s, exit 0)
+import subprocess
+cm = subprocess.run(['checkMesh'], text=True, capture_output=True)
+print(cm.stdout)
+if 'Mesh OK.' not in cm.stdout:
+    raise RuntimeError('bare checkMesh did not report Mesh OK')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 19 2026
+Time   : 12:50:18
+Host   : yc-demo
+PID    : 704708
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260919-124820-7fc7/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           3474
+    faces:            7114
+    internal faces:   4406
+    cells:            1920
+    faces per cell:   6
+    boundary patches: 6
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     1920
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    innerEnd            10       18       ok (non-closed singly connected)  
+    outerEnd            10       18       ok (non-closed singly connected)  
+    threadRoot          384      579      ok (non-closed singly connected)  
+    threadCrest         384      579      ok (non-closed singly connected)  
+    neckFlank           960      1158     ok (non-closed singly connected)  
+    lidFlank            960      1158     ok (non-closed singly connected)  
+    ".*"                2708     2710     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.02 -0.02 0) (0.02 0.02 0.012461134)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (-4.8552124e-18 1.1042491e-17 -7.8616304e-16) OK.
+    Max cell openness = 3.5447425e-16 OK.
+    Max aspect ratio = 13.057332 OK.
+    Minimum face area = 2.0705524e-08. Maximum face area = 8.0420736e-07.  Face area magnitudes OK.
+    Min volume = 7.699662e-11. Max volume = 8.0332726e-11.  Total volume = 1.5103617e-07.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0.96288027 average: 0.77158712
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.24956031 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+
+# -- cell 11 (0.6s, exit 0)
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+fig = plt.figure(figsize=(10,7))
+ax = fig.add_subplot(111, projection='3d')
+colors = {'neckFlank':'#4c78a8','lidFlank':'#f58518','innerEnd':'#54a24b','outerEnd':'#e45756',
+          'threadRoot':'#777777','threadCrest':'#aaaaaa'}
+# Draw filled ends and sparse grid lines on all longitudinal patches.
+for name, qs in patch_quads.items():
+    stride = 1 if 'End' in name else 8
+    selected = qs if 'End' in name else qs[::stride]
+    polys = [points[np.asarray(q)]*1e3 for q in selected]
+    pc = Poly3DCollection(polys, facecolor=colors[name], edgecolor='k', linewidth=.2,
+                          alpha=.9 if 'End' in name else .32)
+    ax.add_collection3d(pc)
+for sv in np.linspace(0,1,ns+1):
+    for tv in np.linspace(0,1,nt+1):
+        xx,yy,zz=helix_xyz(ug,sv,tv); ax.plot(xx*1e3,yy*1e3,zz*1e3,color='k',lw=.25,alpha=.65)
+ax.set_xlim(-21,21); ax.set_ylim(-21,21); ax.set_zlim(0,13)
+ax.set_box_aspect((42,42,16)); ax.set(xlabel='x [mm]',ylabel='y [mm]',zlabel='z [mm]',title='Actual coarse mesh boundary (1,920 hex cells)')
+for n in ('neckFlank','lidFlank','innerEnd','outerEnd'): ax.plot([],[],[],color=colors[n],lw=6,label=n)
+ax.legend(loc='upper right'); plt.tight_layout(); plt.show()
+# -- output
+
+
+# -- cell 12 (6.0s, exit 0)
+def build_helical_mesh(nu_f=384, ns_f=8, nt_f=3):
+    ug_f=np.linspace(0,turns,nu_f+1); sg_f=np.linspace(0,1,ns_f+1); tg_f=np.linspace(0,1,nt_f+1)
+    U,S,T=np.meshgrid(ug_f,sg_f,tg_f,indexing='ij'); x,y,z=helix_xyz(U,S,T)
+    pts=np.column_stack((x.ravel(),y.ravel(),z.ravel()))
+    ids=np.arange(len(pts)).reshape(nu_f+1,ns_f+1,nt_f+1)
+    def cv(i,j,k): return [ids[i,j,k],ids[i+1,j,k],ids[i+1,j+1,k],ids[i,j+1,k],ids[i,j,k+1],ids[i+1,j,k+1],ids[i+1,j+1,k+1],ids[i,j+1,k+1]]
+    def oq(q,i,j,k):
+        q=list(map(int,q)); p=pts[q]; cc=pts[cv(i,j,k)].mean(0); n=np.cross(p[1]-p[0],p[2]-p[0])
+        return q if np.dot(n,p.mean(0)-cc)>0 else q[::-1]
+    pq={n:[] for n in ('innerEnd','outerEnd','threadRoot','threadCrest','neckFlank','lidFlank')}
+    for j in range(ns_f):
+      for k in range(nt_f):
+        pq['innerEnd'].append(oq([ids[0,j,k],ids[0,j,k+1],ids[0,j+1,k+1],ids[0,j+1,k]],0,j,k))
+        pq['outerEnd'].append(oq([ids[nu_f,j,k],ids[nu_f,j+1,k],ids[nu_f,j+1,k+1],ids[nu_f,j,k+1]],nu_f-1,j,k))
+    for i in range(nu_f):
+      for k in range(nt_f):
+        pq['threadRoot'].append(oq([ids[i,0,k],ids[i+1,0,k],ids[i+1,0,k+1],ids[i,0,k+1]],i,0,k))
+        pq['threadCrest'].append(oq([ids[i,ns_f,k],ids[i,ns_f,k+1],ids[i+1,ns_f,k+1],ids[i+1,ns_f,k]],i,ns_f-1,k))
+      for j in range(ns_f):
+        pq['neckFlank'].append(oq([ids[i,j,0],ids[i,j+1,0],ids[i+1,j+1,0],ids[i+1,j,0]],i,j,0))
+        pq['lidFlank'].append(oq([ids[i,j,nt_f],ids[i+1,j,nt_f],ids[i+1,j+1,nt_f],ids[i,j+1,nt_f]],i,j,nt_f-1))
+    # Export one consistently triangulated STL per patch.
+    old_points=globals()['points']; globals()['points']=pts
+    for name,qs in pq.items(): write_ascii_stl(tri_dir/f'{name}.stl',qs,name)
+    globals()['points']=old_points
+    # Build owner-oriented faces.
+    fm={}
+    for i in range(nu_f):
+      for j in range(ns_f):
+       for k in range(nt_f):
+        c=(i*ns_f+j)*nt_f+k; v=cv(i,j,k); cc=pts[v].mean(0)
+        candidates=[[v[0],v[3],v[2],v[1]],[v[4],v[5],v[6],v[7]],[v[0],v[1],v[5],v[4]],
+                    [v[1],v[2],v[6],v[5]],[v[2],v[3],v[7],v[6]],[v[3],v[0],v[4],v[7]]]
+        for q in candidates:
+          p=pts[q]
+          if np.dot(np.cross(p[1]-p[0],p[2]-p[0]),p.mean(0)-cc)<0: q=q[::-1]
+          key=tuple(sorted(q))
+          if key in fm: fm[key]['neighbour']=c
+          else: fm[key]={'verts':q,'owner':c,'neighbour':None}
+    lookup={tuple(sorted(q)):name for name,qs in pq.items() for q in qs}
+    ib=sorted([f for f in fm.values() if f['neighbour'] is not None],key=lambda a:(a['owner'],a['neighbour']))
+    bp={n:[] for n in pq}
+    for key,f in fm.items():
+      if f['neighbour'] is None: bp[lookup[key]].append(f)
+    allf=ib+[f for n in bp for f in bp[n]]
+    with open(poly/'points','w') as f:
+      f.write(foam_header('vectorField','points')+f'{len(pts)}\n(\n'); [f.write(f'({p[0]:.12g} {p[1]:.12g} {p[2]:.12g})\n') for p in pts]; f.write(')\n')
+    with open(poly/'faces','w') as f:
+      f.write(foam_header('faceList','faces')+f'{len(allf)}\n(\n'); [f.write(f"4({' '.join(map(str,a['verts']))})\n") for a in allf]; f.write(')\n')
+    with open(poly/'owner','w') as f:
+      f.write(foam_header('labelList','owner')+f'{len(allf)}\n(\n'); [f.write(f"{a['owner']}\n") for a in allf]; f.write(')\n')
+    with open(poly/'neighbour','w') as f:
+      f.write(foam_header('labelList','neighbour')+f'{len(ib)}\n(\n'); [f.write(f"{a['neighbour']}\n") for a in ib]; f.write(')\n')
+    start=len(ib)
+    with open(poly/'boundary','w') as f:
+      f.write(foam_header('polyBoundaryMesh','boundary')+f'{len(bp)}\n(\n')
+      for name,fs in bp.items(): f.write(f'{name}\n{{\n type patch;\n nFaces {len(fs)};\n startFace {start};\n}}\n'); start+=len(fs)
+      f.write(')\n')
+    return pts,pq,nu_f*ns_f*nt_f
+
+final_points, final_patch_quads, final_cells = build_helical_mesh()
+print(f'final mesh written: {final_cells} hexahedra, {len(final_points)} points')
+for name,qs in final_patch_quads.items(): print(f'{name:12s}: {2*len(qs):5d} STL triangles')
+# -- output
+final mesh written: 9216 hexahedra, 13860 points
+innerEnd    :    48 STL triangles
+outerEnd    :    48 STL triangles
+threadRoot  :  2304 STL triangles
+threadCrest :  2304 STL triangles
+neckFlank   :  6144 STL triangles
+lidFlank    :  6144 STL triangles
+
+# -- cell 13 (0.5s, exit 0)
+import subprocess
+cm_final = subprocess.run(['checkMesh'], text=True, capture_output=True)
+print(cm_final.stdout)
+if 'Mesh OK.' not in cm_final.stdout: raise RuntimeError('final bare checkMesh did not report Mesh OK')
+# -- output
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _87ed40d2-20251219 OPENFOAM=2512 version=2512
+Arch   : "LSB;label=32;scalar=64"
+Exec   : checkMesh
+Date   : Sep 19 2026
+Time   : 12:51:03
+Host   : yc-demo
+PID    : 705340
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+I/O    : uncollated
+--> FOAM Warning : 
+    From Foam::fileName Foam::cwd_L()
+    in file POSIX.C at line 554
+    PWD is not the cwd() - reverting to physical description
+Case   : /home/qiuzi/.openreynolds-buildup/work/T13-20260919-124820-7fc7/t13
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+memory pool : not available
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+--> FOAM Warning : 
+    From static Foam::instantList Foam::timeSelector::select0(Foam::Time&, const Foam::argList&)
+    in file db/Time/timeSelector.C at line 284
+    No time specified or available, selecting 'constant'
+Create mesh for time = constant
+
+Check mesh...
+
+Time = constant
+
+Mesh stats 
+    points:           13860
+    faces:            31896
+    internal faces:   23400
+    cells:            9216
+    faces per cell:   6
+    boundary patches: 6
+    point zones:      0
+    face zones:       0
+    cell zones:       0
+
+Overall number of cells of each type:
+    hexahedra:     9216
+    prisms:        0
+    wedges:        0
+    pyramids:      0
+    tet wedges:    0
+    tetrahedra:    0
+    polyhedra:     0
+
+Checking topology...
+    Boundary definition OK.
+    Cell to face addressing OK.
+    Point usage OK.
+    Upper triangular ordering OK.
+    Face vertices OK.
+    Number of regions: 1 (OK).
+
+Checking patch topology for multiply connected surfaces...
+    Patch               Faces    Points     Surface topology
+    innerEnd            24       36       ok (non-closed singly connected)  
+    outerEnd            24       36       ok (non-closed singly connected)  
+    threadRoot          1152     1540     ok (non-closed singly connected)  
+    threadCrest         1152     1540     ok (non-closed singly connected)  
+    neckFlank           3072     3465     ok (non-closed singly connected)  
+    lidFlank            3072     3465     ok (non-closed singly connected)  
+    ".*"                8496     8498     ok (closed singly connected)      
+
+
+Checking faceZone topology for multiply connected surfaces...
+    No faceZones found.
+
+Checking basic cellZone addressing...
+    No cellZones found.
+
+Checking basic pointZone addressing...
+    No pointZones found.
+
+Checking geometry...
+    Overall domain bounding box (-0.02 -0.02 0) (0.02 0.02 0.012461134)
+    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+    Mesh has 3 solution (non-empty) directions (1 1 1)
+    Boundary openness (5.6024341e-18 3.1260893e-18 -3.6932239e-15) OK.
+    Max cell openness = 4.7711374e-16 OK.
+    Max aspect ratio = 17.360011 OK.
+    Minimum face area = 8.6273015e-09. Maximum face area = 2.5294479e-07.  Face area magnitudes OK.
+    Min volume = 1.6083219e-11. Max volume = 1.6852322e-11.  Total volume = 1.5176697e-07.  Cell volumes OK.
+    Mesh non-orthogonality Max: 0.9603563 average: 0.76278872
+    Non-orthogonality check OK.
+    Face pyramids OK.
+    Max skewness = 0.12960471 OK.
+    Coupled point location match (average 0) OK.
+
+Mesh OK.
+
+End
+

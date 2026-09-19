@@ -1,0 +1,134 @@
+{
+  "run_id": "20260919-134013-eefe",
+  "case": "T25",
+  "arm": "core",
+  "model": "gpt-5.6-sol",
+  "workspace": "/home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe",
+  "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe/t25",
+  "started_at": "2026-09-19T13:40:15",
+  "ended_at": "2026-09-19T13:40:32",
+  "seconds": 12.8,
+  "n_turns": 3,
+  "n_steps": 1,
+  "first_mesh_step": 0,
+  "mesh_exists": false,
+  "checkmesh_ok": false,
+  "usd": 0.0156,
+  "given": [
+    "b123d_api.md",
+    "cad_export.py"
+  ],
+  "tokens": {
+    "input": 607,
+    "cache_read": 11296,
+    "cache_write": 0,
+    "output": 433
+  },
+  "stopped": "refused",
+  "expects": "refused",
+  "passed": true,
+  "why": "",
+  "contaminated": false,
+  "completed": true,
+  "trace": [
+    {
+      "cmd": "from pathlib import Path\ncase_dir = Path.cwd()\nentries = sorted(p.name for p in case_dir.iterdir() if p.name != \"build.py\")\nprint(f\"Case directory: {case_dir}\")\nprint(f\"Existing case entries: {entries}\")\nprint(\"Refusal: no dimensions or physical length scale were specified; no geometry or mesh was built.\")",
+      "exit_code": 0,
+      "seconds": 0.05149065604200587,
+      "output": "Case directory: /home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe/t25\nExisting case entries: ['.reference']\nRefusal: no dimensions or physical length scale were specified; no geometry or mesh was built.",
+      "image": ""
+    }
+  ],
+  "beats": [
+    {
+      "turn": 1,
+      "steps": 0,
+      "stop_reason": "end_turn",
+      "output_tokens": 81,
+      "fenced": false,
+      "text_chars": 166,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789825222.1169271
+    },
+    {
+      "turn": 2,
+      "steps": 0,
+      "stop_reason": "tool_use",
+      "output_tokens": 246,
+      "fenced": true,
+      "text_chars": 200,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789825225.8570175
+    },
+    {
+      "turn": 3,
+      "steps": 1,
+      "stop_reason": "tool_use",
+      "output_tokens": 106,
+      "fenced": false,
+      "text_chars": 174,
+      "thinking_chars": 0,
+      "phase": "turn",
+      "expect_s": 0.0,
+      "at": 1789825228.008787
+    }
+  ],
+  "contamination": {
+    "contaminated": false,
+    "hits": [],
+    "missing": []
+  },
+  "probes": [
+    {
+      "id": "location_in_mesh",
+      "state": "n/a",
+      "why": "the case names no locationInMesh, so nothing was meshed by a point and there is no point to test",
+      "measured": {}
+    },
+    {
+      "id": "union_closure",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe/t25/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe/t25/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "normals",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe/t25/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe/t25/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    },
+    {
+      "id": "coverage",
+      "state": "n/a",
+      "why": "no patch files under /home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe/t25/constant/triSurface, so there is no partition to check",
+      "measured": {}
+    },
+    {
+      "id": "scale",
+      "state": "n/a",
+      "why": "no extent_m was passed in the spec for this case, so there is no stated dimension to measure the surface against; this probe compares against the request and something has to carry the request's number to it",
+      "measured": {}
+    },
+    {
+      "id": "self_intersection",
+      "state": "n/a",
+      "why": "no readable patch set under /home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe/t25/constant/triSurface: refused: /home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe/t25/constant/triSurface does not exist. Pass the triSurface directory holding one STL per patch.",
+      "measured": {}
+    }
+  ],
+  "properties": [],
+  "declares": [],
+  "watch": {
+    "alarm": null,
+    "turns": 3,
+    "steps": 1,
+    "seconds": 15.0,
+    "killed": false,
+    "first_mesh_step": 0,
+    "first_mesh_turn": 0
+  }
+}

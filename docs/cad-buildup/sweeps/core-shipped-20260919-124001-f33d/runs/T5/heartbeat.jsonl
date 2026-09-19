@@ -1,0 +1,13 @@
+{"turn": 1, "steps": 0, "stop_reason": "tool_use", "output_tokens": 363, "fenced": true, "text_chars": 198, "thinking_chars": 472, "phase": "turn", "expect_s": 0.0, "at": 1789825759.0444365}
+{"turn": 2, "steps": 1, "stop_reason": "tool_use", "output_tokens": 350, "fenced": true, "text_chars": 243, "thinking_chars": 0, "phase": "turn", "expect_s": 0.0, "at": 1789825768.032392}
+{"turn": 3, "steps": 2, "stop_reason": "tool_use", "output_tokens": 774, "fenced": true, "text_chars": 325, "thinking_chars": 1526, "phase": "turn", "expect_s": 0.0, "at": 1789825779.6912904}
+{"turn": 4, "steps": 3, "stop_reason": "tool_use", "output_tokens": 325, "fenced": true, "text_chars": 488, "thinking_chars": 486, "phase": "turn", "expect_s": 0.0, "at": 1789825785.4151492}
+{"turn": 5, "steps": 4, "stop_reason": "tool_use", "output_tokens": 374, "fenced": true, "text_chars": 250, "thinking_chars": 454, "phase": "turn", "expect_s": 0.0, "at": 1789825790.0068815}
+{"turn": 6, "steps": 5, "stop_reason": "tool_use", "output_tokens": 485, "fenced": true, "text_chars": 402, "thinking_chars": 533, "phase": "turn", "expect_s": 0.0, "at": 1789825797.9978397}
+{"turn": 7, "steps": 6, "stop_reason": "tool_use", "output_tokens": 504, "fenced": true, "text_chars": 246, "thinking_chars": 0, "phase": "turn", "expect_s": 0.0, "at": 1789825803.7450042}
+{"turn": 8, "steps": 7, "stop_reason": "tool_use", "output_tokens": 58, "fenced": false, "text_chars": 121, "thinking_chars": 0, "phase": "poll", "expect_s": 120.0, "at": 1789826045.5305617}
+{"turn": 9, "steps": 7, "stop_reason": "tool_use", "output_tokens": 85, "fenced": false, "text_chars": 187, "thinking_chars": 393, "phase": "poll", "expect_s": 180.0, "at": 1789826168.3731494}
+{"turn": 10, "steps": 7, "stop_reason": "tool_use", "output_tokens": 96, "fenced": false, "text_chars": 180, "thinking_chars": 0, "phase": "poll", "expect_s": 180.0, "at": 1789826352.0745118}
+{"turn": 11, "steps": 7, "stop_reason": "tool_use", "output_tokens": 95, "fenced": false, "text_chars": 85, "thinking_chars": 409, "phase": "poll", "expect_s": 180.0, "at": 1789826534.8180273}
+{"turn": 12, "steps": 7, "stop_reason": "tool_use", "output_tokens": 130, "fenced": false, "text_chars": 202, "thinking_chars": 413, "phase": "poll", "expect_s": 110.0, "at": 1789826621.3637962}
+{"turn": 13, "steps": 7, "stop_reason": "tool_use", "output_tokens": 193, "fenced": false, "text_chars": 204, "thinking_chars": 0, "phase": "turn", "expect_s": 0.0, "at": 1789826624.7567096}

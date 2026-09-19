@@ -1,0 +1,12 @@
+# -- cell 1 (0.1s, exit 0)
+from pathlib import Path
+case_dir = Path.cwd()
+entries = sorted(p.name for p in case_dir.iterdir() if p.name != "build.py")
+print(f"Case directory: {case_dir}")
+print(f"Existing case entries: {entries}")
+print("Refusal: no dimensions or physical length scale were specified; no geometry or mesh was built.")
+# -- output
+Case directory: /home/qiuzi/.openreynolds-buildup/work/T25-20260919-134013-eefe/t25
+Existing case entries: ['.reference']
+Refusal: no dimensions or physical length scale were specified; no geometry or mesh was built.
+
