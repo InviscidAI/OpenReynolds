@@ -56,14 +56,37 @@ class Alarm:
 
 def evaluate(beats: Sequence[Beat], *, now: float, started_at: float,
              running: bool = True, stale_s: float = HEARTBEAT_STALE_S,
-             k: int = K) -> Alarm | None:
+             k: int = K, steps_seen: int = 0) -> Alarm | None:
     """The first alarm these beats raise, or None if the run is behaving.
 
     `running` is the pidfile's answer, never a command-line match. A run whose process
     is gone and whose beats stop is finished, not wedged -- the supervisor reads its
-    record for the ending; only a live-but-silent process is wedged."""
+    record for the ending; only a live-but-silent process is wedged.
+
+    `steps_seen` is what the run has executed according to its own trail on disk, which
+    the supervisor can read without the heartbeat. It is what separates the two ways of
+    having no beats.
+    """
     if not beats:
         if running and now - started_at > stale_s:
+            # **Never beat at all, while plainly doing work, is our failure and not the
+            # desk's.** The two used to be one alarm, and for a day they were the same
+            # sentence: `Heartbeat.beat` would not accept the `phase` the loop had begun
+            # sending, every call raised, `_beat` swallowed it because the watcher may not
+            # end a run, and no heartbeat file was ever created. The supervisor then
+            # killed every run slower than `stale_s` -- eight of twenty-six in one sweep,
+            # at turn 0 and steps 0 and $0.00, with fifteen cells of real work in their
+            # `cells.log`. Reported as `wedged`, which reads as a desk that hung.
+            #
+            # A desk that hung and a watcher that went blind are different findings and
+            # only one of them is about the desk. So a run with steps on disk and no beats
+            # anywhere is `unobserved`, which `record.TERMINAL` carries and a sweep
+            # discards the way it discards `contaminated`: not averaged in, not retried
+            # quietly, and counted out loud.
+            if steps_seen > 0:
+                return Alarm("unobserved",
+                             f"no beat in {now - started_at:.0f}s while {steps_seen} "
+                             "steps ran -- the run is working and nothing is watching it")
             return Alarm("wedged", f"no beat in {now - started_at:.0f}s of running")
         return None
 

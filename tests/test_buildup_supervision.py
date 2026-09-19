@@ -690,3 +690,69 @@ def test_a_beat_the_loop_actually_sends_is_recorded_whole(tmp_path):
     assert written["phase"] == "poll", "a poll must not read as an ordinary turn"
     assert written["expect_s"] == 90.0, "the wait it declared is what keeps it alive"
     assert written["turn"] == 3 and written["steps"] == 2
+
+
+def test_a_watcher_that_went_blind_is_not_a_desk_that_hung():
+    """The two failures that were one alarm, and the day they were the same sentence.
+
+    `Heartbeat.beat` would not accept the `phase` the loop had begun sending, every call
+    raised, `_beat` swallowed it because the watcher may not end a run, and no heartbeat
+    file was ever created. The supervisor then killed every run slower than its 420 s
+    threshold as `wedged` -- eight of twenty-six in one sweep, at turn 0, steps 0 and
+    $0.00, each with fifteen cells of real work in its `cells.log`.
+
+    `wedged` reads as a desk that hung, and these desks were working. So with no beats at
+    all the step trail decides: nothing executed is `wedged`, something executed is
+    `unobserved`, and only one of those is a finding about the desk.
+    """
+    from openreynolds.buildup import alarms
+
+    common = dict(now=1000.0, started_at=0.0, running=True)
+    hung = alarms.evaluate([], **common, steps_seen=0)
+    blind = alarms.evaluate([], **common, steps_seen=15)
+
+    assert hung is not None and hung.name == "wedged"
+    assert blind is not None and blind.name == "unobserved"
+    assert "15 steps ran" in blind.why and "nothing is watching" in blind.why
+
+
+def test_unobserved_is_a_terminal_state_a_sweep_can_carry():
+    """A run that ends outside `TERMINAL` is a bug in the supervisor, not a result."""
+    from openreynolds.buildup import record
+
+    assert "unobserved" in record.TERMINAL
+    assert "wedged" in record.TERMINAL
+
+
+def test_nothing_is_raised_before_the_threshold_either_way():
+    """The alarm is still about silence, not about having no beats yet."""
+    from openreynolds.buildup import alarms
+
+    early = dict(now=10.0, started_at=0.0, running=True)
+    assert alarms.evaluate([], **early, steps_seen=0) is None
+    assert alarms.evaluate([], **early, steps_seen=9) is None
+    # And a run whose process is gone is finished, not blind.
+    assert alarms.evaluate([], now=1000.0, started_at=0.0, running=False,
+                           steps_seen=15) is None
+
+
+def test_the_step_trail_is_read_off_the_cells_log_not_the_record(tmp_path):
+    """A second opinion has to come down a second channel.
+
+    `record.json`'s `n_steps` is written through the same `on_turn`/`on_step` path whose
+    failure this exists to catch, so reading it would have agreed with the broken side
+    and reported `wedged` all the same.
+    """
+    from openreynolds.buildup.supervise import Supervisor
+
+    watcher = Supervisor.__new__(Supervisor)
+    watcher.dir = tmp_path
+    assert watcher._steps_on_disk() == 0
+
+    (tmp_path / "cells.log").write_text(
+        "# -- cell 1 (3.9s, exit 0)\nimport build123d\n# -- output\nok\n\n"
+        "# -- cell 2 (0.2s, exit 0)\nx = 1\n# -- output\n\n", encoding="utf-8")
+    assert watcher._steps_on_disk() == 2
+    # The record is not consulted, even when it disagrees.
+    (tmp_path / "record.json").write_text('{"n_steps": 0}', encoding="utf-8")
+    assert watcher._steps_on_disk() == 2
