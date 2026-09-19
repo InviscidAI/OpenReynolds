@@ -149,6 +149,25 @@ class Supervisor:
         finally:
             self.release()
 
+    def _steps_on_disk(self) -> int:
+        """How many cells the run has executed, read without the heartbeat.
+
+        The runner appends one `# -- cell N` header per executed cell as it goes, so this
+        is a second and independent answer to "is anything happening". It exists to tell
+        a desk that has hung apart from a watcher that has gone blind: with no beats at
+        all, a zero here is `wedged` and a positive one is `unobserved`.
+
+        Deliberately not `record.json`'s `n_steps`: the runner writes that through the
+        same `on_turn`/`on_step` path whose failure this is meant to catch, and a check
+        that shares a channel with the thing it checks is not a second opinion.
+        """
+        log = self.dir / "cells.log"
+        try:
+            return sum(1 for line in log.read_text(encoding="utf-8", errors="replace")
+                       .splitlines() if line.startswith("# -- cell "))
+        except OSError:
+            return 0
+
     def _watch(self, *, deadline_s: float | None = None) -> Watch:
         started = self.now()
         first_step = first_turn = 0
@@ -162,7 +181,8 @@ class Supervisor:
             if not first_turn and beats and running and meshed(self.case):
                 first_step, first_turn = beats[-1].steps, beats[-1].turn
             alarm = alarms.evaluate(beats, now=self.now(), started_at=started,
-                                    running=running, stale_s=self.stale_s, k=self.k)
+                                    running=running, stale_s=self.stale_s, k=self.k,
+                                    steps_seen=self._steps_on_disk())
             seen = Watch(alarm=alarm, turns=beats[-1].turn if beats else 0,
                          steps=beats[-1].steps if beats else 0,
                          seconds=self.now() - started,

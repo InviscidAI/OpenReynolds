@@ -205,6 +205,7 @@ def drive(label: str, names: list[str], repeat: int, parallel: int, work: str,
                   f"checkMesh {'ok' if outcome.get('checkmesh_ok') else 'not ok'}, "
                   f"${outcome.get('usd', 0):.2f}"
                   + (" CONTAMINATED" if outcome.get("contaminated") else "")
+                  + (" UNOBSERVED" if outcome.get("stopped") == "unobserved" else "")
                   + (f" measured={outcome['measured']}" if outcome.get("measured") else ""))
 
     manifest["ended_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -308,7 +309,18 @@ def table(name: str, against: str = "") -> int:
     dirty = [key for key, data in here.items() if data.get("contaminated")]
     if dirty:
         print(f"\nCONTAMINATED, discarded from the baseline: {', '.join(dirty)}")
-    clean = {key: data for key, data in here.items() if not data.get("contaminated")}
+    # `unobserved` is discarded on the same rule and for the same reason: the run may
+    # have been fine and we cannot say, so averaging it in reports our own blindness as
+    # the desk's result. It is printed rather than dropped quietly, because a sweep with
+    # any of these is a sweep whose instrumentation needs fixing before its numbers mean
+    # anything -- eight of twenty-six, once, all of them the long cases.
+    blind = [key for key, data in here.items() if data.get("stopped") == "unobserved"]
+    if blind:
+        print(f"\nUNOBSERVED, discarded from the baseline: {', '.join(blind)} -- the "
+              "watcher saw no beats while these ran. Fix the heartbeat before reading "
+              "anything else here.")
+    clean = {key: data for key, data in here.items()
+             if not data.get("contaminated") and data.get("stopped") != "unobserved"}
 
     if not against:
         # The last column counts instruments that returned a number, not findings. A

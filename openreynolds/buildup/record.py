@@ -30,7 +30,7 @@ RECORD = "record.json"
 REPLIES = "replies.jsonl"
 
 TERMINAL = ("done", "refused", "steps", "time", "provider", "wedged", "no-progress",
-            "starved", "contaminated")
+            "starved", "contaminated", "unobserved")
 """Every way a run is allowed to end. `done` and `refused` are the two that are results.
 
 `refused` is the desk saying the request cannot be answered correctly, and why. It was
