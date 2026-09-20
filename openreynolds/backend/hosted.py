@@ -25,6 +25,7 @@ from .base import (
     JobStatus,
     Stat,
 )
+from .pending import PendingBackend
 
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 """Statuses worth trying again rather than handing to the model as a failed tool call.
@@ -1262,12 +1263,139 @@ def _comparable_time(value: Any) -> str:
     return value[:-1] + "+00:00" if value.endswith("Z") else value
 
 
-def acquire(
+class Starter:
+    """The slow half of getting a workspace: bringing its container up.
+
+    `reserve` settles WHICH instance in a fraction of a second and hands back one of
+    these; `start()` sends the start call on a thread of its own, and `result()` is
+    the live `HostedBackend` once that call has answered. Between the two, the
+    session runs: header on screen, model talking, person typing. The one fact only
+    the start call can settle -- whether this session brought the workspace up or
+    joined one already running -- is read off its reply, exactly as `acquire` always
+    read it.
+
+    A started start cannot be called back: the service has the request. `cancel()`
+    therefore only ever succeeds before `start()`, and says so with its answer.
+    """
+
+    def __init__(
+        self,
+        client: FoamdClient,
+        instance_id: str,
+        *,
+        instances_held: int = 0,
+        listed_as_running: bool = False,
+    ):
+        self.client = client
+        self.instance_id = instance_id
+        self.instances_held = instances_held
+        """How many workspaces the account held when this one was chosen; 0 when
+        nobody counted (an instance named outright). See `HostedBackend`."""
+        self.listed_as_running = listed_as_running
+        """What the listing said before the start call -- the pre-start answer to
+        `was_already_running`, and the whole answer for a service too old to say."""
+        self.started_at: float | None = None
+        self._thread: threading.Thread | None = None
+        self._done = threading.Event()
+        self._backend: HostedBackend | None = None
+        self._error: BackendError | None = None
+        self._cancelled = False
+
+    def start(self) -> None:
+        """Begin bringing the workspace up, on a background thread. Idempotent."""
+        if self._thread is not None or self._cancelled:
+            return
+        self.started_at = time.monotonic()
+        self._thread = threading.Thread(target=self._run, name="workspace-start", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            reply = self.client.start_instance(self.instance_id)
+        except BackendError as exc:
+            self._error = exc
+        except BaseException as exc:  # noqa: BLE001 - a thread's exception goes nowhere on its own
+            self._error = BackendError(
+                f"the workspace could not be started: {type(exc).__name__}: {exc}",
+                code="start_failed",
+            )
+        else:
+            backend = HostedBackend(self.client, self.instance_id)
+            backend.instances_held = self.instances_held
+            # Whether it was already up decides whether whoever asked for it should
+            # put it back down again. The listing cannot answer that on its own: it
+            # is read BEFORE the start call, a fresh row reads `stopped`, and a row
+            # only turns `running` once the start has happened -- so two sessions
+            # listing within the same second both concluded they had started the
+            # workspace, and the first to exit stopped it from under the other. The
+            # start route says which of the two it did. Its absence is tolerated so
+            # an older service still works: there the pre-start listing is all there
+            # is, which is the behaviour this has always had.
+            started_new = reply.get("started_new") if isinstance(reply, dict) else None
+            backend.was_already_running = (
+                self.listed_as_running if started_new is None else not bool(started_new)
+            )
+            self._backend = backend
+        finally:
+            self._done.set()
+
+    def cancel(self) -> bool:
+        """Call the start off. True only if it had not begun -- a start that is under
+        way is the service's now, and `PendingBackend.shutdown` is the way to undo
+        one of those (wait for it, then stop it)."""
+        if self._thread is not None:
+            return False
+        self._cancelled = True
+        self._error = BackendError("the workspace start was called off", code="start_cancelled")
+        self._done.set()
+        return True
+
+    @property
+    def done(self) -> bool:
+        return self._done.is_set()
+
+    @property
+    def elapsed_s(self) -> float:
+        """Seconds since `start()`; 0 before it."""
+        return 0.0 if self.started_at is None else time.monotonic() - self.started_at
+
+    def result(self, timeout: float | None = None) -> HostedBackend:
+        """The live backend, waiting for the start to answer. Starts it if nobody has.
+
+        Raises the start call's own `BackendError`, or `start_timeout` if `timeout`
+        ran out first -- `None` waits as long as the start call itself does, which
+        is bounded by the client's request timeout and retries."""
+        self.start()
+        if not self._done.wait(timeout):
+            raise BackendError(
+                f"the workspace did not answer its start within {timeout:.0f} s",
+                code="start_timeout",
+            )
+        if self._error is not None:
+            raise self._error
+        assert self._backend is not None
+        return self._backend
+
+    def pending(self, **kwargs: Any) -> PendingBackend:
+        """A `PendingBackend` for this workspace, with what is already known filled
+        in. Whoever runs the start is expected to `resolve` it with `result()` -- or
+        `fail` it -- once the workspace is set up for use."""
+        return PendingBackend(
+            self.instance_id,
+            instances_held=self.instances_held,
+            was_already_running=self.listed_as_running,
+            closer=self.client.close,
+            **kwargs,
+        )
+
+
+def reserve(
     base_url: str,
     api_key: str,
     instance_id: str | None = None,
-) -> tuple[HostedBackend, FoamdClient, str]:
-    """Get a workspace: the named instance, else an existing one, else a new one.
+) -> tuple[FoamdClient, str, Starter]:
+    """Settle which workspace, without starting it: the named instance, else an
+    existing one, else a new row. A fraction of a second, all of it database.
 
     Deleting an instance destroys its persistent volume, so reuse is the default and
     nothing here ever deletes.
@@ -1280,8 +1408,11 @@ def acquire(
     the failure does not look like a wrong choice, it looks like an empty workspace --
     the case directory gone, the mesh gone, nothing anywhere saying a different
     workspace was joined. So the listing is ordered (`_most_recently_active_first`)
-    and the count is handed to the caller on `HostedBackend.instances_held`, because
-    collapsing five workspaces to one id is a thing the user has to be told.
+    and the count is handed on (`Starter.instances_held`, then the backend's),
+    because collapsing five workspaces to one id is a thing the user has to be told.
+
+    The client is closed on failure here, as `acquire` always closed it; a starter
+    handed back is the caller's, and so is the client under it.
     """
     client = FoamdClient(base_url, api_key)
     try:
@@ -1304,25 +1435,28 @@ def acquire(
             else:
                 instance_id = client.create_instance()
                 held = 1
-        reply = client.start_instance(instance_id)
     except BaseException:
         client.close()
         raise
-    backend = HostedBackend(client, instance_id)
-    backend.instances_held = held
-    # Whether it was already up decides whether whoever asked for it should put it
-    # back down again. A command that borrows a container ought to leave the machine
-    # as it found it; a session is what containers are for.
-    #
-    # The listing above cannot answer that on its own: it is read BEFORE the start
-    # call, a fresh instance row reads `stopped`, and a row only turns `running` once
-    # the start has happened -- so two sessions listing within the same second both
-    # concluded they had started the workspace, and the first to exit stopped it from
-    # under the other. The start route now says which of the two it did. Its absence is
-    # tolerated so an older service still works: there the pre-start listing is all
-    # there is, which is the behaviour this has always had.
-    started_new = reply.get("started_new") if isinstance(reply, dict) else None
-    backend.was_already_running = (
-        listed_as_running if started_new is None else not bool(started_new)
-    )
+    starter = Starter(client, instance_id, instances_held=held, listed_as_running=listed_as_running)
+    return client, instance_id, starter
+
+
+def acquire(
+    base_url: str,
+    api_key: str,
+    instance_id: str | None = None,
+) -> tuple[HostedBackend, FoamdClient, str]:
+    """Get a workspace, up and ready: `reserve`, then wait for the start.
+
+    The blocking shape, for callers with nothing to do while the workspace comes up
+    -- `openreynolds files`, `pull`, `push`, `stop`. A session uses `reserve` and
+    talks to the person meanwhile.
+    """
+    client, instance_id, starter = reserve(base_url, api_key, instance_id)
+    try:
+        backend = starter.result()
+    except BaseException:
+        client.close()
+        raise
     return backend, client, instance_id

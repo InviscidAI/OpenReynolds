@@ -9,6 +9,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -21,6 +22,7 @@ from . import __version__
 from .backend import hosted
 from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT
+from .backend.pending import PendingBackend
 from .browse import Browser
 from . import casebundle
 from .capture import Capture
@@ -1270,6 +1272,10 @@ def session(
     inheriting the shared workspace root."""
 
     local = bool(os.environ.get("OPENREYNOLDS_LOCAL"))
+    starter: Any = None
+    pending: PendingBackend | None = None
+    """The workspace as a promise, while it is coming up. None for a workspace that
+    is here already (the local one)."""
     try:
         if local:
             # A workspace on this machine: no container, no bill, and nothing to
@@ -1279,19 +1285,31 @@ def session(
             client, resolved_instance = None, "local"
             console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
         else:
-            with _timed("acquire"):
-                backend, client, resolved_instance = hosted.acquire(
+            # Which workspace, settled now; the workspace itself, started now and
+            # waited for later. `reserve` is a fraction of a second of database;
+            # the start is seconds to minutes of machine, and everything below --
+            # the header, the briefing, the model's first turn, the person's first
+            # message -- used to wait behind it for no reason it needed to. It runs
+            # on its own thread from here, and every tool holds a `PendingBackend`
+            # that waits for it the first time something actually needs the machine.
+            with _timed("reserve"):
+                client, resolved_instance, starter = hosted.reserve(
                     cfg.foamd_url,
                     cfg.foamd_api_key,
                     instance_id or store.session.instance_id or None,
                 )
+            starter.start()
+            pending = starter.pending()
+            backend = pending
     except BackendError as exc:
         console.print(f"[red]Could not reach the workspace service:[/] {exc}")
         if streaming_json:
             _terminal_json("unreachable", str(exc), store.session.study_id)
         raise SystemExit(1) from exc
 
-    if getattr(backend, "was_already_running", False):
+    if pending is None and getattr(backend, "was_already_running", False):
+        # For a workspace still coming up this is said once the start has answered,
+        # because the start's reply is what settles it (`_bring_up`).
         console.print(
             _join_notice(resolved_instance, getattr(backend, "instances_held", 0))
         )
@@ -1307,11 +1325,18 @@ def session(
         store.session.base_url = cfg.llm_base_url or ""
     if resuming:
         # A study this machine has never seen -- opened in the browser, or on another
-        # laptop -- knows nothing about itself until the platform is asked.
+        # laptop -- knows nothing about itself until the platform is asked. One read
+        # of one row, and it needs no workspace, so it is not waited for.
         with _timed("recover_session"):
             _recover_session(store, client, study_id)
-    with _timed("home_for"):
-        store.session.home = _home_for(store, backend, resuming, known_here)
+    # Which directory is this study's is decided from what this machine knows; making
+    # it is the one part that needs the workspace, and for a workspace still coming
+    # up that part waits with everything else (`_bring_up`).
+    if pending is None:
+        with _timed("home_for"):
+            store.session.home = _home_for(store, backend, resuming, known_here)
+    else:
+        store.session.home = _home_path(store, resuming, known_here)
     if not store.session.title and one_shot:
         store.session.title = one_shot[:80]
     store.save()
@@ -1320,8 +1345,12 @@ def session(
     # the model can run a tool (below, `toolbox_sync.result()`). It is a tar of a few
     # dozen files and took 1.6-3.6 s in series on staging; nothing between here and the
     # loop reads it, so that time now overlaps the capture row and the briefing probes.
-    toolbox_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="toolbox")
-    toolbox_sync = toolbox_pool.submit(_sync_toolbox_timed, backend)
+    # For a workspace still coming up it is part of bringing the workspace up, and the
+    # pending backend is not ready until it has been done.
+    toolbox_pool = toolbox_sync = None
+    if pending is None:
+        toolbox_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="toolbox")
+        toolbox_sync = toolbox_pool.submit(_sync_toolbox_timed, backend)
 
     capture = None
     if cfg.capture and client is not None:
@@ -1358,13 +1387,28 @@ def session(
     # the next cycle. poke() is non-blocking, so looking costs the model nothing.
     ctx.on_render = lambda _path: live_mirror.poke()
 
+    bringing_up = threading.Event()
+    """Whether `drive` got as far as starting the thread that resolves `pending`. A
+    session that fails before that point has a start under way and nobody waiting on
+    it, and the close-down below settles the promise itself so it cannot wait on a
+    thread that does not exist."""
+
     def drive(view: View, reader: Any) -> None:
         """One session, against whichever interface is running it."""
         nonlocal outcome
         # First, before the machinery: this is where the study id reaches whoever is
         # watching, and a view that answers in objects rather than in prose has nothing
-        # to say about itself until it has been told which study it is.
+        # to say about itself until it has been told which study it is. The instance
+        # is named here too, while it may still be coming up: the header is what the
+        # hosted page turns into "running", and a page that is running is one the
+        # person can type into.
         view.header(store.session.study_id, resolved_instance, cfg.model, store.dir)
+        if pending is not None:
+            # A tool call made before the workspace is up waits for it, and the wait
+            # is said on the view so a call taking a minute reads as the wait it is.
+            pending.on_wait = lambda waited: view.stage(
+                f"waiting for the workspace, {waited:.0f} s"
+            )
         # The tools report job state through the view, so a panel showing what is
         # running is current the moment it changes rather than only while polling.
         ctx.view = view
@@ -1396,6 +1440,11 @@ def session(
             concierge.start()
         tracker.start()
         live_mirror.start()
+        # The browser is handed over now whether or not the workspace is up: a view
+        # that lists on its own thread waits with everything else, and the hosted
+        # page needs the browser's store to follow the transcript from the first
+        # word. What a listing needs is the workspace, and `workspace_ready` says
+        # when that is.
         with _timed("view_workspace"):
             view.workspace(browser)
         loop = Loop(cfg, ctx, store, view, capture=capture, progress=tracker)
@@ -1428,11 +1477,12 @@ def session(
             # few lines below, and the desk needs the same one. It is what lets a
             # person change the shape while it is being built instead of waiting out
             # the whole call and asking the main agent to start again.
-            ctx.mesher = mesher.Mesher(
-                cfg, backend, store, store.session.home,
-                interject=lambda: loop.interject() if loop.interject else None,
-                on_step=lambda step: _mesh_desk_step(view, tracker, step),
-            )
+            with _timed("mesher"):
+                ctx.mesher = mesher.Mesher(
+                    cfg, backend, store, store.session.home,
+                    interject=lambda: loop.interject() if loop.interject else None,
+                    on_step=lambda step: _mesh_desk_step(view, tracker, step),
+                )
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
         )
@@ -1442,17 +1492,37 @@ def session(
                 backend,
                 resuming,
                 interactive=not one_shot,
-                browser=browser,
+                # The listing and the core count are questions to the workspace; for
+                # one still coming up they are asked when it is here (`_bring_up`),
+                # and the briefing says instead that it is coming.
+                browser=browser if pending is None else None,
                 preferences=cfg.preferences,
                 mode=ctx.mode,
+                starting_eta_s=cfg.workspace_eta_s if pending is not None else None,
             )
         with _timed("loop_brief"):
             loop.brief(briefing)
-        # The toolbox must be on the instance before the first tool call can ask for
-        # it; by now the upload has had the whole briefing to finish.
-        with _timed("toolbox_wait"):
-            toolbox_sync.result()
-            toolbox_pool.shutdown(wait=False)
+        if pending is None:
+            # The toolbox must be on the instance before the first tool call can ask
+            # for it; by now the upload has had the whole briefing to finish.
+            with _timed("toolbox_wait"):
+                toolbox_sync.result()
+                toolbox_pool.shutdown(wait=False)
+            _say_workspace_ready(view, resolved_instance, 0.0)
+        else:
+            # The workspace is coming up on its own thread; this one runs the
+            # conversation. When it is here, `_bring_up` makes it this study's --
+            # the directory, the toolbox -- resolves every waiting tool call, tells
+            # the view, and posts the facts the briefing could not wait for so the
+            # model's next turn has them.
+            tracker.workspace_starting(cfg.workspace_eta_s)
+            bringing_up.set()
+            threading.Thread(
+                target=_bring_up,
+                args=(pending, starter, store, view, loop, tracker, browser, resuming),
+                name="workspace-ready",
+                daemon=True,
+            ).start()
         try:
             if one_shot:
                 outcome = _run_one_shot(
@@ -1520,13 +1590,30 @@ def session(
         # it rides alongside rather than in front: every step of the close-down is a
         # round trip the person is waiting on.
         live_mirror.view = None
-        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pickup") as pool:
-            pickup = pool.submit(
-                _pickup_results_timed, backend, capture, store.session.home or WORKSPACE_ROOT
-            )
-            with _timed("close.final_sync"):
-                _final_sync(live_mirror, ConsoleView(console))
-            pickup.result()
+        if pending is not None and not bringing_up.is_set() and not pending.ready_event.is_set():
+            # `drive` never reached the point of bringing the workspace up -- an
+            # interface that would not start, an error on the way -- so the start
+            # that was sent has nobody to answer to. Settled here, as the blocking
+            # start would have settled it, so the close-down can put the workspace
+            # down rather than wait on a thread that was never started.
+            try:
+                pending.resolve(starter.result())
+            except BackendError as exc:
+                pending.fail(exc)
+        if pending is not None and not pending.ready():
+            # The workspace never came, or has not come yet: nothing of this study's
+            # is on it, so there is nothing to pick up and nothing to bring home,
+            # and waiting for it to say so would be the wait this whole arrangement
+            # exists to avoid -- on the way out, to a person who has already left.
+            console.print("[dim]the workspace was still starting; nothing ran on it[/]")
+        else:
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pickup") as pool:
+                pickup = pool.submit(
+                    _pickup_results_timed, backend, capture, store.session.home or WORKSPACE_ROOT
+                )
+                with _timed("close.final_sync"):
+                    _final_sync(live_mirror, ConsoleView(console))
+                pickup.result()
         if capture:
             with _timed("close.capture_case"):
                 _capture_the_case(capture, store, ConsoleView(console))
@@ -1608,29 +1695,43 @@ def _home_for(store: Store, backend: Backend, resuming: bool, known_here: bool =
     the whole point of it -- but starting a new study now starts somewhere empty.
     Studies made before this have no home recorded and keep the whole workspace,
     because moving their files out from under them would be worse.
+
+    Two halves: which directory (`_home_path`, decided from what this machine knows)
+    and making it (`_ensure_home`, the one part that needs the workspace). A session
+    running ahead of its workspace takes them separately.
     """
+    home = _home_path(store, resuming, known_here)
+    return home if _ensure_home(backend, home) else WORKSPACE_ROOT
+
+
+def _home_path(store: Store, resuming: bool, known_here: bool = True) -> str:
+    """Which directory is this study's. Needs no workspace: see `_home_for`."""
     if store.session.home:
-        home = store.session.home
-    elif resuming and known_here:
+        return store.session.home
+    if resuming and known_here:
         # A study this machine already had, whose session predates homes: it keeps
         # the whole workspace, because moving its files out from under it would be
         # worse than the untidiness.
-        home = WORKSPACE_ROOT
-    else:
-        # A new study, or one resumed on a machine that has never seen it -- opened
-        # in the browser, or on another laptop. `known_here` is false there, and the
-        # id names the directory. Falling back to the workspace root instead is what
-        # put one run among every other run's files, and made the mirror try to bring
-        # the whole volume down.
-        home = f"{WORKSPACE_ROOT}/{store.session.study_id}"
+        return WORKSPACE_ROOT
+    # A new study, or one resumed on a machine that has never seen it -- opened
+    # in the browser, or on another laptop. `known_here` is false there, and the
+    # id names the directory. Falling back to the workspace root instead is what
+    # put one run among every other run's files, and made the mirror try to bring
+    # the whole volume down.
+    return f"{WORKSPACE_ROOT}/{store.session.study_id}"
 
-    if home != WORKSPACE_ROOT:
-        try:
-            backend.exec(f"mkdir -p {home}", timeout_s=60)
-        except BackendError as exc:
-            console.print(f"[yellow]could not make {home} ({exc}); using {WORKSPACE_ROOT}[/]")
-            return WORKSPACE_ROOT
-    return home
+
+def _ensure_home(backend: Backend, home: str) -> bool:
+    """Make the study's directory on the workspace. False, and a line saying so, when
+    it could not be made; the caller decides what to fall back to."""
+    if home == WORKSPACE_ROOT:
+        return True
+    try:
+        backend.exec(f"mkdir -p {home}", timeout_s=60)
+    except BackendError as exc:
+        console.print(f"[yellow]could not make {home} ({exc}); using {WORKSPACE_ROOT}[/]")
+        return False
+    return True
 
 
 def _machine_note(backend: Backend) -> str:
@@ -1774,35 +1875,37 @@ def _situation_brief(
     browser: Browser | None = None,
     preferences: str = "",
     mode: str = "auto",
+    starting_eta_s: float | None = None,
 ) -> str:
     """Facts about this session, assembled by the harness.
 
     Whether anyone is at the terminal is one of them. It is the difference between a
     question that gets answered and a turn that ends on a question nobody will ever
     see, and the model has no other way to know which kind of session this is.
+
+    `starting_eta_s` says the workspace is still coming up, and roughly how long
+    that usually takes. The briefing then carries that fact in place of the two it
+    would have had to wait for -- the listing and the core count -- and those follow
+    as a note once the workspace is here (`_workspace_ready_note`).
     """
     lines = []
     if resuming:
-        lines.append(situation(store, backend))
+        # `situation` re-reads every running job's status from the workspace, which a
+        # resume ahead of its workspace cannot do yet: there it says what the study
+        # recorded, and the ready note re-reads it.
+        lines.append(situation(store, None if starting_eta_s is not None else backend))
     else:
         lines.append(f"study {store.session.study_id} on instance {store.session.instance_id}.")
-    # The workspace listing and the core count are two independent questions to the
-    # instance, and each one is a full round trip through the service to a container
-    # (~1.3 s on the hosted backend). Asked in series they were most of the pause
-    # between "running" and "waiting for you" -- measured 4-13 s on staging, 2026-09-18
-    # -- so they are asked together and the briefing waits for the slower of the two.
-    home = store.session.home or WORKSPACE_ROOT
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="brief") as pool:
-        note_future = (
-            pool.submit(_workspace_note, browser, home, resuming) if browser is not None else None
-        )
-        machine_future = pool.submit(_machine_note, backend)
-        note = note_future.result() if note_future is not None else ""
-        machine = machine_future.result()
-    if note:
-        lines.append(note)
-    if machine:
-        lines.append(machine)
+    if starting_eta_s is not None:
+        lines.append(_starting_note(starting_eta_s, interactive))
+    else:
+        # The workspace listing and the core count are two independent questions to
+        # the instance, and each one is a full round trip through the service to a
+        # container (~1.3 s on the hosted backend). Asked in series they were most of
+        # the pause between "running" and "waiting for you" -- measured 4-13 s on
+        # staging, 2026-09-18 -- so they are asked together and the briefing waits for
+        # the slower of the two.
+        lines.extend(_workspace_facts(store, backend, resuming, browser))
     if preferences:
         # The user's standing note, in the user's voice. The harness relays it
         # verbatim and adds nothing: what to do about it stays the model's call,
@@ -1827,6 +1930,158 @@ def _situation_brief(
             "can arrive, so a question asked here will not be seen."
         )
     return "\n".join(lines)
+
+
+def _workspace_facts(
+    store: Store, backend: Backend, resuming: bool, browser: Browser | None
+) -> list[str]:
+    """What is in the study's directory and what the machine is: the two facts about
+    the workspace the briefing carries, asked of it together (see `_situation_brief`).
+    Each is a round trip; asked of a workspace still coming up they wait for it."""
+    home = store.session.home or WORKSPACE_ROOT
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="brief") as pool:
+        note_future = (
+            pool.submit(_workspace_note, browser, home, resuming) if browser is not None else None
+        )
+        machine_future = pool.submit(_machine_note, backend)
+        note = note_future.result() if note_future is not None else ""
+        machine = machine_future.result()
+    return [line for line in (note, machine) if line]
+
+
+def _starting_note(eta_s: float, interactive: bool) -> str:
+    """The workspace is still coming up: said as facts, with what the time is good
+    for, in the briefing's own voice (`tests/test_briefing.py` keeps it there).
+
+    The whole point of a session running ahead of its workspace is the minute this
+    buys, and the model has no other way to know it is in one: a tool call that
+    waits a minute reads as a slow machine, and a slow machine is worked around
+    rather than talked through. So it is told that the machine is coming, roughly
+    when, that its tools wait rather than fail, and that nothing about the case
+    itself needs the machine -- which is the model's cue, not the harness's
+    instruction.
+    """
+    about = f"usually about {eta_s:.0f} seconds" if eta_s > 0 else "usually well under a minute"
+    lines = [
+        f"The workspace is still starting ({about} from here). Every tool call waits "
+        "for it rather than failing, so a call made now answers once the workspace is "
+        "up and not before; a note in this thread says when it is.",
+    ]
+    if interactive:
+        lines.append(
+            "Nothing about the case itself needs the workspace: what is being "
+            "simulated, the geometry and its dimensions, the physics and the flow "
+            "regime, the boundary conditions, which result matters and to what "
+            "accuracy, the constraints on time and cost, and what files the person "
+            "has to upload are all questions the person can answer while the machine "
+            "comes up. A directory listing and the core count follow with the note."
+        )
+    else:
+        lines.append(
+            "The prompt is already here, so the plan can be made now; the first tool "
+            "call is where the wait is paid, once. A directory listing and the core "
+            "count follow with the note."
+        )
+    return " ".join(lines)
+
+
+def _workspace_ready_note(
+    store: Store, backend: Backend, resuming: bool, browser: Browser | None,
+    seconds: float, home_made: bool,
+) -> str:
+    """The note that follows `_starting_note`: the workspace is here, and the facts
+    the briefing left out. Same facts, same words, as a briefing that did not have
+    to wait -- plus, for a resume, the job status `situation` would have re-read."""
+    lines = [f"The workspace is ready ({seconds:.0f} s after the session began), so tool calls run at once now."]
+    if not home_made:
+        lines.append(
+            f"The study's directory {store.session.home} could not be made, so commands "
+            f"run in {WORKSPACE_ROOT} unless told otherwise."
+        )
+    if resuming and store.session.jobs:
+        # The job statuses the briefing could only repeat from the record, re-read
+        # from the workspace now that it can be asked.
+        lines.append(situation(store, backend))
+    lines.extend(_workspace_facts(store, backend, resuming, browser))
+    return "\n".join(lines)
+
+
+def _say_workspace_ready(view: View, instance_id: str, seconds: float) -> None:
+    """`view.workspace_ready`, from whichever thread learned it. Never raises: this is
+    presentation, and a view that is tearing down may not end a session."""
+    try:
+        view.workspace_ready(instance_id, seconds)
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
+
+
+def _bring_up(
+    pending: PendingBackend,
+    starter: Any,
+    store: Store,
+    view: View,
+    loop: Loop,
+    tracker: Any,
+    browser: Browser | None,
+    resuming: bool,
+) -> None:
+    """The workspace, from "asked for" to "this study's": the thread that runs
+    alongside the conversation while the machine comes up.
+
+    Waits for the start, makes the study's directory, pushes the toolbox -- the two
+    things every session did before its first tool call, and still does, only no
+    longer in front of the first word -- then resolves the pending backend so every
+    waiting tool call goes ahead, tells the view and the bar, and posts to the model
+    the facts the briefing said would follow. A start that fails fails every tool
+    call with the start's own error, and says so on the view, which is exactly what
+    a blocking start did with one difference: the conversation so far is kept.
+
+    Never raises: it is a thread, and a thread's exception is a silent one.
+    """
+    try:
+        try:
+            with _timed("workspace_start"):
+                live = starter.result()
+        except BackendError as exc:
+            pending.fail(exc)
+            tracker.workspace_ready()
+            console.print(f"[red]Could not start the workspace:[/] {exc}")
+            view.notice(f"the workspace could not be started: {exc}")
+            loop.post(
+                f"The workspace could not be started ({exc}). Every tool call will "
+                "fail with that error until the session is resumed."
+            )
+            return
+        if getattr(live, "was_already_running", False):
+            console.print(_join_notice(pending.instance_id, getattr(live, "instances_held", 0)))
+        home = store.session.home or WORKSPACE_ROOT
+        with _timed("home_for"):
+            home_made = _ensure_home(live, home)
+        if not home_made:
+            # The same fallback `_home_for` makes, applied to everything already
+            # holding the home: the tools' working directory and the store's record.
+            store.session.home = WORKSPACE_ROOT
+            store.save()
+            loop.ctx.home = WORKSPACE_ROOT
+            if browser is not None:
+                browser.home = WORKSPACE_ROOT
+            tracker.home = WORKSPACE_ROOT
+        _sync_toolbox_timed(live)
+        pending.resolve(live)
+        seconds = pending.elapsed_s
+        tracker.workspace_ready()
+        _say_workspace_ready(view, pending.instance_id, seconds)
+        with _timed("workspace_ready_note"):
+            note = _workspace_ready_note(store, live, resuming, browser, seconds, home_made)
+        loop.post(note)
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        if not pending.ready_event.is_set():
+            pending.fail(BackendError(f"the workspace could not be set up: {exc}", code="setup_failed"))
+        try:
+            tracker.workspace_ready()
+            view.warn(f"the workspace could not be set up: {exc}")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _with_mode(blurb: str, loop: Loop) -> str:
@@ -2114,6 +2369,9 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     """
     study = store.session.study_id
     home = store.session.home or WORKSPACE_ROOT
+    if isinstance(backend, PendingBackend) and not backend.ready():
+        _close_down_pending(backend, store, keep_alive=keep_alive)
+        return
     started_it_here = not bool(getattr(backend, "was_already_running", False))
     """Whether this session is the one that started the workspace.
 
@@ -2228,6 +2486,59 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
         except BackendError as exc:
             console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")
 
+    console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+
+
+def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: bool = False) -> None:
+    """End a session whose workspace never became usable while it ran.
+
+    Nothing of this study's ran on the workspace, so there are no jobs to stop and no
+    sweep to make. What there is, is a start already under way: the service has the
+    request and cannot be asked to forget it, so the container comes up whether or
+    not anyone is still here for it. A session that asked for it puts it down again
+    -- which means waiting for it, because a stop sent to a workspace that is not up
+    yet stops nothing -- rather than leaving a machine running for nobody until the
+    reaper notices. A workspace that was already up before this session joined it is
+    left as it was found, as `_release` leaves one: this session ran nothing on it
+    and cannot tell who else is.
+
+    `keep_alive` keeps its meaning: the hosted runner passes it above a session cap
+    of one, where the reaper owns the workspace's lifetime (`_close_down`), and the
+    start it made is the reaper's too.
+    """
+    study = store.session.study_id
+    console.print(f"\n[dim]this study's files are in {store.dir}[/]")
+    console.print("[dim]the workspace was still starting when the session ended; nothing ran on it[/]")
+    if keep_alive:
+        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        return
+    if backend.failed:
+        console.print("[dim]the workspace did not start, so there is nothing to stop[/]")
+        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        return
+    console.print("[dim]waiting for the workspace to come up so it can be put down again[/]")
+    try:
+        live = backend.wait()
+    except BackendError as exc:
+        console.print(f"[dim]the workspace did not start ({exc}), so there is nothing to stop[/]")
+    else:
+        # The start's own reply decides who brought the workspace up (see `Starter`):
+        # the listing read before the start cannot tell two sessions that asked in
+        # the same second apart, and the one that exits first must not stop it from
+        # under the other.
+        if getattr(live, "was_already_running", False):
+            console.print(
+                "[dim]this session joined a workspace that was already running, and "
+                "is leaving it as it was[/]"
+            )
+        else:
+            try:
+                shutdown = getattr(live, "shutdown", None)
+                if shutdown is not None:
+                    shutdown()
+                console.print("[dim]instance stopped; the workspace volume is untouched[/]")
+            except BackendError as exc:
+                console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")
     console.print(f"[dim]  resume: openreynolds --study {study}[/]")
 
 

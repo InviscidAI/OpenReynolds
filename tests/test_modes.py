@@ -153,11 +153,11 @@ def test_saving_a_default_config_says_nothing_about_modes(clean_config):
 def _no_instance(monkeypatch, tmp_path, cfg=None):
     acquired = []
 
-    def acquire(url, key, iid):
+    def reserve(url, key, iid):
         acquired.append(iid)
         raise BackendError("no service in this test")
 
-    monkeypatch.setattr(cli.hosted, "acquire", acquire)
+    monkeypatch.setattr(cli.hosted, "reserve", reserve)
     config = cfg or Config(foamd_url="u", foamd_api_key="k", llm_api_key="a",
                            studies_dir=tmp_path / "studies")
     monkeypatch.setattr(cli.Config, "load", classmethod(lambda cls: config))

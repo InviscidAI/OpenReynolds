@@ -265,6 +265,12 @@ class JsonView(View):
         self._browser = browser
         self.emit("workspace", home=str(getattr(browser, "home", "")))
 
+    def workspace_ready(self, instance_id: str, seconds: float) -> None:
+        """The tools can run from here: `session_start` came first and named the
+        instance while it was still coming up, so a reader that wants to know when
+        a `bash` will answer at once rather than after the start reads this."""
+        self.emit("workspace_ready", instance_id=instance_id, seconds=round(seconds, 3))
+
     def show_files(self, path: str = "", depth: int = 0) -> None:
         if self._browser is None:
             self.emit("files", path=path, depth=depth, entries=[], error="no workspace")

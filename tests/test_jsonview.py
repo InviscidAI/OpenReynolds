@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import pytest
 from click.testing import CliRunner
 
-from conftest import FakeBackend
+from conftest import FakeBackend, reserved
 from openreynolds import cli, jsonview, trace
 from openreynolds.backend.base import BackendError
 from openreynolds.config import Config
@@ -382,6 +382,10 @@ class FakeLoop:
     def inform(self, text):
         self.messages.append({"role": "user", "content": text})
 
+    def post(self, text):
+        """The workspace-ready note, from the thread that brought it up."""
+        self.messages.append({"role": "user", "content": text})
+
     def refresh(self, situation):
         pass
 
@@ -423,7 +427,7 @@ def test_a_whole_stream_json_session_puts_nothing_but_json_on_stdout(
     nothing else here at all"."""
     monkeypatch.setattr(cli, "console", cli.console)  # restored on teardown
     backend = FakeBackend()
-    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (backend, None, "iid-1"))
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(backend))
     monkeypatch.setattr(cli, "Loop", FakeLoop)
     cfg = Config(
         foamd_url="https://svc.example",
@@ -472,7 +476,7 @@ def test_the_prose_a_stream_json_session_would_have_printed_goes_to_stderr(
     it will keep costing, and an agent that swallowed that would be hiding a bill."""
     monkeypatch.setattr(cli, "console", cli.console)
     backend = FakeBackend()
-    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (backend, None, "iid-1"))
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(backend))
     monkeypatch.setattr(cli, "Loop", FakeLoop)
     cfg = Config(
         foamd_url="u", foamd_api_key="k", llm_api_key="sk", model="m",
@@ -492,7 +496,7 @@ def test_without_a_prompt_the_same_flag_is_a_conversation(tmp_path, monkeypatch,
     no-input reader, so a JSON mode that only did `-p` would be one message and one
     reply forever. Here the other side of the stream is stdin."""
     backend = FakeBackend()
-    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (backend, None, "iid-1"))
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(backend))
     monkeypatch.setattr(cli, "Loop", FakeLoop)
     monkeypatch.setattr(sys, "stdin", Silent([
         '{"type": "user", "text": "how many cells?"}\n',
@@ -539,7 +543,7 @@ def test_an_interface_of_its_own_is_not_given_a_second_one(tmp_path, monkeypatch
     JSON view on the same session would run two views over one loop."""
     monkeypatch.setattr(cli, "console", cli.console)
     backend = FakeBackend()
-    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (backend, None, "iid-1"))
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(backend))
     monkeypatch.setattr(cli, "Loop", FakeLoop)
     cfg = Config(foamd_url="u", foamd_api_key="k", llm_api_key="sk", model="m",
                  studies_dir=tmp_path / "studies", capture=False, desk=False,
@@ -715,7 +719,7 @@ def test_the_study_id_in_the_first_event_is_the_directory_on_disk(tmp_path, monk
     """The id is only worth streaming if `--study <id>` actually finds it again."""
     monkeypatch.setattr(cli, "console", cli.console)
     backend = FakeBackend()
-    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (backend, None, "iid-1"))
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(backend))
     monkeypatch.setattr(cli, "Loop", FakeLoop)
     sink = io.StringIO()
     monkeypatch.setattr(sys, "stdout", sink)
@@ -803,7 +807,7 @@ def test_a_session_that_crashed_does_not_report_that_it_finished_cleanly(
     the teardown decision that costs money has already been taken. The README promises
     `session_end` carries "the same outcome the exit code means"."""
     backend = FakeBackend()
-    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (backend, None, "iid-1"))
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(backend))
     monkeypatch.setattr(cli, "Loop", Exploding)
     sink = io.StringIO()
     monkeypatch.setattr(sys, "stdout", sink)
@@ -846,12 +850,12 @@ def test_a_missing_key_ends_the_stream_with_one_object_rather_than_nothing(monke
 def test_a_workspace_that_cannot_be_reached_ends_the_stream_with_one_object(
     tmp_path, monkeypatch
 ):
-    """The other half: the acquire raises before the view is ever constructed, so
+    """The other half: the reserve raises before the view is ever constructed, so
     stdout was empty here too -- for the one failure an agent should retry."""
     def refuse(*a, **k):
         raise BackendError("no instance available", code="unavailable", status=503)
 
-    monkeypatch.setattr(cli.hosted, "acquire", refuse)
+    monkeypatch.setattr(cli.hosted, "reserve", refuse)
     sink = io.StringIO()
     monkeypatch.setattr(sys, "stdout", sink)
 
@@ -891,7 +895,7 @@ def test_a_cost_row_is_measured_from_the_same_moment_as_the_events_around_it(
     monkeypatch.setattr(trace, "_t0", time.monotonic() - 30.0)
     """A process that has been up for thirty seconds before the session begins."""
     backend = FakeBackend()
-    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (backend, None, "iid-1"))
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(backend))
     monkeypatch.setattr(cli, "Loop", Costing)
     sink = io.StringIO()
     monkeypatch.setattr(sys, "stdout", sink)

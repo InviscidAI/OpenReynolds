@@ -1028,9 +1028,23 @@ class TuiView(View):
         self._to("conversation", "[dim](sent - it reads this at its next step)[/dim]")
 
     def workspace(self, browser: Any) -> None:
-        """Hand the interface a way to look at the workspace, and fill the pane once."""
+        """Hand the interface a way to look at the workspace, and fill the pane once.
+
+        Once the workspace is there to list: a browser handed over while it is still
+        starting would sit in `load_files` saying "listing" for the whole start, so
+        the first listing waits for `workspace_ready` instead."""
         self.app.browser = browser
+        if not _workspace_up(browser):
+            return
         self.app.call_from_thread(self.app.show_files_tab, browser.home)
+
+    def workspace_ready(self, instance_id: str, seconds: float) -> None:
+        """The files pane fills now, and the activity pane says the wait is over."""
+        if seconds >= 1.0:
+            self._to("activity", f"[dim]workspace ready after {seconds:.0f} s[/dim]")
+        browser = self.app.browser
+        if browser is not None:
+            self.app.call_from_thread(self.app.show_files_tab, browser.home)
 
     def show_files(self, path: str = "", depth: int = 0) -> None:
         """Depth is the flat listing's concern; the tree loads what it needs."""
@@ -1150,3 +1164,18 @@ def _answer_hint(kind: str) -> str:
 def _escape(text: str) -> str:
     """Model output is not markup; square brackets in it must not become tags."""
     return text.replace("[", r"\[")
+
+
+def _workspace_up(browser: Any) -> bool:
+    """Whether the browser's workspace can answer a listing now.
+
+    A backend that is still coming up says so through `ready()`; one with no such
+    notion is up by definition. Duck-typed on purpose: a view knows nothing about
+    which backend it has, only whether asking it would wait."""
+    ready = getattr(getattr(browser, "backend", None), "ready", None)
+    if not callable(ready):
+        return True
+    try:
+        return bool(ready())
+    except Exception:  # noqa: BLE001 - a view guesses "up" rather than blocking the screen
+        return True
