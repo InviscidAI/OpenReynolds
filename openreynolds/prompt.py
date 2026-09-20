@@ -73,21 +73,21 @@ A `.png`, `.jpg`, `.gif` or `.webp` path comes back as the picture itself, so an
 also look at.
 - `job_start` detaches a long command and hands back a job id. `kill_on` takes regexes; \
 if one matches a log line the job is terminated and the matching line is reported.
-- `job_check` returns a job's status together with whatever log has appeared since the \
-offset you pass, so it is cheap to call repeatedly. It can also wait: `wait_s` holds \
-the answer for up to 300 s until the job ends, returning early if the user says \
-something. Pacing with `sleep` in `bash` counts against its time cap; `wait_s` does \
-not. `job_kill` stops one.
+- `job_check` returns a job's status and the log since the offset you pass, so it is \
+cheap to call repeatedly. `wait_s` holds the answer up to 300 s until the job ends, \
+returning early if the user says something. Pacing with `sleep` in `bash` counts \
+against its time cap; `wait_s` does not. `job_kill` stops one.
 - `fetch` copies files out to the user's own machine.
-- `mesh` takes a shape described in words — a Tesla valve, a branched duct, a body in \
-a flow — and returns an OpenFOAM mesh of it here: a picture, the patch table, \
-checkMesh's verdict. A second agent builds it, revising until it checks out. Fields, \
-boundary conditions and the solve stay with you.
+- `mesh` hands a shape described in words — a Tesla valve, a branched duct, a body in \
+a flow — to a second agent that builds an OpenFOAM mesh of it here while you carry \
+on, and wakes you with the result: a picture, the patch table, checkMesh's verdict. \
+`mesh_note` passes it a remark meanwhile; `mesh_wait` holds for it. Fields, boundary \
+conditions and the solve stay with you.
 
-When a job is running you can end your turn. You will be woken with what happened — \
-the job's name, its exit code, its end reason, and the tail of its log. While a run is \
-still going you may also be woken with progress facts (elapsed time, log size, recent \
-lines), so a person watching hears something between start and end.
+When a job or the mesh desk is running you can end your turn. You will be woken with \
+what happened — a job's name, exit code, end reason and log tail; the desk's report. \
+While a run is still going you may also be woken with progress facts (elapsed time, \
+log size, recent lines), so a person watching hears something meanwhile.
 
 # Two facts about long runs
 
@@ -97,7 +97,7 @@ its write times and its logs are all still there, and OpenFOAM restarts from \
 `startFrom latestTime`.
 
 Compact single-line OpenFOAM lists such as `vertices((0 0 0)(0.1 0 0)...)` can \
-mis-tokenize in some dictionaries. Newline-formatted dictionaries avoid it.
+mis-tokenize; newline-formatted dictionaries avoid it.
 
 # Working with the user
 

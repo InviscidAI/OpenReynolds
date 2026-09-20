@@ -2,7 +2,7 @@
 
 **A CFD agent with a real OpenFOAM workspace.**
 
-OpenReynolds is a tool-use loop with eight tools pointed at a Linux machine that has
+OpenReynolds is a tool-use loop with ten tools pointed at a Linux machine that has
 OpenFOAM v2512 on it. You describe the flow; it writes the case, meshes it, launches
 the solver, reads the residuals while they come in, looks at its own renders, and
 hands back the figures and the files that made them.
@@ -98,7 +98,7 @@ workspace** gets a file tree you can open things from.
 `--plain` gives a plain streaming terminal instead, which is what you want in CI or
 over a poor connection.
 
-## The eight tools
+## The ten tools
 
 That is the whole surface. Anything the agent does to a case, it does through one of
 these.
@@ -112,10 +112,12 @@ these.
 | `job_check` | Ask how a job is doing. It can hold the answer until the job ends, and returns early the moment you type. |
 | `job_kill` | Stop a job, and confirm it actually stopped. |
 | `fetch` | Copy files or directories out of the workspace onto your own machine, and say where they landed. Renders and reports come home this way. |
-| `mesh` | Describe a shape in words and get an OpenFOAM mesh of it on the workspace. A separate agent builds it on the same machine: it picks the mesher (gmsh body-fitted, `blockMesh`, `snappyHexMesh`, cfMesh), writes the geometry as a script, renders the mesh, measures it, and revises until `checkMesh` passes and the shape measures up to what was asked for. Saying it is done is not what ends it — the mesh has to be there, pass, carry patch names somebody chose, and have a script that rebuilds it. |
+| `mesh` | Describe a shape in words and have an OpenFOAM mesh of it built on the workspace. A separate agent builds it on the same machine, in the background: it picks the mesher (gmsh body-fitted, `blockMesh`, `snappyHexMesh`, cfMesh), writes the geometry as a script, renders the mesh, measures it, and revises until `checkMesh` passes and the shape measures up to what was asked for. Saying it is done is not what ends it — the mesh has to be there, pass, carry patch names somebody chose, and have a script that rebuilds it. The call returns at once; the agent carries on talking with you and writing the rest of the case while the desk builds, its steps show in the transcript as they happen, and the finished mesh wakes the agent the way a job's end does. `wait: true` holds the call instead, as it used to. |
+| `mesh_note` | Pass a remark to the mesh desk while it builds — "make it 2 mm wider" — which it reads at its next command. What you type reaches the agent, and the agent decides what the desk needs to hear. |
+| `mesh_wait` | Hold for the running desk's result, up to five minutes a call, returning early the moment you type. For when the agent has nothing else to do meanwhile; the result arrives on its own otherwise. |
 
-A ninth, `checkpoint`, exists only when you choose structured mode (see *Modes*): it
-puts a summary of where the study stands, and what comes next, in front of you and
+An eleventh, `checkpoint`, exists only when you choose structured mode (see *Modes*):
+it puts a summary of where the study stands, and what comes next, in front of you and
 waits for your answer. In full auto it is not in the tool list at all.
 
 ## The rule this repository keeps
@@ -469,12 +471,12 @@ or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
 | --- | --- |
 | `cli.py` | Entry point, session assembly, subcommands. |
 | `loop.py` | The tool-use loop: streaming, interjections, thread refresh. |
-| `tools.py` | The eight tool schemas, `checkpoint` for structured mode, and their handlers. |
+| `tools.py` | The ten tool schemas, `checkpoint` for structured mode, and their handlers. |
 | `modes.py` / `approval.py` | The three modes and what each gates; putting a question to the person and reading the answer. |
 | `commands.py` | The one registry of typed commands, read by the parser, `/help` and both completions. |
 | `switch.py` | Changing the model, provider or effort mid-study. |
-| `mesher/` | The agent behind the `mesh` tool: `brief.py` is what it is told, `agent.py` runs it one fenced `bash` block at a time on the instance that already has gmsh and OpenFOAM, and `check.py` decides whether it is finished. Geometry and meshing used to be a stack of generators and a spec language here; this replaced all of it on 2026-09-07. |
-| `watch.py` | Job polling, wake facts, progress, narration. |
+| `mesher/` | The agent behind the `mesh` tool: `brief.py` is what it is told, `agent.py` runs it one fenced `bash` block at a time on the instance that already has gmsh and OpenFOAM, `check.py` decides whether it is finished, and `background.py` runs it on a thread of its own so the conversation goes on while it builds. Geometry and meshing used to be a stack of generators and a spec language here; this replaced all of it on 2026-09-07. |
+| `watch.py` | Job and mesh-desk polling, wake facts, progress, narration. |
 | `mirror.py` / `store.py` | Files home, and the local `./studies/<id>/` record. |
 | `backend/` | The `Backend` protocol. `hosted.py` is the only module that knows the service exists; `pending.py` stands in for a workspace that is still coming up, so a session talks before its machine is there. |
 | `llm/` | Provider adapters: Messages API, Chat Completions, and the preset table. |

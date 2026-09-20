@@ -20,6 +20,8 @@ def test_tool_list_is_deterministic():
         "job_kill",
         "job_start",
         "mesh",
+        "mesh_note",
+        "mesh_wait",
         "read_file",
         "write_file",
     ]
@@ -29,7 +31,7 @@ def test_tool_list_is_deterministic():
 
 
 def test_the_checkpoint_tool_is_offered_only_in_structured_mode(ctx):
-    """Eight tools in every mode; a ninth, `checkpoint`, only when the person chose
+    """Ten tools in every mode; an eleventh, `checkpoint`, only when the person chose
     structured mode. Still sorted, so a mode's tool list is always the same bytes."""
     from openreynolds.tools import tools_for
 
@@ -72,22 +74,32 @@ def test_the_mesh_tool_says_what_comes_back_and_what_does_not():
     description = next(t for t in TOOLS if t["name"] == "mesh")["description"]
     assert "checkMesh" in description and "patch table" in description
     assert "no boundary conditions" in description and "no solve" in description
-    lowered = description.lower()
-    for imperative in ("you must", "always ", "never ", "you should", "prefer "):
-        assert imperative not in lowered, imperative
+    # And the shape of the call: it returns at once and the result arrives later,
+    # which is the one thing a caller cannot infer from the result it gets.
+    assert "returns at once" in description
+    assert "mesh_note" in description and "mesh_wait" in description
+    for name in ("mesh", "mesh_note", "mesh_wait"):
+        lowered = next(t for t in TOOLS if t["name"] == name)["description"].lower()
+        for imperative in ("you must", "always ", "never ", "you should", "prefer "):
+            assert imperative not in lowered, (name, imperative)
 
 
-def test_the_mesh_tool_is_offered_only_when_there_is_a_desk_behind_it(ctx):
+def test_the_mesh_tools_are_offered_only_when_there_is_a_desk_behind_them(ctx):
     """A tool in the list that can only answer "not available" costs the model a call
     to find that out. Taking it out is also what makes the question answerable: the
     same prompt run with the desk and without it is the only honest way to settle
     whether a slow natural-language sub-agent beats the bash the caller already has
-    (`OPENREYNOLDS_MESH_TOOL=0`)."""
+    (`OPENREYNOLDS_MESH_TOOL=0`). All three go together: a `mesh_note` with no desk to
+    note for is the same wasted call."""
     from openreynolds.tools import tools_for
 
-    assert "mesh" not in [tool["name"] for tool in tools_for(ctx)]
+    without = [tool["name"] for tool in tools_for(ctx)]
+    for name in ("mesh", "mesh_note", "mesh_wait"):
+        assert name not in without, name
     ctx.mesher = object()
-    assert "mesh" in [tool["name"] for tool in tools_for(ctx)]
+    with_desk = [tool["name"] for tool in tools_for(ctx)]
+    for name in ("mesh", "mesh_note", "mesh_wait"):
+        assert name in with_desk, name
     assert tools_for(ctx) is TOOLS
 
 
