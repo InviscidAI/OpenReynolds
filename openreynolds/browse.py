@@ -28,6 +28,20 @@ BINARY_SNIFF_BYTES = 8_000
 FIND_FORMAT = r"%y\t%s\t%T@\t%p\n"
 """Type, size, mtime, path. The escapes are for `find`, so they must survive as text."""
 
+LIST_PIPELINE = f"| sort -n -s | cut -f2- | head -n {MAX_ENTRIES + 1}"
+"""Breadth-first, then the cap. `find` prints its depth (`%d`) first and walks in
+directory order -- depth-first, siblings as the filesystem happens to hold them -- so
+the cap used to fall wherever the walk was at entry 4,000. In a transient study that
+was inside `run/processors4/`: the walk went down that directory and streamed its
+thousands of per-time field files, and the study's `renders/`, `README.md` and 201
+animation frames -- written, looked at, described to the person -- were past the cap
+and so never in any listing, and so never mirrored. The page for the finished study
+showed `run/` and nothing else. Sorting numerically on the depth (stably, so within a
+depth it is still `find`'s order) puts every shallow entry before any deep one: the
+files a person is watching for sit in the first two levels, the solver's bulk in the
+fourth, and the cut -- when there is one -- lands in the bulk. `cut` strips the depth
+again so the parsed shape is unchanged. This is `sort` over one listing, milliseconds."""
+
 
 @dataclass(frozen=True)
 class Entry:
@@ -155,9 +169,11 @@ class Browser:
         # returns nothing at all -- not an error, just an empty workspace, which is
         # the most convincing wrong answer available. Deeper symlinks are still left
         # alone, so no loop can be walked into.
+        # Depth first on each line, for `sort`; see LIST_PIPELINE for why the order of
+        # the walk is not the order of the listing.
         cmd = (
             f"find -H {shlex.quote(path)} -maxdepth {int(depth)} -mindepth 1 "
-            f"-printf '{FIND_FORMAT}' 2>/dev/null | head -n {MAX_ENTRIES + 1}"
+            f"-printf '%d\\t{FIND_FORMAT}' 2>/dev/null {LIST_PIPELINE}"
         )
         result = self.backend.exec(cmd, timeout_s=60, background=background)
         if result.idle:

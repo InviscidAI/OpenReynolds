@@ -48,11 +48,13 @@ def as_find_output(paths) -> str:
 
 
 class WalkingBackend:
-    """Answers `find` from a fixed tree, honouring `-maxdepth` and the `head` cap.
+    """Answers `find` from a fixed tree, honouring `-maxdepth`, the breadth-first
+    `sort -n -s` and the `head` cap.
 
     A stub that ignored the pipeline would let the truncation be asserted against a
-    fiction. This one applies the same two knobs the real command does, so narrowing
-    `path` or `depth` genuinely changes what comes back.
+    fiction. This one applies the same knobs the real command does, so narrowing
+    `path` or `depth` genuinely changes what comes back, and so does the order the
+    listing is cut in: a stable sort on depth, like `sort -n -s` over `find`'s `%d`.
     """
 
     def __init__(self, paths):
@@ -76,6 +78,8 @@ class WalkingBackend:
             and path != root
             and path.count("/") - base <= depth
         ]
+        if "| sort -n -s |" in cmd:
+            kept.sort(key=lambda item: item[0].count("/") - base)  # stable, like sort -s
         return ExecResult(0, as_find_output(kept[:cap]), False, None)
 
 
@@ -87,13 +91,61 @@ def browser_for(paths, home: str = "/work") -> Browser:
 
 
 def test_the_exec_logs_bury_the_study_tree():
-    """The premise. Without this the rest of the file proves nothing."""
+    """The premise. Without this the rest of the file proves nothing.
+
+    The logs still eat the budget -- the listing is capped -- but the cap now falls
+    among the deepest entries, so what it costs is the tail of the case *files*, not
+    the study's directories: every case is in the listing, and the walk plainly says
+    it was cut."""
     listing = browser_for(a_real_workspace()).tree("/work", depth=DEFAULT_DEPTH)
 
     assert len(listing) == MAX_ENTRIES
     paths = {e.path for e in listing}
     assert f"{HOME}/case000" in paths, "the walk should reach the study tree at all"
-    assert f"{HOME}/case039" not in paths, "the tail was supposed to be cut off"
+    assert f"{HOME}/case039" in paths, "a shallow directory is never what the cap costs"
+    assert f"{HOME}/case039/f059" not in paths, "the tail was supposed to be cut off"
+    assert listing.truncated
+
+
+def a_transient_study(times: int = 600, fields: int = 8, frames: int = 201):
+    """The study that found this: a 4-rank transient solve, its per-time field files
+    under `run/processors4/` (9,301 entries under `run/` on the day), with the pictures
+    the model made beside them. In `find`'s directory order `run/` came first and its
+    walk alone passed the cap."""
+    paths: list[tuple[str, bool]] = [(HOME, True), (f"{HOME}/run", True),
+                                     (f"{HOME}/run/processors4", True)]
+    for t in range(times):
+        paths.append((f"{HOME}/run/processors4/{t}", True))
+        paths += [(f"{HOME}/run/processors4/{t}/field{n}", False) for n in range(fields)]
+    paths.append((f"{HOME}/run/log.pimpleFoam", False))
+    paths.append((f"{HOME}/frames", True))
+    paths += [(f"{HOME}/frames/frame_{n:03d}.png", False) for n in range(frames)]
+    paths.append((f"{HOME}/renders", True))
+    paths += [(f"{HOME}/renders/{name}", False)
+              for name in ("forces.png", "shedding.gif", "shedding_small.gif", "vorticity_z_0.8.png")]
+    paths.append((f"{HOME}/README.md", False))
+    paths.append((f"{HOME}/make_gif.py", False))
+    return paths
+
+
+def test_the_solver_bulk_no_longer_hides_the_pictures():
+    """`renders/shedding.gif`, `README.md` and the 201 frames were written, looked at
+    and described to the person -- and were past the cap in every listing, because the
+    walk had spent its 4,000 entries inside `run/processors4/` before reaching them.
+    Never listed, never mirrored: the page for the finished study showed `run/` alone.
+    Breadth-first, the shallow files are listed first and the cut lands in the bulk."""
+    paths = a_transient_study()
+    assert len(paths) > MAX_ENTRIES, "the premise: this study does not fit"
+    listing = browser_for(paths, home=HOME).tree(HOME, depth=DEFAULT_DEPTH)
+
+    listed = {e.path for e in listing}
+    assert listing.truncated
+    for wanted in (f"{HOME}/README.md", f"{HOME}/make_gif.py", f"{HOME}/renders/shedding.gif",
+                   f"{HOME}/renders/forces.png", f"{HOME}/frames/frame_200.png",
+                   f"{HOME}/run/log.pimpleFoam"):
+        assert wanted in listed, wanted
+    deep = [p for p in listed if "/run/processors4/" in p and p.count("/") == HOME.count("/") + 4]
+    assert len(deep) < 600 * 8, "the cut fell where it should: among the per-time field files"
 
 
 def test_a_capped_listing_says_so_and_says_at_what():
