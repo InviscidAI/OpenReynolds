@@ -18,6 +18,7 @@ how that loop reaches its model.
 from __future__ import annotations
 
 import re
+import shlex
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -74,7 +75,10 @@ class ToolContext:
     A waiting `job_check` ends early on it, so a person who speaks during a held
     call is heard in seconds rather than when the wait runs out."""
     cores: int | None = None
-    """What `nproc` reported, once it has been asked. See `_core_count`."""
+    """What `nproc` reported, once it has been asked: hardware threads. See `_core_count`."""
+    physical_cores: int | None = None
+    """Physical cores, from `lscpu`, asked in the same round trip as `cores`. Zero when
+    the machine would not say; then only the thread count is spoken of."""
     started: float = field(default_factory=time.monotonic)
     """When this session began.
 
@@ -275,7 +279,13 @@ TOOLS: list[dict[str, Any]] = [
             "per rank per write time, and the workspace is a network filesystem that "
             "charges by the file: `-fileHandler collated`, passed to decomposePar, "
             "the solver and reconstructPar alike, writes one set instead of N, which "
-            "reconstructs faster and leaves the solve unchanged."
+            "reconstructs faster and leaves the solve unchanged. "
+            "A solver launched into a case that already holds written time steps, with "
+            "`startFrom startTime` in its controlDict, would start from t=0 again and "
+            "write over them; this tool refuses that launch and says so. To carry a "
+            "transient on -- more time, denser writes -- set `startFrom latestTime` "
+            "(every write so far is kept and the run continues from the last one); "
+            "to start over on purpose, pass overwrite=true or run in a fresh directory."
         ),
         "input_schema": {
             "type": "object",
@@ -295,6 +305,14 @@ TOOLS: list[dict[str, Any]] = [
                     "description": (
                         "Regexes matched against log lines. The first match terminates "
                         "the job and the matching line is reported back. Optional."
+                    ),
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": (
+                        "Allow a solver to restart from startTime in a case that already "
+                        "holds written time steps, discarding them. Default false: the "
+                        "launch is refused instead."
                     ),
                 },
             },
@@ -727,6 +745,9 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
 
 
 def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
+    refusal = _restart_guard(ctx, args)
+    if refusal:
+        return refusal
     job_id = ctx.backend.job_start(
         args["cmd"],
         cwd=args.get("cwd") or ctx.home,
@@ -739,6 +760,84 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
     _announce_jobs(ctx)
     label = f" ({args['name']})" if args.get("name") else ""
     return f"started job {job_id}{label}{_solve_shape(ctx, args)}{_mesher_note(ctx, args)}"
+
+
+_TIME_DIR = re.compile(r"/(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/?$")
+"""A time directory's name at the end of a path: `0.8`, `100`, `1e-05`. Anything else
+under a case or a `processors*` directory -- `constant`, `system`, `log.x` -- is not."""
+
+
+def _written_times(ctx: ToolContext, case: str) -> list[float]:
+    """The time steps a case already holds on disk, decomposed or not.
+
+    One `ls` covers the three places OpenFOAM writes them: the case itself, one
+    `processorN/` per rank (the default decomposed layout) and `processorsN/` (the
+    collated layout, one directory for all ranks). An unreadable case -- no directory,
+    a workspace that did not answer -- yields no times, and the guard that reads this
+    then does not fire: a guard on bad information would refuse first launches."""
+    listing = (
+        f"ls -d {shlex.quote(case)}/[0-9]* {shlex.quote(case)}/processor*/[0-9]* "
+        f"{shlex.quote(case)}/processors*/[0-9]* 2>/dev/null"
+    )
+    try:
+        out = ctx.backend.exec(listing, timeout_s=30).output or ""
+    except Exception:  # noqa: BLE001 - not knowing is not a reason to refuse
+        return []
+    times: set[float] = set()
+    for line in out.splitlines():
+        found = _TIME_DIR.search(line.strip())
+        if found:
+            try:
+                times.add(float(found.group(1)))
+            except ValueError:
+                continue
+    return sorted(times)
+
+
+def _restart_guard(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """Refuse a solver launch that would write over a transient's results.
+
+    The loss this stops, measured: a 2D transient had run 22 minutes to t=0.8 when
+    the person asked for a gif. The agent raised `endTime`, tightened `writeInterval`
+    and relaunched the same command in the same directory -- and the controlDict said
+    `startFrom startTime`, so pimpleFoam began again at t=0 and rewrote the
+    `processors4/` time directories it had spent those minutes on (study
+    20260920-161908-c7ef). Nothing in the harness said a word.
+
+    The rule is the smallest one that catches it: a solving command, a case that
+    already holds time steps later than `startTime`, and a controlDict whose
+    `startFrom` is not `latestTime` (`startTime` is OpenFOAM's usual choice, and an
+    absent entry is refused too, because the dictionary does not parse without one).
+    The refusal names the times at stake and the two honest ways forward; a launch that
+    truly means to start over says `overwrite=true`. Meshers, post-processing, and the
+    first launch of a case (no times yet) are never touched."""
+    if args.get("overwrite"):
+        return ""
+    cmd = args.get("cmd") or ""
+    if phase_from_cmd(cmd)[0] != "solving":
+        return ""
+    case = case_dir_from_cmd(cmd, args.get("cwd") or ctx.home)
+    try:
+        text = ctx.backend.get_file(f"{case}/system/controlDict").decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001 - no controlDict: the solver will say so itself
+        return ""
+    control = parse_control_dict(text)
+    if control.get("startFrom") == "latestTime":
+        return ""
+    start = control.get("startTime") or 0.0
+    later = [t for t in _written_times(ctx, case) if t > start]
+    if not later:
+        return ""
+    return (
+        f"not started: {case} already holds {len(later)} written time step(s), from "
+        f"{later[0]:g} to {later[-1]:g}, and its controlDict says startFrom "
+        f"{control.get('startFrom') or 'startTime'} (startTime {start:g}). This launch would "
+        "start the solve again from there and write over them. To carry the run on from "
+        f"t={later[-1]:g} -- more time, a different writeInterval -- set `startFrom "
+        "latestTime;` in system/controlDict and start again (every write so far is kept). "
+        "To start over on purpose, call job_start with overwrite=true, or copy the case to "
+        "a new directory first so the finished results stay where they are."
+    )
 
 
 _EMPTY_PATCH = re.compile(r"^\s*type\s+empty\s*;", re.M)
@@ -830,6 +929,16 @@ def _solve_shape(ctx: ToolContext, args: dict[str, Any]) -> str:
             # file that is actually on disk rather than the one that went past.
             span = end - (control.get("startTime") or 0.0)
             parts.append(f"deltaT {step:g} ({int(span / step)} steps at that timestep)")
+    # The two entries that decide whether a transient's results survive the NEXT
+    # launch, said at this one while they are still cheap to change: `startFrom
+    # latestTime` is what lets a run be carried on, and `purgeWrite N` throws away all
+    # but the last N writes as it goes -- a gif made from the "written" times finds N
+    # of them.
+    if control.get("startFrom"):
+        parts.append(f"startFrom {control['startFrom']}")
+    purge = control.get("purgeWrite")
+    if purge:
+        parts.append(f"purgeWrite {purge} (only the last {purge} write times are kept on disk)")
     parts.append(_load_per_rank(ctx, cmd, case))
     parts.append(_study_age(ctx))
     return f" [{', '.join(p for p in parts if p)}]" if any(parts) else ""
@@ -880,12 +989,34 @@ def _load_per_rank(ctx: ToolContext, cmd: str, case: str) -> str:
         return ""
     ranks = _ranks_in(cmd)
     cells = _cell_count(ctx, case)
+    machine = _machine_line(ctx, ranks)
     if not cells:
-        return f"{ranks} rank(s), {cores} cores on this machine"
-    return (
-        f"{cells} cells on {ranks} rank(s) = {cells // ranks} each; "
-        f"{cores} cores on this machine"
-    )
+        return f"{ranks} rank(s), {machine}"
+    return f"{cells} cells on {ranks} rank(s) = {cells // ranks} each; {machine}"
+
+
+def _machine_line(ctx: ToolContext, ranks: int) -> str:
+    """Threads and cores, told apart.
+
+    `nproc` counts hardware threads, and the sentence "8 cores on this machine" was
+    built on it. On a machine with two threads a core that sentence is wrong by half,
+    and it cost a launch: told 8 cores, an agent decomposed for 6 ranks and Open MPI
+    refused the run -- "not enough slots" -- because its default slot count is the
+    PHYSICAL cores, four (study 20260920-161908-c7ef, c7i.2xlarge). The agent then
+    re-decomposed for 4. So both numbers are said, and what MPI will accept without
+    being told otherwise; the extra ranks a thread would add are named for what they
+    are, because a CFD solve is bound by memory bandwidth and two ranks on one core
+    share it."""
+    threads = ctx.cores or 0
+    physical = ctx.physical_cores or 0
+    if physical and physical < threads:
+        line = (f"{threads} hardware threads = {physical} physical cores on this machine; "
+                f"mpirun accepts up to {physical} ranks as it is (more needs "
+                "--use-hwthread-cpus, and ranks that share a core gain little in CFD)")
+        if ranks > physical:
+            line += f" -- {ranks} ranks is more than the {physical} cores"
+        return line
+    return f"{threads} cores on this machine"
 
 
 _MPIRUN_NP = re.compile(r"\bmpirun\b[^|;&]*?-np\s+(\d+)")
@@ -897,18 +1028,30 @@ def _ranks_in(cmd: str) -> int:
     return int(found.group(1)) if found else 1
 
 
+CORES_PROBE = (
+    "nproc; lscpu -p=CORE,SOCKET 2>/dev/null | grep -v '^#' | sort -u | wc -l"
+)
+"""Two numbers in one round trip: hardware threads, then distinct (core, socket) pairs
+from lscpu -- the physical cores. The second is 0 where lscpu is missing or refuses."""
+
+
 def _core_count(ctx: ToolContext) -> int:
-    """What `nproc` says, asked once per session.
+    """What `nproc` says, asked once per session, with the physical core count beside it.
 
     The count is a property of the container and does not change under us, so paying
     a round trip for it on every launch would be paying repeatedly for the same
-    answer. Zero means it could not be established, and nothing is said."""
+    answer. Zero means it could not be established, and nothing is said. Returns the
+    thread count (what `nproc` has always meant here); `ctx.physical_cores` holds the
+    other number for `_machine_line`."""
     if ctx.cores is None:
         try:
-            result = ctx.backend.exec("nproc", timeout_s=30)
-            ctx.cores = int((result.output or "").strip().split()[0])
+            result = ctx.backend.exec(CORES_PROBE, timeout_s=30)
+            fields = (result.output or "").split()
+            ctx.cores = int(fields[0])
+            ctx.physical_cores = int(fields[1]) if len(fields) > 1 and fields[1].isdigit() else 0
         except Exception:  # noqa: BLE001 - not knowing is not a failed launch
             ctx.cores = 0
+            ctx.physical_cores = 0
     return ctx.cores
 
 

@@ -89,12 +89,32 @@ def gated(mode: str, tool: str) -> bool:
     return mode in (PARTIAL, STRUCTURED) and tool in COMPUTE_TOOLS
 
 
+AUTO_NO_QUESTIONS = (
+    "The person chose full auto: nothing waits on them, and that includes questions. "
+    "A list of questions put to them sits unanswered while the work waits, and a turn "
+    "that ends on a question ends the work. What the request leaves open -- a "
+    "dimension, a speed, a boundary condition, which result matters -- is yours to "
+    "assume, said in a line so they can correct it; a remark they type reaches you at "
+    "your next step."
+)
+"""What auto mode says about questions, and why it says anything at all.
+
+The auto briefing used to be empty, so that it was byte-identical to a briefing written
+before modes existed. The measurement that ended that: a person who had chosen "Full
+auto" watched the agent open with a numbered list of questions ("answer any, I have
+defaults for all") and then build the mesh for seven minutes while the list sat there
+(study 20260920-161908-c7ef). The system prompt invites questions in every mode, and
+the workspace-starting note used to name the things a person "can answer while the
+machine comes up"; a mode called full auto has to say the opposite, in words, or the
+default wins."""
+
+
 def briefing(mode: str) -> str:
     """The one sentence the session's briefing carries about the mode.
 
     In the person's terms, like the standing note: what they chose and what the
-    harness does about it. Empty in auto, so an auto briefing is byte-identical to
-    one written before modes existed."""
+    harness does about it. Auto says the one thing the other two do not need to:
+    that the person is not to be asked (`AUTO_NO_QUESTIONS`)."""
     if mode == PARTIAL:
         return (
             "The person chose to be asked before compute is spent: each job_start and "
@@ -110,7 +130,7 @@ def briefing(mode: str) -> str:
             "them and waits for their answer, and job_start and mesh calls are held "
             "until they have approved a plan."
         )
-    return ""
+    return AUTO_NO_QUESTIONS
 
 
 def switched(mode: str) -> str:
@@ -131,7 +151,8 @@ def switched(mode: str) -> str:
         )
     return (
         "The person switched this session to full auto mode. No tool call is put to "
-        "them for approval from here on."
+        "them for approval from here on, and no questions either: what is open is "
+        "yours to assume, said in a line so they can correct it."
     )
 
 

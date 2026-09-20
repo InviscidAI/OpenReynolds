@@ -149,28 +149,58 @@ def parse_log_tail(text: str) -> LogFacts:
 
 
 _DICT_ENTRY = re.compile(
-    r"^\s*(startTime|endTime|deltaT|writeInterval)\s+([0-9.eE+-]+)\s*;", re.M
+    r"^\s*(startTime|endTime|deltaT|writeInterval|purgeWrite)\s+([0-9.eE+-]+)\s*;", re.M
 )
 _STOP_AT = re.compile(r"^\s*stopAt\s+(\w+)\s*;", re.M)
+_START_FROM = re.compile(r"^\s*startFrom\s+(\w+)\s*;", re.M)
 _COMMENTS = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
 
 
+def _top_level(body: str) -> str:
+    """The dictionary with every nested `{ ... }` block blanked out.
+
+    A controlDict's own entries sit at brace depth zero; `FoamFile { ... }` and every
+    function object under `functions { ... }` sit deeper, and function objects carry
+    their OWN `writeInterval`. Read flat, the last one wins: a live case whose top
+    level said `writeInterval 0.02` and whose `forces` function object said
+    `writeInterval 5` was announced at launch as "writeInterval 5 (0 write times)",
+    which is a warning about a number that was never the run's. Blanking the nested
+    text rather than deleting it keeps `^` anchors and line structure intact."""
+    out = []
+    depth = 0
+    for ch in body:
+        if ch == "{":
+            depth += 1
+            out.append(" ")
+        elif ch == "}":
+            depth = max(0, depth - 1)
+            out.append(" ")
+        else:
+            out.append(ch if depth == 0 or ch == "\n" else " ")
+    return "".join(out)
+
+
 def parse_control_dict(text: str) -> dict[str, Any]:
-    """The run's bounds from `system/controlDict`.
+    """The run's bounds from `system/controlDict`, top-level entries only.
 
     `endTime` is only the end when `stopAt` says so -- `writeNow` and friends mean the
     run ends whenever somebody says, and a percentage against endTime would then be a
-    number about nothing."""
-    body = _COMMENTS.sub("", text)
+    number about nothing. `startFrom` (a word: startTime, firstTime, latestTime) and
+    `purgeWrite` (an integer; 0 keeps every write) are read for the launch note that
+    guards a transient run's data (`tools._restart_guard`)."""
+    body = _top_level(_COMMENTS.sub("", text))
     found: dict[str, Any] = {}
     for key, value in _DICT_ENTRY.findall(body):
         number = _float(value)
         if number is not None:
-            found[key] = number
+            found[key] = int(number) if key == "purgeWrite" else number
     stop = _STOP_AT.findall(body)
     if stop and stop[-1] != "endTime":
         found.pop("endTime", None)
         found["stopAt"] = stop[-1]
+    start_from = _START_FROM.findall(body)
+    if start_from:
+        found["startFrom"] = start_from[-1]
     return found
 
 

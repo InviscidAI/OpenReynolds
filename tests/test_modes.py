@@ -76,8 +76,14 @@ def test_the_stages_are_the_guided_pipelines_own_phases():
     assert modes.STAGES == study_run.PHASE_NAMES
 
 
-def test_auto_adds_nothing_to_the_briefing():
-    assert modes.briefing("auto") == ""
+def test_auto_says_the_person_is_not_asked():
+    """The auto briefing used to be empty. It gained one sentence on 2026-09-21: a
+    person who had chosen full auto was met with a numbered list of questions, because
+    the system prompt invites questions in every mode and nothing said otherwise."""
+    said = modes.briefing("auto")
+    assert said == modes.AUTO_NO_QUESTIONS
+    assert "questions" in said and "assume" in said
+    assert "full auto" in said
 
 
 @pytest.mark.parametrize("pattern", IMPERATIVE_PATTERNS)

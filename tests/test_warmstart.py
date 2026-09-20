@@ -371,9 +371,22 @@ def test_the_briefing_says_the_workspace_is_coming_and_asks_nothing_of_it(store,
     brief = _brief(store, backend)
     assert "still starting" in brief and "usually about 30 seconds" in brief
     assert "waits for it rather than failing" in brief
-    assert "geometry" in brief and "boundary conditions" in brief and "upload" in brief
+    assert "geometry" in brief and "boundary conditions" in brief
     assert backend.execs == [], "nothing was asked of a workspace that is not there"
     assert "person is at the terminal" in brief
+
+
+def test_in_full_auto_the_starting_minute_is_for_assumptions_not_questions(store, backend):
+    """A person who had chosen full auto was met with a numbered list of questions
+    while the mesh built (study 20260920-161908-c7ef), because this note named the
+    things "the person can answer while the machine comes up" in every mode."""
+    auto = _brief(store, backend, mode="auto")
+    assert "assumptions you will proceed on" in auto and "Not for a list of questions" in auto
+    assert "questions the person can answer" not in auto
+    assert "chose full auto" in auto, "the mode's own sentence rides in the briefing"
+    consulted = _brief(store, backend, mode="partial")
+    assert "questions the person can answer" in consulted and "upload" in consulted
+    assert "assumptions you will proceed on" not in consulted
 
 
 def test_a_resume_ahead_of_its_workspace_repeats_the_record_and_re_reads_it_when_ready(store, backend):
@@ -418,7 +431,8 @@ def test_the_ready_note_carries_what_the_briefing_left_out(store, backend):
     note = cli._workspace_ready_note(store, backend, False, Browser(backend, store), 12.0, True)
     assert note.startswith("The workspace is ready (12 s")
     assert "Your directory is /work/study-test" in note
-    assert "This machine has 8 cores" in note
+    assert "This machine has 4 physical cores (8 hardware threads)" in note
+    assert "up to 4 ranks" in note
     fallen = cli._workspace_ready_note(store, backend, False, None, 12.0, False)
     assert "could not be made" in fallen and "/work" in fallen
 
