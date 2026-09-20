@@ -6,6 +6,20 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The workspace listing is breadth-first, so the cap falls in the solver's bulk, not
+  on the pictures.** `Browser.tree` ran `find | head -n 4001`, and `find` walks
+  depth-first in directory order. In a transient study (20260920-161908-c7ef, in
+  production) the walk went down `run/processors4/` first and spent the whole cap on
+  per-time field files; `renders/shedding.gif`, `README.md`, `make_gif.py` and the 201
+  animation frames -- all written, looked at and described to the person -- were past
+  the cap in every listing, so the live mirror never saw them and never brought them
+  home, and the finished study's page showed `run/` and nothing else. The listing now
+  prints each entry's depth, sorts on it (stably) and strips it again before the cap:
+  every shallow entry precedes any deep one, and the cut, when there is one, lands
+  among the deepest. The cap and its notice are unchanged.
+
 ### Changed
 
 - **The mesh desk builds in the background.** A `mesh` call used to run the desk on
