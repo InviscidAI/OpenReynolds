@@ -70,7 +70,16 @@ a reader wants when asking what survived the split.
 
 `replay` and `build` were here until 2026-09-18 and are not checks any more -- see
 `check._leave_script` for why. The cell log is still the artifact; it is simply no longer
-something the desk can fail."""
+something the desk can fail.
+
+**`scale` appears here and in `WAIVABLE` and they are two measurements.** `check.py`
+raises `scale` from the mesh bounds against the largest dimension the request names, and
+it binds; `cad_audit.scale` reads the exported union's extent, and it is the probe the
+registry knows. Nothing keys on the bare word -- `is_advisory` and `activated` both read
+the full finding name -- so the two never meet. They share a word because the corpus has
+called the probe `scale` since before either existed, and renaming it here would have
+made every sweep report disagree with the enum. The shipped desk raises only the probe
+one: `CoreDesk._verify` is `checkMesh` per region and nothing else."""
 
 
 def is_advisory(check: str) -> bool:
@@ -98,55 +107,71 @@ def is_advisory(check: str) -> bool:
         name.startswith(f"{script}.") for script in ADVISORY_SCRIPTS)
 
 
-RENAMED = {"cad_audit.scale": "surface_scale"}
-"""Advisory checks whose bare name would collide with a binding one.
+ACTIVATED = {
+    "cad_audit.closure": "union_closure",
+    "cad_audit.normals": "normals",
+    "cad_audit.self_intersection": "self_intersection",
+    "cad_audit.coverage": "coverage",
+    "cad_audit.scale": "scale",
+    "domain_probe.location_in_mesh": "location_in_mesh",
+}
+"""The findings that reach the desk, and the name it waives each one by.
 
-`cad_audit.scale` measures the exported union's extent and is advisory.  `check.py` also
-raises a `scale`, comparing the mesh bounds to the largest dimension the request names,
-and that one binds -- it fires only past a factor of 100, where the millimetres-for-metres
-error lives and nothing legitimate does.  Two different measurements, and stripping the
-prefix gave them one name, so a desk reading `scale` in the enum could not tell which it
-was being offered.  It is offered the one it can have."""
+**Advisory and activated are two different questions and conflating them was a mistake.**
+Not binding is a property of every finding these two scripts produce -- they have all been
+wrong at least once and none of them may end a run. *Reaching the desk* is separate, and
+`docs/cad-build-up-handoff.md` §2 already answers it: detection lives in the supervisor,
+and a check is shown to the desk "only once its probe has actually fired -- that is, once
+some run has produced a silently-wrong result of that kind. On that trigger, and not
+before." A probe that never fires stays dormant forever, and that is the point: the agent
+pays for a check only after the failure it catches has been observed.
+
+These six are `buildup/gate.WAIVABLE` -- the set that ran in
+`core+cad_export-20260917-022129-dd05` and the set `docs/cad-silent-failures.md` carries a
+row for. Four were activated on 2026-09-13 with the run that triggered them named;
+`coverage` and `scale` are recorded dormant and are in the vocabulary for continuity with
+that sweep rather than because they have fired.
+
+For a day this module let everything either script emits through, which switched on nine
+checks with no registry row and no evidence, two of them recorded as deliberately dormant.
+The keys are the finding names `check.py` writes; the values are the probe ids the corpus,
+both briefs and every sweep report already use."""
+
+
+def activated(check: str) -> bool:
+    """Whether this finding is one the desk is told about.
+
+    The bare script names count. When a script cannot run at all, `_cad_findings` emits
+    one `skipped` finding named for the script itself with no check after it, and that
+    has to reach the desk as `n/a` -- "could not be measured" and "measured and fine" are
+    the two answers this layer exists to keep apart. Narrowing delivery to the activated
+    six dropped it a second time; the first time cost a sweep's worth of declares
+    recording zero states and reading like clean surfaces.
+    """
+    name = str(check or "")
+    return name in ACTIVATED or name in ADVISORY_SCRIPTS
 
 
 def gate_id(check: str) -> str:
-    """The name the desk waives this check by: the finding's name without its script.
-
-    `cad_audit.closure` is `closure` to the desk. The script prefix says which of our
-    files computed it, which is our bookkeeping and not something the desk should have to
-    type. Where stripping it would collide with a binding check, `RENAMED` says so.
-    """
-    name = str(check or "")
-    if name in RENAMED:
-        return RENAMED[name]
-    for script in ADVISORY_SCRIPTS:
-        if name.startswith(f"{script}."):
-            return name[len(script) + 1:]
-    return name
+    """The name the desk waives this check by -- the probe id, not our filename."""
+    return ACTIVATED.get(str(check or ""), str(check or ""))
 
 
-WAIVABLE = ("closure", "manifold", "normals", "degenerate", "coverage",
-            "self_intersection", "surface_scale", "manifest", "surface_check",
-            "location_in_mesh", "min_width", "min_wall_thickness", "domain")
-"""Every advisory check either script can raise, and the enum the tool offers.
+WAIVABLE = ("union_closure", "normals", "self_intersection",
+            "location_in_mesh", "coverage", "scale")
+"""The enum the tool offers: exactly `ACTIVATED`'s values, in the registry's order.
 
 `checkMesh` and the other binding checks are deliberately absent: they cannot be waived,
 and a schema that will not form the call is better than a handler that rejects it after
 the fact. Held against the tool's own copy by a test rather than by an import, because
 `agent.py` defines the tool this module's caller uses."""
 
-ALIASES = {"union_closure": "closure", "scale": "surface_scale"}
-"""The core desk's vocabulary, accepted here.
+ALIASES = {"closure": "union_closure", "surface_scale": "scale"}
+"""Names a desk might type that are not the probe id, accepted anyway.
 
-`buildup/probes.py` calls the welded-union check `union_closure` and `cad_audit.py` calls
-it `closure`; the same probe's `scale` is `cad_audit.scale`, renamed here. Both
-vocabularies are in the corpus, in the sweep reports and in two briefs, so a desk that has
-read either forms a call this accepts rather than one it has to be corrected on.
-
-Aliasing `scale` is safe in the direction that matters. It is not in the enum, so a desk
-following the schema never types it; one that types it anyway has the core desk's
-vocabulary in mind, where `scale` *is* the surface measurement. And the binding
-request-scale check is not waivable by any name, so nothing here can reach it."""
+`cad_audit.py` calls the welded-union check `closure` and its extent reading `scale`, and
+those names are in its own output, so a desk that has read a finding and waives it by the
+name it saw forms a call that works."""
 
 
 @dataclass
@@ -236,7 +261,10 @@ def evaluate(findings: Iterable[Any], waivers: Iterable[dict[str, Any]],
 
     out: list[GateState] = []
     for finding in findings or ():
-        if not is_advisory(getattr(finding, "check", "")):
+        # Activated, not merely advisory. Everything these scripts say is non-binding and
+        # lands in the record; only what the registry has activated is put in front of
+        # the desk.
+        if not activated(getattr(finding, "check", "")):
             continue
         pid = gate_id(getattr(finding, "check", ""))
         if str(getattr(finding, "status", "") or "") == "skipped":
@@ -302,14 +330,11 @@ def render(states: Iterable[GateState], case_dir: str = "") -> str:
                      "warning is fixed or waived the declare is not accepted -- the same "
                      "way a failing checkMesh is not accepted. A reason is what gets you "
                      "past one; declaring again unchanged does not.")
-        # Both names, because the two desks measure this with different code and call it
-        # different things: `cad_audit.py` says `closure` and `buildup/probes.py` says
-        # `union_closure`. Keying on one of them silently drops the paragraph for the
-        # other desk, which is how the misconception this paragraph exists to correct
-        # went three-for-three in the first sweep.
-        if {"closure", "union_closure"} & set(warned):
+        # One name now: `gate_id` maps `cad_audit.closure` onto the probe id, so both
+        # desks arrive here saying `union_closure`.
+        if "union_closure" in warned:
             lines.append("")
-            lines.append("On closure: it welds every STL in the directory into one "
+            lines.append("On union_closure: it welds every STL in the directory into one "
                          "surface and counts the free edges of that union. Individual "
                          "patch files are open by construction and that is not what it "
                          "measures, so 'each patch is a separate sheet' does not explain "

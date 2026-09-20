@@ -274,11 +274,8 @@ DECLARE_TOOL: dict[str, Any] = {
                     "type": "object",
                     "properties": {
                         "check": {"type": "string", "enum": [
-                            "closure", "manifold", "normals", "degenerate",
-                            "coverage", "self_intersection", "surface_scale",
-                            "manifest",
-                            "surface_check", "location_in_mesh", "min_width",
-                            "min_wall_thickness", "domain", "union_closure"]},
+                            "union_closure", "normals", "self_intersection",
+                            "location_in_mesh", "coverage", "scale"]},
                         "because": {"type": "string"},
                     },
                     "required": ["check", "because"],

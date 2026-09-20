@@ -404,7 +404,9 @@ def test_a_cad_fail_is_advisory_here_and_keeps_its_own_words():
     warned = {s.check: s.concern for s in states if s.state == gate.WARNED}
     # The evidence and the interpretation, which is what a desk needs to act: `measured`
     # is the number it already has, `means` is why that number ends the run.
-    for row, warning in ((AUDIT_FAIL, warned["closure"]),
+    # `union_closure`, the probe id the registry and every sweep report use -- not
+    # `cad_audit.py`'s own word for it.
+    for row, warning in ((AUDIT_FAIL, warned["union_closure"]),
                          (PROBE_FAIL, warned["location_in_mesh"])):
         assert row["findings"][0]["measured"] in warning
         assert row["findings"][0]["means"] in warning
@@ -422,11 +424,14 @@ def test_a_binding_fail_still_decides_the_finish():
     check = read(facts(bounds=[0, 0, 0, 74, 24, 1]), "mesh", "/work/s/mesh",
                  "a passage 8 mm wide, two legs 60 mm long")
     assert not check.ok
+    # Two measurements that share a word, told apart by the full finding name and never
+    # by the bare one. `check.py`'s binds; `cad_audit`'s is the probe the registry knows.
     assert not gate.is_advisory("scale")
     assert gate.is_advisory("cad_audit.scale")
-    # And nothing binding is offered to the desk as waivable.
+    assert gate.activated("cad_audit.scale") and not gate.activated("scale")
+    # Nothing binding is reachable by a waiver, which is the property that matters.
     for name in gate.BINDING:
-        assert name not in gate.WAIVABLE, name
+        assert not gate.activated(name), name
 
 
 def test_an_ok_cad_finding_comes_through_and_does_not_block():
@@ -1050,6 +1055,7 @@ def test_staging_that_fails_says_so_rather_than_reporting_a_clean_surface(tmp_pa
     findings = cadcheck.advisory_findings(Workspace(), f"{tmp_path}/case")
     states = gate.evaluate(findings, [])
     assert [s.state for s in states] == [gate.NOT_RUN, gate.NOT_RUN]
+    assert [s.check for s in states] == ["cad_audit", "domain_probe"]
     assert all("could not be staged" in s.concern for s in states)
 
 
