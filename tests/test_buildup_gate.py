@@ -137,7 +137,7 @@ def test_the_two_copies_of_the_waivable_list_agree():
 
     enum = (DECLARE_TOOL["input_schema"]["properties"]["waive"]["items"]
             ["properties"]["check"]["enum"])
-    assert enum == list(cadgate.WAIVABLE) + ["union_closure"]
+    assert enum == list(cadgate.WAIVABLE)
     # Every name the core desk knows still forms a call the shipped desk accepts.
     for name in gate.WAIVABLE:
         assert cadgate.ALIASES.get(name, name) in cadgate.WAIVABLE, name
@@ -528,6 +528,9 @@ def test_a_script_that_could_not_run_is_recorded_rather_than_dropped():
     states = cadgate.evaluate(findings, [])
     assert [(s.check, s.state) for s in states] == [
         ("cad_audit", cadgate.NOT_RUN), ("domain_probe", cadgate.NOT_RUN)]
+    # And it survives delivery being narrowed to the activated six: the bare script name
+    # is not one of them and still has to arrive.
+    assert not any(f.check in cadgate.ACTIVATED for f in findings)
     # It is recorded and it does not hold the finish: `n/a` is not a warning.
     assert not [s for s in states if s.state == cadgate.WARNED]
     assert cadgate.render(states) == "", "n/a is not a finding and is not reported as one"
@@ -546,5 +549,61 @@ def test_an_unavailable_script_is_not_mistaken_for_a_clean_surface():
 
     assert absent[0].state == cadgate.NOT_RUN
     assert clean[0].state == cadgate.CLEAN
+    assert clean[0].check == "union_closure"
     assert absent[0].state != clean[0].state, (
         "the whole point: not measured and measured-clean are different answers")
+
+
+def test_only_the_activated_probes_reach_the_desk():
+    """§2 of the handoff: detection is the supervisor's, delivery is earned.
+
+    "A check is activated for the agent only once its probe has actually fired -- that
+    is, once some run has produced a silently-wrong result of that kind. On that trigger,
+    and not before." A probe that never fires stays dormant forever, and that is the
+    point: the agent pays for a check only after the failure it catches has been observed.
+
+    For a day `cad/gate.py` let through everything `cad_audit.py` and `domain_probe.py`
+    emit -- thirteen names, nine with no row in `docs/cad-silent-failures.md` at all and
+    two the registry records as deliberately dormant. It was advisory-vs-binding
+    reasoning silently answering the reaches-the-desk question, which this project had
+    already answered with a mechanism.
+    """
+    from openreynolds.cad import gate as cadgate
+
+    assert set(cadgate.WAIVABLE) == set(gate.WAIVABLE), (
+        "the shipped desk offers exactly what the corpus's own registry carries")
+
+    # The nine that were switched on without evidence, off again.
+    for name in ("manifold", "degenerate", "manifest", "surface_check",
+                 "min_width", "min_wall_thickness", "domain"):
+        assert not cadgate.activated(f"cad_audit.{name}"), name
+        assert not cadgate.activated(f"domain_probe.{name}"), name
+        assert name not in cadgate.WAIVABLE, name
+
+
+def test_a_probe_that_is_not_activated_still_does_not_bind():
+    """Narrowing delivery must not push the rest into the binding half.
+
+    They are two questions. Nothing either script says may end a run -- all six activated
+    ones have been wrong at least once, and the seven unactivated have no evidence either
+    way -- so `is_advisory` stays wide while `activated` is narrow. Getting this backwards
+    would make `manifold` and `degenerate` harder gates than `checkMesh`.
+    """
+    from openreynolds.cad import gate as cadgate
+
+    for name in ("cad_audit.manifold", "cad_audit.degenerate", "cad_audit.manifest",
+                 "domain_probe.min_width", "domain_probe.domain"):
+        assert cadgate.is_advisory(name), f"{name} would bind"
+        assert not cadgate.activated(name), f"{name} would be delivered"
+
+
+def test_the_registry_has_a_row_for_every_name_the_desk_can_waive():
+    """The enum and `docs/cad-silent-failures.md` are the same six, or one is lying."""
+    from pathlib import Path
+
+    from openreynolds.cad import gate as cadgate
+
+    registry = (Path(__file__).resolve().parents[1]
+                / "docs" / "cad-silent-failures.md").read_text(encoding="utf-8")
+    for name in cadgate.WAIVABLE:
+        assert f"`{name}`" in registry, f"{name} is offered to the desk and has no row"

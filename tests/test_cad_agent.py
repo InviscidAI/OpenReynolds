@@ -1518,7 +1518,7 @@ def test_an_advisory_warning_bounces_the_shipped_desks_declare(backend, store, m
     assert not result.ok, "an unresolved warning is not a finish, however many declares"
     assert len(made._declares) >= 3, "it kept coming back rather than letting one through"
     assert {d["states"][0]["state"] for d in made._declares} == {"warned"}
-    assert {d["states"][0]["check"] for d in made._declares} == {"closure"}
+    assert {d["states"][0]["check"] for d in made._declares} == {"union_closure"}
     # And the desk was told what it actually measures, which is the misconception that
     # went three-for-three in the first sweep that had this gate at all.
     everything = "\n".join(said(made.provider, i)
@@ -1539,7 +1539,7 @@ def test_waiving_it_is_what_gets_the_shipped_desk_past_it(backend, store, monkey
     made = declaring(backend, store, [
         Declare({"outcome": "complete"}),
         Declare({"outcome": "complete",
-                 "waive": [{"check": "closure", "because": "baffle, open by design"}]}),
+                 "waive": [{"check": "union_closure", "because": "baffle, open by design"}]}),
     ], monkeypatch, PASSES_BUT_OPEN)
     result = made.run("a duct")
 
