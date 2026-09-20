@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 
 from openreynolds import cli, commands, switch
-from openreynolds.backend.base import BackendError
 from openreynolds.config import Config
 from openreynolds.llm import ProviderError, TextBlock, Turn
 from openreynolds.loop import Loop
@@ -353,10 +352,9 @@ def _resume(monkeypatch, studies, config=None, **kwargs):
     The model is settled before an instance is acquired, so the configuration the
     session gave up on is the whole of the answer. `config` is for the cases that turn
     on where this run points, which is a fact about the configuration."""
-    def acquire(url, key, iid):
-        raise BackendError("no service in this test")
+    from conftest import refusing_to_reserve
 
-    monkeypatch.setattr(cli.hosted, "acquire", acquire)
+    monkeypatch.setattr(cli.hosted, "reserve", refusing_to_reserve())
     cfg = config or Config(foamd_url="u", foamd_api_key="k", llm_api_key="a",
                            studies_dir=studies)
     with pytest.raises(SystemExit):
@@ -434,10 +432,10 @@ def test_a_new_study_records_the_pair_it_started_on(nobody_named_a_model, monkey
     """There is nothing to restore on a first run, and something to write down: the
     pair the next resume reads. The model is taken out (`FakeLoop`), because what is
     under test is what the session put in `session.json` before it handed over."""
-    from conftest import FakeBackend
+    from conftest import FakeBackend, reserved
     from test_jsonview import FakeLoop
 
-    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (FakeBackend(), None, "iid-1"))
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(FakeBackend()))
     monkeypatch.setattr(cli, "Loop", FakeLoop)
     studies = tmp_path / "studies"
     cfg = Config(foamd_url="u", foamd_api_key="k", llm_api_key="a",
@@ -504,10 +502,10 @@ def test_a_refused_restore_leaves_the_study_the_pair_it_recorded(
     allowed to forget it. This run wrote its own pair over the study's a few lines
     later, so the resume on the machine that does have the key found nothing left to
     carry on with."""
-    from conftest import FakeBackend
+    from conftest import FakeBackend, reserved
     from test_jsonview import FakeLoop
 
-    monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (FakeBackend(), None, "iid-1"))
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(FakeBackend()))
     monkeypatch.setattr(cli, "Loop", FakeLoop)
     studies = _stored_study(tmp_path, "gpt-5", "openai")
     cfg = Config(foamd_url="u", foamd_api_key="k", llm_api_key="a", studies_dir=studies,

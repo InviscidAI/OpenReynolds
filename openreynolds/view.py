@@ -72,7 +72,17 @@ class View(Protocol):
         """Something the user said that will reach the model without stopping it."""
 
     def workspace(self, browser: Any) -> None:
-        """A read-only way to look at the workspace, for views that can show one."""
+        """A read-only way to look at the workspace, for views that can show one.
+
+        Handed over as soon as the session knows where it is looking, which may be
+        before the workspace itself is up: a listing asked of the browser then waits
+        for it. A view that lists on its own thread need not care; one that would
+        block its screen can wait for `workspace_ready` first."""
+
+    def workspace_ready(self, instance_id: str, seconds: float) -> None:
+        """The workspace is up and set up, so the tools can run. Said once per
+        session, `seconds` after the session began asking for it; the header has
+        long since named the instance, so a view showing "starting" stops."""
 
     def show_files(self, path: str = "", depth: int = 0) -> None:
         """Show what is in the workspace. Answered locally; the model is not told."""
@@ -284,6 +294,12 @@ class ConsoleView(View):
 
     def workspace(self, browser: Any) -> None:
         self._browser = browser
+
+    def workspace_ready(self, instance_id: str, seconds: float) -> None:
+        """One dim line, and only when there was a wait worth naming: a workspace
+        that was up before the session asked says nothing."""
+        if seconds >= 1.0:
+            self.console.print(f"[dim]workspace ready after {seconds:.0f} s[/]")
 
     def show_files(self, path: str = "", depth: int = 0) -> None:
         if self._browser is None:

@@ -83,6 +83,12 @@ class Loop:
         switch typed while tools run) they cannot be a message of their own: the next
         message has to be the tool results. They ride in that message instead."""
         self._mid_turn = False
+        self._posted: list[str] = []
+        """Harness facts said from another thread (`post`), waiting for this thread to
+        pick them up at one of its own safe points. `messages` is read while a request
+        is being built and appended to when the answer lands, and neither of those
+        may be interleaved with a write from elsewhere."""
+        self._posted_lock = threading.Lock()
 
         headers = {"X-Study-Id": store.session.study_id}
         # Without a timeout a stalled connection is indistinguishable from a model
@@ -196,6 +202,25 @@ class Loop:
         else:
             self.inform(text)
 
+    def post(self, text: str) -> None:
+        """`tell`, from a thread that is not this loop's.
+
+        The workspace coming up, and the facts about it that the briefing could not
+        wait for, are learned on a background thread while the model may be mid-turn
+        on this one. `tell` straight from there would race the request being built;
+        this only queues, and `_drain_posted` hands the fact over at the next point
+        where this thread would have said it itself -- before a request goes out, or
+        between one tool call and the next. Nothing is lost if no turn is running:
+        the note is the first thing the next turn's request carries."""
+        with self._posted_lock:
+            self._posted.append(text)
+
+    def _drain_posted(self) -> None:
+        with self._posted_lock:
+            posted, self._posted = self._posted, []
+        for text in posted:
+            self.tell(text)
+
     def _take_notes(self) -> list[dict[str, Any]]:
         notes = [{"type": "text", "text": _as_operator_text(note)} for note in self._notes]
         self._notes = []
@@ -255,6 +280,10 @@ class Loop:
         while True:
             step += 1
             started = time.monotonic()
+            # Anything another thread has learned since the last request rides in
+            # this one: a `system` turn here, after the user's message or the tool
+            # results, is where `inform` would have put it.
+            self._drain_posted()
             response = self._send()
 
             if response.stop_reason == "refusal":
@@ -317,7 +346,9 @@ class Loop:
 
     def _gather(self, into: list[str]) -> None:
         """Drain what has been typed (`interject`): commands are answered on the spot,
-        and words for the model are kept in `into` to ride with this batch's results."""
+        and words for the model are kept in `into` to ride with this batch's results.
+        What other threads posted meanwhile rides with them too (`_notes`)."""
+        self._drain_posted()
         said = self.interject() if self.interject else None
         if said:
             into.append(said)

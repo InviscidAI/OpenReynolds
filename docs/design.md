@@ -112,6 +112,8 @@ class Backend(Protocol):
 
 Instance acquisition: the CLI creates (or reuses, `--instance`) an instance at session start; lazy-start on a stopped instance is the backend's problem, invisible above the protocol.
 
+The session does not wait for the instance to be up. `hosted.reserve` settles which instance in a fraction of a second and hands back a starter; the start runs on its own thread, and a `PendingBackend` (`backend/pending.py`, transport-free) stands in for the workspace until it is here, so the header goes out, the model is briefed and the person can start talking while the machine boots. Every tool call waits for the real backend the first time something needs it (a `background=True` exec answers `idle` at once, as the protocol says it must). The briefing says the workspace is coming and roughly when (`OPENREYNOLDS_WORKSPACE_ETA_S`), and that the case itself needs no machine to talk about; a note follows into the thread when it is up, with the directory listing and core count the briefing could not wait for. `acquire` remains as `reserve` plus the wait, for the read-only commands.
+
 ---
 
 ## 4. Tool surface (deliberately few)

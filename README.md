@@ -412,6 +412,7 @@ three cases exit code `1` alone cannot tell apart. In between:
 | `type` | What it says |
 | --- | --- |
 | `workspace` | The study's own directory on the instance. The second object of every session. |
+| `workspace_ready` | The workspace is up and set up, so tool calls run at once from here: `instance_id` and `seconds` since the session began. `session_start` names the instance while it may still be coming up; until this arrives a tool call waits for it rather than failing, and the model has been told so. |
 | `thinking_begin` | The model started thinking; `thinking` carries what it thought. |
 | `text` / `thinking` | Model output as it arrives, coalesced to a line rather than a token. |
 | `message` | The whole assistant message once the turn ends, `text` and `thinking` in full. |
@@ -454,6 +455,7 @@ containers want:
 | `FOAMD_URL` / `FOAMD_API_KEY` | The workspace service and this machine's key. |
 | `OPENREYNOLDS_MIRROR_INTERVAL_S` | How often files come home. `0` turns it off. |
 | `OPENREYNOLDS_NARRATE_EVERY_S` | How often a long run wakes the model. `0` turns it off. |
+| `OPENREYNOLDS_WORKSPACE_ETA_S` | How long a workspace usually takes to come up (default 30). A session starts talking before its workspace is up; this is the "usually about N seconds" the model is told while it waits. |
 | `OPENREYNOLDS_CAPTURE` | `0` sends nothing to the platform. |
 | `OPENREYNOLDS_TRACE` | A file to append cost events to: one JSON object per turn, tool call and mirror cycle, with the token counts split apart rather than summed. Unset writes nothing. |
 
@@ -474,7 +476,7 @@ or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
 | `mesher/` | The agent behind the `mesh` tool: `brief.py` is what it is told, `agent.py` runs it one fenced `bash` block at a time on the instance that already has gmsh and OpenFOAM, and `check.py` decides whether it is finished. Geometry and meshing used to be a stack of generators and a spec language here; this replaced all of it on 2026-09-07. |
 | `watch.py` | Job polling, wake facts, progress, narration. |
 | `mirror.py` / `store.py` | Files home, and the local `./studies/<id>/` record. |
-| `backend/` | The `Backend` protocol. `hosted.py` is the only module that knows the service exists. |
+| `backend/` | The `Backend` protocol. `hosted.py` is the only module that knows the service exists; `pending.py` stands in for a workspace that is still coming up, so a session talks before its machine is there. |
 | `llm/` | Provider adapters: Messages API, Chat Completions, and the preset table. |
 | `tui.py` / `view.py` | The interface, behind a presentation-only `View` seam. |
 | `toolbox/` | The optional scripts and the field notes. |

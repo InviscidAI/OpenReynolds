@@ -127,6 +127,81 @@ class FakeBackend(Backend):
         pass
 
 
+class ReadyStarter:
+    """Stands in for `hosted.Starter`: a workspace that is up the moment it is asked.
+
+    `reserve` hands one back; the session kicks it and `_bring_up` collects the
+    backend from `result()`. With `error` set, the start fails the way a start against
+    a service that is down fails -- with a `BackendError` -- once anything asks.
+    `hold` is an event the start waits on, for a test that needs the workspace to be
+    still coming up while it looks."""
+
+    def __init__(self, backend, instance_id="iid-1", *, instances_held=0,
+                 listed_as_running=False, error=None, hold=None):
+        self.backend = backend
+        self.instance_id = instance_id
+        self.instances_held = instances_held
+        self.listed_as_running = listed_as_running
+        self.error = error
+        self.hold = hold
+        self.started = False
+        self.cancelled = False
+
+    def start(self):
+        self.started = True
+
+    def cancel(self):
+        if self.started:
+            return False
+        self.cancelled = True
+        return True
+
+    @property
+    def done(self):
+        return self.hold is None or self.hold.is_set()
+
+    @property
+    def elapsed_s(self):
+        return 0.0
+
+    def result(self, timeout=None):
+        self.start()
+        if self.hold is not None:
+            self.hold.wait(timeout)
+        if self.error is not None:
+            raise self.error
+        return self.backend
+
+    def pending(self, **kwargs):
+        from openreynolds.backend.pending import PendingBackend
+
+        return PendingBackend(
+            self.instance_id, instances_held=self.instances_held,
+            was_already_running=self.listed_as_running, **kwargs,
+        )
+
+
+def reserved(backend, instance_id="iid-1", **kwargs):
+    """`monkeypatch.setattr(cli.hosted, "reserve", reserved(backend))`: the seam a
+    session gets its workspace through, answered from memory. Returns what `reserve`
+    returns -- no client, the instance id, a starter that resolves to `backend`."""
+
+    def reserve(url, key, iid=None):
+        return None, instance_id, ReadyStarter(backend, instance_id, **kwargs)
+
+    return reserve
+
+
+def refusing_to_reserve(error=None):
+    """A `reserve` against a service that is not there, for the tests that turn on
+    what a session settles before it has a workspace."""
+
+    def reserve(url, key, iid=None):
+        raise error or BackendError("no service in this test")
+
+    return reserve
+
+
 @pytest.fixture(autouse=True)
 def drawing_starts_allowed():
     """`--output-format stream-json` gives up drawing inline images for the life of
