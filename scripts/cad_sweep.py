@@ -90,6 +90,38 @@ def sweep_id() -> str:
     return new_study_id()
 
 
+def _asked(names: list[str]) -> dict[str, str]:
+    """A digest of what each case actually asked, so pairing can be about the question.
+
+    A sweep records `git_sha`, which says what the *desk* was, and nothing that says what
+    the *corpus* was. Two sweeps then pair on the case's name, and a case whose request
+    was rewritten between them is compared against a different question with no sign of
+    it in the table.
+
+    That is not hypothetical: `core-shipped-20260919-124001-f33d` paired T4, T5 and T10
+    against `core+cad_export-20260917-022129-dd05` after all three had been reposed --
+    T4 and T10 rewritten when that sweep's vet withdrew its own findings against them,
+    T5 moved to external flow. None changed verdict, so the headline survived; the next
+    one might not.
+
+    The `## Request` text and the named properties, because those are the two sections a
+    run is graded against. `## What this catches` is provenance and is deliberately not
+    in here -- a case whose notes were edited is still the same question.
+    """
+    import hashlib
+
+    from cad_accept import load_prompts
+
+    prompts = load_prompts()
+    out: dict[str, str] = {}
+    for name in names:
+        case = prompts.get(name) or {}
+        material = (str(case.get("request") or "")
+                    + "\x00" + "\x00".join(str(p) for p in (case.get("properties") or [])))
+        out[name] = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+    return out
+
+
 def git_sha() -> str:
     """What the core was when this sweep ran.
 
@@ -171,6 +203,7 @@ def drive(label: str, names: list[str], repeat: int, parallel: int, work: str,
         "sweep_id": identifier, "label": label, "cases": names, "repeat": repeat,
         "model": cfg.mesher_model or cfg.model, "effort": cfg.mesher_effort,
         "git_sha": git_sha(), "noise_fraction": NOISE_FRACTION,
+        "asked": _asked(names),
         "baseline": _resolve_baseline(baseline),
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "runs": [],
     }
@@ -355,11 +388,25 @@ def table(name: str, against: str = "") -> int:
         print("\nWARNING: the model or the effort moved between these sweeps, so the "
               "difference below is not the addition's.")
 
+    # A case whose question changed is not a pairing. Both sweeps have to say what they
+    # asked for this to be answerable -- a baseline written before `asked` existed says
+    # nothing, and silence is not a claim that nothing moved, so it pairs as it always
+    # did and the report carries the caveat by hand.
+    now_asked = manifest.get("asked") or {}
+    was_asked = baseline_manifest.get("asked") or {}
+    reposed = sorted(key for key in set(before) & set(clean)
+                     if now_asked.get(key) and was_asked.get(key)
+                     and now_asked[key] != was_asked[key])
+    if now_asked and not was_asked:
+        print("\nNOTE: the baseline predates `asked`, so a case whose request was "
+              "rewritten between these two sweeps cannot be detected here. Check by "
+              f"hand against core {baseline_manifest.get('git_sha', '?')}.")
+
     noise = float(manifest.get("noise_fraction") or NOISE_FRACTION)
     print(f"\n| case | cells before | after | delta | passed before -> after |")
     print("|---|---|---|---|---|")
     better = worse = 0
-    for key in sorted(set(before) & set(clean)):
+    for key in sorted((set(before) & set(clean)) - set(reposed)):
         was, now = before[key], clean[key]
         delta = int(now.get("n_steps", 0)) - int(was.get("n_steps", 0))
         # Against what the case used *before*, so the band is the case's own scale and
@@ -380,6 +427,10 @@ def table(name: str, against: str = "") -> int:
     if only_here or only_there:
         print(f"\nunpaired, excluded from the test: "
               f"{', '.join(sorted(only_here + only_there))}")
+    if reposed:
+        print(f"\nreposed since the baseline, excluded from the test: "
+              f"{', '.join(reposed)} -- the request or its properties changed, so these "
+              "would be two answers to two different questions.")
 
     print(f"\n{better} cases used fewer cells, {worse} more, "
           f"the rest within {noise:.0%} of their own cell count.")

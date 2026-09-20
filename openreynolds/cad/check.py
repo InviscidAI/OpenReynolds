@@ -77,6 +77,11 @@ LOOK = f"{TOOLBOX}/mesh_look.py"
 CAD_AUDIT = f"{TOOLBOX}/cad_audit.py"
 DOMAIN_PROBE = f"{TOOLBOX}/domain_probe.py"
 SURFACE_REL = "constant/triSurface"
+SURFACE_CANDIDATES = ("constant/triSurface", "constant/geometry", ".")
+"""Where a patch set may be, in the order `buildup/probes.patch_set` tries them.
+
+Held identical to the probes' list by a test. The two reading different directories is
+how the supervisor measured a surface the desk was told did not exist."""
 MANIFEST_REL = f"{SURFACE_REL}/patches.json"
 RENDER_REL = "renders/mesh_look.png"
 JSON_REL = "renders/mesh_look.json"
@@ -366,9 +371,45 @@ def _region_command(region: str, toolbox: str = TOOLBOX) -> str:
 
 
 def _cad_command(script_path: str) -> str:
-    """One toolbox audit, run only where there is a patch set for it to read."""
-    return (f"if [ -f {MANIFEST_REL} ]; then python3 {script_path} {SURFACE_REL} --json; "
-            f"else echo 'no patch set'; fi")
+    """One toolbox audit, over the exported surface.
+
+    **The `patches.json` guard that used to wrap this is gone.** It was a shell `if`
+    around the whole invocation, so a missing manifest silenced not one check but every
+    finding both scripts produce -- closure, normals, degenerate, self-intersection,
+    scale, manifold, coverage, the seed point, the widths. On
+    `core-shipped-20260919-124001-f33d` that was five of twenty-six cases reporting "no
+    patch set", while the supervisor's own probes read 4,368 triangles out of the same
+    directory and found them clean.
+
+    The asymmetry was never about the geometry. `cad_audit.derived_manifest` reads a
+    directory as its own patch set -- one STL per patch, its stem the name -- and
+    `buildup/probes.py` has always used it by importing the module. Running the same file
+    as a script got `read_manifest`'s refusal, because the derived path had no
+    command-line way in. `--derive` is that way in, so both callers now see the same
+    surface.
+
+    **And it looks where the patch set actually is.** `SURFACE_REL` was hardcoded here
+    while `buildup/probes.patch_set` has always tried three candidates in turn, so a desk
+    that meshed through gmsh and left its patches in the case root was read by the
+    supervisor and invisible to the gate. T12 of that sweep is exactly this: one
+    `fluid_preview.stl` at the case root, 4,368 triangles, measured by the probes and
+    reported to the desk as "no patch set". Two of the five blind cases were the manifest
+    and the rest were the directory.
+
+    The search is done in shell rather than here because the case is on the backend and
+    may not be a path this process can glob.
+
+    What stays honest: a derived manifest cannot say whether a file on disk was one
+    somebody meant to export, so `cad_audit`'s `manifest` finding reports that it was
+    derived rather than implying a declaration nobody made. And when no candidate holds
+    an STL the script is still run, on the conventional path, so it refuses in its own
+    words -- which arrives as `skipped` and is recorded `n/a`, never as a pass.
+    """
+    candidates = " ".join(shlex.quote(rel) for rel in SURFACE_CANDIDATES)
+    return (f"d={shlex.quote(SURFACE_REL)}; "
+            f"for c in {candidates}; do "
+            f'if ls "$c"/*.stl >/dev/null 2>&1; then d="$c"; break; fi; done; '
+            f'python3 {script_path} "$d" --derive --json')
 
 
 def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",

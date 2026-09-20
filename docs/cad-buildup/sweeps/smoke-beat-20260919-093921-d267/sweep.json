@@ -80,5 +80,10 @@
       ]
     }
   ],
-  "ended_at": "2026-09-19T09:57:27"
+  "ended_at": "2026-09-19T09:57:27",
+  "asked": {
+    "T2": "652dd90bc0e14345",
+    "T24": "bc1b908a3d0648cb"
+  },
+  "asked_backfilled": true
 }

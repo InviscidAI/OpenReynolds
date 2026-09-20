@@ -1,0 +1,50 @@
+{
+  "sweep_id": "20260920-020517-9f20",
+  "label": "core-shipped-t11",
+  "cases": [
+    "T11"
+  ],
+  "repeat": 1,
+  "model": "gpt-5.6-sol",
+  "effort": "medium",
+  "git_sha": "aa68f49",
+  "noise_fraction": 0.3,
+  "baseline": "",
+  "started_at": "2026-09-20T02:05:17",
+  "runs": [
+    {
+      "case": "T11",
+      "run_dir": "/home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/core-shipped-t11-20260920-020517-9f20/runs/T11",
+      "aborted": false,
+      "run_id": "20260920-020517-ebdc",
+      "arm": "core",
+      "model": "gpt-5.6-sol",
+      "workspace": "/home/qiuzi/.openreynolds-buildup/work/T11-20260920-020517-ebdc",
+      "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T11-20260920-020517-ebdc/t11",
+      "started_at": "2026-09-20T02:05:19",
+      "ended_at": "2026-09-20T02:17:17",
+      "seconds": 714.3,
+      "n_turns": 24,
+      "n_steps": 22,
+      "first_mesh_step": 12,
+      "mesh_exists": true,
+      "checkmesh_ok": true,
+      "usd": 0.5117,
+      "stopped": "done",
+      "expects": "done",
+      "passed": true,
+      "why": "",
+      "contaminated": false,
+      "completed": true,
+      "measured": [
+        "location_in_mesh",
+        "union_closure",
+        "normals",
+        "coverage",
+        "scale",
+        "self_intersection"
+      ]
+    }
+  ],
+  "ended_at": "2026-09-20T02:17:17"
+}

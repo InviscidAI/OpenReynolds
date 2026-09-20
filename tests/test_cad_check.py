@@ -1051,3 +1051,75 @@ def test_staging_that_fails_says_so_rather_than_reporting_a_clean_surface(tmp_pa
     states = gate.evaluate(findings, [])
     assert [s.state for s in states] == [gate.NOT_RUN, gate.NOT_RUN]
     assert all("could not be staged" in s.concern for s in states)
+
+
+def test_the_gate_and_the_probes_look_in_the_same_places():
+    """They did not, and the supervisor measured a surface the desk was told was absent.
+
+    `buildup/probes.patch_set` has always tried three candidates; `check._cad_command`
+    hardcoded the first. T12 of `core-shipped-20260919-124001-f33d` left one
+    `fluid_preview.stl` at the case root -- 4,368 triangles, clean on every probe -- and
+    its declare recorded "no patch set".
+    """
+    from openreynolds.buildup import probes
+    from openreynolds.cad.check import SURFACE_CANDIDATES
+
+    assert SURFACE_CANDIDATES == probes.PATCH_SET_CANDIDATES
+
+
+def test_the_audit_command_carries_no_manifest_guard():
+    """The guard silenced every finding, not one.
+
+    It was `if [ -f patches.json ]` around the whole invocation, so a missing manifest
+    took closure, normals, degenerate, self-intersection, scale, manifold, coverage, the
+    seed point and the widths with it. Five of twenty-six cases in one sweep.
+    """
+    from openreynolds.cad.check import _cad_command
+
+    command = _cad_command("/x/cad_audit.py")
+    assert "patches.json" not in command, "the manifest is not a precondition any more"
+    assert "--derive" in command, "the script needs telling it may read the directory"
+    assert "no patch set" not in command, "the shell no longer answers for the script"
+    for rel in ("constant/triSurface", "constant/geometry"):
+        assert rel in command, f"{rel} is not searched"
+
+
+@pytest.mark.skipif(not (TOOLBOX / "cad_audit.py").is_file(), reason="no toolbox here")
+def test_cad_audit_derives_a_patch_set_when_no_manifest_declares_one(tmp_path):
+    """`derived_manifest` existed and only an importer could reach it.
+
+    `buildup/probes.py` imports this module and passes a derived manifest in. Anything
+    running the same file as a script got `read_manifest`'s refusal, which is why one
+    caller could see a surface and the other could not. `--derive` is the way in.
+    """
+    import subprocess
+    import sys
+
+    surface = tmp_path / "constant" / "triSurface"
+    surface.mkdir(parents=True)
+    # One closed tetrahedron, written by hand: enough for the audit to have an opinion.
+    pts = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]
+    faces = [(0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)]
+    body = ["solid part"]
+    for a, b, c in faces:
+        body.append(" facet normal 0 0 0\n  outer loop")
+        for i in (a, b, c):
+            body.append("   vertex {} {} {}".format(*pts[i]))
+        body.append("  endloop\n endfacet")
+    body.append("endsolid part")
+    (surface / "part.stl").write_text("\n".join(body), encoding="utf-8")
+    assert not (surface / "patches.json").exists()
+
+    out = subprocess.run(
+        [sys.executable, str(TOOLBOX / "cad_audit.py"), "constant/triSurface",
+         "--derive", "--json"], cwd=tmp_path, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    report = json.loads(out.stdout)
+    checks = {f["check"] for f in report["findings"]}
+    assert {"closure", "normals", "coverage"} <= checks, report
+
+    # And without it, the same directory is refused -- which is what the gate was seeing.
+    bare = subprocess.run(
+        [sys.executable, str(TOOLBOX / "cad_audit.py"), "constant/triSurface", "--json"],
+        cwd=tmp_path, capture_output=True, text=True)
+    assert bare.returncode == 2 and "no patches.json" in bare.stderr
