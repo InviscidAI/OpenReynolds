@@ -42,7 +42,7 @@ from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
 from . import trace
-from .tools import ToolContext
+from .tools import CORES_PROBE, ToolContext
 from .view import ConsoleView, View, plain_console
 from .jsonview import JsonReader, JsonView
 from .watch import NOTHING, LineReader, NullReader, situation, watch
@@ -1747,12 +1747,29 @@ def _machine_note(backend: Backend) -> str:
     stays.
     """
     try:
-        result = backend.exec("nproc", timeout_s=30)
-        cores = int((result.output or "").strip().split()[0])
+        result = backend.exec(CORES_PROBE, timeout_s=30)
+        fields = (result.output or "").split()
+        cores = int(fields[0])
+        physical = int(fields[1]) if len(fields) > 1 and fields[1].isdigit() else 0
     except Exception:  # noqa: BLE001 - not knowing is not a failed session
         return ""
     if cores <= 1:
         return ""
+    if physical and physical < cores:
+        # Two threads a core: the number that matters to a solve is the smaller one.
+        # Told "8 cores", a live agent decomposed for 6 and Open MPI refused the run
+        # (its default slot count is the physical cores); tools._machine_line has the
+        # measurement.
+        return (
+            f"This machine has {physical} physical cores ({cores} hardware threads). A "
+            f"solver run as one process uses one core, and the session is billed for "
+            f"the whole machine either way; `decomposePar` and `mpirun -np N` spread it "
+            f"over N, and mpirun accepts up to {physical} ranks as it is -- more needs "
+            f"--use-hwthread-cpus, and two ranks on one core share its memory "
+            f"bandwidth, which is what a CFD solve is bound by. What the extra ranks "
+            f"return falls away as the cells each one holds get small, so the N worth "
+            f"using depends on the mesh."
+        )
     return (
         f"This machine has {cores} cores. A solver run as one process uses one of "
         f"them, and the session is billed for all {cores} either way; `decomposePar` "
@@ -1897,7 +1914,7 @@ def _situation_brief(
     else:
         lines.append(f"study {store.session.study_id} on instance {store.session.instance_id}.")
     if starting_eta_s is not None:
-        lines.append(_starting_note(starting_eta_s, interactive))
+        lines.append(_starting_note(starting_eta_s, interactive, mode))
     else:
         # The workspace listing and the core count are two independent questions to
         # the instance, and each one is a full round trip through the service to a
@@ -1949,7 +1966,7 @@ def _workspace_facts(
     return [line for line in (note, machine) if line]
 
 
-def _starting_note(eta_s: float, interactive: bool) -> str:
+def _starting_note(eta_s: float, interactive: bool, mode: str = "auto") -> str:
     """The workspace is still coming up: said as facts, with what the time is good
     for, in the briefing's own voice (`tests/test_briefing.py` keeps it there).
 
@@ -1960,6 +1977,13 @@ def _starting_note(eta_s: float, interactive: bool) -> str:
     when, that its tools wait rather than fail, and that nothing about the case
     itself needs the machine -- which is the model's cue, not the harness's
     instruction.
+
+    What the minute is good for depends on the mode. With someone who wants to be
+    consulted it is the time to ask about the case. In full auto it is the time to
+    say what is being assumed and to draft the case files: the first version of this
+    note listed the things "the person can answer while the machine comes up" in every
+    mode, and a person who had chosen full auto got a numbered list of questions for
+    an answer (`modes.AUTO_NO_QUESTIONS` has the measurement).
     """
     about = f"usually about {eta_s:.0f} seconds" if eta_s > 0 else "usually well under a minute"
     lines = [
@@ -1967,7 +1991,17 @@ def _starting_note(eta_s: float, interactive: bool) -> str:
         "for it rather than failing, so a call made now answers once the workspace is "
         "up and not before; a note in this thread says when it is.",
     ]
-    if interactive:
+    if interactive and mode == modes.AUTO:
+        lines.append(
+            "Nothing about the case itself needs the workspace. The person chose full "
+            "auto, so this minute is for telling them, in a few lines, what you take "
+            "the case to be -- the geometry and its dimensions, the physics and the "
+            "flow regime, the boundary conditions, which result matters -- as the "
+            "assumptions you will proceed on unless they say otherwise, and for "
+            "drafting the case files that do not need the machine. Not for a list of "
+            "questions. A directory listing and the core count follow with the note."
+        )
+    elif interactive:
         lines.append(
             "Nothing about the case itself needs the workspace: what is being "
             "simulated, the geometry and its dimensions, the physics and the flow "

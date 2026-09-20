@@ -326,6 +326,81 @@ def test_job_start_records_it_locally(ctx, backend, store):
     assert backend.started[0]["kill_on"] == ["FOAM FATAL"]
 
 
+RESTARTING_DICT = b"""\
+FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application     pimpleFoam;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         1.3;
+deltaT          1e-4;
+writeControl    adjustableRunTime;
+writeInterval   0.0025;
+"""
+
+SOLVE = "cd /work/s/run && mpirun -np 4 pimpleFoam -parallel > log.pimpleFoam 2>&1"
+LISTING = ("ls -d /work/s/run/[0-9]* /work/s/run/processor*/[0-9]* "
+           "/work/s/run/processors*/[0-9]* 2>/dev/null")
+
+
+def _with_times(backend, dict_text=RESTARTING_DICT, times=("0", "0.2", "0.4", "0.6", "0.8")):
+    backend.files["/work/s/run/system/controlDict"] = dict_text
+    backend.exec_results[LISTING] = ExecResult(
+        0, "\n".join(f"/work/s/run/processors4/{t}" for t in times) + "\n", False, None)
+
+
+def test_a_solver_relaunch_that_would_overwrite_a_transient_is_refused(ctx, backend, store):
+    """The loss this guards, measured: 22 minutes of a transient rewritten from t=0
+    because the controlDict said startFrom startTime and the command was launched
+    again in the same directory (study 20260920-161908-c7ef)."""
+    _with_times(backend)
+    content, is_error = dispatch(ctx, "job_start", {"cmd": SOLVE})
+    assert not backend.started, "nothing was launched"
+    assert content.startswith("not started:")
+    assert "4 written time step(s), from 0.2 to 0.8" in content, "the 0 directory is the start, not a write"
+    assert "startFrom latestTime" in content and "overwrite=true" in content
+
+
+def test_start_from_latest_time_carries_a_transient_on(ctx, backend):
+    _with_times(backend, RESTARTING_DICT.replace(b"startFrom       startTime;", b"startFrom       latestTime;"))
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE})
+    assert backend.started and content.startswith("started job")
+    assert "startFrom latestTime" in content
+
+
+def test_overwrite_true_is_the_deliberate_restart(ctx, backend):
+    _with_times(backend)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE, "overwrite": True})
+    assert backend.started and content.startswith("started job")
+
+
+def test_a_first_launch_and_a_mesher_are_never_guarded(ctx, backend):
+    backend.files["/work/s/run/system/controlDict"] = RESTARTING_DICT
+    backend.exec_results[LISTING] = ExecResult(0, "/work/s/run/0\n", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE})
+    assert content.startswith("started job"), "only the initial time exists: not a restart"
+    _with_times(backend)
+    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && blockMesh > log.blockMesh 2>&1"})
+    assert content.startswith("started job"), "a mesher writes no time steps"
+
+
+def test_purge_write_is_said_at_launch(ctx, backend):
+    backend.files["/work/s/run/system/controlDict"] = RESTARTING_DICT + b"purgeWrite      2;\n"
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE})
+    assert "purgeWrite 2 (only the last 2 write times are kept on disk)" in content
+
+
+def test_the_launch_note_tells_threads_from_cores(ctx, backend):
+    """Told "8 cores", a live agent decomposed for 6 and Open MPI refused the run: its
+    slots are the physical cores. Both numbers are said, and the one mpirun accepts."""
+    backend.files["/work/s/run/system/controlDict"] = RESTARTING_DICT
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE.replace("-np 4", "-np 6")})
+    assert "8 hardware threads = 4 physical cores" in content
+    assert "up to 4 ranks" in content and "6 ranks is more than the 4 cores" in content
+
+
 def test_job_check_advances_the_offset(ctx, backend, store):
     dispatch(ctx, "job_start", {"cmd": "simpleFoam"})
     backend.logs["job-1"] = b"line one\nline two\n"

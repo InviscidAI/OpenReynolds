@@ -18,7 +18,7 @@ from openreynolds.backend.base import (
     Stat,
 )
 from openreynolds.store import Store
-from openreynolds.tools import ToolContext
+from openreynolds.tools import CORES_PROBE, ToolContext
 from openreynolds.view import View
 
 
@@ -34,6 +34,9 @@ class FakeBackend(Backend):
         self.exec_results: dict[str, ExecResult] = {
             # So the briefing's imperative guards see the line that depends on it.
             "nproc": ExecResult(0, "8\n", False, None),
+            # The probe the machine note and the launch note ask: threads, then physical
+            # cores. Eight and four is a c7i.2xlarge, the production default shape.
+            CORES_PROBE: ExecResult(0, "8\n4\n", False, None),
         }
         self.execs: list[str] = []
         self.exec_background: list[bool] = []
