@@ -1,18 +1,20 @@
-"""The tool surface: eight tools, thin handlers, everything delegating to `Backend`.
+"""The tool surface: ten tools, thin handlers, everything delegating to `Backend`.
 
 There is no `run_gate`, no `amend_spec`, no `ask_user` — asking is just talking. Nothing
 here inspects what the model is doing or refuses it on policy grounds. The handlers cap
 output and report facts; that is the whole job.
 
-A ninth, `checkpoint`, exists only when the person chose structured mode (`modes.py`):
-it puts a summary in front of them and waits for their answer. It is the person asking
-to be consulted, not the harness deciding to consult them, so in full auto it is not in
-the list at all.
+An eleventh, `checkpoint`, exists only when the person chose structured mode
+(`modes.py`): it puts a summary in front of them and waits for their answer. It is the
+person asking to be consulted, not the harness deciding to consult them, so in full
+auto it is not in the list at all.
 
-The eighth, `mesh`, delegates to the mesh desk (`mesher/`) rather than straight to the
-backend: it is the one tool whose work is a model loop of its own — an agent with one
-bash block a step, on the same workspace — and this module still knows nothing about
-how that loop reaches its model.
+Three of the ten are the mesh desk's (`mesher/`): `mesh` starts a second agent -- one
+bash block a step, on the same workspace -- on a thread of its own and returns at once,
+`mesh_note` passes it a remark while it works, and `mesh_wait` holds for its result. The
+result otherwise arrives on its own, through the same watch loop that wakes the model
+when a job ends (`watch.py`). This module still knows nothing about how that agent
+reaches its model.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from typing import Any, Callable
 
 from . import images
 from . import trace
+from .mesher.background import DeskRun, mesh_text
 from .progress import case_dir_from_cmd, parse_control_dict, phase_from_cmd
 from .backend.base import Backend, BackendError, EXEC_MAX_TIMEOUT_S, JobStatus, WORKSPACE_ROOT
 from .store import Store
@@ -33,10 +36,14 @@ SLOW_COMMAND_S = 10.0
 """Past this, how long a command took is worth saying."""
 
 JOB_WAIT_MAX_S = 300
-"""Longest one `job_check` call will hold its answer. Waiting again is free."""
+"""Longest one `job_check` or `mesh_wait` call will hold its answer. Waiting again is free."""
 
 JOB_WAIT_POLL_S = 5.0
 """How often a waiting `job_check` looks at the job."""
+
+DESK_WAIT_POLL_S = 1.0
+"""How often a waiting `mesh_wait` looks for typed input. The desk's own end is an
+event and needs no polling; this is the latency at which a person is heard."""
 
 READ_TIMEOUT_S = 60.0
 """How long `read_file` waits on the workspace for one file before saying so.
@@ -110,8 +117,16 @@ class ToolContext:
     must not fail the read -- it is a nudge, and the picture matters more."""
     mesher: Any = None
     """The mesh desk (`mesher.Mesher`), when there is a model key to run one with.
-    None means the `mesh` tool answers with why not, and meshing is the caller's own
+    None means the three mesh tools are not offered, and meshing is the caller's own
     work like any other command."""
+    desk: Any = None
+    """The desk's current background run (`mesher.DeskRun`), or None.
+
+    One at a time: a `mesh` call while this is live starts nothing and answers with
+    where the run has got to. Cleared when the result has been handed over -- by
+    `mesh_wait`, or by the session loop when the run's end woke the model
+    (`take_desk`). Also recorded on the session (`store.session.desk`) so a resume
+    can say the run was cut off with the process."""
     on_tokens: Callable[[dict], None] | None = None
     """Called with the model usage a tool spent on the session's behalf -- the mesh
     desk's steps -- so it lands in the same totals as the main loop's."""
@@ -132,12 +147,12 @@ class ToolContext:
 def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     """The tools this session can actually serve.
 
-    Only `mesh` is conditional: without a mesh desk behind it the tool can do nothing
-    but explain that, and a tool in the list that answers "not available" costs the
-    model a call to find out. Taking it out of the list is also what makes the
-    question answerable -- the same prompt run with the desk and without it, which is
-    the only honest way to settle whether a slow natural-language sub-agent beats the
-    bash the caller already has.
+    Only the mesh desk's three are conditional: without a desk behind them the tools
+    can do nothing but explain that, and a tool in the list that answers "not
+    available" costs the model a call to find out. Taking them out of the list is also
+    what makes the question answerable -- the same prompt run with the desk and without
+    it, which is the only honest way to settle whether a slow natural-language
+    sub-agent beats the bash the caller already has.
 
     `checkpoint` is the other: it is offered only in structured mode. A `/mode` switch
     into or out of structured therefore changes the tool list once, which rewrites the
@@ -145,7 +160,9 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     is paid only when they make it. Sorted by name either way, so the list for a given
     mode is always the same bytes.
     """
-    offered = TOOLS if ctx.mesher is not None else [tool for tool in TOOLS if tool["name"] != "mesh"]
+    offered = TOOLS if ctx.mesher is not None else [
+        tool for tool in TOOLS if tool["name"] not in DESK_TOOLS
+    ]
     if ctx.mode != "structured":
         return offered
     return sorted([*offered, CHECKPOINT_TOOL], key=lambda tool: tool["name"])
@@ -322,15 +339,21 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "mesh",
         "description": (
-            "Describe a geometry in words and get back an OpenFOAM mesh of it on the "
-            "workspace. A separate agent builds it on this same machine — it chooses "
-            "the mesher (gmsh body-fitted, blockMesh, snappyHexMesh, cfMesh), writes "
-            "the geometry as a script, renders the mesh and measures it, and revises "
-            "until checkMesh passes and the shape measures up to what was asked for. "
-            "You get the picture, the patch table with each patch's area and normal, "
-            "checkMesh's verdict, and where the case is. It is a MESH only: no fields, "
-            "no boundary conditions, no solver settings and no solve — those stay with "
-            "you. Takes a few minutes."
+            "Describe a geometry in words and have an OpenFOAM mesh of it built on the "
+            "workspace. A separate agent builds it on this same machine, in the "
+            "background — it chooses the mesher (gmsh body-fitted, blockMesh, "
+            "snappyHexMesh, cfMesh), writes the geometry as a script, renders the mesh "
+            "and measures it, and revises until checkMesh passes and the shape measures "
+            "up to what was asked for. This call returns at once with where the desk is "
+            "working; the conversation carries on, and the result arrives here as a "
+            "message when the desk finishes or gets stuck (typically 2–8 minutes): the "
+            "picture's path, the patch table with each patch's area and normal, "
+            "checkMesh's verdict, and where the case is. mesh_note passes the person's "
+            "remarks about the geometry to the desk while it works; mesh_wait holds for "
+            "the result when there is nothing else to do. One desk runs at a time. It is "
+            "a MESH only: no fields, no boundary conditions, no solver settings and no "
+            "solve — those stay with you. wait=true runs it in the foreground instead "
+            "and returns the result directly."
         ),
         "input_schema": {
             "type": "object",
@@ -351,8 +374,63 @@ TOOLS: list[dict[str, Any]] = [
                         "Directory name for the case under the study (default 'mesh')."
                     ),
                 },
+                "wait": {
+                    "type": "boolean",
+                    "description": (
+                        "Hold this call until the desk is done and return the result "
+                        "here, as the tool did before it had a background. Default "
+                        "false: the desk runs on its own and the result arrives as a "
+                        "message."
+                    ),
+                },
             },
             "required": ["request"],
+        },
+    },
+    {
+        "name": "mesh_note",
+        "description": (
+            "Pass a remark to the mesh desk while it is building: a change to the "
+            "shape, a correction, a detail the person added. The desk reads it at its "
+            "next command and works to it, and its result says what it heard. Answers "
+            "whether a desk was there to hear it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The remark, in the person's words where it is theirs.",
+                },
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "mesh_wait",
+        "description": (
+            "Hold the answer until the running mesh desk finishes, up to wait_s "
+            f"seconds (at most {JOB_WAIT_MAX_S}), ending early if the user says "
+            "something. When the desk has finished this returns its full result — the "
+            "picture, the patch table, checkMesh's verdict, where the case is — and "
+            "otherwise where it has got to. The result also arrives on its own as a "
+            "message when the desk finishes, so this is for when there is nothing "
+            "else to do meanwhile."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "wait_s": {
+                    "type": "integer",
+                    "description": (
+                        f"Seconds to hold the answer, up to {JOB_WAIT_MAX_S}; default "
+                        f"{JOB_WAIT_MAX_S}. 0 answers at once with where the desk is. "
+                        "The wait is the harness's own and does not count against any "
+                        "command timeout."
+                    ),
+                },
+            },
+            "required": [],
         },
     },
     {
@@ -388,6 +466,9 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 TOOL_NAMES = frozenset(tool["name"] for tool in TOOLS)
+
+DESK_TOOLS = frozenset({"mesh", "mesh_note", "mesh_wait"})
+"""The three that exist only when the mesh desk does (`tools_for`)."""
 
 CHECKPOINT_TOOL: dict[str, Any] = {
     "name": "checkpoint",
@@ -1144,92 +1225,185 @@ def _fetch(ctx: ToolContext, args: dict[str, Any]) -> str:
 
 
 def _mesh(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
-    """The mesh desk's answer as one tool result: the picture first, the words second,
-    so that when the picture is later evicted from the thread the caption still carries
-    the patch table, the verdict and where the case is."""
+    """Start the mesh desk on a thread of its own and say so, at once.
+
+    Measured before this: one `mesh` call held the loop's thread for 402 s and some
+    twenty-five model calls (study 20260920-161908-c7ef), during which the main agent
+    answered nothing and every line the person typed was drained into the desk. The
+    desk's work was fine; the thread it ran on was the problem. Now the call returns
+    with where the desk is working, the conversation carries on, and the finished
+    result reaches the model as a wake (`watch.watch`) or through `mesh_wait`.
+
+    `wait: true` is the old shape, whole: the call holds until the desk is done and
+    the desk hears the session's inbox directly, as it did before there was a
+    background. Kept for callers that want exactly that.
+    """
     if ctx.mesher is None:
         return (
             "the mesh desk is not available in this session (it needs a model key of "
             "its own to run); meshing here is yours to do with bash like anything else"
         )
-    result = ctx.mesher.run(str(args.get("request", "")), case=args.get("case"))
-    if ctx.on_tokens and result.tokens:
+    request = str(args.get("request", ""))
+    case = args.get("case")
+    if args.get("wait"):
+        return mesh_content(_counted(ctx, ctx.mesher.run(request, case=case)))
+
+    running = ctx.desk
+    if running is not None and not running.done.is_set():
+        # One at a time. Its request is not queued behind the running one either --
+        # a queue is a second thing to lose track of, and the caller can call again.
+        return (
+            f"{running.progress_line()}. One mesh desk runs at a time in a session, so "
+            "this call started nothing and its request was not queued. mesh_note passes "
+            "a remark to the running desk (a change of shape included); mesh_wait holds "
+            "for its result, which also arrives here on its own when it finishes."
+        )
+    lead: list[dict[str, Any]] = []
+    if running is not None:
+        # It finished while the caller was working and nothing has handed the result
+        # over yet -- the wake would have, at the end of this turn. Delivered here
+        # first, so the new run does not bury the old one's answer.
+        finished = take_desk(ctx, running)
+        lead = _blocks(
+            f"The mesh desk on `{running.case_rel}` had finished; its result first:",
+            _finished_content(running, finished),
+        )
+    run = DeskRun(ctx.mesher, request, case).start()
+    ctx.desk = run
+    ctx.store.session.desk = run.record()
+    ctx.store.save()
+    started = _desk_started(run)
+    return [*lead, {"type": "text", "text": started}] if lead else started
+
+
+def _desk_started(run: Any) -> str:
+    return (
+        f"the mesh desk has started on `{run.case_rel}`. It works on its own from here, "
+        "and its result arrives in this conversation as a message when it finishes or "
+        "gets stuck (typically 2-8 minutes), so nothing here has to wait for it. "
+        "Meanwhile: talk with the person, write the case files that do not depend on "
+        "the mesh (controlDict, fvSchemes, fvSolution, transportProperties, "
+        f"boundary-condition drafts) in a directory of their own rather than in "
+        f"`{run.case_rel}`, which is the desk's to write into, and do not poll it with "
+        "sleep -- a sleep only holds the turn the result is waiting for. mesh_note "
+        "passes the person's remarks about the geometry to the desk; mesh_wait blocks "
+        "only when you truly have nothing else to do."
+    )
+
+
+def _mesh_note(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """A remark for the running desk. It goes into the desk's own queue, which the
+    desk drains at its next step (`DeskRun.take_remarks`); the session's inbox is
+    never read on the desk's behalf any more."""
+    run = ctx.desk
+    text = str(args.get("text") or "").strip()
+    if run is None:
+        return "no mesh desk is running in this session, so there was nobody to note this for"
+    if run.done.is_set():
+        return (f"the mesh desk on `{run.case_rel}` has already finished, so this note "
+                "reached nobody; mesh_wait returns its result")
+    if not text:
+        return "nothing was noted: the text was empty"
+    run.note(text)
+    return f"noted for the mesh desk on `{run.case_rel}`; it reads it at its next command"
+
+
+def _mesh_wait(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    """Hold for the running desk, the way a `job_check` with `wait_s` holds for a job:
+    bounded, and ending early the moment the person says something."""
+    run = ctx.desk
+    if run is None:
+        return "no mesh desk is running in this session"
+    asked = JOB_WAIT_MAX_S if args.get("wait_s") is None else int(args.get("wait_s") or 0)
+    wait_s = min(max(asked, 0), JOB_WAIT_MAX_S)
+    began = time.monotonic()
+    heard = False
+    while not run.done.is_set():
+        elapsed = time.monotonic() - began
+        if elapsed >= wait_s:
+            break
+        if ctx.on_wait_input is not None and ctx.on_wait_input():
+            heard = True
+            break
+        run.done.wait(min(DESK_WAIT_POLL_S, wait_s - elapsed))
+    notes = []
+    if wait_s > 0:
+        notes.append(f"[waited {time.monotonic() - began:.0f}s]")
+    if asked > JOB_WAIT_MAX_S:
+        notes.append(f"[wait_s={asked} exceeds the {JOB_WAIT_MAX_S}s ceiling for one call; "
+                     "waiting again is free]")
+    if run.done.is_set():
+        result = take_desk(ctx, run)
+        return _blocks(" ".join(notes), _finished_content(run, result))
+    if heard:
+        notes.append("[the user said something, so this answered early]")
+    return " ".join([run.progress_line(), *notes])
+
+
+def _finished_content(run: Any, result: Any) -> ToolResult:
+    """A finished run as a tool result -- or, when the run raised instead of
+    returning, the one honest sentence about it."""
+    if result is None:
+        return (f"the mesh desk on `{run.case_rel}` stopped without a result "
+                f"({run.error or 'no reason recorded'}); whatever it built is on disk "
+                f"under `{run.case_rel}`")
+    return mesh_content(result)
+
+
+def _blocks(lead: str, content: ToolResult) -> ToolResult:
+    """`content` with `lead` in front of its words, whatever shape it came in."""
+    lead = lead.strip()
+    if not lead:
+        return content
+    if isinstance(content, str):
+        return f"{lead}\n{content}"
+    out: list[dict[str, Any]] = []
+    for block in content:
+        if lead and block.get("type") == "text":
+            # The picture stays first; the words after it carry the lead.
+            out.append({**block, "text": f"{lead}\n{block.get('text', '')}"})
+            lead = ""
+        else:
+            out.append(block)
+    if lead:
+        out.append({"type": "text", "text": lead})
+    return out
+
+
+def _counted(ctx: ToolContext, result: Any) -> Any:
+    """The desk's tokens into the session's totals, so `/status` shows what the study
+    actually spent; the result is handed back for the words."""
+    if ctx.on_tokens and result is not None and result.tokens:
         ctx.on_tokens(result.tokens)
+    return result
+
+
+def take_desk(ctx: ToolContext, run: Any) -> Any:
+    """Hand a finished run over, once: its tokens into the session's totals, the
+    registry and the session's record cleared. Returns the run's `MeshResult`, or None
+    when the run raised. Called by `mesh_wait` and by the session loop when the run's
+    end woke the model, whichever gets there first; the second caller finds nothing
+    left to count."""
+    if ctx.desk is run:
+        ctx.desk = None
+    if ctx.store.session.desk:
+        ctx.store.session.desk = {}
+        ctx.store.save()
+    if run.delivered:
+        return run.result
+    run.delivered = True
+    return _counted(ctx, run.result)
+
+
+def mesh_content(result: Any) -> ToolResult:
+    """The mesh desk's answer as one tool result: the picture first, the words second,
+    so that when the picture is later evicted from the thread the caption still carries
+    the patch table, the verdict and where the case is."""
     text = mesh_text(result)
     if result.png:
         return [images.attachment(images.downscale(result.png, "image/png"), "image/png"),
                 {"type": "text", "text": text}]
     return text
-
-
-def mesh_text(result: Any) -> str:
-    """The words of the mesh tool's answer: whether it is a mesh, what the mesh is,
-    what the desk says it built, what is still to do, and how to change it.
-
-    The order is deliberate. A tool result that opened with "case written" was once
-    read as "meshed" and the solve that followed had nothing to solve, so the first
-    line here is always the state of `constant/polyMesh` and never anything else.
-    """
-    check = result.check
-    lines: list[str] = []
-    if result.error and not result.ok:
-        lines.append(f"the mesh desk stopped: {result.error}")
-    elif result.error:
-        lines.append(f"the mesh desk stopped ({result.error}) -- but the mesh it had "
-                     "already built is there and passes:")
-    if result.ok and check is not None:
-        lines.append(f"meshed: {result.case_rel}/constant/polyMesh is an OpenFOAM mesh "
-                     "and checkMesh passes on it.")
-    elif check is not None and check.unreachable:
-        # Nothing is known: the workspace did not answer. Three runs had a finished
-        # mesh described as missing because a container recycled while it was being
-        # checked, and the caller believed it.
-        lines.append(
-            f"the mesh in {result.case_rel} could NOT BE CHECKED -- the workspace did "
-            f"not answer ({result.check.error}). This is not a statement about the "
-            "mesh: a container that recycles mid-run comes back and the Volume under "
-            f"it keeps the files, so look for yourself with `python3 "
-            f"{WORKSPACE_ROOT}/.toolbox/mesh_look.py {result.case_rel} --out look.png` "
-            "before building anything again.")
-    elif check is not None and check.missing:
-        why = "; ".join(check.missing)
-        lines.append(f"NOT a usable mesh yet in {result.case_rel}: {why}")
-    else:
-        lines.append(f"nothing was meshed in {result.case_rel}")
-    if getattr(result, "remarks", None):
-        lines.append("")
-        lines.append("while this ran, the user said this to the mesh desk directly, and it "
-                     "worked to it:")
-        lines.extend(f'  "{remark}"' for remark in result.remarks)
-    if result.summary:
-        lines.append("")
-        lines.append("the mesh desk says:")
-        lines.extend(f"  {line}" for line in result.summary.splitlines())
-    if check is not None and check.lines():
-        lines.append("")
-        lines.extend(check.lines())
-    lines.append("")
-    lines.append(_mesh_accounting(result))
-    lines.append(
-        f"this is a mesh and nothing else: no 0/ fields, no boundary conditions, no "
-        f"solver settings, nothing solved. Look at it again yourself with "
-        f"`python3 {WORKSPACE_ROOT}/.toolbox/mesh_look.py {result.case_rel} --out look.png`, "
-        f"rebuild it after an edit with `cd {result.case_rel} && sh Allmesh`, or call this "
-        "tool again with what to change."
-    )
-    return "\n".join(lines)
-
-
-def _mesh_accounting(result: Any) -> str:
-    steps = len(getattr(result, "steps", []) or [])
-    line = f"{steps} step{'s' if steps != 1 else ''}, {result.seconds / 60:.1f} min"
-    if result.stopped == "steps":
-        line += f"; it ran out of steps before it was finished, so this is where it got to"
-    elif result.stopped == "time":
-        line += "; it ran out of time before it was finished, so this is where it got to"
-    elif result.stopped == "provider":
-        line += "; the model call failed, so this is where it got to"
-    return line
 
 
 def _checkpoint(ctx: ToolContext, args: dict[str, Any]) -> str:
@@ -1267,6 +1441,8 @@ _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "checkpoint": _checkpoint,
     "fetch": _fetch,
     "mesh": _mesh,
+    "mesh_note": _mesh_note,
+    "mesh_wait": _mesh_wait,
     "job_check": _job_check,
     "job_kill": _job_kill,
     "job_start": _job_start,

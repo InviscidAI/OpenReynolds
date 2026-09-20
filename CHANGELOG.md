@@ -6,6 +6,29 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The mesh desk builds in the background.** A `mesh` call used to run the desk on
+  the loop's own thread and hold it for the whole build. Measured in production
+  (study 20260920-161908-c7ef): one call held the agent for 402 s and some twenty-five
+  model calls, during which the main agent answered nothing, every line the person
+  typed was drained into the desk by its `interject` -- the same inbox the loop reads
+  between its own tool calls -- and on the web page each typed line sat marked as
+  pending until the desk consumed it, which read as "sending a message takes minutes".
+  Now `mesh` starts the desk on a daemon thread (`openreynolds/mesher/background.py`,
+  `DeskRun`) and returns at once with where it is working; the conversation carries
+  on; the desk's steps show in the transcript as before; and its end wakes the model
+  through the same watch loop a job's end does (`watch.Wake("desk")`), the person's
+  typed lines still winning. Two tools join it: `mesh_note` passes a remark to the
+  running desk, which reads it at its next command -- the desk's ears are its own now,
+  and the session's inbox is the main agent's again -- and `mesh_wait` holds for the
+  result, bounded like `job_check`'s wait and ending early when the person types. One
+  desk runs at a time; a second `mesh` call answers with where the first has got to.
+  `mesh` with `wait: true` is the old shape, whole. A `-p` run waits for a live desk
+  as it waits for a job. `session.json` records a live run, so a session resumed
+  after its process ended mid-build is told so once, with where the desk's work is.
+  All three tools are absent when the desk is not configured, as `mesh` was.
+
 ## [0.3.1] - 2026-09-17
 
 ### Fixed

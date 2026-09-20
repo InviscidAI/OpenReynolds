@@ -306,7 +306,11 @@ TOOL_HELP: tuple[tuple[str, str], ...] = (
     ("job_kill", "stops a running job"),
     ("fetch", "copies files from the workspace to this machine"),
     ("mesh", "hands a geometry described in words to the mesh desk, a second agent that "
-             "builds and checks the mesh"),
+             "builds and checks the mesh in the background while the conversation goes on"),
+    ("mesh_note", "passes a remark to the mesh desk while it builds; it reads it at its "
+                  "next command"),
+    ("mesh_wait", "holds for the mesh desk's result, up to five minutes a call, and "
+                  "returns early the moment you type"),
     ("checkpoint", "structured mode only: shows you a stage summary and what comes next, "
                    "and waits for your answer"),
 )

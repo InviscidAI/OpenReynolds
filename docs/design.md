@@ -127,7 +127,9 @@ The session does not wait for the instance to be up. `hosted.reserve` settles wh
 | `job_check` | `(job_id, log_offset?)` | status + incremental log tail in one call (cheap to use repeatedly) |
 | `job_kill` | `(job_id)` | |
 | `fetch` | `(paths[])` | pull files to the local mirror `./studies/<id>/`, print local paths, register as platform artifacts |
-| `mesh` | `(request, case?)` | a shape in words handed to the mesh desk (`mesher/`), a second agent that builds and checks the mesh on the same workspace; offered when the desk is configured |
+| `mesh` | `(request, case?, wait?)` | a shape in words handed to the mesh desk (`mesher/`), a second agent that builds and checks the mesh on the same workspace, on a thread of its own: the call returns at once, the conversation carries on, and the finished mesh wakes the model through the same watch loop as a job's end (`mesher/background.py`, `watch.py`); `wait` holds the call instead; offered when the desk is configured |
+| `mesh_note` | `(text)` | a remark for the running desk, read at its next command; the desk no longer reads the session's inbox itself |
+| `mesh_wait` | `(wait_s?)` | hold for the running desk's result, bounded like `job_check`'s wait and ending early when the user types |
 | `checkpoint` | `(stage, summary, next)` | **structured mode only**: puts the summary and what comes next in front of the person and waits for their answer (§1) |
 
 That is the entire surface. No `run_gate`, no `amend_spec`, no `ask_user` tool — asking is just talking; this is a chat. Meshing, checking, rendering, post-processing are all `bash` or `mesh`. `checkpoint` is not an exception to that: it exists only when the person chose to approve a study in stages, and it is their gate, not the harness's. In full auto it is not in the list.

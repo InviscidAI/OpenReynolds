@@ -2,7 +2,8 @@
 
 While a job runs the model can end its turn. This module watches in plain Python and
 wakes it with what happened - a name, an exit code, an end reason, a tail of log. It
-never suggests what to do about any of it.
+never suggests what to do about any of it. The mesh desk's background run is watched
+the same way: its end is a wake carrying the desk's report, and nothing more.
 """
 
 from __future__ import annotations
@@ -142,8 +143,11 @@ class NullReader:
 @dataclass
 class Wake:
     kind: str
-    """job | user | eof | idle"""
+    """job | user | eof | idle | timeout | narrate | desk"""
     text: str = ""
+    run: Any = None
+    """For `desk`: the finished `mesher.DeskRun`, so the caller can hand its result
+    over -- count its tokens, clear the registry (`tools.take_desk`)."""
 
 
 def watch(
@@ -154,20 +158,32 @@ def watch(
     deadline: float | None = None,
     narrate_every_s: float = 0.0,
     progress: Any = None,
+    desk: Any = None,
 ) -> Wake:
-    """Poll live jobs until something happens worth waking for.
+    """Poll live jobs, and the mesh desk's background run, until something happens
+    worth waking for.
 
     `deadline` is a monotonic time past which waiting stops. Nothing is killed by it;
     the jobs are on the instance and outlive this process either way.
 
     With a `progress` tracker the per-poll facts go to the bar through it; without
     one they go to the stage line as a sentence, as they did before there was a bar.
+
+    `desk` is the mesh desk's current run (`mesher.DeskRun`), when there is one. It is
+    waited on like a job: its end is a wake of its own, `Wake("desk", report, run)`,
+    and a session with no live job but a live desk is not idle. Its end is an event
+    rather than a status to poll, so it is checked every tick and the wake follows
+    within a second of the mesh being done. A typed line still wins, as it does over a
+    job's end.
     """
     live = store.live_jobs()
-    if not live:
+    if not live and desk is None:
         return Wake("idle")
 
-    view.watching([job.name or job.job_id[:8] for job in live])
+    names = [job.name or job.job_id[:8] for job in live]
+    if desk is not None:
+        names.append(f"mesh desk: {desk.case_rel}")
+    view.watching(names)
     if getattr(reader, "accepts_input", True):
         # Waiting on a job is still waiting on the user: they can say something at any
         # moment and it will be heard. Without a prompt here the screen looks locked,
@@ -185,12 +201,15 @@ def watch(
             if typed.strip():
                 return Wake("user", typed)
 
+        if desk is not None and desk.done.is_set():
+            return Wake("desk", desk.report(), run=desk)
+
         finished = _collect_finished(backend, store, view)
         if finished:
             return Wake("job", finished)
 
         running = store.live_jobs()
-        if not running:
+        if not running and desk is None:
             return Wake("idle")
 
         # A twenty-minute solve with a static "watching 1 job(s)" on screen reads
@@ -199,13 +218,16 @@ def watch(
         pairs: list = []
         if progress is not None:
             # Not forced: the tracker looks on its own clock, and this poll already
-            # asked every job's status once to see whether it had finished.
+            # asked every job's status once to see whether it had finished. The
+            # desk's steps reach the bar as they happen (`cli._mesh_desk_step`).
             progress.refresh_jobs()
         else:
-            pairs = _running_pairs(backend, running)
+            pairs = _running_pairs(backend, running) if running else []
             if pairs:
                 view.stage(_stage_line(backend, pairs))
-        if narrate_every_s > 0 and time.monotonic() - last_narrated >= narrate_every_s:
+            elif desk is not None:
+                view.stage(desk.progress_line())
+        if running and narrate_every_s > 0 and time.monotonic() - last_narrated >= narrate_every_s:
             pairs = pairs or _running_pairs(backend, running)
             return Wake("narrate", _progress_report(backend, pairs, progress))
 
@@ -219,6 +241,8 @@ def watch(
                     return Wake("eof")
                 if typed.strip():
                     return Wake("user", typed)
+            if desk is not None and desk.done.is_set():
+                return Wake("desk", desk.report(), run=desk)
             time.sleep(TICK_S)
 
 

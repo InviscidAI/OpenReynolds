@@ -2,7 +2,9 @@
 
 Three files and no machinery. `brief.py` is what it is told, `agent.py` is the loop
 that gives it one bash block a step on the machine with OpenFOAM, `check.py` is the
-finish line it does not get to declare for itself. The instrument it looks through --
+finish line it does not get to declare for itself. A fourth, `background.py`, is
+where a run lives when the calling agent carries on talking while it builds: the same
+loop on a thread of its own, with ears of its own. The instrument it looks through --
 `toolbox/mesh_look.py` -- lives with the other toolbox scripts, because a person and
 the main agent run it the same way this one does.
 
@@ -15,11 +17,13 @@ the wrong shape. This desk is allowed to be told what to do.
 from __future__ import annotations
 
 from .agent import MAX_SECONDS, MAX_STEPS, MeshResult, Mesher, Step, parse_action
+from .background import DeskRun, mesh_text
 from .brief import MESH_DONE, MESHER_SYSTEM, system_prompt, task_message
 from .check import Check, look_command, read, verify
 
 __all__ = [
     "Check",
+    "DeskRun",
     "MAX_SECONDS",
     "MAX_STEPS",
     "MESHER_SYSTEM",
@@ -28,6 +32,7 @@ __all__ = [
     "Mesher",
     "Step",
     "look_command",
+    "mesh_text",
     "parse_action",
     "read",
     "system_prompt",

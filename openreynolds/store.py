@@ -70,6 +70,14 @@ class Session:
     title: str = ""
     capture_seq: int = 0
     jobs: dict[str, JobRecord] = field(default_factory=dict)
+    desk: dict[str, str] = field(default_factory=dict)
+    """The mesh desk's background run, while one is live: `case_rel`, `request`,
+    `started_at` (`mesher.DeskRun.record`). Written when the run starts and cleared when
+    its result has been handed over, so a record still here when a session is resumed
+    means the process ended mid-build -- the runner was replaced, or preempted -- and
+    the briefing says so once (`cli._interrupted_desk_note`). A job outlives the
+    process on the instance and is re-read from there; a desk thread does not, and
+    this is the only trace it leaves. Empty on every study made before it existed."""
 
 
 class Store:
