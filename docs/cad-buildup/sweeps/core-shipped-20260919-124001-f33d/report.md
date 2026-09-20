@@ -72,10 +72,15 @@ declared at turn 11, was bounced, produced an empty turn, declared again, and
 
 **T15 -- a passing mesh at the buzzer.** 924.9 s against a 900 s budget, ended `time` on
 its own clock with no alarm fired, and `checkmesh_ok: true`, `mesh_exists: true`. It built
-an acceptable mesh and ran out of seconds before it could declare. Scored a non-pass,
-which is defensible -- an undeclared finish is not a finish -- but it is the second case
-in two sweeps where the declare cost more budget than the geometry did. `core+cad_export`
-§3.1 has the first: T12 landed its only declare on turn 30 of 30.
+an acceptable mesh and ran out of seconds before declaring. Scored a non-pass, which is
+what a budget is for: a desk that cannot finish inside one has not finished.
+
+**An earlier draft of this report called that "the declare costing a run its budget" and
+that was wrong.** T15 made **zero** declares -- it never reached one. The claim was
+imported from `core+cad_export` §3.1, where T12 genuinely did land its only declare on
+turn 30 of 30 and was bounced by the `coverage` bug since fixed. One case, one cause,
+already repaired. There is no pattern here and the recommendation that rested on it has
+been withdrawn.
 
 **T5 -- the kernel hung.** *"The OCCT defeaturing operation hung for the remainder of the
 execution budget before any mesh could be created."* A time-out expressed as a refusal.
@@ -135,17 +140,20 @@ one recurring finding of the previous sweep -- `named_requirement_dropped_withou
 
 ## 6. What to do next, ranked
 
-1. **Clean the 302 stale workspaces** (10 GB, `/` at 98%) and re-run T11. One case in this
-   corpus currently has no verdict.
-2. **Decide what the gate does without a manifest.** Either `export_patches` becomes
-   something the brief insists on, or the gate reads the STLs the way the supervisor's
-   probes do. As it stands the advisory layer is off for a fifth of the corpus and says
-   so only in the record.
-3. **Pair sweeps on the request text, not the case name.** A sweep records `git_sha` but
-   not what each case asked; a hash of each `## Request` in the manifest would make
-   unpaired cases mechanical instead of something a reader has to remember. Three cases
-   were silently mispaired here.
-4. **The declare is costing runs their budget.** Two cases in two sweeps had acceptable
-   geometry and no turn left to declare it.
-5. **Property grading, or drop the claim.** Either the supervisor pass fills those 73
-   fields or the corpus stops describing itself as having per-case acceptance criteria.
+1. **Done.** 274 stale workspaces removed, 9.5 GB reclaimed, `/` from 98% to 94%. T11
+   re-run separately; until it lands the corpus has no verdict on that case.
+2. **Done, and it was not what §4 said it was.** Three things blinded the gate, only one
+   of them the manifest: the shell guard silenced both scripts entirely; `cad_audit`'s
+   `derived_manifest` was reachable only by importing the module, so a caller running it
+   as a script got a refusal; and the gate hardcoded `constant/triSurface` while the
+   probes search three candidates. T12 hit the first and the third -- one
+   `fluid_preview.stl` at the case root. With all three fixed its gate reports eleven
+   findings on the same 4,368 triangles the probes measured.
+3. **Done.** A sweep now records `asked`, a digest of each case's `## Request` and its
+   properties, and the table excludes cases whose question moved. The provenance sections
+   are deliberately not in the digest: editing a note is not a reposing. A baseline
+   without the field says so rather than reporting agreement it cannot check.
+4. **Withdrawn.** See T15 above -- the case it rested on made no declares.
+5. **Left as is, deliberately.** The 73 fields stay unfilled and `passed` stays a
+   `checkMesh` statement. Recorded here so the next reader knows it is a decision and not
+   an oversight.

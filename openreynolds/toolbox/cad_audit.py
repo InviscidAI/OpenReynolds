@@ -892,10 +892,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="the report as JSON")
     parser.add_argument("--surface-check", action="store_true",
                         help="also run OpenFOAM's surfaceCheck on each patch file")
+    parser.add_argument("--derive", action="store_true",
+                        help="with no patches.json, read the directory as its own patch "
+                             "set -- one STL per patch, its stem the name. What is "
+                             "derived cannot say whether a file on disk was meant to be "
+                             "exported, and `manifest` says so rather than implying it.")
     args = parser.parse_args(argv)
 
+    # `derived_manifest` has existed since the coverage repair and was reachable only by
+    # importing this module -- `buildup/probes.py` does, and passes it in. Anything
+    # running this as a script got `read_manifest`'s refusal instead, which is why the
+    # desk-facing gate saw "no patch set" on five cases of a sweep while the supervisor
+    # measured 4,368 triangles in the same directory. Same code, two callers, one of them
+    # locked out by an argument it had no way to pass.
+    manifest = None
+    if args.derive and not (Path(args.directory) / MANIFEST_NAME).is_file():
+        try:
+            manifest = derived_manifest(args.directory)
+        except Refused as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
     try:
-        report = audit(args.directory, surface_check=args.surface_check)
+        report = audit(args.directory, surface_check=args.surface_check,
+                       manifest=manifest)
     except Refused as exc:
         print(str(exc), file=sys.stderr)
         return 2

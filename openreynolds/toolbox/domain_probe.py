@@ -858,6 +858,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--suggest", action="store_true",
                         help="propose a point at the deepest part of the domain")
     parser.add_argument("--json", action="store_true", help="the envelope as JSON too")
+    parser.add_argument("--derive", action="store_true",
+                        help="accepted and already the behaviour: this reads patches.json "
+                             "when it is there and the directory's own STLs when it is "
+                             "not. It takes the flag so one command shape drives both "
+                             "audits -- `cad_audit.py` needs it, and a caller should not "
+                             "have to remember which.")
     args = parser.parse_args(argv)
 
     if args.width_samples < 0:
