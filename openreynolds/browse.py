@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .backend.base import WORKSPACE_ROOT, Backend, BackendError, StoredListing
+from .backend.base import WORKSPACE_ROOT, Backend, BackendError, ExecResult, StoredListing
 from .store import Store
 
 MAX_ENTRIES = 4_000
@@ -40,7 +40,28 @@ showed `run/` and nothing else. Sorting numerically on the depth (stably, so wit
 depth it is still `find`'s order) puts every shallow entry before any deep one: the
 files a person is watching for sit in the first two levels, the solver's bulk in the
 fourth, and the cut -- when there is one -- lands in the bulk. `cut` strips the depth
-again so the parsed shape is unchanged. This is `sort` over one listing, milliseconds."""
+again so the parsed shape is unchanged. This is `sort` over one listing, milliseconds.
+
+This walk is the FALLBACK now, not the listing. On a backend that can list the
+workspace without running a command on it (`Backend.list_stored` -- the hosted one,
+through the service's own files route) `Browser.tree` takes that answer first, running
+or stopped, and only walks when there is no such answer: a local backend, a workspace
+still coming up, a service without the route, a network failure. The reason is a cap
+this pipeline cannot see. The hosted workspace's daemon caps a command's output at
+64 KB and cuts it mid-line (`OpenFoam_Instance/daemon/settings.py`
+`EXEC_OUTPUT_CAP_BYTES`, `daemon/runner.py` `out[:cap]`); a study of 1,532 entries
+lists at about 83 bytes a row, ~127 KB, so `head -n 4001` never bound anything -- the
+byte cap did, at ~850 rows, and the last row it left was partial. On 2026-09-21
+(study 20260921-033356-076b) that partial row was `f\\t1528155\\t<mtime>\\t/work/
+20260921-033356-076b`: the row for `mesh/zoom.png`, 1,528,155 bytes, cut right after
+the study id, and it parsed as a 1.5 MB *file* at the study root. The page's tree
+collapsed to that one leaf, and the mirror asked the service to archive the "file"
+every twenty seconds (502/504 each time, 04:07 to 04:16). The service route has no
+byte cap: it answers the tree to 5,000 entries, breadth-first, from the live daemon
+when the workspace is up and from the copy when it is stopped. Where the walk is
+still what runs, `Browser.tree` now drops the partial tail of a capped output and
+says the listing was cut (`Listing.output_capped`), and `_parse` refuses a row that
+is not under the listed path -- so a cut can still cost entries, but never invent one."""
 
 
 @dataclass(frozen=True)
@@ -88,12 +109,19 @@ class Listing(list):
         limit: int = MAX_ENTRIES,
         root: str = "",
         depth: int = DEFAULT_DEPTH,
+        output_capped: bool = False,
     ):
         super().__init__(entries)
         self.truncated = truncated
         self.limit = limit
         self.root = root
         self.depth = depth
+        self.output_capped = output_capped
+        """The walk's output was cut by the backend's cap on what a command may print
+        -- by bytes, part-way through a line -- and not by `limit`. Only ever set
+        alongside `truncated`; it changes what the notice says was the cause, because a
+        listing of 850 rows told it was "capped at 4,000 entries" is a notice that
+        contradicts what is in front of the reader."""
 
     @property
     def notice(self) -> str:
@@ -104,6 +132,12 @@ class Listing(list):
         if not self.truncated:
             return ""
         where = self.root or "this path"
+        if self.output_capped:
+            return (
+                f"listing cut short: the workspace capped the command's output part-way "
+                f"through {where} within depth {self.depth}, and the rest was not looked "
+                f"at. Nothing is hidden -- narrow the path, or lower the depth, to see it."
+            )
         return (
             f"listing capped at {self.limit:,} entries: {where} holds more than that "
             f"within depth {self.depth}, and the rest was not looked at. Nothing is "
@@ -140,6 +174,7 @@ class Browser:
         self._cached_root: str = ""
         self._cached_at: float = 0.0
         self._cached_truncated: bool = False
+        self._cached_output_capped: bool = False
         self._cached_depth: int = DEFAULT_DEPTH
 
     # -- listing ---------------------------------------------------------------
@@ -148,37 +183,65 @@ class Browser:
              *, background: bool = False) -> Listing:
         """Everything under `path`, to a depth, in one round trip.
 
-        One command beats one call per directory: a workspace has hundreds of
-        directories, and a listing that takes a minute to draw is not a listing.
+        Asked of the service first, where there is one to ask. A backend that can
+        list the workspace without running a command on it says so by answering
+        `Backend.list_stored`; the hosted one does, through the service's own files
+        route, which lists the live machine when the workspace is up and the copy
+        the service keeps when it is stopped -- and starts nothing either way. That
+        answer is the listing, running or stopped, cut to `depth` and `MAX_ENTRIES`
+        breadth-first (`_from_store`). One path for both states, no command on the
+        workspace, and none of the walk's caps: see `LIST_PIPELINE` for the 64 KB
+        one that cut a study's listing mid-line and grew a 1.5 MB file at its root.
 
-        Capped at `MAX_ENTRIES`, and the result says when the cap was reached. It
-        used to say nothing: 2,993 command logs under one dotted directory took
-        three quarters of the budget and the study tree was cut off behind them,
-        with a listing that looked complete. `head` is asked for one line more than
-        the cap so "there was more" is measured rather than inferred from a listing
-        that happens to be exactly `MAX_ENTRIES` long.
+        The walk -- one `find` over the exec channel, `LIST_PIPELINE` -- is what runs
+        when there is no such answer: a backend with nothing but the machine to ask
+        (the local one), a workspace still coming up (`PendingBackend.list_stored`
+        answers None until the machine is there, and the walk then waits for it as
+        every call did), a service without the route, a network failure. One command
+        beats one call per directory: a workspace has hundreds of directories, and a
+        listing that takes a minute to draw is not a listing. Capped at
+        `MAX_ENTRIES`, and the result says when the cap was reached; `head` is asked
+        for one line more than the cap so "there was more" is measured rather than
+        inferred from a listing that happens to be exactly `MAX_ENTRIES` long. And
+        when the backend cut the output itself (`ExecResult.truncated`), the tail
+        after the last newline is dropped before parsing and the listing says the
+        output was capped -- a partial row is not an entry, whatever it parses as.
 
-        `background=True` marks the listing a poll: the backend runs it only on a
-        workspace already up, and it does not keep that workspace alive. Raises
-        BackendError("workspace_idle") when there is nothing running -- which is a
-        thing to wait out, not an empty workspace.
+        `background=True` marks the listing a poll: it must never start a machine,
+        and it does not keep one alive. Through the service that is so by
+        construction -- the route starts nothing and leaves the workspace's
+        last-activity clock alone. Where the walk is what runs, the poll runs only on
+        a workspace already up, and raises BackendError("workspace_idle") when there
+        is nothing running -- which is a thing to wait out, not an empty workspace.
 
-        A foreground listing is asked as a poll first, too, on a backend that keeps
-        a copy of the workspace (`Backend.list_stored`). When the poll ran, its
-        output is the listing, exactly as before. When it found nothing running, the
-        copy is read instead, and the machine is started only when there is no copy
-        to read -- which is what a foreground listing always did, and is still right
-        when somebody is actually working. What this changes is the listing on the
-        way out of a session: the close-down sync listed through a foreground `exec`,
-        and on a hosted workspace the service had already stopped that started a
-        fresh machine to run one `find` (2026-09-21, 02:24:32: a c7i.2xlarge adopted
-        from the pool for an idle-timed-out session's final sync, then left to sit
-        until the reaper took it down at 02:42 -- eighteen minutes of instance for
-        an answer the service holds in the copy it writes at every stop). The files
-        themselves already came from that copy once the workspace was stopped; the
-        listing was the one call that did not.
+        A foreground walk is asked as a poll first, too, and sent as work only when
+        the poll finds nothing running: somebody asking is somebody working, and
+        starting the machine is then the right answer, as it always was. That order
+        is what stopped the close-down of a session whose workspace the service had
+        already stopped from starting a fresh machine for one `find` (2026-09-21,
+        02:24:32: a c7i.2xlarge adopted from the pool for an idle-timed-out
+        session's final sync, then left to sit until the reaper took it down at
+        02:42). The service's listing now answers that case before any command is
+        considered; the poll-first order is kept for the backends that still walk.
         """
         path = path or self.home
+        depth = int(depth)
+        # `hasattr` rather than the protocol's word: every backend in the package has
+        # `list_stored` (the protocol gives it a default), and a stand-in that predates
+        # it -- a test's, or an embedder's -- lists as it always did.
+        asks_the_service = hasattr(self.backend, "list_stored")
+        if asks_the_service:
+            # Before any command, whatever `background` says. Taking the listing this
+            # way does not count as use of the workspace, and a listing never did: a
+            # foreground one on a running workspace went out as a poll since the
+            # close-down fix, and a poll leaves the workspace's last-activity clock
+            # alone -- as does this, by `Backend.list_stored`'s contract. What keeps a
+            # workspace alive is the work done on it, and a look at the files is not
+            # work; the commands and copies that follow a listing somebody asked for
+            # still count exactly as they did.
+            listed = self.backend.list_stored(path, depth)
+            if listed is not None:
+                return self._from_store(listed, path, depth)
         # `-H` follows a symlink named on the command line, and only that one. The
         # workspace root is a symlink to the volume, so without this, listing it
         # returns nothing at all -- not an error, just an empty workspace, which is
@@ -187,59 +250,81 @@ class Browser:
         # Depth first on each line, for `sort`; see LIST_PIPELINE for why the order of
         # the walk is not the order of the listing.
         cmd = (
-            f"find -H {shlex.quote(path)} -maxdepth {int(depth)} -mindepth 1 "
+            f"find -H {shlex.quote(path)} -maxdepth {depth} -mindepth 1 "
             f"-printf '%d\\t{FIND_FORMAT}' 2>/dev/null {LIST_PIPELINE}"
         )
-        # `hasattr` rather than the protocol's word: every backend in the package has
-        # `list_stored` (the protocol gives it a default), and a stand-in that predates
-        # it -- a test's, or an embedder's -- lists as it always did.
-        if background or not hasattr(self.backend, "list_stored"):
+        if background or not asks_the_service:
             result = self.backend.exec(cmd, timeout_s=60, background=background)
         else:
-            # The poll, on a workspace that is up, runs the same `find` and answers
-            # the same lines; the one thing it does not do is count as use of the
-            # workspace -- the service leaves its last-activity clock alone for a
-            # poll -- and that is right for a listing. What keeps a workspace alive
-            # is the work done on it, and a look at the files is not work; the
-            # commands and copies that follow a listing somebody asked for still
-            # count exactly as they did.
+            # The service had no listing to give (a workspace still coming up, a
+            # service without the route, a failed request), so the walk it is -- as a
+            # poll first, so a workspace that is up answers without being claimed,
+            # and as work only when nothing is running. The service is not asked a
+            # second time here: it just answered None, and the one fallback left is
+            # the machine.
             result = self.backend.exec(cmd, timeout_s=60, background=True)
             if result.idle:
-                stored = self.backend.list_stored(path, int(depth))
-                if stored is not None:
-                    return self._from_store(stored, path, int(depth))
-                # No copy to read, and somebody is asking: the workspace is in use,
-                # and starting it is the right answer, as it always was.
                 result = self.backend.exec(cmd, timeout_s=60, background=False)
         if result.idle:
             # Nothing ran, so there is nothing to say about what is on disk. Falling
             # through would answer "no files", and the list_dir fallback below would
             # go start the very workspace this listing declined to start.
             raise BackendError("the workspace is not running", code="workspace_idle")
-        entries = [entry for line in result.output.splitlines() if (entry := _parse(line))]
-        truncated = len(entries) > MAX_ENTRIES
+        return self._from_walk(result, path, depth)
+
+    def _from_walk(self, result: ExecResult, root: str, depth: int) -> Listing:
+        """A `Listing` from the walk's output -- what `find | sort | cut | head`
+        printed, as far as the backend let it through.
+
+        `result.truncated` is the backend saying the output is only part of what the
+        command printed, and both backends cut by bytes, mid-line (the hosted daemon at
+        64 KB, the local one at `MAX_OUTPUT_BYTES`). The tail after the last newline
+        is therefore a row that was cut off, and it is dropped unparsed: on 2026-09-21
+        the cut fell inside a path and left `f\\t1528155\\t<mtime>\\t/work/<study>`,
+        four well-formed fields naming a 1.5 MB file at the study root that did not
+        exist. A cut that happens to land on a line end drops nothing. Either way the
+        listing is marked truncated, and its notice names the output cap rather than
+        the entry cap, because the entry cap was not what was reached.
+        """
+        output = result.output
+        output_capped = bool(result.truncated)
+        if output_capped:
+            output = output[: output.rfind("\n") + 1]
+        entries = [entry for line in output.splitlines() if (entry := _parse(line, root))]
+        over_the_cap = len(entries) > MAX_ENTRIES
         del entries[MAX_ENTRIES:]
         if entries or result.exit_code == 0:
             return Listing(
                 sorted(entries, key=_order),
-                truncated=truncated,
+                truncated=over_the_cap or output_capped,
                 limit=MAX_ENTRIES,
-                root=path,
-                depth=int(depth),
+                root=root,
+                depth=depth,
+                # The entry cap, when it was reached, is the fuller explanation: 4,001
+                # rows came through whole, and the notice that counts them is right.
+                output_capped=output_capped and not over_the_cap,
             )
-        return Listing(sorted(self.list_dir(path), key=_order), root=path, depth=int(depth))
+        return Listing(sorted(self.list_dir(root), key=_order), root=root, depth=depth)
 
     def _from_store(self, stored: StoredListing, root: str, depth: int) -> Listing:
-        """A `Listing` from the backend's copy of the workspace, held to the same
-        contract as one from the walk.
+        """A `Listing` from the service's answer, held to the same contract as one
+        from the walk.
 
-        The copy answers a whole tree and its own cap (`stored.truncated`); this
-        listing keeps `MAX_ENTRIES`, so the cut is applied here as well, and it is
-        applied breadth-first for the reason `LIST_PIPELINE` gives: the copy lists in
-        its own order, and a cut at entry 4,000 of that order can fall on the
-        pictures as surely as `find`'s did. Shallow entries first, then the cut lands
-        in the solver's bulk. Either cap makes the listing truncated -- an answer the
-        copy cut short is not complete because this side had room for it.
+        "Stored" names where the answer comes from once the machine is down -- the
+        copy the service writes at every checkpoint and stop; while the machine is
+        up the same route reads the live tree. Either way the route answers a whole
+        tree and its own cap (`stored.truncated`); this listing keeps `MAX_ENTRIES`,
+        so the cut is applied here as well, and it is applied breadth-first for the
+        reason `LIST_PIPELINE` gives: the route lists in its own order, and a cut at
+        entry 4,000 of that order can fall on the pictures as surely as `find`'s did.
+        Shallow entries first, then the cut lands in the solver's bulk. Either cap
+        makes the listing truncated -- an answer the service cut short is not
+        complete because this side had room for it.
+
+        The route's `mtime` are whole seconds where `find`'s `%T@` carried a
+        fraction; `Entry.mtime` stays a float and nothing that reads it is finer than
+        that -- the mirror's "already here" test compares it with this machine's
+        clock against the workspace's, a gap larger than any fraction of a second.
         """
         entries = [
             Entry(path=item.path, is_dir=item.is_dir, size=item.size, mtime=item.mtime)
@@ -268,6 +353,7 @@ class Browser:
         # the remembered copy must not look more complete than the one drawn from the
         # call that took it.
         self._cached_truncated = bool(getattr(entries, "truncated", False))
+        self._cached_output_capped = bool(getattr(entries, "output_capped", False))
         self._cached_depth = int(getattr(entries, "depth", DEFAULT_DEPTH))
         self._cached_at = time.time()
 
@@ -305,6 +391,7 @@ class Browser:
             limit=MAX_ENTRIES,
             root=root,
             depth=self._cached_depth,
+            output_capped=self._cached_output_capped,
         )
 
     def cache_age(self) -> float | None:
@@ -383,11 +470,24 @@ class Browser:
         return sorted(found, key=lambda p: p.stat().st_mtime)
 
 
-def _parse(line: str) -> Entry | None:
+def _parse(line: str, root: str) -> Entry | None:
+    """One row of the walk as an `Entry`, or None for a row that is not one.
+
+    Four tab-separated fields that read as type, size, mtime and path -- and a path
+    that is strictly under `root`. The walk is `-mindepth 1`, so a row naming the root
+    itself, or anything not below it, cannot be a row the walk printed whole: it is a
+    row cut off inside its path (the 2026-09-21 listing's `.../<study>` was the first
+    part of `.../<study>/mesh/zoom.png`), or noise on the channel. Well-formed is not
+    the same as true, and a phantom entry at the root is the one wrong answer this
+    listing's readers act on -- the page drew it as the whole tree, and the mirror
+    asked the service to archive it every cycle.
+    """
     parts = line.rstrip("\n").split("\t")
     if len(parts) != 4:
         return None
     kind, size, mtime, path = parts
+    if not path.startswith(root.rstrip("/") + "/"):
+        return None
     try:
         return Entry(path=path, is_dir=kind == "d", size=int(size), mtime=float(mtime))
     except ValueError:

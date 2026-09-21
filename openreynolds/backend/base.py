@@ -251,25 +251,32 @@ class Backend(Protocol):
         return []
 
     def list_stored(self, path: str, depth: int) -> StoredListing | None:
-        """What is under `path`, to `depth`, read from a copy of the workspace that
-        outlives the machine -- or None when this backend keeps no such copy, or
-        cannot read it just now.
+        """What is under `path`, to `depth`, listed without running a command on the
+        workspace -- from the machine while it is up, from a copy of the workspace
+        that outlives the machine once it is down -- or None when this backend has
+        no such listing to give, or cannot get it just now.
 
-        The listing a session takes on its way out is what this exists for. It went
+        The listing a session takes on its way out is what this began as. It went
         through `exec`, and a foreground `exec` on a hosted workspace the service had
         already stopped starts a new machine to run it: on 2026-09-21 the close-down
         of an idle-timed-out session started a c7i.2xlarge at 02:24:32 for one `find`,
         and the machine then sat until the reaper took it down again at 02:42 --
         eighteen minutes of instance for a listing the service could have answered
-        from the copy it writes at every stop. `Browser.tree` asks this when a poll
-        finds nothing running, and only starts the machine when the answer is None.
+        from the copy it writes at every stop. The same morning the `find` on a
+        *running* workspace was found cut at the exec channel's 64 KB output cap,
+        mid-line, and the partial last row read as a 1.5 MB file at the study root
+        (`browse.LIST_PIPELINE`). So `Browser.tree` asks this first, running or
+        stopped, background or not; the walk over `exec` is what runs when the answer
+        is None, and it starts a machine only for a foreground listing that finds
+        nothing running, as it always did.
 
         Same shape as the walk (`StoredEntry` is what `find` prints), relative to
         the same root, so a caller cannot tell which it was given. `depth` counts as
         `find -maxdepth` does: the path's own children are 1.
 
-        Never raises, and None is never "empty" -- it means "ask the machine", and
-        the caller does. The default is a backend with no copy to read."""
+        Never raises, never starts a machine, never counts as use of one, and None is
+        never "empty" -- it means "ask the machine", and the caller does. The default
+        is a backend with nothing but the machine to ask."""
         return None
 
     def close(self) -> None: ...

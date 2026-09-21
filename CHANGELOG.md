@@ -8,6 +8,59 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **The workspace is listed by the service, running or stopped; the `find` over the
+  exec channel is the fallback, and a cut output can no longer invent a file.**
+  `Browser.tree` listed a workspace with `find ... | sort | cut | head -n 4001` over
+  the exec channel, and the hosted workspace's daemon caps a command's output at 64 KB
+  and cuts it mid-line (`OpenFoam_Instance/daemon/settings.py` `EXEC_OUTPUT_CAP_BYTES`,
+  `daemon/runner.py` `out[:cap]`; the answer carries `truncated: true`, which
+  `HostedBackend.exec` mapped onto `ExecResult.truncated` and `Browser.tree` ignored).
+  Measured in production on 2026-09-21 (study 20260921-033356-076b, workspace
+  35c9f018): the listing is ~1,532 rows at ~83 bytes each, ~127 KB, against the 64 KB
+  cap -- so the 4,000-entry cap never bound anything, the byte cap did, at ~850 rows.
+  The partial last row, `f\t1528155\t<mtime>\t/work/20260921-033356-076b` -- the row
+  for `mesh/zoom.png`, 1,528,155 bytes, cut right after the study id -- has four
+  well-formed fields, and `_parse` accepted it: an `Entry` with that path,
+  `is_dir: False` and `size: 1.5 MB` -- a file at the study root. Everything that
+  followed was measured too: the page's tree collapsed to one unexpandable "remote
+  1.5M" leaf (ui #31 now hardens the page); the mirror asked the service to archive
+  that "file" every cycle (`tar?mode=pack&paths=/work/20260921-033356-076b` -> 502/504
+  each 20 s from 04:07 to 04:16), plus 404s for the other paths a cut produced (`/r`,
+  `/run/processor`, `/run/p`); and the live tree during a run held ~850 of the
+  study's 1,532 rows -- since #36 the order is breadth-first, so the cut lands in
+  `run/processors4/<time>/`, but everything past it was invisible to the live pane and
+  to the mirror until the workspace was stopped. Meanwhile #38/#39 had given the
+  hosted backend `list_stored` -- `GET /v1/instances/{id}/files?list=1`, recursive,
+  5,000 entries -- which lists any path under `/work` from the live daemon while the
+  workspace is up and from the service's copy once it is stopped, breadth-first,
+  capped at 5,000 with its own `truncated`, never starting a machine and never
+  counting as use of one (foamd #53) -- and `Browser.tree` used it only when a poll
+  said the workspace was idle. Now `tree()` asks `list_stored` first, whatever state
+  the workspace is in and whether or not the call is a background poll; the answer is
+  the listing, cut to the depth and to 4,000 entries breadth-first, the service's
+  `truncated` carried. No `find`, no exec channel, no byte cap, no partial line, and
+  one path for both states. The walk runs only when `list_stored` answers None -- a
+  local backend, a workspace still coming up (`PendingBackend.list_stored` is None
+  until the machine is there, and the walk then waits for it as every call did), a
+  service without the route, a failed request -- and then exactly as before: a poll,
+  then work only when nothing is running and somebody is asking; a background walk
+  that finds nothing running still raises `workspace_idle` and starts nothing. The
+  walk itself is made safe for the local backend and for the fallback: when the
+  backend says the output was cut, the tail after the last newline is dropped
+  unparsed, and the listing is marked truncated with a notice that names the output
+  cap (a listing of 850 rows told it was "capped at 4,000 entries" would contradict
+  what is in front of the reader); and `_parse` refuses a row whose path is the
+  listed root or is not under it -- the walk is `-mindepth 1`, so such a row can only
+  be a cut or noise. The listing request is bounded at 60 s, the minute the `find`
+  had (`FoamdClient.request` with no timeout is no timeout at all, and the mirror
+  asks this every twenty seconds). The route's `mtime` are whole seconds where
+  `find`'s carried a fraction; `Entry.mtime` stays a float and nothing that reads it
+  is finer than two machines' clocks. Behaviour changed for the background cycles of
+  a session whose workspace is stopped: they now read the service's copy each cycle
+  -- one bounded request, nothing started, nothing pulled when nothing has changed --
+  where before they waited out the idle workspace. Unchanged: a backend without
+  `list_stored` (a test's, an embedder's) lists as it always did; the 4,000-entry cap
+  and its notice; the poll-first order of the walk.
 - **A steady solver's residuals levelling off on an unsteady flow is no longer reported
   to the person as a run that "did not converge".** The owner, after five solving
   studies in three days: "In each solve I just wanted a quick look, not a mesh

@@ -58,12 +58,15 @@ GATE_WAIT_S = 120.0
 The service used to run the mirror's transfers and the model's commands on the same
 container, and a transfer that stalls there stalls the command behind it: a finish
 step timed at 27 s on the instance took 120, 236 and 323 s inside the tool call, each
-time with a cycle in flight. That is still true of the listing (`browser.tree`, a
-`find` over the exec channel a tool call also uses), so a cycle still waits for the
-tool call to end before it starts one -- bounded, because a turn of back-to-back tool
-calls would otherwise never even list at all, and a bounded wait is a delay, which the
-cycle can afford, where an unbounded one is the twenty-five minutes the turn-end sync
-once cost. It was briefly true of a pull as well, and the measurement took it back:
+time with a cycle in flight. That was true of the listing too while it was a `find`
+over the exec channel a tool call also uses; on a hosted workspace the listing now
+comes from the service's files route (`Browser.tree`, `Backend.list_stored`) and
+touches no channel a tool call is on, but the local backend and the fallback still
+walk over `exec`, so a cycle still waits for the tool call to end before it starts one
+-- bounded, because a turn of back-to-back tool calls would otherwise never even list
+at all, and a bounded wait is a delay, which the cycle can afford, where an unbounded
+one is the twenty-five minutes the turn-end sync once cost. It was briefly true of a
+pull as well, and the measurement took it back:
 what made an archive request stall a `bash` call was never the container's CPU, it was
 the workspace service running that request *on its event loop*, where one slow call
 stalls every other request the process is serving. With that fixed, a copy and a
@@ -498,12 +501,13 @@ def _sync(
     root = path or browser.home or WORKSPACE_ROOT
 
     # The gate was already asked once, in `LiveMirror._run`, before this cycle was
-    # let start -- but the listing below is itself a round trip (`browser.tree`,
-    # `find` over the exec channel), and a tool call can arrive in the gap between
-    # that first check and this one. Asked again here for the same reason `_pull_batch`
-    # asks again before every archive request: the wait is cheap, and skipping it
-    # is how a cycle that was clear to start ends up listing right through a call
-    # that started a moment later.
+    # let start -- but the listing below is itself a round trip (`browser.tree`: the
+    # service's files route on a hosted workspace, a `find` over the exec channel
+    # everywhere else), and a tool call can arrive in the gap between that first
+    # check and this one. Asked again here for the same reason `_pull_batch` asks
+    # again before every archive request: the wait is cheap, and skipping it is how
+    # a cycle that was clear to start ends up listing right through a call that
+    # started a moment later.
     if gate is not None:
         report.gate_wait_seconds += _timed_clear(gate, GATE_WAIT_S)
 
@@ -523,14 +527,17 @@ def _sync(
     # files pane wants to draw. Remember it so showing the workspace is free.
     browser.remember(root, entries)
 
-    # `find` output is capped, so the tail of a very large workspace was never examined
-    # at all. That is a different thing from there being nothing there.
+    # A listing is capped -- at `MAX_ENTRIES` here, at 5,000 on the service, and by
+    # bytes on the exec channel when the walk is what ran -- so the tail of a very
+    # large workspace was never examined at all. That is a different thing from there
+    # being nothing there.
     #
     # Asked of the listing rather than counted here. `len(entries) >= MAX_ENTRIES` was a
     # guess from the outside and it was wrong at the boundary: a workspace holding
     # exactly MAX_ENTRIES entries is complete, and this called it truncated. `browse`
-    # now asks `find` for one more line than it will keep, so the flag is measured. The
-    # wording lives there too -- one sentence, in one place, rather than two that drift.
+    # measures the flag (one line more than it keeps from the walk; the service's own
+    # word for its cap; the backend's word for a cut output) and words the notice for
+    # whichever cap it was -- one sentence, in one place, rather than two that drift.
     if getattr(entries, "truncated", False):
         report.warnings.append(entries.notice)
 
@@ -942,11 +949,11 @@ class LiveMirror:
 
         Foreground by definition: something asked for it, so the workspace is in use
         and may be started if it is not up -- but only when there is nothing else to
-        read. On a backend that keeps a copy of the workspace, a foreground listing
-        that finds nothing running reads the copy (`Browser.tree`), and the files
-        follow from the same copy, so the close-down sync of a session whose
-        workspace the service has already stopped no longer starts a machine to
-        list what it can be told."""
+        read. On a backend that can list the workspace without a command on it, the
+        listing comes from the service whether the machine is up or down
+        (`Browser.tree`), and on a stopped workspace the files follow from the same
+        copy, so the close-down sync of a session whose workspace the service has
+        already stopped no longer starts a machine to list what it can be told."""
         return self._cycle()
 
     def catch_up(self) -> MirrorReport | None:
