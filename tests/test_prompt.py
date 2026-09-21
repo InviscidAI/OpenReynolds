@@ -74,6 +74,17 @@ def test_prompt_says_where_honesty_is_expected():
     assert "did not verify" in SYSTEM_PROMPT
 
 
+def test_honesty_is_a_fact_about_the_number_not_a_verdict_on_the_run():
+    """The sentence used to lead with "an unconverged solve" as the first thing to
+    confess to, and four studies in five answered it with a bold "Honesty: the run did
+    not converge" about a residual levelled off on a shedding wake -- the physics, not
+    a defect (`openreynolds/convergence.py` has them). The expectation stands; the
+    example that framed a stall as a confession is gone."""
+    assert "unconverged" not in SYSTEM_PROMPT
+    assert "a fact about it and not a verdict on the run" in SYSTEM_PROMPT
+    assert "a run still moving when its number was read" in SYSTEM_PROMPT
+
+
 def test_prompt_does_not_promise_tools_the_image_lacks():
     """The A4 run wasted a detour on foamToC, which the prompt claimed was there."""
     assert "`foamToC` is available" not in SYSTEM_PROMPT

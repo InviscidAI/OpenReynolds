@@ -2101,17 +2101,20 @@ def check_courant(case: Case, intent: Intent) -> list[Finding]:
 # -- residuals in a running or finished log ----------------------------------------
 
 
-DIVERGED = 1e3
+DIVERGED = log_digest.DIVERGED
 """An initial residual above this is not a slow convergence, it is a blow-up."""
 
-RESIDUAL_RISE = 10.0
+RESIDUAL_RISE = log_digest.RISE
 """How much worse than its own best a residual has to get to count as rising."""
 
-RESIDUAL_FLOOR = 1e-6
+RESIDUAL_FLOOR = log_digest.FLOOR
 """Below this a residual is converged and the ratio to its own minimum stops meaning
 anything. A run that bottoms out at 1e-12 and settles at 3e-11 is thirty times its
 best and is not going anywhere; calling that "rising" puts a warn on the healthiest
-log there is, and a gate that warns about healthy runs stops being read."""
+log there is, and a gate that warns about healthy runs stops being read.
+
+The three are `log_digest`'s, so its reading of a finished log (`how_it_ended`) and
+this gate's verdict draw the line between climbing and levelled in the same place."""
 
 CONTINUITY_WARN = 1e-3
 CONTINUITY_FAIL = 1.0

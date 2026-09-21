@@ -705,6 +705,118 @@ def test_how_a_run_ended_is_the_first_thing_the_digest_says(tmp_path):
     assert "no End line" in log_digest.how_it_ended(cut)[0]
 
 
+# -- what the residuals did, said in words that depend on why ------------------------
+
+
+def _steady_stall(steps: int = 2000, level: float = 0.015) -> dict:
+    """The shape of study 20260920-155504-4379: Ux from 1.0 to ~1.5e-2 by step 200
+    and oscillating there to step 2000 -- a shedding wake under simpleFoam."""
+    import math
+
+    series = [(1, 1.0), (50, 0.2), (100, 0.05)]
+    series += [(s, level * (1 + 0.1 * math.sin(s / 7.0))) for s in range(200, steps + 1, 10)]
+    return {"Ux": series, "p": [(s, 2 * v) for s, v in series]}
+
+
+def _blow_up() -> dict:
+    """A residual that fell to 1.6e-5 and then climbed to 18 over a dozen steps."""
+    return {"Ux": [(s, 1e-3 * 0.9 ** s) for s in range(1, 40)]
+                  + [(s, 1e-4 * 3 ** (s - 40)) for s in range(40, 52)]}
+
+
+def test_a_plateau_on_an_unsteady_flow_is_read_as_a_plateau_not_a_failure():
+    """The old line said "ran to the end of controlDict without reporting
+    convergence" about this run -- the same words as for a divergence. The person
+    heard it on four studies in five and asked whether nothing converges."""
+    log_digest = load("log_digest")
+    data = {"residuals": _steady_stall(), "times": [float(s) for s in range(1, 2001)], "ended": True}
+
+    lines = log_digest.how_it_ended(data)
+
+    assert lines[0] == "ended: ran to the end of controlDict"
+    reading = lines[1]
+    assert reading.startswith("residuals: levelled off (Ux ~1.5e-02, p ~3.0e-02) from about step 200")
+    assert "a plateau, not a divergence" in reading
+    assert "steady solver on a flow that is unsteady" in reading
+    assert "usable snapshot" in reading
+    for failure_words in ("did not", "not converg", "without reporting", "fail"):
+        assert failure_words not in " ".join(lines), failure_words
+
+
+def test_a_climbing_residual_is_read_as_a_divergence_and_says_so():
+    """The other case, and the one the failure words are for: no field to show, and
+    where to look. `stopped at` stays a fact about the end; the verdict is the second line."""
+    log_digest = load("log_digest")
+    data = {"residuals": _blow_up(), "times": [float(s) for s in range(1, 52)]}
+
+    lines = log_digest.how_it_ended(data, 1000.0)
+
+    assert lines[0] == "ended: stopped at 51 of a requested 1000"
+    assert lines[1].startswith("residuals: climbing (Ux best 1.6e-05, last 1.8e+01)")
+    assert "diverging" in lines[1] and "not one to show" in lines[1]
+    assert "plateau" not in lines[1]
+
+
+def test_a_residual_still_falling_is_neither():
+    log_digest = load("log_digest")
+    data = {"residuals": {"p": [(s, 10 ** (-s / 100)) for s in range(1, 501)]},
+            "times": [float(s) for s in range(1, 501)], "ended": True}
+    lines = log_digest.how_it_ended(data)
+    assert lines[1].startswith("residuals: still falling (p 1.0e-05)")
+    assert "more iterations would tighten" in lines[1]
+    assert "nothing here says it is wrong" in lines[1]
+
+
+def test_the_shape_is_the_worst_field_and_the_plateau_has_a_start():
+    log_digest = load("log_digest")
+    shape = log_digest.residual_shape(_steady_stall())
+    assert shape["shape"] == "levelled"
+    assert shape["fields"] == {"Ux": "levelled", "p": "levelled"}
+    assert shape["since"]["Ux"] == 200, "the step the series last came within 3x of its level"
+
+    mixed = dict(_steady_stall(), k=_blow_up()["Ux"])
+    assert log_digest.residual_shape(mixed)["shape"] == "diverging", "one climbing field is a diverging run"
+
+    assert log_digest.residual_shape({"Ux": [(1, 0.1), (2, 0.05)]})["shape"] == "short"
+    assert log_digest.residual_shape({})["shape"] == "short"
+
+
+def test_a_finished_run_at_the_floor_is_not_called_climbing():
+    """3e-11 against a best of 1e-12 is thirty times its best and going nowhere;
+    calling that a divergence would put the failure words on the healthiest log."""
+    log_digest = load("log_digest")
+    series = [(s, 1e-12 if s % 7 else 3e-11) for s in range(1, 197)]
+    assert series[-1][1] == 3e-11, "the run ends on its thirty-times-best value"
+    shape = log_digest.residual_shape({"p": series})
+    assert shape["fields"]["p"] == "levelled"
+
+
+def test_a_fatal_error_is_named_as_the_run_failing():
+    log_digest = load("log_digest")
+    lines = log_digest.how_it_ended({"fatal": "--> FOAM FATAL ERROR: Floating point exception", "times": [3.0],
+                                     "residuals": _blow_up()})
+    assert len(lines) == 1, "the solver's own verdict is the whole story"
+    assert "this run failed" in lines[0]
+
+
+def test_the_report_carries_the_reading_and_leaves_the_level_to_the_reader(tmp_path):
+    log_digest = load("log_digest")
+    log = tmp_path / "log.simpleFoam"
+    body = []
+    for step, value in _steady_stall()["Ux"]:
+        body.append(f"Time = {step}\n")
+        body.append(f"smoothSolver:  Solving for Ux, Initial residual = {value:.6e}, "
+                    f"Final residual = {value / 10:.6e}, No Iterations 3\n")
+    body.append("End\n")
+    log.write_text("".join(body), encoding="utf-8")
+
+    text = log_digest.report(log_digest.digest(log), log, None)
+
+    assert "residuals: levelled off (Ux ~1.5e-02)" in text
+    assert "without reporting convergence" not in text
+    assert "did not report convergence" not in text
+
+
 def test_a_diverged_run_no_longer_reads_like_a_finished_one(tmp_path):
     """It printed a normal-looking table headed "time steps parsed: 37"."""
     log_digest = load("log_digest")

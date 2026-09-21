@@ -403,6 +403,40 @@ def test_purge_write_is_said_at_launch(ctx, backend):
     assert "purgeWrite 2 (only the last 2 write times are kept on disk)" in content
 
 
+def test_a_steady_solver_is_launched_with_the_shape_of_its_residuals(ctx, backend):
+    """A steady solver on an unsteady flow levels off, and a model not told to expect
+    it read the plateau as a failed run in four studies of five (`convergence`). The
+    clause rides on the launch line because the residuals are the next thing read."""
+    from openreynolds import convergence
+
+    backend.files["/work/s/run/system/controlDict"] = RESTARTING_DICT.replace(b"pimpleFoam", b"simpleFoam")
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE.replace("pimpleFoam", "simpleFoam")})
+    assert content.startswith("started job")
+    assert f"[{convergence.STEADY_LAUNCH_NOTE}]" in content
+    assert content.index("endTime 1.3") < content.index("steady solver:"), "the run's shape first, the reading after"
+
+
+def test_a_transient_solver_is_launched_without_the_steady_clause(ctx, backend):
+    """A transient's per-step residuals do not have that shape, and a note that
+    appears only sometimes is a note worth reading."""
+    backend.files["/work/s/run/system/controlDict"] = RESTARTING_DICT
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE})
+    assert "steady solver" not in content
+    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && blockMesh > log.blockMesh 2>&1"})
+    assert "steady solver" not in content, "a mesher is not a solve"
+
+
+def test_the_steady_clause_survives_a_case_with_no_controldict(ctx, backend):
+    """The shape note is silent without a controlDict; the steady clause is about the
+    solver, not the dictionary, and is said either way."""
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && simpleFoam > log 2>&1"})
+    assert content.startswith("started job") and "steady solver:" in content
+    assert "endTime" not in content
+
+
 def test_the_launch_note_tells_threads_from_cores(ctx, backend):
     """Told "8 cores", a live agent decomposed for 6 and Open MPI refused the run: its
     slots are the physical cores. Both numbers are said, and the one mpirun accepts."""
