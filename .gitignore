@@ -42,3 +42,20 @@ reynolds-verification/
 
 # the acceptance harness's local workspace (scripts/cad_accept.py --local)
 .accept-work/
+
+# Sweep and run records. The desk is measured by running it, and one 26-case sweep
+# leaves ~2,000 files -- record.json, cells.log, replies.jsonl, heartbeat.jsonl, the
+# meshes' own logs. They are evidence while a question is open and they are not source,
+# so they stay on the machine that produced them.
+#
+# The rule is the directory: `runs/` is the raw per-run trail and is ignored, and
+# everything at the sweep's own level is the reading of it -- `report.md`, `sweep.json`
+# (model, effort, core sha, the `asked` digests, the headline per run), `findings.jsonl`,
+# a `VOID.md` where a sweep was discarded, and the figures. Anything citing a number
+# should cite a report.
+#
+# Consequence, stated rather than discovered: `cad_sweep.py table <old-sweep>` reads
+# `runs/*/record.json`, so on a fresh clone it can only compare sweeps whose records are
+# still local. The reports carry the numbers; the tables are rebuilt where the runs are.
+docs/cad-buildup/runs/
+docs/cad-buildup/sweeps/*/runs/
