@@ -24,8 +24,11 @@ from .base import (
     ExecResult,
     JobStatus,
     Stat,
+    StoredEntry,
+    StoredListing,
 )
 from .kernel import KernelHost
+from .pending import PendingBackend
 
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 """Statuses worth trying again rather than handing to the model as a failed tool call.
@@ -82,6 +85,52 @@ three times, and five other messages of the same study twice; read back afterwar
 looked exactly like an agent being served a stale answer for twenty-six minutes, and
 that is not what happened. Nothing here is retried in the dark now: an ambiguous failure
 on a write is handed to the caller instead of being tried again."""
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+"""Methods that only read, which is a stronger claim than `_REPEATABLE_METHODS`.
+
+A repeatable call may be sent again without doubling its effect; a safe one has no
+effect to double. The distinction only matters for `sandbox_gone` below, where the
+question is not "did this land?" but "is there anything here a second attempt could
+make happen twice?" -- and the only honest answer for a write is that nobody knows."""
+
+_SANDBOX_GONE_ATTEMPTS = 2
+"""How many times a read may meet `409 sandbox_gone` before the model hears about it.
+
+The hosted Sandbox cycles under load: 9 of 68 tool calls in one live study and 56 of
+244 in another came back `sandbox_gone`, in bursts, three of the four beginning within
+90 seconds of an 8-rank solve being launched (F-58). Nothing is lost when it happens --
+`/work` is a persistent Volume and a job restarts from the latest time -- but every one
+of those reached the model as a failed tool call, and one study spent about 16 minutes
+improvising recovery and relaunched the same solve stage five times.
+
+The service now answers the 409 with `Retry-After: 5`, the same number its cold-start
+503 carries, because the replacement Sandbox is up in about that long. Two attempts,
+not five: this is a read waiting for a container to come back, and if it has not by the
+second ask the model is better told plainly than left sitting.
+
+**409 is deliberately not in `_RETRY_STATUSES`, and must not be put there.** That list
+is keyed on the status alone and so answers for every route at once, including
+`job_start`: a retried POST once produced five duplicate running jobs, and `job_start`
+would need an idempotency key before it could be sent twice safely. The carve-out here
+is narrower on both axes -- one error code, and only for a method that reads."""
+
+_SANDBOX_GONE_MAX_WAIT_S = 15.0
+"""The longest a `sandbox_gone` retry may add to a call.
+
+`Retry-After` is honoured verbatim by `_retry_delay`, which is right for a header the
+service chose; this bounds what a header nobody is watching can cost a tool call that
+is already slow. At the 5 seconds foamd sends, the cap never binds."""
+
+STORED_LISTING_LIMIT = 5000
+"""The most entries `GET /v1/instances/{id}/files?list=1` (and its study-scoped twin
+`GET /v1/studies/{id}/workspace`) will list in one answer.
+
+The routes' own ceiling (`OpenFoam_Instance/app/workspace.py`, `MAX_ENTRIES`; a
+cap above it is a 422, not a bigger answer), and asked for in full because the
+answer is one whole tree rather than a walk to a depth: `browse.MAX_ENTRIES` is cut
+on this side, after the depth is applied, and asking for less here would cut the tree
+before the depth had been looked at."""
 
 _MAX_ATTEMPTS = 5
 _DEFAULT_RETRY_AFTER_S = 10.0
@@ -552,6 +601,11 @@ class FoamdClient:
         all) is tried again; an ambiguous one is raised, because the alternative is
         doing the work twice and never finding out.
 
+        A `409 sandbox_gone` is outside both of those rules and has its own, narrower
+        one: it is tried again only for a method that reads, only once, and only for
+        as long as the service's own `Retry-After` asks for. `_SANDBOX_GONE_ATTEMPTS`
+        says why a write is left alone.
+
         `max_attempts` overrides `_MAX_ATTEMPTS` for this call. Only a caller with a
         reason to bound its own worst case passes it -- the mirror's background
         cycles, which share the exec channel with whatever tool call is running and
@@ -564,6 +618,9 @@ class FoamdClient:
         )
         attempts = int(max_attempts) if max_attempts else _MAX_ATTEMPTS
         last_error: BackendError | None = None
+        # Counted separately from `attempt`, because a vanished Sandbox is its own
+        # kind of failure with its own much shorter patience.
+        gone_attempts = 0
         for attempt in range(attempts):
             response = None
             # Whether this failure leaves it unknown whether the service acted.
@@ -601,6 +658,29 @@ class FoamdClient:
                 # cannot reach Modal at all until somebody renews a token".
                 if last_error.code in _NO_RETRY_CODES:
                     raise last_error
+                # The other case the status cannot answer for, from the other side:
+                # `409 sandbox_gone` is the Sandbox having cycled underneath a call
+                # that was fine. For a read it means only that the answer has to be
+                # asked for again once the replacement is up, and the service says
+                # when that will be. For anything else it is unanswerable -- the
+                # container is gone, so nothing can be asked about what the request
+                # did before it went -- which is why the gate is `_SAFE_METHODS` and
+                # not `repeat_ok`, and why 409 stays out of `_RETRY_STATUSES`
+                # entirely. See `_SANDBOX_GONE_ATTEMPTS` for the duplicate jobs that
+                # settled it.
+                if response.status_code == 409 and last_error.code == "sandbox_gone":
+                    may_ask_again = (
+                        repeat_ok
+                        and method.upper() in _SAFE_METHODS
+                        and gone_attempts < _SANDBOX_GONE_ATTEMPTS - 1
+                        and attempt < attempts - 1
+                    )
+                    if not may_ask_again:
+                        raise last_error
+                    gone_attempts += 1
+                    time.sleep(min(_retry_delay(response, attempt),
+                                   _SANDBOX_GONE_MAX_WAIT_S))
+                    continue
                 # A 4xx collected through a 303 hop gets no special treatment here, and
                 # an earlier draft of the F-47 fix that gave it some was wrong: it made
                 # every 4xx behind a hop "ambiguous", which retried a 401/403/413 like a
@@ -679,6 +759,58 @@ class FoamdClient:
         """One study as the platform holds it: title, instance_id, home, created_at."""
         return _json(self.request("GET", f"/v1/studies/{study_id}"))
 
+    def list_files(self, instance_id: str, path: str) -> dict[str, Any]:
+        """The tree under `path` as the service's own copy of the workspace holds it,
+        scoped to the instance: `GET /v1/instances/{id}/files?list=1`. No instance is
+        started, whatever state the workspace is in.
+
+        The instance's twin of `list_workspace`, and the one `list_stored` asks,
+        because the study route refuses the one path a study whose home is the
+        workspace root itself asks for -- `/work` -- and three of the owner's studies
+        have that home. Measured 2026-09-21 09:58 SGT: `workspace?path=/work -> 400`,
+        and the fallback exec adopted a machine from the pool to answer one `find` on
+        the way out of a session. An instance's own `/work` is the owner's, whole.
+
+        `path` is workspace-absolute (`/work`, `/work/<study>/case`) or relative to
+        `/work`; the answer is `{root, entries, truncated}` in the study route's shape,
+        `root` the resolved absolute path, entries workspace-absolute, cut breadth-first
+        at `STORED_LISTING_LIMIT`. A path outside `/work` is a 400, a path the copy does
+        not have is a 404; both arrive as the `BackendError` `request` makes of them.
+        """
+        return _json(
+            self.request(
+                "GET",
+                f"/v1/instances/{instance_id}/files",
+                params={"path": path, "list": 1, "recursive": 1, "entries": STORED_LISTING_LIMIT},
+            )
+        )
+
+    def list_workspace(self, study_id: str, path: str = "") -> dict[str, Any]:
+        """The study's files as the service's own copy of the workspace holds them.
+        No instance is started, whatever state the workspace is in.
+
+        `path` is "" for the study's root, a path relative to it (`case/system`), or
+        a workspace-absolute one (`/work/<study>/case/system`) -- the spelling every
+        other surface uses -- and the answer is the same either way: `root` is the
+        study's home, `entries` are workspace-absolute (`path`, `is_dir`, `size`,
+        `mtime`) and `truncated` says whether the copy held more than
+        `STORED_LISTING_LIMIT`. Recursive and not depth-limited: the whole tree under
+        `path`, or the first `limit` entries of it.
+
+        Two refusals are facts about the ask rather than the service: a path outside
+        the study's own directory is a 400 (the copy holds every study the instance
+        ever ran, and this route shows one), and a study whose workspace was never
+        written to the copy -- or whose row predates the id being recorded -- is a
+        404. Both arrive as the `BackendError` `request` makes of them, unretried.
+        """
+        return _json(
+            self.request(
+                "GET",
+                f"/v1/studies/{study_id}/workspace",
+                params={"path": path, "recursive": 1, "limit": STORED_LISTING_LIMIT},
+            )
+        )
+
     def list_studies(self) -> list[dict[str, Any]]:
         return _json(self.request("GET", "/v1/studies"))
 
@@ -710,10 +842,78 @@ class HostedBackend(KernelHost, Backend):
         self.instance_id = instance_id
         self.was_already_running = False
         """Whether somebody else's session had it up before this one asked."""
+        self.instances_held = 0
+        """How many non-deleted instances the account held when this one was chosen.
+
+        The service used to cap an account at one instance, so `acquire` picking a
+        workspace was never a choice and nothing needed to report it. The cap is no
+        longer 1, so it is: `acquire` collapses a whole account to a single id, and
+        the workspaces it did not pick have their own Volumes with their own files
+        on them. A caller that can say "there are five and I took this one" turns an
+        empty-looking workspace into a sentence the user can act on.
+
+        0 means nobody counted rather than "the account holds none": `acquire` given
+        an explicit instance id never lists, because there was no choice to make."""
+        self.study_id: str | None = None
+        """Which study this session is serving, as the platform names it. Set by the
+        session once it has opened or resumed the study's row (`cli.session`); the
+        service keeps its copy of the workspace per study, so `list_stored` cannot
+        ask without it and answers None until it is told."""
 
     def shutdown(self) -> None:
         """Put the container down. The volume is untouched, so nothing is lost."""
         self._client.stop_instance(self.instance_id)
+
+    def list_stored(self, path: str, depth: int) -> StoredListing | None:
+        """The files under `path` from the service's own copy of the workspace, cut
+        to `depth`. None when the ask did not work.
+
+        The copy is what the service writes at every checkpoint and stop, and
+        `GET /v1/instances/{id}/files?list=1` reads it whether or not a machine is
+        up -- the same copy `get_file` and `get_tree` are served from once the
+        workspace is stopped, so a sync that lists this way stays off the machine end
+        to end. Asked of the instance, not the study: the study route refuses the
+        workspace root, and a study whose home is the root (three of the owner's are)
+        lists exactly that path on its way out -- which is how the first cut of this
+        (asking `/v1/studies/{id}/workspace`) still started a machine on 2026-09-21.
+        Nothing here needs a study id. The route answers the whole tree, so the
+        caller's depth is applied here, counted from `path` as `find -maxdepth`
+        counts it.
+
+        Every failure is None and none of them is raised: this is asked on the way
+        out of a session by a caller that has a machine to fall back on, and the
+        one thing it must not do is turn a listing into an exception. A 400 is a
+        path outside `/work`; a 404 is a path the copy does not have, a workspace
+        never written to it, or a service without the route; the rest is the network.
+        In each case the fallback is what always happened -- a foreground `exec`,
+        which may start the workspace -- so nothing is lost by being quiet here,
+        only the saving.
+        """
+        try:
+            body = self._client.list_files(self.instance_id, path)
+            root = str(body.get("root") or "").rstrip("/")
+            # The route names the resolved path as `root` and its entries in full,
+            # so a relative ask is measured from where the route put it.
+            anchor = path if path.startswith("/") else (root or f"{WORKSPACE_ROOT}/{path.strip('/')}")
+            base = anchor.rstrip("/") + "/"
+            entries = []
+            for item in body.get("entries") or []:
+                where = str(item.get("path") or "")
+                if not where.startswith(base):
+                    continue
+                if where[len(base):].count("/") >= int(depth):
+                    continue  # deeper than asked: `a/b` under `base` is depth 2
+                entries.append(
+                    StoredEntry(
+                        path=where,
+                        is_dir=bool(item.get("is_dir")),
+                        size=int(item.get("size") or 0),
+                        mtime=float(item.get("mtime") or 0),
+                    )
+                )
+            return StoredListing(entries, truncated=bool(body.get("truncated")))
+        except Exception:  # noqa: BLE001 - see docstring: None, never an exception
+            return None
 
     def active_jobs(self) -> list[dict[str, Any]]:
         """What is still running on this instance, whoever started it (F-46).
@@ -1000,9 +1200,12 @@ class HostedBackend(KernelHost, Backend):
     def job_kill(self, job_id: str, signal: str = "TERM") -> JobStatus:
         """Signal a job's process group.
 
-        The service marks the job killed whether or not the signal reached anything,
-        so a returned status of `killed` is a record of the request, not proof that
-        the work stopped. Confirming that is `stop`'s job.
+        When the service finds no process group to signal it asks jobd what the job
+        is doing: a job that had already ended comes back with its real ending, and
+        one that may still be running is refused with `409 kill_not_delivered`
+        rather than marked killed (F-63, where a `killed` answer covered a shell that
+        went on running cases). A returned `killed` still says the signal was sent,
+        not that every child of the job obeyed it; confirming that is `stop`'s job.
         """
         return _job_status(
             _json(
@@ -1151,35 +1354,236 @@ def _extract_tar_gz(data: bytes, local_dir: Path) -> list[Path]:
     return written
 
 
+def _most_recently_active_first(row: dict[str, Any]) -> tuple[str, str, str]:
+    """Sort key for "the workspace this client is most likely still holding".
+
+    `coalesce(last_active_at, created_at) desc, created_at desc` is the ordering
+    `OpenFoam_Instance/sql/schema_f16.sql`'s repair step uses to decide which of an
+    account's live rows to keep, and the two have to agree. That migration keeps the
+    row a client is most likely still holding; this picks the row to re-attach to.
+    If they disagree, a resumed session lands on the workspace the repair marked
+    deleted -- the same study, on the other Volume, reading as empty.
+
+    The values are the service's ISO-8601 timestamps, compared as strings. That is
+    exact for same-offset ISO-8601, which is what the listing carries, and a trailing
+    `Z` is normalised to `+00:00` so a mixed representation cannot invert the order.
+    Where it is still inexact -- two rows written with different fractional-digit
+    counts -- the disagreement is sub-second and the later keys settle it.
+
+    `id` is the last key so the choice is deterministic even for two rows created in
+    the same microsecond. That is the whole point of this function: an unordered
+    `existing[0]` was not, and picked differently on two runs of the same resume.
+    """
+    created = _comparable_time(row.get("created_at"))
+    active = _comparable_time(row.get("last_active_at")) or created
+    return (active, created, str(row.get("id") or ""))
+
+
+def _comparable_time(value: Any) -> str:
+    """One timestamp as a string that sorts the way the instant does, or "" for none.
+
+    `""` sorts before every real timestamp, which is the right place for a row whose
+    time the service did not send: never the one preferred over a row that has one.
+    """
+    if not isinstance(value, str) or not value:
+        return ""
+    return value[:-1] + "+00:00" if value.endswith("Z") else value
+
+
+class Starter:
+    """The slow half of getting a workspace: bringing its container up.
+
+    `reserve` settles WHICH instance in a fraction of a second and hands back one of
+    these; `start()` sends the start call on a thread of its own, and `result()` is
+    the live `HostedBackend` once that call has answered. Between the two, the
+    session runs: header on screen, model talking, person typing. The one fact only
+    the start call can settle -- whether this session brought the workspace up or
+    joined one already running -- is read off its reply, exactly as `acquire` always
+    read it.
+
+    A started start cannot be called back: the service has the request. `cancel()`
+    therefore only ever succeeds before `start()`, and says so with its answer.
+    """
+
+    def __init__(
+        self,
+        client: FoamdClient,
+        instance_id: str,
+        *,
+        instances_held: int = 0,
+        listed_as_running: bool = False,
+    ):
+        self.client = client
+        self.instance_id = instance_id
+        self.instances_held = instances_held
+        """How many workspaces the account held when this one was chosen; 0 when
+        nobody counted (an instance named outright). See `HostedBackend`."""
+        self.listed_as_running = listed_as_running
+        """What the listing said before the start call -- the pre-start answer to
+        `was_already_running`, and the whole answer for a service too old to say."""
+        self.started_at: float | None = None
+        self._thread: threading.Thread | None = None
+        self._done = threading.Event()
+        self._backend: HostedBackend | None = None
+        self._error: BackendError | None = None
+        self._cancelled = False
+
+    def start(self) -> None:
+        """Begin bringing the workspace up, on a background thread. Idempotent."""
+        if self._thread is not None or self._cancelled:
+            return
+        self.started_at = time.monotonic()
+        self._thread = threading.Thread(target=self._run, name="workspace-start", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            reply = self.client.start_instance(self.instance_id)
+        except BackendError as exc:
+            self._error = exc
+        except BaseException as exc:  # noqa: BLE001 - a thread's exception goes nowhere on its own
+            self._error = BackendError(
+                f"the workspace could not be started: {type(exc).__name__}: {exc}",
+                code="start_failed",
+            )
+        else:
+            backend = HostedBackend(self.client, self.instance_id)
+            backend.instances_held = self.instances_held
+            # Whether it was already up decides whether whoever asked for it should
+            # put it back down again. The listing cannot answer that on its own: it
+            # is read BEFORE the start call, a fresh row reads `stopped`, and a row
+            # only turns `running` once the start has happened -- so two sessions
+            # listing within the same second both concluded they had started the
+            # workspace, and the first to exit stopped it from under the other. The
+            # start route says which of the two it did. Its absence is tolerated so
+            # an older service still works: there the pre-start listing is all there
+            # is, which is the behaviour this has always had.
+            started_new = reply.get("started_new") if isinstance(reply, dict) else None
+            backend.was_already_running = (
+                self.listed_as_running if started_new is None else not bool(started_new)
+            )
+            self._backend = backend
+        finally:
+            self._done.set()
+
+    def cancel(self) -> bool:
+        """Call the start off. True only if it had not begun -- a start that is under
+        way is the service's now, and `PendingBackend.shutdown` is the way to undo
+        one of those (wait for it, then stop it)."""
+        if self._thread is not None:
+            return False
+        self._cancelled = True
+        self._error = BackendError("the workspace start was called off", code="start_cancelled")
+        self._done.set()
+        return True
+
+    @property
+    def done(self) -> bool:
+        return self._done.is_set()
+
+    @property
+    def elapsed_s(self) -> float:
+        """Seconds since `start()`; 0 before it."""
+        return 0.0 if self.started_at is None else time.monotonic() - self.started_at
+
+    def result(self, timeout: float | None = None) -> HostedBackend:
+        """The live backend, waiting for the start to answer. Starts it if nobody has.
+
+        Raises the start call's own `BackendError`, or `start_timeout` if `timeout`
+        ran out first -- `None` waits as long as the start call itself does, which
+        is bounded by the client's request timeout and retries."""
+        self.start()
+        if not self._done.wait(timeout):
+            raise BackendError(
+                f"the workspace did not answer its start within {timeout:.0f} s",
+                code="start_timeout",
+            )
+        if self._error is not None:
+            raise self._error
+        assert self._backend is not None
+        return self._backend
+
+    def pending(self, **kwargs: Any) -> PendingBackend:
+        """A `PendingBackend` for this workspace, with what is already known filled
+        in. Whoever runs the start is expected to `resolve` it with `result()` -- or
+        `fail` it -- once the workspace is set up for use."""
+        return PendingBackend(
+            self.instance_id,
+            instances_held=self.instances_held,
+            was_already_running=self.listed_as_running,
+            closer=self.client.close,
+            **kwargs,
+        )
+
+
+def reserve(
+    base_url: str,
+    api_key: str,
+    instance_id: str | None = None,
+) -> tuple[FoamdClient, str, Starter]:
+    """Settle which workspace, without starting it: the named instance, else an
+    existing one, else a new row. A fraction of a second, all of it database.
+
+    Deleting an instance destroys its persistent volume, so reuse is the default and
+    nothing here ever deletes.
+
+    Which existing one is not arbitrary any more. The service caps concurrent
+    instances and that cap is no longer 1, so an account can hold several workspaces
+    at once, each with its own Volume and its own files. Taking `existing[0]` from an
+    unordered listing silently attached a resumed session to whichever row the
+    service happened to return first: the study's files are on a different Volume, so
+    the failure does not look like a wrong choice, it looks like an empty workspace --
+    the case directory gone, the mesh gone, nothing anywhere saying a different
+    workspace was joined. So the listing is ordered (`_most_recently_active_first`)
+    and the count is handed on (`Starter.instances_held`, then the backend's),
+    because collapsing five workspaces to one id is a thing the user has to be told.
+
+    The client is closed on failure here, as `acquire` always closed it; a starter
+    handed back is the caller's, and so is the client under it.
+    """
+    client = FoamdClient(base_url, api_key)
+    try:
+        listed_as_running = False
+        held = 0
+        if instance_id is None:
+            existing = sorted(
+                (
+                    inst
+                    for inst in client.list_instances()
+                    if inst.get("status") != "deleted"
+                ),
+                key=_most_recently_active_first,
+                reverse=True,
+            )
+            held = len(existing)
+            if existing:
+                instance_id = existing[0]["id"]
+                listed_as_running = existing[0].get("status") == "running"
+            else:
+                instance_id = client.create_instance()
+                held = 1
+    except BaseException:
+        client.close()
+        raise
+    starter = Starter(client, instance_id, instances_held=held, listed_as_running=listed_as_running)
+    return client, instance_id, starter
+
+
 def acquire(
     base_url: str,
     api_key: str,
     instance_id: str | None = None,
 ) -> tuple[HostedBackend, FoamdClient, str]:
-    """Get a workspace: the named instance, else an existing one, else a new one.
+    """Get a workspace, up and ready: `reserve`, then wait for the start.
 
-    The service caps concurrent instances (default 1) and deleting one destroys its
-    persistent volume, so reuse is the default and nothing here ever deletes.
+    The blocking shape, for callers with nothing to do while the workspace comes up
+    -- `openreynolds files`, `pull`, `push`, `stop`. A session uses `reserve` and
+    talks to the person meanwhile.
     """
-    client = FoamdClient(base_url, api_key)
+    client, instance_id, starter = reserve(base_url, api_key, instance_id)
     try:
-        was_running = False
-        if instance_id is None:
-            existing = [
-                inst for inst in client.list_instances() if inst.get("status") != "deleted"
-            ]
-            if existing:
-                instance_id = existing[0]["id"]
-                was_running = existing[0].get("status") == "running"
-            else:
-                instance_id = client.create_instance()
-        client.start_instance(instance_id)
+        backend = starter.result()
     except BaseException:
         client.close()
         raise
-    backend = HostedBackend(client, instance_id)
-    # Whether it was already up decides whether whoever asked for it should put it
-    # back down again. A command that borrows a container ought to leave the machine
-    # as it found it; a session is what containers are for.
-    backend.was_already_running = was_running
     return backend, client, instance_id

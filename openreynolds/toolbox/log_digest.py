@@ -2,7 +2,9 @@
 """Solver log -> residual plot, last-iteration table, continuity summary.
 
 Reads a log of any size in one pass without holding it in memory. Reports numbers and
-draws them; it does not say whether anything is converged — that reading is yours.
+draws them, and says what the residuals did -- levelled off, still falling, climbing --
+because those are three different facts about a run and only one of them is a failure.
+Whether a level is low enough for the question is still yours to judge.
 
     python3 log_digest.py log.simpleFoam [-o residuals.png] [--csv residuals.csv]
 """
@@ -10,6 +12,7 @@ draws them; it does not say whether anything is converged — that reading is yo
 from __future__ import annotations
 
 import argparse
+import math
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -143,27 +146,147 @@ def plot(residuals, out: Path) -> None:
     plt.close(fig)
 
 
+DIVERGED = 1e3
+"""An initial residual above this is not a slow convergence, it is a blow-up."""
+
+RISE = 10.0
+"""How much worse than its own best a residual has to get to count as climbing."""
+
+FLOOR = 1e-6
+"""Below this a residual has done its job and the ratio to its own minimum means
+nothing: 3e-11 against a best of 1e-12 is thirty times its best and going nowhere."""
+
+STILL_FALLING = 2.0
+"""A last window this many times lower than the window before it is a residual that
+is still coming down; less than that, and it has levelled off."""
+
+MIN_STEPS = 8
+"""Fewer steps than this and there is no trend to read, only numbers."""
+
+
+def _geometric_mean(values: list[float]) -> float:
+    positive = [v for v in values if v > 0 and math.isfinite(v)]
+    if not positive:
+        return float("nan")
+    return math.exp(sum(math.log(v) for v in positive) / len(positive))
+
+
+def residual_shape(residuals: dict, window: int | None = None) -> dict:
+    """Why the residuals stopped falling -- or whether they have.
+
+    A run that ends says one of four things about its residuals, and each wants
+    different words: `diverging` (a field climbing off its own best, or past any
+    sensible value), `falling` (the last window still lower than the one before it),
+    `levelled` (flat: a plateau, which under a steady solver on an unsteady flow is the
+    flow being reported, not a defect), or `short` (too few steps to say). Per field,
+    and overall as the worst of them: diverging beats falling beats levelled.
+
+    `level` is the geometric mean of each levelled field's last window, and `since` is
+    the step from which the series last stayed within a factor of three of that level,
+    so the report can say "levelled off at ~2.5e-2 from step ~250" -- which is what a
+    person reading the plot would say, and what the digest said nothing about.
+    """
+    shape: dict = {"shape": "short", "fields": {}, "level": {}, "best": {}, "last": {}, "since": {}}
+    ranking = {"diverging": 3, "falling": 2, "levelled": 1, "short": 0}
+    for field, series in sorted(residuals.items()):
+        values = [float(v) for _step, v in series]
+        steps = [s for s, _v in series]
+        if not values:
+            continue
+        last = values[-1]
+        shape["last"][field] = last
+        finite = [v for v in values if math.isfinite(v)]
+        best = min(finite) if finite else float("nan")
+        shape["best"][field] = best
+        if not math.isfinite(last) or last > DIVERGED or (
+            len(values) > 3 and last > FLOOR and last > best * RISE
+        ):
+            kind = "diverging"
+        elif len(values) < MIN_STEPS:
+            kind = "short"
+        else:
+            size = window or max(4, len(values) // 5)
+            recent = _geometric_mean(values[-size:])
+            before = _geometric_mean(values[-2 * size:-size])
+            if math.isfinite(recent) and math.isfinite(before) and recent * STILL_FALLING <= before:
+                kind = "falling"
+            else:
+                kind = "levelled"
+                shape["level"][field] = recent
+                since = len(values) - 1
+                while since > 0 and recent / 3 <= values[since - 1] <= recent * 3:
+                    since -= 1
+                shape["since"][field] = steps[since]
+        shape["fields"][field] = kind
+        if ranking[kind] > ranking[shape["shape"]]:
+            shape["shape"] = kind
+    return shape
+
+
+def _residual_reading(data) -> str:
+    """The residuals in one sentence whose words depend on why they stopped falling.
+
+    The old line said "did not report convergence" whatever the reason, and a person
+    who heard it on five studies concluded that nothing converges. A plateau, a climb
+    and a series still on its way down are three different facts about a run, and only
+    one of them is a failure."""
+    shape = residual_shape(data.get("residuals") or {})
+    kind = shape["shape"]
+    if kind == "diverging":
+        worst = [f for f, k in shape["fields"].items() if k == "diverging"]
+        detail = ", ".join(
+            f"{f} best {shape['best'][f]:.1e}, last {shape['last'][f]:.1e}" for f in worst
+        )
+        return (f"residuals: climbing ({detail}) -- this run is diverging, not converging "
+                "slowly, and the last field is not one to show; the usual causes are the "
+                "mesh where the field is worst, a boundary condition, or the timestep")
+    if kind == "falling":
+        moving = [f for f, k in shape["fields"].items() if k == "falling"]
+        detail = ", ".join(f"{f} {shape['last'][f]:.1e}" for f in moving)
+        return (f"residuals: still falling ({detail}) -- more iterations would tighten "
+                "the answer; nothing here says it is wrong")
+    if kind == "levelled":
+        flat = [f for f, k in shape["fields"].items() if k == "levelled"]
+        detail = ", ".join(f"{f} ~{shape['level'][f]:.1e}" for f in flat)
+        since = min(shape["since"][f] for f in flat)
+        return (f"residuals: levelled off ({detail}) from about step {since:g} and stayed "
+                "there -- a plateau, not a divergence. Under a steady solver on a flow that "
+                "is unsteady (a bluff body, a shedding wake) this is the residual reporting "
+                "the flow, and the last field is a usable snapshot of it; a plateau on a "
+                "flow that should be steady points at the mesh or a boundary condition")
+    return ""
+
+
 def how_it_ended(data, end_time: float | None = None) -> list[str]:
-    """One line saying what happened to the run, before any table of numbers.
+    """What happened to the run, before any table of numbers, in words that depend
+    on why: how it stopped, then what its residuals were doing when it did.
 
     Nothing here read `FOAM FATAL`, `End`, or `solution converged`, so a solve that
     diverged at iteration 37 produced a normal-looking table headed "time steps parsed:
     37", and one that stopped at its iteration cap without converging looked exactly
-    like one that had finished. Whether a residual is *low enough* is still a judgement
-    about the case; whether the solver said it was finished is a fact, and it was missing.
+    like one that had finished. Then it said "did not report convergence" about every
+    run that reached its end without the solver's own message -- the same words for a
+    residual levelled off on a shedding wake (the physics) as for one climbing towards
+    a floating point exception (a failure), and a person who read that on five studies
+    heard that nothing converges. The end is still a fact; what the residuals did is
+    read from the series (`residual_shape`) and said in its own terms.
     """
     times = data.get("times") or []
     reached = times[-1] if times else None
     if data.get("fatal"):
-        return [f"ended: FOAM FATAL — {data['fatal']}"]
+        return [f"ended: FOAM FATAL — {data['fatal']} (the solver stopped itself: this run failed)"]
     if data.get("converged_at") is not None:
         return [f"ended: the solver reported convergence at iteration {data['converged_at']}"]
     if end_time is not None and reached is not None and reached < end_time:
-        return [f"ended: stopped at {reached:g} of a requested {end_time:g}, "
-                "and did not report convergence"]
-    if data.get("ended"):
-        return ["ended: ran to the end of controlDict without reporting convergence"]
-    return ["ended: no End line — the log is still being written, or the run was cut off"]
+        lines = [f"ended: stopped at {reached:g} of a requested {end_time:g}"]
+    elif data.get("ended"):
+        lines = ["ended: ran to the end of controlDict"]
+    else:
+        lines = ["ended: no End line — the log is still being written, or the run was cut off"]
+    reading = _residual_reading(data)
+    if reading:
+        lines.append(reading)
+    return lines
 
 
 def requested_end_time(log: Path) -> float | None:

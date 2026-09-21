@@ -1145,7 +1145,7 @@ def test_the_loop_holds_the_gate_around_a_tool_call(backend, store, view, monkey
     loop.gate = Gate()
     seen = []
 
-    def dispatch(ctx, name, tool_input):
+    def dispatch(ctx, name, tool_input, call_id=None):
         seen.append(loop.gate.busy)
         return "ok", False
 

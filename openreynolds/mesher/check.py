@@ -84,6 +84,13 @@ class Check:
     metrics: dict[str, float] = field(default_factory=dict)
     """max non-orthogonality, max skewness, aspect ratio -- what a solver cares about."""
     two_d: bool = False
+    cell: float = 0.0
+    """Representative cell size, m: the n-th root of (domain volume / cells)."""
+    across: float = 0.0
+    """How many cells span the SMALLEST extent of the domain. The one resolution
+    number that means the same thing on a channel, a cavity and a pipe."""
+    unchanged: bool = False
+    """This mesh is indistinguishable from the one that was here before the run."""
     build: list[str] = field(default_factory=list)
     """The scripts left behind that rebuild this: Allmesh, build.py, blockMeshDict..."""
     render: str = ""
@@ -127,12 +134,16 @@ class Check:
                     c = patch["center"]
                     bits.append(f"at ({c[0]:.4g} {c[1]:.4g} {c[2]:.4g})")
                 out.append(" ".join(bits))
+        if self.across:
+            out.append(f"resolution: ~{self.cell:.4g} m cells, {self.across:.0f} across "
+                       "the narrowest extent of the domain")
         if self.build:
             out.append("rebuilds with: " + ", ".join(self.build))
         return out
 
 
-def verify(backend: Any, case_dir: str, case_rel: str, request: str = "") -> Check:
+def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
+           before: dict[str, Any] | None = None) -> Check:
     """Run the check on the workspace and read the verdict.
 
     One command: draw the mesh, measure it, run checkMesh, write the JSON, print it.
@@ -167,11 +178,11 @@ def verify(backend: Any, case_dir: str, case_rel: str, request: str = "") -> Che
                      "and fix what it says" + (f"\n  {tail}" if tail else "")],
             error="no json",
         )
-    return read(payload, case_rel, case_dir, request)
+    return read(payload, case_rel, case_dir, request, before)
 
 
 def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "",
-         request: str = "") -> Check:
+         request: str = "", before: dict[str, Any] | None = None) -> Check:
     """The JSON `mesh_look.py --json` writes, turned into a verdict.
 
     Split from `verify` so the rules can be tested without a workspace: this function
@@ -184,6 +195,8 @@ def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "",
     check.bounds = [float(v) for v in (payload.get("bounds") or [])]
     check.patches = list(payload.get("patches") or [])
     check.two_d = bool(payload.get("two_d"))
+    check.cell, check.across = resolution(payload)
+    check.unchanged = same_mesh(before, payload)
     check.build = list(payload.get("build") or [])
     check.metrics = {str(k): float(v) for k, v in (payload.get("metrics") or {}).items()}
     mesh_ok = bool(payload.get("checkmesh_ok"))
@@ -224,12 +237,114 @@ def read(payload: dict[str, Any], case_rel: str = "", case_dir: str = "",
     off = scale_mismatch(request, check.bounds)
     if off:
         missing.append(off)
+    wanted = asked_resolution(request)
+    if wanted and check.across and check.across + 0.5 < wanted:
+        missing.append(
+            f"the request asks for at least {wanted} cells across and this mesh has "
+            f"{check.across:.0f} (cells about {check.cell:.4g} m). Refine it -- a mesh "
+            "that cannot resolve what the study is measuring passes every other check "
+            "on this list")
+    if check.unchanged:
+        missing.append(
+            "this mesh is IDENTICAL to the one that was in the case before this run -- "
+            "same cell count, same bounds, same patch areas. Whatever was asked for, "
+            "nothing about the mesh changed, so either the build script was not "
+            "actually re-run or the change never reached it. Make the change, rebuild, "
+            "and look at the numbers before saying done")
     if payload.get("error"):
         missing.append(str(payload["error"]))
 
     check.missing = missing
     check.ok = not missing
     return check
+
+
+def resolution(payload: dict[str, Any]) -> tuple[float, float]:
+    """Representative cell size, and how many cells span the domain's smallest extent.
+
+    Deliberately crude and deliberately reported rather than judged. `cells` and
+    `bounds` are the only two things every mesh here has, so `h = (volume/cells)**(1/n)`
+    is the one resolution figure that can be computed for a channel, a cavity, a pipe
+    and a flow box alike. A 2D mesh is one cell thick, so its third extent is excluded
+    from both the volume and the span.
+    """
+    bounds = [float(v) for v in (payload.get("bounds") or [])]
+    cells = int(payload.get("cells") or 0)
+    if len(bounds) != 6 or cells <= 0:
+        return 0.0, 0.0
+    spans = [bounds[3] - bounds[0], bounds[4] - bounds[1], bounds[5] - bounds[2]]
+    spans = [s for s in spans if s > 0]
+    if payload.get("two_d") and len(spans) == 3:
+        spans = sorted(spans)[1:]   # drop the one-cell thickness
+    if not spans:
+        return 0.0, 0.0
+    volume = 1.0
+    for s in spans:
+        volume *= s
+    cell = (volume / cells) ** (1.0 / len(spans))
+    return cell, (min(spans) / cell if cell > 0 else 0.0)
+
+
+_ASKED_CELLS = re.compile(
+    r"(?:at least\s+)?(\d+)\s*cells?\s+(?:across|through|over|spanning)", re.I)
+
+
+def asked_resolution(request: str) -> int:
+    """A resolution the REQUEST named, e.g. "at least 40 cells across the gap".
+
+    Why a caller has to say it, rather than the check having a threshold of its own:
+    the measurements in this repository show a threshold cannot work. A plane channel
+    at TEN cells across its height reproduced f*Re to within 2%, because the profile
+    it has to represent is a smooth parabola. A lid-driven cavity at TWENTY cells
+    across -- twice the resolution -- missed Ghia's centreline extrema by 18.7% and
+    21.2%, because what it has to represent is a corner-driven recirculation. The same
+    number is comfortably enough for one case and badly short for another, and nothing
+    the mesh desk can see tells the two apart. The physics does, and the caller knows
+    the physics.
+
+    So: a stated requirement is enforced, an unstated one is REPORTED and never
+    guessed at. The alternative -- a number picked here -- would fail the channel to
+    catch the cavity.
+    """
+    best = 0
+    for found in _ASKED_CELLS.findall(request or ""):
+        try:
+            best = max(best, int(found))
+        except ValueError:
+            continue
+    return best
+
+
+def same_mesh(before: dict[str, Any] | None, after: dict[str, Any]) -> bool:
+    """Whether nothing measurable changed between two meshes of the same case.
+
+    The failure this exists for, measured: asked to "make the channel 30 mm tall
+    instead of 20", the desk rebuilt the case, ran its own look, reported "Rebuild is
+    clean: bounds 0.200 x 0.020 x 0.002 m, checkMesh reports Mesh OK" -- and the
+    channel was still 20 mm. Identical extent, identical 1,000 cells, identical
+    answer. Every clause of the finish check passed, because after a no-op there IS a
+    valid mesh of the right rough size. Nothing in the check compared what was ASKED
+    against what CHANGED.
+
+    A silent no-op is worse than a failure: the person gets a clean rebuild, a green
+    checkMesh, a confident summary and the old shape.
+    """
+    if not before or not before.get("cells"):
+        return False
+    if int(before.get("cells") or 0) != int(after.get("cells") or 0):
+        return False
+    a = [float(v) for v in (before.get("bounds") or [])]
+    b = [float(v) for v in (after.get("bounds") or [])]
+    if len(a) != 6 or len(b) != 6:
+        return False
+    scale = max(abs(v) for v in b) or 1.0
+    if any(abs(x - y) > 1e-6 * scale for x, y in zip(a, b)):
+        return False
+    # Bounds and cell count can both survive a real change -- widening a cylinder
+    # inside a fixed box moves neither -- so the patch areas are the third witness.
+    area = lambda rows: {str(r.get("name")): round(float(r.get("area") or 0.0), 12)
+                         for r in (rows or [])}
+    return area(before.get("patches")) == area(after.get("patches"))
 
 
 def largest_length(request: str) -> float:

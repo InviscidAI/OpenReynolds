@@ -6,6 +6,11 @@ finish line it does not get to declare for itself. The instrument it looks throu
 `toolbox/mesh_look.py` -- lives with the other toolbox scripts, because a person and
 the main agent run it the same way this one does.
 
+**This is the desk as it was.** The shipped desk is `cad/`, which runs one python cell
+a step in a kernel rather than one bash block on the machine; this package is kept so
+that `scripts/cad_accept.py` and `tests/test_mesher.py` can measure the new one against
+the old one. Nothing in the harness reaches it.
+
 Why it is separate from the agent that calls it: meshing is a closed task with a
 checkable answer, and the main agent's contract is written for open-ended work where
 nobody knows the right move in advance. Mixing them cost 66-turn sessions that produced

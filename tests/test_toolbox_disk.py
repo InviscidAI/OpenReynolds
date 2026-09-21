@@ -183,13 +183,13 @@ def test_a_symlink_is_not_followed_and_not_counted_twice(work):
     side: an OpenFOAM tree is full of internal links, and following them reports a
     directory as bigger than it is and invites deleting the wrong one."""
     c = work / "study-a" / "cyl"
-    without = disk.scan(work, study="study-a")[0].bytes
+    before = disk.scan(work, study="study-a")[0].bytes
     try:
         (c / "0.link").symlink_to(c / "0", target_is_directory=True)
     except (OSError, NotImplementedError):
         pytest.skip("this filesystem does not allow symlinks without elevation")
     usages = disk.scan(work, study="study-a")
-    assert usages[0].bytes == without, "the link's target was counted again"
+    assert usages[0].bytes == before, "the link's target was counted again"
     assert not any(c.path.name == "0.link" for c in usages[0].candidates)
 
 
@@ -201,3 +201,156 @@ def test_a_directory_that_is_not_a_case_is_reported_but_offers_nothing(tmp_path)
     (work / "uploads" / "hull.stl").write_text("s" * 2000)
     usages = disk.scan(work)
     assert usages[0].bytes > 0 and usages[0].candidates == []
+
+
+# -- the mesh that moves -------------------------------------------------------
+
+
+def test_a_time_directory_that_carries_its_own_mesh_is_kept_whole(work):
+    """On a moving mesh `<time>/polyMesh/points` IS the mesh at that instant.
+
+    Nothing regenerates it short of re-running the solve, so a prune that takes the
+    time directory destroys the only record the run keeps of its own motion -- and
+    pruning is routine here, because /work is one shared 20 GB quota. The reason line on
+    the times that do go names the test they passed.
+    """
+    case = work / "study-a" / "cyl"
+    (case / "0.5" / "polyMesh").mkdir(parents=True)
+    (case / "0.5" / "polyMesh" / "points").write_text("p" * 400)
+
+    usages = disk.scan(work, study="study-a")
+    offered = {c.path.name for c in usages[0].candidates}
+    assert "0.5" not in offered, "the deformed mesh at t = 0.5 has nothing to rebuild it"
+    assert not any("polyMesh" in str(c.path) for c in usages[0].candidates)
+
+
+def test_an_ordinary_time_directory_still_goes_and_says_why(work):
+    usages = disk.scan(work, study="study-a")
+    dropped = [c for c in usages[0].candidates if c.path.name == "0.5"]
+    assert dropped, "a plain intermediate time is still regenerable"
+    assert "carries no mesh of its own" in dropped[0].why
+
+
+FIELDS = ("U", "p_rgh", "alpha.water", "k", "omega", "nut", "phi")
+
+
+def _moving_case(root, name="hull", times=(3.6, 3.8, 4.0, 4.2, 4.4), mesh_bytes=600,
+                 field_bytes=4000):
+    """The Wigley free phase: every written time carries its own deformed mesh.
+
+    A morphing mesh writes `<time>/polyMesh/points` at every write, so this shape --
+    not some corner of it -- is what a moving-mesh study looks like on the volume, and
+    the field data beside those meshes is the bulk of it.
+    """
+    case = _case(root, name, times=(), procs=0)
+    for t in times:
+        d = case / f"{t:g}"
+        (d / "polyMesh").mkdir(parents=True, exist_ok=True)
+        (d / "polyMesh" / "points").write_text("p" * mesh_bytes)
+        (d / "uniform").mkdir(exist_ok=True)
+        (d / "uniform" / "time").write_text("t" * 50)
+        for f in FIELDS:
+            (d / f).write_text("f" * field_bytes)
+    return case
+
+
+def test_the_fields_beside_a_deformed_mesh_are_still_reclaimed(tmp_path):
+    """Keeping the whole time directory answered F-56 with "nothing regenerable found".
+
+    Measured on this shape before the fix: 0 candidates and 0 B regenerable, in both
+    modes, on a case where the fields are most of the volume. Only the `polyMesh`
+    subtree is irreplaceable; `U`, `p_rgh`, `alpha.water`, `k`, `omega`, `nut` and `phi`
+    at an intermediate time are exactly what this module's own header classifies as
+    regenerable, and a session that cannot write because /work is over quota is the
+    situation the module exists for.
+    """
+    work = tmp_path / "work"
+    (work / "study-m").mkdir(parents=True)
+    _moving_case(work / "study-m")
+
+    usages = disk.scan(work, study="study-m")
+    offered = {str(c.path) for c in usages[0].candidates}
+    assert usages[0].regenerable > 0, "a moving-mesh case must not report 0 B reclaimable"
+    for t in ("3.6", "3.8", "4"):  # 4.0 is written as `4`
+        for f in FIELDS:
+            assert str(work / "study-m" / "hull" / t / f) in offered, (
+                f"{t}/{f} is regenerable and was not offered"
+            )
+    assert not any("polyMesh" in str(c.path) for c in usages[0].candidates), (
+        "the deformed mesh at that instant is the only record of the run's own motion"
+    )
+    latest = work / "study-m" / "hull" / "4.4"
+    assert not any(c.path == latest or latest in c.path.parents
+                   for c in usages[0].candidates), (
+        "the latest time is what a restart resumes from"
+    )
+
+
+def test_a_moving_mesh_case_frees_the_bulk_of_its_volume_rather_than_nothing(tmp_path):
+    """F-56 in miniature: /work over quota, and the answer has to be a number that
+    helps. The fields are roughly seven eighths of this tree and all of them come back
+    from a re-run; the meshes are the small remainder that does not."""
+    work = tmp_path / "work"
+    (work / "study-m").mkdir(parents=True)
+    _moving_case(work / "study-m", times=tuple(3.6 + 0.1 * i for i in range(45)))
+
+    usage = disk.scan(work, study="study-m")[0]
+    assert usage.regenerable > usage.bytes // 2, (
+        f"only {usage.regenerable} of {usage.bytes} offered; the fields are most of it"
+    )
+
+
+def test_drop_latest_on_a_moving_mesh_reaches_the_last_times_fields_but_not_its_mesh(tmp_path):
+    """`--drop-latest` is the mode a person reaches for when the volume is full. Before
+    the fix it freed nothing at all here, which is the worst possible answer to give
+    someone who has already accepted that a restart will not resume."""
+    work = tmp_path / "work"
+    (work / "study-m").mkdir(parents=True)
+    _moving_case(work / "study-m", times=(1.0, 2.0))
+
+    usage = disk.scan(work, study="study-m", keep_latest=False)[0]
+    offered = {str(c.path) for c in usage.candidates}
+    assert str(work / "study-m" / "hull" / "2" / "U") in offered
+    assert not any("polyMesh" in str(c.path) for c in usage.candidates)
+
+
+def test_pruning_a_moving_mesh_case_keeps_every_deformed_mesh_and_takes_the_fields(tmp_path):
+    """The prune itself, end to end: what the report promised is what the disk shows."""
+    work = tmp_path / "work"
+    (work / "study-m").mkdir(parents=True)
+    case = _moving_case(work / "study-m", times=(1.0, 2.0, 3.0))
+
+    rc = disk.main(["prune", "--work", str(work), "--study", "study-m", "--apply"])
+    assert rc == 0
+    for t in ("1", "2", "3"):
+        assert (case / t / "polyMesh" / "points").exists(), (
+            f"the deformed mesh at t = {t} was destroyed"
+        )
+    for t in ("1", "2"):
+        for f in FIELDS:
+            assert not (case / t / f).exists(), f"{t}/{f} is regenerable and should be gone"
+    for f in FIELDS:
+        assert (case / "3" / f).exists(), "the latest time is what a restart resumes from"
+
+
+def test_a_moving_mesh_candidate_says_the_mesh_beside_it_is_kept(tmp_path):
+    """A prune that frees less than the directory listing suggests has to say why on the
+    line itself, because nobody reads the module to find out."""
+    work = tmp_path / "work"
+    (work / "study-m").mkdir(parents=True)
+    _moving_case(work / "study-m", times=(1.0, 2.0))
+
+    usage = disk.scan(work, study="study-m")[0]
+    whys = {c.why for c in usage.candidates}
+    assert any("the deformed mesh beside it is kept" in w for w in whys), whys
+
+
+def test_drop_latest_does_not_reach_a_moving_meshs_last_mesh_either(work):
+    """`--keep-latest False` is for a case whose numbers are already out; it is not
+    consent to delete a mesh that only exists inside a time directory."""
+    case = work / "study-b" / "duct"
+    (case / "2" / "polyMesh").mkdir(parents=True)
+    (case / "2" / "polyMesh" / "points").write_text("p" * 400)
+
+    usages = disk.scan(work, study="study-b", keep_latest=False)
+    assert not any(c.path.name == "2" for c in usages[0].candidates)

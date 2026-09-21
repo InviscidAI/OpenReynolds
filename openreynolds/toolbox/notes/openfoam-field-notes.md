@@ -441,6 +441,7 @@ Solver names are ESI. These are places to start, not defaults to defend.
 | external aero, steady | `simpleFoam` | `kOmegaSST` | ~10D upstream, 20D downstream, 12D sides (an aerofoil wants 50-100c) | vary the schemes; bluff or post-stall bodies are shedding candidates |
 | indoor / buoyant | `buoyantSimpleFoam` | `kEpsilon` | room plus plenum | |
 | transient shedding | `pimpleFoam` | `kOmegaSST` | per class | a short-window check before the long run pays for itself |
+| free surface, moving body | `interFoam` | `kOmegaSST` | tank at model scale, the still-water plane on a cell face | two runs: held, then released. `case_gen.py` writes no `dynamicMeshDict` -- see "When the mesh moves" |
 
 ## When a steady solve will not converge
 
@@ -770,6 +771,181 @@ from the regime before solving, and saying which was chosen and why, saves the r
 otherwise arrives when someone looks at the result and asks for "the transient one." A
 transient run (pimpleFoam) costs more but is the honest instrument for a shedding flow;
 a steady run is right for an attached, genuinely steady one.
+
+## When the mesh moves
+
+A moving mesh is a second solver underneath the flow solver, with its own dictionary and
+its own failure modes, and it is coupled tightly enough that the wall conditions, the
+fields and the function objects all have to agree with the mesh type before anything
+runs. What follows begins with one case class -- a mesh that morphs, with no topology
+change -- written down because it cost four rounds of divergence to get once: a 3 m
+Wigley hull towed at Fr 0.316 and then released in heave and pitch, `interFoam` with
+`dynamicMotionSolverFvMesh` and `sixDoFRigidBodyMotion`, 8 s of physical time in two
+phases, one attempt each and no restarts, settling at 6.19 +/- 0.35 mm of sinkage
+against the towing tank's 7.50 mm.
+
+**Settling and then releasing is two runs, not a switch.** `sixDoFRigidBodyMotion` reads
+its constraints once at start-up and has no time-varying form of them, so a body that is
+held for the start-up transient and freed afterwards is two cases: phase one with
+`dynamicFvMesh staticFvMesh` and the body fixed, run until the flow field is developed,
+then a restart from `latestTime` with `dynamicMeshDict` switched to
+`dynamicMotionSolverFvMesh`. Nothing moved during phase one, so the mesh the second phase
+inherits is the mesh it was built with.
+
+**The mesh type decides three other files with it.** Under `staticFvMesh` the body wall is
+`noSlip` and `0/pointDisplacement` is never read. With the motion solver active the wall
+is `movingWallVelocity` and `pointDisplacement` has to be there. Function objects go the
+same way: `sixDoFRigidBodyState` wants a live motion solver and is an error under
+`staticFvMesh`, so one `controlDict` cannot serve both phases. On the hull above, the
+wall condition on binary restart fields was switched with `changeDictionary` rather than
+by rewriting them.
+
+**`sixDoFRigidBodyState.dat` reports absolute positions, and angles in radians** unless
+`angleFormat` is set to degrees. Heave is that column minus the centre of rotation's
+starting z, which is a subtraction that is easy to skip and impossible to see afterwards
+in a plot that looks plausible with or without it.
+
+**The datum is a measurement.** `setFields`' `boxToCell` fills every cell whose centre is
+below the plane, and on a graded tank mesh that over-fills the domain and leaves the
+ambient free surface sitting above it -- about 24 mm above z = 0 on one 304k-cell case,
+agreed to a millimetre by an `alpha = 0.5` isosurface, the far-field bottom `p_rgh`, and
+the volume bookkeeping. Sinkage quoted against the design draught instead of against that
+measured rest float came out as the hull *rising* 18.2 mm, and two rounds went into the
+mesh before anyone measured where the water actually was.
+
+**Morphing amplifies what the mesh already had.** A motion solver that morphs the whole
+domain around a body turns cells that were merely concave into negative-volume cells once
+the amplitude grows, so a run that started clean fails some seconds in. The cheap half of
+that is `checkMesh` on the mesh as meshed, before any body is released; the other half is
+that a displacement growing steadily with no bound is more often a force imbalance than a
+mesh defect, and the two read alike in the log. `ladder.py` puts the cheap half first on
+the rotating-machinery ladder: move the points through a full cycle with no flow solved
+at all and count the volumes, which is the one moving-mesh check whose answer is known
+before it runs.
+
+**Where the templates are.** Three `constant/dynamicMeshDict` files are attested on this
+image by path: `$FOAM_TUTORIALS/multiphase/interFoam/RAS/DTCHullMoving`,
+`$FOAM_TUTORIALS/multiphase/interFoam/RAS/floatingObject`, and
+`$FOAM_TUTORIALS/incompressible/pimpleFoam/RAS/propeller`. Taking DTCHullMoving's
+structure *wholesale* is what ended the divergence on the hull above, on the first
+attempt: internal field at tow speed from t = 0 with no inlet ramp, an outlet of
+`outletPhaseMeanVelocity` plus `variableHeightFlowRate` on the phase fraction,
+`pressureInletOutletVelocity`/`totalPressure` on the atmosphere, `fixedFluxPressure` on
+the hull, the tutorial's own alpha solver block, `setFields` with both `boxToCell` and
+`boxToFace`, and `renumberMesh -overwrite` ahead of the solver. Four earlier rounds had
+adopted parts of it and died at the same t ~ 0.106 s each time.
+
+`case_gen.py` dresses a mesh that exists and writes no `constant/dynamicMeshDict`, no
+`0/pointDisplacement` and no `constant/MRFProperties`; its `--study` values are mesh,
+steady and transient. So a moving-mesh case here is a tutorial copied and edited, which
+is also the conclusion the hull session reached on its own before it went to
+DTCHullMoving.
+
+**Zones are what AMI, MRF and overset are named against.** A sliding interface, a frozen
+rotor and an overset region all point at a `cellZone` or a `faceZone` by name, and a
+dictionary that names a zone the mesh does not have fails at the first solver step.
+`mesh_look.py` reports the zones it finds in `constant/polyMesh/{cellZones,faceZones}`
+next to the patch table -- names and counts either format, and a cell zone's bounding box
+and centroid where the file is ascii -- so a zone can be checked for before a dictionary
+is written against it. A mesh with no zone files reports none, which is the state of most
+meshes here.
+
+**What is on PATH is a question rather than a fact.** `interFoam` running a
+`dynamicMotionSolverFvMesh` case is attested on this image. The tutorial trees for
+`moveDynamicMesh`, the `over*DyMFoam` overset family, and `topoSet`/`setsToZones` are
+here too, which is strong evidence and not the same thing as the executable being on
+PATH. One `which` settles it in a second, and it is worth the second: on this image
+`which MRFSimpleFoam simpleFoam` came back with only `simpleFoam`, because MRF in v2512
+is an `MRFProperties`/`fvOptions` feature of the ordinary solvers and not a binary of its
+own.
+
+Two more moving-mesh cases have been paid for since the hull, and they cost different
+things: a 2D circular-Couette annulus cut in half by a `cyclicAMI` sliding interface, and
+a cylinder on a spring free to move across the stream at Re = 100 on a morphing mesh.
+Both are kept as prompts and a grader under `benchmarks/moving_mesh/`, so what follows is
+reproducible rather than remembered.
+
+**The refinement that diverged was limited by `nu*dt/dr^2`, not by the Courant number.**
+The annulus's grid ladder doubled the radial cells and left `deltaT` at 0.005 with
+`adjustTimeStep no`, and both members ran away to 2--3 m/s against a wall speed of 0.04.
+The Courant number looked like the culprit, peaking at 234, and it was not: the conformal
+control with no interface in it diverged identically, so the AMI pair was never
+implicated; `checkMesh` passed on every mesh (a polar `blockMesh` is essentially perfect,
+3.5e-6 degrees of non-orthogonality); and upwinding the convection term, dropping the
+non-orthogonal correction, and initialising with the exact field each left it diverging.
+One variable at a time on the same mesh found the parameter that separates the runs that
+live from the runs that die: the **cell diffusion number `D = nu*dt/dr^2`**, which is the
+pressure--velocity splitting error of an implicit step whose transport is all diffusion.
+On this case's original two outer and two inner correctors, D = 3.1 is stable and D = 6.25
+and D = 12.5 both diverge. `nCorrectors 4` inside the same two outer correctors carried
+every level of the ladder, to D = 11.5, for about 20% more per step; under-relaxation also
+stabilises it and was rejected for slowing the approach to the steady state by orders of
+magnitude, still 7.4% off after 6 s of run. The trap underneath is that holding the
+Courant number fixed under refinement means `dt ~ h`, which *doubles* D at every level, so
+a numerics setting that carried the base mesh cannot carry that mesh's own grid study --
+the third level of this ladder reaches D = 5.8 on settings good to 3.1. The extra
+correctors buy stability and not a different answer: the same mesh at D = 12.5 with four
+correctors and at D = 3.1 with the cheap numerics reach the same torque to 4e-4 relative.
+
+**A sliding interface's error is first order in the angular slide per step, so refining
+the mesh at a fixed time step buys almost nothing.** Three meshes per flavour at 2,880,
+11,520 and 46,080 cells, `dt` scaled with the cell size so the Courant number is 0.255
+throughout: the conformal control converges at observed order 1.93 and Richardson
+extrapolates to within +0.0004% of the closed-form torque, GCI 0.0136% on the fine mesh;
+the same annulus with a `cyclicAMI` pair through it converges at 0.79, which is first
+order, and extrapolates to -0.0646%, GCI 0.3557%. The experiment that separates the two
+causes holds `dt` and moves only the cells: at `dt = 0.0025 s`, going from 11,520 to
+46,080 cells moves the inner-wall torque error from +0.2174% to +0.2205% and the imbalance
+from -0.5415% to -0.4539%. Four times the cells, nothing bought. What the interface error
+scales with is `omega*dt`, how far the rotor slides past the stator in one step, and a
+second-order `ddt` scheme does not remove it. A ladder that refines space and time
+together therefore reads as clean first-order convergence while the time step is doing all
+of the work, and a sliding-interface number means something at a stated `omega*dt` rather
+than at a stated cell count.
+
+**The interface's own health check passes a case whose torque is a percent wrong.** The
+standard check on a `cyclicAMI` pair, and the one a rotating-machinery engineer runs, is
+the solver's printed `AMI: Patch source/target sum(weights)`: it measures whether the
+interface kept its **area**. On the graded annulus it was immaculate -- min 1.0, max
+1.0000428 over 4,076 rebuilds, 43 ppm from unity, source and target identical on every
+line. The torque was not. In steady circular Couette the torques on the two walls are
+equal and opposite exactly, because angular momentum is conserved; it is an identity and
+needs no publication behind it. The two walls disagreed by **0.911% of the inner reading**
+against the same annulus meshed conformally at the same 50 x 240 resolution, which
+balanced to **0.011%** -- 85 times smaller, and with the opposite sign, so it is a
+different error rather than the same one smaller. The inner-wall torque itself was +0.43%
+off the closed form. Area conserved, torque not, and the check that says so costs nothing:
+both walls already carry a `forces` function object and the difference between them has a
+known exact value of zero. It also behaves like the interface rather than like the mesh --
+-1.80%, -0.91%, -0.45% down the ladder at observed order 1.00, against the control's
++0.033%, +0.011%, +0.0030% at 1.65 and then 1.84. A conserved quantity whose exact value
+is zero is the cheapest instrument any case has, because it needs no reference, no grid
+study and no second run.
+
+**A body free to move can settle on an amplitude the coupling scheme is holding it at.**
+The VIV case was graded in two stages and the first one is a gate, for the reason the hull
+above is two runs: the same mesh with the cylinder held fixed gave St = 0.166141 against
+Williamson's 0.164, +1.31%, with mean C_D 1.3555 and C_L rms 0.2467 both inside their
+published bands, and halving `deltaT` moved St by 0.13%, so the offset is not temporal
+resolution and 2.5% blockage is the plausible home for it. Released loosely coupled -- the
+mesh moved once per step on the previous step's force, `accelerationRelaxation 0.7` -- the
+cylinder settled at A/D = 0.640, and by every conventional test it was finished:
+stationary to the fourth decimal over 15 cycles, one clean spectral line, sinusoidal to
+0.02% (half peak-to-peak and sqrt(2) x rms agreeing to 2e-4), and the forces reproducible
+offline digit for digit by `pimpleFoam -postProcess`. With zero structural damping nothing
+can dissipate energy, so a real limit cycle takes zero net fluid work per cycle.
+Integrating `F_y v_y` over each whole cycle gave **-10.1% to -10.4%** of the body's
+mechanical energy per cycle while that energy held constant to 0.1%, which is impossible,
+and the partitioned coupling is the only candidate supplier. Restarted with the body
+inside the PIMPLE loop -- `moveMeshOuterCorrectors yes`, three outer correctors,
+`accelerationRelaxation 1.0` -- the amplitude decayed monotonically through 0.626, 0.603,
+0.589, 0.580, 0.574 and flattened at **0.567**, where the work per cycle is +0.04% to
++0.18%. A second and independent route agrees to 1%: the work per cycle through the ring-up
+is positive at small amplitude and crosses zero at A/D ~ 0.572, bracketed by measured
+cycles at 0.576 and 0.624. **Loose coupling over-predicted the amplitude by 13% and no
+residual, no spectrum and no stationarity test saw it**; the energy balance is what the
+published 0.567 rests on, and it is qualified by the run itself as a twelve-cycle
+continuation decaying from above rather than an independent ring-up from rest.
 
 ## Choosing a solver class from the deliverable
 

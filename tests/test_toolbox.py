@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import re
 import struct
 import sys
 from pathlib import Path
@@ -395,6 +396,58 @@ def test_the_toolbox_index_names_every_script_in_it():
         assert script.name in index, f"{script.name} is in the toolbox and not in its index"
 
 
+def test_the_toolbox_index_names_nothing_that_is_not_there():
+    """The other direction, which nothing checked until 2026-09-12.
+
+    The index carried finished descriptions of `corpus.py` and `search.py` -- a
+    $FOAM_TUTORIALS index of 556 tutorials and a query tool for it, in detail, in the
+    present tense -- and neither file existed anywhere in the workspace. The existing
+    guard only walks the directory and looks in the index, so an index running ahead of
+    the code failed nothing, and a session reading it was promised an instrument it
+    could not run. Scoped to the table rows on purpose: the prose beside them names a
+    case's own `build.py` and the templates by their bare filenames, which are not
+    claims about this directory.
+    """
+    index = (TOOLBOX / "README.md").read_text(encoding="utf-8")
+    named = re.findall(r"^\|\s*`([^`]+\.py)`\s*\|", index, re.M)
+    assert named, "the index has no table rows, so it is no longer an index"
+    for name in named:
+        assert (TOOLBOX / name).is_file(), (
+            f"the index describes {name} and there is no such script in the toolbox"
+        )
+
+
+def test_the_field_notes_carry_what_the_moving_mesh_cost_to_learn():
+    """The Wigley hull's four rounds lived only in `qa-runs/comp/wigley/REPORT.md`, and
+    the agent never reads that. Each of these is a fact that run paid for: the release
+    is a restart because sixDoFRigidBodyMotion reads its constraints once at start-up,
+    the wall condition and pointDisplacement flip with the mesh type, the state file is
+    absolute and in radians, morphing turns concave cells negative, and what ended the
+    divergence was taking the DTCHullMoving tutorial wholesale."""
+    notes = (TOOLBOX / "notes" / "openfoam-field-notes.md").read_text(encoding="utf-8")
+    assert "## When the mesh moves" in notes
+    section = notes.split("## When the mesh moves", 1)[1].split("\n## ", 1)[0]
+    for fact in ("staticFvMesh", "dynamicMotionSolverFvMesh", "sixDoFRigidBodyMotion",
+                 "movingWallVelocity", "pointDisplacement", "sixDoFRigidBodyState",
+                 "radians", "negative-volume", "DTCHullMoving", "floatingObject"):
+        assert fact in section, f"the moving-mesh note does not mention {fact}"
+    assert "$FOAM_TUTORIALS/multiphase/interFoam/RAS/DTCHullMoving" in section, (
+        "a template is worth naming by the path it is actually at"
+    )
+
+
+def test_the_moving_mesh_note_states_facts_rather_than_a_procedure():
+    """The notes are offered like everything else in here. A section that told a session
+    the order to do things in would be the workflow injection the design exists to
+    avoid, and motion is exactly where that temptation is strongest."""
+    section = (TOOLBOX / "notes" / "openfoam-field-notes.md").read_text(encoding="utf-8")
+    section = " ".join(section.split("## When the mesh moves", 1)[1]
+                       .split("\n## ", 1)[0].lower().split())
+    for imperative in ("you must", "always run", "before you", "step 1", "first,",
+                       "you should", "make sure"):
+        assert imperative not in section
+
+
 def test_the_environment_manifest_states_the_facts_the_corpus_kept_missing():
     """235 install attempts and a run of `import fitz` failures came from not knowing
     the instance: the network is sealed, PDFs are pdftoppm not fitz, imageio and gmsh
@@ -660,6 +713,118 @@ def test_how_a_run_ended_is_the_first_thing_the_digest_says(tmp_path):
 
     cut = {"times": [10.0]}
     assert "no End line" in log_digest.how_it_ended(cut)[0]
+
+
+# -- what the residuals did, said in words that depend on why ------------------------
+
+
+def _steady_stall(steps: int = 2000, level: float = 0.015) -> dict:
+    """The shape of study 20260920-155504-4379: Ux from 1.0 to ~1.5e-2 by step 200
+    and oscillating there to step 2000 -- a shedding wake under simpleFoam."""
+    import math
+
+    series = [(1, 1.0), (50, 0.2), (100, 0.05)]
+    series += [(s, level * (1 + 0.1 * math.sin(s / 7.0))) for s in range(200, steps + 1, 10)]
+    return {"Ux": series, "p": [(s, 2 * v) for s, v in series]}
+
+
+def _blow_up() -> dict:
+    """A residual that fell to 1.6e-5 and then climbed to 18 over a dozen steps."""
+    return {"Ux": [(s, 1e-3 * 0.9 ** s) for s in range(1, 40)]
+                  + [(s, 1e-4 * 3 ** (s - 40)) for s in range(40, 52)]}
+
+
+def test_a_plateau_on_an_unsteady_flow_is_read_as_a_plateau_not_a_failure():
+    """The old line said "ran to the end of controlDict without reporting
+    convergence" about this run -- the same words as for a divergence. The person
+    heard it on four studies in five and asked whether nothing converges."""
+    log_digest = load("log_digest")
+    data = {"residuals": _steady_stall(), "times": [float(s) for s in range(1, 2001)], "ended": True}
+
+    lines = log_digest.how_it_ended(data)
+
+    assert lines[0] == "ended: ran to the end of controlDict"
+    reading = lines[1]
+    assert reading.startswith("residuals: levelled off (Ux ~1.5e-02, p ~3.0e-02) from about step 200")
+    assert "a plateau, not a divergence" in reading
+    assert "steady solver on a flow that is unsteady" in reading
+    assert "usable snapshot" in reading
+    for failure_words in ("did not", "not converg", "without reporting", "fail"):
+        assert failure_words not in " ".join(lines), failure_words
+
+
+def test_a_climbing_residual_is_read_as_a_divergence_and_says_so():
+    """The other case, and the one the failure words are for: no field to show, and
+    where to look. `stopped at` stays a fact about the end; the verdict is the second line."""
+    log_digest = load("log_digest")
+    data = {"residuals": _blow_up(), "times": [float(s) for s in range(1, 52)]}
+
+    lines = log_digest.how_it_ended(data, 1000.0)
+
+    assert lines[0] == "ended: stopped at 51 of a requested 1000"
+    assert lines[1].startswith("residuals: climbing (Ux best 1.6e-05, last 1.8e+01)")
+    assert "diverging" in lines[1] and "not one to show" in lines[1]
+    assert "plateau" not in lines[1]
+
+
+def test_a_residual_still_falling_is_neither():
+    log_digest = load("log_digest")
+    data = {"residuals": {"p": [(s, 10 ** (-s / 100)) for s in range(1, 501)]},
+            "times": [float(s) for s in range(1, 501)], "ended": True}
+    lines = log_digest.how_it_ended(data)
+    assert lines[1].startswith("residuals: still falling (p 1.0e-05)")
+    assert "more iterations would tighten" in lines[1]
+    assert "nothing here says it is wrong" in lines[1]
+
+
+def test_the_shape_is_the_worst_field_and_the_plateau_has_a_start():
+    log_digest = load("log_digest")
+    shape = log_digest.residual_shape(_steady_stall())
+    assert shape["shape"] == "levelled"
+    assert shape["fields"] == {"Ux": "levelled", "p": "levelled"}
+    assert shape["since"]["Ux"] == 200, "the step the series last came within 3x of its level"
+
+    mixed = dict(_steady_stall(), k=_blow_up()["Ux"])
+    assert log_digest.residual_shape(mixed)["shape"] == "diverging", "one climbing field is a diverging run"
+
+    assert log_digest.residual_shape({"Ux": [(1, 0.1), (2, 0.05)]})["shape"] == "short"
+    assert log_digest.residual_shape({})["shape"] == "short"
+
+
+def test_a_finished_run_at_the_floor_is_not_called_climbing():
+    """3e-11 against a best of 1e-12 is thirty times its best and going nowhere;
+    calling that a divergence would put the failure words on the healthiest log."""
+    log_digest = load("log_digest")
+    series = [(s, 1e-12 if s % 7 else 3e-11) for s in range(1, 197)]
+    assert series[-1][1] == 3e-11, "the run ends on its thirty-times-best value"
+    shape = log_digest.residual_shape({"p": series})
+    assert shape["fields"]["p"] == "levelled"
+
+
+def test_a_fatal_error_is_named_as_the_run_failing():
+    log_digest = load("log_digest")
+    lines = log_digest.how_it_ended({"fatal": "--> FOAM FATAL ERROR: Floating point exception", "times": [3.0],
+                                     "residuals": _blow_up()})
+    assert len(lines) == 1, "the solver's own verdict is the whole story"
+    assert "this run failed" in lines[0]
+
+
+def test_the_report_carries_the_reading_and_leaves_the_level_to_the_reader(tmp_path):
+    log_digest = load("log_digest")
+    log = tmp_path / "log.simpleFoam"
+    body = []
+    for step, value in _steady_stall()["Ux"]:
+        body.append(f"Time = {step}\n")
+        body.append(f"smoothSolver:  Solving for Ux, Initial residual = {value:.6e}, "
+                    f"Final residual = {value / 10:.6e}, No Iterations 3\n")
+    body.append("End\n")
+    log.write_text("".join(body), encoding="utf-8")
+
+    text = log_digest.report(log_digest.digest(log), log, None)
+
+    assert "residuals: levelled off (Ux ~1.5e-02)" in text
+    assert "without reporting convergence" not in text
+    assert "did not report convergence" not in text
 
 
 def test_a_diverged_run_no_longer_reads_like_a_finished_one(tmp_path):

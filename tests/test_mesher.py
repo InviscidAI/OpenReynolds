@@ -13,11 +13,14 @@ from types import SimpleNamespace
 
 import pytest
 
+import json
+
 from openreynolds import images
 from openreynolds.backend.base import ExecResult
 from openreynolds.config import Config
 from openreynolds.llm import ProviderError, TextBlock, Turn
 from openreynolds.mesher import MESH_DONE, Mesher, parse_action, system_prompt, task_message
+from openreynolds.mesher import check as check_mod
 from openreynolds.mesher.agent import KEEP_IMAGES, _evict
 
 PNG = images.attachment(b"\x89PNG\r\n\x1a\n" + b"0" * 64, "image/png")["source"]["data"]
@@ -33,6 +36,8 @@ OK_JSON = (
     '"build": ["Allmesh", "build.py"], "checkmesh": "Mesh OK.", "checkmesh_ok": true, '
     '"metrics": {"max_non_orthogonality": 12.4}, "render": "renders/mesh_look.png"}'
 )
+
+OK_PAYLOAD = json.loads(OK_JSON)
 
 NOT_YET_JSON = '{"polymesh": false, "patches": [], "build": [], "checkmesh_ok": false}'
 
@@ -549,3 +554,68 @@ def test_the_case_is_a_directory_name_under_the_study(given, expected, backend, 
     desk = mesher(backend, store, [block(f"echo {MESH_DONE}")], mesher_max_steps=2)
     answers(backend, {"mesh_look.py": ExecResult(0, NOT_YET_JSON, False, None)})
     assert desk.run("x", case=given).case_rel == expected
+
+# -- resolution, and the edit that changed nothing -----------------------------
+
+
+def test_resolution_is_reported_and_the_same_number_means_different_things():
+    """Why the check reports resolution instead of having a threshold of its own.
+
+    These are the two real meshes that motivated the rule. The cavity has TWICE the
+    resolution of the channel and is the one that was badly wrong -- 20 cells across
+    missed Ghia's centreline extrema by 19% and 21%, while the channel at 10 across
+    reproduced f*Re to within 2%. No single number separates them; only the physics
+    does, and only the caller knows the physics.
+    """
+    cavity = {"bounds": [0, 0, 0, 0.1, 0.1, 0.005], "cells": 400, "two_d": True}
+    channel = {"bounds": [0, 0, 0, 0.2, 0.02, 0.002], "cells": 1000, "two_d": True}
+    assert [round(v, 4) for v in check_mod.resolution(cavity)] == [0.005, 20.0]
+    assert [round(v, 4) for v in check_mod.resolution(channel)] == [0.002, 10.0]
+    assert check_mod.resolution({"cells": 0, "bounds": []}) == (0.0, 0.0)
+
+
+def test_a_resolution_the_request_names_is_enforced_and_one_it_does_not_is_not():
+    assert check_mod.asked_resolution("at least 40 cells across the gap") == 40
+    assert check_mod.asked_resolution("resolve it with 25 cells through the throat") == 25
+    assert check_mod.asked_resolution("a duct 20 mm tall") == 0
+
+    coarse = dict(OK_PAYLOAD, cells=400, bounds=[0, 0, 0, 0.1, 0.1, 0.005], two_d=True)
+    asked = check_mod.read(coarse, request="a cavity with at least 40 cells across")
+    assert not asked.ok
+    assert any("at least 40 cells across" in m for m in asked.missing)
+
+    silent = check_mod.read(coarse, request="a cavity 100 mm on a side")
+    assert silent.across == 20.0
+    assert not any("cells across" in m for m in silent.missing), (
+        "an unstated resolution must be reported, never guessed at")
+
+
+def test_a_mesh_identical_to_the_one_before_it_is_refused():
+    """The silent no-op: 'make it 30 mm tall' returning the 20 mm mesh, reported clean."""
+    before = {"cells": 1000, "bounds": [0, 0, 0, 0.2, 0.02, 0.002],
+              "patches": [{"name": "inlet", "area": 4e-05, "nFaces": 10},
+                          {"name": "outlet", "area": 4e-05, "nFaces": 10}]}
+    after = dict(OK_PAYLOAD, cells=1000, bounds=[0, 0, 0, 0.2, 0.02, 0.002],
+                 patches=[{"name": "inlet", "area": 4e-05, "nFaces": 10},
+                          {"name": "outlet", "area": 4e-05, "nFaces": 10}])
+    refused = check_mod.read(after, request="make the channel 30 mm tall", before=before)
+    assert refused.unchanged
+    assert not refused.ok
+    assert any("IDENTICAL" in m for m in refused.missing)
+
+    # A real edit is not refused, even when bounds and cell count are unmoved --
+    # widening a cylinder inside a fixed box moves neither, so the patch areas are
+    # the witness.
+    widened = dict(after, patches=[{"name": "inlet", "area": 6e-05, "nFaces": 10},
+                                   {"name": "outlet", "area": 4e-05, "nFaces": 10}])
+    assert not check_mod.read(widened, request="wider", before=before).unchanged
+    # And a first run, with nothing before it, can never trip the guard.
+    assert not check_mod.read(after, request="a duct", before=None).unchanged
+
+
+def test_no_snapshot_is_taken_when_the_case_has_no_mesh_in_it(backend, store):
+    """The guard must not fire on bad information: every way of not knowing is {}."""
+    desk = mesher(backend, store, [block(f"echo {MESH_DONE}")])
+    answers(backend, {"mesh_look.py": ExecResult(0, OK_JSON, False, None)})
+    result = desk.run("a duct")
+    assert result.ok, "a first mesh must not be mistaken for an unchanged one"

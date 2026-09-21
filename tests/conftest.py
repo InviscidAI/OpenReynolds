@@ -8,6 +8,7 @@ import anthropic
 import pytest
 from rich.console import Console
 
+from openreynolds import images
 from openreynolds.backend.base import (
     WORKSPACE_ROOT,
     Backend,
@@ -17,7 +18,7 @@ from openreynolds.backend.base import (
     Stat,
 )
 from openreynolds.store import Store
-from openreynolds.tools import ToolContext
+from openreynolds.tools import CORES_PROBE, ToolContext
 from openreynolds.view import View
 
 
@@ -33,6 +34,9 @@ class FakeBackend(Backend):
         self.exec_results: dict[str, ExecResult] = {
             # So the briefing's imperative guards see the line that depends on it.
             "nproc": ExecResult(0, "8\n", False, None),
+            # The probe the machine note and the launch note ask: threads, then physical
+            # cores. Eight and four is a c7i.2xlarge, the production default shape.
+            CORES_PROBE: ExecResult(0, "8\n4\n", False, None),
         }
         self.execs: list[str] = []
         self.exec_background: list[bool] = []
@@ -124,6 +128,97 @@ class FakeBackend(Backend):
 
     def close(self):
         pass
+
+
+class ReadyStarter:
+    """Stands in for `hosted.Starter`: a workspace that is up the moment it is asked.
+
+    `reserve` hands one back; the session kicks it and `_bring_up` collects the
+    backend from `result()`. With `error` set, the start fails the way a start against
+    a service that is down fails -- with a `BackendError` -- once anything asks.
+    `hold` is an event the start waits on, for a test that needs the workspace to be
+    still coming up while it looks."""
+
+    def __init__(self, backend, instance_id="iid-1", *, instances_held=0,
+                 listed_as_running=False, error=None, hold=None):
+        self.backend = backend
+        self.instance_id = instance_id
+        self.instances_held = instances_held
+        self.listed_as_running = listed_as_running
+        self.error = error
+        self.hold = hold
+        self.started = False
+        self.cancelled = False
+
+    def start(self):
+        self.started = True
+
+    def cancel(self):
+        if self.started:
+            return False
+        self.cancelled = True
+        return True
+
+    @property
+    def done(self):
+        return self.hold is None or self.hold.is_set()
+
+    @property
+    def elapsed_s(self):
+        return 0.0
+
+    def result(self, timeout=None):
+        self.start()
+        if self.hold is not None:
+            self.hold.wait(timeout)
+        if self.error is not None:
+            raise self.error
+        return self.backend
+
+    def pending(self, **kwargs):
+        from openreynolds.backend.pending import PendingBackend
+
+        return PendingBackend(
+            self.instance_id, instances_held=self.instances_held,
+            was_already_running=self.listed_as_running, **kwargs,
+        )
+
+
+def reserved(backend, instance_id="iid-1", **kwargs):
+    """`monkeypatch.setattr(cli.hosted, "reserve", reserved(backend))`: the seam a
+    session gets its workspace through, answered from memory. Returns what `reserve`
+    returns -- no client, the instance id, a starter that resolves to `backend`."""
+
+    def reserve(url, key, iid=None):
+        return None, instance_id, ReadyStarter(backend, instance_id, **kwargs)
+
+    return reserve
+
+
+def refusing_to_reserve(error=None):
+    """A `reserve` against a service that is not there, for the tests that turn on
+    what a session settles before it has a workspace."""
+
+    def reserve(url, key, iid=None):
+        raise error or BackendError("no service in this test")
+
+    return reserve
+
+
+@pytest.fixture(autouse=True)
+def drawing_starts_allowed():
+    """`--output-format stream-json` gives up drawing inline images for the life of
+    the process, because a pseudo-terminal answers `isatty()` the same way a person's
+    terminal does and the escape payload would land in the middle of the NDJSON.
+
+    A process runs in one output mode for its whole life; a test process runs many
+    sessions in one interpreter, so the flag is reset around each one. Without this
+    the first test to ask for stream-json would quietly turn every later drawing test
+    into a test of nothing.
+    """
+    images.allow_drawing()
+    yield
+    images.allow_drawing()
 
 
 @pytest.fixture

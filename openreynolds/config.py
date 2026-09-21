@@ -53,6 +53,15 @@ was the single largest cost of a study (thirty-odd wakes across one solve, for
 nothing the progress bar was not already showing); ten minutes keeps the
 narration and drops that bill by an order of magnitude. Zero turns it off."""
 
+DEFAULT_WORKSPACE_ETA_S = 30.0
+"""How long a workspace usually takes to come up, as said to the model at the start
+of a session that is running ahead of its workspace (`cli.session`, the briefing).
+
+A hint, not a measurement: the session cannot know what is behind the service, and
+the number is only ever said as "usually about". An embedder that knows its fleet
+sets `OPENREYNOLDS_WORKSPACE_ETA_S`; thirty seconds is between a warm pool and a cold
+machine."""
+
 DEFAULT_DESK_MODEL = "claude-haiku-4-5"
 """The front-desk model: a second, cheap agent that answers the user while the main
 agent is busy (`desk.py`). Haiku is ~5x cheaper than the Opus main model and fast
@@ -72,7 +81,19 @@ _CONFIG_KEYS = (
     "desk_model",
     "effort",
     "context_window",
+    "mode",
 )
+
+
+def _seconds_or(text: str | None, default: float) -> float:
+    """A non-negative number of seconds from an environment variable, or `default`
+    for anything that is not one. A hint about timing is not worth refusing to start
+    over."""
+    try:
+        value = float(text) if text else default
+    except ValueError:
+        return default
+    return value if value >= 0 else default
 
 
 def preferences_path() -> Path:
@@ -130,6 +151,9 @@ class Config:
     llm_timeout_s: float = DEFAULT_LLM_TIMEOUT_S
     mirror_interval_s: float = DEFAULT_MIRROR_INTERVAL_S
     narrate_every_s: float = DEFAULT_NARRATE_EVERY_S
+    workspace_eta_s: float = DEFAULT_WORKSPACE_ETA_S
+    """Seconds a workspace usually takes to come up, told to the model while it waits
+    for one (`OPENREYNOLDS_WORKSPACE_ETA_S`). See `DEFAULT_WORKSPACE_ETA_S`."""
     capture: bool = True
     """Whether transcripts are uploaded to the workspace service as the study runs.
 
@@ -163,6 +187,13 @@ class Config:
     mesher_max_seconds: float = 0.0
     """Wall clock for one call; 0 takes the default (900 s).
     `OPENREYNOLDS_CAD_MAX_SECONDS`, or `OPENREYNOLDS_MESHER_MAX_SECONDS` as it was."""
+    mode: str = "auto"
+    """How much the person wants to be consulted: `auto`, `partial` or `structured`
+    (`modes.py`). `OPENREYNOLDS_MODE` or the config file's `mode`; `--mode` for one
+    session. A value that is not a mode is ignored: a bad `OPENREYNOLDS_MODE` falls
+    through to the config file's, and a bad config-file value to `auto`. `openreynolds`
+    warns about a bad `OPENREYNOLDS_MODE` only. A resumed study keeps its stored mode
+    unless a valid one is given (`cli.session`)."""
     studies_dir: Path = field(default_factory=lambda: Path.cwd() / "studies")
     preferences: str = ""
     """The standing note from `preferences_path()`, or empty when there is none."""
@@ -236,11 +267,16 @@ class Config:
             or str(stored.get("anthropic_api_key") or "")
         )
         llm_base_url = pick("OPENREYNOLDS_LLM_BASE_URL", "llm_base_url") or None
+        # What was actually named, with no preset standing in for it. Re-asserted after
+        # construction below, where `__post_init__` can no longer swap it.
+        named_model = pick("OPENREYNOLDS_MODEL", "model")
+        named_desk = pick("OPENREYNOLDS_DESK_MODEL", "desk_model")
         window = pick("OPENREYNOLDS_CONTEXT_WINDOW", "context_window")
         max_output = os.environ.get("OPENREYNOLDS_MAX_TOOL_OUTPUT")
         timeout = os.environ.get("OPENREYNOLDS_LLM_TIMEOUT_S")
         mirror_every = os.environ.get("OPENREYNOLDS_MIRROR_INTERVAL_S")
         narrate_every = os.environ.get("OPENREYNOLDS_NARRATE_EVERY_S")
+        workspace_eta = os.environ.get("OPENREYNOLDS_WORKSPACE_ETA_S")
 
         try:
             preferences = preferences_path().read_text(encoding="utf-8").strip()
@@ -250,14 +286,18 @@ class Config:
         def switched_off(env: str) -> bool:
             return (os.environ.get(env) or "").strip().lower() in ("0", "false", "no", "off")
 
-        return cls(
+        from .modes import normalize as normal_mode
+
+        cfg = cls(
             preferences=preferences,
+            # Each source is checked on its own, so a bad OPENREYNOLDS_MODE falls through
+            # to the config file's mode rather than hiding it.
+            mode=normal_mode(os.environ.get("OPENREYNOLDS_MODE") or "")
+            or normal_mode(str(stored.get("mode") or ""))
+            or "auto",
             capture=not switched_off("OPENREYNOLDS_CAPTURE"),
             desk=not switched_off("OPENREYNOLDS_DESK"),
-            desk_model=pick(
-                "OPENREYNOLDS_DESK_MODEL", "desk_model",
-                preset.desk_model if preset else DEFAULT_DESK_MODEL,
-            ),
+            desk_model=named_desk or (preset.desk_model if preset else DEFAULT_DESK_MODEL),
             mesher_model=pick_renamed(
                 "OPENREYNOLDS_CAD_MODEL", "cad_model",
                 "OPENREYNOLDS_MESHER_MODEL", "mesher_model"),
@@ -280,7 +320,7 @@ class Config:
             llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,
             context_window=int(window) if window else 0,
-            model=pick("OPENREYNOLDS_MODEL", "model", preset.model if preset else DEFAULT_MODEL),
+            model=named_model or (preset.model if preset else DEFAULT_MODEL),
             effort=pick("OPENREYNOLDS_EFFORT", "effort", DEFAULT_EFFORT),
             max_tool_output=int(max_output) if max_output else DEFAULT_MAX_TOOL_OUTPUT,
             llm_timeout_s=float(timeout) if timeout else DEFAULT_LLM_TIMEOUT_S,
@@ -290,13 +330,33 @@ class Config:
             narrate_every_s=(
                 float(narrate_every) if narrate_every else DEFAULT_NARRATE_EVERY_S
             ),
+            workspace_eta_s=_seconds_or(workspace_eta, DEFAULT_WORKSPACE_ETA_S),
         )
+        # `__post_init__` swaps `claude-opus-5` for the preset's model, so that a
+        # provider named on its own arrives with a model that provider serves. A model
+        # named here is the opposite case, and the swap was eating it:
+        # `OPENREYNOLDS_PROVIDER=reynolds` with `OPENREYNOLDS_MODEL=claude-opus-5` --
+        # one of the two models that service meters, and what the hosted app's chooser
+        # sends when someone picks Opus -- loaded as Sonnet, silently, on every new
+        # session as well as on every resume. The default is above; what was asked for
+        # wins here.
+        if named_model:
+            cfg.model = named_model
+        if named_desk:
+            cfg.desk_model = named_desk
+        return cfg
 
     def save(self) -> Path:
         """Write the credential fields back, readable only by this user."""
         path = config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {key: getattr(self, key) for key in _CONFIG_KEYS if getattr(self, key)}
+        # `mode` is written only when it is not the default, so a config file saved by
+        # someone who never chose a mode says nothing about modes.
+        payload = {
+            key: getattr(self, key)
+            for key in _CONFIG_KEYS
+            if getattr(self, key) and not (key == "mode" and self.mode == "auto")
+        }
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         if os.name != "nt":
             path.chmod(stat.S_IRUSR | stat.S_IWUSR)

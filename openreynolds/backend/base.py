@@ -97,6 +97,35 @@ class JobStatus:
         return self.status == "running"
 
 
+@dataclass(frozen=True)
+class StoredEntry:
+    """One path as a backend's copy of the workspace holds it.
+
+    The same four facts `find` prints for a live listing (`browse.FIND_FORMAT`), so a
+    listing read from the copy is the same shape as one walked on the machine, and
+    nothing downstream can tell which it was given. Plain data rather than
+    `browse.Entry` because `browse` imports this module, and the protocol may not
+    import it back."""
+
+    path: str
+    is_dir: bool
+    size: int = 0
+    mtime: float = 0.0
+
+
+@dataclass(frozen=True)
+class StoredListing:
+    """What a backend's copy of the workspace says is under a path.
+
+    Not depth-limited by the backend: the copy is asked for everything under the path
+    and cut to the caller's depth on this side, because the copy answers as a whole
+    tree. `truncated` is the copy's own word that it held more than it listed, so the
+    entries are the head of the answer and not the whole of it."""
+
+    entries: list[StoredEntry]
+    truncated: bool = False
+
+
 class BackendError(Exception):
     """Any failure reaching or acting on the workspace.
 
@@ -123,6 +152,13 @@ class Backend(Protocol):
 
     workspace_root: str
     """Absolute path of the persistent directory, e.g. "/work"."""
+
+    study_id: str | None = None
+    """Which study this workspace is serving, once the session has said (`cli.session`
+    sets it when it opens or resumes the study's row). Only a backend that keeps a copy
+    of the workspace somewhere other than the machine has a use for it -- the copy is
+    kept per study, and `list_stored` reads it under this name. Every other backend
+    carries None and nothing asks."""
 
     def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120,
              *, background: bool = False) -> ExecResult:
@@ -260,5 +296,27 @@ class Backend(Protocol):
         """A fresh kernel. Every binding is gone, which is what makes the cell log the
         source of truth rather than the kernel."""
         ...
+
+    def list_stored(self, path: str, depth: int) -> StoredListing | None:
+        """What is under `path`, to `depth`, read from a copy of the workspace that
+        outlives the machine -- or None when this backend keeps no such copy, or
+        cannot read it just now.
+
+        The listing a session takes on its way out is what this exists for. It went
+        through `exec`, and a foreground `exec` on a hosted workspace the service had
+        already stopped starts a new machine to run it: on 2026-09-21 the close-down
+        of an idle-timed-out session started a c7i.2xlarge at 02:24:32 for one `find`,
+        and the machine then sat until the reaper took it down again at 02:42 --
+        eighteen minutes of instance for a listing the service could have answered
+        from the copy it writes at every stop. `Browser.tree` asks this when a poll
+        finds nothing running, and only starts the machine when the answer is None.
+
+        Same shape as the walk (`StoredEntry` is what `find` prints), relative to
+        the same root, so a caller cannot tell which it was given. `depth` counts as
+        `find -maxdepth` does: the path's own children are 1.
+
+        Never raises, and None is never "empty" -- it means "ask the machine", and
+        the caller does. The default is a backend with no copy to read."""
+        return None
 
     def close(self) -> None: ...

@@ -22,17 +22,22 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from rich.panel import Panel
 from rich.text import Text
 from textual import work
+from textual.actions import SkipAction
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.suggester import Suggester
 from textual.widgets import (
     Footer,
     Header,
     Input,
+    OptionList,
     RichLog,
     Static,
     TabbedContent,
@@ -40,10 +45,13 @@ from textual.widgets import (
     TextArea,
     Tree,
 )
+from textual.widgets.option_list import Option
 
 from . import commands, images
 from .browse import Entry, human
+from .llm.presets import EFFORTS, models_for
 from .mirror import local_for
+from .modes import label as mode_label
 from .progress import BAR_WIDTH, Progress
 from .progress import bar as draw_bar
 from .view import View
@@ -56,15 +64,25 @@ TOOL_STYLE = {
     "job_check": "magenta",
     "job_kill": "red",
     "fetch": "yellow",
+    "mesh": "magenta",
+    "checkpoint": "yellow",
 }
+
+PLACEHOLDER = "Ask for something, /help for commands, Tab completes a /command"
+
+ANSWERS = ("/yes", "/no", "/all")
+"""What an open question can be answered with, offered first while one is open."""
 
 
 class SessionBar(Static):
-    """Study, instance, model, and how full the thread is."""
+    """Study, instance, model, effort, mode, and how full the thread is."""
 
     study = reactive("")
     instance = reactive("")
     model = reactive("")
+    effort = reactive("")
+    provider = reactive("")
+    mode = reactive("")
     tokens = reactive(0)
     fraction = reactive(0.0)
 
@@ -72,10 +90,220 @@ class SessionBar(Static):
         used = f"{self.tokens:,} tokens"
         if self.fraction:
             used += f"  ({self.fraction * 100:.0f}% of the window)"
+        model = _escape(self.model)
+        if self.effort:
+            model += f" [dim]({_escape(self.effort)} effort)[/dim]"
+        second = f"[dim]{used}[/dim]"
+        if self.provider:
+            second += f"   [dim]provider {_escape(self.provider)}[/dim]"
+        if self.mode:
+            second += f"   [b]mode[/b] {mode_label(self.mode)}"
         return (
             f"[b]study[/b] {self.study}   [b]instance[/b] {self.instance[:8]}   "
-            f"[b]model[/b] {self.model}\n[dim]{used}[/dim]"
+            f"[b]model[/b] {model}\n{second}"
         )
+
+
+# -- the prompt ------------------------------------------------------------------
+
+
+class SuggestionList(OptionList):
+    """The commands matching what is typed, drawn just above the prompt.
+
+    It never takes focus: the prompt keeps the keyboard, and Up, Down, Tab and Esc
+    reach this list through the prompt's own bindings. A click still picks a line."""
+
+    can_focus = False
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.lines: list[str] = []
+
+    def show(self, items: list[tuple[str, str]]) -> None:
+        self.lines = [line for line, _ in items]
+        options = []
+        for line, summary in items:
+            prompt = Text(line.rstrip() or line, style="bold")
+            if summary:
+                prompt.append(f"   {summary}", style="dim")
+            options.append(Option(prompt))
+        self.set_options(options)
+        self.display = bool(items)
+        if items:
+            self.highlighted = 0
+
+    def hide(self) -> None:
+        self.lines = []
+        self.clear_options()
+        self.display = False
+
+    @property
+    def is_open(self) -> bool:
+        return bool(self.display and self.lines)
+
+    def current(self) -> str | None:
+        if not self.is_open or self.highlighted is None:
+            return None
+        if 0 <= self.highlighted < len(self.lines):
+            return self.lines[self.highlighted]
+        return None
+
+    def move(self, step: int) -> None:
+        if not self.lines:
+            return
+        at = self.highlighted if self.highlighted is not None else -step
+        self.highlighted = (at + step) % len(self.lines)
+
+
+class CommandSuggester(Suggester):
+    """The grey completion after the cursor: the highlighted suggestion's remainder."""
+
+    def __init__(self, prompt: PromptInput) -> None:
+        super().__init__(use_cache=False, case_sensitive=True)
+        self.prompt = prompt
+
+    async def get_suggestion(self, value: str) -> str | None:
+        return self.prompt.ghost_for(value)
+
+
+class PromptInput(Input):
+    """The input box, with completion for the things that are not messages.
+
+    Everything offered comes from `commands.completions`, the same registry `/help`
+    and the web composer read, so nothing here can drift from what the parser accepts.
+    Plain messages are untouched: completion only wakes up on a leading slash."""
+
+    BINDINGS = [
+        # Priority, so Tab completes instead of moving focus to the next pane.
+        Binding("tab", "complete", "Complete", show=False, priority=True),
+        Binding("down", "suggestion(1)", "Next suggestion", show=False, priority=True),
+        Binding("up", "suggestion(-1)", "Previous suggestion", show=False, priority=True),
+        Binding("escape", "close_suggestions", "Close suggestions", show=False, priority=True),
+    ]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.suggester = CommandSuggester(self)
+        self.models: tuple[Any, ...] = ()
+        """What `/model ` offers: the provider's known models, the current one first."""
+        self.efforts: tuple[str, ...] = tuple(EFFORTS)
+        self.answering = False
+        """A question is open, so /yes, /no and /all come first."""
+        self._closed_for: str | None = None
+        """The text Esc closed the list on; typing anything else opens it again."""
+
+    # What is offered -----------------------------------------------------------
+
+    def items_for(self, value: str) -> list[tuple[str, str]]:
+        items = commands.completions(
+            value, "terminal", models=self.models, efforts=self.efforts
+        )
+        if self.answering:
+            items.sort(key=lambda item: 0 if item[0].rstrip() in ANSWERS else 1)
+        return items
+
+    def ghost_for(self, value: str) -> str | None:
+        if value != self.value:
+            return None
+        line = self._list().current() if self._list() else None
+        if line is None:
+            items = self.items_for(value)
+            line = items[0][0] if items else None
+        if line and len(line) > len(value) and line.lower().startswith(value.lower()):
+            return value + line[len(value):]
+        return None
+
+    def _list(self) -> SuggestionList | None:
+        try:
+            return self.app.query_one("#suggestions", SuggestionList)
+        except NoMatches:
+            return None
+
+    def watch_value(self, value: str) -> None:
+        if value != self._closed_for:
+            self._closed_for = None
+        self.refresh_suggestions()
+
+    def refresh_suggestions(self) -> None:
+        box = self._list()
+        if box is None:
+            return
+        value = self.value
+        if not value.startswith("/") or self._closed_for == value:
+            box.hide()
+            return
+        box.show(self.items_for(value))
+
+    def _ghost_from_list(self) -> None:
+        """Keep the grey text in step with the highlight as it moves."""
+        line = self._list().current() if self._list() else None
+        value = self.value
+        if line and len(line) > len(value) and line.lower().startswith(value.lower()):
+            self._suggestion = value + line[len(value):]
+        else:
+            self._suggestion = ""
+
+    def accept(self, line: str) -> None:
+        self.value = line
+        self.cursor_position = len(line)
+
+    # Keys ----------------------------------------------------------------------
+
+    def action_complete(self) -> None:
+        box = self._list()
+        line = box.current() if box else None
+        if line is not None and line != self.value:
+            self.accept(line)
+            return
+        ghost = self._suggestion
+        if ghost and len(ghost) > len(self.value):
+            self.accept(ghost)
+            return
+        if self.value.startswith("/"):
+            return  # a command is being typed: Tab never wanders off to another pane
+        raise SkipAction()
+
+    def action_suggestion(self, step: int) -> None:
+        box = self._list()
+        if box is None or not box.is_open:
+            raise SkipAction()
+        box.move(step)
+        self._ghost_from_list()
+
+    def action_close_suggestions(self) -> None:
+        box = self._list()
+        if box is None or not box.is_open:
+            raise SkipAction()
+        self._closed_for = self.value
+        box.hide()
+        self._suggestion = ""
+
+    async def action_submit(self) -> None:
+        box = self._list()
+        line = box.current() if box else None
+        if line is not None and self._half_typed(line):
+            self.accept(line)
+            return
+        if box is not None:
+            box.hide()
+        await super().action_submit()
+
+    def _half_typed(self, line: str) -> bool:
+        """Whether Enter should take the suggestion rather than send the line.
+
+        A verb not yet typed in full (`/mo`) cannot mean anything as sent, so Enter
+        finishes it. So does an argument cut short of a choice (`/mode par`). A complete
+        verb, or a verb with nothing after it (`/mode `, which asks for the status), is
+        sent as typed."""
+        value = self.value
+        if value.strip() == line.strip():
+            return False
+        verb, space, arg = value.partition(" ")
+        if not space:
+            return commands.parse(verb).kind == commands.SAY
+        if not arg.strip():
+            return False
+        return line.lower().startswith(value.lower())
 
 
 def _field(row: Any, name: str) -> Any:
@@ -295,7 +523,8 @@ class OpenReynoldsApp(App):
     JobsPane { padding: 0 1; height: 1fr; }
     #conversation { height: 3fr; border: round $primary; padding: 0 1; }
     #activity { height: 1fr; border: round $secondary; padding: 0 1; }
-    Input { dock: bottom; }
+    #composer { height: auto; }
+    SuggestionList { height: auto; max-height: 10; border: none; padding: 0 1; display: none; }
     """
 
     BINDINGS = [
@@ -317,6 +546,8 @@ class OpenReynoldsApp(App):
         self.quitting = False
         self.browser: Any = None
         self._files_sig: tuple | None = None
+        self.question: str | None = None
+        """The id of the question waiting on the person, while one is open."""
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -336,15 +567,17 @@ class OpenReynoldsApp(App):
                         yield RendersPane(id="renders")
                     with TabPane("files", id="tab-files"):
                         yield FilesTree("/work", id="filestree")
-        yield Input(placeholder="Ask for something, or /btw to speak without interrupting", id="prompt")
+        with Vertical(id="composer"):
+            yield SuggestionList(id="suggestions")
+            yield PromptInput(placeholder=PLACEHOLDER, id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
         self.title = "OpenReynolds"
         self.sub_title = "CFD agent"
         self.query_one("#activity", RichLog).write(
-            "[dim]/help for what you can type - /btw says something without asking it "
-            "to stop, /status says what is happening[/dim]"
+            "[dim]/help for what you can type - type / and Tab completes a command - /btw "
+            "says something without asking it to stop, /status says what is happening[/dim]"
         )
         self.query_one("#prompt", Input).focus()
         self.start_session()
@@ -410,6 +643,82 @@ class OpenReynoldsApp(App):
             # would claim otherwise.
             log.write(f"[dim]{_escape(text)}[/dim]")
         self.typed.put(text)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """A click on a suggestion takes it, and the keyboard stays in the prompt."""
+        box = event.option_list
+        if not isinstance(box, SuggestionList) or not 0 <= event.option_index < len(box.lines):
+            return
+        prompt = self.query_one("#prompt", PromptInput)
+        prompt.accept(box.lines[event.option_index])
+        prompt.focus()
+
+    # -- the session's settings and questions ----------------------------------
+
+    def set_model(self, model: str, effort: str, provider: str) -> None:
+        """Refresh the bar, and what `/model ` offers, for the model now in use."""
+        try:
+            bar = self.query_one("#bar", SessionBar)
+            prompt = self.query_one("#prompt", PromptInput)
+        except NoMatches:
+            return
+        bar.model, bar.effort, bar.provider = model, effort, provider
+        known = [m for m in (model, *models_for(provider)) if m]
+        prompt.models = tuple(
+            (m, "in use now" if m == model else provider)
+            for m in dict.fromkeys(known)
+        )
+        prompt.refresh_suggestions()
+
+    def set_mode(self, mode: str) -> None:
+        try:
+            self.query_one("#bar", SessionBar).mode = mode
+        except NoMatches:
+            return
+        self._note(f"[dim]mode: {mode_label(mode)}[/dim]")
+
+    def open_question(
+        self, request_id: str, kind: str, title: str, detail: str, choices: list[str]
+    ) -> None:
+        """Put a question where it cannot be missed, and make the prompt about it."""
+        self.question = request_id
+        hint = _answer_hint(kind)
+        body = Text(detail or "")
+        if choices:
+            body.append("\n\n" + " / ".join(choices), style="dim")
+        body.append(f"\n{hint}", style="bold yellow")
+        try:
+            log = self.query_one("#conversation", RichLog)
+            prompt = self.query_one("#prompt", PromptInput)
+        except NoMatches:
+            return
+        log.write(Panel(body, title=Text(title, style="bold yellow"), border_style="yellow",
+                        title_align="left", expand=True))
+        if not prompt.disabled:
+            prompt.placeholder = hint
+        prompt.answering = True
+        prompt.refresh_suggestions()
+
+    def close_question(self, request_id: str, outcome: str, note: str = "") -> None:
+        said = {
+            "approved": "approved",
+            "declined": "declined",
+            "approved_all": "approved, and full auto from here on",
+        }.get(outcome, outcome.replace("_", " "))
+        if note:
+            said += f": {note}"
+        try:
+            log = self.query_one("#conversation", RichLog)
+            prompt = self.query_one("#prompt", PromptInput)
+        except NoMatches:
+            return
+        log.write(f"[yellow]{_escape(said)}[/yellow]")
+        if self.question == request_id:
+            self.question = None
+            prompt.answering = False
+            if not prompt.disabled:
+                prompt.placeholder = PLACEHOLDER
+            prompt.refresh_suggestions()
 
     def action_clear(self) -> None:
         self.query_one("#conversation", RichLog).clear()
@@ -636,6 +945,7 @@ class TuiView(View):
         self.app.call_from_thread(apply)
 
     def header(self, study_id: str, instance_id: str, model: str, mirror: Path) -> None:
+        # Effort, provider and mode follow straight after, through model() and mode().
         self._set("bar", study=study_id, instance=instance_id, model=model)
         self._to("activity", f"[dim]fetched files land in {mirror}[/dim]")
 
@@ -695,6 +1005,10 @@ class TuiView(View):
     def usage(self, tokens: int, fraction: float) -> None:
         self._set("bar", tokens=tokens, fraction=fraction)
 
+    def model(self, model: str, effort: str, provider: str) -> None:
+        """The bar, and the models `/model ` completes, follow the session's model."""
+        self.app.call_from_thread(self.app.set_model, model, effort, provider)
+
     def prompt(self) -> None:
         """The input box is always there, so nothing to announce."""
 
@@ -714,9 +1028,23 @@ class TuiView(View):
         self._to("conversation", "[dim](sent - it reads this at its next step)[/dim]")
 
     def workspace(self, browser: Any) -> None:
-        """Hand the interface a way to look at the workspace, and fill the pane once."""
+        """Hand the interface a way to look at the workspace, and fill the pane once.
+
+        Once the workspace is there to list: a browser handed over while it is still
+        starting would sit in `load_files` saying "listing" for the whole start, so
+        the first listing waits for `workspace_ready` instead."""
         self.app.browser = browser
+        if not _workspace_up(browser):
+            return
         self.app.call_from_thread(self.app.show_files_tab, browser.home)
+
+    def workspace_ready(self, instance_id: str, seconds: float) -> None:
+        """The files pane fills now, and the activity pane says the wait is over."""
+        if seconds >= 1.0:
+            self._to("activity", f"[dim]workspace ready after {seconds:.0f} s[/dim]")
+        browser = self.app.browser
+        if browser is not None:
+            self.app.call_from_thread(self.app.show_files_tab, browser.home)
 
     def show_files(self, path: str = "", depth: int = 0) -> None:
         """Depth is the flat listing's concern; the tree loads what it needs."""
@@ -772,6 +1100,19 @@ class TuiView(View):
     def show_renders(self, renders_dir: Any) -> None:
         self.app.call_from_thread(self.app.show_renders_tab)
 
+    def approval(self, request_id: str, kind: str, title: str, detail: str, choices: list[str]) -> None:
+        """A question for the person: boxed in the conversation, and the prompt's
+        placeholder and suggestions turn to answering it."""
+        self.app.call_from_thread(
+            self.app.open_question, request_id, kind, title, detail, list(choices)
+        )
+
+    def approval_done(self, request_id: str, outcome: str, note: str = "") -> None:
+        self.app.call_from_thread(self.app.close_question, request_id, outcome, note)
+
+    def mode(self, mode: str) -> None:
+        self.app.call_from_thread(self.app.set_mode, mode)
+
 
 class TuiReader:
     """Stands in for stdin: lines come from the input box instead."""
@@ -814,6 +1155,27 @@ def _open_path(path: Path) -> None:
         pass
 
 
+def _answer_hint(kind: str) -> str:
+    if kind == "checkpoint":
+        return "y to approve, or say what to change - a approves all (full auto)"
+    return "y to approve, n to decline (or say why) - a approves all (full auto)"
+
+
 def _escape(text: str) -> str:
     """Model output is not markup; square brackets in it must not become tags."""
     return text.replace("[", r"\[")
+
+
+def _workspace_up(browser: Any) -> bool:
+    """Whether the browser's workspace can answer a listing now.
+
+    A backend that is still coming up says so through `ready()`; one with no such
+    notion is up by definition. Duck-typed on purpose: a view knows nothing about
+    which backend it has, only whether asking it would wait."""
+    ready = getattr(getattr(browser, "backend", None), "ready", None)
+    if not callable(ready):
+        return True
+    try:
+        return bool(ready())
+    except Exception:  # noqa: BLE001 - a view guesses "up" rather than blocking the screen
+        return True

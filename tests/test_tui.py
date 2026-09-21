@@ -11,6 +11,7 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from openreynolds.jsonview import JsonView
 from openreynolds.tui import JobsPane, OpenReynoldsApp, SessionBar, TuiReader, TuiView, _escape
 from openreynolds.view import ConsoleView, View
 from openreynolds.watch import NOTHING
@@ -69,11 +70,12 @@ def test_both_views_satisfy_the_protocol():
     """The loop cannot tell which one it has, which is the point."""
     assert isinstance(ConsoleView(), View)
     assert isinstance(TuiView(idle_app()), View)
+    assert isinstance(JsonView(), View)
 
 
-def test_the_two_views_implement_the_same_surface():
+def test_every_view_implements_the_same_surface():
     surface = {n for n in dir(View) if not n.startswith("_")}
-    for implementation in (ConsoleView, TuiView):
+    for implementation in (ConsoleView, TuiView, JsonView):
         missing = surface - {n for n in dir(implementation) if not n.startswith("_")}
         assert not missing, f"{implementation.__name__} is missing {missing}"
 
@@ -709,6 +711,233 @@ async def test_a_desk_reply_lands_in_the_conversation_labelled():
         await asyncio.to_thread(view.desk, "the agent is 20% through the solve, about 19 min left")
         await pilot.pause()
     # It reached the conversation pane (no exception); attribution is in the markup.
+
+
+# -- completion in the prompt ----------------------------------------------------
+
+
+def _suggestions(app):
+    from openreynolds.tui import SuggestionList
+
+    return app.query_one("#suggestions", SuggestionList)
+
+
+async def test_a_slash_opens_the_list_of_commands():
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press("/")
+        await pilot.pause()
+        box = _suggestions(app)
+        assert box.is_open
+        assert "/help " in box.lines and "/mode " in box.lines and "/status" in box.lines
+        assert box.highlighted == 0
+
+
+async def test_a_plain_message_gets_no_suggestions():
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press(*"mode")
+        await pilot.pause()
+        assert not _suggestions(app).is_open
+
+
+async def test_tab_completes_a_half_typed_verb_to_the_first_match():
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press(*"/mo")
+        await pilot.pause()
+        assert _suggestions(app).lines[:2] == ["/mode ", "/model "]
+        await pilot.press("tab")
+        await pilot.pause()
+        prompt = app.query_one("#prompt")
+        assert prompt.value == "/mode "
+        assert prompt.cursor_position == len("/mode ")
+        assert prompt.has_focus, "Tab completed rather than moving focus"
+
+
+async def test_down_then_tab_takes_the_second_match():
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press(*"/mo")
+        await pilot.press("down")
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.query_one("#prompt").value == "/model "
+
+
+async def test_up_wraps_to_the_last_match():
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press(*"/mo")
+        await pilot.press("up")
+        await pilot.pause()
+        box = _suggestions(app)
+        assert box.highlighted == len(box.lines) - 1
+
+
+async def test_escape_closes_the_list_and_typing_opens_it_again():
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press(*"/s")
+        await pilot.pause()
+        assert _suggestions(app).is_open
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not _suggestions(app).is_open
+        await pilot.press("t")
+        await pilot.pause()
+        assert _suggestions(app).is_open
+
+
+async def test_after_the_verb_the_list_offers_the_modes():
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press(*"/mode ")
+        await pilot.pause()
+        box = _suggestions(app)
+        assert box.lines == ["/mode auto", "/mode partial", "/mode structured"]
+        rendered = " ".join(str(box.get_option_at_index(i).prompt) for i in range(3))
+        assert "Full auto" in rendered and "Ask before compute" in rendered
+
+
+async def test_enter_on_a_half_typed_verb_takes_the_suggestion_instead_of_sending():
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press(*"/stat")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.query_one("#prompt").value == "/status"
+        assert app.typed.empty(), "nothing was sent yet"
+        await pilot.press("enter")
+        await pilot.pause()
+    assert app.typed.get_nowait() == "/status"
+
+
+async def test_enter_on_a_verb_with_nothing_after_it_sends_it():
+    """`/mode ` on its own asks which mode the session is in."""
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press(*"/mode ")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not _suggestions(app).is_open
+    assert app.typed.get_nowait() == "/mode"
+
+
+async def test_tab_on_an_ordinary_message_still_moves_focus():
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press(*"hello")
+        await pilot.press("tab")
+        await pilot.pause()
+        assert not app.query_one("#prompt").has_focus
+
+
+async def test_the_model_list_follows_the_provider():
+    app = idle_app()
+    async with running(app) as pilot:
+        await asyncio.to_thread(TuiView(app).model, "claude-sonnet-5", "medium", "anthropic")
+        await pilot.pause()
+        await pilot.press(*"/model claude-h")
+        await pilot.pause()
+        assert _suggestions(app).lines == ["/model claude-haiku-4-5"]
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.query_one("#prompt").value == "/model claude-haiku-4-5"
+
+
+async def test_clicking_a_suggestion_takes_it():
+    app = idle_app()
+    async with running(app) as pilot:
+        await pilot.press(*"/mo")
+        await pilot.pause()
+        box = _suggestions(app)
+        box.highlighted = 1
+        box.action_select()
+        await pilot.pause()
+        assert app.query_one("#prompt").value == "/model "
+
+
+# -- the session's model, effort and mode ----------------------------------------
+
+
+async def test_the_bar_follows_a_model_switch():
+    app = idle_app()
+    async with running(app) as pilot:
+        view = TuiView(app)
+        await asyncio.to_thread(view.header, "s1", "i1", "claude-opus-5", Path("/tmp/x"))
+        await asyncio.to_thread(view.model, "claude-sonnet-5", "low", "reynolds")
+        await pilot.pause()
+        bar = app.query_one("#bar", SessionBar)
+        rendered = bar.render()
+
+    assert (bar.model, bar.effort, bar.provider) == ("claude-sonnet-5", "low", "reynolds")
+    assert "claude-sonnet-5" in rendered and "low effort" in rendered
+
+
+async def test_the_bar_shows_the_mode():
+    app = idle_app()
+    async with running(app) as pilot:
+        await asyncio.to_thread(TuiView(app).mode, "partial")
+        await pilot.pause()
+        bar = app.query_one("#bar", SessionBar)
+        assert bar.mode == "partial"
+        assert "Ask before compute" in bar.render()
+        written = "".join(str(line) for line in app.query_one("#activity").lines)
+        assert "Ask before compute" in written
+
+
+# -- a question for the person -----------------------------------------------------
+
+
+async def test_a_question_is_answered_with_y_from_the_prompt():
+    from openreynolds.approval import Approver
+    from openreynolds.tui import PLACEHOLDER
+
+    app = idle_app()
+    async with running(app) as pilot:
+        approver = Approver(TuiView(app), TuiReader(app))
+        asked = asyncio.ensure_future(
+            asyncio.to_thread(approver.ask, "job", "start solve?", "simpleFoam on 8 cores")
+        )
+        for _ in range(50):
+            await pilot.pause()
+            if app.question:
+                break
+            await asyncio.sleep(0.02)
+        prompt = app.query_one("#prompt")
+        assert app.question is not None
+        assert "approve" in prompt.placeholder
+        conversation = "".join(str(line) for line in app.query_one("#conversation").lines)
+        assert "start solve?" in conversation and "simpleFoam on 8 cores" in conversation
+
+        await pilot.press("y", "enter")
+        decision = await asyncio.wait_for(asked, timeout=5)
+        await pilot.pause()
+
+        assert decision.approved and not decision.all
+        assert app.question is None
+        assert prompt.placeholder == PLACEHOLDER
+
+
+async def test_an_open_question_puts_the_answers_first_in_the_list():
+    app = idle_app()
+    async with running(app) as pilot:
+        await asyncio.to_thread(
+            TuiView(app).approval, "q1", "checkpoint", "plan", "mesh then solve",
+            ["approve", "ask for changes", "approve all"],
+        )
+        await pilot.pause()
+        await pilot.press("/")
+        await pilot.pause()
+        assert [line.rstrip() for line in _suggestions(app).lines[:3]] == ["/yes", "/no", "/all"]
+        assert "say what to change" in app.query_one("#prompt").placeholder
+
+        await asyncio.to_thread(TuiView(app).approval_done, "q1", "declined", "coarser first")
+        await pilot.pause()
+        written = "".join(str(line) for line in app.query_one("#conversation").lines)
+        assert "declined: coarser first" in written
+        assert app.question is None
 
 
 async def test_the_renders_tab_lists_delivered_pictures(tmp_path):

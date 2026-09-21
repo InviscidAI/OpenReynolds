@@ -170,3 +170,174 @@ def test_the_docstring_keeps_the_check_advisory(preflight):
     text = preflight.check_method.__doc__
     assert "edits nothing and blocks nothing" in text
     assert "the reading can be wrong" in text
+
+
+# -- the mesh that moves -------------------------------------------------------
+#
+# The Wigley hull of 2026-08-31. Four rounds of divergence, then two runs that worked:
+# 3.5 s with the body held on `staticFvMesh`, then a restart with the mesh type switched
+# to `dynamicMotionSolverFvMesh` and the body released. `sixDoFRigidBodyMotion` reads its
+# constraints once at start-up, so that is a restart and not a runtime switch -- and
+# phase one left in place is the deliverable silently switched off, on one line nothing
+# was reading.
+
+
+def motion_case(root: Path, application: str, dynamic: str | None) -> Path:
+    case = write(root, application, SHARP)
+    (case / "constant").mkdir(parents=True, exist_ok=True)
+    if dynamic is not None:
+        (case / "constant" / "dynamicMeshDict").write_text(dynamic)
+    return case
+
+
+def test_a_case_asked_for_motion_with_no_dictionary_is_told_before_it_runs(preflight, tmp_path):
+    case = motion_case(tmp_path / "hull", "interFoam", None)
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+    assert statuses(found) == ["fail"]
+    assert "no constant/dynamicMeshDict" in measured(found)
+    assert "DTCHullMoving" in found[0].repair, (
+        "the templates on this image are the repair; nothing in the toolbox writes one"
+    )
+
+
+def test_a_motion_dictionary_switched_off_is_the_settle_phase_left_in_place(preflight, tmp_path):
+    """`staticFvMesh` is correct for phase one of a settle-then-release pair and is the
+    whole answer thrown away in phase two, and the two are one line apart."""
+    case = motion_case(tmp_path / "hull", "interFoam",
+                       "dynamicFvMesh   staticFvMesh;\n")
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+    assert "fail" in statuses(found)
+    assert "staticFvMesh" in measured(found)
+    assert "movingWallVelocity" in " ".join(f.repair for f in found)
+
+
+def test_a_steady_solver_cannot_move_a_mesh_and_is_told_so(preflight, tmp_path):
+    case = motion_case(tmp_path / "mixer", "simpleFoam",
+                       "dynamicFvMesh   solidBodyMotionFvMesh;\n")
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+    assert "fail" in statuses(found)
+    assert "is steady" in measured(found)
+
+
+def test_a_steady_overset_case_is_not_mistaken_for_a_steady_solver_moving_a_mesh(preflight, tmp_path):
+    """An overset dictionary on a steady solver is hole-cutting, not motion, and
+    `overSimpleFoam` is already in STEADY_APPLICATIONS for the Courant number's sake."""
+    case = motion_case(tmp_path / "over", "overSimpleFoam",
+                       "dynamicFvMesh   dynamicOversetFvMesh;\n")
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+    assert "fail" not in statuses(found)
+    assert "names overset" in measured(found)
+
+
+def test_the_pair_that_actually_ran_is_reported_ok(preflight, tmp_path):
+    case = motion_case(
+        tmp_path / "wig6", "interFoam",
+        "dynamicFvMesh   dynamicMotionSolverFvMesh;\nmotionSolver    sixDoFRigidBodyMotion;\n",
+    )
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+    assert set(statuses(found)) == {"ok"}
+    assert "dynamicMotionSolverFvMesh" in measured(found)
+    assert "sixDoFRigidBodyMotion" in measured(found)
+
+
+def test_an_unseen_mesh_type_is_a_question_rather_than_a_verdict(preflight, tmp_path):
+    """The tutorial directories for the overset and solid-body families exist on this
+    image; that is not the same fact as the type being registered in the build, and a
+    checker that asserted one from the other would be the constant-not-measurement
+    failure the workspace already has a post-mortem for."""
+    case = motion_case(tmp_path / "mixer", "pimpleFoam",
+                       "dynamicFvMesh   solidBodyMotionFvMesh;\n")
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+    assert "fail" not in statuses(found)
+    warned = [f for f in found if f.status == "warn"]
+    assert warned and "no run recorded here" in warned[0].meaning
+    assert "probe" in warned[0].repair, "the build is the authority, and the probe asks it"
+
+
+def test_a_mesh_type_only_read_out_of_the_source_tree_is_a_warn_and_not_a_run(preflight, tmp_path):
+    """`dynamicRefineFvMesh` was read at the v2512 tag; nothing here has ever run it.
+
+    Until the review of 2026-09-12 the emitter told the agent it "has run on this image"
+    for every name in the table, so a refining case came back `ok` and attested off a
+    source-tree reading. That is the "briefs carry measurements, not constants" failure
+    written into the one file that exists to catch it, and it costs a long adaptive-mesh
+    solve: the agent skips `--only probe`, queues the run, and finds out at the first
+    step whether the type is registered. An unattested type belongs in the warn branch
+    that sends it to the probe, which asks the build itself in seconds.
+    """
+    case = motion_case(tmp_path / "amr", "pimpleFoam",
+                       "dynamicFvMesh   dynamicRefineFvMesh;\n")
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+
+    mesh = [f for f in found if "dynamicRefineFvMesh" in f.measured]
+    assert mesh, "the mesh type must still be reported"
+    assert mesh[0].status == "warn", "nothing here has run it, so it cannot be an ok"
+    assert "has run on this image" not in mesh[0].meaning
+    assert "no run here has used it" in mesh[0].meaning
+    assert "probe" in mesh[0].repair, "the build is the authority and the probe asks it"
+
+
+def test_the_mesh_type_that_did_run_says_where_it_ran(preflight, tmp_path):
+    """The other half of the same rule: an `ok` has to carry its own evidence, so the
+    claim a reader acts on and the run behind it cannot drift apart again."""
+    case = motion_case(tmp_path / "wig7", "interFoam",
+                       "dynamicFvMesh   dynamicMotionSolverFvMesh;\n")
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+
+    mesh = [f for f in found if "dynamicMotionSolverFvMesh" in f.measured]
+    assert mesh and mesh[0].status == "ok"
+    assert "Wigley hull of 2026-08-31" in mesh[0].meaning
+
+
+def test_no_attested_name_can_claim_a_run_without_naming_where_it_ran(preflight):
+    """The table is evidence, not a build manifest, and the entry now carries both
+    facts: what the name does and how this workspace knows it. A name added with
+    `ran=True` and no run behind it is the defect of 2026-09-12 all over again."""
+    entries = list(preflight.MESH_TYPES_ATTESTED.items()) + \
+        list(preflight.MOTION_SOLVERS_ATTESTED.items())
+    for name, seen in entries:
+        assert seen.provenance.strip(), f"{name} says nothing about where it came from"
+        if seen.ran:
+            assert "this image" in seen.provenance, (
+                f"{name} claims a run; the entry must say where that run was"
+            )
+
+
+def test_motion_did_not_become_a_top_level_check(preflight):
+    """It lives in `--resolve`, where the case that does not move pays nothing for it.
+
+    The count is a guard against a check arriving unnoticed, not a claim about the
+    number: the thirteenth is `change_me`, which the CAD desk added."""
+    assert "motion" not in preflight.CHECKS
+    assert len(preflight.CHECKS) == 13
+
+
+# -- reading a motion failure out of the probe ---------------------------------
+
+
+def hint_for(preflight, fatal: str) -> str:
+    verdict = preflight.probe_verdict(
+        {"output": f"--> FOAM FATAL ERROR:\n{fatal}\nFOAM exiting", "returncode": 1}
+    )
+    assert verdict["status"] == "fail"
+    return verdict["hint"]
+
+
+@pytest.mark.parametrize("fatal,expected", [
+    ("Unknown dynamicFvMesh type wobbleFvMesh", "names a mesh type this build does not have"),
+    ("Unknown motionSolver type sixDofRigidBody", "not in this build"),
+    ('cannot find file "/work/c/0/pointDisplacement"', "pointDisplacement"),
+    ("Illegal neighbourPatch name AMI2", "neighbour patch"),
+    ("cannot find cellZone rotor", "not in constant/polyMesh"),
+])
+def test_the_probe_says_what_broke_rather_than_quoting_foam(preflight, fatal, expected):
+    """The probe constructs a real dynamicFvMesh in its one step, so it has caught every
+    one of these all along -- and reported the raw fatal text with no reading of it,
+    because none of the eight patterns it had mentioned motion, a zone or an AMI pair."""
+    assert expected in hint_for(preflight, fatal)
+
+
+def test_a_missing_field_that_is_not_pointDisplacement_keeps_its_own_hint(preflight):
+    """The motion patterns are specific cases of the generic ones and sit above them, so
+    the ordering has to be checked rather than assumed."""
+    assert "pointDisplacement" not in hint_for(preflight, 'cannot find file "/work/c/0/U"')

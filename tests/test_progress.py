@@ -107,6 +107,36 @@ def test_control_dict_gives_the_bounds_and_ignores_comments():
     assert found["writeInterval"] == 0.05
 
 
+def test_a_function_object_s_write_interval_is_not_the_run_s():
+    """A live case's top level said writeInterval 0.02 and its `forces` function object
+    said writeInterval 5; read flat, the last one won and the launch note announced
+    "writeInterval 5 (0 write times)". Only depth-zero entries are the run's."""
+    text = CONTROL_DICT.replace("writeInterval   0.05;", "writeInterval   0.02;") + """
+functions
+{
+    forces
+    {
+        type            forces;
+        writeControl    timeStep;
+        writeInterval   5;
+        patches         (text);
+    }
+}
+"""
+    found = parse_control_dict(text)
+    assert found["writeInterval"] == 0.02
+    assert found["endTime"] == 6.0
+
+
+def test_start_from_and_purge_write_are_read_for_the_restart_guard():
+    assert parse_control_dict(CONTROL_DICT)["startFrom"] == "startTime"
+    text = CONTROL_DICT.replace("startFrom       startTime;", "startFrom       latestTime;") + "purgeWrite      3;\n"
+    found = parse_control_dict(text)
+    assert found["startFrom"] == "latestTime"
+    assert found["purgeWrite"] == 3
+    assert "purgeWrite" not in parse_control_dict(CONTROL_DICT)
+
+
 def test_a_stop_at_that_is_not_end_time_means_no_end():
     text = CONTROL_DICT.replace("stopAt          endTime;", "stopAt writeNow;")
     found = parse_control_dict(text)

@@ -105,8 +105,27 @@ side patches `empty`. A box-shaped domain: blockMesh. snappyHexMesh or cfMesh on
 the shape genuinely arrives as a triangulated surface. gmshToFoam types every patch \
 `patch`, so retype the walls in `Allmesh` with `foamDictionary` or `createPatch`.
 
-**Coarse first.** Get the shape right at a few thousand cells, look at it, and only \
-then refine. A wrong shape at 2 million cells is 20 wasted minutes.
+**Coarse first -- but coarse is for iterating, not for finishing.** Get the shape \
+right at a few thousand cells, look at it, and only then refine. A wrong shape at 2 \
+million cells is 20 wasted minutes. What you must not do is STOP there: the finish \
+check reports how many cells span the narrowest part of your domain, and a mesh too \
+coarse to resolve what the study is about passes every other clause on the list. \
+Measured here: a lid-driven cavity finished at 20 cells across missed the published \
+centreline velocities by 19% and 21% with checkMesh perfectly happy, while a plane \
+channel at TEN cells across was within 2% -- the same number is plenty for one case \
+and badly short for another, and only the physics tells them apart. If the request \
+names a resolution ("at least 40 cells across the gap") it is enforced and you will \
+be handed the mesh back until you meet it. If it does not, say in your closing lines \
+what resolution you chose and what you believe it is good enough for.
+
+**If there was already a mesh here, you are CHANGING it, and the check compares.** \
+The mesh that was in this directory when you started has been measured. If what you \
+leave behind has the same cell count, the same bounds and the same patch areas, the \
+run is refused however clean checkMesh is, because that is exactly what a rebuild of \
+the OLD shape looks like. This happened: asked to make a channel 30 mm tall instead \
+of 20, a desk rebuilt it, checked it and reported "bounds 0.200 x 0.020 x 0.002 m, \
+checkMesh reports Mesh OK" -- still 20 mm. Change the number in the script, re-run \
+the script, and read the new bounds before you say done.
 
 **Say what you did not check.** If a property could not be measured, or the mesh has a \
 warning you decided to live with, write it in your closing lines.

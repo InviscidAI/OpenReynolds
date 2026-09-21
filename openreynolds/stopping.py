@@ -73,9 +73,12 @@ def running_solvers(backend: Backend) -> list[str]:
     Matched against `ps` output rather than `pgrep -f`, because a pattern search also
     matches the shell that is doing the searching.
 
-    Instance-wide, and that is the problem with it: the workspace service caps an
-    account at one instance and `acquire()` joins the existing one, so "what is
-    running here" is not the same question as "what did this study start". Use
+    Instance-wide, and that is the problem with it: `acquire()` joins an existing
+    workspace rather than making a second, so "what is running here" is not the same
+    question as "what did this study start". (It used to be that the service capped an
+    account at one instance, which made the sharing certain; the cap is no longer 1, so
+    the sharing is merely the default -- which changes nothing here, because one shared
+    container is all it takes.) Use
     `own_solvers` for anything that is about to kill something.
     """
     try:
@@ -86,17 +89,33 @@ def running_solvers(backend: Backend) -> list[str]:
     return [name for name in names if name in SOLVERS]
 
 
-_OWN_PROBE = r"""for d in /proc/[0-9]*; do
+_OWN_PROBE = r"""mine=%s
+rmine=$(readlink -f "$mine" 2>/dev/null || echo "$mine")
+for d in /proc/[0-9]*; do
 c=$(cat "$d/comm" 2>/dev/null) || continue
 w=$(readlink "$d/cwd" 2>/dev/null) || continue
-case "$w" in %s|%s/*) printf '%%s %%s\n' "${d#/proc/}" "$c" ;; esac
+case "$w" in "$mine"|"$mine"/*|"$rmine"|"$rmine"/*) printf '%%s %%s\n' "${d#/proc/}" "$c" ;; esac
 done"""
 """Every process working inside one directory, as `pid name`.
 
 `ps` says what is running and not where it is working, and where it is working is the
 only thing that distinguishes this study's solver from somebody else's. `/proc/<pid>/cwd`
 answers it for a process in any process group -- which matters, because the reason this
-sweep exists at all is mpirun ranks that escape their job's group."""
+sweep exists at all is mpirun ranks that escape their job's group.
+
+The home is resolved before it is compared, and that is not a nicety. Inside a Modal
+Sandbox `/work` is not a directory: it is a symlink to `/__modal/volumes/vo-<id>`
+(foamd's `quota.py` measured `du -sm /work` at 1 MB against `du -sLm /work` at 28633 MB
+on the same live Sandbox, and its `files.py` resolves the root with `realpath -m`
+rather than comparing the literal). `/proc/<pid>/cwd` is a kernel magic link and yields
+the PHYSICAL path however the process got there, because a shell `cd` only updates the
+logical `$PWD` -- one production transcript prints the same case as
+`/__modal/volumes/vo-QLeP1IjwPg9DkyX8ENl2HW/onera_hisa` and as `/work/onera_hisa`. So
+matching against the literal `/work/<study>` matched nothing in production ever:
+`own_solvers` always answered [], and a scoped `stop_everything` reported "nothing was
+running / the instance is idle" while the escaped mpirun ranks this module exists to
+catch were neither seen nor killed. Both spellings are matched, because a backend that
+does not symlink its workspace answers with the logical one."""
 
 
 def own_solvers(backend: Backend, home: str) -> list[tuple[str, str]]:
@@ -107,7 +126,7 @@ def own_solvers(backend: Backend, home: str) -> list[tuple[str, str]]:
     holds for a solver launched by a job here and cannot hold for one launched by
     another session in its own study directory.
     """
-    probe = _OWN_PROBE % (shlex.quote(home), shlex.quote(home))
+    probe = _OWN_PROBE % shlex.quote(home)
     try:
         result = backend.exec(probe, timeout_s=30)
     except BackendError:
@@ -171,9 +190,9 @@ def stop_everything(
 
     `home` is this study's own directory, and giving it is what keeps the sweep to this
     study's work. Without it the survivor check is `ps` across the whole instance and the
-    escalation is `pkill -9 -x <name>` -- and because an account is capped at one instance
-    and `acquire()` joins the one that is already there, "the whole instance" regularly
-    means somebody else's solve. A session that had started no jobs at all still reached
+    escalation is `pkill -9 -x <name>` -- and because `acquire()` joins a workspace that
+    is already there rather than making a second, "the whole instance" regularly means
+    somebody else's solve. A session that had started no jobs at all still reached
     that branch and killed another study's mpirun; that is what this argument closes.
 
     With `home`, survivors are the solver processes whose working directory is under it

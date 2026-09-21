@@ -423,10 +423,11 @@ class Detection(NamedTuple):
 
 
 def classify(case: preflight.Case, signals: list[Signal] | None = None) -> Detection:
-    """Which of the four families this looks like, and why.
+    """Which family this looks like, and why.
 
     The order matters and it runs from the least ambiguous signal to the most. A phase
-    fraction field is unarguable; a second mesh region is unarguable; whether a case is
+    fraction field is unarguable; a second mesh region is unarguable; a dynamicMeshDict
+    or an MRF zone is unarguable; whether a case is
     external or internal is a judgement made from patch names and an immersed body, and
     it is the one that can be wrong. When neither reading is supported the answer is
     "unrecognised" and the generic ladder, because two suggested rungs honestly labelled
@@ -462,6 +463,33 @@ def classify(case: preflight.Case, signals: list[Signal] | None = None) -> Detec
             parts.append("the body is free to move")
         return Detection(
             "free-surface-marine", "free-surface marine", False, "; ".join(parts), signals,
+        )
+
+    # Motion is read before the patch evidence and after the free surface, because a
+    # dynamicMeshDict or an MRF zone is a fact on disk and external-vs-internal is a
+    # judgement made from patch names. A VOF hull that is also free to move stays with
+    # the marine rungs, which are the tuned ladder for it; what this catches is the
+    # mixer, the propeller and the prescribed-motion body, all of which have no alpha
+    # field and were landing in external aerodynamics next to rungs about empty tunnels.
+    rotating = signal_named(signals, "rotating frame")
+    if (motion is not None and motion.detected) or (rotating is not None and rotating.detected):
+        parts = []
+        if motion is not None and motion.detected:
+            parts.append(f"a mesh that moves ({motion.value.split(' --')[0]})")
+        if rotating is not None and rotating.detected:
+            parts.append("a rotating frame is declared (constant/MRFProperties or fvOptions)")
+        if motion is not None and "overset" in motion.value.lower():
+            # Said rather than folded in: an overset case fails on donor and acceptor
+            # coverage and on the interpolation between overlapping meshes, and nothing
+            # in this repository reads either. The rungs below are honest about the part
+            # of it that is a mesh in motion and claim nothing about the overlap.
+            parts.append(
+                "the mesh type names overset, and these rungs cover the motion rather "
+                "than the overlap -- donor and acceptor coverage is not measured here"
+            )
+        return Detection(
+            "rotating-machinery", "rotating machinery and moving bodies", False,
+            "; ".join(parts), signals,
         )
 
     patches, _source = case_patches(case)
@@ -681,6 +709,172 @@ MARINE = (
               "beneath are where the disagreement is already located.",
         tolerance="whatever the study set, and it belongs in the report next to the number.",
         cost="the cost of the study.",
+        overrides={"note": "the case as written; nothing is overridden"},
+    ),
+)
+
+
+# A mesh that moves fails in ways none of the other four families have a rung for, and
+# until 2026-09-12 a mixer or a propeller on a sliding mesh landed in external
+# aerodynamics and was offered rungs about empty tunnels. The motion signal and the
+# rotating-frame signal were both already being read and were being used only to decorate
+# the marine reason string.
+#
+# One family, not two. Morphing and sliding meshes fail on mesh quality -- a cell turns
+# inside out and the volume goes negative -- and every rung below is built around that.
+# Overset fails on something else entirely: donor and acceptor coverage, and the
+# interpolation between overlapping meshes, neither of which anything in this repository
+# reads and neither of which any run here has exercised. So an overset case is detected
+# and said out loud rather than folded in; the rungs below are honest for the part of it
+# that is a mesh in motion and say nothing about the part that is an overlap.
+ROTATING = (
+    Rung(
+        name="the motion alone, with nothing solved",
+        adds="the points moved through a full revolution or a full period, and no flow "
+             "solved at all",
+        check="`checkMesh` at every write: the minimum cell volume, the number of negative "
+              "volumes, and the maximum non-orthogonality across the whole cycle",
+        known="A fact about the mesh, not a result about the flow. A cell volume is a "
+              "signed integral over the cell's own closed surface, so a negative one means "
+              "the cell has turned itself inside out, and no discretisation on such a cell "
+              "means anything whatever the fields say. The answer is therefore known before "
+              "anything runs: every volume stays positive for the whole cycle, or the "
+              "motion is unusable from the first amplitude at which one does not.",
+        tolerance="no negative volumes at any write, and a minimum volume that does not "
+                  "fall by more than about an order of magnitude from its value at rest. "
+                  "Non-orthogonality is read against whatever limit `checkMesh` applies on "
+                  "this mesh rather than against a number carried in from elsewhere.",
+        cost="minutes, and the cheapest rung in this file: no flow is solved, no turbulence "
+             "model is constructed, and the only arithmetic is points moving and volumes "
+             "being counted.",
+        overrides={
+            "edit": {
+                "system/controlDict": {
+                    "application": "moveDynamicMesh", "writeInterval": "1",
+                    "endTime": "one full revolution or period at the requested rate",
+                },
+            },
+            "note": "the `mesh/moveDynamicMesh` tutorial family is on this image; whether "
+                    "the `moveDynamicMesh` binary is on PATH here is a `which` away and is "
+                    "not assumed. Where it is not, the same fact comes out of a few steps of "
+                    "the real solver with the fields ignored and checkMesh run between "
+                    "writes -- more expensive, same answer",
+        },
+    ),
+    Rung(
+        name="the zone at rest",
+        adds="the flow, with the motion switched off: omega = 0, or the mesh type set to "
+             "staticFvMesh, and the zone still declared",
+        check="every field against the same case with no zone declared at all, and the "
+              "force and torque on the body",
+        known="An identity in the formulation. A rotating-frame source term is built from "
+              "omega -- the Coriolis and centrifugal terms carry one and two factors of it "
+              "-- and a rigid mesh displacement is omega times t, so at omega = 0 all of "
+              "them are identically zero and the equations inside the zone are the "
+              "equations outside it. The expected difference between declaring the zone and "
+              "not declaring it is exactly zero. Not small: zero, by algebra rather than by "
+              "anyone's prediction, and a difference that is not zero is the zone's "
+              "bookkeeping leaking into the answer.",
+        tolerance="field differences at solver tolerance, which is to say indistinguishable "
+                  "from the linear-solver convergence criterion, and a torque difference "
+                  "below the last digit worth quoting. Anything visible on a slice is a "
+                  "finding rather than a tolerance question.",
+        cost="the cost of one stationary run of the real case, and it is a run usually worth "
+             "having anyway: it is the no-rotation baseline every later number is quoted "
+             "against.",
+        overrides={
+            "edit": {
+                "constant/dynamicMeshDict": {"dynamicFvMesh": "staticFvMesh"},
+                "constant/MRFProperties": {"rpm": "0"},
+            },
+            "note": "the point is that the zone stays declared and only its rate goes to "
+                    "zero, because what is being tested is the zone machinery and not the "
+                    "flow. Run the same mesh a second time with the zone entry removed "
+                    "entirely and difference the two",
+        },
+    ),
+    Rung(
+        name="solid-body rotation of a closed annulus",
+        adds="rotation, with nothing in the flow for it to do work on: two concentric walls "
+             "both turning, no blade, no inlet and no outlet",
+        check="the tangential velocity against radius on a line from the inner wall to the "
+              "outer one, and the radial pressure rise, both in the stationary frame",
+        known="Rigid-body rotation, which is arithmetic on the boundary data. A viscous "
+              "fluid enclosed between two concentric walls that both turn at the same omega "
+              "has one steady state: it turns with them, u = omega x r at every radius, with "
+              "the pressure rising as rho*omega^2*r^2/2 from the axis to satisfy the radial "
+              "momentum balance. Nothing about the fluid, the turbulence model, the cell "
+              "count or the interface treatment enters either expression -- omega and r are "
+              "the whole of it, and they are inputs.",
+        tolerance="within a percent or two of omega*r at mid-radius once the spin-up has "
+                  "passed, and the spin-up is the one thing to be patient about: it scales "
+                  "as the gap squared over the effective viscosity, so a run stopped early "
+                  "reads as a velocity deficit and not as an error. On a sliding interface "
+                  "this is also the sharpest test of the interface itself, because any jump "
+                  "in u across it is visible against a straight line.",
+        cost="minutes on a 2D annulus of a few thousand cells. Where the motion asked for is "
+             "a translation rather than a rotation, the equivalent statement is that a "
+             "closed box of fluid translated rigidly ends at the wall velocity everywhere, "
+             "and it is checked the same way.",
+        overrides={
+            "remove": ["constant/fvOptions"],
+            "note": "strip the case to an annulus: delete the blade from the geometry, close "
+                    "the inlet and outlet into walls, and set both the inner and the outer "
+                    "wall to turn with the zone. Keep the sliding interface or the motion "
+                    "solver exactly as the real case has it -- that is what is under test",
+        },
+    ),
+    Rung(
+        name="the frozen rotor",
+        adds="the blade, in a rotating frame rather than on a rotating mesh: the geometry "
+             "held still and the source terms applied inside the zone",
+        check="the absolute velocity across the zone boundary on a slice, and the torque "
+              "with the zone boundary moved out by a quarter of its radius",
+        known="Two statements about the frame change, and both are exact. The rotating and "
+              "stationary frames are related by u_absolute = u_relative + omega x r, an "
+              "algebraic offset applied at the boundary, so the absolute velocity is "
+              "continuous across the zone face by construction and a visible step in it is "
+              "the frame bookkeeping showing through rather than the flow doing something. "
+              "The second is the same statement turned around: the zone face is a surface "
+              "where nothing physical happens, so where it is put cannot change the answer.",
+        tolerance="no step in absolute velocity across the zone face that is visible on a "
+                  "slice, and a torque that moves by no more than a few per cent when the "
+                  "zone radius changes by about a quarter. A torque that tracks the zone "
+                  "radius is a number set by a modelling choice, and quoting it without "
+                  "saying so is the trap this rung exists for.",
+        cost="the cost of a steady run of the real geometry, which is a fraction of a "
+             "resolved sliding-mesh run -- the frozen rotor is the cheap standing "
+             "alternative to moving the mesh at all, and where it answers the question "
+             "asked, the rungs above it are the whole ladder.",
+        overrides={
+            "edit": {
+                "system/controlDict": {"application": "simpleFoam"},
+                "constant/MRFProperties": {"cellZone": "the rotating zone's name"},
+            },
+            "remove": ["constant/dynamicMeshDict"],
+            "note": "MRF in this OpenFOAM is an MRFProperties/fvOptions feature of the "
+                    "ordinary solvers and not a binary of its own -- `which MRFSimpleFoam "
+                    "simpleFoam` on this image answered with simpleFoam alone. The zone it "
+                    "names has to exist in constant/polyMesh; `mesh_look.py` lists the zones "
+                    "a mesh actually has",
+        },
+    ),
+    Rung(
+        name="the case as asked",
+        adds="the blade and the motion together: the deliverable",
+        check="whatever the study was commissioned to measure -- thrust, torque, a Strouhal "
+              "number, a shed wake",
+        known="Nothing external. This is the question itself, and it is the one rung on the "
+              "ladder whose answer is not knowable in advance, which is why the four below "
+              "it exist. A disagreement with a published value is already localised by them: "
+              "a mesh that stayed positive through a revolution, a zone that changed nothing "
+              "at rest, an annulus that turned at omega*r and a frozen rotor that did not "
+              "care where its boundary was leave very little room for the disagreement to "
+              "hide in.",
+        tolerance="whatever the study set, and it belongs in the report next to the number.",
+        cost="the cost of the study. A resolved sliding-mesh run is bounded by the time step "
+             "the interface needs rather than by the flow, which is the part of the bill "
+             "that surprises people.",
         overrides={"note": "the case as written; nothing is overridden"},
     ),
 )
@@ -1002,6 +1196,7 @@ GENERIC = (
 
 CATALOGUE: dict[str, tuple[Rung, ...]] = {
     "free-surface-marine": MARINE,
+    "rotating-machinery": ROTATING,
     "external-aerodynamics": AERO,
     "internal-flow": INTERNAL,
     "conjugate-heat-transfer": CHT,
@@ -1010,6 +1205,7 @@ CATALOGUE: dict[str, tuple[Rung, ...]] = {
 
 CLASS_TITLES: dict[str, str] = {
     "free-surface-marine": "free-surface marine",
+    "rotating-machinery": "rotating machinery and moving bodies",
     "external-aerodynamics": "external aerodynamics",
     "internal-flow": "internal flow",
     "conjugate-heat-transfer": "conjugate heat transfer",

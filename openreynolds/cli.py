@@ -5,25 +5,31 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from pathlib import Path
 from typing import Any
 
 import click
-from rich.console import Console
+from concurrent.futures import ThreadPoolExecutor
 
 from . import __version__
 from .backend import hosted
 from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT
+from .backend.pending import PendingBackend
 from .browse import Browser
 from . import casebundle
 from .capture import Capture
-from . import cad, commands, images
+from . import cad, commands, images, switch
+from . import convergence, modes
+from .approval import Approver
+from .llm.presets import EFFORTS, models_for
 from .config import Config, config_path
 from .delivery import Gallery
 from .llm import PRESETS, ProviderError, make_provider, preset_for
@@ -35,17 +41,97 @@ from .progress import Tracker
 from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
-from .tools import ToolContext, cad_text, refuse_input as tools_refuse_input
-from .view import ConsoleView, View
+from . import trace
+from .tools import CORES_PROBE, ToolContext, cad_text, refuse_input as tools_refuse_input
+from .view import ConsoleView, View, plain_console
+from .jsonview import JsonReader, JsonView
 from .watch import NOTHING, LineReader, NullReader, situation, watch
 
 TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
 TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
+
+_TIMING = bool(os.environ.get("OPENREYNOLDS_TIMING"))
+"""`OPENREYNOLDS_TIMING=1` prints one `[timing] <step> <ms>` line to stderr around each
+step of a session's start and close-down. A diagnostic, off by default: "starting takes
+forever" and "ending takes forever" are only fixable once it is known which of the
+half-dozen network steps in each is the one taking the time, and the hosted runner's
+logs are the only place to learn it from."""
+
+
+class _timed:
+    """`with _timed("acquire"):` -- a stopwatch on stderr when _TIMING is on, nothing
+    otherwise. stderr, not the console: the console is the user's transcript."""
+
+    def __init__(self, step: str) -> None:
+        self.step = step
+
+    def __enter__(self) -> None:
+        self.t0 = time.monotonic()
+
+    def __exit__(self, *_exc: object) -> None:
+        if _TIMING:
+            print(f"[timing] {self.step} {int((time.monotonic() - self.t0) * 1000)} ms",
+                  file=sys.stderr, flush=True)
 RESULTS_FILE = "results.json"
 """Picked up from the study's own directory if it happens to be there."""
 
+OUTPUT_FORMATS = ("text", "stream-json")
+"""`text` is a person reading a terminal. `stream-json` is one JSON object per line and
+nothing else on stdout, for an agent or a script driving this."""
+
+JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor"})
+"""Subcommands that have a structured answer for the group's `--output-format` to mean
+something. Everything else it is given with is refused rather than answered in prose."""
+
+
+def _json_asked(ctx: click.Context) -> bool:
+    """Whether the group was given `--output-format stream-json` in front of this
+    subcommand. It is the same request as the subcommand's own `--json`, made with the
+    flag an agent already puts in front of everything."""
+    parent = ctx.find_root()
+    return bool((parent.obj or {}).get("output_format") == "stream-json")
+
 tolerant_stdout()
-console = Console()
+console = plain_console()
+"""Wide when nothing is there to measure: piped output used to fold at rich's
+eighty-column non-terminal default, in the middle of a workspace path."""
+
+
+def _keep_stdout_for_json() -> None:
+    """Move everything this module says onto stderr, so stdout carries only JSON.
+
+    Roughly fifteen call sites print through the module console -- hard errors, the
+    joined-workspace warning, the API-failure report, close-down, the plain fallback --
+    and a single rich line in the middle of an NDJSON stream is not something a strict
+    reader recovers from: it resynchronises on the next newline, in the middle of an
+    object. Chasing every call site means the next one added puts the bug back, so the
+    stream itself is moved instead: one console, pointed somewhere else.
+    """
+    global console
+    if console.file is not sys.stderr:
+        console = plain_console(sys.stderr)
+    # And the other thing that writes bytes onto stdout without going through a view:
+    # an inline image. `images.drawable` asked only `stream.isatty()`, and an agent
+    # harness normally runs a child CLI on a pseudo-terminal -- so with
+    # `TERM=xterm-kitty` a `fetch` of a .png injected a kitty graphics payload into
+    # the middle of the NDJSON stream and a strict reader, resynchronising inside a
+    # base64 blob, never recovered. The mode is the fact; the file descriptor is not.
+    images.suppress()
+
+
+def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
+    """One `session_end` on stdout for a failure that happened before the view existed.
+
+    A missing key and an unreachable workspace service both printed to stderr and
+    exited 1 with stdout completely empty, and exit code 1 already means "the model
+    API failed" -- so an agent reading the documented stream could not tell a missing
+    key from a refused model call from a workspace outage, which are the three things
+    it would handle differently (prompt the person, back off, retry). The stream now
+    always ends with exactly one terminal object, whatever went wrong.
+    """
+    JsonView(sys.stdout).emit(
+        "session_end", study=study_id, outcome=outcome, error=error
+    )
 
 
 @click.group(invoke_without_command=True)
@@ -54,6 +140,18 @@ console = Console()
 @click.option("--study", "study_id", help="Resume a local study by id.")
 @click.option("--instance", "instance_id", help="Use a specific workspace instance.")
 @click.option("--model", help="Override the model for this session.")
+@click.option(
+    "--mode",
+    type=click.Choice(modes.choices(), case_sensitive=False),
+    default=None,
+    help="auto (full auto, the default), partial (ask before compute) or structured "
+         "(approve a plan and each stage).",
+)
+@click.option(
+    "--effort",
+    type=click.Choice(EFFORTS, case_sensitive=False),
+    help="How hard the model thinks this session. /effort changes it mid-study.",
+)
 @click.option("--no-capture", is_flag=True, help="Do not send anything to the platform.")
 @click.option("--plain", is_flag=True, help="Plain streaming terminal instead of the interface.")
 @click.option(
@@ -67,6 +165,14 @@ console = Console()
     default=0.0,
     help="With -p, stop waiting on jobs after this many minutes (0 = no limit).",
 )
+@click.option(
+    "--output-format",
+    "output_format",
+    type=click.Choice(OUTPUT_FORMATS),
+    default="text",
+    help="stream-json puts one JSON object per line on stdout and nothing else; "
+         "without -p it also reads JSON messages from stdin.",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -74,18 +180,60 @@ def main(
     study_id: str | None,
     instance_id: str | None,
     model: str | None,
+    effort: str | None,
+    mode: str | None,
     no_capture: bool,
     plain: bool,
     keep_alive: bool,
     max_wait: float,
+    output_format: str,
 ) -> None:
     """A CFD agent with a real OpenFOAM workspace."""
     if ctx.invoked_subcommand is not None:
+        # `--output-format` is a GROUP option, so the obvious thing for an agent to do
+        # is put it in front of everything -- and this function used to return here
+        # before the mode was applied, which meant `--output-format stream-json
+        # studies` was accepted, parsed, discarded, and answered with four lines of
+        # rich prose on stdout and no hint that the flag did nothing. The two
+        # subcommands that have a JSON answer now take it as one; the rest say they
+        # cannot, rather than silently printing prose at a reader that cannot read it.
+        if output_format != "text":
+            if ctx.invoked_subcommand not in JSON_CAPABLE_COMMANDS:
+                ctx.fail(
+                    f"--output-format {output_format} is for a session; "
+                    f"of the subcommands only "
+                    f"{' and '.join(sorted(JSON_CAPABLE_COMMANDS))} answer in JSON, "
+                    "through their own --json."
+                )
+            ctx.obj = {"output_format": output_format}
         return
+
+    if output_format == "stream-json":
+        # Before the configuration check below, which prints in red on the console
+        # this moves: a missing key must not be the one line of prose in the stream.
+        _keep_stdout_for_json()
 
     cfg = Config.load()
     if model:
         cfg.model = model
+    # The model: --model, then OPENREYNOLDS_MODEL, then the config file -- the same
+    # order as the mode, and told apart here for the same reason. By the time `session`
+    # runs they are all one string on `cfg`, and a resumed study needs to know whether
+    # anybody asked for this one (`session`).
+    model_explicit = bool(model) or bool((os.environ.get("OPENREYNOLDS_MODEL") or "").strip())
+    # The mode: --mode, then OPENREYNOLDS_MODE, then the config file. A resumed study
+    # keeps the mode it was started in unless one of the first two says otherwise.
+    raw_mode = os.environ.get("OPENREYNOLDS_MODE")
+    if raw_mode and modes.normalize(raw_mode) is None:
+        console.print(
+            f"[yellow]OPENREYNOLDS_MODE={raw_mode} is not a mode "
+            f"({', '.join(modes.MODES)}), so it is ignored.[/]"
+        )
+    if mode:
+        cfg.mode = modes.normalize(mode) or modes.AUTO
+    mode_explicit = bool(mode) or modes.normalize(raw_mode) is not None
+    if effort:
+        cfg.effort = effort.lower()
     if no_capture:
         cfg.capture = False
 
@@ -96,6 +244,8 @@ def main(
             "[bold]openreynolds login[/] gets a service key; [bold]openreynolds config[/] "
             "sets the model key. Or set them in the environment."
         )
+        if output_format == "stream-json":
+            _terminal_json("config", f"missing configuration: {', '.join(missing)}")
         raise SystemExit(1)
 
     outcome = session(
@@ -106,6 +256,9 @@ def main(
         plain=plain,
         keep_alive=keep_alive,
         max_wait=max_wait,
+        output_format=output_format,
+        mode_explicit=mode_explicit,
+        model_explicit=model_explicit,
     )
     code = ONE_SHOT_EXIT_CODES.get(outcome or "ok", 0)
     if code:
@@ -113,10 +266,36 @@ def main(
 
 
 @main.command("studies")
-def studies_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def studies_cmd(ctx: click.Context, as_json: bool) -> None:
     """List local studies."""
+    as_json = as_json or _json_asked(ctx)
     cfg = Config.load()
     sessions = list_studies(cfg.studies_dir)
+    if as_json:
+        # This and `doctor --json` are the two commands something has to run before a
+        # first session, and both answered only in rich markup -- so the id needed for
+        # `--study` had to be recovered by parsing a styled line. Straight to stdout
+        # rather than through the console: this is data, and rich would style it.
+        payload = {
+            "dir": str(cfg.studies_dir),
+            "studies": [
+                {
+                    "study_id": item.study_id,
+                    "title": item.title or "",
+                    "instance_id": item.instance_id,
+                    "model": item.model,
+                    "created_at": item.created_at,
+                    "running_jobs": sum(
+                        1 for job in item.jobs.values() if job.status == "running"
+                    ),
+                }
+                for item in sessions
+            ],
+        }
+        sys.stdout.write(json.dumps(payload, default=str) + "\n")
+        return
     if not sessions:
         console.print(f"No studies under {cfg.studies_dir}")
         return
@@ -213,7 +392,11 @@ def login_cmd(
     service: str | None, name: str | None, email: str | None, password_stdin: bool,
     browser: bool, no_browser: bool,
 ) -> None:
-    """Sign in with your email and password; this machine gets its own service key."""
+    """Sign in with your email and password; this machine gets its own service key.
+
+    An account created with Google has no password, so this will not work for it:
+    use --browser, which approves a short code in the browser instead.
+    """
     cfg = Config.load()
     url = (service or cfg.foamd_url).rstrip("/")
     label = name or socket.gethostname() or "openreynolds"
@@ -273,8 +456,26 @@ def login_cmd(
 
 
 def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) -> dict[str, Any] | None:
-    """Wrong password, or no account yet -- the service cannot tell which, so ask."""
+    """Wrong password, or no account yet -- the service cannot tell which, so ask.
+
+    There is a third case the service cannot distinguish either, and it is the common
+    one: an account created with Google has no password at all, so the sign-in fails
+    exactly like a wrong one and this offered to create a second account for an address
+    that already has one. Naming the browser flow first is what stops that.
+    """
     console.print("Wrong password, or no account with that address yet.")
+    console.print(
+        "If you signed up with Google there is no password to type: run "
+        "[bold]openreynolds login --browser[/] and approve the code instead."
+    )
+    # What a web signup is told at the same moment. The rule about which addresses
+    # count lives on the service, so this says what the credit is and never guesses
+    # whether this address earns it -- a domain list copied into the client goes stale
+    # and starts telling people the opposite of what they are about to get.
+    console.print(
+        "A company email address starts the account with $10 of credit, once, covering "
+        "the workspace and Reynolds' model together. A personal address starts at zero."
+    )
     if not _can_prompt() or not click.confirm(f"Create an account for {email} with this password?", default=False):
         return None
     console.print(f"The terms are at {url}/terms and the privacy note at {url}/privacy.")
@@ -705,9 +906,31 @@ def video_cmd(frames: str, study_id: str | None, fps: float | None, out_path: st
 
 
 @main.command("doctor")
-def doctor_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def doctor_cmd(ctx: click.Context, as_json: bool) -> None:
     """Check configuration, connectivity and credentials."""
+    as_json = as_json or _json_asked(ctx)
     cfg = Config.load()
+    if as_json:
+        # `run_checks` already answers in tuples; the prose is the only thing standing
+        # between a script and the verdict. The exit code is unchanged, so a caller
+        # that only reads that keeps working.
+        checks = run_checks(cfg)
+        failed = [label for label, ok, _detail in checks if not ok]
+        sys.stdout.write(json.dumps({
+            "config_file": str(config_path()),
+            "config_file_exists": config_path().exists(),
+            "ok": not failed,
+            "failed": failed,
+            "checks": [
+                {"check": label, "ok": ok, "detail": detail}
+                for label, ok, detail in checks
+            ],
+        }, default=str) + "\n")
+        if failed:
+            raise SystemExit(1)
+        return
     console.print(f"config file: [bold]{config_path()}[/]"
                   f"{'' if config_path().exists() else '  (absent; using the environment)'}\n")
 
@@ -880,6 +1103,45 @@ def _check_terminal() -> tuple[str, bool, str]:
 # -- the session ---------------------------------------------------------------
 
 
+def _join_notice(instance_id: str, instances_held: int) -> str:
+    """What to say when this session joined a workspace that was already up.
+
+    Joining is the right default and it used to be completely silent. Two terminals,
+    or a terminal and the web app, then shared four cores with nothing said on either
+    screen -- one live pair ran at a fifth of the throughput each had alone, and both
+    were billed for it. That is the first sentence, and it is unchanged.
+
+    The second sentence is newer, and it exists because the reasoning behind the first
+    one has expired. It used to be that the account was capped at one instance, so
+    `acquire()` joined the only workspace there was and there was nothing to choose
+    between. The cap is no longer 1: an account can hold several workspaces, each on
+    its own Volume with its own files, and `acquire()` picks the most recently active
+    one. Unsaid, that picking is the worst kind of silence -- the session opens on a
+    workspace where the study's files simply are not, which reads as a workspace that
+    lost them rather than as the wrong workspace. So when there is more than one, the
+    notice names how many there are and how to ask for a different one.
+
+    `--instance` and the remembered `store.session.instance_id` already do the asking,
+    so this is a message and not a mechanism.
+    """
+    line = (
+        f"[yellow]joining the workspace already running on {instance_id[:8]}[/] "
+        "- another session may be using it, so they share its cores"
+    )
+    if instances_held > 1:
+        others = instances_held - 1
+        rest = (
+            "the other one has its own files"
+            if others == 1
+            else f"the other {others} have their own files"
+        )
+        line += (
+            f"; this account holds {instances_held} workspaces and {rest}"
+            " - `--instance` picks a different one"
+        )
+    return line
+
+
 def session(
     cfg: Config,
     *,
@@ -889,7 +1151,10 @@ def session(
     plain: bool = False,
     keep_alive: bool = False,
     max_wait: float = 0.0,
+    output_format: str = "text",
     interface: Any = None,
+    mode_explicit: bool | None = None,
+    model_explicit: bool | None = None,
 ) -> str | None:
     """Run one study to its end.
 
@@ -900,18 +1165,117 @@ def session(
     supplying one can change what the user reads and never what the model does.
     Its return value says whether the process has to be force-exited afterwards.
 
+    `output_format` is `text` or `stream-json`. In `stream-json` this session speaks
+    newline-delimited JSON on stdout and nothing else, and everything the harness
+    would have said in prose goes to stderr instead.
+
     Returns how a one-shot run ended (see `_run_one_shot`), and None for an
     interactive session, where whatever happened was said on screen to someone.
     """
     outcome: str | None = None
+    streaming_json = output_format == "stream-json" and interface is None
+    """An `interface` is somebody else's presentation entirely, and giving it a second
+    one would put two views on one session."""
+    if streaming_json:
+        _keep_stdout_for_json()
     resuming = study_id is not None
     store = Store(cfg.studies_dir, study_id or new_study_id())
+    # A trace file written on a machine running three studies could not say which
+    # study any of its rows belonged to. It can now, and it costs one assignment.
+    trace.begin(store.session.study_id)
+    # How much the person wants to be consulted. A resumed study keeps the mode it was
+    # chosen with, unless this run was told one (`--mode`, `OPENREYNOLDS_MODE`).
+    # `mode_explicit` is None from an embedder that sets only the environment.
+    if mode_explicit is None:
+        mode_explicit = modes.normalize(os.environ.get("OPENREYNOLDS_MODE")) is not None
+    stored_mode = modes.normalize(store.session.mode)
+    if resuming and stored_mode and not mode_explicit:
+        cfg.mode = stored_mode
+    cfg.mode = modes.normalize(cfg.mode) or modes.AUTO
+    if one_shot and cfg.mode != modes.AUTO:
+        # Checked before an instance is acquired: nothing is spent on a run that
+        # could only ever wait for an answer nobody can give.
+        raise click.UsageError(
+            f"{modes.label(cfg.mode)} mode ({cfg.mode}) needs someone to answer its "
+            "questions, and -p runs with nobody at the terminal. Run without -p, or "
+            "pass --mode auto."
+        )
+    store.session.mode = cfg.mode
+    # Which model it runs on. A resumed study carries on on the model it was last
+    # running -- the one `/model` left it on -- exactly as it carries on in its own
+    # mode, and so a study started on Sonnet and moved to Opus for the hard part is
+    # still on Opus tomorrow, whatever the configured default has become since.
+    # `--model` and OPENREYNOLDS_MODEL still win. `model_explicit` is None from an
+    # embedder that sets only the environment, and the hosted runner is one: it names a
+    # model on every session it starts -- the one the app chose, which is the one its
+    # ledger row and its model chooser show -- so its environment counts as a choice
+    # and the agent must not quietly run another.
+    if model_explicit is None:
+        model_explicit = bool((os.environ.get("OPENREYNOLDS_MODEL") or "").strip())
+    stored_model = (store.session.model or "").strip()
+    stored_provider = (store.session.provider or "").strip()
+    stored_base_url = (store.session.base_url or "").strip()
+    restore_refused = False
+    """Whether this run could not honour the pair the study recorded.
+
+    The study's own record is then left exactly as it is. It used to be overwritten
+    with the configured pair a few lines later, which meant the one run that could not
+    serve what the study remembered was also the run that destroyed the memory: resume
+    on the laptop with the key and there was nothing left to carry on with."""
+    if (
+        resuming
+        and stored_model
+        and stored_provider
+        and not model_explicit
+        and (stored_provider, stored_model) != (cfg.provider, cfg.model)
+    ):
+        # The pair is restored together or not at all, and a key for the provider that
+        # served it is the whole of the test: an id says nothing about who can answer
+        # to it, so a model remembered from a provider that is gone from this machine
+        # would be this provider being asked for another vendor's model, and would fail
+        # a turn later with a message about a model that does not exist.
+        key = switch.key_for(stored_provider, cfg)
+        here = cfg.llm_base_url or ""
+        if key is None:
+            restore_refused = True
+            console.print(
+                f"[yellow]This study was last on {stored_model} ({stored_provider}), "
+                f"and there is no key for {stored_provider} here, so this run falls "
+                f"back to {cfg.model} ({cfg.provider}). The study still records "
+                f"{stored_model} ({stored_provider}): resume it where that key is set "
+                f"and it carries on there.[/]"
+            )
+        elif stored_provider == cfg.provider and stored_base_url != here:
+            # The same provider name is not the same endpoint. Two bring-your-own keys
+            # of one family -- a vendor's own and a gateway or router in front of it --
+            # list different model ids, so restoring `anthropic/claude-sonnet-4.5` onto
+            # a direct Anthropic key would be accepted here and refused by the vendor
+            # mid-turn with a 400 about a model that does not exist. The endpoint is
+            # recorded beside the pair for this; a study that recorded none is refused
+            # rather than guessed at. Compared against the configured URL, never the
+            # preset's: a provider left on its preset's endpoint records no URL, and
+            # comparing that to the preset's would refuse every one of its own resumes.
+            restore_refused = True
+            was = stored_base_url or "an endpoint it did not record"
+            now = here or "this provider's own endpoint"
+            console.print(
+                f"[yellow]This study was last on {stored_model} ({stored_provider}) "
+                f"through {was}, and this run points at {now}. A model id belongs to "
+                f"the endpoint that served it, so this run falls back to {cfg.model}. "
+                f"The study keeps what it recorded.[/]"
+            )
+        else:
+            switch.restore(cfg, stored_provider, stored_model, key)
     known_here = (store.dir / "session.json").is_file()
     """Whether this machine already held the study before this run. A resume without
     it is a study opened somewhere else, and it is named by its id rather than
     inheriting the shared workspace root."""
 
     local = bool(os.environ.get("OPENREYNOLDS_LOCAL"))
+    starter: Any = None
+    pending: PendingBackend | None = None
+    """The workspace as a promise, while it is coming up. None for a workspace that
+    is here already (the local one)."""
     try:
         if local:
             # A workspace on this machine: no container, no bill, and nothing to
@@ -921,50 +1285,98 @@ def session(
             client, resolved_instance = None, "local"
             console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
         else:
-            backend, client, resolved_instance = hosted.acquire(
-                cfg.foamd_url,
-                cfg.foamd_api_key,
-                instance_id or store.session.instance_id or None,
-            )
+            # Which workspace, settled now; the workspace itself, started now and
+            # waited for later. `reserve` is a fraction of a second of database;
+            # the start is seconds to minutes of machine, and everything below --
+            # the header, the briefing, the model's first turn, the person's first
+            # message -- used to wait behind it for no reason it needed to. It runs
+            # on its own thread from here, and every tool holds a `PendingBackend`
+            # that waits for it the first time something actually needs the machine.
+            with _timed("reserve"):
+                client, resolved_instance, starter = hosted.reserve(
+                    cfg.foamd_url,
+                    cfg.foamd_api_key,
+                    instance_id or store.session.instance_id or None,
+                )
+            starter.start()
+            pending = starter.pending()
+            backend = pending
     except BackendError as exc:
         console.print(f"[red]Could not reach the workspace service:[/] {exc}")
+        if streaming_json:
+            _terminal_json("unreachable", str(exc), store.session.study_id)
         raise SystemExit(1) from exc
 
-    if getattr(backend, "was_already_running", False):
-        # The account is capped at one instance and `acquire()` joins the one that is
-        # already there, which is the right default and was completely silent. Two
-        # terminals, or a terminal and the web app, then shared four cores with nothing
-        # said on either screen -- one live pair ran at a fifth of the throughput each
-        # had alone, and both were billed for it.
+    if pending is None and getattr(backend, "was_already_running", False):
+        # For a workspace still coming up this is said once the start has answered,
+        # because the start's reply is what settles it (`_bring_up`).
         console.print(
-            f"[yellow]joining the workspace already running on {resolved_instance[:8]}[/] "
-            "- another session may be using it, so they share its cores"
+            _join_notice(resolved_instance, getattr(backend, "instances_held", 0))
         )
     store.session.instance_id = resolved_instance
-    store.session.model = cfg.model
+    if not restore_refused:
+        # Only a run that is actually running what the study recorded -- or had nothing
+        # to honour -- may write the record. See `restore_refused`.
+        store.session.model = cfg.model
+        # And who served it, and where, because the next resume reads the three
+        # together: an id alone could be any provider's, and a provider name alone
+        # could be a vendor's key or a router standing in front of it.
+        store.session.provider = cfg.provider
+        store.session.base_url = cfg.llm_base_url or ""
     if resuming:
         # A study this machine has never seen -- opened in the browser, or on another
-        # laptop -- knows nothing about itself until the platform is asked.
-        _recover_session(store, client, study_id)
-    store.session.home = _home_for(store, backend, resuming, known_here)
+        # laptop -- knows nothing about itself until the platform is asked. One read
+        # of one row, and it needs no workspace, so it is not waited for.
+        with _timed("recover_session"):
+            _recover_session(store, client, study_id)
+    # Which directory is this study's is decided from what this machine knows; making
+    # it is the one part that needs the workspace, and for a workspace still coming
+    # up that part waits with everything else (`_bring_up`).
+    if pending is None:
+        with _timed("home_for"):
+            store.session.home = _home_for(store, backend, resuming, known_here)
+    else:
+        store.session.home = _home_path(store, resuming, known_here)
     if not store.session.title and one_shot:
         store.session.title = one_shot[:80]
     store.save()
+
+    # The toolbox goes up in the background from here, and is waited for just before
+    # the model can run a tool (below, `toolbox_sync.result()`). It is a tar of a few
+    # dozen files and took 1.6-3.6 s in series on staging; nothing between here and the
+    # loop reads it, so that time now overlaps the capture row and the briefing probes.
+    # For a workspace still coming up it is part of bringing the workspace up, and the
+    # pending backend is not ready until it has been done.
+    toolbox_pool = toolbox_sync = None
+    if pending is None:
+        toolbox_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="toolbox")
+        toolbox_sync = toolbox_pool.submit(_sync_toolbox_timed, backend)
 
     capture = None
     if cfg.capture and client is not None:
         if resuming and store.session.remote_study_id:
             capture = Capture(client, store.session.remote_study_id, warn=_warn)
         else:
-            capture = Capture.start(
-                client, store.session.title or store.session.study_id, resolved_instance,
-                study_id=store.session.study_id, home=store.session.home, warn=_warn,
-            )
+            with _timed("capture_start"):
+                capture = Capture.start(
+                    client, store.session.title or store.session.study_id, resolved_instance,
+                    study_id=store.session.study_id, home=store.session.home, warn=_warn,
+                )
             if capture:
                 store.session.remote_study_id = capture.study_id
                 store.save()
-
-    _sync_toolbox(backend)
+    if store.session.remote_study_id:
+        # The workspace is told which study it is serving, under the platform's own
+        # name for it: the row just opened, or the one this study was resumed on
+        # (recorded here, or read back by `_recover_session`). It is what lets a
+        # listing be answered without a machine -- the service keeps its copy of the
+        # workspace per study, and `Browser.tree` reads it under this id when a poll
+        # finds nothing running (`Backend.list_stored`). The close-down sync of an
+        # idle-timed-out session used to start a machine for exactly that listing.
+        # A workspace still coming up holds the id and hands it to the live backend
+        # when it arrives (`PendingBackend.resolve`); a study with no row -- capture
+        # off, and never on -- is told nothing, and lists as it always did.
+        backend.study_id = store.session.remote_study_id
 
     ctx = ToolContext(
         backend=backend,
@@ -972,6 +1384,7 @@ def session(
         max_output=cfg.max_tool_output,
         home=store.session.home,
         on_fetch=_fetch_hook(capture),
+        mode=cfg.mode,
     )
     browser = Browser(backend, store, home=store.session.home)
     live_mirror = LiveMirror(browser, interval_s=cfg.mirror_interval_s)
@@ -986,9 +1399,28 @@ def session(
     # the next cycle. poke() is non-blocking, so looking costs the model nothing.
     ctx.on_render = lambda _path: live_mirror.poke()
 
+    bringing_up = threading.Event()
+    """Whether `drive` got as far as starting the thread that resolves `pending`. A
+    session that fails before that point has a start under way and nobody waiting on
+    it, and the close-down below settles the promise itself so it cannot wait on a
+    thread that does not exist."""
+
     def drive(view: View, reader: Any) -> None:
         """One session, against whichever interface is running it."""
         nonlocal outcome
+        # First, before the machinery: this is where the study id reaches whoever is
+        # watching, and a view that answers in objects rather than in prose has nothing
+        # to say about itself until it has been told which study it is. The instance
+        # is named here too, while it may still be coming up: the header is what the
+        # hosted page turns into "running", and a page that is running is one the
+        # person can type into.
+        view.header(store.session.study_id, resolved_instance, cfg.model, store.dir)
+        if pending is not None:
+            # A tool call made before the workspace is up waits for it, and the wait
+            # is said on the view so a call taking a minute reads as the wait it is.
+            pending.on_wait = lambda waited: view.stage(
+                f"waiting for the workspace, {waited:.0f} s"
+            )
         # The tools report job state through the view, so a panel showing what is
         # running is current the moment it changes rather than only while polling.
         ctx.view = view
@@ -1020,12 +1452,33 @@ def session(
             concierge.start()
         tracker.start()
         live_mirror.start()
-        view.workspace(browser)
+        # The browser is handed over now whether or not the workspace is up: a view
+        # that lists on its own thread waits with everything else, and the hosted
+        # page needs the browser's store to follow the transcript from the first
+        # word. What a listing needs is the workspace, and `workspace_ready` says
+        # when that is.
+        with _timed("view_workspace"):
+            view.workspace(browser)
         loop = Loop(cfg, ctx, store, view, capture=capture, progress=tracker)
         # The mirror's cycles share the container with the model's commands, and a
         # command waited minutes behind a cycle's transfers. Held around each tool
         # call, this is how a cycle knows to stand aside (mirror.Gate).
         loop.gate = live_mirror.gate
+        # The mode the person chose, said at the start (header() keeps its shape). Only
+        # a reader somebody can type into can answer a question; -p has refused a
+        # non-auto mode before getting here, so no approver means nothing is asked.
+        view.mode(ctx.mode)
+        # Effort and provider too, which header() does not carry: the interface's bar
+        # shows them and `/model ` completes from the provider's known models.
+        view.model(cfg.model, cfg.effort, cfg.provider)
+        if getattr(reader, "accepts_input", True):
+            approver = Approver(
+                view, reader,
+                local=lambda command: _local(command, view, browser, store, loop, tracker),
+            )
+            loop.approver = approver
+            ctx.approver = approver
+        ctx.on_mode = getattr(loop, "set_mode", None)
         # The CAD desk: geometry and its mesh built by a second agent on this same
         # workspace, one python cell at a time in a kernel there, with its own model
         # client (cad/). It needs nothing in this process but a key -- the machine it
@@ -1041,25 +1494,52 @@ def session(
             # handed two reference files by name instead. That configuration is the one
             # with evidence behind it -- three times the steps on eight of eight prompts
             # for the catalogue version, p = 0.008, and no more meshes for the cost.
-            ctx.cad = cad.CoreDesk(
-                cfg, backend, store, store.session.home,
-                interject=lambda: loop.interject() if loop.interject else None,
-                on_step=lambda step: _cad_desk_step(view, tracker, step),
-            )
+            with _timed("cad"):
+                ctx.cad = cad.CoreDesk(
+                    cfg, backend, store, store.session.home,
+                    interject=lambda: loop.interject() if loop.interject else None,
+                    on_step=lambda step: _cad_desk_step(view, tracker, step),
+                )
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
         )
-        view.header(store.session.study_id, resolved_instance, cfg.model, store.dir)
-        loop.brief(
-            _situation_brief(
+        with _timed("situation_brief"):
+            briefing = _situation_brief(
                 store,
                 backend,
                 resuming,
                 interactive=not one_shot,
-                browser=browser,
+                # The listing and the core count are questions to the workspace; for
+                # one still coming up they are asked when it is here (`_bring_up`),
+                # and the briefing says instead that it is coming.
+                browser=browser if pending is None else None,
                 preferences=cfg.preferences,
+                mode=ctx.mode,
+                starting_eta_s=cfg.workspace_eta_s if pending is not None else None,
             )
-        )
+        with _timed("loop_brief"):
+            loop.brief(briefing)
+        if pending is None:
+            # The toolbox must be on the instance before the first tool call can ask
+            # for it; by now the upload has had the whole briefing to finish.
+            with _timed("toolbox_wait"):
+                toolbox_sync.result()
+                toolbox_pool.shutdown(wait=False)
+            _say_workspace_ready(view, resolved_instance, 0.0)
+        else:
+            # The workspace is coming up on its own thread; this one runs the
+            # conversation. When it is here, `_bring_up` makes it this study's --
+            # the directory, the toolbox -- resolves every waiting tool call, tells
+            # the view, and posts the facts the briefing could not wait for so the
+            # model's next turn has them.
+            tracker.workspace_starting(cfg.workspace_eta_s)
+            bringing_up.set()
+            threading.Thread(
+                target=_bring_up,
+                args=(pending, starter, store, view, loop, tracker, browser, resuming),
+                name="workspace-ready",
+                daemon=True,
+            ).start()
         try:
             if one_shot:
                 outcome = _run_one_shot(
@@ -1075,21 +1555,47 @@ def session(
         except KeyboardInterrupt:
             view.info(_interrupt_note(keep_alive))
         finally:
-            tracker.stop()
+            with _timed("close.tracker_stop"):
+                tracker.stop()
             if concierge is not None:
-                concierge.stop()
+                with _timed("close.concierge_stop"):
+                    concierge.stop()
 
     force_exit = False
+    stream: JsonView | None = None
     try:
         if interface is not None:
             force_exit = bool(interface(drive))
+        elif streaming_json:
+            # The fourth interface behind this same seam. `-p` is one prompt and one
+            # structured reply, so there is nothing to read; without it the session is
+            # a conversation and the other side of the stream is stdin.
+            stream = JsonView(sys.stdout)
+            # The cost events (`turn`, `tool`, `mirror`) join the same stream through
+            # the view's own lock, rather than racing it for stdout.
+            # ... and on the view's clock, so one stream has one meaning for `at`.
+            trace.to(stream.trace_sink(), origin=stream.origin)
+            drive(stream, NullReader() if one_shot else JsonReader())
         elif one_shot or plain or not _tui_available():
             drive(ConsoleView(console), LineReader() if not one_shot else NullReader())
         else:
             force_exit = bool(_run_tui(drive))
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001 - re-raised immediately below
+        # `outcome` is assigned only by the two run loops, so anything escaping
+        # `drive()` left it None -- and `JsonView.session_end` renders None as "ok".
+        # A RuntimeError out of the provider gave exit code 1, a traceback on stderr,
+        # and a final stdout line saying the study finished cleanly; an agent driving
+        # the paid service from the stream recorded the run as successful and did not
+        # retry, while the teardown decision that costs money had already been taken.
+        outcome = outcome or "crashed"
+        if stream is not None:
+            stream.emit("error", message=f"{type(exc).__name__}: {exc}")
+        raise
     finally:
-        live_mirror.stop()
-        _pickup_results(backend, capture, store.session.home or WORKSPACE_ROOT)
+        with _timed("close.mirror_stop"):
+            live_mirror.stop()
         # The interface is gone by now, so this reports to the plain console. A
         # one-shot run never had turn ends to sync at, which makes this its only one.
         # It runs before anything is stopped: the work comes home first — and it
@@ -1097,13 +1603,50 @@ def session(
         # cycle that outlived it is still writing these same files, and two syncs
         # interleaving over one path is how a local copy ends up a hybrid of two
         # versions of the file.
+        #
+        # The results pickup is one read of one file and independent of the sync, so
+        # it rides alongside rather than in front: every step of the close-down is a
+        # round trip the person is waiting on.
         live_mirror.view = None
-        _final_sync(live_mirror, ConsoleView(console))
+        if pending is not None and not bringing_up.is_set() and not pending.ready_event.is_set():
+            # `drive` never reached the point of bringing the workspace up -- an
+            # interface that would not start, an error on the way -- so the start
+            # that was sent has nobody to answer to. Settled here, as the blocking
+            # start would have settled it, so the close-down can put the workspace
+            # down rather than wait on a thread that was never started.
+            try:
+                pending.resolve(starter.result())
+            except BackendError as exc:
+                pending.fail(exc)
+        if pending is not None and not pending.ready():
+            # The workspace never came, or has not come yet: nothing of this study's
+            # is on it, so there is nothing to pick up and nothing to bring home,
+            # and waiting for it to say so would be the wait this whole arrangement
+            # exists to avoid -- on the way out, to a person who has already left.
+            console.print("[dim]the workspace was still starting; nothing ran on it[/]")
+        else:
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pickup") as pool:
+                pickup = pool.submit(
+                    _pickup_results_timed, backend, capture, store.session.home or WORKSPACE_ROOT
+                )
+                with _timed("close.final_sync"):
+                    _final_sync(live_mirror, ConsoleView(console))
+                pickup.result()
         if capture:
-            _capture_the_case(capture, store, ConsoleView(console))
-            capture.close()
-        _close_down(backend, store, keep_alive=keep_alive)
-        backend.close()
+            with _timed("close.capture_case"):
+                _capture_the_case(capture, store, ConsoleView(console))
+            with _timed("close.capture_close"):
+                capture.close()
+        with _timed("close.close_down"):
+            _close_down(backend, store, keep_alive=keep_alive)
+        with _timed("close.backend_close"):
+            backend.close()
+        if stream is not None:
+            # Last, and after the teardown that costs money has been decided: a reader
+            # that stops at `session_end` has seen everything. The exit code says the
+            # same thing, and a reader on the far side of a pipe may never see it.
+            stream.session_end(outcome)
+            trace.off()
         if force_exit:
             # The session thread is still inside a network call it cannot be pulled out
             # of. Everything worth keeping is written; waiting for it would leave the
@@ -1114,10 +1657,14 @@ def session(
     return outcome
 
 
-ONE_SHOT_EXIT_CODES = {"ok": 0, "failed": 1, "timeout": 2}
+ONE_SHOT_EXIT_CODES = {"ok": 0, "failed": 1, "timeout": 2, "crashed": 1}
 """What a `-p` run's ending means to the shell that started it. Documented in the
 README, so a script can tell "the model could not be reached" from "the solve is
-still going" without parsing the output."""
+still going" without parsing the output.
+
+`crashed` normally leaves by the exception itself rather than through this table --
+the traceback is worth more than a tidy exit -- and it is mapped anyway so that an
+embedder which swallows the exception cannot turn a crash into a zero."""
 
 WORKSPACE_LISTED = 40
 
@@ -1166,29 +1713,43 @@ def _home_for(store: Store, backend: Backend, resuming: bool, known_here: bool =
     the whole point of it -- but starting a new study now starts somewhere empty.
     Studies made before this have no home recorded and keep the whole workspace,
     because moving their files out from under them would be worse.
+
+    Two halves: which directory (`_home_path`, decided from what this machine knows)
+    and making it (`_ensure_home`, the one part that needs the workspace). A session
+    running ahead of its workspace takes them separately.
     """
+    home = _home_path(store, resuming, known_here)
+    return home if _ensure_home(backend, home) else WORKSPACE_ROOT
+
+
+def _home_path(store: Store, resuming: bool, known_here: bool = True) -> str:
+    """Which directory is this study's. Needs no workspace: see `_home_for`."""
     if store.session.home:
-        home = store.session.home
-    elif resuming and known_here:
+        return store.session.home
+    if resuming and known_here:
         # A study this machine already had, whose session predates homes: it keeps
         # the whole workspace, because moving its files out from under it would be
         # worse than the untidiness.
-        home = WORKSPACE_ROOT
-    else:
-        # A new study, or one resumed on a machine that has never seen it -- opened
-        # in the browser, or on another laptop. `known_here` is false there, and the
-        # id names the directory. Falling back to the workspace root instead is what
-        # put one run among every other run's files, and made the mirror try to bring
-        # the whole volume down.
-        home = f"{WORKSPACE_ROOT}/{store.session.study_id}"
+        return WORKSPACE_ROOT
+    # A new study, or one resumed on a machine that has never seen it -- opened
+    # in the browser, or on another laptop. `known_here` is false there, and the
+    # id names the directory. Falling back to the workspace root instead is what
+    # put one run among every other run's files, and made the mirror try to bring
+    # the whole volume down.
+    return f"{WORKSPACE_ROOT}/{store.session.study_id}"
 
-    if home != WORKSPACE_ROOT:
-        try:
-            backend.exec(f"mkdir -p {home}", timeout_s=60)
-        except BackendError as exc:
-            console.print(f"[yellow]could not make {home} ({exc}); using {WORKSPACE_ROOT}[/]")
-            return WORKSPACE_ROOT
-    return home
+
+def _ensure_home(backend: Backend, home: str) -> bool:
+    """Make the study's directory on the workspace. False, and a line saying so, when
+    it could not be made; the caller decides what to fall back to."""
+    if home == WORKSPACE_ROOT:
+        return True
+    try:
+        backend.exec(f"mkdir -p {home}", timeout_s=60)
+    except BackendError as exc:
+        console.print(f"[yellow]could not make {home} ({exc}); using {WORKSPACE_ROOT}[/]")
+        return False
+    return True
 
 
 def _machine_note(backend: Backend) -> str:
@@ -1204,12 +1765,29 @@ def _machine_note(backend: Backend) -> str:
     stays.
     """
     try:
-        result = backend.exec("nproc", timeout_s=30)
-        cores = int((result.output or "").strip().split()[0])
+        result = backend.exec(CORES_PROBE, timeout_s=30)
+        fields = (result.output or "").split()
+        cores = int(fields[0])
+        physical = int(fields[1]) if len(fields) > 1 and fields[1].isdigit() else 0
     except Exception:  # noqa: BLE001 - not knowing is not a failed session
         return ""
     if cores <= 1:
         return ""
+    if physical and physical < cores:
+        # Two threads a core: the number that matters to a solve is the smaller one.
+        # Told "8 cores", a live agent decomposed for 6 and Open MPI refused the run
+        # (its default slot count is the physical cores); tools._machine_line has the
+        # measurement.
+        return (
+            f"This machine has {physical} physical cores ({cores} hardware threads). A "
+            f"solver run as one process uses one core, and the session is billed for "
+            f"the whole machine either way; `decomposePar` and `mpirun -np N` spread it "
+            f"over N, and mpirun accepts up to {physical} ranks as it is -- more needs "
+            f"--use-hwthread-cpus, and two ranks on one core share its memory "
+            f"bandwidth, which is what a CFD solve is bound by. What the extra ranks "
+            f"return falls away as the cells each one holds get small, so the N worth "
+            f"using depends on the mesh."
+        )
     return (
         f"This machine has {cores} cores. A solver run as one process uses one of "
         f"them, and the session is billed for all {cores} either way; `decomposePar` "
@@ -1226,22 +1804,23 @@ def _workspace_note(browser: Browser, home: str, resuming: bool) -> str:
     contents are its business. The rest of the volume gets a single line: it exists,
     it belongs to other studies, and nothing in it was written for this request.
     """
-    try:
-        entries = [
-            entry for entry in browser.tree(home, depth=1) if not entry.name.startswith(".")
-        ]
-    except BackendError:
-        return ""
-
-    if home == WORKSPACE_ROOT:
-        neighbours = ""
-    else:
+    # Two listings -- the study's directory and the volume around it -- and each is a
+    # round trip to the instance; asked together (see _situation_brief).
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="wsnote") as pool:
+        tree_future = pool.submit(browser.tree, home, 1)
         # Saying whose it is without saying what they are leaves a real question open,
         # and a live run spent turns on it: it found several near-identical studies
         # made minutes apart by a user who did not remember commissioning them, and
         # worked through whether that meant an intruder. The answer is dull and the
         # harness has always known it -- they are this same tool's other sessions.
-        neighbours = _neighbours(browser, home)
+        neighbours_future = (
+            pool.submit(_neighbours, browser, home) if home != WORKSPACE_ROOT else None
+        )
+        try:
+            entries = [entry for entry in tree_future.result() if not entry.name.startswith(".")]
+        except BackendError:
+            return ""
+        neighbours = neighbours_future.result() if neighbours_future is not None else ""
 
     if not entries:
         return f"Your directory is {home}. It is empty.{neighbours}"
@@ -1330,25 +1909,44 @@ def _situation_brief(
     interactive: bool,
     browser: Browser | None = None,
     preferences: str = "",
+    mode: str = "auto",
+    starting_eta_s: float | None = None,
 ) -> str:
     """Facts about this session, assembled by the harness.
 
     Whether anyone is at the terminal is one of them. It is the difference between a
     question that gets answered and a turn that ends on a question nobody will ever
     see, and the model has no other way to know which kind of session this is.
+
+    `starting_eta_s` says the workspace is still coming up, and roughly how long
+    that usually takes. The briefing then carries that fact in place of the two it
+    would have had to wait for -- the listing and the core count -- and those follow
+    as a note once the workspace is here (`_workspace_ready_note`).
     """
     lines = []
     if resuming:
-        lines.append(situation(store, backend))
+        # `situation` re-reads every running job's status from the workspace, which a
+        # resume ahead of its workspace cannot do yet: there it says what the study
+        # recorded, and the ready note re-reads it.
+        lines.append(situation(store, None if starting_eta_s is not None else backend))
     else:
         lines.append(f"study {store.session.study_id} on instance {store.session.instance_id}.")
-    if browser is not None:
-        note = _workspace_note(browser, store.session.home or WORKSPACE_ROOT, resuming)
-        if note:
-            lines.append(note)
-    machine = _machine_note(backend)
-    if machine:
-        lines.append(machine)
+    if starting_eta_s is not None:
+        lines.append(_starting_note(starting_eta_s, interactive, mode))
+    else:
+        # The workspace listing and the core count are two independent questions to
+        # the instance, and each one is a full round trip through the service to a
+        # container (~1.3 s on the hosted backend). Asked in series they were most of
+        # the pause between "running" and "waiting for you" -- measured 4-13 s on
+        # staging, 2026-09-18 -- so they are asked together and the briefing waits for
+        # the slower of the two.
+        lines.extend(_workspace_facts(store, backend, resuming, browser))
+    # How a solve is read and reported: a residual that levels off on an unsteady flow
+    # is not a failed run, and the person hears "did not converge" as one
+    # (`convergence.SOLVE_NOTE` carries the five studies that measured it). Said in
+    # every session, ahead of the person's own note, because the standing expectation
+    # of honesty in the system prompt was being met with confessions.
+    lines.append(convergence.SOLVE_NOTE)
     if preferences:
         # The user's standing note, in the user's voice. The harness relays it
         # verbatim and adds nothing: what to do about it stays the model's call,
@@ -1358,6 +1956,10 @@ def _situation_brief(
             "start of every session. In their own words:"
         )
         lines.append(preferences.strip())
+    # The person's choice of mode, when it is not full auto. Nothing at all in auto, so
+    # that briefing is the same bytes it was before modes existed.
+    if modes.briefing(mode):
+        lines.append(modes.briefing(mode))
     if interactive:
         lines.append(
             "A person is at the terminal for this session and can answer you. Anything "
@@ -1369,6 +1971,200 @@ def _situation_brief(
             "can arrive, so a question asked here will not be seen."
         )
     return "\n".join(lines)
+
+
+def _workspace_facts(
+    store: Store, backend: Backend, resuming: bool, browser: Browser | None
+) -> list[str]:
+    """What is in the study's directory and what the machine is: the two facts about
+    the workspace the briefing carries, asked of it together (see `_situation_brief`).
+    Each is a round trip; asked of a workspace still coming up they wait for it."""
+    home = store.session.home or WORKSPACE_ROOT
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="brief") as pool:
+        note_future = (
+            pool.submit(_workspace_note, browser, home, resuming) if browser is not None else None
+        )
+        machine_future = pool.submit(_machine_note, backend)
+        note = note_future.result() if note_future is not None else ""
+        machine = machine_future.result()
+    return [line for line in (note, machine) if line]
+
+
+def _starting_note(eta_s: float, interactive: bool, mode: str = "auto") -> str:
+    """The workspace is still coming up: said as facts, with what the time is good
+    for, in the briefing's own voice (`tests/test_briefing.py` keeps it there).
+
+    The whole point of a session running ahead of its workspace is the minute this
+    buys, and the model has no other way to know it is in one: a tool call that
+    waits a minute reads as a slow machine, and a slow machine is worked around
+    rather than talked through. So it is told that the machine is coming, roughly
+    when, that its tools wait rather than fail, and that nothing about the case
+    itself needs the machine -- which is the model's cue, not the harness's
+    instruction.
+
+    What the minute is good for depends on the mode. With someone who wants to be
+    consulted it is the time to ask about the case. In full auto it is the time to
+    say what is being assumed and to draft the case files: the first version of this
+    note listed the things "the person can answer while the machine comes up" in every
+    mode, and a person who had chosen full auto got a numbered list of questions for
+    an answer (`modes.AUTO_NO_QUESTIONS` has the measurement).
+    """
+    about = f"usually about {eta_s:.0f} seconds" if eta_s > 0 else "usually well under a minute"
+    lines = [
+        f"The workspace is still starting ({about} from here). Every tool call waits "
+        "for it rather than failing, so a call made now answers once the workspace is "
+        "up and not before; a note in this thread says when it is.",
+    ]
+    if interactive and mode == modes.AUTO:
+        lines.append(
+            "Nothing about the case itself needs the workspace. The person chose full "
+            "auto, so this minute is for telling them, in a few lines, what you take "
+            "the case to be -- the geometry and its dimensions, the physics and the "
+            "flow regime, the boundary conditions, which result matters -- as the "
+            "assumptions you will proceed on unless they say otherwise, and for "
+            "drafting the case files that do not need the machine. Not for a list of "
+            "questions. A directory listing and the core count follow with the note."
+        )
+    elif interactive:
+        lines.append(
+            "Nothing about the case itself needs the workspace: what is being "
+            "simulated, the geometry and its dimensions, the physics and the flow "
+            "regime, the boundary conditions, which result matters and to what "
+            "accuracy, the constraints on time and cost, and what files the person "
+            "has to upload are all questions the person can answer while the machine "
+            "comes up. A directory listing and the core count follow with the note."
+        )
+    else:
+        lines.append(
+            "The prompt is already here, so the plan can be made now; the first tool "
+            "call is where the wait is paid, once. A directory listing and the core "
+            "count follow with the note."
+        )
+    return " ".join(lines)
+
+
+def _workspace_ready_note(
+    store: Store, backend: Backend, resuming: bool, browser: Browser | None,
+    seconds: float, home_made: bool,
+) -> str:
+    """The note that follows `_starting_note`: the workspace is here, and the facts
+    the briefing left out. Same facts, same words, as a briefing that did not have
+    to wait -- plus, for a resume, the job status `situation` would have re-read."""
+    lines = [f"The workspace is ready ({seconds:.0f} s after the session began), so tool calls run at once now."]
+    if not home_made:
+        lines.append(
+            f"The study's directory {store.session.home} could not be made, so commands "
+            f"run in {WORKSPACE_ROOT} unless told otherwise."
+        )
+    if resuming and store.session.jobs:
+        # The job statuses the briefing could only repeat from the record, re-read
+        # from the workspace now that it can be asked.
+        lines.append(situation(store, backend))
+    lines.extend(_workspace_facts(store, backend, resuming, browser))
+    return "\n".join(lines)
+
+
+def _say_workspace_ready(view: View, instance_id: str, seconds: float) -> None:
+    """`view.workspace_ready`, from whichever thread learned it. Never raises: this is
+    presentation, and a view that is tearing down may not end a session."""
+    try:
+        view.workspace_ready(instance_id, seconds)
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
+
+
+def _bring_up(
+    pending: PendingBackend,
+    starter: Any,
+    store: Store,
+    view: View,
+    loop: Loop,
+    tracker: Any,
+    browser: Browser | None,
+    resuming: bool,
+) -> None:
+    """The workspace, from "asked for" to "this study's": the thread that runs
+    alongside the conversation while the machine comes up.
+
+    Waits for the start, makes the study's directory, pushes the toolbox -- the two
+    things every session did before its first tool call, and still does, only no
+    longer in front of the first word -- then resolves the pending backend so every
+    waiting tool call goes ahead, tells the view and the bar, and posts to the model
+    the facts the briefing said would follow. A start that fails fails every tool
+    call with the start's own error, and says so on the view, which is exactly what
+    a blocking start did with one difference: the conversation so far is kept.
+
+    Never raises: it is a thread, and a thread's exception is a silent one.
+    """
+    try:
+        try:
+            with _timed("workspace_start"):
+                live = starter.result()
+        except BackendError as exc:
+            pending.fail(exc)
+            tracker.workspace_ready()
+            console.print(f"[red]Could not start the workspace:[/] {exc}")
+            view.notice(f"the workspace could not be started: {exc}")
+            loop.post(
+                f"The workspace could not be started ({exc}). Every tool call will "
+                "fail with that error until the session is resumed."
+            )
+            return
+        if getattr(live, "was_already_running", False):
+            console.print(_join_notice(pending.instance_id, getattr(live, "instances_held", 0)))
+        home = store.session.home or WORKSPACE_ROOT
+        with _timed("home_for"):
+            home_made = _ensure_home(live, home)
+        if not home_made:
+            # The same fallback `_home_for` makes, applied to everything already
+            # holding the home: the tools' working directory and the store's record.
+            store.session.home = WORKSPACE_ROOT
+            store.save()
+            loop.ctx.home = WORKSPACE_ROOT
+            if browser is not None:
+                browser.home = WORKSPACE_ROOT
+            tracker.home = WORKSPACE_ROOT
+        _sync_toolbox_timed(live)
+        pending.resolve(live)
+        seconds = pending.elapsed_s
+        tracker.workspace_ready()
+        _say_workspace_ready(view, pending.instance_id, seconds)
+        with _timed("workspace_ready_note"):
+            note = _workspace_ready_note(store, live, resuming, browser, seconds, home_made)
+        loop.post(note)
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        if not pending.ready_event.is_set():
+            pending.fail(BackendError(f"the workspace could not be set up: {exc}", code="setup_failed"))
+        try:
+            tracker.workspace_ready()
+            view.warn(f"the workspace could not be set up: {exc}")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _with_mode(blurb: str, loop: Loop) -> str:
+    """A refreshed thread's blurb, still carrying the person's choice of mode."""
+    said = modes.briefing(loop.ctx.mode)
+    return f"{blurb}\n{said}" if said else blurb
+
+
+def _switch_mode(name: str, view: View, loop: Loop | None) -> None:
+    """`/mode` and `/mode <name>`: say what the modes are, or switch."""
+    current = loop.ctx.mode if loop is not None else modes.AUTO
+    if not name:
+        view.status(modes.status_lines(current))
+        return
+    if loop is None:
+        view.status(["there is no session to switch"])
+        return
+    chosen = loop.set_mode(name)
+    if chosen is None:
+        view.status([f"there is no mode called {name!r}", *modes.status_lines(current)])
+        return
+    view.status([
+        f"mode: {modes.label(chosen)}. {modes.DESCRIPTIONS[chosen]}",
+        "this applies from the next tool call",
+    ])
 
 
 def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
@@ -1496,6 +2292,126 @@ def _still_running_on_the_instance(backend: Backend, store: Store) -> list[dict]
     return [row for row in rows if str(row.get("id") or "") not in mine]
 
 
+_NEIGHBOUR_PROBE = r"""self=$$
+cd / 2>/dev/null || true
+mine=%s
+root=%s
+rmine=$(readlink -f "$mine" 2>/dev/null || echo "$mine")
+rroot=$(readlink -f "$root" 2>/dev/null || echo "$root")
+for d in /proc/[0-9]*; do
+p=${d#/proc/}
+[ "$p" = "$self" ] && continue
+c=$(cat "$d/comm" 2>/dev/null) || continue
+w=$(readlink "$d/cwd" 2>/dev/null) || continue
+case "$w" in "$mine"|"$mine"/*|"$rmine"|"$rmine"/*) continue ;; esac
+case "$w" in "$root"|"$root"/*|"$rroot"|"$rroot"/*) printf '%%s %%s\n' "$p" "$c" ;; esac
+done"""
+"""Processes working somewhere in the workspace that is not this study's directory.
+
+The exact inverse of `stopping._OWN_PROBE`, and for the same reason: where a process
+is working is the only thing that distinguishes this study's work from a neighbour's.
+
+Both roots are resolved before they are compared, and that is what makes this fire at
+all. Inside a Modal Sandbox `/work` is a SYMLINK to `/__modal/volumes/vo-<id>`, not a
+directory -- foamd says so in `quota.py` (`du -sm /work` answered 1 MB against
+`du -sLm /work` at 28633 MB on the same live Sandbox) and acts on it in `files.py`,
+which resolves the root with `realpath -m` for its jail check instead of comparing the
+literal string. `/proc/<pid>/cwd` is a kernel magic link: it yields the PHYSICAL path
+however the process got there, because a shell `cd` only updates the logical `$PWD`.
+One production transcript prints the same case twice, as
+`/__modal/volumes/vo-QLeP1IjwPg9DkyX8ENl2HW/onera_hisa` from getcwd and as
+`/work/onera_hisa` from `$PWD`. Interpolating the literals therefore matched nothing
+in production ever: this answered empty every time and `shared` collapsed to exactly
+the pre-fix behaviour it was written to replace. Both spellings are matched, because a
+backend that does not symlink its workspace answers with the logical one.
+
+`cd /` is the other half of not reporting yourself: the probe's own shell and the
+`cat`/`readlink` it spawns per process inherit a working directory outside the
+workspace, so neither arm can match them and no name filter is needed to hide them.
+"""
+
+QUIET_COMMANDS = frozenset({
+    "sh", "bash", "dash", "cat", "readlink", "ps", "sleep", "env", "tee", "timeout",
+    "printf", "ls", "df", "true", "sshd", "init",
+})
+"""Not work: shells waiting on their next command, and the housekeeping every
+container does.
+
+`cp`, `mv`, `rm`, `tar`, `gzip`, `find`, `du`, `sed`, `awk`, `cut`, `grep`, `head`,
+`tail`, `wc` and `mkdir` were in here too, as "housekeeping". On this image they are
+the data-moving half of a real pipeline, and while one of them is the running child of
+a mesh-desk bash block it is the ONLY non-quiet process that block has. A neighbour
+part-way through `cp -r ../mesh/constant/polyMesh constant/` -- minutes, for a
+multi-GB mesh over the 9p Volume -- looked exactly like an empty container, so the
+exiting session terminated it mid-copy and, because `/stop` keeps the Volume, left a
+half-copied `constant/polyMesh` for the next session to inherit as a corrupt mesh.
+The same window covered `tar -x` of an uploaded case and `rm -rf processor*` after a
+decompose."""
+
+PROBE_ATTEMPTS = 2
+PROBE_RETRY_PAUSE_S = 2.0
+"""One retry before giving up on the question. A 503 from a control plane mid-deploy,
+or a 429 from the rate limiter, is usually gone a couple of seconds later; a 507 from
+a full volume is not, and that is what the refusal below is for."""
+
+
+def _neighbour_work(backend: Backend, home: str) -> list[str] | None:
+    """What somebody else is running on this workspace right now, by name.
+
+    `None` means the question could not be put -- which is not the same answer as
+    "nobody is here", and the caller must not read it as one.
+
+    The shutdown half of `_close_down` asked `active_jobs()`, which reads JOB ROWS --
+    and the mesh desk does all of its work through `backend.exec`, one bash block at a
+    time, capped around four minutes a step. So a session that started the instance
+    itself and saw no running job rows called `shutdown()`, the service terminated the
+    Sandbox, and a neighbouring session's snappyHexMesh died mid-step. Nothing was
+    reported on either side: the victim saw a bare 500 and a container reporting two
+    minutes of uptime. This is the residue of F-26 and it is reachable through the web
+    tier's own deploy overlap, without anybody asking for concurrency.
+
+    A workspace root of `/work` is every study's directory at once, so a study that
+    predates homes cannot tell its own work from anyone's and this answers nothing
+    rather than guessing -- `was_already_running` and the job rows still decide there.
+    """
+    scoped = bool(home) and str(home).rstrip("/") != WORKSPACE_ROOT
+    if not scoped:
+        return []
+    probe = _NEIGHBOUR_PROBE % (
+        shlex.quote(str(home).rstrip("/")), shlex.quote(WORKSPACE_ROOT)
+    )
+    result = None
+    for attempt in range(PROBE_ATTEMPTS):
+        try:
+            result = backend.exec(probe, timeout_s=30)
+            break
+        except AttributeError:
+            return []
+        except BackendError as exc:
+            if attempt + 1 < PROBE_ATTEMPTS:
+                time.sleep(PROBE_RETRY_PAUSE_S)
+                continue
+            # Not []. The cost here is asymmetric the wrong way round for a guess:
+            # leaving the workspace up costs at most the reaper's idle window, while
+            # terminating it under a neighbour destroys an in-flight mesh or solve.
+            # And the states that make this fail are exactly the states where a
+            # neighbour is most likely -- a 507 from `quota.ensure_room` once /work is
+            # at its quota (every synchronous exec, this probe included, is refused
+            # before it runs), a 429 from the rate limiter, or the 30 s timeout on a
+            # container that is busy meshing.
+            console.print(f"[yellow]could not check for other sessions' work ({exc})[/]")
+            return None
+    if result is None:
+        return None
+    names = []
+    for line in (result.output or "").splitlines():
+        pid, _, name = line.strip().partition(" ")
+        name = name.strip()
+        if pid.isdigit() and name and name not in QUIET_COMMANDS:
+            names.append(name)
+    return sorted(dict.fromkeys(names))
+
+
 def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> None:
     """End the session: stop the work, then put the container down.
 
@@ -1511,13 +2427,16 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     """
     study = store.session.study_id
     home = store.session.home or WORKSPACE_ROOT
-    shared = bool(getattr(backend, "was_already_running", False))
-    """Whether this session joined a workspace somebody else had already started.
+    if isinstance(backend, PendingBackend) and not backend.ready():
+        _close_down_pending(backend, store, keep_alive=keep_alive)
+        return
+    started_it_here = not bool(getattr(backend, "was_already_running", False))
+    """Whether this session is the one that started the workspace.
 
-    An account is capped at one instance and `acquire()` joins the existing one without
-    saying so, so a second terminal -- or the web app, or `openreynolds files` -- lands in
-    the same container. Stopping it, or sweeping it, then reaches work this session never
-    started. One live run lost a 22-minute solve to exactly that."""
+    `acquire()` joins an existing workspace rather than making a second, so a second
+    terminal -- or the web app, or `openreynolds files` -- lands in the same container.
+    Stopping it, or sweeping it, then reaches work this session never started. One live
+    run lost a 22-minute solve to exactly that."""
     console.print(f"\n[dim]this study's files are in {store.dir}[/]")
     console.print(f"[dim]on the instance they are at {home}[/]")
 
@@ -1542,14 +2461,59 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
         console.print(f"  [{'green' if report.clean else 'yellow'}]{line}[/]")
 
     running = _still_running_on_the_instance(backend, store)
+    scoped = str(home).rstrip("/") != WORKSPACE_ROOT
+    # Only asked when the answer could change something: a session that can already see
+    # somebody's job running on it is leaving it up either way, and the probe is a round
+    # trip to a container that is about to be let go of.
+    neighbours = _neighbour_work(backend, home) if not running else []
+    unanswered = neighbours is None
+    """The probe could not be run at all. Not an answer, and above all not the answer
+    "nobody is here" -- see `_neighbour_work`."""
+    shared = bool(neighbours) or unanswered or (not started_it_here and not scoped)
+    """Whether anyone else is on this workspace.
+
+    Who STARTED the container is the wrong question and always was: the answer that
+    matters is whether stopping it now takes somebody else's work with it. Another
+    live session of this account makes the workspace shared whether or not this session
+    was the one that brought it up -- and two sessions that list while the instance row
+    still reads `stopped` both believe they started it, which is how they both arrive
+    here certain they own it.
+
+    The converse holds too, and leaving it out kept workspaces up for nobody. A session
+    that joined a running workspace used to leave it up unconditionally, so the next
+    `openreynolds` found it still running, joined it, and left it up in turn: one
+    person relaunching the CLI kept an idle container alive across launch after launch,
+    with "joining the workspace already running" on every screen and no session on the
+    web to explain it (2026-09-17, instance 35c9f018; the workspace had been brought up
+    by a web session preempted hours earlier). So joining now decides nothing on its
+    own: a joined session asks the same two questions -- job rows and the neighbour
+    probe -- and puts the workspace down when both say nobody is working. What that
+    costs is a sibling session that is live but idle at this instant (waiting on the
+    model or on its person): its next call starts a fresh container, the volume and its
+    files untouched. Only a study with no directory of its own, which the probe cannot
+    tell apart from anyone else's, still leaves a joined workspace up."""
     if shared:
-        # Somebody else's session had this workspace up before this one joined it, so
-        # it is theirs to stop. `_release` has said so for every read-only command
-        # since it was written; the session path is the one that never asked.
-        console.print(
-            "[dim]this workspace was already running when this session joined it, "
-            "so it is left up[/]"
-        )
+        # Somebody else's session is working on this workspace right now (or, for a study
+        # with no directory of its own, had it up and cannot be ruled out), so it is
+        # theirs to stop. `_release` has asked the
+        # first half for every read-only command since it was written; the session path
+        # is the one that never asked, and the second half is what a mesh desk needs --
+        # its work is execs, and an exec has no job row for the check above to find.
+        if neighbours:
+            console.print(
+                f"[yellow]another session is working on this workspace:[/] "
+                f"{', '.join(neighbours)}"
+            )
+        if unanswered:
+            console.print(
+                "[yellow]could not tell whether another session is working here, "
+                "so the workspace is left up[/]"
+            )
+            console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
+        else:
+            console.print(
+                "[dim]this workspace is in use by another session, so it is left up[/]"
+            )
     elif running:
         # F-46. `was_already_running` asks who STARTED this workspace, and that is the
         # wrong question to ask about a detached job: jobs outlive sessions by design
@@ -1571,10 +2535,68 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
             shutdown = getattr(backend, "shutdown", None)
             if shutdown is not None:
                 shutdown()
+                if not started_it_here:
+                    console.print(
+                        "[dim]this session joined a running workspace, and nothing else "
+                        "is working on it[/]"
+                    )
                 console.print("[dim]instance stopped; the workspace volume is untouched[/]")
         except BackendError as exc:
             console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")
 
+    console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+
+
+def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: bool = False) -> None:
+    """End a session whose workspace never became usable while it ran.
+
+    Nothing of this study's ran on the workspace, so there are no jobs to stop and no
+    sweep to make. What there is, is a start already under way: the service has the
+    request and cannot be asked to forget it, so the container comes up whether or
+    not anyone is still here for it. A session that asked for it puts it down again
+    -- which means waiting for it, because a stop sent to a workspace that is not up
+    yet stops nothing -- rather than leaving a machine running for nobody until the
+    reaper notices. A workspace that was already up before this session joined it is
+    left as it was found, as `_release` leaves one: this session ran nothing on it
+    and cannot tell who else is.
+
+    `keep_alive` keeps its meaning: the hosted runner passes it above a session cap
+    of one, where the reaper owns the workspace's lifetime (`_close_down`), and the
+    start it made is the reaper's too.
+    """
+    study = store.session.study_id
+    console.print(f"\n[dim]this study's files are in {store.dir}[/]")
+    console.print("[dim]the workspace was still starting when the session ended; nothing ran on it[/]")
+    if keep_alive:
+        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        return
+    if backend.failed:
+        console.print("[dim]the workspace did not start, so there is nothing to stop[/]")
+        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        return
+    console.print("[dim]waiting for the workspace to come up so it can be put down again[/]")
+    try:
+        live = backend.wait()
+    except BackendError as exc:
+        console.print(f"[dim]the workspace did not start ({exc}), so there is nothing to stop[/]")
+    else:
+        # The start's own reply decides who brought the workspace up (see `Starter`):
+        # the listing read before the start cannot tell two sessions that asked in
+        # the same second apart, and the one that exits first must not stop it from
+        # under the other.
+        if getattr(live, "was_already_running", False):
+            console.print(
+                "[dim]this session joined a workspace that was already running, and "
+                "is leaving it as it was[/]"
+            )
+        else:
+            try:
+                shutdown = getattr(live, "shutdown", None)
+                if shutdown is not None:
+                    shutdown()
+                console.print("[dim]instance stopped; the workspace volume is untouched[/]")
+            except BackendError as exc:
+                console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")
     console.print(f"[dim]  resume: openreynolds --study {study}[/]")
 
 
@@ -1736,8 +2758,22 @@ def _local(
         view.show_renders(store.renders_dir)
     elif command.kind == commands.OPEN:
         _open_folder(store.dir, view)
+    elif command.kind == commands.MODE:
+        _switch_mode(command.text, view, loop)
+    elif command.kind in (commands.YES, commands.NO, commands.ALL):
+        # An answer with no question open: a question is answered inside the turn
+        # that asked it (approval.Approver), so reaching here means nothing waits.
+        view.status(["nothing is waiting for an answer"])
     elif command.kind == commands.HELP:
-        view.status(commands.HELP_TEXT.splitlines())
+        # The web page sets `surface = "web"`: its keys and its commands differ.
+        view.status(commands.help_lines(command.text, getattr(view, "surface", "terminal")))
+    elif command.kind in (commands.MODEL, commands.EFFORT):
+        if loop is None:
+            view.status(["no model to change outside a session"])
+        elif command.kind == commands.MODEL:
+            view.status(switch.request(loop, command.text))
+        else:
+            view.status(switch.effort(loop, command.text))
 
 
 def _typed_while_working(
@@ -1828,6 +2864,17 @@ rate limit. Everything else the API answers with a 4xx is about this account or
 this request -- the budget, the key, the model id -- and answers the same way in a
 minute."""
 
+_IMAGE_REFUSAL = re.compile(r"could not process image|invalid image|image.*(?:corrupt|malformed)",
+                            re.IGNORECASE)
+"""A 400 whose text says the picture was the problem.
+
+Matched on the message rather than on a code, because the API has one code for every
+bad request and only the sentence distinguishes "your key is wrong" from "that PNG is
+half a PNG". The exact string seen in production on 2026-09-12, twice, was
+`{'type': 'invalid_request_error', 'message': 'Could not process image'}`; the
+alternatives are here because a provider is free to reword its own error and the cost
+of matching one word too widely is a single retried turn."""
+
 _REFUSALS = {
     400: "the request itself was rejected",
     401: "the key was not accepted",
@@ -1854,14 +2901,17 @@ def _run_turn(loop: Loop, view: View) -> bool:
     """
     status: int | None = None
     said = ""
+    exc_message = ""
     try:
         loop.run()
         loop.api_failures = 0
         loop.blocked_reason = None
+        loop.images_dropped = False
         return True
     except ProviderError as exc:
         loop.api_failures += 1
         status = exc.status_code
+        exc_message = exc.message or ""
         if status:
             said = f"The model API returned {status}: {exc.message}"
         else:
@@ -1874,6 +2924,23 @@ def _run_turn(loop: Loop, view: View) -> bool:
         view.notice(said)
 
     loop.settle()
+
+    # A 400 about an image is the one refusal this process can repair, because the
+    # thing the API objected to is in a thread this process owns. Take the pictures
+    # out and try once more; the session continues having lost a picture instead of
+    # two hours. See Loop.drop_images for the incident and why all of them go.
+    if status == 400 and _IMAGE_REFUSAL.search(exc_message) and not loop.images_dropped:
+        loop.images_dropped = True
+        dropped = loop.drop_images()
+        if dropped:
+            console.print(
+                f"[yellow]The model API refused an image, so {dropped} picture(s) were "
+                "taken out of the thread and the turn is being retried. The files are "
+                "untouched on the instance.[/]"
+            )
+            view.notice("an image was refused; it was dropped and the turn retried")
+            return _run_turn(loop, view)
+
     refused = bool(status) and 400 <= status < 500 and status not in RETRYABLE_MODEL_STATUSES
     study = loop.store.session.study_id
     if refused:
@@ -1961,16 +3028,23 @@ def _run_interactive(
         else:
             if progress is not None:
                 progress.begin("waiting")
-            view.prompt()
+            with _timed("idle.prompt"):
+                view.prompt()
             line = reader.get()
             if line is None:
                 return
             loop.blocked_reason = None
-            spoken = _apply(commands.parse(line), loop, view, browser, store, progress,
-                            cad=cad, backend=backend)
+            with _timed("idle.apply"):
+                spoken = _apply(commands.parse(line), loop, view, browser, store, progress,
+                                cad=cad, backend=backend)
             if spoken is QUIT:
                 return
             if spoken is None:
+                if loop.refresh_due:
+                    # `/model` to a model whose window this thread does not fit:
+                    # refreshed now, on the model that built it, so the switch can
+                    # go ahead from the next message.
+                    loop.refresh(_with_mode(situation(store, backend), loop))
                 continue
             from_prompt = True
 
@@ -1991,8 +3065,9 @@ def _run_interactive(
             live.catch_up()
         else:
             _mirror(browser, view)
-        if completed and loop.needs_refresh:
-            loop.refresh(situation(store, backend))
+        # `refresh_due` is a model switch waiting on a thread its window cannot hold.
+        if completed and (loop.needs_refresh or loop.refresh_due):
+            loop.refresh(_with_mode(situation(store, backend), loop))
 
 
 def _run_one_shot(
@@ -2006,7 +3081,8 @@ def _run_one_shot(
     live: LiveMirror | None = None,
     progress: Any = None,
 ) -> str:
-    """Run until the model is done and no jobs remain, and say how it went.
+    """Run until the model is done and no jobs remain -- and no mesh desk is still
+    building -- and say how it went.
 
     There is nobody here to answer a question, so if the model ends its turn wanting
     one, this waits on the job instead -- possibly for hours. `--max-wait` bounds that.
@@ -2044,7 +3120,7 @@ def _run_one_shot(
         if live is not None:
             live.catch_up()
         if loop.needs_refresh:
-            loop.refresh(situation(store, backend))
+            loop.refresh(_with_mode(situation(store, backend), loop))
     return "ok"
 
 
@@ -2055,6 +3131,17 @@ def _sync_toolbox(backend: Backend) -> None:
     try:
         backend.put_tree(TOOLBOX_SOURCE, TOOLBOX_DEST)
     except BackendError as exc:
+        console.print(f"[yellow]toolbox sync skipped:[/] {exc}")
+
+
+def _sync_toolbox_timed(backend: Backend) -> None:
+    """`_sync_toolbox` under its stopwatch, for the background thread `session` runs
+    it on. Never raises: a toolbox that could not be pushed is reported by
+    `_sync_toolbox` itself, and the session goes on without it."""
+    try:
+        with _timed("sync_toolbox"):
+            _sync_toolbox(backend)
+    except Exception as exc:  # noqa: BLE001 - see docstring
         console.print(f"[yellow]toolbox sync skipped:[/] {exc}")
 
 
@@ -2082,6 +3169,16 @@ def _pickup_results(backend: Backend, capture: Capture | None, home: str) -> Non
         capture.result(json.loads(raw.decode("utf-8")))
     except (ValueError, UnicodeDecodeError):
         return
+
+
+def _pickup_results_timed(backend: Backend, capture: Capture | None, home: str) -> None:
+    """`_pickup_results` under its stopwatch, for the close-down's side thread.
+    Never raises: nothing requires a results file, and the close-down must finish."""
+    try:
+        with _timed("close.pickup_results"):
+            _pickup_results(backend, capture, home)
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
 
 
 def _warn(message: str) -> None:

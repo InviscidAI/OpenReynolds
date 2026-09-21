@@ -915,10 +915,14 @@ def test_checkmesh_is_not_second_guessed_on_a_real_mesh(tmp_path):
 # -- mesh_look's payload, with and without --region ----------------------------
 
 
-PAYLOAD_KEYS = {"case", "polymesh", "patches", "build", "cells", "faces", "points",
-                "bounds", "two_d", "checkmesh", "checkmesh_ok", "metrics", "render"}
+PAYLOAD_KEYS = {"case", "polymesh", "patches", "zones", "build", "cells", "faces",
+                "points", "bounds", "two_d", "checkmesh", "checkmesh_ok", "metrics",
+                "render"}
 """The keys `case_gen.py` and the hosted Mesh panel read. `--region` changes which
-polyMesh is read and nothing else, so the two payloads have the same shape."""
+polyMesh is read and nothing else, so the two payloads have the same shape.
+
+`zones` is written unconditionally (empty when the mesh has no zone files), so it is
+part of the shape rather than something a caller may or may not be handed."""
 
 
 def load_mesh_look():

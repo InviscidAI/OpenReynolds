@@ -1,31 +1,95 @@
-# Publish to PyPI on a version tag, with no long-lived secret anywhere.
+# Publish to PyPI and npm on a version tag, with no long-lived secret anywhere.
 #
-# PyPI "trusted publishing": the project on pypi.org names this repository and this
-# workflow file, and PyPI accepts the short-lived OIDC token GitHub mints for the run.
-# One-time setup on pypi.org (Account → Publishing → Add a pending publisher):
-#   PyPI project name: openreynolds     Owner: InviscidAI     Repository: OpenReynolds
-#   Workflow name:     publish.yml      Environment: pypi
-# Then `git tag v0.1.0 && git push origin v0.1.0` publishes; the tag must match the
-# version in openreynolds/__init__.py or the release step refuses.
+# BOTH REGISTRIES, ONE TAG, AND THAT IS THE POINT. The Python package and the npm
+# launcher are one product: the launcher pins which Python version it installs
+# (PYTHON_PACKAGE_SPEC in launcher/bin/openreynolds.js), so a release that reaches one
+# registry and not the other does not half-ship, it mis-ships. On 2026-09-12 PyPI got
+# 0.2.0 and npm did not, and the launcher on npm still said `>=0.1,<0.2` -- so every
+# `npm install -g openreynolds` would have kept installing 0.1.0 and `openreynolds
+# upgrade` would have kept calling it current. Publishing them from one job makes that
+# drift impossible rather than merely noticed.
+#
+# TRUSTED PUBLISHING, on both sides: the registry names this repository and this
+# workflow file, and accepts the short-lived OIDC token GitHub mints for the run. No
+# token is stored anywhere, nothing expires, and -- the reason this exists at all -- no
+# human has to be at a keyboard with an authenticator app. npm 2FA satisfied by a
+# passkey gives no six-digit code, so `npm publish --otp=` from a laptop is not merely
+# inconvenient there, it is impossible.
+#
+# ONE-TIME SETUP, done once per registry by somebody who can sign in:
+#   pypi.org  → Account → Publishing → Add a pending publisher
+#       project openreynolds, owner InviscidAI, repo OpenReynolds,
+#       workflow publish.yml, environment pypi
+#   npmjs.com → the openreynolds package → Settings → Trusted publisher
+#       GitHub Actions, owner InviscidAI, repo OpenReynolds, workflow publish.yml
+#
+# Then `git tag v0.2.1 && git push origin v0.2.1` publishes both. The tag must match
+# __version__ in openreynolds/__init__.py AND the version in launcher/package.json, or
+# the run refuses before it publishes anything.
+#
+# `workflow_dispatch` is here so one registry can be caught up on its own when they
+# have already drifted, which is exactly the state this file was written in: 0.2.0 was
+# on PyPI and not on npm, and re-pushing the tag would have had the PyPI job fail on a
+# version that already exists.
 name: publish
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag to publish, e.g. v0.2.0"
+        required: true
+      registries:
+        description: "Which registries to publish to"
+        required: true
+        default: both
+        type: choice
+        options: [both, pypi, npm]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.which.outputs.tag }}
     steps:
+      # A dispatch names its tag; a tag push is its own. Either way everything below
+      # works off one ref, so a manual catch-up publishes the same commit the tag does
+      # rather than whatever happens to be on main.
+      - id: which
+        run: echo "tag=${{ inputs.ref || github.ref_name }}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.which.outputs.tag }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: The tag names the version the package says it is
+      - name: The tag names the version BOTH packages say they are
+        # Both, because the launcher and the Python package ship as one thing and a
+        # release where they disagree is the failure this whole file is guarding.
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${{ steps.which.outputs.tag }}"; tag="${tag#v}"
           version="$(python -c 'import re,pathlib;print(re.search(r"__version__\s*=\s*\"([^\"]+)\"", pathlib.Path("openreynolds/__init__.py").read_text()).group(1))')"
           test "$tag" = "$version" || { echo "tag v$tag != __version__ $version"; exit 1; }
+          launcher="$(python -c 'import json,pathlib;print(json.loads(pathlib.Path("launcher/package.json").read_text())["version"])')"
+          test "$tag" = "$launcher" || { echo "tag v$tag != launcher/package.json $launcher"; exit 1; }
+      - name: The launcher installs the Python package this tag publishes
+        # The pin is a range, so this asks whether the tag falls inside it rather than
+        # whether the strings match. A launcher pinned to the PREVIOUS minor is how
+        # 0.2.0 reached PyPI and reached nobody.
+        run: |
+          tag="${{ steps.which.outputs.tag }}"; tag="${tag#v}"
+          python - "$tag" <<'EOF'
+          import pathlib, re, sys
+          spec = re.search(r'PYTHON_PACKAGE_SPEC\s*=\s*"([^"]+)"',
+                           pathlib.Path("launcher/bin/openreynolds.js").read_text()).group(1)
+          lo, hi = re.findall(r"[<>=]+([0-9.]+)", spec)
+          key = lambda v: tuple(int(p) for p in v.split("."))
+          version = key(sys.argv[1])
+          assert key(lo) <= version < key(hi), f"{sys.argv[1]} is outside the launcher pin {spec}"
+          print(f"{sys.argv[1]} is inside {spec}")
+          EOF
       - run: python -m pip install --upgrade build
       - run: python -m build
       - name: The wheel carries the toolbox
@@ -43,6 +107,7 @@ jobs:
 
   pypi:
     needs: build
+    if: ${{ inputs.registries != 'npm' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -55,18 +120,56 @@ jobs:
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
 
+  npm:
+    needs: build
+    if: ${{ inputs.registries != 'pypi' }}
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write   # the OIDC token npm trusts
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      # Trusted publishing on npm needs a recent CLI; the one bundled with the Node
+      # image is older than the OIDC support and fails asking for a token.
+      - run: npm install -g npm@latest
+      - name: The launcher's own tests
+        working-directory: launcher
+        run: node --test
+      - name: Publish
+        working-directory: launcher
+        run: npm publish --provenance --access public
+
   release:
-    needs: pypi
+    needs: [pypi, npm]
+    if: ${{ always() && !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.tag }}
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
-      - name: A GitHub release with the artifacts attached
+      - name: A GitHub release with the artifacts attached, unless it is already there
+        # `always() && !failure()` above lets this run when one registry was skipped on
+        # purpose, and this step lets a catch-up publish find the release it made the
+        # first time rather than failing on it.
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes "See CHANGELOG.md."
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists, leaving it alone"
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --notes "See CHANGELOG.md."
+          fi

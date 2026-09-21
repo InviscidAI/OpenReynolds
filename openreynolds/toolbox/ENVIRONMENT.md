@@ -78,3 +78,23 @@ mesh, solve and `reconstructPar` on a real case belong in a job, not a foregroun
 
 See `README.md` for the scripts that already do the common jobs (rendering, animation,
 geometry views, case generation, digests) — most of what gets written by hand is in there.
+
+## The three scripts every study reaches for
+
+Their flags, so the first call is the real one (two studies in a row spent a round trip
+on `render.py --help` before rendering anything):
+
+- `python3 /work/.toolbox/render.py <case> [--scene all|mesh|fields] [--fields U p vorticity]
+  [--time T] [--normal z] [--zoom F | --bounds xmin xmax ymin ymax zmin zmax] [--out DIR]`
+  — fixed-camera PNGs of the mesh cut and field slices; `--out` defaults to `<case>/renders`;
+  without `--time` the latest time is drawn.
+- `python3 /work/.toolbox/mesh_look.py [<case>] [--out look.png] [--json measured.json]
+  [--no-check]` — one captioned picture of a mesh plus its measured bounds, cell count and
+  patch table; runs `checkMesh` unless told not to.
+- `python3 /work/.toolbox/results.py <case> [--preset NAME | --list] [--time latest|first|T]
+  [--normal z] [--out DIR]` — the preset picture and plot set and a `results.md` from a
+  finished case; `--out` defaults to `<case>/results`.
+
+A decomposed run's time steps live in `processorN/` (or `processors<N>/` with the collated
+handler) until `reconstructPar` puts them together; `reconstructPar -latestTime` reconstructs
+one time, and a series (an animation) needs `reconstructPar` without it, or `-time 'a:b'`.

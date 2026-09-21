@@ -149,28 +149,58 @@ def parse_log_tail(text: str) -> LogFacts:
 
 
 _DICT_ENTRY = re.compile(
-    r"^\s*(startTime|endTime|deltaT|writeInterval)\s+([0-9.eE+-]+)\s*;", re.M
+    r"^\s*(startTime|endTime|deltaT|writeInterval|purgeWrite)\s+([0-9.eE+-]+)\s*;", re.M
 )
 _STOP_AT = re.compile(r"^\s*stopAt\s+(\w+)\s*;", re.M)
+_START_FROM = re.compile(r"^\s*startFrom\s+(\w+)\s*;", re.M)
 _COMMENTS = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
 
 
+def _top_level(body: str) -> str:
+    """The dictionary with every nested `{ ... }` block blanked out.
+
+    A controlDict's own entries sit at brace depth zero; `FoamFile { ... }` and every
+    function object under `functions { ... }` sit deeper, and function objects carry
+    their OWN `writeInterval`. Read flat, the last one wins: a live case whose top
+    level said `writeInterval 0.02` and whose `forces` function object said
+    `writeInterval 5` was announced at launch as "writeInterval 5 (0 write times)",
+    which is a warning about a number that was never the run's. Blanking the nested
+    text rather than deleting it keeps `^` anchors and line structure intact."""
+    out = []
+    depth = 0
+    for ch in body:
+        if ch == "{":
+            depth += 1
+            out.append(" ")
+        elif ch == "}":
+            depth = max(0, depth - 1)
+            out.append(" ")
+        else:
+            out.append(ch if depth == 0 or ch == "\n" else " ")
+    return "".join(out)
+
+
 def parse_control_dict(text: str) -> dict[str, Any]:
-    """The run's bounds from `system/controlDict`.
+    """The run's bounds from `system/controlDict`, top-level entries only.
 
     `endTime` is only the end when `stopAt` says so -- `writeNow` and friends mean the
     run ends whenever somebody says, and a percentage against endTime would then be a
-    number about nothing."""
-    body = _COMMENTS.sub("", text)
+    number about nothing. `startFrom` (a word: startTime, firstTime, latestTime) and
+    `purgeWrite` (an integer; 0 keeps every write) are read for the launch note that
+    guards a transient run's data (`tools._restart_guard`)."""
+    body = _top_level(_COMMENTS.sub("", text))
     found: dict[str, Any] = {}
     for key, value in _DICT_ENTRY.findall(body):
         number = _float(value)
         if number is not None:
-            found[key] = number
+            found[key] = int(number) if key == "purgeWrite" else number
     stop = _STOP_AT.findall(body)
     if stop and stop[-1] != "endTime":
         found.pop("endTime", None)
         found["stopAt"] = stop[-1]
+    start_from = _START_FROM.findall(body)
+    if start_from:
+        found["startFrom"] = start_from[-1]
     return found
 
 
@@ -388,6 +418,10 @@ class Tracker:
         self._activity: Activity | None = None
         self._syncing_since: float | None = None
         self._sync_note = ""
+        self._workspace_since: float | None = None
+        """When the workspace was asked for, while it is still coming up; None once it
+        is here (or when it was here all along)."""
+        self._workspace_eta_s = 0.0
         self._jobs: dict[str, JobProgress] = {}
         self._first_seen: dict[str, tuple[float, float]] = {}
         self._jobs_refreshed = 0.0
@@ -421,6 +455,27 @@ class Tracker:
             # A running job still keeps the desk narrating; a bare idle does not.
             self.concierge.working(jobs)
         self.push()
+
+    # -- what the workspace says -----------------------------------------------
+
+    def workspace_starting(self, eta_s: float = 0.0) -> None:
+        """The session is running ahead of its workspace: the bar says so while
+        nothing else is happening, and a tool call that is waiting says what for.
+        `eta_s` is the hint the session was given, said as "usually about"."""
+        with self._lock:
+            self._workspace_since = time.monotonic()
+            self._workspace_eta_s = max(0.0, float(eta_s or 0.0))
+        self.push()
+
+    def workspace_ready(self) -> None:
+        with self._lock:
+            self._workspace_since = None
+        self.push()
+
+    @property
+    def workspace_pending(self) -> bool:
+        with self._lock:
+            return self._workspace_since is not None
 
     # -- what the mirror says --------------------------------------------------
 
@@ -559,9 +614,12 @@ class Tracker:
         """A `bash` command that said where its log goes can be watched while it runs."""
         with self._lock:
             activity = self._activity
+            workspace_pending = self._workspace_since is not None
         if activity is None or activity.kind != "tool" or not activity.log_path:
             return
-        if self.backend is None:
+        if self.backend is None or workspace_pending:
+            # A tool call made while the workspace is starting is waiting for it, and
+            # so would a read of its log be -- on this thread, which draws the bar.
             return
         now = time.monotonic()
         if now - self._tool_polled < TOOL_LOG_POLL_S:
@@ -594,6 +652,22 @@ class Tracker:
             syncing = self._syncing_since
             sync_note = self._sync_note
             tick = self._tick
+            workspace_since = self._workspace_since
+            workspace_eta = self._workspace_eta_s
+        if workspace_since is not None and not jobs:
+            # The workspace is still coming up. The model's own thinking and writing
+            # stay the headline -- that is the conversation this wait was moved out
+            # of the way of -- but a tool call is waiting, and says so, and with
+            # nothing else going on the bar says what everyone is waiting for.
+            waited = duration(now - workspace_since)
+            usually = f"usually about {workspace_eta:.0f} s" if workspace_eta > 0 else ""
+            if activity is not None and activity.kind == "tool":
+                return Progress(
+                    "starting", f"{activity.label} waiting for the workspace · {waited}",
+                    usually, None, True, tick,
+                )
+            if activity is None or activity.kind == "waiting":
+                return Progress("starting", f"workspace starting · {waited}", usually, None, True, tick)
         lead = next((j for j in jobs if j.fraction is not None), jobs[0] if jobs else None)
         if lead is not None:
             headline = lead.headline(now)

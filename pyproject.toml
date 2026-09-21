@@ -39,7 +39,7 @@ Repository = "https://github.com/InviscidAI/OpenReynolds"
 Issues = "https://github.com/InviscidAI/OpenReynolds/issues"
 
 [project.optional-dependencies]
-# numpy/matplotlib/pandas are what the container provides; the toolbox tests
+# numpy/matplotlib/pandas/pyvista are what the container provides; the toolbox tests
 # exercise the same parsing locally, so CI needs them too.
 dev = [
     "pytest>=8.0.0",
@@ -47,6 +47,7 @@ dev = [
     "numpy>=1.24",
     "matplotlib>=3.7",
     "pandas>=2.0",
+    "pyvista>=0.43",
     # The kernel channel's own tests run a real kernel against `LocalBackend`.
     "ipykernel>=6.29",
     "jupyter_client>=8.6",
@@ -87,6 +88,7 @@ exclude = [
     "studies/",
     "user-test*.log",
     "scripts/",
+    "benchmarks/",
     ".github/",
     ".githooks/",
     "docs/",

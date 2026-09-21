@@ -1056,3 +1056,395 @@ def test_an_ordinary_500_is_still_retried(monkeypatch):
     monkeypatch.setattr(client._client, "request", fake_request)
     assert client.request("GET", "/v1/instances").json() == {"ok": True}
     assert len(calls) == 3
+
+
+# -- the Sandbox cycling underneath a call (F-58) ------------------------------
+
+
+def _slept(monkeypatch) -> list[float]:
+    """Every delay the retry loop asks for, without spending any of it."""
+    waits: list[float] = []
+    monkeypatch.setattr(hosted_mod.time, "sleep", waits.append)
+    return waits
+
+
+def _gone(retry_after: str | None = "5") -> httpx.Response:
+    return response(
+        409,
+        {"error": "sandbox_gone", "message": "the sandbox for this instance is gone"},
+        headers={"Retry-After": retry_after} if retry_after else {},
+    )
+
+
+def test_a_read_waits_out_a_vanished_sandbox_instead_of_failing_the_tool_call(monkeypatch):
+    """9 of 68 tool calls in one live study and 56 of 244 in another came back
+    `sandbox_gone (409)` while the hosted Sandbox cycled under an 8-rank solve. Nothing
+    was lost -- `/work` is a persistent Volume and the job restarted from the latest
+    time -- but every one of them reached the model, which spent about 16 minutes of
+    one run improvising recovery and relaunched the same stage five times. A stat five
+    seconds later answers."""
+    waits = _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def cycling(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        if len(calls) == 1:
+            return _gone()
+        return response(200, {"ok": True})
+
+    monkeypatch.setattr(client._client, "request", cycling)
+    assert client.request("GET", "/v1/instances/i/files").json() == {"ok": True}
+    assert calls == ["GET", "GET"]
+    assert waits == [5.0], "the service says when the replacement is up; that is the wait"
+
+
+def test_a_vanished_sandbox_is_asked_again_once_and_then_reported(monkeypatch):
+    """Two attempts, not five. This is a read waiting for a container to come back,
+    and if it has not by the second ask the model is better told plainly than left
+    sitting: it can restart the job, which is what the volume makes cheap."""
+    waits = _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def always_gone(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        return _gone()
+
+    monkeypatch.setattr(client._client, "request", always_gone)
+    with pytest.raises(BackendError) as caught:
+        client.request("GET", "/v1/instances/i/files")
+
+    assert caught.value.code == "sandbox_gone"
+    assert caught.value.status == 409
+    assert len(calls) == 2, f"asked {len(calls)} times; the cap is two attempts"
+    assert waits == [5.0]
+
+
+def test_a_vanished_sandbox_is_not_a_reason_to_start_a_job_twice(monkeypatch):
+    """The negative case, and the reason 409 is not simply added to
+    `_RETRY_STATUSES`. That set is keyed on the status alone, so putting 409 in it
+    would cover `POST .../jobs` as well -- and a retried job start once produced five
+    duplicate running jobs on one instance. `job_start` needs an idempotency key
+    before it can be sent twice; until it has one it is handed to the caller on the
+    first answer."""
+    from openreynolds.backend.hosted import HostedBackend
+
+    _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def always_gone(method, path, timeout=None, **kwargs):
+        calls.append((method, path))
+        return _gone()
+
+    monkeypatch.setattr(client._client, "request", always_gone)
+    with pytest.raises(BackendError) as caught:
+        HostedBackend(client, "inst-1").job_start("mpirun -np 8 pimpleFoam -parallel")
+
+    assert caught.value.code == "sandbox_gone"
+    assert len(calls) == 1, f"the solve was launched {len(calls)} times"
+
+
+def test_a_vanished_sandbox_does_not_repeat_a_write_even_a_repeatable_one(monkeypatch):
+    """`repeatable=True` answers a different question -- whether sending the same
+    bytes twice leaves the workspace as once does -- and it is not the one asked here.
+    A gone Sandbox cannot be asked what the request did before it went, so the gate is
+    the method being one that only reads."""
+    _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def always_gone(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        return _gone()
+
+    monkeypatch.setattr(client._client, "request", always_gone)
+    with pytest.raises(BackendError):
+        client.request("POST", "/v1/instances/i/tar", repeatable=True)
+    assert len(calls) == 1
+
+
+def test_only_sandbox_gone_is_carved_out_of_the_409s(monkeypatch):
+    """One code, not the status. `409 kill_not_delivered` says a job may still be
+    running and the kill did not reach it, which is a fact about the workspace and not
+    a blink: asking again tells the model nothing new and costs it the seconds."""
+    _slept(monkeypatch)
+    from openreynolds.backend.hosted import _RETRY_STATUSES
+
+    assert 409 not in _RETRY_STATUSES
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def refused(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        return response(409, {"error": "kill_not_delivered",
+                              "message": "the signal did not reach the job"})
+
+    monkeypatch.setattr(client._client, "request", refused)
+    with pytest.raises(BackendError) as caught:
+        client.request("GET", "/v1/jobs/j")
+
+    assert caught.value.code == "kill_not_delivered"
+    assert len(calls) == 1
+
+
+def test_a_sandbox_gone_wait_is_capped(monkeypatch):
+    """`Retry-After` is honoured verbatim, which is right for a header the service
+    chose; the cap bounds what a header nobody is watching can add to a tool call that
+    is already slow. At the 5 seconds foamd sends it never binds."""
+    waits = _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def cycling(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        if len(calls) == 1:
+            return _gone("600")
+        return response(200, {"ok": True})
+
+    monkeypatch.setattr(client._client, "request", cycling)
+    assert client.request("GET", "/v1/instances").status_code == 200
+    assert waits == [15.0]
+
+
+def test_a_sandbox_gone_without_a_header_still_waits_a_little(monkeypatch):
+    """An older service, or an edge that drops the header. The general backoff applies
+    and the read is still absorbed rather than spent on a model turn."""
+    waits = _slept(monkeypatch)
+    client = FoamdClient("https://example.invalid", "of_live_test")
+    calls = []
+
+    def cycling(method, path, timeout=None, **kwargs):
+        calls.append(method)
+        if len(calls) == 1:
+            return _gone(None)
+        return response(200, {"ok": True})
+
+    monkeypatch.setattr(client._client, "request", cycling)
+    assert client.request("GET", "/v1/instances").status_code == 200
+    assert waits == [1.0]
+
+
+# -- who owns the workspace at teardown ---------------------------------------
+
+
+class _Joining:
+    """A service that lists one instance and answers the start route.
+
+    The one fact `acquire` has to get right is whether THIS call brought the Sandbox
+    up, because that is what decides whether the session stops it on the way out.
+    """
+
+    def __init__(self, listed_status, start_reply):
+        self.listed_status = listed_status
+        self.start_reply = start_reply
+        self.closed = False
+
+    def list_instances(self):
+        return [{"id": "iid-1", "status": self.listed_status}]
+
+    def create_instance(self):
+        raise AssertionError("there was one to join")
+
+    def start_instance(self, instance_id):
+        return self.start_reply
+
+    def close(self):
+        self.closed = True
+
+
+def _acquired(monkeypatch, listed_status, start_reply):
+    client = _Joining(listed_status, start_reply)
+    monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: client)
+    backend, _client, _iid = hosted_mod.acquire("https://svc.example", "of_live_test")
+    return backend
+
+
+def test_the_start_route_decides_who_owns_the_workspace(monkeypatch):
+    """The listing is read BEFORE the start call and a fresh row reads `stopped`, so
+    two sessions listing within the same second both concluded they had started the
+    workspace -- and the first to exit stopped it from under the other. The start
+    route knows which of the two it did, so it is asked."""
+    joined = _acquired(monkeypatch, "stopped", {"id": "iid-1", "status": "running",
+                                                "started_new": False})
+    assert joined.was_already_running is True, "it joined a Sandbox somebody else had"
+
+    started = _acquired(monkeypatch, "stopped", {"id": "iid-1", "status": "running",
+                                                 "started_new": True})
+    assert started.was_already_running is False, "this call is the one that built it"
+
+
+def test_a_service_that_does_not_say_leaves_the_old_answer_standing(monkeypatch):
+    """`started_new` is additive, so an older deployment answers without it. There the
+    pre-start listing is all there is, which is the behaviour this has always had."""
+    running = _acquired(monkeypatch, "running", {"id": "iid-1", "status": "running"})
+    assert running.was_already_running is True
+
+    stopped = _acquired(monkeypatch, "stopped", {"id": "iid-1", "status": "running"})
+    assert stopped.was_already_running is False
+
+
+# -- which of several workspaces gets joined -----------------------------------
+
+
+class _Several:
+    """A service answering for an account that holds more than one instance.
+
+    The rows come back in an order that is deliberately not the order they should be
+    chosen in. Nothing asks the service to sort `GET /v1/instances`, so the listing
+    arrives in whatever order the database hands over -- which is what made
+    `existing[0]` a coin toss rather than a choice.
+    """
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.started = []
+        self.created = 0
+        self.closed = False
+
+    def list_instances(self):
+        return list(self.rows)
+
+    def create_instance(self):
+        self.created += 1
+        return "iid-new"
+
+    def start_instance(self, instance_id):
+        self.started.append(instance_id)
+        return {"id": instance_id, "status": "running", "started_new": False}
+
+    def close(self):
+        self.closed = True
+
+
+def _acquire_against(monkeypatch, rows):
+    client = _Several(rows)
+    monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: client)
+    backend, _client, instance_id = hosted_mod.acquire("https://svc.example", "of_live_test")
+    return client, backend, instance_id
+
+
+def test_acquire_joins_the_most_recently_active_instance_when_the_account_holds_several(
+    monkeypatch,
+):
+    """The service's cap on concurrent instances is no longer 1, so an account can
+    hold several workspaces at once and each one is a separate Volume with its own
+    files. `existing[0]` on an unsorted listing attached a resumed session to an
+    arbitrary one of them, and the study's case directory then simply was not there --
+    a failure that reads as a workspace that lost its files, not as the wrong
+    workspace. The ordering is `coalesce(last_active_at, created_at) desc, created_at
+    desc`, which is what `OpenFoam_Instance/sql/schema_f16.sql`'s repair step uses to
+    pick the row a client is most likely still holding; the two have to agree."""
+    client, backend, chosen = _acquire_against(
+        monkeypatch,
+        [
+            {"id": "iid-oldest", "status": "running",
+             "created_at": "2026-09-01T00:00:00+00:00",
+             "last_active_at": "2026-09-02T00:00:00+00:00"},
+            {"id": "iid-newest", "status": "running",
+             "created_at": "2026-09-03T00:00:00+00:00",
+             "last_active_at": "2026-09-11T23:59:00+00:00"},
+            {"id": "iid-middle", "status": "stopped",
+             "created_at": "2026-09-05T00:00:00+00:00",
+             "last_active_at": "2026-09-06T00:00:00+00:00"},
+        ],
+    )
+
+    assert chosen == "iid-newest"
+    assert backend.instance_id == "iid-newest"
+    assert client.started == ["iid-newest"], "and it is the one that was started"
+    assert client.created == 0, "joining, never a sixth workspace nobody asked for"
+    assert backend.instances_held == 3, (
+        "the count is carried out so the session can say which of several it took"
+    )
+
+
+def test_acquire_falls_back_to_created_at_when_an_instance_has_never_been_active(
+    monkeypatch,
+):
+    """`last_active_at` is null on a row that has never been started, which is exactly
+    the workspace a user made a minute ago and is about to open. Ordering on the raw
+    column would sort that null against real timestamps; the coalesce is why a
+    brand-new instance is preferred over one last touched a week ago."""
+    _client, _backend, chosen = _acquire_against(
+        monkeypatch,
+        [
+            {"id": "iid-stale", "status": "stopped",
+             "created_at": "2026-09-01T00:00:00+00:00",
+             "last_active_at": "2026-09-04T00:00:00+00:00"},
+            {"id": "iid-fresh", "status": "stopped",
+             "created_at": "2026-09-12T08:00:00+00:00",
+             "last_active_at": None},
+        ],
+    )
+
+    assert chosen == "iid-fresh"
+
+
+def test_acquire_ignores_deleted_rows_when_it_counts_and_when_it_chooses(monkeypatch):
+    """A deleted instance's Volume is gone, so joining one is joining nothing -- and
+    counting one would make the notice claim workspaces the account no longer has."""
+    _client, backend, chosen = _acquire_against(
+        monkeypatch,
+        [
+            {"id": "iid-gone", "status": "deleted",
+             "created_at": "2026-09-11T00:00:00+00:00",
+             "last_active_at": "2026-09-12T09:00:00+00:00"},
+            {"id": "iid-live", "status": "running",
+             "created_at": "2026-09-01T00:00:00+00:00",
+             "last_active_at": "2026-09-02T00:00:00+00:00"},
+        ],
+    )
+
+    assert chosen == "iid-live"
+    assert backend.instances_held == 1
+
+
+def test_acquire_still_joins_the_only_instance_when_the_account_holds_one(monkeypatch):
+    """The case every session took before the cap moved, unchanged: one live row, and
+    it is joined rather than added to. The count says one, so the session says nothing
+    about other workspaces -- there are none to mention."""
+    client, backend, chosen = _acquire_against(
+        monkeypatch,
+        [
+            {"id": "iid-1", "status": "running",
+             "created_at": "2026-09-01T00:00:00+00:00",
+             "last_active_at": "2026-09-02T00:00:00+00:00"},
+        ],
+    )
+
+    assert chosen == "iid-1"
+    assert client.started == ["iid-1"]
+    assert client.created == 0
+    assert backend.instances_held == 1
+
+
+def test_acquire_told_which_instance_to_use_never_lists_and_reports_no_count(monkeypatch):
+    """`--instance` and the remembered session id are an answer, not a question, so
+    there is nothing to choose between and nothing to count. The count reads 0 for
+    "nobody counted", which is why the notice checks for more than one rather than
+    for anything else."""
+    client = _Several([])
+    monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: client)
+
+    def refuse():
+        raise AssertionError("it was told which workspace to use")
+
+    client.list_instances = refuse
+    backend, _client, chosen = hosted_mod.acquire(
+        "https://svc.example", "of_live_test", "iid-asked-for"
+    )
+
+    assert chosen == "iid-asked-for"
+    assert backend.instances_held == 0
+
+
+def test_acquire_creates_one_workspace_when_the_account_holds_none(monkeypatch):
+    """And reports holding exactly the one it just made, so a first session does not
+    announce workspaces that do not exist."""
+    client, backend, chosen = _acquire_against(monkeypatch, [])
+
+    assert chosen == "iid-new"
+    assert client.created == 1
+    assert backend.instances_held == 1

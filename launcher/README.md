@@ -38,7 +38,7 @@ On every run, in order, saying what it is doing before it does it:
    terminal; pass `--yes` or set `OPENREYNOLDS_YES=1` to skip the question. In a
    non-interactive shell without either it prints the instructions and exits with
    code 2. Nothing is ever installed silently.
-2. **Installs the Python package once**, with `uv tool install "openreynolds>=0.1,<0.2"`
+2. **Installs the Python package once**, with `uv tool install "openreynolds>=0.3,<0.4"`
    (the range is pinned in the launcher; `uv` fetches a Python 3.10+ if you have
    none). Skipped when `uv tool list` already shows it.
 3. **Execs the installed `openreynolds`** with all of your arguments, inheriting

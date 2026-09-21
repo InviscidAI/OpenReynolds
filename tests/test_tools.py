@@ -41,6 +41,42 @@ def test_the_cad_tool_says_what_comes_back_and_what_does_not():
         assert imperative not in lowered, imperative
 
 
+def test_the_checkpoint_tool_is_offered_only_in_structured_mode(ctx):
+    """Eight tools in every mode; a ninth, `checkpoint`, only when the person chose
+    structured mode. Still sorted, so a mode's tool list is always the same bytes."""
+    from openreynolds.tools import tools_for
+
+    ctx.cad = object()
+    for mode in ("auto", "partial"):
+        ctx.mode = mode
+        assert "checkpoint" not in [tool["name"] for tool in tools_for(ctx)]
+    ctx.mode = "structured"
+    names = [tool["name"] for tool in tools_for(ctx)]
+    assert names == sorted(names)
+    assert names == sorted([tool["name"] for tool in TOOLS] + ["checkpoint"])
+    assert tools_for(ctx) == tools_for(ctx)
+
+
+def test_a_checkpoint_outside_structured_mode_asks_nobody(ctx):
+    asked = []
+    ctx.approver = type("A", (), {"ask": lambda self, *a: asked.append(a)})()
+    content, is_error = dispatch(ctx, "checkpoint", {"stage": "plan", "summary": "s", "next": "n"})
+    assert not asked and "not put to the person" in content
+
+
+def test_a_checkpoint_approved_with_all_switches_to_full_auto(ctx):
+    from openreynolds.approval import Decision
+
+    switched = []
+    ctx.mode = "structured"
+    ctx.on_mode = switched.append
+    ctx.approver = type("A", (), {"ask": lambda self, *a: Decision(True, all=True)})()
+    content, is_error = dispatch(ctx, "checkpoint", {"stage": "mesh", "summary": "s", "next": "solve"})
+    assert not is_error and ctx.plan_approved
+    assert switched == ["auto"]
+    assert "solve" in content and "full auto" in content
+
+
 def test_the_cad_tool_is_offered_only_when_there_is_a_desk_behind_it(ctx):
     """A tool in the list that can only answer "not available" costs the model a call
     to find that out. Taking it out is also what makes the question answerable: the
@@ -52,6 +88,7 @@ def test_the_cad_tool_is_offered_only_when_there_is_a_desk_behind_it(ctx):
     assert "cad" not in [tool["name"] for tool in tools_for(ctx)]
     ctx.cad = object()
     assert "cad" in [tool["name"] for tool in tools_for(ctx)]
+    assert tools_for(ctx) is TOOLS
     assert tools_for(ctx) is TOOLS
 
 
@@ -164,6 +201,104 @@ def test_read_file_window_reports_what_remains(ctx, backend):
     assert content.endswith("234")
 
 
+class _StillWriting:
+    """A solver appending to its output between the calls a read makes.
+
+    The reads are the FakeBackend's own; only the writer is new. A chunk lands after
+    each fetch, which is what a `postProcessing` forces file or a solver log does while
+    the case is running."""
+
+    def __init__(self, backend, path, chunks):
+        self.backend, self.path, self.chunks = backend, path, list(chunks)
+        self.inner = backend.get_file
+        self.reads = 0
+
+    def __call__(self, path, *args, **kwargs):
+        data = self.inner(path, *args, **kwargs)
+        if path == self.path:
+            self.reads += 1
+            if self.chunks:
+                self.backend.files[path] += self.chunks.pop(0)
+        return data
+
+
+def test_a_file_written_under_the_read_is_read_again(ctx, backend):
+    """`_read_file` stats the path, asks for that many bytes and is handed exactly that
+    many, so the short-read guard that covers images cannot fire on a `.dat`, a `.csv`
+    or a log: a file caught mid-write comes back looking whole, and a forces file cut
+    short is a number the model will happily average (F-64). A second stat catches it,
+    and one more read lands on the finished file."""
+    backend.files["/work/forces.dat"] = b"# Time Cd\n0.1 1.0\n"
+    backend.get_file = _StillWriting(backend, "/work/forces.dat", [b"0.2 1.1\n"])
+
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/forces.dat"})
+
+    assert not is_error
+    assert backend.get_file.reads == 2, "the first read was taken mid-write"
+    assert content.endswith("0.2 1.1\n"), "the whole file, not the part that existed"
+    assert "bytes 0–26 of 26" in content
+    assert "Still being written" not in content, "it settled; there is nothing to warn about"
+
+
+def test_a_file_that_never_settles_says_so_rather_than_looking_whole(ctx, backend):
+    """A read again is not always enough -- a solver writing every timestep is still
+    writing on the second look. Nothing here can make it stop, so what comes back names
+    the three sizes and says the snapshot may stop part-way through a record. The
+    alternative is a truncated column that reads exactly like a complete one."""
+    backend.files["/work/live.dat"] = b"1\n"
+    backend.get_file = _StillWriting(backend, "/work/live.dat", [b"2\n", b"3\n", b"4\n"])
+
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/live.dat"})
+
+    assert not is_error, "a growing file is a fact about the file, not a failed call"
+    assert backend.get_file.reads == 2, "read again once, not until it settles"
+    assert "Still being written: 2 bytes when it was measured, 4 after the first read, " \
+           "6 after the second" in content
+    assert "part-way through a line or a record" in content
+
+
+def test_a_settled_file_costs_one_extra_round_trip_and_no_words(ctx, backend):
+    """The check is a stat on a path that already makes several calls, and the common
+    case -- a file nothing is writing to -- pays for that stat and nothing else."""
+    backend.files["/work/quiet.txt"] = b"hello"
+    stats, reads = [], []
+    inner_stat, inner_get = backend.stat, backend.get_file
+    backend.stat = lambda path, **kw: (stats.append(path), inner_stat(path, **kw))[1]
+    backend.get_file = lambda path, *a, **kw: (reads.append(path), inner_get(path, *a, **kw))[1]
+
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/quiet.txt"})
+
+    assert not is_error
+    assert stats == ["/work/quiet.txt"] * 2 and reads == ["/work/quiet.txt"]
+    assert "bytes 0–5 of 5" in content and content.endswith("hello")
+
+
+def test_a_file_that_disappears_under_the_check_still_hands_back_what_was_read(ctx, backend):
+    """The bytes are in hand and they were real when they were fetched. A path removed
+    by whatever was writing it -- a script clearing its own scratch -- must not turn a
+    successful read into a failed tool call: that trades a rare inaccuracy for a common
+    one."""
+    from openreynolds.backend.base import BackendError
+
+    backend.files["/work/temp.csv"] = b"a,b\n1,2\n"
+    inner = backend.stat
+    calls = []
+
+    def vanishing(path, **kwargs):
+        calls.append(path)
+        if len(calls) > 1:
+            raise BackendError(f"no such path: {path}", code="not_found", status=404)
+        return inner(path, **kwargs)
+
+    backend.stat = vanishing
+    content, is_error = dispatch(ctx, "read_file", {"path": "/work/temp.csv"})
+
+    assert not is_error
+    assert len(calls) == 2, "the check ran and was refused, which is the case under test"
+    assert content.endswith("a,b\n1,2\n")
+    assert "Still being written" not in content, "a check that cannot run makes no claim"
+
+
 def test_read_file_on_a_directory_lists_it(ctx, backend):
     backend.dirs["/work/case"] = ["0", "constant", "system"]
     content, is_error = dispatch(ctx, "read_file", {"path": "/work/case"})
@@ -190,6 +325,115 @@ def test_job_start_records_it_locally(ctx, backend, store):
     assert record.name == "solve"
     assert record.cmd == "simpleFoam"
     assert backend.started[0]["kill_on"] == ["FOAM FATAL"]
+
+
+RESTARTING_DICT = b"""\
+FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application     pimpleFoam;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         1.3;
+deltaT          1e-4;
+writeControl    adjustableRunTime;
+writeInterval   0.0025;
+"""
+
+SOLVE = "cd /work/s/run && mpirun -np 4 pimpleFoam -parallel > log.pimpleFoam 2>&1"
+LISTING = ("ls -d /work/s/run/[0-9]* /work/s/run/processor*/[0-9]* "
+           "/work/s/run/processors*/[0-9]* 2>/dev/null")
+
+
+def _with_times(backend, dict_text=RESTARTING_DICT, times=("0", "0.2", "0.4", "0.6", "0.8")):
+    backend.files["/work/s/run/system/controlDict"] = dict_text
+    backend.exec_results[LISTING] = ExecResult(
+        0, "\n".join(f"/work/s/run/processors4/{t}" for t in times) + "\n", False, None)
+
+
+def test_a_solver_relaunch_that_would_overwrite_a_transient_is_refused(ctx, backend, store):
+    """The loss this guards, measured: 22 minutes of a transient rewritten from t=0
+    because the controlDict said startFrom startTime and the command was launched
+    again in the same directory (study 20260920-161908-c7ef)."""
+    _with_times(backend)
+    content, is_error = dispatch(ctx, "job_start", {"cmd": SOLVE})
+    assert not backend.started, "nothing was launched"
+    assert content.startswith("not started:")
+    assert "4 written time step(s), from 0.2 to 0.8" in content, "the 0 directory is the start, not a write"
+    assert "startFrom latestTime" in content and "overwrite=true" in content
+
+
+def test_start_from_latest_time_carries_a_transient_on(ctx, backend):
+    _with_times(backend, RESTARTING_DICT.replace(b"startFrom       startTime;", b"startFrom       latestTime;"))
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE})
+    assert backend.started and content.startswith("started job")
+    assert "startFrom latestTime" in content
+
+
+def test_overwrite_true_is_the_deliberate_restart(ctx, backend):
+    _with_times(backend)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE, "overwrite": True})
+    assert backend.started and content.startswith("started job")
+
+
+def test_a_first_launch_and_a_mesher_are_never_guarded(ctx, backend):
+    backend.files["/work/s/run/system/controlDict"] = RESTARTING_DICT
+    backend.exec_results[LISTING] = ExecResult(0, "/work/s/run/0\n", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE})
+    assert content.startswith("started job"), "only the initial time exists: not a restart"
+    _with_times(backend)
+    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && blockMesh > log.blockMesh 2>&1"})
+    assert content.startswith("started job"), "a mesher writes no time steps"
+
+
+def test_purge_write_is_said_at_launch(ctx, backend):
+    backend.files["/work/s/run/system/controlDict"] = RESTARTING_DICT + b"purgeWrite      2;\n"
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE})
+    assert "purgeWrite 2 (only the last 2 write times are kept on disk)" in content
+
+
+def test_a_steady_solver_is_launched_with_the_shape_of_its_residuals(ctx, backend):
+    """A steady solver on an unsteady flow levels off, and a model not told to expect
+    it read the plateau as a failed run in four studies of five (`convergence`). The
+    clause rides on the launch line because the residuals are the next thing read."""
+    from openreynolds import convergence
+
+    backend.files["/work/s/run/system/controlDict"] = RESTARTING_DICT.replace(b"pimpleFoam", b"simpleFoam")
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE.replace("pimpleFoam", "simpleFoam")})
+    assert content.startswith("started job")
+    assert f"[{convergence.STEADY_LAUNCH_NOTE}]" in content
+    assert content.index("endTime 1.3") < content.index("steady solver:"), "the run's shape first, the reading after"
+
+
+def test_a_transient_solver_is_launched_without_the_steady_clause(ctx, backend):
+    """A transient's per-step residuals do not have that shape, and a note that
+    appears only sometimes is a note worth reading."""
+    backend.files["/work/s/run/system/controlDict"] = RESTARTING_DICT
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE})
+    assert "steady solver" not in content
+    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && blockMesh > log.blockMesh 2>&1"})
+    assert "steady solver" not in content, "a mesher is not a solve"
+
+
+def test_the_steady_clause_survives_a_case_with_no_controldict(ctx, backend):
+    """The shape note is silent without a controlDict; the steady clause is about the
+    solver, not the dictionary, and is said either way."""
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && simpleFoam > log 2>&1"})
+    assert content.startswith("started job") and "steady solver:" in content
+    assert "endTime" not in content
+
+
+def test_the_launch_note_tells_threads_from_cores(ctx, backend):
+    """Told "8 cores", a live agent decomposed for 6 and Open MPI refused the run: its
+    slots are the physical cores. Both numbers are said, and the one mpirun accepts."""
+    backend.files["/work/s/run/system/controlDict"] = RESTARTING_DICT
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE.replace("-np 4", "-np 6")})
+    assert "8 hardware threads = 4 physical cores" in content
+    assert "up to 4 ranks" in content and "6 ranks is more than the 4 cores" in content
 
 
 def test_job_check_advances_the_offset(ctx, backend, store):

@@ -186,6 +186,55 @@ PRESETS: dict[str, Preset] = {
 }
 
 
+EFFORTS = ("low", "medium", "high")
+"""The reasoning efforts a session can be set to (`--effort`, `/effort`).
+
+The same three the hosted app offers (`reynolds_app/sessions.py`). Sent as the
+Messages API's `output_config.effort` and as Chat Completions' `reasoning_effort`, both
+of which accept these words."""
+
+KNOWN_MODELS: dict[str, tuple[str, ...]] = {
+    # The two the workspace service meters (`reynolds_app/sessions.py` REYNOLDS_MODELS).
+    REYNOLDS: ("claude-sonnet-5", "claude-opus-5"),
+    "anthropic": ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"),
+}
+"""Models worth offering at `/model` beyond a preset's own two. Like the presets, a
+list of ids that existed when it was written, not a limit: any id the vendor answers
+to can be typed, and the probe is what decides."""
+
+
+MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    # Smaller than the window of the preset that offers them, so a switch to one of
+    # these on the same provider must not keep the preset's window.
+    "claude-haiku-4-5": 200_000,
+    "anthropic/claude-haiku-4.5": 200_000,
+}
+"""Context windows of models whose window differs from their preset's. A model not
+here is taken to have its provider's configured window."""
+
+
+def context_window_for(model: str) -> int | None:
+    """The window known for this model id, or None when only the provider's is known."""
+    return MODEL_CONTEXT_WINDOWS.get((model or "").strip())
+
+
+def models_for(provider: str) -> tuple[str, ...]:
+    """The model ids known for a provider, its default first. Empty for a bare family.
+
+    Where `KNOWN_MODELS` names a provider's models, that list is the whole of it: the
+    `reynolds` service meters two models, and its desk model is not one to switch to.
+    Elsewhere the preset's own two are offered."""
+    preset = preset_for(provider)
+    if preset is None:
+        return ()
+    listed = KNOWN_MODELS.get(preset.name)
+    out: list[str] = []
+    for model in (preset.model, *(listed if listed is not None else (preset.desk_model,))):
+        if model not in out:
+            out.append(model)
+    return tuple(out)
+
+
 def preset_for(name: str) -> Preset | None:
     return PRESETS.get((name or "").strip().lower())
 
