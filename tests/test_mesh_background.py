@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from conftest import ScriptedReader, install_model, message, text_block
+from conftest import ScriptedReader, install_model, message, text_block, tool_block
 from openreynolds import cli
 from openreynolds.backend.base import ExecResult
 from openreynolds.browse import Browser
@@ -195,7 +195,9 @@ def test_mesh_wait_ends_early_when_the_person_types(ctx, fake_desk):
     answer, _ = dispatch(ctx, "mesh_wait", {"wait_s": 60})
 
     assert time.monotonic() - began < 5
-    assert "the user said something" in answer
+    assert "the person wrote, so this answered early" in answer
+    assert "their words follow this result" in answer
+    assert "call mesh_wait again -- the desk is still building" in answer
     assert ctx.desk is not None
 
 
@@ -338,6 +340,180 @@ def test_a_result_is_handed_over_once(ctx):
 
     assert counted == [{"input": 10, "output": 5}]
     assert ctx.desk is None and ctx.store.session.desk == {}
+
+
+# -- the wait and the inbox ----------------------------------------------------
+#
+# Measured in production (study 20260921-033019-e1b4, 2026-09-21): `mesh_wait` returned
+# three times in nine seconds -- 03:33:40, 03:33:41, 03:33:45 -- the last two with
+# `[waited 0s] [the user said something, so this answered early]`, and no words from the
+# person ever followed; the model switched to `bash sleep 115` and paced the remaining
+# thirty-seven minutes with it. The same prompt on the same model, side by side
+# (20260921-033356-076b), held its `job_check(wait_s=120..300)` waits in full. The wait
+# asked the reader's `pending()` -- is anything in the queue -- and the loop's drain had
+# put a line back that was nobody's to deliver to the model. These drive the real loop,
+# the real drain (`cli._typed_while_working`) and the real `Loop.heard`.
+
+
+def _wired(loop, ctx, view, backend, store, reader):
+    """The session's wiring for what is typed mid-turn, as `cli.drive` makes it."""
+    loop.interject = lambda: cli._typed_while_working(
+        loop, view, Browser(backend, store), store, reader)
+    ctx.on_wait_input = loop.heard
+
+
+def _results(loop, index):
+    """The user message carrying the results of the model's `index`th tool batch."""
+    carriers = [m for m in loop.messages if m["role"] == "user" and isinstance(m["content"], list)]
+    return carriers[index]["content"]
+
+
+@pytest.fixture
+def quick_waits(monkeypatch):
+    monkeypatch.setattr("openreynolds.tools.DESK_WAIT_POLL_S", 0.01)
+
+
+def test_a_line_the_drain_puts_back_never_cuts_the_wait(
+    loop, ctx, view, backend, store, fake_desk, quick_waits
+):
+    """The e1b4 shape. `/exit` is put back by the drain for whoever waits at the prompt,
+    so the reader's `pending()` stayed true for the rest of the turn and every wait
+    answered at once. Now the wait holds until the desk is done, nothing is said about
+    the person, and the `/exit` is still there for the prompt to honour."""
+    reader = ScriptedReader(["/exit"])
+    _wired(loop, ctx, view, backend, store, reader)
+    install_model(loop, [
+        message([tool_block("mesh_wait", {"wait_s": 60})], stop_reason="tool_use"),
+        message([text_block("the mesh is in")]),
+    ])
+    dispatch(ctx, "mesh", {"request": "a duct"})
+    threading.Timer(0.6, fake_desk.gate.set).start()
+
+    loop.say("mesh it")
+    began = time.monotonic()
+    loop.run()
+
+    assert time.monotonic() - began >= 0.5, "held for the desk rather than answering at once"
+    results = _results(loop, 0)
+    assert [b["type"] for b in results] == ["tool_result"], "no words were put to the model"
+    said = describe(results[0]["content"])
+    assert "answered early" not in said and "waited 0s" not in said
+    assert "meshed: mesh/constant/polyMesh" in said
+    assert reader.poll() == "/exit", "still there for the prompt, as before"
+
+
+def test_a_message_waiting_before_the_wait_cuts_it_once_and_rides_with_the_result(
+    loop, ctx, view, backend, store, fake_desk, quick_waits
+):
+    """What the owner took e1b4 to be: a message pending as the wait begins. It cuts
+    the wait at 0 s -- once -- and the words are in the same message as the result
+    that says so; the next wait is not cut by it again."""
+    reader = ScriptedReader(["how many cells so far?"])
+    _wired(loop, ctx, view, backend, store, reader)
+    install_model(loop, [
+        message([tool_block("mesh_wait", {"wait_s": 60})], stop_reason="tool_use"),
+        message([tool_block("mesh_wait", {"wait_s": 60})], stop_reason="tool_use"),
+        message([text_block("about 3,750; the mesh is in")]),
+    ])
+    dispatch(ctx, "mesh", {"request": "a duct"})
+    threading.Timer(0.6, fake_desk.gate.set).start()
+
+    loop.say("mesh it")
+    loop.run()
+
+    first = _results(loop, 0)
+    assert [b["type"] for b in first] == ["tool_result", "text"]
+    cut = describe(first[0]["content"])
+    assert "[waited 0s]" in cut
+    assert "the person wrote, so this answered early" in cut
+    assert "their words follow this result" in cut
+    assert "call mesh_wait again -- the desk is still building" in cut
+    assert first[1]["text"] == "how many cells so far?", "and they do, in this message"
+    assert view.interjections == ["how many cells so far?"]
+
+    second = _results(loop, 1)
+    assert [b["type"] for b in second] == ["tool_result"], "delivered once, not again"
+    held = describe(second[0]["content"])
+    assert "answered early" not in held and "waited 0s" not in held
+    assert "meshed: mesh/constant/polyMesh" in held, "the second wait held for the desk"
+    assert ctx.desk is None
+
+
+def test_a_message_typed_mid_wait_cuts_it_once_and_reaches_the_model(
+    loop, ctx, view, backend, store, fake_desk, quick_waits
+):
+    """The good behaviour, pinned: a line typed while the wait holds ends it within a
+    poll, the words ride with that result, and the wait after it holds again."""
+    reader = ScriptedReader([])
+    _wired(loop, ctx, view, backend, store, reader)
+    install_model(loop, [
+        message([tool_block("mesh_wait", {"wait_s": 60})], stop_reason="tool_use"),
+        message([tool_block("mesh_wait", {"wait_s": 60})], stop_reason="tool_use"),
+        message([text_block("done")]),
+    ])
+    dispatch(ctx, "mesh", {"request": "a duct"})
+    threading.Timer(0.3, lambda: reader._lines.append("make the inlet 30 mm")).start()
+    threading.Timer(0.9, fake_desk.gate.set).start()
+
+    loop.say("mesh it")
+    began = time.monotonic()
+    loop.run()
+    elapsed = time.monotonic() - began
+
+    first = _results(loop, 0)
+    assert [b["type"] for b in first] == ["tool_result", "text"]
+    cut = describe(first[0]["content"])
+    assert "the person wrote, so this answered early" in cut
+    assert "running for" in cut, "with where the desk had got to"
+    assert first[1]["text"] == "make the inlet 30 mm"
+    second = _results(loop, 1)
+    assert [b["type"] for b in second] == ["tool_result"]
+    assert "answered early" not in describe(second[0]["content"])
+    assert "meshed: mesh/constant/polyMesh" in describe(second[0]["content"])
+    assert 0.8 <= elapsed < 30, "the first wait ended on the line, the second on the desk"
+
+
+def test_a_command_typed_mid_wait_is_answered_there_and_the_wait_goes_on(
+    loop, ctx, view, backend, store, fake_desk, quick_waits
+):
+    """`/status` is the harness's to answer, not the model's: it is answered on the
+    spot, the wait holds, and the result says nothing about the person."""
+    reader = ScriptedReader([])
+    _wired(loop, ctx, view, backend, store, reader)
+    install_model(loop, [
+        message([tool_block("mesh_wait", {"wait_s": 60})], stop_reason="tool_use"),
+        message([text_block("done")]),
+    ])
+    dispatch(ctx, "mesh", {"request": "a duct"})
+    threading.Timer(0.2, lambda: reader._lines.append("/status")).start()
+    threading.Timer(0.6, fake_desk.gate.set).start()
+
+    loop.say("mesh it")
+    loop.run()
+
+    assert view.statuses, "answered while the wait held"
+    results = _results(loop, 0)
+    assert [b["type"] for b in results] == ["tool_result"]
+    assert "answered early" not in describe(results[0]["content"])
+    assert "meshed: mesh/constant/polyMesh" in describe(results[0]["content"])
+
+
+def test_heard_is_what_the_session_wires_the_wait_to(loop, ctx, view, backend, store):
+    """Unit: `Loop.heard` drains, keeps words for the model, answers commands, and says
+    whether anything is kept -- true until the batch delivers it."""
+    reader = ScriptedReader([])
+    _wired(loop, ctx, view, backend, store, reader)
+
+    assert loop.heard() is False
+    reader._lines.append("/status")
+    assert loop.heard() is False and view.statuses
+    reader._lines.append("/exit")
+    assert loop.heard() is False and reader.poll() == "/exit"
+    reader._lines.append("coarser, please")
+    assert loop.heard() is True
+    assert loop.heard() is True, "still unseen by the model, so still true"
+    assert reader.pending() is False, "taken from the reader, so it cannot fire twice"
+    assert loop._typed == ["coarser, please"], "and kept for this batch's results, once"
 
 
 # -- the run's own words -------------------------------------------------------

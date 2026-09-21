@@ -1424,9 +1424,6 @@ def session(
         # The tools report job state through the view, so a panel showing what is
         # running is current the moment it changes rather than only while polling.
         ctx.view = view
-        # A held job_check ends early the moment the user speaks; the peek takes
-        # nothing, so the message still arrives through the usual channel.
-        ctx.on_wait_input = getattr(reader, "pending", None)
         # The mirror runs for the whole session -- through turns, and through the
         # hours a solve spends writing while the model's turn is over -- so the
         # user's copy of the study is never more than one interval behind.
@@ -1502,6 +1499,13 @@ def session(
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
         )
+        # A held job_check or mesh_wait ends early the moment the person says something
+        # for the model -- asked of the loop, whose drain (just above) is the one thing
+        # that can tell a message from a `/status`, a `/exit` or an EOF. It used to be
+        # `reader.pending()`, a peek at the queue: a `/exit` the drain had put back kept
+        # the peek true for the rest of a turn, and every wait answered at once with
+        # `waited 0s` and no message following (study 20260921-033019-e1b4).
+        ctx.on_wait_input = getattr(loop, "heard", None)
         with _timed("situation_brief"):
             briefing = _situation_brief(
                 store,

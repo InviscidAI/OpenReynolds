@@ -190,6 +190,131 @@ def test_the_report_says_when_nothing_would_rebuild_it(tmp_path):
     assert "no Allmesh or build script" in mesh_look.report(payload)
 
 
+# -- where the picture goes ----------------------------------------------------
+#
+# Study 20260920-161908-c7ef, 16:26:34 UTC: `cd /work/<study> && python3
+# /work/.toolbox/mesh_look.py mesh --out look.png` wrote `mesh/look.png` and printed
+# `picture: look.png`; four seconds later `read_file /work/<study>/look.png` answered 404,
+# and three turns went on finding the file. A relative `--out` was joined to the case,
+# which no other toolbox script does (`render.py`, `results.py`, `showcase.py`,
+# `geometry_view.py`, `animate.py` all read one against the working directory). The
+# drawing needs pyvista and a mesh, so `main()` is driven here with `look` standing in.
+
+
+def _drive(monkeypatch, argv, cwd, recorded):
+    import sys
+
+    def standing_in(case, out_png, check=True):
+        recorded["case"], recorded["out"], recorded["check"] = case, out_png, check
+        payload = {"case": str(case), "polymesh": True, "patches": [], "zones": [],
+                   "build": [], "cells": 0, "faces": 0, "points": 0, "bounds": [],
+                   "two_d": False, "checkmesh": "", "checkmesh_ok": False, "metrics": {},
+                   "render": ""}
+        if out_png is not None:
+            payload["render"] = str(out_png)
+            payload["render_abs"] = str(Path(out_png).resolve())
+        return payload
+
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(mesh_look, "look", standing_in)
+    monkeypatch.setattr(sys, "argv", ["mesh_look.py", *argv])
+    with pytest.raises(SystemExit) as stop:
+        mesh_look.main()
+    return stop.value.code
+
+
+def test_a_relative_out_is_where_you_run_it_from_not_in_the_case(tmp_path, monkeypatch, capsys):
+    """The c7ef command, from the study directory: the picture lands beside the caller,
+    and the report names the absolute path so there is nothing to work out."""
+    study = tmp_path / "study"
+    case_with(study)
+    recorded: dict = {}
+
+    code = _drive(monkeypatch, ["mesh", "--out", "look.png"], study, recorded)
+
+    assert code == 0
+    assert recorded["case"] == study / "mesh"
+    assert recorded["out"] == study / "look.png", "beside the caller, not inside the case"
+    printed = capsys.readouterr().out
+    assert f"picture: {(study / 'look.png').resolve()}" in printed
+    assert "picture: look.png" not in printed
+
+
+def test_without_out_the_picture_is_look_png_in_the_case(tmp_path, monkeypatch, capsys):
+    study = tmp_path / "study"
+    case_with(study)
+    recorded: dict = {}
+
+    _drive(monkeypatch, ["mesh"], study, recorded)
+
+    assert recorded["out"] == study / "mesh" / "look.png"
+    assert f"picture: {(study / 'mesh' / 'look.png').resolve()}" in capsys.readouterr().out
+
+
+def test_an_absolute_out_is_taken_as_it_is(tmp_path, monkeypatch, capsys):
+    study = tmp_path / "study"
+    case_with(study)
+    elsewhere = tmp_path / "renders" / "duct.png"
+    recorded: dict = {}
+
+    _drive(monkeypatch, ["mesh", "--out", str(elsewhere)], study, recorded)
+
+    assert recorded["out"] == elsewhere
+    assert f"picture: {elsewhere.resolve()}" in capsys.readouterr().out
+
+
+def test_the_json_goes_where_you_run_it_from_and_keeps_both_paths(tmp_path, monkeypatch):
+    """`--json` follows the same rule. Inside it `render` stays relative to the case
+    when the picture is in the case -- what `mesher/check.py` has always read and joins
+    to the case's paths -- and `render_abs` is the absolute path either way."""
+    import json
+
+    study = tmp_path / "study"
+    case_with(study)
+    recorded: dict = {}
+
+    _drive(monkeypatch, ["mesh", "--out", "mesh/look.png", "--json", "measured.json"], study, recorded)
+    written = json.loads((study / "measured.json").read_text(encoding="utf-8"))
+    assert written["render"] == "look.png", "relative to the case, as check.py reads it"
+    assert written["render_abs"] == str((study / "mesh" / "look.png").resolve())
+
+    _drive(monkeypatch, ["mesh", "--out", "look.png", "--json", "out/measured.json"], study, recorded)
+    written = json.loads((study / "out" / "measured.json").read_text(encoding="utf-8"))
+    assert written["render"] == str(study / "look.png"), "outside the case: absolute"
+    assert written["render_abs"] == str((study / "look.png").resolve())
+
+
+def test_the_desk_and_the_templates_run_from_the_case_and_are_unchanged(tmp_path, monkeypatch):
+    """`mesher/check.py` runs `mesh_look.py . --out renders/mesh_look.png --json
+    renders/mesh_look.json` with the case as the working directory, and the templates
+    run `. --out look.png --json look.json` from the case. With `.` as the case, a path
+    against the working directory and one against the case are the same path."""
+    case = case_with(tmp_path)
+    recorded: dict = {}
+
+    _drive(monkeypatch, [".", "--out", "renders/mesh_look.png", "--json", "renders/mesh_look.json"],
+           case, recorded)
+
+    assert recorded["case"] == case
+    assert recorded["out"] == case / "renders" / "mesh_look.png"
+    assert (case / "renders" / "mesh_look.json").is_file()
+
+
+def test_the_report_prints_the_absolute_path_when_it_has_one():
+    payload = {"case": "/work/s/mesh", "polymesh": True, "patches": [], "zones": [],
+               "build": ["Allmesh"], "render": "look.png",
+               "render_abs": "/work/s/look.png"}
+    assert "picture: /work/s/look.png" in mesh_look.report(payload)
+    del payload["render_abs"]
+    assert "picture: look.png" in mesh_look.report(payload), "an older payload still reads"
+
+
+def test_from_cwd_is_the_convention(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert mesh_look.from_cwd(Path("look.png")) == tmp_path / "look.png"
+    assert mesh_look.from_cwd(tmp_path / "abs.png") == tmp_path / "abs.png"
+
+
 def test_the_facts_are_the_ones_the_finish_check_reads(tmp_path):
     """`mesher/check.py` reads this dictionary; the two must agree on the key names."""
     from openreynolds.mesher.check import read

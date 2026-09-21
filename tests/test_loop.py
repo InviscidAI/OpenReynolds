@@ -241,6 +241,99 @@ def test_nothing_typed_leaves_the_message_untouched(loop):
     assert all(b["type"] == "tool_result" for b in loop.messages[2]["content"])
 
 
+# -- a held job_check and the inbox --------------------------------------------
+#
+# `job_check(wait_s=...)` asks the loop the same question `mesh_wait` does -- has the
+# person said something the model has not seen (`Loop.heard`) -- through the session's
+# real drain. Measured in production (study 20260921-033019-e1b4): with a put-back line
+# in the reader's queue, `job_check` too answered `[waited 0s] [the user said something]`
+# at 03:37:38, 03:44:39, 03:46:18 and 03:50:27, with no words following; the run beside
+# it (20260921-033356-076b) held its `job_check(wait_s=120..300)` waits in full.
+
+
+def _job_wired(loop, backend, store, view, reader, ends_after_polls=None):
+    from openreynolds import cli
+    from openreynolds.backend.base import JobStatus
+    from openreynolds.browse import Browser
+
+    loop.interject = lambda: cli._typed_while_working(
+        loop, view, Browser(backend, store), store, reader)
+    loop.ctx.on_wait_input = loop.heard
+    job_id = backend.job_start("simpleFoam", name="solve")
+    store.record_job(job_id, cmd="simpleFoam", name="solve")
+    polls = {"n": 0}
+    real = backend.job_status
+
+    def counting(jid):
+        polls["n"] += 1
+        if ends_after_polls is not None and polls["n"] >= ends_after_polls:
+            backend.jobs[jid] = JobStatus(job_id=jid, name="solve", status="exited",
+                                          exit_code=0, end_reason="completed", log_size=0)
+        return real(jid)
+
+    backend.job_status = counting
+    return job_id, polls
+
+
+def test_a_held_job_check_is_not_cut_by_a_line_that_is_not_for_the_model(
+    loop, backend, store, view, monkeypatch
+):
+    """`/exit` is put back by the drain for the prompt; the wait holds through it until
+    the job ends, says nothing about the person, and the `/exit` is still there."""
+    from conftest import ScriptedReader
+
+    monkeypatch.setattr("openreynolds.tools.JOB_WAIT_POLL_S", 0.01)
+    reader = ScriptedReader(["/exit"])
+    job_id, polls = _job_wired(loop, backend, store, view, reader, ends_after_polls=4)
+    install(loop, [
+        message([tool_block("job_check", {"job_id": job_id, "wait_s": 30})], stop_reason="tool_use"),
+        message([text_block("the solve is done")]),
+    ])
+
+    loop.say("watch it")
+    loop.run()
+
+    results = loop.messages[2]["content"]
+    assert [b["type"] for b in results] == ["tool_result"], "no words were put to the model"
+    out = results[0]["content"]
+    assert "status=exited" in out and "[waited" in out
+    assert "answered early" not in out
+    assert polls["n"] >= 4, "the wait held through the polls until the job ended"
+    assert reader.poll() == "/exit", "still there for the prompt, as before"
+
+
+def test_a_held_job_check_ends_on_words_for_the_model_and_hands_them_over(
+    loop, backend, store, view, monkeypatch
+):
+    """A message pending as the wait begins ends it at once, once; the words are in
+    the same message as the result, and the result says where to find them."""
+    import time
+
+    from conftest import ScriptedReader
+
+    monkeypatch.setattr("openreynolds.tools.JOB_WAIT_POLL_S", 0.01)
+    reader = ScriptedReader(["is it converging?"])
+    job_id, _polls = _job_wired(loop, backend, store, view, reader)
+    install(loop, [
+        message([tool_block("job_check", {"job_id": job_id, "wait_s": 30})], stop_reason="tool_use"),
+        message([text_block("residuals are falling")]),
+    ])
+
+    loop.say("watch it")
+    began = time.monotonic()
+    loop.run()
+
+    assert time.monotonic() - began < 5, "it did not sit out the wait"
+    results = loop.messages[2]["content"]
+    assert [b["type"] for b in results] == ["tool_result", "text"]
+    out = results[0]["content"]
+    assert "[waited 0s]" in out
+    assert "the person wrote, so this answered early" in out
+    assert "call job_check again -- the job is still running" in out
+    assert results[1]["text"] == "is it converging?"
+    assert loop._typed == [], "delivered, so it cannot end the next wait as well"
+
+
 # -- the loop has visible joints ------------------------------------------------
 
 

@@ -74,6 +74,52 @@ All notable changes to this project are recorded here. The format follows
   text (the failure words appear once, as the words ruled out; no imperative workflow
   language), the briefing and launch note carrying it, and the digest's reading of a
   steady stall, a divergence, a still-falling series and a run sitting at its floor.
+- **A held `mesh_wait` or `job_check` ends early only for words the model is about to
+  read, and says so.** The wait asked the reader's `pending()` -- is anything in the
+  queue -- while the loop's drain between tool calls (`cli._typed_while_working`) does
+  not take everything out of it: `/exit` is put back for whoever waits at the prompt,
+  an EOF likewise, and a `/status` is answered without a word reaching the model. In
+  production on 2026-09-21 (study 20260921-033019-e1b4) a put-back line sat in the
+  queue for the rest of a forty-minute turn: `mesh_wait` returned three times in nine
+  seconds -- 03:33:40 after 126 s, then 03:33:41 and 03:33:45 with `[waited 0s] [the
+  user said something, so this answered early]` -- and nothing the person had said
+  followed, because there was nothing to deliver. The model concluded the tool did not
+  wait, switched to `bash sleep 60..240` and paced the remaining thirty-seven minutes
+  with it (eighteen sleeps between 03:35 and 04:09; the eight waits it still tried,
+  four of them `job_check(wait_s=...)`, all answered in 0 s the same way). The same
+  prompt on the same model, started beside it sixteen seconds after that first cut
+  (20260921-033356-076b), held its `job_check(wait_s=120..300)` waits in full
+  throughout, and every line the person typed reached the model. The
+  question is the loop's to answer now (`Loop.heard`, wired as
+  `ToolContext.on_wait_input`): it drains the inbox the way the loop does between tool
+  calls -- commands answered on the spot, words for the model kept for this batch's
+  results -- and answers whether anything is kept. So a wait ends for a message that is
+  in the same user message as the result that ended, once (delivered, it cannot end the
+  next wait too), and a line that is nobody's to deliver to the model never ends one.
+  The result says what happened and what comes next: `[the person wrote, so this
+  answered early; their words follow this result. Answer them, then call mesh_wait again
+  -- the desk is still building]` (`job_check` says the same of the job). `job_check`
+  also decided its note by asking the question a second time after its loop, which
+  with a draining answer would have dropped the note; it remembers instead. What a
+  typed `/exit` does is unchanged: it is honoured when the turn ends, as before.
+- **`mesh_look.py --out` is relative to where you run it, like every other toolbox
+  script, and the report prints the absolute path it wrote.** A relative `--out` (and
+  `--json`) was joined to the case; `render.py`, `results.py`, `showcase.py`,
+  `geometry_view.py` and `animate.py` all read one against the working directory. In
+  production (study 20260920-161908-c7ef, 16:26:34 UTC) `cd /work/<study> && python3
+  /work/.toolbox/mesh_look.py mesh --out look.png` wrote `mesh/look.png` and printed
+  `picture: look.png`; four seconds later `read_file /work/<study>/look.png` answered
+  `not_found (404)`, and three turns went on finding the file -- for a command the
+  harness itself suggests in those words (`mesh_look.py <case> --out look.png`, in the
+  desk's result and the resume briefing). Now `--out` and `--json` resolve against the
+  working directory, the default without `--out` is still `<case>/look.png`, and the
+  `picture:` line is the absolute path. The JSON's `render` keeps its shape -- relative
+  to the case when the picture is inside it, which is what `mesher/check.py` reads and
+  joins to the case's paths -- and a `render_abs` beside it is absolute either way. The
+  mesh desk (`check.py`: `mesh_look.py . --out renders/mesh_look.png`, run in the case)
+  and the templates (`. --out look.png`, run in the case) name the case as `.`, so
+  nothing changes for them. `--help`, the script's docstring, `ENVIRONMENT.md` and the
+  toolbox `README.md` say where the file goes.
 - **The workspace listing is breadth-first, so the cap falls in the solver's bulk, not
   on the pictures.** `Browser.tree` ran `find | head -n 4001`, and `find` walks
   depth-first in directory order. In a transient study (20260920-161908-c7ef, in
