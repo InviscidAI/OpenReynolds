@@ -319,6 +319,8 @@ TOOLS: list[dict[str, Any]] = [
             "Start a long command detached and return a job id immediately. The job "
             "keeps running after your turn ends, and after this session closes. "
             f"{FRESH_SHELL} "
+            "Do not redirect stdout or stderr to a file: the detached job already "
+            "captures both, and `job_check` can only stream what the job captures. "
             "A solver started serially holds one core for the whole run, however "
             "many the container has; a case put through `decomposePar` and started "
             "with `mpirun -np N` holds N. What the extra ranks return falls away as "

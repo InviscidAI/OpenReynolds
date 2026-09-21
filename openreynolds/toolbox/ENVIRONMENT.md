@@ -49,6 +49,14 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
 
+## OpenFOAM dictionaries
+
+Hand-written dictionaries can start directly with `FoamFile`; the large decorative
+OpenFOAM C++ banner above it is optional. A partial decorative banner is not harmless:
+if its opening `/*...` is copied without the matching closing line, OpenFOAM reads the
+dictionary as a comment and reports that the `FoamFile` token is missing. Omit the
+banner unless copying a complete known-good file.
+
 ## Binaries on PATH
 
 - **OpenFOAM 2512** (ESI): the classic solver and utility names — `blockMesh`,
