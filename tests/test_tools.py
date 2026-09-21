@@ -142,19 +142,6 @@ def test_bash_surfaces_the_workspace_stderr_when_the_wrapper_failed(ctx, backend
     assert "cwd not found: /work/gone" in content
 
 
-def test_bash_surfaces_a_promoted_job_instead_of_reading_like_a_result(ctx, backend):
-    """A command that outran the synchronous window is moved to a detached job by the
-    backend and comes back with a job_id. _bash must say so -- follow it with job_check,
-    do not re-run -- rather than let it read like a command that finished with no output."""
-    backend.exec_result = ExecResult(
-        0, "moved to detached job job-xyz; follow it with job_check", False, None,
-        job_id="job-xyz")
-    content, is_error = dispatch(ctx, "bash", {"cmd": "reconstructPar -latestTime"})
-    assert not is_error
-    assert "job-xyz" in content
-    assert "job_check" in content
-
-
 def test_bash_says_nothing_extra_when_the_wrapper_stderr_is_empty(ctx, backend):
     backend.exec_result = ExecResult(0, "ok", False, None)
     content, _ = dispatch(ctx, "bash", {"cmd": "echo ok"})
@@ -535,6 +522,244 @@ def test_an_ordinary_exit_says_nothing_about_timeouts(ctx, backend):
     backend.exec_result = ExecResult(0, "fine", False, None)
     content, _ = dispatch(ctx, "bash", {"cmd": "ls"})
     assert "exit_code -1" not in content
+
+
+# -- a command the workspace moved to a job -----------------------------------
+#
+# Measured in production on 2026-09-21 (study 20260921-033019-e1b4, workspace
+# 35c9f018): `bash sleep 240`, `sleep 200` and `sleep 180`, each asked with
+# `timeout_s=300`, came back after the service's 120 s synchronous window as
+# `exit_code: 0` -- the hosted backend turned the service's `{exit_code: null,
+# promoted: true, job_id}` into `ExecResult(exit_code=0, output=note, job_id=...)`, and
+# `_bash` printed the zero first. The model read three commands that had finished with
+# no output, polled the first job once (two seconds in) and never again, and the job
+# rows (808edf10, 5432459d, e839ac57) read `running` for 46, 35 and 20 minutes after
+# their commands had ended. The caller asked for 300 s; it gets them.
+
+
+class _Clock:
+    """A clock the tests turn by hand, so a 300 s wait costs no seconds.
+
+    `_bash` measures the exec with `time.monotonic` and `_hold` sleeps between polls;
+    both are read off `openreynolds.tools.time`, so replacing them there turns every
+    `sleep` into a step of the same clock."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += max(0.0, seconds)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr("openreynolds.tools.time.monotonic", clock.monotonic)
+    monkeypatch.setattr("openreynolds.tools.time.sleep", clock.sleep)
+    return clock
+
+
+PROMOTED_JOB = "808edf10-0957-482f-a105-2151008d3a86"
+"""The first of the three, as the transcript names it."""
+
+
+def _promotes(backend, clock, *, after=120.0, output="", job_id=PROMOTED_JOB):
+    """The hosted backend's answer to a command still running at the window: the exec
+    call comes back after `after` seconds with no exit code, the flag and the job,
+    which is running with an empty log until a test says otherwise."""
+
+    def exec(cmd, cwd=None, timeout_s=120, *, background=False):
+        backend.last_exec = (cmd, cwd, timeout_s)
+        backend.execs.append(cmd)
+        clock.sleep(after)
+        return ExecResult(None, output, False, None, job_id=job_id, promoted=True)
+
+    backend.exec = exec
+    backend.jobs[job_id] = JobStatus(job_id=job_id, status="running", log_size=0)
+    backend.logs[job_id] = b""
+
+
+def _ends_after(backend, polls, *, exit_code=0, log=b"", job_id=PROMOTED_JOB):
+    """The job ends on the `polls`-th status read, with this exit code and log."""
+    reads = {"n": 0}
+    real = backend.job_status
+
+    def status(jid):
+        reads["n"] += 1
+        if jid == job_id and reads["n"] >= polls:
+            backend.jobs[jid] = JobStatus(
+                job_id=jid, status="exited", exit_code=exit_code,
+                end_reason="completed" if exit_code == 0 else "failed", log_size=len(log),
+            )
+            backend.logs[jid] = log
+        return real(jid)
+
+    backend.job_status = status
+    return reads
+
+
+def test_a_promoted_command_is_waited_out_and_answers_with_the_jobs_result(ctx, backend, store, clock):
+    """The caller asked for 300 s and the service held the command for 120 of them
+    before moving it to a job: the tool waits the rest on the job, and hands back the
+    job's exit code and log as the command's own -- the promotion made transparent."""
+    _promotes(backend, clock)
+    _ends_after(backend, 3, exit_code=0, log=b"Time = 0.5\nEnd\n")
+
+    content, is_error = dispatch(ctx, "bash", {"cmd": "sleep 240; ls -R mesh | head -40",
+                                               "timeout_s": 300})
+
+    assert not is_error
+    assert content.startswith("exit_code: 0\n"), content
+    assert "still running as job" not in content
+    assert PROMOTED_JOB in content and "moved to job" in content, "it names the job it followed"
+    assert "Time = 0.5\nEnd" in content, "the job's log is the command's output"
+    assert "[took 130s]" in content, "120 s in the exec, two polls of 5 s waiting"
+    assert backend.last_exec == ("sleep 240; ls -R mesh | head -40", WORKSPACE_ROOT, 300)
+    record = store.session.jobs[PROMOTED_JOB]
+    assert record.status == "exited" and record.exit_code == 0
+    assert record.cmd == "sleep 240; ls -R mesh | head -40"
+    assert record.log_offset == len(b"Time = 0.5\nEnd\n"), "a job_check next continues, not repeats"
+
+
+def test_a_promoted_command_that_fails_in_its_job_answers_with_that_exit_code(ctx, backend, clock):
+    _promotes(backend, clock)
+    _ends_after(backend, 2, exit_code=1, log=b"--> FOAM FATAL ERROR\n")
+
+    content, is_error = dispatch(ctx, "bash", {"cmd": "reconstructPar", "timeout_s": 300})
+
+    assert not is_error
+    assert content.startswith("exit_code: 1\n"), content
+    assert "FOAM FATAL" in content
+    assert "exit_code: 0" not in content
+
+
+def test_a_promoted_command_still_running_at_the_callers_timeout_leads_with_that_fact(ctx, backend, store, clock):
+    """`sleep 240` with `timeout_s=300`: 120 s in the exec, then the job is followed for
+    the 180 s left -- and the job, running the command again from the start, has not
+    ended. The first line is the fact, never `exit_code: 0`; the job is left in the
+    session's record as running, so the watch loop polls it and wakes the model when
+    it ends, which is the poll that never happened in production."""
+    _promotes(backend, clock)
+    backend.logs[PROMOTED_JOB] = b"still sleeping\n"
+
+    content, is_error = dispatch(ctx, "bash", {"cmd": "sleep 240", "timeout_s": 300})
+
+    assert not is_error
+    first, rest = content.split("\n", 1)
+    assert first == f"still running as job {PROMOTED_JOB} (promoted after 120 s; 180 s waited)"
+    assert "exit_code: 0" not in content
+    assert f"job_check {PROMOTED_JOB}" in rest, "what follows it from here"
+    assert "not a command to run again" in rest
+    assert "still sleeping" in rest, "the log so far"
+    assert clock.now == 300.0, "the caller's own timeout, and not a second longer"
+    assert store.session.jobs[PROMOTED_JOB].status == "running"
+    assert [job.job_id for job in store.live_jobs()] == [PROMOTED_JOB], "left for the watch loop"
+
+
+def test_a_promoted_wait_ends_early_when_the_person_writes(ctx, backend, clock):
+    """The same interruption every held wait honours (`ToolContext.on_wait_input`), with
+    one difference in the note: the next call is `job_check`, because `bash` again
+    would run the command a third time."""
+    _promotes(backend, clock)
+    ctx.on_wait_input = lambda: True
+
+    content, is_error = dispatch(ctx, "bash", {"cmd": "sleep 240", "timeout_s": 300})
+
+    assert not is_error
+    assert content.startswith(f"still running as job {PROMOTED_JOB} (promoted after 120 s; 0 s waited)")
+    assert "the person wrote, so this answered early" in content
+    assert "their words follow this result" in content
+    assert f"follow it with job_check {PROMOTED_JOB}" in content
+    assert "call bash again" not in content
+    assert clock.now == 120.0
+
+
+def test_a_promoted_wait_ends_when_the_person_leaves(ctx, backend, clock):
+    """`ToolContext.on_leaving`, wired to `Loop.leaving`: End pressed during the wait
+    ends it within a poll, with the note the other waits use."""
+    _promotes(backend, clock)
+    ctx.on_leaving = lambda: True
+
+    content, is_error = dispatch(ctx, "bash", {"cmd": "sleep 240", "timeout_s": 300})
+
+    assert not is_error
+    assert content.startswith(f"still running as job {PROMOTED_JOB} (promoted after 120 s; 0 s waited)")
+    assert "the person ended the session, so this answered early" in content
+    assert "exit_code" not in content.split("\n")[0]
+
+
+def test_a_promotion_with_no_time_left_is_still_reported_as_the_job_it_is(ctx, backend, clock):
+    """A `timeout_s` barely above the window, spent by the exec itself: nothing to wait
+    with, and the answer is still the job, not a zero."""
+    _promotes(backend, clock, after=125.0)
+
+    content, _ = dispatch(ctx, "bash", {"cmd": "sleep 200", "timeout_s": 121})
+
+    assert content.startswith(f"still running as job {PROMOTED_JOB} (promoted after 125 s; 0 s waited)")
+    assert clock.now == 125.0, "no wait was made with a budget already spent"
+
+
+def test_a_promoted_command_whose_job_cannot_be_read_keeps_the_promotion_in_front(ctx, backend, clock):
+    """The transport can fail between the promotion and the answer. The promotion is
+    the fact that must not be lost behind that: the first line stands and the
+    failure is a note."""
+    from openreynolds.backend.base import BackendError
+
+    _promotes(backend, clock)
+
+    def gone(job_id):
+        raise BackendError("the workspace did not answer", code="timeout")
+
+    backend.job_status = gone
+    content, is_error = dispatch(ctx, "bash", {"cmd": "sleep 240", "timeout_s": 300})
+
+    assert not is_error
+    assert content.startswith(f"still running as job {PROMOTED_JOB}")
+    assert "could not be read just now" in content and "did not answer" in content
+
+
+def test_the_synchronous_runs_output_is_kept_apart_from_the_jobs_log(ctx, backend, clock):
+    """Two runs of one command: what the first printed before it was moved, then the
+    job's log from the start. Labelled, so a repeated opening line reads as what it is."""
+    _promotes(backend, clock, output="starting\n")
+    _ends_after(backend, 2, log=b"starting\ndone\n")
+
+    content, _ = dispatch(ctx, "bash", {"cmd": "echo starting; sleep 150; echo done",
+                                        "timeout_s": 300})
+
+    assert "first run, before it was moved" in content
+    assert content.index("first run") < content.index("the job's log, from the start")
+    assert content.endswith("starting\ndone\n")
+
+
+def test_a_timeout_within_the_window_is_formatted_exactly_as_before(ctx, backend, clock):
+    """Nothing about an ordinary command changed: a `timeout_s` the service never
+    promotes gives the same bytes it always did."""
+    backend.exec_result = ExecResult(0, "ok", False, None)
+    for timeout_s in (60, 120):
+        content, is_error = dispatch(ctx, "bash", {"cmd": "ls", "timeout_s": timeout_s})
+        assert not is_error
+        assert content == "exit_code: 0\n\nok", content
+    assert "job" not in content
+
+
+def test_the_bash_description_says_a_long_command_becomes_a_job():
+    """The model reads the description, not this file. It has to learn there that a
+    command still running at the window comes back as a job it can `job_check` -- and
+    learn it as a fact about the environment, not as an instruction."""
+    import re
+
+    from openreynolds.backend.base import EXEC_SYNC_WINDOW_S
+    from test_prompt import IMPERATIVE_PATTERNS
+
+    description = next(t for t in TOOLS if t["name"] == "bash")["description"]
+    assert f"{EXEC_SYNC_WINDOW_S} seconds" in description
+    assert "still running as job" in description and "job_check" in description
+    for pattern in IMPERATIVE_PATTERNS:
+        assert not re.search(pattern, description, re.IGNORECASE), pattern
 
 
 # -- a study works in its own directory ----------------------------------------

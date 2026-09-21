@@ -164,14 +164,17 @@ def test_a_png_that_was_never_written_is_simply_not_attached(backend, store):
 
 
 def test_a_command_promoted_to_a_job_says_so_rather_than_looking_finished(backend, store):
-    """The hosted workspace moves a long command to a detached job and answers 0. Read
-    as "it finished" that is a mesh nobody waited for."""
+    """The hosted workspace moves a long command to a detached job and answers with no
+    exit code (`ExecResult.promoted`; it used to answer 0). Read as "it finished" that
+    is a mesh nobody waited for, and `exit None` would be read as a number."""
     desk = mesher(backend, store, [block("sh Allmesh"), block(f"echo {MESH_DONE}")])
-    answers(backend, {"Allmesh": ExecResult(0, "", False, None, job_id="job-7"),
+    answers(backend, {"Allmesh": ExecResult(None, "", False, None, job_id="job-7", promoted=True),
                       "mesh_look.py": ExecResult(0, OK_JSON, False, None)})
     desk.run("a duct")
     observation = desk.provider.calls[1]["messages"][-1]["content"][0]["text"]
     assert "job-7" in observation and "do not start it again" in observation
+    assert observation.startswith("no exit code yet: running as job job-7")
+    assert "exit 0" not in observation and "exit None" not in observation
 
 
 def test_a_workspace_that_refuses_a_command_does_not_end_the_run(backend, store):

@@ -995,15 +995,34 @@ class HostedBackend(Backend):
             return ExecResult(exit_code=-1, output="", truncated=False, log_path=None,
                               stderr="", idle=True)
         if body.get("promoted") and body.get("job_id"):
-            # The command outran the synchronous window and the service moved it to a
-            # detached job rather than hold a fragile long exec connection (which used to
-            # 500 and get retried, re-running a 13-minute command). Surface it as the job
-            # it now is, so the next step is a job_check, not a re-run.
-            note = body.get("note") or (
-                f"moved to detached job {body['job_id']}; follow it with job_check"
+            # The command was still running at the service's synchronous window and
+            # the service started it again from scratch as a detached job rather than
+            # hold a fragile long exec connection (which used to 500 and get retried,
+            # re-running a 13-minute command). The answer is `{exit_code: null,
+            # promoted: true, job_id, output, stderr, note}` (`OpenFoam_Instance/app/
+            # execs.py`), and it is carried here as what it says: no exit code, the
+            # flag, the job. Until 2026-09-21 this line read `ExecResult(exit_code=0,
+            # output=note, job_id=...)`, and `tools._bash` printed `exit_code: 0` as
+            # its first line for `sleep 240`, `sleep 200` and `sleep 180`, each of
+            # them still running (study 20260921-033019-e1b4; jobs 808edf10, 5432459d,
+            # e839ac57). The model read three commands that had finished with no
+            # output and never polled a job; the rows stayed `running` for 46, 35 and
+            # 20 minutes until the reaper closed them. The service's `note` is prose
+            # about this shape for a human reading the raw answer; the tool says the
+            # same from the fields, in the words its caller reads, so it is not kept.
+            # `output` is what the synchronous run had produced when it was moved --
+            # empty from today's service, carried in case that changes -- and `stderr`
+            # is the wrapper's own, the one field that tells a command that was still
+            # running from an exec that never got one started.
+            return ExecResult(
+                exit_code=None,
+                output=body.get("output", "") or "",
+                truncated=bool(body.get("truncated")),
+                log_path=body.get("log_path") or None,
+                stderr=body.get("stderr", "") or "",
+                job_id=str(body["job_id"]),
+                promoted=True,
             )
-            return ExecResult(exit_code=0, output=note, truncated=False, log_path=None,
-                              stderr="", job_id=str(body["job_id"]))
         return ExecResult(
             exit_code=body.get("exit_code", -1),
             output=body.get("output", ""),

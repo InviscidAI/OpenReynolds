@@ -289,6 +289,105 @@ def test_a_long_exec_completes_through_the_redirect():
     assert result.output == "done"
 
 
+# -- a command the service moved to a job ---------------------------------------------
+#
+# `POST .../exec` answers one of four shapes (`OpenFoam_Instance/app/execs.py`), and the
+# second -- the caller asked for longer than the service holds a connection, the command
+# was still running at the 120 s window, so it was started again from scratch as a
+# detached job -- is `{exit_code: null, promoted: true, job_id, output, stderr, note}`.
+# Until 2026-09-21 this client turned it into `ExecResult(exit_code=0, output=note,
+# job_id=...)`, and `tools._bash` printed the zero first: `bash sleep 240`, `sleep 200`
+# and `sleep 180` (study 20260921-033019-e1b4, jobs 808edf10 / 5432459d / e839ac57) each
+# read to the model as a command that had finished with no output.
+
+
+def _service_answering(body: dict) -> httpx.MockTransport:
+    return httpx.MockTransport(lambda request: httpx.Response(200, json=body))
+
+
+PROMOTED = {
+    "exit_code": None, "output": "", "truncated": False, "log_path": "", "stderr": "",
+    "promoted": True, "job_id": "808edf10-0957-482f-a105-2151008d3a86",
+    "note": ("no exit code came back within the 120s synchronous limit, and you asked "
+             "for 300s, so the command was re-launched from the start as a detached job "
+             "(808edf10-0957-482f-a105-2151008d3a86). Follow it with job_check: nothing "
+             "in THIS answer reports a failure, because it carries no exit code to fail "
+             "on (`exit_code` is null here -- the command belongs to the job now)."),
+}
+"""The service's answer, as `execs.py` builds it and `spec/openapi.yaml` describes it."""
+
+
+def test_a_promoted_exec_carries_no_exit_code_and_says_it_is_a_job():
+    """What the service said, carried as it said it: no exit code, the flag, the job.
+    Never `exit_code=0` -- that is the one number every reader takes for "finished,
+    and it worked", and it was read exactly that way three times in one study."""
+    from openreynolds.backend.hosted import HostedBackend
+
+    backend = HostedBackend(_client_against(_service_answering(PROMOTED)), "inst-1")
+
+    result = backend.exec("sleep 240", timeout_s=300)
+
+    assert result.exit_code is None
+    assert result.promoted is True
+    assert result.job_id == "808edf10-0957-482f-a105-2151008d3a86"
+    assert result.output == "", "the service sends none of the first run's output"
+    assert result.stderr == ""
+    assert not result.idle and not result.truncated and result.log_path is None
+
+
+def test_a_promoted_exec_carries_the_wrappers_stderr_and_the_first_runs_output_through():
+    """`stderr` is the one field that tells a command still running at the window from
+    an exec that never got one started, and the service carries it on this shape for
+    that reason; `output` is whatever the synchronous run had printed. Neither is
+    dropped on the floor here."""
+    from openreynolds.backend.hosted import HostedBackend
+
+    said = {**PROMOTED, "stderr": "bash: /work/.foamd/exec: No such file or directory",
+            "output": "starting\n"}
+    backend = HostedBackend(_client_against(_service_answering(said)), "inst-1")
+
+    result = backend.exec("echo starting; sleep 240", timeout_s=300)
+
+    assert result.promoted and result.exit_code is None
+    assert result.stderr == "bash: /work/.foamd/exec: No such file or directory"
+    assert result.output == "starting\n"
+
+
+def test_a_promotion_collected_through_the_edges_redirect_is_read_as_one():
+    """The promoted answer can arrive through the same 303 an ordinary long exec does
+    (`_edge_with_a_150s_redirect`); the hop must not change what it says."""
+    from openreynolds.backend.hosted import HostedBackend
+
+    backend = HostedBackend(_client_against(_edge_with_a_150s_redirect(PROMOTED)), "inst-1")
+
+    result = backend.exec("sleep 240", timeout_s=300)
+
+    assert result.promoted and result.exit_code is None
+    assert result.job_id == PROMOTED["job_id"]
+
+
+def test_an_ordinary_answer_and_an_idle_poll_are_untouched_by_the_promoted_shape():
+    """The other three shapes read as they did: a finished command keeps its exit code,
+    its truncation and its log path, and a `background` poll that found nothing running
+    is `idle` -- neither is `promoted`, and neither has a job."""
+    from openreynolds.backend.hosted import HostedBackend
+
+    finished = {"exit_code": 3, "output": "boom", "truncated": True,
+                "log_path": "/work/.foamd/exec/abc.log", "stderr": ""}
+    backend = HostedBackend(_client_against(_service_answering(finished)), "inst-1")
+    result = backend.exec("false", timeout_s=300)
+    assert (result.exit_code, result.output, result.truncated, result.log_path) == (
+        3, "boom", True, "/work/.foamd/exec/abc.log")
+    assert not result.promoted and result.job_id == "" and not result.idle
+
+    idle = {"exit_code": None, "output": "", "truncated": False, "log_path": "",
+            "stderr": "nothing ran: no Sandbox is up", "nothing_ran": True, "idle": True}
+    backend = HostedBackend(_client_against(_service_answering(idle)), "inst-1")
+    result = backend.exec("find /work", timeout_s=60, background=True)
+    assert result.idle and result.exit_code == -1
+    assert not result.promoted and result.job_id == ""
+
+
 # -- and only the redirects that keep the request whole -------------------------------
 #
 # F-47's second hypothesis: httpx re-issues a 303 (and a 302, and a 301 on a POST) as a
