@@ -1506,6 +1506,10 @@ def session(
         # the peek true for the rest of a turn, and every wait answered at once with
         # `waited 0s` and no message following (study 20260921-033019-e1b4).
         ctx.on_wait_input = getattr(loop, "heard", None)
+        # And ends at once when the person ends the session mid-turn: the drain tells
+        # the loop (`Loop.leave`), the wait asks it, and the turn stops after this
+        # batch's results instead of at the model's next reply.
+        ctx.on_leaving = lambda: getattr(loop, "leaving", False)
         with _timed("situation_brief"):
             briefing = _situation_brief(
                 store,
@@ -2793,12 +2797,21 @@ def _typed_while_working(
             break
         if typed is None:
             # EOF belongs to whoever waits at the prompt; swallowing it here would
-            # leave the session unendable.
+            # leave the session unendable. And it is the person leaving, met while a
+            # turn is running: the loop is told, so the turn ends at its next safe
+            # point rather than when the model happens to stop (`Loop.leave`).
             reader.putback(None)
+            _leave(loop)
             break
         command = commands.parse(typed)
         if command.kind == commands.EXIT:
+            # `/exit` or `/quit`, the same way. Put back for the prompt as before -- and
+            # told to the loop, which the put-back alone never did: in production the
+            # web's End button (it sends `/exit`) pressed at 03:33:40 into a turn was
+            # honoured at 04:10:46, when the turn ended on its own (study
+            # 20260921-033019-e1b4).
             reader.putback(typed)
+            _leave(loop)
             break
         if command.kind in (commands.SAY, commands.ASIDE) and command.text:
             for_model.append(command.text)
@@ -2807,6 +2820,15 @@ def _typed_while_working(
         else:
             _local(command, view, browser, store, loop, progress)
     return "\n".join(for_model) or None
+
+
+def _leave(loop: Any) -> None:
+    """Tell the loop the person has ended the session mid-turn (`Loop.leave`). Read
+    with `getattr`, as `heard` and `set_mode` are, for the stand-in loops that drive a
+    view without a model."""
+    leave = getattr(loop, "leave", None)
+    if leave is not None:
+        leave()
 
 
 def workspace_path(value: str) -> str:
@@ -3044,6 +3066,13 @@ def _run_interactive(
             from_prompt = True
 
         completed = _run_turn(loop, view)
+        if getattr(loop, "leaving", False):
+            # The person ended the session while that turn ran, and the loop stopped
+            # it at its next safe point (`Loop.leave`). What follows is what a
+            # prompt-time `/exit` gets: the return, and the caller's close-down --
+            # the final sync, the capture, `_close_down`. The `/exit` itself is still
+            # in the reader, put back by the drain; nobody needs to read it now.
+            return
         # If a turn typed at the prompt failed, the desk still answers -- the reason
         # someone asks "are you still working?" is usually that the agent went quiet,
         # and a failing turn is exactly that. (Mid-solve messages already reach the

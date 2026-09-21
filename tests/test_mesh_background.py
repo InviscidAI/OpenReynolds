@@ -18,6 +18,7 @@ import pytest
 
 from conftest import ScriptedReader, install_model, message, text_block, tool_block
 from openreynolds import cli
+from openreynolds import loop as loop_mod
 from openreynolds.backend.base import ExecResult
 from openreynolds.browse import Browser
 from openreynolds.config import Config
@@ -360,6 +361,7 @@ def _wired(loop, ctx, view, backend, store, reader):
     loop.interject = lambda: cli._typed_while_working(
         loop, view, Browser(backend, store), store, reader)
     ctx.on_wait_input = loop.heard
+    ctx.on_leaving = lambda: loop.leaving
 
 
 def _results(loop, index):
@@ -373,33 +375,100 @@ def quick_waits(monkeypatch):
     monkeypatch.setattr("openreynolds.tools.DESK_WAIT_POLL_S", 0.01)
 
 
-def test_a_line_the_drain_puts_back_never_cuts_the_wait(
+def test_end_pressed_during_a_held_mesh_wait_ends_the_wait_and_stops_the_desk(
     loop, ctx, view, backend, store, fake_desk, quick_waits
 ):
-    """The e1b4 shape. `/exit` is put back by the drain for whoever waits at the prompt,
-    so the reader's `pending()` stayed true for the rest of the turn and every wait
-    answered at once. Now the wait holds until the desk is done, nothing is said about
-    the person, and the `/exit` is still there for the prompt to honour."""
-    reader = ScriptedReader(["/exit"])
+    """The e1b4 shape, as it should have gone. End (`/exit`) pressed while `mesh_wait`
+    holds: the wait returns within a poll saying the person ended the session, with
+    where the desk had got to; the model is not asked again; the turn's last message
+    carries the harness's one line; the desk's budgets are zeroed so it stops at its
+    next command rather than building for nobody; and the `/exit` is still in the
+    reader for whoever reads next. Before this the put-back `/exit` was honoured when
+    the turn ended on its own -- thirty-seven minutes later, in production."""
+    reader = ScriptedReader([])
     _wired(loop, ctx, view, backend, store, reader)
-    install_model(loop, [
+    fake = install_model(loop, [
         message([tool_block("mesh_wait", {"wait_s": 60})], stop_reason="tool_use"),
         message([text_block("the mesh is in")]),
     ])
     dispatch(ctx, "mesh", {"request": "a duct"})
-    threading.Timer(0.6, fake_desk.gate.set).start()
+    run = ctx.desk
+    threading.Timer(0.3, lambda: reader._lines.append("/exit")).start()
 
     loop.say("mesh it")
     began = time.monotonic()
     loop.run()
+    elapsed = time.monotonic() - began
 
-    assert time.monotonic() - began >= 0.5, "held for the desk rather than answering at once"
+    assert 0.25 <= elapsed < 5, "held until End, then answered at once, not at 60 s"
+    assert len(fake.calls) == 1, "the model was not asked again"
     results = _results(loop, 0)
-    assert [b["type"] for b in results] == ["tool_result"], "no words were put to the model"
-    said = describe(results[0]["content"])
-    assert "answered early" not in said and "waited 0s" not in said
-    assert "meshed: mesh/constant/polyMesh" in said
-    assert reader.poll() == "/exit", "still there for the prompt, as before"
+    assert [b["type"] for b in results] == ["tool_result", "text"]
+    cut = describe(results[0]["content"])
+    assert "running for" in cut, "where the desk had got to"
+    assert "the person ended the session, so this answered early" in cut
+    assert "the person wrote" not in cut and "call mesh_wait again" not in cut
+    assert results[1]["text"].endswith(loop_mod.LEFT_MID_TURN)
+    assert view.interjections == [], "nothing was said for the model"
+    assert reader.poll() == "/exit", "still there for whoever reads next, as before"
+    # The desk: not delivered (it has not finished), and told to stop -- its run's
+    # budgets are zero, so its loop ends at the next lap (`DeskRun.abandon`).
+    assert ctx.desk is run and not run.done.is_set()
+    assert run.mesher.max_steps == 0 and run.mesher.max_seconds == 0.0
+
+
+def test_leaving_stops_a_building_desk_at_its_next_lap(backend, store, ctx, view):
+    """Through the real `Mesher`: told by `Loop.leave` rather than by the close-down,
+    a run in the middle of a step ends after that step with the finish check run on
+    what is on disk, exactly as `abandon` does -- and the session's own desk, the
+    template, is stopped too, since a session that is ending never meshes again."""
+    gate = threading.Event()
+
+    class Gated(ScriptedProvider):
+        def stream(self, **kwargs):
+            gate.wait(5)
+            return super().stream(**kwargs)
+
+    desk = mesher(backend, store, [block("echo working")])
+    desk.provider = Gated([block("echo working")])
+    answers(backend, {"mesh_look.py": ExecResult(0, NOT_YET_JSON, False, None)})
+    ctx.mesher = desk
+    loop = Loop(Config(llm_api_key="k", model="claude-opus-5"), ctx, store, view)
+    dispatch(ctx, "mesh", {"request": "a duct"})
+    run = ctx.desk
+
+    loop.leave()
+    loop.leave()  # the drain meets the same put-back line every second a wait asks
+    gate.set()
+
+    assert loop.leaving is True
+    assert run.done.wait(5)
+    assert run.result is not None and run.result.stopped in ("steps", "time")
+    assert len(run.result.steps) <= 1
+    assert desk.max_steps == 0 and desk.max_seconds == 0.0, (
+        "a foreground `mesh` holding the turn ends at its next lap the same way")
+
+
+def test_leaving_is_what_the_session_wires_the_wait_to(loop, ctx, view, backend, store):
+    """Unit: the drain tells the loop on `/exit`, `/quit` and EOF and on nothing else;
+    `heard` stays what it was -- a `/exit` carries no words for the model."""
+    reader = ScriptedReader([])
+    _wired(loop, ctx, view, backend, store, reader)
+
+    assert loop.leaving is False and ctx.on_leaving() is False
+    reader._lines.append("/status")
+    assert loop.heard() is False and loop.leaving is False
+    reader._lines.append("coarser, please")
+    assert loop.heard() is True and loop.leaving is False
+    reader._lines.append("/quit")
+    assert loop.heard() is True, "the words are still unseen by the model"
+    assert loop.leaving is True and ctx.on_leaving() is True
+    assert reader.poll() == "/quit", "put back for the prompt, as before"
+
+    for line in ("/exit", None):
+        fresh = Loop(Config(llm_api_key="k", model="claude-opus-5"), ctx, store, view)
+        _wired(fresh, ctx, view, backend, store, ScriptedReader([line]))
+        assert fresh.heard() is False and fresh.leaving is True
 
 
 def test_a_message_waiting_before_the_wait_cuts_it_once_and_rides_with_the_result(

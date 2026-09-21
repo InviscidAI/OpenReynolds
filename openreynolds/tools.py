@@ -88,6 +88,17 @@ class ToolContext:
     model (`/exit`, an EOF, a `/status`) ends nothing. It used to be the reader's
     `pending()`, a peek at the queue, and a put-back `/exit` made every wait for the
     rest of a turn answer at once with `waited 0s` (study 20260921-033019-e1b4)."""
+    on_leaving: Callable[[], bool] | None = None
+    """Whether the person has ended the session while this turn runs (`Loop.leaving`).
+
+    The other question a held `job_check` or `mesh_wait` asks once a second, after
+    `on_wait_input`: a `/exit`, a `/quit` or an EOF met by the drain is nobody's to
+    deliver to the model, so it is not "heard" -- but it is the person leaving, and a
+    wait held for them is held for nobody. The wait returns at once, saying so, and
+    the loop ends the turn after this batch's results rather than at the model's next
+    reply. Measured before this (study 20260921-033019-e1b4): End pressed at 03:33:40
+    into a turn was honoured when the turn ended on its own, thirty-seven minutes
+    later. None when nobody is wired to answer, and then no wait ends on it."""
     cores: int | None = None
     """What `nproc` reported, once it has been asked: hardware threads. See `_core_count`."""
     physical_cores: int | None = None
@@ -1166,10 +1177,15 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
     waited_note = ""
     if wait_s > 0 and status.running:
         began = time.monotonic()
-        heard = False
+        heard = left = False
         while status.running and time.monotonic() - began < wait_s:
-            if _heard(ctx):
-                heard = True
+            # `_heard` drains the inbox, which is also how the loop learns of a
+            # `/exit`; asked second, the leaving question sees one the drain has just
+            # met. Both are remembered, and leaving wins the note below: words typed
+            # in the same breath as End ride with this result, but are not answered.
+            heard = _heard(ctx)
+            left = _leaving(ctx)
+            if heard or left:
                 break
             remaining = wait_s - (time.monotonic() - began)
             time.sleep(max(0.0, min(JOB_WAIT_POLL_S, remaining)))
@@ -1180,7 +1196,9 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
                 f" [wait_s={asked_wait} exceeds the {JOB_WAIT_MAX_S}s ceiling for "
                 "one call; waiting again is free]"
             )
-        if heard:
+        if left:
+            waited_note += " " + _left_note()
+        elif heard:
             # Remembered from the loop rather than asked again here: the question
             # drains the inbox, so a second asking would find it empty and drop the
             # one sentence that explains a wait of 0 s.
@@ -1340,13 +1358,16 @@ def _mesh_wait(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     asked = JOB_WAIT_MAX_S if args.get("wait_s") is None else int(args.get("wait_s") or 0)
     wait_s = min(max(asked, 0), JOB_WAIT_MAX_S)
     began = time.monotonic()
-    heard = False
+    heard = left = False
     while not run.done.is_set():
         elapsed = time.monotonic() - began
         if elapsed >= wait_s:
             break
-        if _heard(ctx):
-            heard = True
+        # As in `_job_check`: `_heard` drains, the leaving question asked after it
+        # sees a `/exit` the drain has just met, and leaving wins the note.
+        heard = _heard(ctx)
+        left = _leaving(ctx)
+        if heard or left:
             break
         run.done.wait(min(DESK_WAIT_POLL_S, wait_s - elapsed))
     notes = []
@@ -1358,7 +1379,9 @@ def _mesh_wait(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     if run.done.is_set():
         result = take_desk(ctx, run)
         return _blocks(" ".join(notes), _finished_content(run, result))
-    if heard:
+    if left:
+        notes.append(_left_note())
+    elif heard:
         notes.append(_heard_note("mesh_wait", "the desk is still building"))
     return " ".join([run.progress_line(), *notes])
 
@@ -1368,6 +1391,25 @@ def _heard(ctx: ToolContext) -> bool:
     loop, which drains the inbox to answer and holds the words for this batch's results
     (`ToolContext.on_wait_input`, `Loop.heard`). False when nobody is wired to answer."""
     return ctx.on_wait_input is not None and bool(ctx.on_wait_input())
+
+
+def _leaving(ctx: ToolContext) -> bool:
+    """Whether the person has ended the session -- asked of the loop, which learned it
+    from the same drain `_heard` runs (`ToolContext.on_leaving`, `Loop.leaving`). False
+    when nobody is wired to answer, so a wait with no session behind it holds as it
+    always did."""
+    return ctx.on_leaving is not None and bool(ctx.on_leaving())
+
+
+def _left_note() -> str:
+    """Why a held answer came back before its time when the person ended the session.
+
+    Says only what the tool knows: the wait ended because the person left, and the
+    session is on its way down. Not what becomes of the job or the desk -- the
+    close-down decides that (`cli._close_down`, `--keep-alive`), and the loop says the
+    rest in its own line right after this result (`loop.LEFT_MID_TURN`). The model is
+    not asked again, so this is for whoever reads the transcript."""
+    return "[the person ended the session, so this answered early; the session is closing down]"
 
 
 def _heard_note(again: str, still: str) -> str:
