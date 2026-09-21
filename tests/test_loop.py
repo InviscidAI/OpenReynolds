@@ -259,6 +259,7 @@ def _job_wired(loop, backend, store, view, reader, ends_after_polls=None):
     loop.interject = lambda: cli._typed_while_working(
         loop, view, Browser(backend, store), store, reader)
     loop.ctx.on_wait_input = loop.heard
+    loop.ctx.on_leaving = lambda: loop.leaving
     job_id = backend.job_start("simpleFoam", name="solve")
     store.record_job(job_id, cmd="simpleFoam", name="solve")
     polls = {"n": 0}
@@ -275,31 +276,211 @@ def _job_wired(loop, backend, store, view, reader, ends_after_polls=None):
     return job_id, polls
 
 
-def test_a_held_job_check_is_not_cut_by_a_line_that_is_not_for_the_model(
-    loop, backend, store, view, monkeypatch
+def _transcript(store):
+    """(role, content) of every line in the study's messages.jsonl."""
+    import json
+
+    return [
+        (row["role"], row["content"])
+        for row in (
+            json.loads(line)
+            for line in (store.dir / "messages.jsonl").read_text(encoding="utf-8").strip().splitlines()
+        )
+    ]
+
+
+# -- End pressed mid-turn ---------------------------------------------------------
+#
+# The web's End button sends `/exit` into the session's inbox; typed, `/exit` and `/quit`
+# are the same command, and an EOF (the interface's ctrl+C, a closed stdin) is the same
+# leaving. Met by the drain mid-turn, all of them used to be put back for the prompt and
+# honoured only when the turn ended on its own. Measured in production (study
+# 20260921-033019-e1b4): End pressed at 03:33:40, in a turn that went on to 04:10:46 --
+# thirty-seven minutes of `bash sleep` and held waits for a person who had left -- and
+# the session ended 27 s after the turn did. Now the turn ends at its next safe point.
+
+
+@pytest.mark.parametrize("leaving", ["/exit", "/quit", None], ids=["exit", "quit", "eof"])
+def test_end_pressed_during_a_held_job_check_ends_the_wait_and_the_turn(
+    loop, backend, store, view, monkeypatch, leaving
 ):
-    """`/exit` is put back by the drain for the prompt; the wait holds through it until
-    the job ends, says nothing about the person, and the `/exit` is still there."""
+    """The wait returns at once saying the person ended the session; the model is not
+    asked again; the transcript carries one line, in the harness's voice, saying the
+    turn was ended by the person; the line itself is still there for the prompt."""
+    import threading
+    import time
+
     from conftest import ScriptedReader
 
     monkeypatch.setattr("openreynolds.tools.JOB_WAIT_POLL_S", 0.01)
-    reader = ScriptedReader(["/exit"])
-    job_id, polls = _job_wired(loop, backend, store, view, reader, ends_after_polls=4)
-    install(loop, [
+    reader = ScriptedReader([])
+    job_id, polls = _job_wired(loop, backend, store, view, reader)
+    fake = install(loop, [
         message([tool_block("job_check", {"job_id": job_id, "wait_s": 30})], stop_reason="tool_use"),
         message([text_block("the solve is done")]),
     ])
+    threading.Timer(0.3, lambda: reader._lines.append(leaving)).start()
+
+    loop.say("watch it")
+    began = time.monotonic()
+    response = loop.run()
+    elapsed = time.monotonic() - began
+
+    assert 0.25 <= elapsed < 5, "held until End was pressed, then answered at once"
+    assert polls["n"] >= 1 and backend.jobs[job_id].status == "running"
+    assert len(fake.calls) == 1, "the model was not asked again"
+    assert response.stop_reason == "tool_use", "the turn that was in flight is the one returned"
+    assert loop.leaving is True
+
+    results = loop.messages[2]["content"]
+    assert [b["type"] for b in results] == ["tool_result", "text"]
+    out = results[0]["content"]
+    assert "status=running" in out and "[waited" in out
+    assert "the person ended the session, so this answered early" in out
+    assert "the person wrote" not in out, "nothing was said for the model"
+    assert results[1]["text"] == f"[from the harness, not the user]\n{loop_mod.LEFT_MID_TURN}"
+    assert loop.messages[-1] is loop.messages[2], "the thread ends on the results, whole"
+
+    transcript = _transcript(store)
+    assert [role for role, _ in transcript] == ["user", "assistant", "tool", "event"]
+    assert transcript[-1][1] == loop_mod.LEFT_MID_TURN, "one line, the harness's"
+    assert any("ended mid-turn" in n for n in view.notices)
+    assert reader.poll() == leaving, "still there for whoever reads next, as before"
+
+
+def test_words_typed_in_the_same_breath_as_end_ride_along_but_are_not_answered(
+    loop, backend, store, view, monkeypatch
+):
+    """"That's enough, thanks" and then End, in one drain: the words are delivered and
+    recorded like any interjection, but the wait's note says the person left -- not
+    "answer them, then call again", which nobody would do -- and no turn follows."""
+    import threading
+
+    from conftest import ScriptedReader
+
+    monkeypatch.setattr("openreynolds.tools.JOB_WAIT_POLL_S", 0.01)
+    reader = ScriptedReader([])
+    job_id, _polls = _job_wired(loop, backend, store, view, reader)
+    fake = install(loop, [
+        message([tool_block("job_check", {"job_id": job_id, "wait_s": 30})], stop_reason="tool_use"),
+        message([text_block("you're welcome")]),
+    ])
+    threading.Timer(0.3, lambda: reader._lines.extend(["that's enough, thanks", "/exit"])).start()
 
     loop.say("watch it")
     loop.run()
 
+    assert len(fake.calls) == 1
     results = loop.messages[2]["content"]
-    assert [b["type"] for b in results] == ["tool_result"], "no words were put to the model"
+    assert [b["type"] for b in results] == ["tool_result", "text", "text"]
     out = results[0]["content"]
-    assert "status=exited" in out and "[waited" in out
-    assert "answered early" not in out
-    assert polls["n"] >= 4, "the wait held through the polls until the job ended"
-    assert reader.poll() == "/exit", "still there for the prompt, as before"
+    assert "the person ended the session, so this answered early" in out
+    assert "the person wrote" not in out and "call job_check again" not in out
+    assert results[1]["text"] == "that's enough, thanks"
+    assert results[2]["text"].endswith(loop_mod.LEFT_MID_TURN)
+    assert view.interjections == ["that's enough, thanks"]
+    assert [role for role, _ in _transcript(store)] == ["user", "assistant", "tool", "user", "event"]
+
+
+def test_end_pressed_between_two_ordinary_tool_calls_makes_no_further_call(
+    loop, backend, store, view
+):
+    """A `bash` in flight when End is pressed finishes and its result is recorded; the
+    call after it in the same batch is not started and says so; the model is not asked
+    for the next batch."""
+    from conftest import ScriptedReader
+    from openreynolds import cli
+    from openreynolds.browse import Browser
+
+    reader = ScriptedReader([])
+    loop.interject = lambda: cli._typed_while_working(
+        loop, view, Browser(backend, store), store, reader)
+    real = backend.exec
+
+    def pressed_end_during(cmd, *args, **kwargs):
+        # End arrives while the first command runs: it is in the inbox by the time
+        # the drain runs before the second call.
+        if cmd == "sleep 60; ls mesh":
+            reader._lines.append("/exit")
+        return real(cmd, *args, **kwargs)
+
+    backend.exec = pressed_end_during
+    fake = install(loop, [
+        message([tool_block("bash", {"cmd": "sleep 60; ls mesh"}, "tu_1"),
+                 tool_block("bash", {"cmd": "tail log.pisoFoam"}, "tu_2")],
+                stop_reason="tool_use"),
+        message([tool_block("bash", {"cmd": "sleep 115"}, "tu_3")], stop_reason="tool_use"),
+        message([text_block("done")]),
+    ])
+
+    loop.say("pace it")
+    loop.run()
+
+    assert backend.execs == ["sleep 60; ls mesh"], "the call in flight ran; nothing after it"
+    assert len(fake.calls) == 1, "no further turn"
+    results = loop.messages[2]["content"]
+    assert [b["type"] for b in results] == ["tool_result", "tool_result", "text"]
+    assert results[0]["tool_use_id"] == "tu_1" and "exit_code" in results[0]["content"]
+    assert results[1] == {"type": "tool_result", "tool_use_id": "tu_2",
+                          "content": loop_mod.NOT_RUN_LEFT, "is_error": True}
+    assert loop_mod.LEFT_MID_TURN in results[2]["text"]
+    assert [name for name, _ in view.tools] == ["bash", "bash"], "the person sees both calls"
+    assert view.tool_errors == [loop_mod.NOT_RUN_LEFT]
+
+    recorded = [content for role, content in _transcript(store) if role == "tool"]
+    assert [r["error"] for r in recorded] == [False, True]
+    assert recorded[1]["output"] == loop_mod.NOT_RUN_LEFT
+    assert [role for role, _ in _transcript(store)][-1] == "event"
+
+
+def test_end_pressed_mid_turn_ends_the_session_loop_without_another_prompt(
+    loop, backend, store, view, monkeypatch
+):
+    """Through `_run_interactive`: the turn stops, and the session loop returns to the
+    close-down at once -- no second prompt, no reading of the put-back `/exit`, no wake
+    on the job that is still running."""
+    import threading
+
+    from conftest import ScriptedReader
+    from openreynolds import cli
+    from openreynolds.browse import Browser
+
+    monkeypatch.setattr("openreynolds.tools.JOB_WAIT_POLL_S", 0.01)
+    reader = ScriptedReader(["watch it"])
+    job_id, _polls = _job_wired(loop, backend, store, view, reader)
+    fake = install(loop, [
+        message([tool_block("job_check", {"job_id": job_id, "wait_s": 30})], stop_reason="tool_use"),
+        message([text_block("the solve is done")]),
+    ])
+    threading.Timer(0.3, lambda: reader._lines.append("/exit")).start()
+
+    cli._run_interactive(loop, backend, store, view, Browser(backend, store), reader)
+
+    assert len(fake.calls) == 1
+    # One watch and one prompt: the ones that took "watch it" while the job ran. After
+    # the turn, none -- the job still running was not watched for a person who left.
+    assert len(view.watched) == 1 and view.prompts == 1
+    assert store.live_jobs(), "it is still running: what becomes of it is the close-down's"
+    assert reader._lines == ["/exit"], "left in the reader, unread; nobody needs it now"
+
+
+def test_a_prompt_time_exit_is_unchanged(loop, backend, store, view):
+    """Typed when the model is waiting for input, `/exit` (and an EOF) ends the session
+    loop as before, without a turn and without the mid-turn machinery."""
+    from conftest import ScriptedReader
+    from openreynolds import cli, commands
+    from openreynolds.browse import Browser
+
+    fake = install(loop, [message([text_block("never said")])])
+    assert cli._apply(commands.parse("/exit"), loop, view, Browser(backend, store), store) is cli.QUIT
+
+    for lines in (["/exit"], ["/quit"], []):
+        cli._run_interactive(loop, backend, store, view, Browser(backend, store),
+                             ScriptedReader(lines))
+        assert loop.leaving is False, "nothing was running to stop"
+    assert fake.calls == [] and loop.messages == []
+    assert view.prompts == 3, "one prompt each, answered by leaving"
+    assert view.notices == [], "nothing to say about a turn: there was none"
 
 
 def test_a_held_job_check_ends_on_words_for_the_model_and_hands_them_over(

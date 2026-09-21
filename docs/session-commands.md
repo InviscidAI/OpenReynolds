@@ -31,6 +31,15 @@ from it, so a command cannot exist in one and be missing from another.
 answered by the harness and never become a turn. `/yes`, `/no` and `/all` with no
 question open answer "nothing is waiting for an answer".
 
+`/exit` typed while the agent is mid-turn (the hosted app's End button sends the same
+word; the interface's `ctrl+c` and a closed stdin count the same) ends the turn at its
+next safe point rather than when the model happens to stop: a held `job_check` or
+`mesh_wait` returns at once, a command already running finishes and its result is
+recorded, nothing further is started, the model is not asked again, and the transcript
+carries one line from the harness saying the session was ended by the person. Then the
+ordinary close-down runs. A mesh desk still building is told to stop at its next
+command.
+
 ## /help
 
 `/help` on its own lists every command with its arguments and a summary, the three

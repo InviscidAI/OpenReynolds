@@ -61,6 +61,60 @@ All notable changes to this project are recorded here. The format follows
   where before they waited out the idle workspace. Unchanged: a backend without
   `list_stored` (a test's, an embedder's) lists as it always did; the 4,000-entry cap
   and its notice; the poll-first order of the walk.
+- **End pressed mid-turn ends the turn at its next safe point, then the session -- the
+  way a Stop button is expected to work.** The web's End button sends `/exit` into the
+  session's inbox (the runner's `relay.py`); typed, `/exit` and `/quit` are the same
+  command, and an EOF (the interface's ctrl+C, a closed stdin) is the same leaving. Met
+  by the loop's drain between tool calls (`cli._typed_while_working`), all of them were
+  put back for whoever waits at the prompt -- and honoured there, when the turn ended on
+  its own. In production on 2026-09-21 (study 20260921-033019-e1b4) the person pressed
+  End at 03:33:40 into a turn that was waiting on the mesh desk; the turn went on for
+  another thirty-seven minutes (to 04:10:46: eighteen `bash sleep 60..240` calls, eight
+  held waits, a fifteen-minute `pisoFoam` solve on four ranks launched at 03:44:36, a
+  reconstruction, a 300-frame animation and a gif, all for a person who had left) and
+  the session ended 27 s after the turn did, at 04:11:13. (#41 fixed what the put-back
+  line did to the waits in that same turn -- `mesh_wait` and `job_check` answering at
+  0 s with nothing to deliver -- and deliberately left the End semantics for this
+  item.) Now the drain tells the loop (`Loop.leave`) when what it meets is a `/exit`, a
+  `/quit` or an EOF, and still puts the line back as before; from then on the turn ends
+  at its next safe point. A held `job_check` or `mesh_wait` asks the loop a second
+  question beside "did the person write?" (`ToolContext.on_leaving`, wired to
+  `Loop.leaving`) and returns within a poll: `[waited 12s] [the person ended the
+  session, so this answered early; the session is closing down]`. A call already
+  running when End was pressed -- a `bash` command, a `job_start` -- is not cut: each is
+  bounded by its own deadline, and its result is recorded when it comes back. A call the
+  model asked for in the same batch that had not started is not started, and is answered
+  `This call did not run: the person ended the session.` (the shape `settle` gives an
+  interrupted turn's calls, so the thread stays whole). After that batch's results the
+  model is not asked again -- no further tool call, no reply -- and the transcript
+  carries one line in the harness's voice: `The person ended the session while this
+  turn was running, so the turn stops here: the tool calls already in flight finished,
+  no further call was made, and the model was not asked again.` The session loop
+  (`cli._run_interactive`) returns straight to the close-down -- the final sync, the
+  capture, `_close_down`, unchanged -- without another prompt. A mesh desk still
+  building is told at that moment rather than at the close-down: a background run's
+  budgets are zeroed (`DeskRun.abandon`) so it stops at its next command instead of
+  spending model calls for as long as the call in flight takes to come back, and the
+  session's own desk is stopped the same way, so a foreground `mesh` (`wait: true`)
+  holding the turn ends at its next lap rather than at its fifteen-minute budget. What
+  a typed line does mid-turn is otherwise exactly as #41 left it: words for the model
+  cut a wait once and ride with that batch's results; `/status` and its kind are
+  answered on the spot and cut nothing. A prompt-time `/exit` -- typed when the model is
+  waiting for input -- is unchanged. Tests drive the real loop, drain and wiring: End
+  (`/exit`, `/quit`, EOF) pressed during a held `job_check` and a held `mesh_wait` ends
+  the wait within a poll, the model is not called again, the last message carries the
+  one line, the desk's budgets are zero and the line is still in the reader; words
+  typed in the same breath as End ride with the result and the note says the person
+  left; End pressed during a `bash` lets it finish, marks the next call in the batch as
+  not run and makes no further call; the session loop returns without a second prompt;
+  `/exit` typed to an open question (partial mode) declines the call and ends the turn
+  there; a whole session through `drive` ends with the ordinary close-down and the
+  workspace put down; a prompt-time `/exit`, `/quit` and EOF are as before; a real
+  `Mesher` run told by `Loop.leave` ends at its next lap; #41's typed-words and
+  `/status` tests pass unchanged. Two warm-start tests that queued a `/exit` behind
+  their first message as the way to end afterwards now end on the reader's EOF at the
+  prompt instead: a `/exit` in the inbox at the first tool call is, correctly, the
+  person leaving. `docs/session-commands.md` says what `/exit` does mid-turn.
 - **A steady solver's residuals levelling off on an unsteady flow is no longer reported
   to the person as a run that "did not converge".** The owner, after five solving
   studies in three days: "In each solve I just wanted a quick look, not a mesh
