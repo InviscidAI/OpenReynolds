@@ -103,11 +103,13 @@ def test_an_ordinary_listing_is_asked_as_a_poll_first_and_is_work_only_when_it_m
     """A foreground listing used to be an ordinary exec, and on a hosted workspace the
     service had already stopped an ordinary exec starts a machine: the close-down of
     an idle-timed-out session did exactly that on 2026-09-21, eighteen minutes of
-    c7i.2xlarge for one `find`. So the listing polls first. On a workspace that is up
-    the poll *is* the listing and nothing else is sent; only when nothing is running,
-    and the backend has no copy of the workspace to read (`test_store_listing.py` has
-    the copy), is it sent again as work -- the one case where starting the machine is
-    what the person asked for."""
+    c7i.2xlarge for one `find`. So the walk polls first. On a workspace that is up
+    the poll *is* the listing and nothing else is sent; only when nothing is running
+    is it sent again as work -- the one case where starting the machine is what the
+    person asked for. This is the walk, which a backend with no listing of its own to
+    give falls back to (`FakeBackend.list_stored` is the protocol's None); a backend
+    that can list the workspace without a command sends none at all
+    (`test_store_listing.py`)."""
     Browser(backend, store, home=HOME).tree(HOME)
     assert backend.exec_background == [True], "up: the poll answered, and that was all"
 

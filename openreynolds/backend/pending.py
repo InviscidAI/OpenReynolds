@@ -229,15 +229,17 @@ class PendingBackend(Backend):
         return active() if active is not None else []
 
     def list_stored(self, path: str, depth: int) -> StoredListing | None:
-        """The live backend's copy of the workspace, or None while there is no live
-        backend yet.
+        """The live backend's listing of the workspace, or None while there is no
+        live backend yet.
 
         Not waited for, unlike everything else here: a listing that needs no
         machine must not be the call that waits for one. None sends the caller to
-        its fallback, a foreground `exec`, and that one waits for the workspace
+        its fallback, the walk over `exec` -- a poll, which this stand-in answers
+        `idle` at once, then the foreground `exec`, which waits for the workspace
         exactly as it always did -- so a listing asked for during the start costs
         what it cost before, and nothing is read from a copy that the machine now
-        coming up is about to overtake."""
+        coming up is about to overtake. Once the live backend is here, its own
+        answer is handed back, and `Browser.tree` takes it before any command."""
         live = self._live
         if live is None:
             return None

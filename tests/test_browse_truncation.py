@@ -12,13 +12,20 @@ still be *in* the listing: excluding it was proposed and rejected, on the ground
 browser which silently omits a directory that exists is worse than one that admits it
 ran out of room, and the person most likely to be looking there is somebody debugging
 the thing that fills it.
+
+The second half of the file is the other cap, the one the walk cannot see: the exec
+channel's own limit on a command's output, applied by bytes and mid-line. On
+2026-09-21 it cut a 127 KB listing at 64 KB and left a partial row that parsed as a
+1.5 MB file at the study root. Where the walk still runs -- the local backend, and the
+fallback when the service has no listing to give -- a cut output must lose rows, never
+gain one, and must say it was cut.
 """
 
 from __future__ import annotations
 
 from openreynolds import mirror
 from openreynolds.backend.base import ExecResult
-from openreynolds.browse import DEFAULT_DEPTH, MAX_ENTRIES, Browser, Listing
+from openreynolds.browse import DEFAULT_DEPTH, MAX_ENTRIES, Browser, Entry, Listing, _parse
 
 HOME = "/work/20260905-101500-ab12"
 
@@ -310,3 +317,205 @@ def test_a_plain_list_can_still_be_remembered():
 
     assert isinstance(browser.cached("/work"), Listing)
     assert not browser.cached("/work").truncated
+
+
+# -- the exec channel's own cap: by bytes, mid-line ----------------------------
+
+STUDY = "/work/20260921-033356-076b"
+"""The study whose listing found this: 1,532 rows at ~83 bytes each, ~127 KB, against
+a 64 KB cap on what a command may print back."""
+
+
+class CappedChannel:
+    """A backend whose exec channel caps a command's output by bytes and cuts it
+    mid-line, exactly as the hosted daemon does (`out[:cap]`, and `truncated: true`
+    on the answer) and as the local backend does (`blob[:MAX_OUTPUT_BYTES]`). Answers
+    one fixed walk, whatever it is asked, and keeps no copy of the workspace -- so the
+    walk is what `Browser.tree` has to work from."""
+
+    workspace_root = "/work"
+
+    def __init__(self, output: str, cap: int):
+        self.output = output
+        self.cap = cap
+        self.calls: list[str] = []
+
+    def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 60,
+             *, background: bool = False):
+        self.calls.append(cmd)
+        return ExecResult(0, self.output[: self.cap], len(self.output) > self.cap, None)
+
+
+def rows(*items: tuple[str, int, str]) -> str:
+    """What the walk prints: `%y`, size, mtime, path -- a real `find` says `f` for a
+    file, and this half of the file does too."""
+    return "".join(f"{kind}\t{size}\t1700000000.0\t{path}\n" for kind, size, path in items)
+
+
+THE_STUDYS_WALK = rows(
+    ("d", 4096, f"{STUDY}/mesh"),
+    ("d", 4096, f"{STUDY}/run"),
+    ("f", 1631, f"{STUDY}/README.md"),
+    ("f", 1_528_155, f"{STUDY}/mesh/zoom.png"),
+    ("f", 88_120, f"{STUDY}/mesh/overview.png"),
+    ("d", 4096, f"{STUDY}/run/processor0"),
+    ("f", 2_400_000, f"{STUDY}/run/processor0/0.5/U"),
+)
+
+
+def cut_inside(output: str, row_path: str, keep: str) -> int:
+    """The byte at which a cap would leave `row_path`'s row ending in `keep` -- the
+    row's path cut part-way, as the daemon's cap left `.../<study>` of
+    `.../<study>/mesh/zoom.png`."""
+    row = output.index(f"\t{row_path}\n")
+    return row + 1 + len(keep)
+
+
+def test_a_row_cut_inside_its_path_does_not_become_a_file_at_the_root():
+    """The incident. The cut fell right after the study id in the row for
+    `mesh/zoom.png`, and `f\\t1528155\\t<mtime>\\t/work/<study>` is four well-formed
+    fields naming a 1.5 MB file at the study root. The page drew the tree as that one
+    unexpandable leaf; the mirror asked the service to archive it every cycle."""
+    cap = cut_inside(THE_STUDYS_WALK, f"{STUDY}/mesh/zoom.png", STUDY)
+    backend = CappedChannel(THE_STUDYS_WALK, cap)
+    assert backend.exec("").output.endswith(f"\t{STUDY}"), "the premise: cut after the study id"
+
+    listing = Browser(backend, home=STUDY).tree(STUDY)
+
+    assert not any(e.path == STUDY for e in listing), "no file at the study root"
+    assert not any(e.size == 1_528_155 for e in listing), "the cut row is gone, not misfiled"
+    assert {e.path for e in listing} == {f"{STUDY}/mesh", f"{STUDY}/run", f"{STUDY}/README.md"}
+    assert listing.truncated, "and the listing says it was cut"
+
+
+def test_a_row_cut_inside_a_deeper_path_does_not_become_a_phantom_file():
+    """The same cut, landing where the breadth-first order puts it now -- inside
+    `run/processors4/<time>/` -- produced `/r`, `/run/processor` and `/run/p` in
+    production, each a path the mirror then asked for and was told 404."""
+    cap = cut_inside(THE_STUDYS_WALK, f"{STUDY}/run/processor0/0.5/U", f"{STUDY}/run/processor")
+
+    listing = Browser(CappedChannel(THE_STUDYS_WALK, cap), home=STUDY).tree(STUDY)
+
+    assert f"{STUDY}/run/processor" not in {e.path for e in listing}
+    assert f"{STUDY}/run/processor0" in {e.path for e in listing}, "the whole rows before it stay"
+    assert listing.truncated
+
+
+def test_a_cut_on_a_line_end_loses_nothing_and_still_says_so():
+    """When the cap happens to land right after a newline every row that arrived is
+    whole, and none is dropped for having been last. The listing is still cut -- the
+    backend said so -- and still says it."""
+    whole_rows = THE_STUDYS_WALK.index(f"\t{STUDY}/mesh/overview.png\n")
+    cap = THE_STUDYS_WALK.index("\n", whole_rows) + 1  # through overview.png's newline
+    backend = CappedChannel(THE_STUDYS_WALK, cap)
+    assert backend.exec("").output.endswith("overview.png\n")
+
+    listing = Browser(backend, home=STUDY).tree(STUDY)
+
+    assert f"{STUDY}/mesh/overview.png" in {e.path for e in listing}
+    assert len(listing) == 5
+    assert listing.truncated
+
+
+def test_a_cut_output_says_the_output_was_capped_not_the_entries():
+    """The notice for the entry cap counts to 4,000; over a listing of five rows that
+    is a notice contradicting what is in front of the reader. The cut is named for
+    what it was."""
+    cap = cut_inside(THE_STUDYS_WALK, f"{STUDY}/mesh/zoom.png", STUDY)
+
+    listing = Browser(CappedChannel(THE_STUDYS_WALK, cap), home=STUDY).tree(STUDY)
+
+    assert listing.output_capped
+    assert "cut short" in listing.notice and "output" in listing.notice
+    assert "not looked at" in listing.notice, "the words the mirror's report is read for"
+    assert STUDY in listing.notice and f"depth {DEFAULT_DEPTH}" in listing.notice
+    assert f"{MAX_ENTRIES:,}" not in listing.notice
+    assert listing.lines()[-1] == listing.notice, "and it reaches what is drawn"
+
+
+def test_an_output_the_backend_did_not_cut_is_not_called_cut():
+    backend = CappedChannel(THE_STUDYS_WALK, len(THE_STUDYS_WALK))
+
+    listing = Browser(backend, home=STUDY).tree(STUDY)
+
+    assert len(listing) == 7
+    assert not listing.truncated and not listing.output_capped and listing.notice == ""
+
+
+def test_when_both_caps_are_reached_the_entry_cap_is_the_one_named():
+    """4,001 whole rows and then the byte cap: the entry cap is the fuller account --
+    that many rows came through, and the notice that counts them is the right one."""
+    walk = rows(*(("f", 1, f"/work/f{n:06d}") for n in range(MAX_ENTRIES + 1)))
+    backend = CappedChannel(walk + rows(("f", 1, "/work/one-more")), len(walk))
+
+    listing = Browser(backend).tree("/work")
+
+    assert len(listing) == MAX_ENTRIES
+    assert listing.truncated and not listing.output_capped
+    assert f"{MAX_ENTRIES:,}" in listing.notice
+
+
+def test_a_remembered_cut_listing_still_names_the_cause():
+    """The files pane is drawn from the remembered listing; drawn from memory it must
+    say the same thing the call that took it said."""
+    cap = cut_inside(THE_STUDYS_WALK, f"{STUDY}/mesh/zoom.png", STUDY)
+    browser = Browser(CappedChannel(THE_STUDYS_WALK, cap), home=STUDY)
+    browser.remember(STUDY, browser.tree(STUDY))
+
+    remembered = browser.cached(STUDY)
+    assert remembered.truncated and remembered.output_capped
+    assert "cut short" in remembered.notice
+    assert browser.cached(f"{STUDY}/mesh").output_capped, "a subtree of a cut walk is cut too"
+
+
+def test_the_mirror_does_not_fetch_the_phantom_root_file(backend, store):
+    """What the incident cost, measured on the mirror: `tar?mode=pack&paths=/work/
+    <study>` every twenty seconds, 502/504 each time, 04:07 to 04:16. A backend with
+    no listing of its own to give (`FakeBackend.list_stored` is the protocol's None)
+    walks over the channel, and the phantom must not reach the fetch."""
+    cap = cut_inside(THE_STUDYS_WALK, f"{STUDY}/mesh/zoom.png", STUDY)
+    backend.exec_result = ExecResult(0, THE_STUDYS_WALK[:cap], True, None)
+    backend.files[f"{STUDY}/README.md"] = b"x"
+
+    report = mirror.sync(Browser(backend, store, home=STUDY), path=STUDY, live=True)
+
+    assert STUDY not in backend.fetched, "the study root was never asked for as a file"
+    assert backend.fetched == [f"{STUDY}/README.md"], "what arrived whole came home"
+    assert any("not looked at" in line for line in report.warnings), "and the cut was reported"
+
+
+# -- rows that are not entries ---------------------------------------------------
+
+
+def test_a_row_naming_the_listed_root_is_not_an_entry():
+    """The walk is `-mindepth 1`, so a row whose path is the root itself was never
+    printed whole: it is a row cut inside its path, or noise on the channel."""
+    assert _parse(f"d\t4096\t1700000000.0\t{STUDY}", STUDY) is None
+    assert _parse(f"f\t1528155\t1700000000.0\t{STUDY}", STUDY) is None
+
+
+def test_a_row_outside_the_listed_path_is_not_an_entry():
+    assert _parse("f\t9\t1700000000.0\t/work/another-study/notes.md", STUDY) is None
+    assert _parse(f"f\t9\t1700000000.0\t{STUDY}-bis/notes.md", STUDY) is None, (
+        "a sibling whose name merely begins with the root's is outside it")
+    assert _parse("f\t9\t1700000000.0\tnotes.md", STUDY) is None
+
+
+def test_a_row_under_the_listed_path_is_an_entry_however_the_root_is_spelled():
+    row = f"f\t9\t1700000000.0\t{STUDY}/notes.md"
+    for root in (STUDY, STUDY + "/"):
+        entry = _parse(row, root)
+        assert entry == Entry(path=f"{STUDY}/notes.md", is_dir=False, size=9, mtime=1700000000.0)
+
+
+def test_a_root_row_in_a_whole_output_is_dropped_and_the_rest_kept():
+    """Through `tree`, and with the backend saying nothing was cut: the row is refused
+    on its own account, not because of the cap."""
+    walk = rows(("d", 4096, STUDY)) + THE_STUDYS_WALK
+    backend = CappedChannel(walk, len(walk))
+
+    listing = Browser(backend, home=STUDY).tree(STUDY)
+
+    assert STUDY not in {e.path for e in listing}
+    assert len(listing) == 7
+    assert not listing.truncated

@@ -131,6 +131,11 @@ answer is one whole tree rather than a walk to a depth: `browse.MAX_ENTRIES` is 
 on this side, after the depth is applied, and asking for less here would cut the tree
 before the depth had been looked at."""
 
+LISTING_TIMEOUT_S = 60.0
+"""How long one `list_files` request may run. The `find` it replaced was sent with
+`timeout_s=60`; a listing that takes longer than a minute is the service stuck, not a
+big workspace, and the mirror's cycle behind it should find that out rather than sit."""
+
 _MAX_ATTEMPTS = 5
 _DEFAULT_RETRY_AFTER_S = 10.0
 _SERVER_ERROR_RETRY_S = 1.0
@@ -756,9 +761,12 @@ class FoamdClient:
         return _json(self.request("GET", f"/v1/studies/{study_id}"))
 
     def list_files(self, instance_id: str, path: str) -> dict[str, Any]:
-        """The tree under `path` as the service's own copy of the workspace holds it,
-        scoped to the instance: `GET /v1/instances/{id}/files?list=1`. No instance is
-        started, whatever state the workspace is in.
+        """The tree under `path`, scoped to the instance: `GET /v1/instances/{id}/
+        files?list=1`. Answered from the live machine when the workspace is up and
+        from the service's own copy of the workspace when it is stopped; no instance
+        is started, whatever state the workspace is in, and the workspace's
+        last-activity clock is left alone (the route resolves the instance row without
+        touching it -- foamd `files.read_or_stat`, #53).
 
         The instance's twin of `list_workspace`, and the one `list_stored` asks,
         because the study route refuses the one path a study whose home is the
@@ -772,12 +780,20 @@ class FoamdClient:
         `root` the resolved absolute path, entries workspace-absolute, cut breadth-first
         at `STORED_LISTING_LIMIT`. A path outside `/work` is a 400, a path the copy does
         not have is a 404; both arrive as the `BackendError` `request` makes of them.
+
+        Bounded, unlike the other listings on this client: this one is asked every
+        twenty seconds for the life of a session by the mirror's background cycles,
+        and `request` given no timeout passes `None` through to httpx, which is no
+        timeout at all rather than the client's default. The `find` this replaces ran
+        under `timeout_s=60`; the same minute is the bound here. Retries are the
+        client's ordinary ones for a GET.
         """
         return _json(
             self.request(
                 "GET",
                 f"/v1/instances/{instance_id}/files",
                 params={"path": path, "list": 1, "recursive": 1, "entries": STORED_LISTING_LIMIT},
+                timeout=LISTING_TIMEOUT_S,
             )
         )
 
@@ -852,38 +868,42 @@ class HostedBackend(Backend):
         an explicit instance id never lists, because there was no choice to make."""
         self.study_id: str | None = None
         """Which study this session is serving, as the platform names it. Set by the
-        session once it has opened or resumed the study's row (`cli.session`); the
-        service keeps its copy of the workspace per study, so `list_stored` cannot
-        ask without it and answers None until it is told."""
+        session once it has opened or resumed the study's row (`cli.session`). Carried
+        for the study-scoped routes; `list_stored` asks the instance's own route and
+        needs no study id (see `FoamdClient.list_files` for why)."""
 
     def shutdown(self) -> None:
         """Put the container down. The volume is untouched, so nothing is lost."""
         self._client.stop_instance(self.instance_id)
 
     def list_stored(self, path: str, depth: int) -> StoredListing | None:
-        """The files under `path` from the service's own copy of the workspace, cut
-        to `depth`. None when the ask did not work.
+        """The files under `path` as the service lists them, cut to `depth`. None
+        when the ask did not work.
 
-        The copy is what the service writes at every checkpoint and stop, and
-        `GET /v1/instances/{id}/files?list=1` reads it whether or not a machine is
-        up -- the same copy `get_file` and `get_tree` are served from once the
-        workspace is stopped, so a sync that lists this way stays off the machine end
-        to end. Asked of the instance, not the study: the study route refuses the
-        workspace root, and a study whose home is the root (three of the owner's are)
-        lists exactly that path on its way out -- which is how the first cut of this
-        (asking `/v1/studies/{id}/workspace`) still started a machine on 2026-09-21.
-        Nothing here needs a study id. The route answers the whole tree, so the
-        caller's depth is applied here, counted from `path` as `find -maxdepth`
-        counts it.
+        `GET /v1/instances/{id}/files?list=1` answers from the live machine while the
+        workspace is up (the daemon's own directory listing, no command run and no
+        cap on the answer's bytes) and from the copy the service writes at every
+        checkpoint and stop once it is down -- the same copy `get_file` and
+        `get_tree` are served from then, so a sync that lists this way stays off the
+        machine end to end. It never starts a machine and never counts as use of one.
+        "Stored" is the name from when only the stopped case came this way; since the
+        listing of a running workspace over the exec channel was found cut at 64 KB
+        mid-line (`browse.LIST_PIPELINE` has the incident), `Browser.tree` asks this
+        first in both states. Asked of the instance, not the study: the study route
+        refuses the workspace root, and a study whose home is the root (three of the
+        owner's are) lists exactly that path on its way out -- which is how the first
+        cut of this (asking `/v1/studies/{id}/workspace`) still started a machine on
+        2026-09-21. Nothing here needs a study id. The route answers the whole tree,
+        so the caller's depth is applied here, counted from `path` as `find
+        -maxdepth` counts it.
 
-        Every failure is None and none of them is raised: this is asked on the way
-        out of a session by a caller that has a machine to fall back on, and the
-        one thing it must not do is turn a listing into an exception. A 400 is a
-        path outside `/work`; a 404 is a path the copy does not have, a workspace
-        never written to it, or a service without the route; the rest is the network.
-        In each case the fallback is what always happened -- a foreground `exec`,
-        which may start the workspace -- so nothing is lost by being quiet here,
-        only the saving.
+        Every failure is None and none of them is raised: the caller has the exec
+        walk to fall back on, and the one thing this must not do is turn a listing
+        into an exception. A 400 is a path outside `/work`; a 404 is a path the
+        service does not have, a workspace never written to the copy, or a service
+        without the route; the rest is the network. In each case the fallback is
+        what always happened -- a poll, then a foreground `exec`, which may start
+        the workspace -- so nothing is lost by being quiet here, only the saving.
         """
         try:
             body = self._client.list_files(self.instance_id, path)
@@ -904,6 +924,12 @@ class HostedBackend(Backend):
                         path=where,
                         is_dir=bool(item.get("is_dir")),
                         size=int(item.get("size") or 0),
+                        # Whole seconds on the wire (`workspace.listing_payload` casts
+                        # to int), where `find`'s `%T@` carried a fraction. Kept as
+                        # the float the walk's rows became, unrounded: the one reader
+                        # that compares it (`mirror._already_here`) sets this machine's
+                        # clock against the workspace's, and no fraction of a second
+                        # survives that.
                         mtime=float(item.get("mtime") or 0),
                     )
                 )

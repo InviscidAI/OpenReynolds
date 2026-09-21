@@ -1,29 +1,41 @@
-"""The listing on the way out of a session does not start a machine to be taken.
+"""The workspace is listed by the service, and a command on the machine is the fallback.
 
-When a hosted session ends -- an idle timeout, or the person pressing End -- the
-close-down syncs the study's directory one last time, and a sync begins with a listing:
-`Browser.tree`, a `find` over the exec channel. On a workspace the service had already
-stopped (its reaper stops an idle workspace after fifteen minutes) a foreground exec
-lazy-starts a new machine to run it. In production on 2026-09-21 that was a c7i.2xlarge
-adopted from the pool at 02:24:32 for an idle-timed-out session's final sync; it listed
-the files and then sat until the reaper took it down again at 02:42 -- eighteen minutes
-of instance for one listing whose answer the service holds without one. The service
-keeps a copy of the workspace, written at every checkpoint and stop, and once the
-workspace is stopped it serves files and archives from that copy already; the listing
-was the one call in the close-down that still needed the machine.
+Two incidents on 2026-09-21, one on each side of the machine being up. When a hosted
+session ends -- an idle timeout, or the person pressing End -- the close-down syncs the
+study's directory one last time, and a sync begins with a listing. That listing was a
+`find` over the exec channel, and on a workspace the service had already stopped (its
+reaper stops an idle workspace after fifteen minutes) a foreground exec lazy-starts a
+new machine to run it: a c7i.2xlarge adopted from the pool at 02:24:32 for an
+idle-timed-out session's final sync, which listed the files and then sat until the
+reaper took it down again at 02:42 -- eighteen minutes of instance for one listing
+whose answer the service holds without one. Then, on a workspace that was *up* (study
+20260921-033356-076b), the same `find` came back cut at the exec channel's 64 KB
+output cap, mid-line: 1,532 rows at ~83 bytes each is ~127 KB, ~850 rows arrived, and
+the partial last row -- the path of `mesh/zoom.png` cut right after the study id --
+parsed as a 1.5 MB file at the study root, which the page drew as the whole tree and
+the mirror asked the service to archive every twenty seconds.
 
-What is checked here: that a foreground listing polls first and reads the copy when
-nothing is running; that it still starts the machine when there is no copy, because
-somebody asking is somebody working; that a running workspace's own answer is used and
-the copy is never asked; and that the close-down sync brings a stopped workspace's files
-home with no foreground exec at all. Then the hosted half -- the route, the depth cut,
-every failure answering None -- and the wiring that tells the workspace which study it
-is serving, without which the copy cannot be asked for.
+So `Browser.tree` asks the service first, running or stopped: `Backend.list_stored`,
+which the hosted backend answers through `GET /v1/instances/{id}/files?list=1` --
+the live machine's tree while it is up, the copy the service writes at every
+checkpoint and stop once it is down, never a start, never a claim on the machine, no
+byte cap. The walk over `exec` runs only when that answers None.
+
+What is checked here: that a listing on a stopped workspace and on a running one is
+the service's, with no command sent at all; that a background listing takes the same
+answer and starts nothing; that with no answer from the service the walk runs as it
+always did -- a poll, then work only when nothing is running and somebody is asking --
+and a background walk still refuses to guess; that a workspace still coming up is not
+listed from a copy the machine is about to overtake; and that the close-down sync
+brings a stopped workspace's files home with no command at all. Then the hosted half
+-- the route, its bound, the depth cut, every failure answering None -- and the wiring
+that tells the workspace which study it is serving.
 """
 
 from __future__ import annotations
 
 import json
+import threading
 
 import httpx2 as httpx
 import pytest
@@ -70,20 +82,23 @@ def stored(*rows: tuple[str, int], truncated: bool = False) -> StoredListing:
 
 
 class StoredWorkspace(FakeBackend):
-    """A hosted workspace as the close-down finds it: stopped, with the service's copy
-    of its files to hand.
+    """A hosted workspace with the service's listing of it to hand (`copy`), up or
+    down.
 
-    A poll finds nothing running. Ordinary work starts a machine -- counted in
-    `machine_starts`, because that count is the whole of what the fix is measured
-    by -- and from then on the workspace is up and answers `running_output`. A test
-    that means to prove no machine was started asserts on the count; one that means
-    to prove the old fallback still starts one asserts on it too."""
+    Stopped unless `running` is set: a poll then finds nothing running, and ordinary
+    work starts a machine -- counted in `machine_starts`, because that count is what
+    the close-down fix is measured by -- after which the workspace is up. Up, the
+    exec channel answers `running_output`, which is how a test shows the service's
+    listing and the machine's own being told apart. Every command sent is in `execs`
+    and `exec_background`, because the whole of the second fix is that a listing sends
+    none; a test that means to prove that asserts the list is empty."""
 
-    def __init__(self, copy: StoredListing | None = None, *, running_output: str = ""):
+    def __init__(self, copy: StoredListing | None = None, *, running_output: str = "",
+                 running: bool = False):
         super().__init__()
         self.copy = copy
         self.copy_asked: list[tuple[str, int]] = []
-        self.running = False
+        self.running = running
         self.running_output = running_output
         self.machine_starts = 0
 
@@ -102,75 +117,184 @@ class StoredWorkspace(FakeBackend):
         return self.copy
 
 
+A_STUDYS_ROWS = (
+    (f"{HOME}/case/", 4096),
+    (f"{HOME}/case/log.simpleFoam", 120),
+    (f"{HOME}/renders/", 4096),
+    (f"{HOME}/renders/mesh.png", 90_000),
+    (f"{HOME}/README.md", 9),
+)
+A_STUDYS_COPY = stored(*A_STUDYS_ROWS)
+"""The service's answer for a small study, as `list_stored` hands it on."""
+
+
+def as_the_walk_orders(listing) -> list[str]:
+    return [e.path for e in listing]
+
+
 # -- the browser ---------------------------------------------------------------
 
 
-def test_a_stopped_workspace_is_listed_from_the_copy_and_no_machine_is_started(store):
-    backend = StoredWorkspace(stored(
-        (f"{HOME}/case/", 4096),
-        (f"{HOME}/case/log.simpleFoam", 120),
-        (f"{HOME}/renders/", 4096),
-        (f"{HOME}/renders/mesh.png", 90_000),
-        (f"{HOME}/README.md", 9),
-        truncated=True,
-    ))
+def test_a_stopped_workspace_is_listed_by_the_service_and_no_machine_is_started(store):
+    backend = StoredWorkspace(stored(*A_STUDYS_ROWS, truncated=True))
 
     listing = Browser(backend, store, home=HOME).tree(HOME, depth=4)
 
-    assert backend.exec_background == [True], "one poll, and nothing sent as work"
+    assert backend.execs == [], "no command at all: not even a poll"
     assert backend.machine_starts == 0
-    assert backend.copy_asked == [(HOME, 4)], "the copy was asked for the same path and depth"
+    assert backend.copy_asked == [(HOME, 4)], "the service was asked for the same path and depth"
     assert isinstance(listing, Listing)
-    assert [e.path for e in listing] == [
+    assert as_the_walk_orders(listing) == [
         f"{HOME}/case", f"{HOME}/renders", f"{HOME}/README.md",
         f"{HOME}/case/log.simpleFoam", f"{HOME}/renders/mesh.png",
     ], "in the walk's order: directories first, then files, parents before children"
     assert all(isinstance(e, Entry) for e in listing)
     picture = next(e for e in listing if e.name == "mesh.png")
     assert (picture.size, picture.mtime, picture.is_dir) == (90_000, 1700000000.0, False)
-    assert listing.truncated is True, "the copy's own cap is carried"
+    assert listing.truncated is True, "the service's own cap is carried"
     assert (listing.limit, listing.root, listing.depth) == (MAX_ENTRIES, HOME, 4)
     assert "capped" in listing.notice
 
 
-def test_with_no_copy_to_read_the_listing_starts_the_machine_as_it_always_did(store):
-    """Somebody asking for a listing is somebody working, and a workspace with no copy
-    to read has exactly one place the answer can come from."""
+def test_a_running_workspace_is_listed_by_the_service_and_no_command_is_sent(store):
+    """The second incident. The listing of a running workspace was a `find` over the
+    exec channel, and that channel caps a command's output at 64 KB, mid-line. The
+    service's route has no such cap and reads the live machine while it is up, so
+    that is the listing -- and the exec channel is not touched, so nothing it might
+    have cut can reach the listing."""
+    backend = StoredWorkspace(stored((f"{HOME}/whole.md", 1)),
+                              running_output=as_find_output((f"{HOME}/cut.md", 2)),
+                              running=True)
+
+    listing = Browser(backend, store, home=HOME).tree(HOME)
+
+    assert backend.execs == [], "the exec channel was not asked"
+    assert backend.copy_asked == [(HOME, 4)]
+    assert [e.name for e in listing] == ["whole.md"], "the service's answer is the listing"
+
+
+def test_the_listing_of_a_running_workspace_is_not_the_exec_channels_cut_one(store):
+    """The incident's own shape, end to end: what the exec channel would have answered
+    is the 64 KB-cut walk whose last row is the study root wearing `zoom.png`'s size,
+    and the listing has none of it."""
+    cut_by_the_channel = (
+        f"d\t4096\t1700000000.0\t{HOME}/mesh\n"
+        f"f\t1631\t1700000000.0\t{HOME}/README.md\n"
+        f"f\t1528155\t1700000000.0\t{HOME}"  # `mesh/zoom.png`, cut after the study id
+    )
+    backend = StoredWorkspace(
+        stored((f"{HOME}/mesh/", 4096), (f"{HOME}/README.md", 1631),
+               (f"{HOME}/mesh/zoom.png", 1_528_155), (f"{HOME}/mesh/overview.png", 88_120)),
+        running_output=cut_by_the_channel, running=True,
+    )
+
+    listing = Browser(backend, store, home=HOME).tree(HOME)
+
+    assert backend.execs == []
+    assert not any(e.path == HOME for e in listing), "no phantom file at the study root"
+    zoom = next(e for e in listing if e.name == "zoom.png")
+    assert (zoom.path, zoom.size, zoom.is_dir) == (f"{HOME}/mesh/zoom.png", 1_528_155, False)
+    assert f"{HOME}/mesh/overview.png" in as_the_walk_orders(listing), "past the cut, and listed"
+    assert not listing.truncated
+
+
+def test_with_no_listing_from_the_service_the_walk_starts_the_machine_as_it_always_did(store):
+    """Somebody asking for a listing is somebody working, and a workspace the service
+    cannot list has exactly one place the answer can come from."""
     backend = StoredWorkspace(None, running_output=as_find_output((f"{HOME}/notes.md", 9)))
 
     listing = Browser(backend, store, home=HOME).tree(HOME)
 
+    assert backend.copy_asked == [(HOME, 4)], "the service was asked first"
     assert backend.exec_background == [True, False], "the poll found nothing; the work followed"
     assert backend.machine_starts == 1
     assert [e.path for e in listing] == [f"{HOME}/notes.md"]
     assert not listing.truncated
 
 
-def test_a_running_workspace_answers_itself_and_the_copy_is_never_asked(store):
-    """The copy is written at checkpoints and stops; a workspace that is up may be
-    ahead of it, and its own answer is the one to use."""
-    backend = StoredWorkspace(stored((f"{HOME}/stale.md", 1)),
-                              running_output=as_find_output((f"{HOME}/fresh.md", 2)))
-    backend.running = True
+def test_with_no_listing_from_the_service_a_running_workspace_answers_itself_by_a_poll(store):
+    """The fallback on a workspace that is up is the poll's own output, as it was: one
+    command, sent as a poll so the workspace is not claimed by a look at its files."""
+    backend = StoredWorkspace(None, running_output=as_find_output((f"{HOME}/fresh.md", 2)),
+                              running=True)
 
     listing = Browser(backend, store, home=HOME).tree(HOME)
 
     assert backend.exec_background == [True], "the poll ran, and its output is the listing"
-    assert backend.copy_asked == []
+    assert backend.machine_starts == 0
     assert [e.name for e in listing] == ["fresh.md"]
 
 
-def test_a_background_poll_of_a_stopped_workspace_still_refuses_to_guess(store):
-    """The unattended cycle is unchanged: it runs every twenty seconds for as long as
-    the process lives, and reading the copy on that clock would be the same listing
-    of the same stopped workspace ~150 times an hour. It waits, as before."""
-    backend = StoredWorkspace(stored((f"{HOME}/notes.md", 9)))
+def test_a_background_listing_takes_the_services_answer_and_starts_nothing(store):
+    """The unattended cycle lists through the service too -- the one path for both
+    states -- and the contract it has always had holds by construction: the route
+    starts no machine and does not count as use of one. What it gains is the whole
+    tree of a running workspace, where the poll over the exec channel held ~850 rows
+    of a 1,532-row study."""
+    backend = StoredWorkspace(A_STUDYS_COPY, running=True)
+
+    listing = Browser(backend, store, home=HOME).tree(HOME, background=True)
+
+    assert backend.execs == [] and backend.machine_starts == 0
+    assert len(listing) == len(A_STUDYS_COPY.entries)
+
+
+def test_a_background_listing_of_a_stopped_workspace_reads_the_copy_and_starts_nothing(store):
+    """A stopped workspace has a copy, and the cycle may read it: nothing is started,
+    and a cycle that finds nothing changed pulls nothing. What it must never do is
+    the thing the poll was invented to prevent, and it does not."""
+    backend = StoredWorkspace(A_STUDYS_COPY)
+
+    listing = Browser(backend, store, home=HOME).tree(HOME, background=True)
+
+    assert backend.execs == [] and backend.machine_starts == 0
+    assert as_the_walk_orders(listing)[0] == f"{HOME}/case"
+
+
+def test_a_background_walk_of_a_stopped_workspace_still_refuses_to_guess(store):
+    """With nothing from the service, a background listing is the poll it always was:
+    it runs only on a workspace that is up, and when nothing is, it says so rather
+    than answering an empty workspace -- and starts nothing."""
+    backend = StoredWorkspace(None)
 
     with pytest.raises(BackendError) as caught:
         Browser(backend, store, home=HOME).tree(HOME, background=True)
 
     assert caught.value.code == "workspace_idle"
-    assert backend.copy_asked == [] and backend.machine_starts == 0
+    assert backend.exec_background == [True], "one poll, and nothing sent as work"
+    assert backend.machine_starts == 0
+
+
+def test_a_listing_asked_during_the_start_waits_for_the_machine_as_it_always_did():
+    """`PendingBackend.list_stored` answers None until the live backend is there, so a
+    listing asked while the workspace is coming up is the walk, and the walk waits
+    for the machine: nothing is read from a copy the machine is about to overtake,
+    and the cost is what it was before -- the start, then the command."""
+    pending = PendingBackend("iid-1")
+    live = StoredWorkspace(stored((f"{HOME}/copy.md", 1)),
+                           running_output=as_find_output((f"{HOME}/fresh.md", 2)), running=True)
+    browser = Browser(pending, home=HOME)
+    answered: dict[str, Listing] = {}
+
+    def ask():
+        answered["listing"] = browser.tree(HOME)
+
+    asking = threading.Thread(target=ask, daemon=True)
+    asking.start()
+    asking.join(0.3)
+    assert asking.is_alive(), "the listing waited for the workspace rather than answering from nothing"
+    assert live.copy_asked == [] and live.execs == []
+
+    pending.resolve(live)
+    asking.join(5.0)
+    assert not asking.is_alive()
+    assert [e.name for e in answered["listing"]] == ["fresh.md"], "the machine's own answer"
+    assert live.exec_background == [False], "the poll was answered idle by the stand-in; the work waited"
+    assert live.copy_asked == [], "no copy was read while the machine was coming up"
+
+    # From here the workspace is up and the service answers first, as for any other.
+    assert [e.name for e in browser.tree(HOME)] == ["copy.md"]
+    assert live.exec_background == [False], "and no further command was sent"
 
 
 def test_the_copy_is_held_to_the_same_cap_and_cut_breadth_first(store):
@@ -218,17 +342,11 @@ def test_a_stand_in_without_the_method_lists_exactly_as_before(store):
 
 
 def test_the_close_down_sync_brings_a_stopped_workspace_home_without_a_machine(store):
-    """The consequence the incident asked for. `sync_now` is the close-down's sync;
-    on a stopped workspace its listing comes from the copy and its files through
-    `get_tree`, which the service serves from the same copy -- so the whole sync stays
-    off the machine, and the machine stays down."""
-    backend = StoredWorkspace(stored(
-        (f"{HOME}/case/", 4096),
-        (f"{HOME}/case/log.simpleFoam", 120),
-        (f"{HOME}/renders/", 4096),
-        (f"{HOME}/renders/mesh.png", 90_000),
-        (f"{HOME}/README.md", 9),
-    ))
+    """The consequence the first incident asked for. `sync_now` is the close-down's
+    sync; on a stopped workspace its listing comes from the service and its files
+    through `get_tree`, which the service serves from the same copy -- so the whole
+    sync stays off the machine, and the machine stays down."""
+    backend = StoredWorkspace(A_STUDYS_COPY)
     for path in (f"{HOME}/case/log.simpleFoam", f"{HOME}/renders/mesh.png", f"{HOME}/README.md"):
         backend.files[path] = b"x"
     live = mirror.LiveMirror(Browser(backend, store, home=HOME), interval_s=0)
@@ -236,8 +354,7 @@ def test_the_close_down_sync_brings_a_stopped_workspace_home_without_a_machine(s
     report = live.sync_now()
 
     assert backend.machine_starts == 0, "nothing was started to take the listing"
-    assert backend.exec_background == [True], "one poll was the only command sent"
-    assert not backend.exec_background.count(False)
+    assert backend.execs == [], "no command was sent, not even a poll"
     assert not report.warnings, report.warnings
     assert {p.name for p in report.pulled} == {"log.simpleFoam", "mesh.png", "README.md"}
     assert sorted(backend.fetched) == sorted(
@@ -255,6 +372,28 @@ def test_the_close_down_sync_says_when_the_copy_was_cut_short(store):
 
     assert any("not looked at" in line for line in report.warnings)
     assert backend.machine_starts == 0
+
+
+def test_a_live_cycle_mirrors_a_running_workspace_from_the_services_listing(store):
+    """The second incident's cost, measured on the mirror: it fetched the phantom
+    root "file" every cycle (`tar?mode=pack&paths=/work/<study>` -> 502/504 each
+    20 s, 04:07 to 04:16) and never saw anything past the cut. Listed by the service,
+    a cycle asks for the files that exist and for nothing else."""
+    backend = StoredWorkspace(
+        stored((f"{HOME}/mesh/", 4096), (f"{HOME}/README.md", 1631),
+               (f"{HOME}/mesh/zoom.png", 1_528_155)),
+        running_output=f"f\t1528155\t1700000000.0\t{HOME}", running=True,
+    )
+    for path in (f"{HOME}/README.md", f"{HOME}/mesh/zoom.png"):
+        backend.files[path] = b"x"
+    live = mirror.LiveMirror(Browser(backend, store, home=HOME), interval_s=20.0)
+
+    report = live._cycle(background=True)
+
+    assert backend.execs == []
+    assert HOME not in backend.fetched, "the study root was never asked for as a file"
+    assert sorted(backend.fetched) == [f"{HOME}/README.md", f"{HOME}/mesh/zoom.png"]
+    assert not report.warnings, report.warnings
 
 
 # -- the hosted backend ----------------------------------------------------------
@@ -310,6 +449,19 @@ def test_list_stored_asks_the_instances_files_route_for_the_whole_tree():
         "path": "/work/st-1", "list": "1", "recursive": "1",
         "entries": str(hosted_mod.STORED_LISTING_LIMIT),
     }, "the path as given, the whole tree, at the route's own ceiling"
+
+
+def test_the_listing_request_is_bounded_in_time():
+    """`FoamdClient.request` given no timeout hands `None` to httpx, which is no
+    timeout at all -- and this request is made every twenty seconds for the life of a
+    session by the mirror's cycles. The `find` it replaced ran under `timeout_s=60`;
+    the listing keeps the same minute."""
+    backend, seen = _backend_against(_workspace_route(A_STUDY))
+
+    backend.list_stored("/work/st-1", 4)
+
+    (request,) = seen
+    assert request.extensions["timeout"]["read"] == hosted_mod.LISTING_TIMEOUT_S == 60.0
 
 
 def test_the_workspace_root_itself_is_listed_from_the_copy():
