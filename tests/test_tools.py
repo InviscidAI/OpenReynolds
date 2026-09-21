@@ -325,6 +325,17 @@ def test_job_start_records_it_locally(ctx, backend, store):
     assert backend.started[0]["kill_on"] == ["FOAM FATAL"]
 
 
+def test_job_start_refuses_a_kill_pattern_that_matches_the_trapfpe_banner(ctx, backend):
+    content, _ = dispatch(
+        ctx, "job_start", {"cmd": "simpleFoam", "kill_on": ["Floating point exception"]}
+    )
+
+    assert not backend.started
+    assert content.startswith("not started:")
+    assert "trapFpe" in content
+    assert "trapping enabled" in content
+
+
 RESTARTING_DICT = b"""\
 FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
 application     pimpleFoam;

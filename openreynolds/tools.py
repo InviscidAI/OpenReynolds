@@ -355,7 +355,9 @@ TOOLS: list[dict[str, Any]] = [
                     "items": {"type": "string"},
                     "description": (
                         "Regexes matched against log lines. The first match terminates "
-                        "the job and the matching line is reported back. Optional."
+                        "the job and the matching line is reported back. Optional. Do not "
+                        "use a broad `Floating point exception` pattern: OpenFOAM prints "
+                        "that phrase in its harmless trapFpe startup banner."
                     ),
                 },
                 "overwrite": {
@@ -1000,6 +1002,18 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
     refusal = _restart_guard(ctx, args)
     if refusal:
         return refusal
+    trapfpe_banner = "trapFpe: Floating point exception trapping enabled"
+    for pattern in args.get("kill_on") or []:
+        try:
+            matches_banner = re.search(pattern, trapfpe_banner)
+        except re.error as exc:
+            return f"not started: invalid kill_on regex {pattern!r}: {exc}"
+        if matches_banner:
+            return (
+                f"not started: kill_on regex {pattern!r} also matches OpenFOAM's harmless "
+                f"startup line `{trapfpe_banner}`. Anchor or narrow the regex so the job "
+                "is killed only by an actual crash line."
+            )
     job_id = ctx.backend.job_start(
         args["cmd"],
         cwd=args.get("cwd") or ctx.home,
