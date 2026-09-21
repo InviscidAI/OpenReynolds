@@ -24,6 +24,8 @@ from .base import (
     ExecResult,
     JobStatus,
     Stat,
+    StoredEntry,
+    StoredListing,
 )
 from .pending import PendingBackend
 
@@ -118,6 +120,15 @@ _SANDBOX_GONE_MAX_WAIT_S = 15.0
 `Retry-After` is honoured verbatim by `_retry_delay`, which is right for a header the
 service chose; this bounds what a header nobody is watching can cost a tool call that
 is already slow. At the 5 seconds foamd sends, the cap never binds."""
+
+STORED_LISTING_LIMIT = 5000
+"""The most entries `GET /v1/studies/{id}/workspace` will list in one answer.
+
+The route's own ceiling (`OpenFoam_Instance/app/workspace.py`, `MAX_ENTRIES`; a
+`limit` above it is a 422, not a bigger answer), and asked for in full because the
+answer is one whole tree rather than a walk to a depth: `browse.MAX_ENTRIES` is cut
+on this side, after the depth is applied, and asking for less here would cut the tree
+before the depth had been looked at."""
 
 _MAX_ATTEMPTS = 5
 _DEFAULT_RETRY_AFTER_S = 10.0
@@ -743,6 +754,32 @@ class FoamdClient:
         """One study as the platform holds it: title, instance_id, home, created_at."""
         return _json(self.request("GET", f"/v1/studies/{study_id}"))
 
+    def list_workspace(self, study_id: str, path: str = "") -> dict[str, Any]:
+        """The study's files as the service's own copy of the workspace holds them.
+        No instance is started, whatever state the workspace is in.
+
+        `path` is "" for the study's root, a path relative to it (`case/system`), or
+        a workspace-absolute one (`/work/<study>/case/system`) -- the spelling every
+        other surface uses -- and the answer is the same either way: `root` is the
+        study's home, `entries` are workspace-absolute (`path`, `is_dir`, `size`,
+        `mtime`) and `truncated` says whether the copy held more than
+        `STORED_LISTING_LIMIT`. Recursive and not depth-limited: the whole tree under
+        `path`, or the first `limit` entries of it.
+
+        Two refusals are facts about the ask rather than the service: a path outside
+        the study's own directory is a 400 (the copy holds every study the instance
+        ever ran, and this route shows one), and a study whose workspace was never
+        written to the copy -- or whose row predates the id being recorded -- is a
+        404. Both arrive as the `BackendError` `request` makes of them, unretried.
+        """
+        return _json(
+            self.request(
+                "GET",
+                f"/v1/studies/{study_id}/workspace",
+                params={"path": path, "recursive": 1, "limit": STORED_LISTING_LIMIT},
+            )
+        )
+
     def list_studies(self) -> list[dict[str, Any]]:
         return _json(self.request("GET", "/v1/studies"))
 
@@ -786,10 +823,63 @@ class HostedBackend(Backend):
 
         0 means nobody counted rather than "the account holds none": `acquire` given
         an explicit instance id never lists, because there was no choice to make."""
+        self.study_id: str | None = None
+        """Which study this session is serving, as the platform names it. Set by the
+        session once it has opened or resumed the study's row (`cli.session`); the
+        service keeps its copy of the workspace per study, so `list_stored` cannot
+        ask without it and answers None until it is told."""
 
     def shutdown(self) -> None:
         """Put the container down. The volume is untouched, so nothing is lost."""
         self._client.stop_instance(self.instance_id)
+
+    def list_stored(self, path: str, depth: int) -> StoredListing | None:
+        """This study's files from the service's own copy of the workspace, cut to
+        `depth`. None when there is nothing to ask, or the ask did not work.
+
+        The copy is what the service writes at every checkpoint and stop, and
+        `GET /v1/studies/{id}/workspace` reads it whether or not a machine is up --
+        the same copy `get_file` and `get_tree` are served from once the workspace
+        is stopped, so a sync that lists this way stays off the machine end to end.
+        The route answers the whole tree, so the caller's depth is applied here,
+        counted from `path` as `find -maxdepth` counts it.
+
+        Every failure is None and none of them is raised: this is asked on the way
+        out of a session by a caller that has a machine to fall back on, and the
+        one thing it must not do is turn a listing into an exception. A 400 is a
+        path outside the study (the workspace root itself, for a study that predates
+        homes); a 404 is a workspace never written to the copy, or a service without
+        the route; the rest is the network. In each case the fallback is what always
+        happened -- a foreground `exec`, which may start the workspace -- so nothing
+        is lost by being quiet here, only the saving.
+        """
+        if not self.study_id:
+            return None
+        try:
+            body = self._client.list_workspace(self.study_id, path)
+            root = str(body.get("root") or "").rstrip("/")
+            # Relative to the same root the answer is: the route resolved a relative
+            # `path` against the study's home, and its entries say so in full.
+            anchor = path if path.startswith("/") else f"{root}/{path.strip('/')}"
+            base = anchor.rstrip("/") + "/"
+            entries = []
+            for item in body.get("entries") or []:
+                where = str(item.get("path") or "")
+                if not where.startswith(base):
+                    continue
+                if where[len(base):].count("/") >= int(depth):
+                    continue  # deeper than asked: `a/b` under `base` is depth 2
+                entries.append(
+                    StoredEntry(
+                        path=where,
+                        is_dir=bool(item.get("is_dir")),
+                        size=int(item.get("size") or 0),
+                        mtime=float(item.get("mtime") or 0),
+                    )
+                )
+            return StoredListing(entries, truncated=bool(body.get("truncated")))
+        except Exception:  # noqa: BLE001 - see docstring: None, never an exception
+            return None
 
     def active_jobs(self) -> list[dict[str, Any]]:
         """What is still running on this instance, whoever started it (F-46).

@@ -285,7 +285,8 @@ A background mirror copies the study's directory down to your machine while the 
 runs, and fires immediately whenever the agent looks at an image, so a render you are
 about to be shown is already local. Remote deletions are not propagated home, which is
 deliberate: a local copy of something the agent cleaned up is a recovered file, not a
-bug.
+bug. A session ending on a workspace the service has already stopped syncs from the
+service's own copy of it rather than starting a machine to be listed.
 
 Rendering happens on the instance, beside the data, because moving gigabytes home to
 make a hundred-kilobyte picture is the wrong way round. Frames come home and
