@@ -153,7 +153,10 @@ class DeskRun:
             last = steps[-1]
             first = (last.cmd or "").strip().splitlines()
             head = first[0][:80] if first else ""
-            line += f"; last command `{head}` exited {last.exit_code}"
+            if last.exit_code is None:
+                line += f"; last command `{head}` was moved to a detached job"
+            else:
+                line += f"; last command `{head}` exited {last.exit_code}"
             line += ", with a picture" if last.image else ", no picture"
         return line
 

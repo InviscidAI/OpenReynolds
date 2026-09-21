@@ -8,6 +8,67 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **A `bash` command the workspace moved to a job no longer comes back as `exit_code:
+  0`; the call waits the job out for the rest of its `timeout_s`, and a command still
+  running when that is up says so in its first line.** The hosted service caps a
+  synchronous exec at 120 s (`FOAMD_SYNC_EXEC_MAX_S`); a command still running there,
+  whose caller asked for longer, is started again from scratch as a detached job and the
+  answer is `{exit_code: null, promoted: true, job_id, output, note}`
+  (`OpenFoam_Instance/app/execs.py`, `spec/openapi.yaml`). `HostedBackend.exec` turned
+  that into `ExecResult(exit_code=0, output=note, job_id=...)`, and `_bash` printed the
+  zero first and the note about the job second. Measured in production on 2026-09-21
+  (study 20260921-033019-e1b4, workspace 35c9f018): `bash sleep 240; ls -R .../mesh |
+  head -40` at 03:37:36, `bash sleep 200; ... grep "^Time =" log.pisoFoam | tail -1` at
+  03:48:23 and `bash sleep 180; ... tail -3 log.recon` at 04:04:22, each asked with
+  `timeout_s=300`, each answered after the 120 s window, and each transcript row reads
+  `-> exit_code: 0` for a command that was still running (jobs 808edf10, 5432459d,
+  e839ac57). The model read three commands that had finished with no output: it
+  `job_check`ed the first once, two seconds in (a wait answered at 0 s by the put-back
+  line #41 fixed), and none of them again, and paced the rest of the study with `bash
+  sleep` calls of 60-115 s. Nothing on the control plane read the jobs either -- a row was only
+  reconciled by a `GET /jobs/{id}` or by the reaper once the workspace had gone idle --
+  so the three rows read `running` for 46, 35 and 20 minutes after their commands had
+  ended, until the 04:27 sweep closed them off the store. foamd #55 fixed the service's
+  half (the promoted job is watched and its row closed with the real exit code); this is
+  the agent's. `ExecResult` carries the truth: `exit_code=None`, a new `promoted` flag,
+  `job_id`, and `output` as what the synchronous run had produced (empty from today's
+  service; carried in case that changes), with the wrapper's `stderr` through -- never
+  `exit_code=0`. `EXEC_SYNC_WINDOW_S = 120` joins `EXEC_MAX_TIMEOUT_S` on the protocol,
+  because the tool states the number to the model. `_bash` on a promoted answer records
+  the job as the session's (`store.record_job`, the way `job_start` does) and follows it
+  for what is left of the caller's own `timeout_s` -- the same held wait `job_check
+  wait_s` makes (`_hold`, now the one loop behind both), ended by the same things: the
+  job ending, the time running out, the person writing (`ToolContext.on_wait_input`,
+  #41) or leaving (`on_leaving`, #43). A job that ends in time is the command's result:
+  `exit_code: <the job's>` first, a note naming the job and the two spans (`moved to
+  job <id> at 120s ... waited 130s more`), the job's status line and its log as the
+  output. One still running when the time is up, or when the wait was cut, leads with
+  the fact -- `still running as job <id> (promoted after 120 s; 180 s waited)` -- then
+  the mechanism, `job_check <id>` as what follows it and "not a command to run again",
+  the wait's own note when the person wrote or left (the written one says `job_check`,
+  not "call bash again": `bash` again would run the command a third time), the job's
+  status line and the log so far. Never `exit_code: 0`. The record's `log_offset` is
+  where this left the log, so the model's `job_check <id>` continues rather than
+  repeats; a job handed back still running stays `running` in the record, so the watch
+  loop polls it and wakes the model when it ends -- the poll that never happened. A
+  status or log that could not be read is a note under the first line, which stands.
+  The `bash` description says that a command still running at 120 s may become a job
+  the call waits on and what the two answers look like, as a fact about the workspace
+  (the local backend never promotes: it runs a command to its `timeout_s`, and nothing
+  there changed). The mesh desk's step observation, which asked for 240 s and read the
+  same shape, says `no exit code yet: running as job <id>` where it would now have said
+  `exit None`. Unchanged: a `timeout_s` at or under 120 (the service never promotes
+  it), `-1` and its note, truncation, `[took Ns]`, the workspace `stderr` note, `idle`.
+  Tests: the hosted backend on the service's promoted answer (direct, through the
+  edge's 303, with `stderr` and output through, the other three shapes untouched);
+  `_bash` with `timeout_s=300` on a promotion under a hand-turned clock -- the job ends
+  with rc 0 and a log (`exit_code: 0`, the log, the job named, `[took 130s]`, the record
+  closed), ends with rc 1 (`exit_code: 1`), outlives the caller's timeout (the first
+  line, `job_check <id>`, the log so far, exactly 300 s held, the record left running),
+  is cut by the person writing and by the person leaving (the same notes the other waits
+  carry), has no time left after the exec, cannot be read; the first run's output kept
+  apart from the job's log; a `timeout_s` within the window byte-identical to before;
+  the description's words and register.
 - **The workspace is listed by the service, running or stopped; the `find` over the
   exec channel is the fallback, and a cut output can no longer invent a file.**
   `Browser.tree` listed a workspace with `find ... | sort | cut | head -n 4001` over

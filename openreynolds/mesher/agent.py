@@ -95,7 +95,9 @@ class Step:
     """One lap, as the record keeps it."""
 
     cmd: str
-    exit_code: int
+    exit_code: int | None
+    """None when the workspace moved the command to a detached job before it ended
+    (`ExecResult.promoted`): there is no exit code yet, and the job has it."""
     seconds: float
     output: str = ""
     image: str = ""
@@ -379,7 +381,13 @@ class Mesher:
                       f"running detached as job {outcome.job_id}. Poll its log with "
                       "`tail`; do not start it again.")
         body = _clip(output, OUTPUT_CHARS)
-        head = f"exit {outcome.exit_code} ({seconds:.0f} s)"
+        if outcome.exit_code is None:
+            # A promoted command has no exit code here -- the job has it. `exit None`
+            # would be read as a number, and `exit 0` (what the backend used to say
+            # for this shape) as a mesh that was built.
+            head = f"no exit code yet: running as job {outcome.job_id} ({seconds:.0f} s)"
+        else:
+            head = f"exit {outcome.exit_code} ({seconds:.0f} s)"
         if outcome.truncated and outcome.log_path:
             head += f"; output cut, all of it is at {outcome.log_path}"
         blocks: list[dict[str, Any]] = [{"type": "text", "text": f"{head}\n{body}".rstrip()}]

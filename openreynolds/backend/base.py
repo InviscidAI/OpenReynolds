@@ -19,12 +19,29 @@ EXEC_MAX_TIMEOUT_S = 300
 """Ceiling the protocol advertises for a synchronous command. Backends may enforce it;
 work that outlives it belongs in a job."""
 
+EXEC_SYNC_WINDOW_S = 120
+"""How long a backend holds a synchronous command before it may stop waiting and move
+the command to a detached job instead (`ExecResult.promoted`).
+
+The hosted workspace does exactly that, at this many seconds, for a command whose
+caller asked for longer: it starts the command again from scratch as a job and answers
+with the job's id, because a connection held past about 150 s is cut by the edge in
+front of it. The local backend never does -- it runs a command to its `timeout_s` --
+so a caller that asks for more than this has to be ready for either answer. Here
+rather than in the hosted module because the tool that runs commands states the
+number to the model, and a fact a description states has to have one home."""
+
 
 @dataclass(frozen=True)
 class ExecResult:
     """Outcome of a synchronous command."""
 
-    exit_code: int
+    exit_code: int | None
+    """What the command exited with. -1 is a backend's sentinel for "no exit status was
+    reported" -- a command killed at its timeout. None only with `promoted`: the command
+    has no exit code HERE because it belongs to a job now, and the job's status is where
+    the code will appear. It used to be 0 on that shape, which is the one number every
+    reader takes for "it finished, and it worked"."""
     output: str
     """Combined stdout+stderr, already capped by the backend."""
     truncated: bool
@@ -48,6 +65,20 @@ class ExecResult:
     empty listing is the most convincing wrong answer a file mirror can be given.
     `output` is empty and `exit_code` says nothing; the only correct reading is
     "ask again later"."""
+    promoted: bool = False
+    """The command was still running at the backend's synchronous window
+    (`EXEC_SYNC_WINDOW_S`) and the backend started it again from scratch as a detached
+    job: `job_id` names it, `exit_code` is None, and `output` is whatever the
+    synchronous run had produced by then (the hosted service sends none of it today).
+
+    Neither a failure nor a result. The hosted backend used to hand this shape back as
+    `exit_code=0` with the service's note for output, and the `bash` tool printed
+    `exit_code: 0` as its first line: measured in production on 2026-09-21 (study
+    20260921-033019-e1b4, workspace 35c9f018), `sleep 240`, `sleep 200` and `sleep 180`
+    each came back that way while still running (jobs 808edf10, 5432459d, e839ac57).
+    The model read three commands that had finished with no output, and never polled
+    the jobs. A flag of its own, so that no reader has to infer the state from a job id
+    beside a zero."""
 
 
 @dataclass(frozen=True)
