@@ -94,13 +94,18 @@ def test_a_run_with_nobody_watching_is_told_so(backend, store):
 
 def test_the_briefing_stays_short(backend, store):
     """It is prepended to every session. Things that turned out to be worth saying
-    accumulate, and the point at which nobody reads it is a real point."""
+    accumulate, and the point at which nobody reads it is a real point.
+
+    The bound was 4000 until 2026-09-21, when the briefing gained the paragraph on
+    reading a solve (`convergence.SOLVE_NOTE`, ~1500 characters with its three example
+    sentences); the five studies that earned it the room are quoted in that module.
+    Growth past this bound is a decision to take on purpose, as that one was."""
     a_workspace(backend, *[f"/work/s/case{n}" for n in range(60)])
     store.session.home = "/work/s"
 
     brief = brief_for(backend, store)
 
-    assert len(brief) < 4000, "the briefing has grown past a screenful"
+    assert len(brief) < 5000, "the briefing has grown past a screenful"
     assert "and 20 more" in brief, "a long listing is summarised rather than dumped"
 
 
@@ -173,6 +178,37 @@ def test_no_note_means_no_mention_of_one(backend, store):
     a_workspace(backend)
     brief = brief_for(backend, store)
     assert "standing note" not in brief
+
+
+# -- how a solve is read and reported ----------------------------------------------
+
+
+def test_every_briefing_says_what_a_stalled_residual_is(backend, store):
+    """Four studies in five told the person a plateau was a run that "did not
+    converge" (`openreynolds/convergence.py` quotes them). The line between a stall and
+    a failure is said in every session, in the harness's voice, ahead of the person's
+    own note so the note is read against it."""
+    from openreynolds import convergence
+
+    for shape, brief in every_shape_of_briefing(backend, store):
+        assert convergence.SOLVE_NOTE in brief, f"the {shape} briefing lacks the solve note"
+        assert brief.count("did not converge") == 1, "the failure words, once, as the words ruled out"
+
+    a_workspace(backend)
+    store.session.home = "/work/mine"
+    brief = brief_for(backend, store, preferences="Quick look only.")
+    assert brief.index(convergence.SOLVE_NOTE) < brief.index("In their own words:")
+
+
+def test_the_solve_note_comes_before_the_workspace_when_the_workspace_is_late(backend, store):
+    """A session running ahead of its workspace still gets the note in its briefing;
+    it does not wait for the machine."""
+    from openreynolds import convergence
+
+    store.session.home = "/work/mine"
+    brief = brief_for(backend, store, starting_eta_s=30.0)
+    assert convergence.SOLVE_NOTE in brief
+    assert "still starting" in brief
 
 
 # -- what the other directories on the volume are ------------------------------

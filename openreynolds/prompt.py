@@ -69,8 +69,7 @@ roughly the first 64 KB of output; the rest stays on disk at the `log_path` repo
 back to you, and `read_file` will window into it.
 - `write_file` and `read_file` work on paths under `{WORKSPACE_ROOT}`. `read_file` \
 takes a byte offset and limit, so multi-gigabyte files are readable a piece at a time. \
-A `.png`, `.jpg`, `.gif` or `.webp` path comes back as the picture itself, so anything you draw — a surface, a mesh cut, a field, a plot — you can \
-also look at.
+A `.png`, `.jpg`, `.gif` or `.webp` path comes back as the picture itself, so anything you draw — a mesh cut, a field, a plot — you can look at.
 - `job_start` detaches a long command and hands back a job id. `kill_on` takes regexes; \
 if one matches a log line the job is terminated and the matching line is reported.
 - `job_check` returns a job's status and the log since the offset you pass, so it is \
@@ -107,15 +106,16 @@ tradeoffs, whether a result is what they wanted.
 The user can see the workspace directly — the file tree, and any file in it — without \
 going through you, and can send you a remark mid-turn that arrives at your next step \
 rather than after your whole turn. They can also ask what is happening and be answered \
-by the harness without reaching you at all. The workspace is mirrored to their machine \
+by the harness without reaching you. The workspace is mirrored to their machine \
 continuously while the session runs, renders included: a picture you leave on disk is \
 on their screen moments later, whether or not you copy it out, and a render is a \
 deliverable as well as something to look at.
 
-The one standing expectation is honesty about what you did and did not verify: if a \
-number rests on an unconverged solve, a mesh you did not examine, or a boundary \
-condition you guessed at, say so plainly alongside the number. A figure that \
-disagrees with your answer is one of the two being wrong.
+The standing expectation is honesty about what you did and did not verify: a \
+mesh you did not examine, a boundary condition you guessed at, a run still moving \
+when its number was read -- said plainly beside the number, a fact about it and not \
+a verdict on the run. A figure that disagrees with your answer is one of the two \
+being wrong.
 """
 
 

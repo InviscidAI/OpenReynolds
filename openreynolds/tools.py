@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from . import images
+from . import convergence, images
 from . import trace
 from .mesher.background import DeskRun, mesh_text
 from .progress import case_dir_from_cmd, parse_control_dict, phase_from_cmd
@@ -988,13 +988,20 @@ def _solve_shape(ctx: ToolContext, args: dict[str, Any]) -> str:
     `endTime` to speak of. A note that appears only sometimes is a note worth reading.
     """
     cmd = args.get("cmd") or ""
-    if phase_from_cmd(cmd)[0] != "solving":
+    phase, executable = phase_from_cmd(cmd)
+    if phase != "solving":
         return ""
+    # A steady solver's residuals on an unsteady flow level off and stay there, and a
+    # model not told to expect that read the plateau as a failed run in four studies
+    # of five (`convergence`). Said at the launch, because the residuals are the next
+    # thing it reads; said for steady solvers only, because a transient's per-step
+    # residuals do not have this shape.
+    steady = f" [{convergence.STEADY_LAUNCH_NOTE}]" if convergence.is_steady_solver(executable) else ""
     case = case_dir_from_cmd(cmd, args.get("cwd") or ctx.home)
     try:
         text = ctx.backend.get_file(f"{case}/system/controlDict").decode("utf-8", "replace")
     except Exception:  # noqa: BLE001 - a missing dict is not a failed launch
-        return ""
+        return steady
     control = parse_control_dict(text)
     parts = []
     end, every = control.get("endTime"), control.get("writeInterval")
@@ -1022,7 +1029,8 @@ def _solve_shape(ctx: ToolContext, args: dict[str, Any]) -> str:
         parts.append(f"purgeWrite {purge} (only the last {purge} write times are kept on disk)")
     parts.append(_load_per_rank(ctx, cmd, case))
     parts.append(_study_age(ctx))
-    return f" [{', '.join(p for p in parts if p)}]" if any(parts) else ""
+    shape = f" [{', '.join(p for p in parts if p)}]" if any(parts) else ""
+    return shape + steady
 
 
 def _study_age(ctx: ToolContext) -> str:

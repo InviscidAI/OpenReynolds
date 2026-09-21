@@ -8,6 +8,72 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **A steady solver's residuals levelling off on an unsteady flow is no longer reported
+  to the person as a run that "did not converge".** The owner, after five solving
+  studies in three days: "In each solve I just wanted a quick look, not a mesh
+  independence study, why is it that every time it kept telling me it couldn't
+  converge??? ... Nothing converges is it?" -- and, once the transcripts were read
+  back to him: "if it's never gonna converge it doesn't mean it's physically
+  inaccurate! But the way it's phrased it's always so negative." Read with the
+  operator tool (`OpenFoam_Instance/scripts/study_log.py`), not one of the five had
+  diverged, and every mesh was checkMesh OK (max non-orthogonality 30-38, skewness
+  0.6-1.9). What happened, and what was said: (a) 20260919-041432-e0b6, a laminar
+  backward-facing step at Re_S = 800 under `simpleFoam` -- the Ux residual sat at
+  2.2e-2..3.2e-2 from iteration 250 to 30,000, on two meshes (9k, 23k cells), at
+  relaxation down to p 0.2 / U 0.4, first- and second-order, eight solver runs in all;
+  the flow is past the 2D Hopf bifurcation, so the plateau is the physics. Headline:
+  "**The headline, honestly: at Re_S = 800 there is no steady solution to converge
+  to.**"; README column "converged?" answered "no (res. floor 1.5e-2)" three times.
+  (b) 20260920-155504-4379, the "Inviscid AI" text under `simpleFoam` k-omega SST,
+  106,716 cells, Re 6.7e4, 2000 iterations in 157 s -- Ux 1.2e-2..2.0e-2, Uy
+  3.6e-2..5.1e-2, p 3.0e-2..3.9e-2 from iteration 200 to 2000, flat, no bounding; the
+  pictures were made from that field. Told: "**Honesty:** the run did **not**
+  converge -- residuals plateau at ~1e-2 ... The fields are a frozen pseudo-transient
+  snapshot ... treat them as +/-25%." (c) 20260920-161908-c7ef, the same text under
+  `pimpleFoam`, 0 -> 0.8 s in 22 min, per-step residuals Ux 5e-5 / p 4e-2 (a
+  transient's normal shape): "take Cd as +/-20-30%, not converged. One mesh, no
+  independence study", with "Mesh independence -- 3 meshes ... ~1.5 h" first among the
+  offered follow-ups; nobody had asked for one. (d) 20260921-033356-076b, `pimpleFoam`
+  at Re 6.7e3, stopped by the person at t = 1.48 s ("just plot whats there already"),
+  no bounding, Co max 2.4: the gif was delivered, then "Cd ... **Not converged and not
+  trustworthy.**", "Strouhal number: **I will not quote one.**", a figure titled "NOT
+  statistically converged". (e) 20260921-033019-e1b4, `pisoFoam` laminar at Re 200:
+  clean, one line about "no grid-refinement check". Three senses of "converge" -- a
+  steady residual, a grid, a time average -- reached the person as one message, four
+  times in five. Every diagnosis was accurate; the framing turned the physics into a
+  confession. Where it came from: the system prompt's one sentence on the subject
+  named "an unconverged solve" as the first thing to be honest about (the "Honesty:"
+  headers in (a), (b) and (c) are that sentence answered); nothing told the model what
+  a stall is, that a bluff body under a steady solver stalls by nature, or what a
+  quick look may take from a stalled field; no residual tolerance in the harness was
+  involved (none of the five cases used `case_gen.py`'s `residualControl`) and no
+  mesh-quality gate sent anything back to remeshing. The change is guidance, in the
+  places the model reads at the right moment, plus the one summariser that had the
+  negative wording built in: `openreynolds/convergence.py` holds the line -- a stall on
+  an unsteady flow or a plateau around 1e-4..1e-3 on a first look is a physically
+  meaningful field, reported as what the flow is doing with the residual in one neutral
+  clause; failure words are for a residual that climbs, a floating point exception, a
+  field the solver keeps bounding or a mesh checkMesh rejects, with what failed and what
+  would fix it; a transient window or a mesh study is offered, not started unasked --
+  with an example sentence of each kind, and the briefing carries it in every session
+  (`cli._situation_brief`). The system prompt's honesty sentence now names "a run still
+  moving when its number was read" as "a fact about it and not a verdict on the run".
+  `job_start` on a steady solver (`simpleFoam` and its kin, told by name) adds one
+  clause to the launch note: its residuals level off rather than fall on an unsteady
+  flow, and the levelled-off field is a snapshot worth showing, not a failed run.
+  `toolbox/log_digest.py` read every run that reached its end without the solver's own
+  "converged" message as "ran to the end of controlDict without reporting convergence"
+  -- the same words for a plateau on a shedding wake as for a residual climbing towards
+  an exception; it now reads the residual series (`residual_shape`: diverging, still
+  falling, levelled, or too short to say) and says which, e.g. "residuals: levelled off
+  (Ux ~1.5e-02, p ~3.0e-02) from about step 200 and stayed there -- a plateau, not a
+  divergence", against "residuals: climbing (Ux best 1.6e-05, last 1.8e+01) -- this run
+  is diverging, not converging slowly, and the last field is not one to show"; the
+  climbing/blow-up thresholds are the ones `preflight.py`'s residual gate already used,
+  now shared. No solver default changed: the runs were right. Tests pin the guidance
+  text (the failure words appear once, as the words ruled out; no imperative workflow
+  language), the briefing and launch note carrying it, and the digest's reading of a
+  steady stall, a divergence, a still-falling series and a run sitting at its floor.
 - **The workspace listing is breadth-first, so the cap falls in the solver's bulk, not
   on the pictures.** `Browser.tree` ran `find | head -n 4001`, and `find` walks
   depth-first in directory order. In a transient study (20260920-161908-c7ef, in

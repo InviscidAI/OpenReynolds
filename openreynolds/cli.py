@@ -27,7 +27,7 @@ from .browse import Browser
 from . import casebundle
 from .capture import Capture
 from . import commands, images, mesher, switch
-from . import modes
+from . import convergence, modes
 from .approval import Approver
 from .llm.presets import EFFORTS, models_for
 from .config import Config, config_path
@@ -1946,6 +1946,12 @@ def _situation_brief(
         # staging, 2026-09-18 -- so they are asked together and the briefing waits for
         # the slower of the two.
         lines.extend(_workspace_facts(store, backend, resuming, browser))
+    # How a solve is read and reported: a residual that levels off on an unsteady flow
+    # is not a failed run, and the person hears "did not converge" as one
+    # (`convergence.SOLVE_NOTE` carries the five studies that measured it). Said in
+    # every session, ahead of the person's own note, because the standing expectation
+    # of honesty in the system prompt was being met with confessions.
+    lines.append(convergence.SOLVE_NOTE)
     if preferences:
         # The user's standing note, in the user's voice. The harness relays it
         # verbatim and adds nothing: what to do about it stays the model's call,
