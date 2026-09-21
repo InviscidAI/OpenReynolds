@@ -941,7 +941,12 @@ class LiveMirror:
         background cycles by the same lock.
 
         Foreground by definition: something asked for it, so the workspace is in use
-        and may be started if it is not up."""
+        and may be started if it is not up -- but only when there is nothing else to
+        read. On a backend that keeps a copy of the workspace, a foreground listing
+        that finds nothing running reads the copy (`Browser.tree`), and the files
+        follow from the same copy, so the close-down sync of a session whose
+        workspace the service has already stopped no longer starts a machine to
+        list what it can be told."""
         return self._cycle()
 
     def catch_up(self) -> MirrorReport | None:

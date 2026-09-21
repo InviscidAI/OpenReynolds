@@ -19,6 +19,28 @@ All notable changes to this project are recorded here. The format follows
   prints each entry's depth, sorts on it (stably) and strips it again before the cap:
   every shallow entry precedes any deep one, and the cut, when there is one, lands
   among the deepest. The cap and its notice are unchanged.
+- **The close-down of a session whose workspace has already been stopped no longer
+  starts a machine to list it.** The final sync begins with a listing (`Browser.tree`,
+  a `find` over the exec channel), and a foreground exec on a hosted workspace the
+  service had stopped lazy-starts a new one to run it. In production on 2026-09-21
+  (issue #37, item 1) an idle-timed-out session's close-down started a c7i.2xlarge at
+  02:24:32 -- the workspace had been reaped at 01:31 -- listed the files, and the
+  machine then sat until the reaper took it down again at 02:42: eighteen minutes of
+  instance for one listing. The service keeps a copy of the workspace, written at every
+  checkpoint and stop, and once the workspace is stopped it already serves `get_file`
+  and `get_tree` from it; `GET /v1/studies/{id}/workspace` lists it. So a foreground
+  listing is now asked as a poll first (`background=True`, which never starts
+  anything and does not count as use of the workspace); when the poll finds nothing
+  running, the listing is read from the copy (`Backend.list_stored`, which
+  `HostedBackend` answers through that route, cut to the depth asked, capped and
+  ordered as the walk's is); and the machine is started only when there is no copy
+  to read -- which is what a foreground listing always did, and is still right when
+  somebody is working. The session tells the workspace which study it serves for
+  this (`Backend.study_id`, set when the study's row is opened or resumed, and
+  carried through the `PendingBackend` stand-in). Unchanged: a running workspace's
+  own listing is used and the copy is never asked; the background cycles still wait
+  out a stopped workspace rather than read it every twenty seconds; a local backend,
+  and a study with no row on the platform, list exactly as before.
 
 ### Changed
 

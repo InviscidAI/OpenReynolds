@@ -1365,6 +1365,18 @@ def session(
             if capture:
                 store.session.remote_study_id = capture.study_id
                 store.save()
+    if store.session.remote_study_id:
+        # The workspace is told which study it is serving, under the platform's own
+        # name for it: the row just opened, or the one this study was resumed on
+        # (recorded here, or read back by `_recover_session`). It is what lets a
+        # listing be answered without a machine -- the service keeps its copy of the
+        # workspace per study, and `Browser.tree` reads it under this id when a poll
+        # finds nothing running (`Backend.list_stored`). The close-down sync of an
+        # idle-timed-out session used to start a machine for exactly that listing.
+        # A workspace still coming up holds the id and hands it to the live backend
+        # when it arrives (`PendingBackend.resolve`); a study with no row -- capture
+        # off, and never on -- is told nothing, and lists as it always did.
+        backend.study_id = store.session.remote_study_id
 
     ctx = ToolContext(
         backend=backend,

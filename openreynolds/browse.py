@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .backend.base import WORKSPACE_ROOT, Backend, BackendError
+from .backend.base import WORKSPACE_ROOT, Backend, BackendError, StoredListing
 from .store import Store
 
 MAX_ENTRIES = 4_000
@@ -162,6 +162,21 @@ class Browser:
         workspace already up, and it does not keep that workspace alive. Raises
         BackendError("workspace_idle") when there is nothing running -- which is a
         thing to wait out, not an empty workspace.
+
+        A foreground listing is asked as a poll first, too, on a backend that keeps
+        a copy of the workspace (`Backend.list_stored`). When the poll ran, its
+        output is the listing, exactly as before. When it found nothing running, the
+        copy is read instead, and the machine is started only when there is no copy
+        to read -- which is what a foreground listing always did, and is still right
+        when somebody is actually working. What this changes is the listing on the
+        way out of a session: the close-down sync listed through a foreground `exec`,
+        and on a hosted workspace the service had already stopped that started a
+        fresh machine to run one `find` (2026-09-21, 02:24:32: a c7i.2xlarge adopted
+        from the pool for an idle-timed-out session's final sync, then left to sit
+        until the reaper took it down at 02:42 -- eighteen minutes of instance for
+        an answer the service holds in the copy it writes at every stop). The files
+        themselves already came from that copy once the workspace was stopped; the
+        listing was the one call that did not.
         """
         path = path or self.home
         # `-H` follows a symlink named on the command line, and only that one. The
@@ -175,7 +190,27 @@ class Browser:
             f"find -H {shlex.quote(path)} -maxdepth {int(depth)} -mindepth 1 "
             f"-printf '%d\\t{FIND_FORMAT}' 2>/dev/null {LIST_PIPELINE}"
         )
-        result = self.backend.exec(cmd, timeout_s=60, background=background)
+        # `hasattr` rather than the protocol's word: every backend in the package has
+        # `list_stored` (the protocol gives it a default), and a stand-in that predates
+        # it -- a test's, or an embedder's -- lists as it always did.
+        if background or not hasattr(self.backend, "list_stored"):
+            result = self.backend.exec(cmd, timeout_s=60, background=background)
+        else:
+            # The poll, on a workspace that is up, runs the same `find` and answers
+            # the same lines; the one thing it does not do is count as use of the
+            # workspace -- the service leaves its last-activity clock alone for a
+            # poll -- and that is right for a listing. What keeps a workspace alive
+            # is the work done on it, and a look at the files is not work; the
+            # commands and copies that follow a listing somebody asked for still
+            # count exactly as they did.
+            result = self.backend.exec(cmd, timeout_s=60, background=True)
+            if result.idle:
+                stored = self.backend.list_stored(path, int(depth))
+                if stored is not None:
+                    return self._from_store(stored, path, int(depth))
+                # No copy to read, and somebody is asking: the workspace is in use,
+                # and starting it is the right answer, as it always was.
+                result = self.backend.exec(cmd, timeout_s=60, background=False)
         if result.idle:
             # Nothing ran, so there is nothing to say about what is on disk. Falling
             # through would answer "no files", and the list_dir fallback below would
@@ -193,6 +228,33 @@ class Browser:
                 depth=int(depth),
             )
         return Listing(sorted(self.list_dir(path), key=_order), root=path, depth=int(depth))
+
+    def _from_store(self, stored: StoredListing, root: str, depth: int) -> Listing:
+        """A `Listing` from the backend's copy of the workspace, held to the same
+        contract as one from the walk.
+
+        The copy answers a whole tree and its own cap (`stored.truncated`); this
+        listing keeps `MAX_ENTRIES`, so the cut is applied here as well, and it is
+        applied breadth-first for the reason `LIST_PIPELINE` gives: the copy lists in
+        its own order, and a cut at entry 4,000 of that order can fall on the
+        pictures as surely as `find`'s did. Shallow entries first, then the cut lands
+        in the solver's bulk. Either cap makes the listing truncated -- an answer the
+        copy cut short is not complete because this side had room for it.
+        """
+        entries = [
+            Entry(path=item.path, is_dir=item.is_dir, size=item.size, mtime=item.mtime)
+            for item in stored.entries
+        ]
+        entries.sort(key=lambda entry: entry.depth)  # stable, like `sort -n -s`
+        truncated = bool(stored.truncated) or len(entries) > MAX_ENTRIES
+        del entries[MAX_ENTRIES:]
+        return Listing(
+            sorted(entries, key=_order),
+            truncated=truncated,
+            limit=MAX_ENTRIES,
+            root=root,
+            depth=depth,
+        )
 
     def remember(self, root: str, entries: list[Entry]) -> None:
         """Keep the last full listing, and when it was taken.

@@ -205,6 +205,8 @@ Closing the laptop is fine — jobs live on the instance. `openreynolds --study 
 
 `./studies/<id>/` on the user's machine holds session metadata (instance id, study id, message log) and everything `fetch`ed (renders, reports). Working state lives in `/work` on the instance in whatever layout the agent chose. `openreynolds studies` lists local sessions.
 
+The live mirror (`mirror.py`) lists the study's directory every cycle and on the way out of a session. A foreground listing is asked as a poll first, and when the poll finds nothing running it is read from the service's copy of the workspace (`Backend.list_stored`; the hosted backend reads it under `Backend.study_id`, which the session sets when it opens or resumes the study's row) -- so ending a session whose workspace has already been stopped does not start a machine to list it. Only a backend with no copy to read starts one.
+
 ---
 
 ## 10. Capture plumbing (invisible to the model)

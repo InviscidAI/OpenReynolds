@@ -30,7 +30,15 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from .base import WORKSPACE_ROOT, Backend, BackendError, ExecResult, JobStatus, Stat
+from .base import (
+    WORKSPACE_ROOT,
+    Backend,
+    BackendError,
+    ExecResult,
+    JobStatus,
+    Stat,
+    StoredListing,
+)
 
 WAIT_CEILING_S = 600.0
 """The longest any one call waits for the workspace before giving up on it.
@@ -79,14 +87,35 @@ class PendingBackend(Backend):
         self._error: BackendError | None = None
         self._since = time.monotonic()
         self._settled_at: float | None = None
+        self._study_id: str | None = None
 
     # -- becoming the real thing -----------------------------------------------
 
     def resolve(self, backend: Backend) -> None:
-        """The workspace is up and set up: from here every call goes to `backend`."""
+        """The workspace is up and set up: from here every call goes to `backend`.
+
+        What the session told this stand-in while it waited is told on: the study
+        id arrives before the workspace does (the study's row is opened while the
+        machine is still starting), and the live backend is the one that reads the
+        study's copy of the workspace under it."""
+        if self._study_id is not None:
+            backend.study_id = self._study_id
         self._live = backend
         self._settled_at = time.monotonic()
         self.ready_event.set()
+
+    @property
+    def study_id(self) -> str | None:
+        """Which study this workspace is serving. Held here until the workspace is
+        up, then the live backend's -- set on it at `resolve`, or at once if the
+        workspace is already here."""
+        return self._study_id
+
+    @study_id.setter
+    def study_id(self, value: str | None) -> None:
+        self._study_id = value
+        if self._live is not None:
+            self._live.study_id = value
 
     def fail(self, error: BackendError) -> None:
         """The workspace is not coming. Every waiting call, and every later one,
@@ -198,6 +227,22 @@ class PendingBackend(Backend):
         live = self.wait()
         active = getattr(live, "active_jobs", None)
         return active() if active is not None else []
+
+    def list_stored(self, path: str, depth: int) -> StoredListing | None:
+        """The live backend's copy of the workspace, or None while there is no live
+        backend yet.
+
+        Not waited for, unlike everything else here: a listing that needs no
+        machine must not be the call that waits for one. None sends the caller to
+        its fallback, a foreground `exec`, and that one waits for the workspace
+        exactly as it always did -- so a listing asked for during the start costs
+        what it cost before, and nothing is read from a copy that the machine now
+        coming up is about to overtake."""
+        live = self._live
+        if live is None:
+            return None
+        stored = getattr(live, "list_stored", None)
+        return stored(path, depth) if stored is not None else None
 
     def shutdown(self) -> None:
         """Put the workspace down -- once it is up.
