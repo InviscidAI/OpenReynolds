@@ -5,6 +5,15 @@
     python3 mesh_look.py . --out look.png --json look.json     # and the machine-readable one
     python3 mesh_look.py . --no-check                          # skip checkMesh (faster)
 
+`--out` and `--json` are taken relative to where you run this from -- the working
+directory, as for every other toolbox script -- and NOT relative to the case. Without
+`--out` the picture is `<case>/look.png`. The report's `picture:` line is the absolute
+path that was written, so there is nothing to work out. (Until 2026-09-21 a relative
+`--out` was joined to the case instead: `mesh_look.py mesh --out look.png` run from a
+study directory wrote `mesh/look.png` and printed `picture: look.png`, and the caller
+read `look.png` where it stood -- a 404 and three turns to find the file, in study
+20260920-161908-c7ef.)
+
 Every panel is drawn from `constant/polyMesh` -- no solve, no fields, no time
 directory needed. The boundary is coloured **one colour per patch**, because the
 question that gets answered wrong most often is not "is this the right shape" but "is
@@ -741,7 +750,10 @@ def report(payload: dict) -> str:
     else:
         lines.append("  no Allmesh or build script in this case")
     if payload.get("render"):
-        lines.append(f"  picture: {payload['render']}")
+        # The absolute path, always: the report is read by whoever ran the script,
+        # from wherever they ran it, and a path relative to the case read as one
+        # relative to the caller's directory cost a 404 and three turns (c7ef).
+        lines.append(f"  picture: {payload.get('render_abs') or payload['render']}")
     if payload.get("error"):
         lines.append(f"  {payload['error']}")
     return "\n".join(lines)
@@ -810,32 +822,56 @@ def look(case: Path, out_png: Path | None, check: bool = True) -> dict:
         try:
             payload["render"] = draw(case, internal, surfaces, out_png, payload["two_d"],
                                      {e["name"]: e.get("type", "") for e in entries})
+            # Additive, like `zones`: the absolute path beside the one `render` has
+            # always carried, so a reader that wants no arithmetic has none to do and
+            # a reader that joins `render` to the case keeps working.
+            payload["render_abs"] = str(Path(payload["render"]).resolve())
         except Exception as exc:  # noqa: BLE001
             payload["error"] = f"the picture could not be drawn ({type(exc).__name__}: {exc})"
     return payload
+
+
+def from_cwd(path: Path) -> Path:
+    """A path the caller typed, made absolute the way the shell would read it: against
+    the working directory, never against the case.
+
+    Every other toolbox script that takes `--out` (`render.py`, `results.py`,
+    `showcase.py`, `geometry_view.py`, `animate.py`) hands a relative one straight to
+    `Path`, which is this. This one alone joined it to the case, and a caller who typed
+    `mesh_look.py mesh --out look.png` from a study directory found no `look.png` where
+    they stood (study 20260920-161908-c7ef: `read_file .../look.png -> 404`, three
+    turns to recover). One convention across the toolbox, and this is the one."""
+    return path if path.is_absolute() else Path.cwd() / path
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("case", type=Path, nargs="?", default=Path("."))
-    parser.add_argument("--out", type=Path, default=Path("look.png"),
-                        help="where the picture goes (default look.png in the case)")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="where the picture goes; a relative path is relative to where "
+                             "you run this from, not to the case (default <case>/look.png). "
+                             "The report prints the absolute path written.")
     parser.add_argument("--json", type=Path, default=None,
-                        help="also write the machine-readable report here")
+                        help="also write the machine-readable report here (relative to where "
+                             "you run this from)")
     parser.add_argument("--no-check", action="store_true", help="skip checkMesh")
     args = parser.parse_args()
 
-    case = args.case if args.case.is_absolute() else Path.cwd() / args.case
-    out = args.out if args.out.is_absolute() else case / args.out
+    case = from_cwd(args.case)
+    out = from_cwd(args.out) if args.out is not None else case / "look.png"
     payload = look(case, out, check=not args.no_check)
     if payload.get("render"):
+        # `render` stays relative to the case when the picture is inside it -- that is
+        # what `mesher/check.py` has always read and joins to the case's two paths --
+        # and absolute when it is not. `render_abs` is absolute either way, and the
+        # printed report uses it.
         try:
             payload["render"] = str(Path(payload["render"]).relative_to(case.resolve()))
         except ValueError:
             pass
     if args.json is not None:
-        target = args.json if args.json.is_absolute() else case / args.json
+        target = from_cwd(args.json)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(payload, indent=1), encoding="utf-8")
     print(report(payload))

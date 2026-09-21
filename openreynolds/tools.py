@@ -77,10 +77,17 @@ class ToolContext:
     on_fetch: Callable[[list[Any]], None] | None = None
     """Called with the local paths `fetch` produced, for artifact capture."""
     on_wait_input: Callable[[], bool] | None = None
-    """Whether the user has said something not yet delivered, without taking it.
+    """Whether the person has said something for the model that it has not seen yet.
 
-    A waiting `job_check` ends early on it, so a person who speaks during a held
-    call is heard in seconds rather than when the wait runs out."""
+    A waiting `job_check` or `mesh_wait` ends early on it, so a person who speaks
+    during a held call is heard in seconds rather than when the wait runs out. The
+    session loop answers it (`Loop.heard`): it drains the inbox as the loop does
+    between tool calls, answers commands on the spot, and holds the words for the
+    model to ride after this batch's results -- so what ended the wait is in the same
+    message as the result that says so, and a line that is nobody's to deliver to the
+    model (`/exit`, an EOF, a `/status`) ends nothing. It used to be the reader's
+    `pending()`, a peek at the queue, and a put-back `/exit` made every wait for the
+    rest of a turn answer at once with `waited 0s` (study 20260921-033019-e1b4)."""
     cores: int | None = None
     """What `nproc` reported, once it has been asked: hardware threads. See `_core_count`."""
     physical_cores: int | None = None
@@ -244,8 +251,9 @@ TOOLS: list[dict[str, Any]] = [
             "Get a job's status together with whatever log has appeared since "
             "log_offset. Cheap to call repeatedly. With wait_s it holds the answer "
             "until the job ends or the wait runs out, ending early if the user says "
-            "something - quieter than pacing with sleep in bash, which counts "
-            "against the bash time cap."
+            "something (their words then follow this result in the same message; "
+            "answer them and call again) - quieter than pacing with sleep in bash, "
+            "which counts against the bash time cap."
         ),
         "input_schema": {
             "type": "object",
@@ -411,7 +419,9 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "Hold the answer until the running mesh desk finishes, up to wait_s "
             f"seconds (at most {JOB_WAIT_MAX_S}), ending early if the user says "
-            "something. When the desk has finished this returns its full result — the "
+            "something (their words then follow this result in the same message; "
+            "answer them and call again). When the desk has finished this returns its "
+            "full result — the "
             "picture, the patch table, checkMesh's verdict, where the case is — and "
             "otherwise where it has got to. The result also arrives on its own as a "
             "message when the desk finishes, so this is for when there is nothing "
@@ -1156,8 +1166,10 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
     waited_note = ""
     if wait_s > 0 and status.running:
         began = time.monotonic()
+        heard = False
         while status.running and time.monotonic() - began < wait_s:
-            if ctx.on_wait_input is not None and ctx.on_wait_input():
+            if _heard(ctx):
+                heard = True
                 break
             remaining = wait_s - (time.monotonic() - began)
             time.sleep(max(0.0, min(JOB_WAIT_POLL_S, remaining)))
@@ -1168,8 +1180,11 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
                 f" [wait_s={asked_wait} exceeds the {JOB_WAIT_MAX_S}s ceiling for "
                 "one call; waiting again is free]"
             )
-        if status.running and ctx.on_wait_input is not None and ctx.on_wait_input():
-            waited_note += " [the user said something, so this answered early]"
+        if heard:
+            # Remembered from the loop rather than asked again here: the question
+            # drains the inbox, so a second asking would find it empty and drop the
+            # one sentence that explains a wait of 0 s.
+            waited_note += " " + _heard_note("job_check", "the job is still running")
     data, next_offset, eof = ctx.backend.job_tail(job_id, offset=offset)
     ctx.store.update_job(
         job_id,
@@ -1318,7 +1333,7 @@ def _mesh_note(ctx: ToolContext, args: dict[str, Any]) -> str:
 
 def _mesh_wait(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     """Hold for the running desk, the way a `job_check` with `wait_s` holds for a job:
-    bounded, and ending early the moment the person says something."""
+    bounded, and ending early the moment the person says something for the model."""
     run = ctx.desk
     if run is None:
         return "no mesh desk is running in this session"
@@ -1330,7 +1345,7 @@ def _mesh_wait(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         elapsed = time.monotonic() - began
         if elapsed >= wait_s:
             break
-        if ctx.on_wait_input is not None and ctx.on_wait_input():
+        if _heard(ctx):
             heard = True
             break
         run.done.wait(min(DESK_WAIT_POLL_S, wait_s - elapsed))
@@ -1344,8 +1359,30 @@ def _mesh_wait(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         result = take_desk(ctx, run)
         return _blocks(" ".join(notes), _finished_content(run, result))
     if heard:
-        notes.append("[the user said something, so this answered early]")
+        notes.append(_heard_note("mesh_wait", "the desk is still building"))
     return " ".join([run.progress_line(), *notes])
+
+
+def _heard(ctx: ToolContext) -> bool:
+    """Whether the person has said something the model has not seen yet -- asked of the
+    loop, which drains the inbox to answer and holds the words for this batch's results
+    (`ToolContext.on_wait_input`, `Loop.heard`). False when nobody is wired to answer."""
+    return ctx.on_wait_input is not None and bool(ctx.on_wait_input())
+
+
+def _heard_note(again: str, still: str) -> str:
+    """Why a held answer came back before its time, and what comes next.
+
+    Three facts, because a wait cut short with fewer read as a tool that does not
+    wait: the person wrote (the reason); their words are in this same message, after
+    the tool results (where to look -- the loop puts them there, `Loop._turns`); and
+    what was being waited on is still going, so the same call, made again after
+    answering them, holds as it did. Measured without the last two (study
+    20260921-033019-e1b4): three returns in nine seconds saying only "the user said
+    something", no words following, and the model switched to `bash sleep 115` for
+    the rest of the study."""
+    return (f"[the person wrote, so this answered early; their words follow this result. "
+            f"Answer them, then call {again} again -- {still}]")
 
 
 def _finished_content(run: Any, result: Any) -> ToolResult:

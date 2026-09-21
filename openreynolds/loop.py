@@ -82,6 +82,12 @@ class Loop:
         """Harness facts waiting for a place in the thread. Said mid-turn (a `/mode`
         switch typed while tools run) they cannot be a message of their own: the next
         message has to be the tool results. They ride in that message instead."""
+        self._typed: list[str] = []
+        """What the person typed mid-turn that is for the model, waiting to ride after
+        this batch's tool results (`_turns`). Filled by `_gather`, which drains the
+        inbox before each tool call, after the batch, and -- through `heard` -- every
+        second a tool is waiting. One list rather than a local, because a waiting tool
+        has to be able to ask whether it is empty."""
         self._mid_turn = False
         self._posted: list[str] = []
         """Harness facts said from another thread (`post`), waiting for this thread to
@@ -309,7 +315,6 @@ class Loop:
                 return response
 
             results: list[Any] = []
-            typed: list[str] = []
             self._mid_turn = True
             try:
                 for block in tool_uses:
@@ -319,7 +324,7 @@ class Loop:
                     # call), and a line typed before a question exists is an
                     # interjection, never the answer to a question the person has not
                     # seen yet (`Approver.ask` reads only what arrives after this).
-                    self._gather(typed)
+                    self._gather()
                     results.append(self._run_tool(block))
 
                 # One round of think-then-act is over. Marking where each ends is what
@@ -332,8 +337,9 @@ class Loop:
                 # follow them. That is how something typed while the model is working
                 # reaches it at the next turn instead of sitting unread until the whole
                 # turn ends -- the difference between being heard and being ignored.
-                self._gather(typed)
-                said = "\n".join(typed) or None
+                self._gather()
+                said = "\n".join(self._typed) or None
+                self._typed = []
                 if said:
                     results.append({"type": "text", "text": said})
                     self.view.interjection(said)
@@ -344,14 +350,42 @@ class Loop:
 
             self.messages.append({"role": "user", "content": results})
 
-    def _gather(self, into: list[str]) -> None:
+    def _gather(self) -> None:
         """Drain what has been typed (`interject`): commands are answered on the spot,
-        and words for the model are kept in `into` to ride with this batch's results.
+        and words for the model are kept in `_typed` to ride with this batch's results.
         What other threads posted meanwhile rides with them too (`_notes`)."""
         self._drain_posted()
         said = self.interject() if self.interject else None
         if said:
-            into.append(said)
+            self._typed.append(said)
+
+    def heard(self) -> bool:
+        """Whether the person has said something the model has not seen yet.
+
+        What a tool that holds its answer asks, once a second, to know whether to stop
+        holding it (`ToolContext.on_wait_input`; `job_check` with `wait_s`, `mesh_wait`).
+        It drains the inbox the way the loop does between tool calls -- commands are
+        answered on the spot, words for the model are kept for this batch's results --
+        and answers whether anything is kept. So a wait that ends on it ends for words
+        the model is about to read, in the same message as the result that ended.
+
+        WHY THIS IS THE LOOP'S TO ANSWER. It used to be the reader's `pending()`: is
+        there anything in the queue, without taking it. But the loop's own drain does
+        not take everything. `/exit` is put back for whoever waits at the prompt, an
+        EOF likewise, and a `/status` is answered without a word reaching the model.
+        Measured in production (study 20260921-033019-e1b4): a line the drain put back
+        sat in the queue for the rest of the turn, `pending()` answered true to every
+        wait from then on, and `mesh_wait` returned three times in nine seconds with
+        `[waited 0s] [the user said something]` -- and the model, handed nothing the
+        person had said, concluded the tool did not wait and paced the remaining
+        thirty-seven minutes with `bash sleep`. The same shape ran side by side with
+        an unaffected session (20260921-033356-076b) whose `job_check(wait_s=...)`
+        waited its full 120-300 s throughout. A line that is nobody's to deliver to
+        the model cannot end a wait on the model's behalf, and the only way to know
+        which kind of line it is, is to drain it.
+        """
+        self._gather()
+        return bool(self._typed)
 
     def _send(self) -> Turn:
         """One streamed request, printing as it arrives."""

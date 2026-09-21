@@ -83,7 +83,10 @@ on `render.py --help` before rendering anything):
   without `--time` the latest time is drawn.
 - `python3 /work/.toolbox/mesh_look.py [<case>] [--out look.png] [--json measured.json]
   [--no-check]` — one captioned picture of a mesh plus its measured bounds, cell count and
-  patch table; runs `checkMesh` unless told not to.
+  patch table; runs `checkMesh` unless told not to. A relative `--out` (and `--json`) is
+  relative to the directory you run it from, as for every script here — not to the case —
+  and without `--out` the picture is `<case>/look.png`; the report's `picture:` line is the
+  absolute path it wrote.
 - `python3 /work/.toolbox/results.py <case> [--preset NAME | --list] [--time latest|first|T]
   [--normal z] [--out DIR]` — the preset picture and plot set and a `results.md` from a
   finished case; `--out` defaults to `<case>/results`.

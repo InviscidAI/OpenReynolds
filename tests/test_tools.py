@@ -684,7 +684,30 @@ def test_the_wait_ends_early_when_the_user_speaks(ctx, monkeypatch):
 
     assert not is_error
     assert _time.monotonic() - began < 5, "it did not sit out the full wait"
-    assert "the user said something" in out
+    assert "the person wrote, so this answered early" in out
+    assert "their words follow this result" in out
+    assert "call job_check again -- the job is still running" in out
+
+
+def test_a_wait_cut_by_the_person_says_so_although_asking_again_finds_nothing(ctx, monkeypatch):
+    """The question drains the inbox to answer (`Loop.heard`), so asked a second time
+    after the loop it says no. The note used to be decided by that second asking, which
+    would have dropped the one sentence that explains a wait of 0 s."""
+    from openreynolds import tools as tools_mod
+    from openreynolds.tools import dispatch as _dispatch
+
+    monkeypatch.setattr(tools_mod, "JOB_WAIT_POLL_S", 0.01)
+    job_id = ctx.backend.job_start("simpleFoam", name="solve")
+    ctx.store.record_job(job_id, cmd="simpleFoam", name="solve")
+    answers = iter([True])
+    asked = []
+    ctx.on_wait_input = lambda: asked.append(1) or next(answers, False)
+
+    out, is_error = _dispatch(ctx, "job_check", {"job_id": job_id, "wait_s": 30})
+
+    assert not is_error
+    assert len(asked) == 1, "asked once in the loop, and not again after it"
+    assert "the person wrote, so this answered early" in out
 
 
 def test_an_over_long_wait_is_clamped_and_says_so(ctx, monkeypatch):
