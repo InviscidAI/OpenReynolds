@@ -122,10 +122,11 @@ service chose; this bounds what a header nobody is watching can cost a tool call
 is already slow. At the 5 seconds foamd sends, the cap never binds."""
 
 STORED_LISTING_LIMIT = 5000
-"""The most entries `GET /v1/studies/{id}/workspace` will list in one answer.
+"""The most entries `GET /v1/instances/{id}/files?list=1` (and its study-scoped twin
+`GET /v1/studies/{id}/workspace`) will list in one answer.
 
-The route's own ceiling (`OpenFoam_Instance/app/workspace.py`, `MAX_ENTRIES`; a
-`limit` above it is a 422, not a bigger answer), and asked for in full because the
+The routes' own ceiling (`OpenFoam_Instance/app/workspace.py`, `MAX_ENTRIES`; a
+cap above it is a 422, not a bigger answer), and asked for in full because the
 answer is one whole tree rather than a walk to a depth: `browse.MAX_ENTRIES` is cut
 on this side, after the depth is applied, and asking for less here would cut the tree
 before the depth had been looked at."""
@@ -754,6 +755,32 @@ class FoamdClient:
         """One study as the platform holds it: title, instance_id, home, created_at."""
         return _json(self.request("GET", f"/v1/studies/{study_id}"))
 
+    def list_files(self, instance_id: str, path: str) -> dict[str, Any]:
+        """The tree under `path` as the service's own copy of the workspace holds it,
+        scoped to the instance: `GET /v1/instances/{id}/files?list=1`. No instance is
+        started, whatever state the workspace is in.
+
+        The instance's twin of `list_workspace`, and the one `list_stored` asks,
+        because the study route refuses the one path a study whose home is the
+        workspace root itself asks for -- `/work` -- and three of the owner's studies
+        have that home. Measured 2026-09-21 09:58 SGT: `workspace?path=/work -> 400`,
+        and the fallback exec adopted a machine from the pool to answer one `find` on
+        the way out of a session. An instance's own `/work` is the owner's, whole.
+
+        `path` is workspace-absolute (`/work`, `/work/<study>/case`) or relative to
+        `/work`; the answer is `{root, entries, truncated}` in the study route's shape,
+        `root` the resolved absolute path, entries workspace-absolute, cut breadth-first
+        at `STORED_LISTING_LIMIT`. A path outside `/work` is a 400, a path the copy does
+        not have is a 404; both arrive as the `BackendError` `request` makes of them.
+        """
+        return _json(
+            self.request(
+                "GET",
+                f"/v1/instances/{instance_id}/files",
+                params={"path": path, "list": 1, "recursive": 1, "entries": STORED_LISTING_LIMIT},
+            )
+        )
+
     def list_workspace(self, study_id: str, path: str = "") -> dict[str, Any]:
         """The study's files as the service's own copy of the workspace holds them.
         No instance is started, whatever state the workspace is in.
@@ -834,33 +861,36 @@ class HostedBackend(Backend):
         self._client.stop_instance(self.instance_id)
 
     def list_stored(self, path: str, depth: int) -> StoredListing | None:
-        """This study's files from the service's own copy of the workspace, cut to
-        `depth`. None when there is nothing to ask, or the ask did not work.
+        """The files under `path` from the service's own copy of the workspace, cut
+        to `depth`. None when the ask did not work.
 
         The copy is what the service writes at every checkpoint and stop, and
-        `GET /v1/studies/{id}/workspace` reads it whether or not a machine is up --
-        the same copy `get_file` and `get_tree` are served from once the workspace
-        is stopped, so a sync that lists this way stays off the machine end to end.
-        The route answers the whole tree, so the caller's depth is applied here,
-        counted from `path` as `find -maxdepth` counts it.
+        `GET /v1/instances/{id}/files?list=1` reads it whether or not a machine is
+        up -- the same copy `get_file` and `get_tree` are served from once the
+        workspace is stopped, so a sync that lists this way stays off the machine end
+        to end. Asked of the instance, not the study: the study route refuses the
+        workspace root, and a study whose home is the root (three of the owner's are)
+        lists exactly that path on its way out -- which is how the first cut of this
+        (asking `/v1/studies/{id}/workspace`) still started a machine on 2026-09-21.
+        Nothing here needs a study id. The route answers the whole tree, so the
+        caller's depth is applied here, counted from `path` as `find -maxdepth`
+        counts it.
 
         Every failure is None and none of them is raised: this is asked on the way
         out of a session by a caller that has a machine to fall back on, and the
         one thing it must not do is turn a listing into an exception. A 400 is a
-        path outside the study (the workspace root itself, for a study that predates
-        homes); a 404 is a workspace never written to the copy, or a service without
-        the route; the rest is the network. In each case the fallback is what always
-        happened -- a foreground `exec`, which may start the workspace -- so nothing
-        is lost by being quiet here, only the saving.
+        path outside `/work`; a 404 is a path the copy does not have, a workspace
+        never written to it, or a service without the route; the rest is the network.
+        In each case the fallback is what always happened -- a foreground `exec`,
+        which may start the workspace -- so nothing is lost by being quiet here,
+        only the saving.
         """
-        if not self.study_id:
-            return None
         try:
-            body = self._client.list_workspace(self.study_id, path)
+            body = self._client.list_files(self.instance_id, path)
             root = str(body.get("root") or "").rstrip("/")
-            # Relative to the same root the answer is: the route resolved a relative
-            # `path` against the study's home, and its entries say so in full.
-            anchor = path if path.startswith("/") else f"{root}/{path.strip('/')}"
+            # The route names the resolved path as `root` and its entries in full,
+            # so a relative ask is measured from where the route put it.
+            anchor = path if path.startswith("/") else (root or f"{WORKSPACE_ROOT}/{path.strip('/')}")
             base = anchor.rstrip("/") + "/"
             entries = []
             for item in body.get("entries") or []:

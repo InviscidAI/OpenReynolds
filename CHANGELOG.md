@@ -28,16 +28,21 @@ All notable changes to this project are recorded here. The format follows
   machine then sat until the reaper took it down again at 02:42: eighteen minutes of
   instance for one listing. The service keeps a copy of the workspace, written at every
   checkpoint and stop, and once the workspace is stopped it already serves `get_file`
-  and `get_tree` from it; `GET /v1/studies/{id}/workspace` lists it. So a foreground
-  listing is now asked as a poll first (`background=True`, which never starts
-  anything and does not count as use of the workspace); when the poll finds nothing
-  running, the listing is read from the copy (`Backend.list_stored`, which
+  and `get_tree` from it; `GET /v1/instances/{id}/files?list=1` lists it. So a
+  foreground listing is now asked as a poll first (`background=True`, which never
+  starts anything and does not count as use of the workspace); when the poll finds
+  nothing running, the listing is read from the copy (`Backend.list_stored`, which
   `HostedBackend` answers through that route, cut to the depth asked, capped and
   ordered as the walk's is); and the machine is started only when there is no copy
   to read -- which is what a foreground listing always did, and is still right when
-  somebody is working. The session tells the workspace which study it serves for
-  this (`Backend.study_id`, set when the study's row is opened or resumed, and
-  carried through the `PendingBackend` stand-in). Unchanged: a running workspace's
+  somebody is working. The first cut asked the study-scoped route
+  (`GET /v1/studies/{id}/workspace`) and still started a machine for a study whose
+  home is the workspace root itself -- that route refuses `/work` -- measured on
+  production the same morning (09:58 SGT, a pool adoption for one `find`); the
+  instance-scoped route has no such refusal and needs no study id. The session still
+  tells the workspace which study it serves (`Backend.study_id`, set when the study's
+  row is opened or resumed, and carried through the `PendingBackend` stand-in).
+  Unchanged: a running workspace's
   own listing is used and the copy is never asked; the background cycles still wait
   out a stopped workspace rather than read it every twenty seconds; a local backend,
   and a study with no row on the platform, list exactly as before.

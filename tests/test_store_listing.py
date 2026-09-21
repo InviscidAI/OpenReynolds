@@ -278,10 +278,14 @@ def _backend_against(handler) -> tuple[HostedBackend, list[httpx.Request]]:
     return backend, seen
 
 
-def _workspace_route(entries, *, truncated=False, root="/work/st-1"):
-    return lambda request: httpx.Response(200, json={
-        "root": root, "entries": entries, "truncated": truncated,
-    })
+def _workspace_route(entries, *, truncated=False, root=None):
+    """`GET /v1/instances/{id}/files?list=1` as the service answers it: `root` is the
+    path asked, resolved under /work; entries are the whole tree, workspace-absolute."""
+    def answer(request):
+        asked = request.url.params.get("path", "")
+        resolved = root or (asked if asked.startswith("/") else f"/work/{asked.strip('/')}".rstrip("/"))
+        return httpx.Response(200, json={"root": resolved, "entries": entries, "truncated": truncated})
+    return answer
 
 
 A_STUDY = [
@@ -294,17 +298,37 @@ A_STUDY = [
 """The route's answer: the whole tree, workspace-absolute, not depth-limited."""
 
 
-def test_list_stored_asks_the_studys_workspace_route_for_the_whole_tree():
+def test_list_stored_asks_the_instances_files_route_for_the_whole_tree():
     backend, seen = _backend_against(_workspace_route(A_STUDY))
 
     backend.list_stored("/work/st-1", 4)
 
     (request,) = seen
     assert request.method == "GET"
-    assert request.url.path == "/v1/studies/st-1/workspace"
+    assert request.url.path == "/v1/instances/inst-1/files"
     assert dict(request.url.params) == {
-        "path": "/work/st-1", "recursive": "1", "limit": str(hosted_mod.STORED_LISTING_LIMIT),
+        "path": "/work/st-1", "list": "1", "recursive": "1",
+        "entries": str(hosted_mod.STORED_LISTING_LIMIT),
     }, "the path as given, the whole tree, at the route's own ceiling"
+
+
+def test_the_workspace_root_itself_is_listed_from_the_copy():
+    """The case the first cut missed. A study whose home is `/work` lists `/work` on
+    its way out; the study route refuses that path (400), and the fallback exec
+    started a machine -- measured 2026-09-21 09:58 SGT. The instance route has no
+    such refusal: the workspace is the owner's, whole."""
+    at_root = [
+        {"path": "/work/notes.md", "is_dir": False, "size": 6, "mtime": 1700000000},
+        {"path": "/work/st-1", "is_dir": True, "size": 0, "mtime": 1700000001},
+        {"path": "/work/st-1/README.md", "is_dir": False, "size": 9, "mtime": 1700000002},
+    ]
+    backend, seen = _backend_against(_workspace_route(at_root))
+    backend.study_id = None  # and no study id is needed for it
+
+    listing = backend.list_stored("/work", 12)
+
+    assert dict(seen[0].url.params)["path"] == "/work"
+    assert [e.path for e in listing.entries] == ["/work/notes.md", "/work/st-1", "/work/st-1/README.md"]
 
 
 def test_list_stored_cuts_the_tree_to_the_depth_asked():
@@ -351,10 +375,11 @@ def test_list_stored_counts_depth_from_the_path_asked_not_the_study_root():
 
 def test_list_stored_anchors_a_relative_path_at_the_root_the_route_names():
     """Both spellings are in circulation on the route; the entries it answers are
-    absolute either way, so a relative ask is measured from the study's own root."""
+    absolute either way, so a relative ask is measured from where the route put it
+    (under /work)."""
     backend, _ = _backend_against(_workspace_route(A_STUDY))
 
-    listing = backend.list_stored("case", 1)
+    listing = backend.list_stored("st-1/case", 1)
 
     assert [e.path for e in listing.entries] == [
         "/work/st-1/case/system", "/work/st-1/case/log.simpleFoam",
@@ -366,15 +391,15 @@ def test_list_stored_carries_the_routes_own_truncation():
     assert backend.list_stored("/work/st-1", 1).truncated is True
 
 
-def test_list_stored_without_a_study_id_asks_nothing_and_answers_none():
-    """No id, no row to read the copy under. The backend has not been told which study
-    it serves -- capture off, or a session from before the wiring -- and the honest
-    answer is "ask the machine", not a guess at the id."""
+def test_list_stored_needs_no_study_id():
+    """The copy is the instance's; a session with no study row (capture off) lists
+    from it exactly like one with a row."""
     backend, seen = _backend_against(_workspace_route(A_STUDY))
     backend.study_id = None
 
-    assert backend.list_stored("/work/st-1", 4) is None
-    assert seen == []
+    listing = backend.list_stored("/work/st-1", 4)
+
+    assert len(seen) == 1 and len(listing.entries) == len(A_STUDY)
 
 
 @pytest.mark.parametrize(
@@ -382,12 +407,12 @@ def test_list_stored_without_a_study_id_asks_nothing_and_answers_none():
     [
         pytest.param(
             lambda r: httpx.Response(400, json={"error": "bad_request",
-                                                 "message": "path is outside the study: /work"}),
-            id="400-outside-the-study",
+                                                 "message": "path escapes the /work jail"}),
+            id="400-outside-the-workspace",
         ),
         pytest.param(
-            lambda r: httpx.Response(404, json={"error": "not_found", "message": "workspace"}),
-            id="404-never-written-or-no-route",
+            lambda r: httpx.Response(404, json={"error": "not_found", "message": "path /work/gone"}),
+            id="404-no-such-path-never-written-or-no-route",
         ),
         pytest.param(
             lambda r: (_ for _ in ()).throw(httpx.ConnectError("no route to host")),
@@ -417,6 +442,27 @@ def test_a_400_or_404_is_not_retried_on_the_way_out():
             lambda r, s=status, c=code: httpx.Response(s, json={"error": c, "message": "no"}))
         backend.list_stored("/work/st-1", 4)
         assert len(seen) == 1, f"a {status} was asked again"
+
+
+def test_the_instance_listing_is_the_route_the_service_publishes():
+    """`FoamdClient.list_files` on its own: `GET /v1/instances/{id}/files?list=1`, the
+    answer handed back whole."""
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"root": "/work", "entries": [], "truncated": False})
+
+    client = FoamdClient("https://svc.example", "of_live_test")
+    client._client = httpx.Client(base_url="https://svc.example",
+                                  transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    body = client.list_files("inst-1", "/work")
+
+    assert body == {"root": "/work", "entries": [], "truncated": False}
+    assert seen[0].url.path == "/v1/instances/inst-1/files"
+    assert dict(seen[0].url.params) == {"path": "/work", "list": "1", "recursive": "1",
+                                        "entries": str(hosted_mod.STORED_LISTING_LIMIT)}
 
 
 def test_the_client_route_is_the_one_the_service_publishes():
