@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
@@ -82,6 +83,25 @@ def test_the_mesh_tool_says_what_comes_back_and_what_does_not():
         lowered = next(t for t in TOOLS if t["name"] == name)["description"].lower()
         for imperative in ("you must", "always ", "never ", "you should", "prefer "):
             assert imperative not in lowered, (name, imperative)
+
+
+def test_long_job_description_keeps_output_in_the_job_log():
+    """Redirecting a solver to log.simpleFoam left job_check with zero bytes even
+    though the solve was healthy. Detached jobs already capture stdout and stderr."""
+    description = next(t for t in TOOLS if t["name"] == "job_start")["description"]
+    assert "Do not redirect" in description
+    assert "job_check" in description
+
+
+def test_environment_warns_that_partial_openfoam_banners_are_invalid():
+    """A generated controlDict opened the decorative C++ banner but never closed it,
+    so OpenFOAM treated the whole dictionary as a comment and lost a minute diagnosing
+    a format issue. The minimal safe file starts directly with FoamFile."""
+    environment = (
+        Path(__file__).parents[1] / "openreynolds" / "toolbox" / "ENVIRONMENT.md"
+    ).read_text(encoding="utf-8")
+    assert "start directly with `FoamFile`" in environment
+    assert "partial decorative banner" in environment
 
 
 def test_the_mesh_tools_are_offered_only_when_there_is_a_desk_behind_them(ctx):
