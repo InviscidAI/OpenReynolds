@@ -84,6 +84,22 @@ def test_long_job_description_keeps_output_in_the_job_log():
     description = next(t for t in TOOLS if t["name"] == "job_start")["description"]
     assert "Do not redirect" in description
     assert "job_check" in description
+    assert "tee" in description
+
+
+def test_job_start_refuses_stdio_redirects(ctx, backend):
+    """C-03/C-07/C-08 hid the solver log from job_check by redirecting into a file."""
+    content, is_error = dispatch(
+        ctx, "job_start", {"cmd": "mpirun -np 4 interFoam -parallel > log.interFoam 2>&1"}
+    )
+    assert not backend.started
+    assert content.startswith("not started:")
+    assert "redirect" in content.lower()
+    content, _ = dispatch(ctx, "job_start", {"cmd": "simpleFoam | tee log.simpleFoam"})
+    assert not backend.started
+    assert "tee" in content.lower()
+    content, _ = dispatch(ctx, "job_start", {"cmd": "simpleFoam"})
+    assert backend.started and content.startswith("started job")
 
 
 def test_environment_warns_that_partial_openfoam_banners_are_invalid():
@@ -357,7 +373,8 @@ writeControl    adjustableRunTime;
 writeInterval   0.0025;
 """
 
-SOLVE = "cd /work/s/run && mpirun -np 4 pimpleFoam -parallel > log.pimpleFoam 2>&1"
+SOLVE = "cd /work/s/run && mpirun -np 4 pimpleFoam -parallel"
+REDIRECTED_SOLVE = SOLVE + " > log.pimpleFoam 2>&1"
 LISTING = ("ls -d /work/s/run/[0-9]* /work/s/run/processor*/[0-9]* "
            "/work/s/run/processors*/[0-9]* 2>/dev/null")
 
@@ -399,7 +416,7 @@ def test_a_first_launch_and_a_mesher_are_never_guarded(ctx, backend):
     content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE})
     assert content.startswith("started job"), "only the initial time exists: not a restart"
     _with_times(backend)
-    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && blockMesh > log.blockMesh 2>&1"})
+    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && blockMesh"})
     assert content.startswith("started job"), "a mesher writes no time steps"
 
 
@@ -431,7 +448,7 @@ def test_a_transient_solver_is_launched_without_the_steady_clause(ctx, backend):
     backend.exec_results[LISTING] = ExecResult(0, "", False, None)
     content, _ = dispatch(ctx, "job_start", {"cmd": SOLVE})
     assert "steady solver" not in content
-    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && blockMesh > log.blockMesh 2>&1"})
+    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && blockMesh"})
     assert "steady solver" not in content, "a mesher is not a solve"
 
 
@@ -439,7 +456,7 @@ def test_the_steady_clause_survives_a_case_with_no_controldict(ctx, backend):
     """The shape note is silent without a controlDict; the steady clause is about the
     solver, not the dictionary, and is said either way."""
     backend.exec_results[LISTING] = ExecResult(0, "", False, None)
-    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && simpleFoam > log 2>&1"})
+    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && simpleFoam"})
     assert content.startswith("started job") and "steady solver:" in content
     assert "endTime" not in content
 

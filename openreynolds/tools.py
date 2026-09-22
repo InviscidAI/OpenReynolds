@@ -374,6 +374,7 @@ TOOLS: list[dict[str, Any]] = [
             f"{FRESH_SHELL} "
             "Do not redirect stdout or stderr to a file: the detached job already "
             "captures both, and `job_check` can only stream what the job captures. "
+            "Commands that pipe into `tee` or use `>`, `>>`, `2>&1` are refused. "
             "A solver started serially holds one core for the whole run, however "
             "many the container has; a case put through `decomposePar` and started "
             "with `mpirun -np N` holds N. What the extra ranks return falls away as "
@@ -951,10 +952,31 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
     ]
 
 
+def _stdio_redirected(cmd: str) -> bool:
+    """Whether `cmd` hides stdout/stderr from the job capture that `job_check` reads.
+
+    Measured: `interFoam > log.interFoam 2>&1` completed with a 310 KB log on disk
+    while `job_check` reported `log_size=0` (C-03, C-07, C-08)."""
+    if re.search(r"(?:^|[\s;|&])(?:>>?|2>>?|&>)\s", cmd):
+        return True
+    if "2>&1" in cmd or ">&2" in cmd:
+        return True
+    if re.search(r"\|\s*tee\b", cmd):
+        return True
+    return False
+
+
 def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
     refusal = _restart_guard(ctx, args)
     if refusal:
         return refusal
+    cmd = args["cmd"]
+    if _stdio_redirected(cmd):
+        return (
+            "not started: this command redirects stdout/stderr (or pipes into tee). "
+            "The detached job already captures both; `job_check` can only stream "
+            "what the job captures. Drop the redirect and call again."
+        )
     trapfpe_banner = "trapFpe: Floating point exception trapping enabled"
     for pattern in args.get("kill_on") or []:
         try:
@@ -968,7 +990,7 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
                 "is killed only by an actual crash line."
             )
     job_id = ctx.backend.job_start(
-        args["cmd"],
+        cmd,
         cwd=args.get("cwd") or ctx.home,
         name=args.get("name"),
         kill_on=args.get("kill_on") or None,

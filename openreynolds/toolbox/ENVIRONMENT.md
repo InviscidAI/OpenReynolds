@@ -83,6 +83,8 @@ banner unless copying a complete known-good file.
 The image runs as **root**. Long work belongs in a **job** (`job_start`), which is detached
 and survives; a synchronous `bash` command that runs past ~150 s is cut off at the edge, so
 mesh, solve and `reconstructPar` on a real case belong in a job, not a foreground exec.
+Do not redirect a job's stdout or stderr (`> log.*`, `2>&1`, `| tee`): the job already
+captures both, and `job_start` will refuse a redirected command.
 
 See `README.md` for the scripts that already do the common jobs (rendering, animation,
 geometry views, case generation, digests) — most of what gets written by hand is in there.
