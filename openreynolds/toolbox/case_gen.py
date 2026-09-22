@@ -1025,14 +1025,34 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str) -> str:
     `lRef` and `Aref` are written from the geometry this template actually built, so the
     coefficients mean what their names say without anybody re-deriving them. Only the
     external templates get forces -- a duct has no body to take them on.
+
+    `--yplus` adds the `yPlus` function object, written at every field write: one row
+    per wall patch of min, max and mean y+ into `postProcessing/yPlus/`. It is what
+    `score.py` reads to hold a design study inside its wall-treatment band, and it is
+    the measurement `turbulence_notes` can only estimate before the run.
     """
     body = str(opts.get("body_patch") or "body")
-    if body not in plan.mesh.patch_face_counts():
+    blocks: list[str] = []
+    if body in plan.mesh.patch_face_counts():
+        blocks.append(force_coefficients(plan, flow, body))
+    if opts.get("yplus"):
+        blocks.append("\n".join([
+            "    yPlus", "    {",
+            "        type            yPlus;",
+            "        libs            (fieldFunctionObjects);",
+            "        writeControl    writeTime;",
+            "    }",
+        ]))
+    if not blocks:
         return ""
+    return "\nfunctions\n{\n" + "\n".join(blocks) + "\n}"
+
+
+def force_coefficients(plan: Plan, flow: Flow, body: str) -> str:
+    """The `forceCoeffs` block on `body`, and the residual log beside it."""
     area = plan.length * plan.mesh.thickness
     magnitude = flow.speed
     entries = [
-        "functions", "{",
         "    forceCoeffs", "    {",
         "        type            forceCoeffs;",
         "        libs            (forces);",
@@ -1058,9 +1078,8 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str) -> str:
         "        writeControl    timeStep;",
         "        writeInterval   1;",
         "    }",
-        "}",
     ]
-    return "\n" + "\n".join(entries)
+    return "\n".join(entries)
 
 
 def purge_write(study: str, opts) -> int:
@@ -1482,6 +1501,9 @@ def main(argv: list[str] | None = None) -> int:
     patches.add_argument("--body", default="body", dest="body_patch",
                          help="The patch forces are taken on, when there is one (default 'body'). "
                               "A patch by that name gets a forceCoeffs function object.")
+    patches.add_argument("--yplus", action="store_true",
+                         help="Add a yPlus function object: min, max and mean y+ per wall "
+                              "patch at every write, into postProcessing/yPlus/.")
 
     args = ap.parse_args(argv)
 

@@ -144,8 +144,10 @@ KEEP_SUFFIXES = frozenset(
     {
         # Renders and plots -- the whole point of running the thing.
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
-        # What was written down about it.
-        ".md", ".txt", ".csv", ".json", ".yaml", ".yml",
+        # What was written down about it. `.jsonl` is a parametric study's ledger and
+        # archive -- one record per line, appended as the campaign runs -- and a
+        # leaderboard that never reached the mirror is a study nobody can audit.
+        ".md", ".txt", ".csv", ".json", ".jsonl", ".yaml", ".yml",
         ".log",
         # What the agent wrote to do the work. Small, and the record of how a number
         # was arrived at.
