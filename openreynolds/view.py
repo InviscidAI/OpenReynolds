@@ -11,6 +11,7 @@ view can change what the user reads, never what the model does.
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -161,11 +162,16 @@ def plain_console(file: Any = None) -> Console:
     Width alone was not enough: a wider console still folds a line longer than itself,
     and a workspace path under a CI runner's temp directory is longer than 160 columns,
     so "3 frames" reached the reader as "3\\nframes". `soft_wrap` stops rich inserting
-    newlines at all, which is what a pipe or an agent reading the output wants."""
-    console = Console(file=file)
-    if console.is_terminal:
-        return console
-    return Console(file=file, width=PIPED_WIDTH, soft_wrap=True)
+    newlines at all, which is what a pipe or an agent reading the output wants.
+
+    `Console.is_terminal` is not the check: on Windows, rich can report a StringIO
+    as a terminal and still fold at eighty columns. Ask the file itself."""
+    target = sys.stdout if file is None else file
+    if getattr(target, "isatty", lambda: False)():
+        return Console(file=file)
+    return Console(
+        file=file, width=PIPED_WIDTH, soft_wrap=True, force_terminal=False
+    )
 
 
 class ConsoleView(View):
