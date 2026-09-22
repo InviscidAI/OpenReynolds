@@ -2073,6 +2073,77 @@ def test_recover_session_survives_a_service_without_the_route(store):
     assert store.session.home == ""                  # unchanged, no exception
 
 
+# -- /mesh: the person talking to the CAD desk ---------------------------------
+
+
+class SpyDesk:
+    """A CAD desk that records what it was asked for and answers instantly."""
+
+    def __init__(self):
+        self.calls = []
+
+    def run(self, request, case=None, geometry="", inputs=()):
+        self.calls.append({"request": request, "inputs": list(inputs)})
+        return type("R", (), {"tokens": {}, "png": None, "check": None, "ok": True,
+                              "error": "", "case_rel": "cad", "summary": "built it",
+                              "steps": [], "seconds": 1.0, "stopped": "done",
+                              "remarks": []})()
+
+
+def mesh_line(line, loop, view, browser, store, backend, cad):
+    from openreynolds import commands
+    return cli._apply(commands.parse(line), loop, view, browser, store,
+                      cad=cad, backend=backend)
+
+
+def test_mesh_reaches_the_desk_without_a_model_turn(loop, backend, store, view):
+    """The point of the command: the person's own words, not the agent's reading of
+    them, and no turn in front of it."""
+    browser = Browser(backend, store)
+    desk = SpyDesk()
+    spoken = mesh_line("/mesh a 10 mm U-bend in water", loop, view, browser, store,
+                       backend, desk)
+    assert spoken is None, "a /mesh must not also be said to the model"
+    assert desk.calls == [{"request": "a 10 mm U-bend in water", "inputs": []}]
+
+
+def test_mesh_hands_over_every_file_marked_with_at(loop, backend, store, view):
+    browser = Browser(backend, store)
+    desk = SpyDesk()
+    backend.files["/work/u/plan.png"] = b"\x89PNG\r\n"
+    backend.files["/work/u/rooms.csv"] = b"room,w\n"
+    mesh_line("/mesh trace @/work/u/plan.png with @/work/u/rooms.csv", loop, view,
+              browser, store, backend, desk)
+    assert desk.calls[0]["inputs"] == ["/work/u/plan.png", "/work/u/rooms.csv"]
+    assert desk.calls[0]["request"] == "trace /work/u/plan.png with /work/u/rooms.csv"
+
+
+def test_a_handed_over_file_that_is_not_there_costs_a_stat_not_a_build(
+    loop, backend, store, view
+):
+    browser = Browser(backend, store)
+    desk = SpyDesk()
+    mesh_line("/mesh trace @/work/u/absent.png", loop, view, browser, store, backend,
+              desk)
+    assert desk.calls == [], "a refusal that started a desk is not a refusal"
+
+
+def test_mesh_without_a_desk_says_so_rather_than_failing(loop, backend, store, view):
+    browser = Browser(backend, store)
+    spoken = mesh_line("/mesh a duct", loop, view, browser, store, backend, None)
+    assert spoken is None
+
+
+def test_mesh_typed_mid_turn_is_refused_rather_than_dropped(loop, backend, store, view):
+    """The kernel is sequential and the agent may be inside a desk run of its own, so
+    a second desk started from under it would queue and come back having done nothing.
+    Before this the line fell through the local dispatch and vanished."""
+    browser = Browser(backend, store)
+    reader = ScriptedReader(["/mesh a duct", None])
+    spoken = cli._typed_while_working(loop, view, browser, store, reader)
+    assert spoken is None, "a mid-turn /mesh must not be sent to the model as prose"
+    assert any("prompt is back" in str(line) for line in view.warnings), view.warnings
+
 # -- saying which of several workspaces was joined ------------------------------
 
 

@@ -12,7 +12,8 @@ def lines(text, **kw):
 
 def test_a_slash_offers_every_command_in_registry_order():
     got = lines("/")
-    assert got[0] == "/btw "
+    assert got[0] == "/mesh "  # the registry leads with it; the rest follow in order
+    assert got[1] == "/btw "
     assert "/status" in got and "/help " in got and "/exit" in got
     assert "/quit" not in got and "/y" not in got  # aliases only when typed exactly
 

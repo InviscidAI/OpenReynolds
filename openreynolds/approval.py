@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from . import commands
 
-KINDS = ("job", "mesh", "checkpoint")
+KINDS = ("job", "checkpoint")
 
 APPROVED = "approved"
 DECLINED = "declined"

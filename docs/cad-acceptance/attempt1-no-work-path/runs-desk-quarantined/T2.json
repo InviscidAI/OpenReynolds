@@ -1,0 +1,115 @@
+{
+  "arm": "desk",
+  "prompt": "T2",
+  "title": "T2 \u2014 body in a flow box",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A 40 mm diameter sphere in an open air flow, for an external aerodynamics solve. Put it in a domain that extends 5 diameters upstream, 15 downstream, and 5 to each side and above and below. Name the inlet, the outlet, the far field and the sphere separately. Resolve the boundary layer on the sphere with prism layers.",
+  "properties": [
+    "sphere diameter, 40 mm",
+    "domain extent in diameters, upstream / downstream / lateral: 5 / 15 / 5",
+    "blockage ratio \u2014 sphere frontal area over domain cross-section",
+    "achieved layer coverage on the sphere, as a percentage, **read off the mesh**",
+    "the four patches, each with its area and mean normal"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T09:42:49",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": false,
+    "stopped": "steps",
+    "error": "",
+    "summary": "",
+    "case_dir": "/work/accept-t2",
+    "seconds": 277.7,
+    "desk_seconds": 249.8,
+    "steps": 30,
+    "tokens": {
+      "input": 60,
+      "cache_read": 567992,
+      "cache_write": 35047,
+      "output": 15466
+    },
+    "usd": 0.356,
+    "script_lines": 497,
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "there is no constant/polyMesh in accept-t2 -- nothing has been meshed yet",
+        "the check wrote no readable answer",
+        "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+        "no picture of the mesh was drawn"
+      ],
+      "regions": [],
+      "cells": 0,
+      "two_d": false,
+      "patches": [],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "fail",
+          "measured": "there is no constant/polyMesh in accept-t2 -- nothing has been meshed yet"
+        },
+        {
+          "check": "look",
+          "status": "fail",
+          "measured": "the check wrote no readable answer"
+        },
+        {
+          "check": "build",
+          "status": "fail",
+          "measured": "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh"
+        },
+        {
+          "check": "render",
+          "status": "fail",
+          "measured": "no picture of the mesh was drawn"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        },
+        {
+          "check": "replay",
+          "status": "ok",
+          "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3"
+        }
+      ],
+      "replay": {
+        "ran": true,
+        "exit_code": 0,
+        "before": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "after": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "output_tail": "ssor2/199\n/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/6b9b748f-7740-4d6e-837f-174cc022c775/scratchpad/case/processor2/198\n/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/6b9b748f-7740-4d6e-837f-174cc022c775/scratchpad/case/processor2/197\n/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/6b9b748f-7740-4d6e-837f-174cc022c775/scratchpad/case/processor2/196\n/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/6b9b748f-7740-4d6e-837f-174cc022c775/scratchpad/case/processor2/195\n/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/6b9b748f-7740-4d6e-837f-174cc022c775/scratchpad/case/processor2/194\n/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/6b9b748f-7740-4d6e-837f-174cc022c775/scratchpad/case/processor2/193\n/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/6b9b748f-7740-4d6e-837f-174cc022c775/scratchpad/case/processor2/192\n/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/6b9b748f-7740-4d6e-837f-174cc022c775/scratchpad/case/processor2/191\n/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/6b9b748f-7740-4d6e-837f-174cc022c775/scratchpad/case/processor2/190\n/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynold"
+      }
+    },
+    "artifacts": [
+      "build.py",
+      "check.json",
+      "steps.json"
+    ]
+  },
+  "seconds": 278.2,
+  "verdict": "check-not-ok"
+}

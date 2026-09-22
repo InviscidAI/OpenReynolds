@@ -1,0 +1,29 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Feature edges, one .eMesh per STL, read by snappy's `features` entry. Copy into
+  <case>/system/ and run `surfaceFeatureExtract` before snappyHexMesh.
+
+  The utility installed here is `surfaceFeatureExtract`, so this file is
+  `surfaceFeatureExtractDict`; the older `surfaceFeatures`/`surfaceFeaturesDict`
+  pair, which took a flat `surfaces (...)` list, is not in v2512.
+
+  One block per surface. patch_entries.py --insert writes the blocks from what is in
+  constant/triSurface/, so the block list and the geometry list cannot drift apart.
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      surfaceFeatureExtractDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// includedAngle 150: an edge is a feature when the two triangles either side of it
+// meet at less than this. 180 takes every edge in the tessellation, 0 takes none;
+// 150 keeps a box corner (90) and a fillet break and drops the facet seams a curved
+// wall is tessellated into. Lower it towards 100 on a shape whose creases are shallow.
+
+// PATCH-ENTRIES-BEGIN extract
+// PATCH-ENTRIES-END
+
+// ************************************************************************* //

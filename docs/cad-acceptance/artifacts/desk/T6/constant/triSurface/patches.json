@@ -1,0 +1,32 @@
+{
+  "unit_metres": 1.0,
+  "source": "fluid.step",
+  "patches": [
+    {
+      "name": "inlet",
+      "file": "inlet.stl",
+      "triangles": 99,
+      "area_m2": 0.0012379717325257979,
+      "role": "inlet"
+    },
+    {
+      "name": "outlet",
+      "file": "outlet.stl",
+      "triangles": 99,
+      "area_m2": 0.0012379717325257979,
+      "role": "outlet"
+    },
+    {
+      "name": "walls",
+      "file": "walls.stl",
+      "triangles": 1704,
+      "area_m2": 0.02506538016739757,
+      "role": "wall"
+    }
+  ],
+  "location_in_mesh": [
+    0.1,
+    0.05,
+    0.05
+  ]
+}

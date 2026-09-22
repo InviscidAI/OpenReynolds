@@ -16,13 +16,11 @@ def test_tool_list_is_deterministic():
     assert names == sorted(names)
     assert names == [
         "bash",
+        "cad",
         "fetch",
         "job_check",
         "job_kill",
         "job_start",
-        "mesh",
-        "mesh_note",
-        "mesh_wait",
         "read_file",
         "write_file",
     ]
@@ -31,12 +29,25 @@ def test_tool_list_is_deterministic():
         assert tool["description"]
 
 
+def test_the_cad_tool_says_what_comes_back_and_what_does_not():
+    """The description says what the tool returns and, just as importantly, what it
+    does not: a result read as "the case is ready to solve" is the failure this tool
+    was rebuilt to stop. The restraint test_prompt applies to the main prompt applies
+    here too -- the clause says what comes back, never what the caller should do."""
+    description = next(t for t in TOOLS if t["name"] == "cad")["description"]
+    assert "checkMesh" in description and "patch table" in description
+    assert "no boundary conditions" in description and "no solve" in description
+    lowered = description.lower()
+    for imperative in ("you must", "always ", "never ", "you should", "prefer "):
+        assert imperative not in lowered, imperative
+
+
 def test_the_checkpoint_tool_is_offered_only_in_structured_mode(ctx):
-    """Ten tools in every mode; an eleventh, `checkpoint`, only when the person chose
+    """Eight tools in every mode; a ninth, `checkpoint`, only when the person chose
     structured mode. Still sorted, so a mode's tool list is always the same bytes."""
     from openreynolds.tools import tools_for
 
-    ctx.mesher = object()
+    ctx.cad = object()
     for mode in ("auto", "partial"):
         ctx.mode = mode
         assert "checkpoint" not in [tool["name"] for tool in tools_for(ctx)]
@@ -65,24 +76,6 @@ def test_a_checkpoint_approved_with_all_switches_to_full_auto(ctx):
     assert not is_error and ctx.plan_approved
     assert switched == ["auto"]
     assert "solve" in content and "full auto" in content
-
-
-def test_the_mesh_tool_says_what_comes_back_and_what_does_not():
-    """The description says what the tool returns and, just as importantly, what it
-    does not: a result read as "the case is ready to solve" is the failure this tool
-    was rebuilt to stop. The restraint test_prompt applies to the main prompt applies
-    here too -- the clause says what comes back, never what the caller should do."""
-    description = next(t for t in TOOLS if t["name"] == "mesh")["description"]
-    assert "checkMesh" in description and "patch table" in description
-    assert "no boundary conditions" in description and "no solve" in description
-    # And the shape of the call: it returns at once and the result arrives later,
-    # which is the one thing a caller cannot infer from the result it gets.
-    assert "returns at once" in description
-    assert "mesh_note" in description and "mesh_wait" in description
-    for name in ("mesh", "mesh_note", "mesh_wait"):
-        lowered = next(t for t in TOOLS if t["name"] == name)["description"].lower()
-        for imperative in ("you must", "always ", "never ", "you should", "prefer "):
-            assert imperative not in lowered, (name, imperative)
 
 
 def test_long_job_description_keeps_output_in_the_job_log():
@@ -120,22 +113,18 @@ def test_environment_warns_that_partial_openfoam_banners_are_invalid():
     assert "partial decorative banner" in environment
 
 
-def test_the_mesh_tools_are_offered_only_when_there_is_a_desk_behind_them(ctx):
+def test_the_cad_tool_is_offered_only_when_there_is_a_desk_behind_it(ctx):
     """A tool in the list that can only answer "not available" costs the model a call
     to find that out. Taking it out is also what makes the question answerable: the
     same prompt run with the desk and without it is the only honest way to settle
     whether a slow natural-language sub-agent beats the bash the caller already has
-    (`OPENREYNOLDS_MESH_TOOL=0`). All three go together: a `mesh_note` with no desk to
-    note for is the same wasted call."""
+    (`OPENREYNOLDS_CAD_TOOL=0`, or `OPENREYNOLDS_MESH_TOOL=0` as it was)."""
     from openreynolds.tools import tools_for
 
-    without = [tool["name"] for tool in tools_for(ctx)]
-    for name in ("mesh", "mesh_note", "mesh_wait"):
-        assert name not in without, name
-    ctx.mesher = object()
-    with_desk = [tool["name"] for tool in tools_for(ctx)]
-    for name in ("mesh", "mesh_note", "mesh_wait"):
-        assert name in with_desk, name
+    assert "cad" not in [tool["name"] for tool in tools_for(ctx)]
+    ctx.cad = object()
+    assert "cad" in [tool["name"] for tool in tools_for(ctx)]
+    assert tools_for(ctx) is TOOLS
     assert tools_for(ctx) is TOOLS
 
 

@@ -1,0 +1,39 @@
+{
+ "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/old-t8",
+ "polymesh": true,
+ "patches": [
+  {
+   "name": "solidWall",
+   "type": "wall",
+   "nFaces": 332
+  },
+  {
+   "name": "inlet",
+   "type": "patch",
+   "nFaces": 164
+  },
+  {
+   "name": "fluidWall",
+   "type": "wall",
+   "nFaces": 3400
+  },
+  {
+   "name": "outlet",
+   "type": "patch",
+   "nFaces": 164
+  }
+ ],
+ "build": [
+  "Allmesh",
+  "build.py"
+ ],
+ "cells": 0,
+ "faces": 0,
+ "points": 0,
+ "bounds": [],
+ "two_d": false,
+ "checkmesh": "",
+ "checkmesh_ok": false,
+ "metrics": {},
+ "render": ""
+}

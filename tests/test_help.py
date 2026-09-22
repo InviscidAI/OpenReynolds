@@ -45,7 +45,7 @@ def test_the_modes_topic_says_what_each_gates_and_how_to_switch():
     text = joined("modes")
     for mode in modes.MODES:
         assert modes.DESCRIPTIONS[mode] in text
-    assert "job_start" in text and "mesh" in text and "checkpoint" in text
+    assert "job_start" in text and "checkpoint" in text
     assert "/mode <name>" in text and "--mode" in text and "OPENREYNOLDS_MODE" in text
     for stage in modes.STAGES:
         assert stage in text

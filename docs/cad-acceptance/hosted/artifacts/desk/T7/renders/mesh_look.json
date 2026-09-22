@@ -1,0 +1,17 @@
+{
+ "case": "/__modal/volumes/vo-bOyNivKMQsmb07ENeEbuUg/accept-t7",
+ "polymesh": false,
+ "patches": [],
+ "build": [
+  "system/blockMeshDict"
+ ],
+ "cells": 0,
+ "faces": 0,
+ "points": 0,
+ "bounds": [],
+ "two_d": false,
+ "checkmesh": "",
+ "checkmesh_ok": false,
+ "metrics": {},
+ "render": ""
+}

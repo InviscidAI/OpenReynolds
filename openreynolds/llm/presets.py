@@ -13,12 +13,87 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-FAMILIES = ("anthropic", "openai")
+FAMILIES = ("anthropic", "openai", "openai-responses")
 
 FALLBACK_CONTEXT_WINDOW = 200_000
 """Assumed window for a vendor whose model is not in the table. Conservative on
 purpose: refreshing a thread early costs a briefing; overrunning a window costs the
 turn."""
+
+
+PRICE_PER_MTOK: dict[str, dict[str, float]] = {
+    # Anthropic first-party API rates, per million tokens. Cache reads are 0.1x input
+    # and cache writes 1.25x, so those are derived rather than typed twice.
+    "claude-opus-5": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
+    "claude-sonnet-5": {"input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50},
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00, "cache_read": 0.10, "cache_write": 1.25},
+    # Aster's rates, read off its own `/v1/models` (which reports them per model) rather
+    # than off the marketing page, whose gpt-oss figure disagreed with the API's. Chat
+    # Completions never bills a cache *write* -- `openai_api._token_classes` always
+    # reports that class as 0 -- so 0.0 here is the true rate, not a missing one.
+    # Keyed by vendor as well as model, because a model id does not determine a price:
+    # the same open weights cost different amounts at different vendors, and kimi-k3 is
+    # 20% dearer at Moonshot than at Aster. An unqualified `kimi-k3` is deliberately not
+    # here -- "some vendor's kimi-k3" has no price, and `prices()` returning None is what
+    # stops a run that cannot say what it cost.
+    "aster:kimi-k3": {"input": 2.50, "output": 12.50, "cache_read": 0.25, "cache_write": 0.0},
+    "moonshot:kimi-k3": {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 0.0},
+    "glm-5.2": {"input": 1.00, "output": 4.00, "cache_read": 0.20, "cache_write": 0.0},
+    # gpt-oss publishes no cached rate, so a cached prefix is priced at the full input
+    # rate: an unbilled discount we do not know about understates nothing.
+    "gpt-oss-120b": {"input": 0.15, "output": 0.60, "cache_read": 0.15, "cache_write": 0.0},
+    "gpt-oss-120b-fast": {"input": 0.15, "output": 0.60, "cache_read": 0.15, "cache_write": 0.0},
+    # OpenAI's own rates, standard tier. Chat Completions bills no cache write either.
+    # `gpt-5.6-sol` is priced here but is NOT reachable through this adapter: OpenAI
+    # refuses function tools together with a reasoning effort on /v1/chat/completions for
+    # every model above gpt-5.2, and points at /v1/responses, which `OpenAIProvider` does
+    # not speak. The rate is recorded so that the day the adapter learns that API, the
+    # model is not silently priced at zero.
+    "gpt-5.6-sol": {"input": 4.00, "output": 20.00, "cache_read": 0.40, "cache_write": 0.0},
+    "gpt-5.2": {"input": 1.75, "output": 14.00, "cache_read": 0.175, "cache_write": 0.0},
+    "gpt-5.1": {"input": 1.25, "output": 10.00, "cache_read": 0.125, "cache_write": 0.0},
+}
+"""What a token costs, **by model**, next to the models themselves.
+
+It used to be one untagged table in `scripts/cad_accept.py` holding Sonnet 5's rates,
+because Sonnet 5 is what the default preset below runs. The build-up sweep sets
+`mesher_model` to Opus 5, nothing reconciled the two, and every dollar the first baseline
+reported was understated by exactly 2.5x -- `$3.00` for a corpus that cost `$7.49`.
+
+Nothing was wrong with the arithmetic and nothing was wrong with the desk. The table was
+a fact about one model kept somewhere that did not say which, and the sweep quietly used
+it for another. So it lives here, keyed, where a model id is already the unit.
+
+The ranking in that report survives, because one sweep runs one model and a uniform
+scalar cannot reorder anything. What did not survive is every absolute figure, and any
+comparison between two sweeps whose models differ -- which is exactly what the baseline
+chain exists to make."""
+
+
+def prices(model: str, provider: str = "") -> dict[str, float] | None:
+    """The rates for a model, or `None` when we do not know them.
+
+    `None` rather than an empty dict on purpose: an empty dict prices a run at zero, and
+    a zero that means "unpriced" is indistinguishable from a zero that means "free" --
+    which is the shape of the bug this table was moved to fix."""
+    key = (model or "").strip()
+    who = (provider or "").strip().lower()
+    if who:
+        qualified = PRICE_PER_MTOK.get(f"{who}:{key}")
+        if qualified is not None:
+            return qualified
+    return PRICE_PER_MTOK.get(key)
+
+
+def spend(tokens: dict[str, int] | None, model: str, provider: str = "") -> float:
+    """What a run cost, at this model's rates. Unknown model prices at 0.0.
+
+    Callers that report a number to somebody should refuse an unpriced model up front
+    rather than let this return zero -- `scripts/cad_buildup.py` does, beside its key
+    check, because a sweep ranks its findings by cost."""
+    rates = prices(model, provider) or {}
+    return sum(rates.get(name, 0.0) * int(count or 0) / 1e6
+               for name, count in (tokens or {}).items())
 
 
 @dataclass(frozen=True)
@@ -62,6 +137,15 @@ PRESETS: dict[str, Preset] = {
             "OPENAI_API_KEY", "OpenAI, directly.",
         ),
         Preset(
+            # Required, not preferred: OpenAI refuses function tools beside a reasoning
+            # effort on Chat Completions for every model above gpt-5.2, so the newer
+            # models are reachable only here. `desk_model` stays on a Chat Completions
+            # generation because the front desk asks for no tools and no reasoning.
+            "openai-responses", "openai-responses", None,
+            "gpt-5.6-sol", "gpt-5.2", 400_000,
+            "OPENAI_API_KEY", "OpenAI through the Responses API: tools with reasoning.",
+        ),
+        Preset(
             "zai", "anthropic", "https://api.z.ai/api/anthropic",
             "glm-4.6", "glm-4.5-air", 200_000,
             "ZAI_API_KEY", "Z.ai (GLM) through its Anthropic-compatible endpoint.",
@@ -80,6 +164,12 @@ PRESETS: dict[str, Preset] = {
             "minimax", "anthropic", "https://api.minimax.io/anthropic",
             "MiniMax-M2", "MiniMax-M2", 200_000,
             "MINIMAX_API_KEY", "MiniMax through its Anthropic-compatible endpoint.",
+        ),
+        Preset(
+            "aster", "openai", "https://api.asterlab.ai/v1",
+            "kimi-k3", "gpt-oss-120b-fast", 1_048_576,
+            "ASTER_API_KEY", "Aster's serving stack (Kimi K3, GLM 5.2, gpt-oss) over its "
+            "OpenAI-compatible endpoint.",
         ),
         Preset(
             "openrouter", "openai", "https://openrouter.ai/api/v1",

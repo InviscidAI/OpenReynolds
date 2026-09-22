@@ -45,6 +45,8 @@ the checks
 - `units`      incompressible OpenFOAM `p` is kinematic (m2/s2); force coefficients
                computed as though it were Pa are wrong by a factor of rho
 - `disk`       bytes per write time times the number of write times, against `df`
+- `change_me`  a dictionary copied out of `templates/` with a CHANGE_ME placeholder
+               still in it, named with the file and the line it is on
 
     python3 preflight.py /work/case
     python3 preflight.py /work/case --checks patches,empty,units
@@ -3054,6 +3056,91 @@ def _interface_findings(case: Case, application: str, solver: str) -> list[Findi
     return out
 
 
+# -- CHANGE_ME ---------------------------------------------------------------------
+
+
+CHANGE_ME = "CHANGE_ME"
+"""The token the shipped dictionaries in `templates/` carry where nothing can be
+guessed -- the `locationInMesh` that says which side of a surface is fluid, the
+corners of a background box. It lives in the artifact rather than in a refusal, so it
+survives being copied, and it is greppable by anything, this included."""
+
+CHANGE_ME_DIRS = ("system", "constant", "0", "0.orig", "0.org")
+"""Where a copied dictionary lands. `polyMesh` and `triSurface` are skipped: a mesh is
+megabytes of numbers and an STL is a surface, and neither is a dictionary somebody was
+meant to edit."""
+
+CHANGE_ME_SKIP = ("polyMesh", "triSurface", "trisurface", "geometry", "extendedFeatureEdgeMesh")
+
+CHANGE_ME_LIMIT = 4_000_000
+"""Bytes. Above this it is not a dictionary, and reading it costs more than the answer."""
+
+
+def change_me_sites(case: Case) -> tuple[list[tuple[str, int, str]], int]:
+    """Every line still carrying the token, as (path relative to the case, line
+    number, the line), and how many files were read looking for it."""
+    sites: list[tuple[str, int, str]] = []
+    read = 0
+    for name in CHANGE_ME_DIRS:
+        root = case.path / name
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            if any(part in CHANGE_ME_SKIP for part in path.relative_to(case.path).parts):
+                continue
+            try:
+                if path.stat().st_size > CHANGE_ME_LIMIT:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            read += 1
+            if CHANGE_ME not in text:
+                continue
+            relative = path.relative_to(case.path).as_posix()
+            for number, line in enumerate(text.splitlines(), start=1):
+                if CHANGE_ME in line:
+                    sites.append((relative, number, line.strip()))
+    return sites, read
+
+
+def check_change_me(case: Case, intent: Intent) -> list[Finding]:
+    """A dictionary still holding the placeholder it was shipped with.
+
+    The templates put the token where there is no defensible default -- the point
+    that says which side of a surface is fluid, the corners of the background box --
+    precisely so that a copy that was never finished says so. OpenFOAM does not: it
+    reads `CHANGE_ME` as a word, fails somewhere further in with a parse error if you
+    are lucky, and meshes the wrong side of the geometry if you are not. This is the
+    cheapest question in the file and it is asked before any mesher runs.
+    """
+    sites, read = change_me_sites(case)
+    if not read:
+        return [Finding("change_me", "skipped",
+                        f"no dictionaries under {', '.join(CHANGE_ME_DIRS)} to read")]
+    if not sites:
+        return [Finding(
+            "change_me", "ok",
+            f"no {CHANGE_ME} left in the {count_phrase(read, 'file')} read under "
+            + ", ".join(CHANGE_ME_DIRS),
+            "every placeholder the templates ship with has been replaced",
+        )]
+    shown = ["{}:{}  {}".format(*site) for site in sites[:5]]
+    more = f" (and {len(sites) - 5} more)" if len(sites) > 5 else ""
+    return [Finding(
+        "change_me", "fail",
+        f"{CHANGE_ME} in {count_phrase(len(sites), 'line')}: " + "; ".join(shown) + more,
+        "a template was copied and not finished. There is no default behind the "
+        "token -- it marks the places where a guess would be wrong rather than "
+        "merely unlucky, so nothing can proceed by assuming one",
+        "replace each one with a measured value; the comment beside it names what "
+        "measures it (domain_probe.py --suggest for a locationInMesh, surfaceCheck "
+        "for the bounds a background box has to contain)",
+    )]
+
+
 CHECKS: dict[str, Callable[[Case, Intent], list[Finding]]] = {
     "method": check_method,
     "geometry": check_geometry,
@@ -3067,6 +3154,7 @@ CHECKS: dict[str, Callable[[Case, Intent], list[Finding]]] = {
     "residuals": check_residuals,
     "units": check_units,
     "disk": check_disk,
+    "change_me": check_change_me,
 }
 
 CHECK_ORDER = tuple(CHECKS)

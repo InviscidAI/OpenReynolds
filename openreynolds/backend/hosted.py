@@ -27,6 +27,7 @@ from .base import (
     StoredEntry,
     StoredListing,
 )
+from .kernel import KernelHost
 from .pending import PendingBackend
 
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
@@ -579,6 +580,9 @@ class FoamdClient:
         )
 
     def close(self) -> None:
+        """The kernel goes down with the session that started it; the volume, and
+        everything its cells wrote, stays."""
+        self.kernel_stop()
         self._client.close()
 
     def request(
@@ -844,7 +848,7 @@ class FoamdClient:
         )
 
 
-class HostedBackend(Backend):
+class HostedBackend(KernelHost, Backend):
     """One instance of the hosted service, addressed as a workspace."""
 
     workspace_root = WORKSPACE_ROOT
@@ -959,6 +963,9 @@ class HostedBackend(Backend):
             raise BackendError(f"could not list this workspace's jobs: {exc}") from exc
 
     def close(self) -> None:
+        """The kernel goes down with the session that started it; the volume, and
+        everything its cells wrote, stays."""
+        self.kernel_stop()
         self._client.close()
 
     def _instance_path(self, suffix: str) -> str:

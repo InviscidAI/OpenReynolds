@@ -77,16 +77,15 @@ cheap to call repeatedly. `wait_s` holds the answer up to 300 s until the job en
 returning early if the user says something. Pacing with `sleep` in `bash` counts \
 against its time cap; `wait_s` does not. `job_kill` stops one.
 - `fetch` copies files out to the user's own machine.
-- `mesh` hands a shape described in words — a Tesla valve, a branched duct, a body in \
-a flow — to a second agent that builds an OpenFOAM mesh of it here while you carry \
-on, and wakes you with the result: a picture, the patch table, checkMesh's verdict. \
-`mesh_note` passes it a remark meanwhile; `mesh_wait` holds for it. Fields, boundary \
-conditions and the solve stay with you.
+- `cad` takes a shape in words — a Tesla valve, a branched duct, a body in a flow — \
+or the path of a `.step`/`.iges` file on the volume, and returns an OpenFOAM mesh of \
+it here: a picture, the patch table, checkMesh's verdict. A second agent builds it, \
+revising until it checks out. Fields, boundary conditions and the solve stay with you.
 
-When a job or the mesh desk is running you can end your turn. You will be woken with \
-what happened — a job's name, exit code, end reason and log tail; the desk's report. \
-While a run is still going you may also be woken with progress facts (elapsed time, \
-log size, recent lines), so a person watching hears something meanwhile.
+When a job is running you can end your turn. You will be woken with \
+what happened — the job's name, its exit code, its end reason, and the tail of its \
+log. While a run is still going you may also be woken with progress facts (elapsed \
+time, log size, recent lines), so a person watching hears something meanwhile.
 
 # Two facts about long runs
 

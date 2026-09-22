@@ -8,10 +8,10 @@ theirs to make in the same way `/btw` is theirs (commands.py): the user's own wo
 about how they want to be heard. When they have chosen, the harness gates exactly what
 they asked to have gated and nothing else.
 
-- `partial` puts every `job_start` and every `mesh` call to the person before it runs.
-  Those are the calls that spend compute; everything else runs freely.
-- `structured` offers a `checkpoint` tool and holds `job_start` and `mesh` until a
-  checkpoint (a plan) has been approved since the session entered the mode.
+- `partial` puts every `job_start` call to the person before it runs. That is the call
+  that spends compute; everything else runs freely.
+- `structured` offers a `checkpoint` tool and holds `job_start` until a checkpoint (a
+  plan) has been approved since the session entered the mode.
 
 What the modes gate is decided here, in one place, so the loop, the briefing, the help
 text and the docs cannot drift apart on it.
@@ -35,7 +35,7 @@ LABELS = {
 
 DESCRIPTIONS = {
     AUTO: "The agent decides everything and nothing waits for you.",
-    PARTIAL: "Every job start and every mesh build is put to you before it runs.",
+    PARTIAL: "Every job start is put to you before it runs.",
     STRUCTURED: "The study goes in stages: you approve a plan, then each stage at a checkpoint.",
 }
 
@@ -59,7 +59,7 @@ STAGES: tuple[str, ...] = tuple(PHASES)
 (`toolbox/study_state.py`), so the briefing, the checkpoint tool and the toolbox's
 `phases.json` all use one vocabulary."""
 
-COMPUTE_TOOLS = frozenset({"job_start", "mesh"})
+COMPUTE_TOOLS = frozenset({"job_start"})
 """The calls that spend compute, and so the only ones a non-auto mode gates."""
 
 CHECKPOINT = "checkpoint"
@@ -117,9 +117,9 @@ def briefing(mode: str) -> str:
     that the person is not to be asked (`AUTO_NO_QUESTIONS`)."""
     if mode == PARTIAL:
         return (
-            "The person chose to be asked before compute is spent: each job_start and "
-            "mesh call is put to them and runs once they approve it, and a declined "
-            "call comes back with their reason when they give one."
+            "The person chose to be asked before compute is spent: each job_start "
+            "call is put to them and runs once they approve it, and a declined call "
+            "comes back with their reason when they give one."
         )
     if mode == STRUCTURED:
         return (
@@ -127,8 +127,8 @@ def briefing(mode: str) -> str:
             "with you at a checkpoint and to see a checkpoint after each stage ("
             + ", ".join(STAGES)
             + "); the checkpoint tool puts a summary and what comes next in front of "
-            "them and waits for their answer, and job_start and mesh calls are held "
-            "until they have approved a plan."
+            "them and waits for their answer, and job_start calls are held until "
+            "they have approved a plan."
         )
     return AUTO_NO_QUESTIONS
 
@@ -138,8 +138,8 @@ def switched(mode: str) -> str:
     if mode == PARTIAL:
         return (
             "The person switched this session to ask-before-compute mode. From the next "
-            "tool call, each job_start and mesh call is put to them before it runs; "
-            "every other tool runs as before."
+            "tool call, each job_start call is put to them before it runs; every "
+            "other tool runs as before."
         )
     if mode == STRUCTURED:
         return (
@@ -147,7 +147,7 @@ def switched(mode: str) -> str:
             "plan at a checkpoint and to see a checkpoint after each stage ("
             + ", ".join(STAGES)
             + "). The checkpoint tool is offered from the next request, and job_start "
-            "and mesh calls are held until a checkpoint has been approved."
+            "calls are held until a checkpoint has been approved."
         )
     return (
         "The person switched this session to full auto mode. No tool call is put to "
@@ -160,7 +160,7 @@ def held(tool: str) -> str:
     """The tool result for a call structured mode holds. Facts, nothing run."""
     return (
         f"This {tool} call was held and did not run. The person chose structured mode, "
-        "where job_start and mesh run once a plan has been approved at a checkpoint, and "
+        "where job_start runs once a plan has been approved at a checkpoint, and "
         "no checkpoint has been approved since the mode began."
     )
 

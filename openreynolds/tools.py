@@ -1,20 +1,21 @@
-"""The tool surface: ten tools, thin handlers, everything delegating to `Backend`.
+"""The tool surface: eight tools, thin handlers, everything delegating to `Backend`.
 
 There is no `run_gate`, no `amend_spec`, no `ask_user` — asking is just talking. Nothing
 here inspects what the model is doing or refuses it on policy grounds. The handlers cap
 output and report facts; that is the whole job.
 
-An eleventh, `checkpoint`, exists only when the person chose structured mode
-(`modes.py`): it puts a summary in front of them and waits for their answer. It is the
-person asking to be consulted, not the harness deciding to consult them, so in full
-auto it is not in the list at all.
+The eighth, `cad`, delegates to the CAD desk (`cad/`) rather than straight to the
+backend: it is the one tool whose work is a model loop of its own — an agent with one
+python cell a step, in a kernel on the same workspace — and this module still knows
+nothing about how that loop reaches its model. What it does know is the one fact the
+desk cannot check for itself in time: whether the `geometry` file it was pointed at is
+there and readable. That is asked before the run starts, because a path that is wrong
+is worth a sentence rather than nine steps and a model bill.
 
-Three of the ten are the mesh desk's (`mesher/`): `mesh` starts a second agent -- one
-bash block a step, on the same workspace -- on a thread of its own and returns at once,
-`mesh_note` passes it a remark while it works, and `mesh_wait` holds for its result. The
-result otherwise arrives on its own, through the same watch loop that wakes the model
-when a job ends (`watch.py`). This module still knows nothing about how that agent
-reaches its model.
+A ninth, `checkpoint`, exists only when the person chose structured mode (`modes.py`):
+it puts a summary in front of them and waits for their answer. It is the person asking
+to be consulted, not the harness deciding to consult them, so in full auto it is not in
+the list at all.
 """
 
 from __future__ import annotations
@@ -27,7 +28,6 @@ from typing import Any, Callable
 
 from . import convergence, images
 from . import trace
-from .mesher.background import DeskRun, mesh_text
 from .progress import case_dir_from_cmd, parse_control_dict, phase_from_cmd
 from .backend.base import (
     Backend,
@@ -43,14 +43,10 @@ SLOW_COMMAND_S = 10.0
 """Past this, how long a command took is worth saying."""
 
 JOB_WAIT_MAX_S = 300
-"""Longest one `job_check` or `mesh_wait` call will hold its answer. Waiting again is free."""
+"""Longest one `job_check` call will hold its answer. Waiting again is free."""
 
 JOB_WAIT_POLL_S = 5.0
 """How often a waiting `job_check` looks at the job."""
-
-DESK_WAIT_POLL_S = 1.0
-"""How often a waiting `mesh_wait` looks for typed input. The desk's own end is an
-event and needs no polling; this is the latency at which a person is heard."""
 
 READ_TIMEOUT_S = 60.0
 """How long `read_file` waits on the workspace for one file before saying so.
@@ -86,7 +82,7 @@ class ToolContext:
     on_wait_input: Callable[[], bool] | None = None
     """Whether the person has said something for the model that it has not seen yet.
 
-    A waiting `job_check` or `mesh_wait` ends early on it, so a person who speaks
+    A waiting `job_check` ends early on it, so a person who speaks
     during a held call is heard in seconds rather than when the wait runs out. The
     session loop answers it (`Loop.heard`): it drains the inbox as the loop does
     between tool calls, answers commands on the spot, and holds the words for the
@@ -98,7 +94,7 @@ class ToolContext:
     on_leaving: Callable[[], bool] | None = None
     """Whether the person has ended the session while this turn runs (`Loop.leaving`).
 
-    The other question a held `job_check` or `mesh_wait` asks once a second, after
+    The other question a held `job_check` asks once a second, after
     `on_wait_input`: a `/exit`, a `/quit` or an EOF met by the drain is nobody's to
     deliver to the model, so it is not "heard" -- but it is the person leaving, and a
     wait held for them is held for nobody. The wait returns at once, saying so, and
@@ -140,27 +136,19 @@ class ToolContext:
     A render the model just examined is exactly the file the user wants on their
     machine right now, not at the next mirror cycle. The hook must not block and
     must not fail the read -- it is a nudge, and the picture matters more."""
-    mesher: Any = None
-    """The mesh desk (`mesher.Mesher`), when there is a model key to run one with.
-    None means the three mesh tools are not offered, and meshing is the caller's own
-    work like any other command."""
-    desk: Any = None
-    """The desk's current background run (`mesher.DeskRun`), or None.
-
-    One at a time: a `mesh` call while this is live starts nothing and answers with
-    where the run has got to. Cleared when the result has been handed over -- by
-    `mesh_wait`, or by the session loop when the run's end woke the model
-    (`take_desk`). Also recorded on the session (`store.session.desk`) so a resume
-    can say the run was cut off with the process."""
+    cad: Any = None
+    """The CAD desk (`cad.CadDesk`), when there is a model key to run one with.
+    None means the `cad` tool answers with why not, and CAD and meshing are the
+    caller's own work like any other command."""
     on_tokens: Callable[[dict], None] | None = None
-    """Called with the model usage a tool spent on the session's behalf -- the mesh
+    """Called with the model usage a tool spent on the session's behalf -- the CAD
     desk's steps -- so it lands in the same totals as the main loop's."""
     mode: str = "auto"
     """How much the person chose to be consulted (`modes.py`). Read at every tool call,
     so a `/mode` switch applies from the next one."""
     plan_approved: bool = False
     """Structured mode: whether a checkpoint has been approved since the session entered
-    the mode. Until one has, `job_start` and `mesh` are held."""
+    the mode. Until one has, `job_start` is held."""
     approver: Any = None
     """The `approval.Approver` that puts a question to the person. None when nobody can
     answer (a one-shot run), which is why a non-auto mode refuses to start there."""
@@ -172,12 +160,12 @@ class ToolContext:
 def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     """The tools this session can actually serve.
 
-    Only the mesh desk's three are conditional: without a desk behind them the tools
-    can do nothing but explain that, and a tool in the list that answers "not
-    available" costs the model a call to find out. Taking them out of the list is also
-    what makes the question answerable -- the same prompt run with the desk and without
-    it, which is the only honest way to settle whether a slow natural-language
-    sub-agent beats the bash the caller already has.
+    Only `cad` is conditional: without a desk behind it the tool can do nothing
+    but explain that, and a tool in the list that answers "not available" costs the
+    model a call to find out. Taking it out of the list is also what makes the
+    question answerable -- the same prompt run with the desk and without it, which is
+    the only honest way to settle whether a slow natural-language sub-agent beats the
+    bash the caller already has.
 
     `checkpoint` is the other: it is offered only in structured mode. A `/mode` switch
     into or out of structured therefore changes the tool list once, which rewrites the
@@ -185,8 +173,8 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     is paid only when they make it. Sorted by name either way, so the list for a given
     mode is always the same bytes.
     """
-    offered = TOOLS if ctx.mesher is not None else [
-        tool for tool in TOOLS if tool["name"] not in DESK_TOOLS
+    offered = TOOLS if ctx.cad is not None else [
+        tool for tool in TOOLS if tool["name"] != "cad"
     ]
     if ctx.mode != "structured":
         return offered
@@ -251,6 +239,71 @@ TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["cmd"],
+        },
+    },
+    {
+        "name": "cad",
+        "description": (
+            "Describe a geometry in words, or point at a CAD file already on the "
+            "workspace, and get back an OpenFOAM mesh of it there. A separate agent "
+            "does the work on this same machine — it builds or imports the shape, "
+            "repairs and tags it, chooses the mesher (snappyHexMesh, cfMesh, gmsh "
+            "body-fitted, blockMesh), renders the mesh and measures it, and revises "
+            "until checkMesh passes and the shape measures up to what was asked for. "
+            "You get the picture, the patch table with each patch's area and normal, "
+            "checkMesh's verdict, the script that rebuilds it, and where the case is. "
+            "It is a MESH only: no fields, no boundary conditions, no solver settings "
+            "and no solve — those stay with you. Takes a few minutes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request": {
+                    "type": "string",
+                    "description": (
+                        "The shape in words: its sizes with units, which end is the "
+                        "inlet and which the outlet, whether it is a plane (2D) case "
+                        "or a volume, and any property that has to be right — an "
+                        "angle, a radius, a gap, a count. Anything you leave out is "
+                        "the desk's to choose. With a `geometry` file it is what to "
+                        "make of that file instead: which region is the fluid, what "
+                        "to call each patch, what to leave out."
+                    ),
+                },
+                "case": {
+                    "type": "string",
+                    "description": (
+                        "Directory name for the case under the study (default 'mesh')."
+                    ),
+                },
+                "geometry": {
+                    "type": "string",
+                    "description": (
+                        "Absolute path to a .step, .stp, .iges or .igs file under "
+                        f"{WORKSPACE_ROOT}, when the shape already exists as CAD and "
+                        "the job is to prepare that part rather than to author one. "
+                        "It is read on this machine; there is no upload here, so the "
+                        "file has to be on the volume already. Checked for existence "
+                        "and readability before anything starts."
+                    ),
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Absolute paths under "
+                        f"{WORKSPACE_ROOT} to anything else the desk should work "
+                        "from: a floorplan or drawing to trace, a CSV of coordinates, "
+                        "a spec sheet. Any file type -- the desk opens them itself and "
+                        "sees what is in them. Use this rather than `geometry` "
+                        "whenever the file is material to work from instead of the "
+                        "part itself. Pass every file the person handed over; each is "
+                        "checked before anything starts, and each is put back beside "
+                        "the build script when it is replayed at the finish."
+                    ),
+                },
+            },
+            "required": ["request"],
         },
     },
     {
@@ -376,105 +429,6 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
-        "name": "mesh",
-        "description": (
-            "Describe a geometry in words and have an OpenFOAM mesh of it built on the "
-            "workspace. A separate agent builds it on this same machine, in the "
-            "background — it chooses the mesher (gmsh body-fitted, blockMesh, "
-            "snappyHexMesh, cfMesh), writes the geometry as a script, renders the mesh "
-            "and measures it, and revises until checkMesh passes and the shape measures "
-            "up to what was asked for. This call returns at once with where the desk is "
-            "working; the conversation carries on, and the result arrives here as a "
-            "message when the desk finishes or gets stuck (typically 2–8 minutes): the "
-            "picture's path, the patch table with each patch's area and normal, "
-            "checkMesh's verdict, and where the case is. mesh_note passes the person's "
-            "remarks about the geometry to the desk while it works; mesh_wait holds for "
-            "the result when there is nothing else to do. One desk runs at a time. It is "
-            "a MESH only: no fields, no boundary conditions, no solver settings and no "
-            "solve — those stay with you. wait=true runs it in the foreground instead "
-            "and returns the result directly."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "request": {
-                    "type": "string",
-                    "description": (
-                        "The shape in words: its sizes with units, which end is the "
-                        "inlet and which the outlet, whether it is a plane (2D) case "
-                        "or a volume, and any property that has to be right — an "
-                        "angle, a radius, a gap, a count. Anything you leave out is "
-                        "the mesh desk's to choose."
-                    ),
-                },
-                "case": {
-                    "type": "string",
-                    "description": (
-                        "Directory name for the case under the study (default 'mesh')."
-                    ),
-                },
-                "wait": {
-                    "type": "boolean",
-                    "description": (
-                        "Hold this call until the desk is done and return the result "
-                        "here, as the tool did before it had a background. Default "
-                        "false: the desk runs on its own and the result arrives as a "
-                        "message."
-                    ),
-                },
-            },
-            "required": ["request"],
-        },
-    },
-    {
-        "name": "mesh_note",
-        "description": (
-            "Pass a remark to the mesh desk while it is building: a change to the "
-            "shape, a correction, a detail the person added. The desk reads it at its "
-            "next command and works to it, and its result says what it heard. Answers "
-            "whether a desk was there to hear it."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "The remark, in the person's words where it is theirs.",
-                },
-            },
-            "required": ["text"],
-        },
-    },
-    {
-        "name": "mesh_wait",
-        "description": (
-            "Hold the answer until the running mesh desk finishes, up to wait_s "
-            f"seconds (at most {JOB_WAIT_MAX_S}), ending early if the user says "
-            "something (their words then follow this result in the same message; "
-            "answer them and call again). When the desk has finished this returns its "
-            "full result — the "
-            "picture, the patch table, checkMesh's verdict, where the case is — and "
-            "otherwise where it has got to. The result also arrives on its own as a "
-            "message when the desk finishes, so this is for when there is nothing "
-            "else to do meanwhile."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "wait_s": {
-                    "type": "integer",
-                    "description": (
-                        f"Seconds to hold the answer, up to {JOB_WAIT_MAX_S}; default "
-                        f"{JOB_WAIT_MAX_S}. 0 answers at once with where the desk is. "
-                        "The wait is the harness's own and does not count against any "
-                        "command timeout."
-                    ),
-                },
-            },
-            "required": [],
-        },
-    },
-    {
         "name": "read_file",
         "description": (
             "Read a window of a file as text, or list a directory. Byte offsets, so "
@@ -508,17 +462,14 @@ TOOLS: list[dict[str, Any]] = [
 
 TOOL_NAMES = frozenset(tool["name"] for tool in TOOLS)
 
-DESK_TOOLS = frozenset({"mesh", "mesh_note", "mesh_wait"})
-"""The three that exist only when the mesh desk does (`tools_for`)."""
-
 CHECKPOINT_TOOL: dict[str, Any] = {
     "name": "checkpoint",
     "description": (
         "Put where the study stands in front of the person and wait for their answer. "
         "Offered because they chose structured mode: they want to agree a plan, and to "
         "hear from you after each stage. The result says whether they approved, and "
-        "carries their words when they asked for changes. job_start and mesh calls are "
-        "held until a checkpoint has been approved in this mode."
+        "carries their words when they asked for changes. job_start calls are held "
+        "until a checkpoint has been approved in this mode."
     ),
     "input_schema": {
         "type": "object",
@@ -1467,125 +1418,69 @@ def _fetch(ctx: ToolContext, args: dict[str, Any]) -> str:
     return f"copied {len(written)} file(s) to the user's machine:\n{listing}"
 
 
-def _mesh(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
-    """Start the mesh desk on a thread of its own and say so, at once.
+GEOMETRY_SUFFIXES = (".step", ".stp", ".iges", ".igs")
+"""What the `geometry` property may name. B-rep, and nothing else: a `.stl` is
+triangles somebody already chose the size of, and the desk's whole first act on an
+imported file is choosing that size against the flow."""
 
-    Measured before this: one `mesh` call held the loop's thread for 402 s and some
-    twenty-five model calls (study 20260920-161908-c7ef), during which the main agent
-    answered nothing and every line the person typed was drained into the desk. The
-    desk's work was fine; the thread it ran on was the problem. Now the call returns
-    with where the desk is working, the conversation carries on, and the finished
-    result reaches the model as a wake (`watch.watch`) or through `mesh_wait`.
+GEOMETRY_PROBE_BYTES = 1
+"""How much of the file is read to find out whether it can be read at all. The
+question is whether the volume will hand the bytes over, not what is in them."""
 
-    `wait: true` is the old shape, whole: the call holds until the desk is done and
-    the desk hears the session's inbox directly, as it did before there was a
-    background. Kept for callers that want exactly that.
+
+def refuse_input(backend: Any, path: str, brep: bool = False) -> str | None:
+    """Why this path cannot be handed over, or None to go ahead.
+
+    Asked here rather than inside the desk, and before the desk is started, because
+    everything the desk does costs model time: a path with a typo in it discovered on
+    step nine is a refusal that took nine steps and a bill to write. This one costs a
+    `stat` and one byte.
+
+    **`brep` is about what is being asked for, not about what the file is.** A
+    `geometry` is "this is the part, prepare it", and a drawing cannot be that, so the
+    suffix list applies. An `input` is "here is something to work from", and nothing
+    about a PNG, a CSV of coordinates or a spec sheet makes it unusable -- the desk
+    opens it with a cell and finds out. A whitelist there would be the harness deciding
+    which kinds of work are possible, which is how a floorplan could not be handed over
+    at all.
+
+    The one byte is not a read of the file. It asks whether the volume will hand bytes
+    over, which a `stat` does not answer.
     """
-    if ctx.mesher is None:
-        return (
-            "the mesh desk is not available in this session (it needs a model key of "
-            "its own to run); meshing here is yours to do with bash like anything else"
-        )
-    request = str(args.get("request", ""))
-    case = args.get("case")
-    if args.get("wait"):
-        return mesh_content(_counted(ctx, ctx.mesher.run(request, case=case)))
-
-    running = ctx.desk
-    if running is not None and not running.done.is_set():
-        # One at a time. Its request is not queued behind the running one either --
-        # a queue is a second thing to lose track of, and the caller can call again.
-        return (
-            f"{running.progress_line()}. One mesh desk runs at a time in a session, so "
-            "this call started nothing and its request was not queued. mesh_note passes "
-            "a remark to the running desk (a change of shape included); mesh_wait holds "
-            "for its result, which also arrives here on its own when it finishes."
-        )
-    lead: list[dict[str, Any]] = []
-    if running is not None:
-        # It finished while the caller was working and nothing has handed the result
-        # over yet -- the wake would have, at the end of this turn. Delivered here
-        # first, so the new run does not bury the old one's answer.
-        finished = take_desk(ctx, running)
-        lead = _blocks(
-            f"The mesh desk on `{running.case_rel}` had finished; its result first:",
-            _finished_content(running, finished),
-        )
-    run = DeskRun(ctx.mesher, request, case).start()
-    ctx.desk = run
-    ctx.store.session.desk = run.record()
-    ctx.store.save()
-    started = _desk_started(run)
-    return [*lead, {"type": "text", "text": started}] if lead else started
-
-
-def _desk_started(run: Any) -> str:
-    return (
-        f"the mesh desk has started on `{run.case_rel}`. It works on its own from here, "
-        "and its result arrives in this conversation as a message when it finishes or "
-        "gets stuck (typically 2-8 minutes), so nothing here has to wait for it. "
-        "Meanwhile: talk with the person, write the case files that do not depend on "
-        "the mesh (controlDict, fvSchemes, fvSolution, transportProperties, "
-        f"boundary-condition drafts) in a directory of their own rather than in "
-        f"`{run.case_rel}`, which is the desk's to write into, and do not poll it with "
-        "sleep -- a sleep only holds the turn the result is waiting for. mesh_note "
-        "passes the person's remarks about the geometry to the desk; mesh_wait blocks "
-        "only when you truly have nothing else to do."
-    )
-
-
-def _mesh_note(ctx: ToolContext, args: dict[str, Any]) -> str:
-    """A remark for the running desk. It goes into the desk's own queue, which the
-    desk drains at its next step (`DeskRun.take_remarks`); the session's inbox is
-    never read on the desk's behalf any more."""
-    run = ctx.desk
-    text = str(args.get("text") or "").strip()
-    if run is None:
-        return "no mesh desk is running in this session, so there was nobody to note this for"
-    if run.done.is_set():
-        return (f"the mesh desk on `{run.case_rel}` has already finished, so this note "
-                "reached nobody; mesh_wait returns its result")
-    if not text:
-        return "nothing was noted: the text was empty"
-    run.note(text)
-    return f"noted for the mesh desk on `{run.case_rel}`; it reads it at its next command"
-
-
-def _mesh_wait(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
-    """Hold for the running desk, the way a `job_check` with `wait_s` holds for a job:
-    bounded, and ending early the moment the person says something for the model."""
-    run = ctx.desk
-    if run is None:
-        return "no mesh desk is running in this session"
-    asked = JOB_WAIT_MAX_S if args.get("wait_s") is None else int(args.get("wait_s") or 0)
-    wait_s = min(max(asked, 0), JOB_WAIT_MAX_S)
-    began = time.monotonic()
-    heard = left = False
-    while not run.done.is_set():
-        elapsed = time.monotonic() - began
-        if elapsed >= wait_s:
-            break
-        # As in `_job_check`: `_heard` drains, the leaving question asked after it
-        # sees a `/exit` the drain has just met, and leaving wins the note.
-        heard = _heard(ctx)
-        left = _leaving(ctx)
-        if heard or left:
-            break
-        run.done.wait(min(DESK_WAIT_POLL_S, wait_s - elapsed))
-    notes = []
-    if wait_s > 0:
-        notes.append(f"[waited {time.monotonic() - began:.0f}s]")
-    if asked > JOB_WAIT_MAX_S:
-        notes.append(f"[wait_s={asked} exceeds the {JOB_WAIT_MAX_S}s ceiling for one call; "
-                     "waiting again is free]")
-    if run.done.is_set():
-        result = take_desk(ctx, run)
-        return _blocks(" ".join(notes), _finished_content(run, result))
-    if left:
-        notes.append(_left_note())
-    elif heard:
-        notes.append(_heard_note("mesh_wait", "the desk is still building"))
-    return " ".join([run.progress_line(), *notes])
+    root = getattr(backend, "workspace_root", WORKSPACE_ROOT).rstrip("/")
+    what = "geometry file" if brep else "file"
+    if not path.startswith("/"):
+        return (f"{path} is not an absolute path; the {what} is named by its "
+                f"full path on the workspace, under {root}/")
+    if not (path == root or path.startswith(root + "/")):
+        return (f"{path} is not under {root}/, which is the only filesystem this "
+                "session can reach; there is no upload from your machine here")
+    suffix = path[path.rfind("."):].lower() if "." in path.rsplit("/", 1)[-1] else ""
+    if brep and suffix not in GEOMETRY_SUFFIXES:
+        return (f"{path} is not a CAD file this reads: the suffix is "
+                f"{suffix or 'absent'} and it takes one of "
+                f"{', '.join(GEOMETRY_SUFFIXES)}. A surface that is already triangles "
+                "is work for bash and the toolbox, not for this. To hand it over as "
+                "something to work from rather than as the part, pass it in `inputs`")
+    try:
+        info = backend.stat(path)
+    except BackendError as exc:
+        return f"{path} could not be read: {exc}"
+    except Exception as exc:  # noqa: BLE001 - the workspace answered badly; say which
+        return f"{path} could not be read: {type(exc).__name__}: {exc}"
+    if info.type == "directory":
+        return f"{path} is a directory, not a file"
+    if not info.size:
+        return f"{path} is empty (0 bytes), so there is nothing in it to work from"
+    try:
+        data = backend.get_file(path, offset=0, limit=GEOMETRY_PROBE_BYTES)
+    except BackendError as exc:
+        return f"{path} is there and could not be opened: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        return f"{path} is there and could not be opened: {type(exc).__name__}: {exc}"
+    if not data:
+        return f"{path} is there and gave back no bytes when it was read"
+    return None
 
 
 def _heard(ctx: ToolContext) -> bool:
@@ -1634,77 +1529,123 @@ def _heard_note(again: str, still: str, *, then: str | None = None) -> str:
             f"Answer them, then {then} -- {still}]")
 
 
-def _finished_content(run: Any, result: Any) -> ToolResult:
-    """A finished run as a tool result -- or, when the run raised instead of
-    returning, the one honest sentence about it."""
-    if result is None:
-        return (f"the mesh desk on `{run.case_rel}` stopped without a result "
-                f"({run.error or 'no reason recorded'}); whatever it built is on disk "
-                f"under `{run.case_rel}`")
-    return mesh_content(result)
-
-
-def _blocks(lead: str, content: ToolResult) -> ToolResult:
-    """`content` with `lead` in front of its words, whatever shape it came in."""
-    lead = lead.strip()
-    if not lead:
-        return content
-    if isinstance(content, str):
-        return f"{lead}\n{content}"
-    out: list[dict[str, Any]] = []
-    for block in content:
-        if lead and block.get("type") == "text":
-            # The picture stays first; the words after it carry the lead.
-            out.append({**block, "text": f"{lead}\n{block.get('text', '')}"})
-            lead = ""
-        else:
-            out.append(block)
-    if lead:
-        out.append({"type": "text", "text": lead})
-    return out
-
-
-def _counted(ctx: ToolContext, result: Any) -> Any:
-    """The desk's tokens into the session's totals, so `/status` shows what the study
-    actually spent; the result is handed back for the words."""
-    if ctx.on_tokens and result is not None and result.tokens:
-        ctx.on_tokens(result.tokens)
-    return result
-
-
-def take_desk(ctx: ToolContext, run: Any) -> Any:
-    """Hand a finished run over, once: its tokens into the session's totals, the
-    registry and the session's record cleared. Returns the run's `MeshResult`, or None
-    when the run raised. Called by `mesh_wait` and by the session loop when the run's
-    end woke the model, whichever gets there first; the second caller finds nothing
-    left to count."""
-    if ctx.desk is run:
-        ctx.desk = None
-    if ctx.store.session.desk:
-        ctx.store.session.desk = {}
-        ctx.store.save()
-    if run.delivered:
-        return run.result
-    run.delivered = True
-    return _counted(ctx, run.result)
-
-
-def mesh_content(result: Any) -> ToolResult:
-    """The mesh desk's answer as one tool result: the picture first, the words second,
+def _cad(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    """The CAD desk's answer as one tool result: the picture first, the words second,
     so that when the picture is later evicted from the thread the caption still carries
     the patch table, the verdict and where the case is."""
-    text = mesh_text(result)
+    if ctx.cad is None:
+        return (
+            "the CAD desk is not available in this session (it needs a model key of "
+            "its own to run); geometry and meshing here are yours to do with bash "
+            "like anything else"
+        )
+    geometry = str(args.get("geometry") or "").strip()
+    if geometry:
+        refusal = refuse_input(ctx.backend, geometry, brep=True)
+        if refusal:
+            # Nothing has started: no kernel, no thread, no model call. The path and
+            # what is wrong with it are the whole answer.
+            return f"nothing was run: {refusal}"
+    inputs: list[str] = []
+    for item in (args.get("inputs") or []):
+        path = str(item or "").strip()
+        if not path or path == geometry:
+            continue
+        refusal = refuse_input(ctx.backend, path)
+        if refusal:
+            return f"nothing was run: {refusal}"
+        inputs.append(path)
+    result = ctx.cad.run(str(args.get("request", "")), case=args.get("case"),
+                         geometry=geometry, inputs=inputs)
+    if ctx.on_tokens and result.tokens:
+        ctx.on_tokens(result.tokens)
+    text = cad_text(result)
     if result.png:
         return [images.attachment(images.downscale(result.png, "image/png"), "image/png"),
                 {"type": "text", "text": text}]
     return text
 
 
+def cad_text(result: Any) -> str:
+    """The words of the CAD tool's answer: whether it is a mesh, what the mesh is,
+    what the desk says it built, what is still to do, and how to change it.
+
+    The order is deliberate. A tool result that opened with "case written" was once
+    read as "meshed" and the solve that followed had nothing to solve, so the first
+    line here is always the state of `constant/polyMesh` and never anything else.
+    """
+    check = result.check
+    lines: list[str] = []
+    if result.error and not result.ok:
+        lines.append(f"the CAD desk stopped: {result.error}")
+    elif result.error:
+        lines.append(f"the CAD desk stopped ({result.error}) -- but the mesh it had "
+                     "already built is there and passes:")
+    if result.ok and check is not None:
+        lines.append(f"meshed: {result.case_rel}/constant/polyMesh is an OpenFOAM mesh "
+                     "and checkMesh passes on it.")
+    elif check is not None and check.unreachable:
+        # Nothing is known: the workspace did not answer. Three runs had a finished
+        # mesh described as missing because a container recycled while it was being
+        # checked, and the caller believed it.
+        lines.append(
+            f"the mesh in {result.case_rel} could NOT BE CHECKED -- the workspace did "
+            f"not answer ({result.check.error}). This is not a statement about the "
+            "mesh: a container that recycles mid-run comes back and the Volume under "
+            f"it keeps the files, so look for yourself with `python3 "
+            f"{WORKSPACE_ROOT}/.toolbox/mesh_look.py {result.case_rel} --out look.png` "
+            "before building anything again.")
+    elif check is not None and check.missing:
+        why = "; ".join(check.missing)
+        lines.append(f"NOT a usable mesh yet in {result.case_rel}: {why}")
+    else:
+        lines.append(f"nothing was meshed in {result.case_rel}")
+    if getattr(result, "remarks", None):
+        lines.append("")
+        lines.append("while this ran, the user said this to the CAD desk directly, and it "
+                     "worked to it:")
+        lines.extend(f'  "{remark}"' for remark in result.remarks)
+    if result.summary:
+        lines.append("")
+        lines.append("the CAD desk says:")
+        lines.extend(f"  {line}" for line in result.summary.splitlines())
+    if check is not None and check.lines():
+        lines.append("")
+        lines.extend(check.lines())
+    lines.append("")
+    lines.append(_cad_accounting(result))
+    lines.append(
+        f"this is a mesh and nothing else: no 0/ fields, no boundary conditions, no "
+        f"solver settings, nothing solved. Look at it again yourself with "
+        f"`python3 {WORKSPACE_ROOT}/.toolbox/mesh_look.py {result.case_rel} --out look.png`, "
+        f"rebuild it after an edit with `cd {result.case_rel} && sh Allmesh`, or call this "
+        "tool again with what to change."
+    )
+    return "\n".join(lines)
+
+
+mesh_text = cad_text
+"""The name this was called while the desk was called `mesher`. Kept because
+`cad/check.py`'s tests render a `Check` through it, and a rename of a private
+formatter is not worth a test edit in a file this chunk does not own."""
+
+
+def _cad_accounting(result: Any) -> str:
+    steps = len(getattr(result, "steps", []) or [])
+    line = f"{steps} step{'s' if steps != 1 else ''}, {result.seconds / 60:.1f} min"
+    if result.stopped == "steps":
+        line += f"; it ran out of steps before it was finished, so this is where it got to"
+    elif result.stopped == "time":
+        line += "; it ran out of time before it was finished, so this is where it got to"
+    elif result.stopped == "provider":
+        line += "; the model call failed, so this is where it got to"
+    return line
+
 def _checkpoint(ctx: ToolContext, args: dict[str, Any]) -> str:
     """Ask the person, and hand back their answer as a fact.
 
-    Approval is recorded on the context, because structured mode holds `job_start` and
-    `mesh` until a plan has been approved (`Loop._consult`). Anything but an approval
+    Approval is recorded on the context, because structured mode holds `job_start`
+    until a plan has been approved (`Loop._consult`). Anything but an approval
     carries the person's own words back as the changes they asked for."""
     stage = str(args.get("stage") or "").strip() or "plan"
     summary = str(args.get("summary") or "").strip()
@@ -1732,11 +1673,9 @@ def _checkpoint(ctx: ToolContext, args: dict[str, Any]) -> str:
 
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "bash": _bash,
+    "cad": _cad,
     "checkpoint": _checkpoint,
     "fetch": _fetch,
-    "mesh": _mesh,
-    "mesh_note": _mesh_note,
-    "mesh_wait": _mesh_wait,
     "job_check": _job_check,
     "job_kill": _job_kill,
     "job_start": _job_start,

@@ -122,3 +122,74 @@ def test_renders_verbs_parse():
 
     for verb in ("/renders", "/pics", "/images"):
         assert commands.parse(verb).kind == commands.RENDERS
+
+
+# -- files handed over with @ --------------------------------------------------
+
+
+def test_an_at_path_is_handed_over_and_the_sigil_leaves_the_sentence():
+    command = commands.parse("/mesh mesh the air inside @/work/uploads/plan.png")
+    assert command.kind == commands.MESH
+    assert command.inputs == ("/work/uploads/plan.png",)
+    assert command.text == "mesh the air inside /work/uploads/plan.png"
+
+
+def test_several_files_come_back_in_the_order_they_were_typed():
+    command = commands.parse(
+        "/mesh trace @/work/a/plan.png against @/work/a/rooms.csv and @/work/a/part.step")
+    assert command.inputs == ("/work/a/plan.png", "/work/a/rooms.csv", "/work/a/part.step")
+    assert "@" not in command.text
+
+
+def test_a_file_named_twice_is_handed_over_once():
+    command = commands.parse("/mesh compare @/work/a.step against @/work/a.step")
+    assert command.inputs == ("/work/a.step",)
+
+
+def test_a_path_with_a_space_in_it_can_be_quoted():
+    """`/work/study/uploads/chassis v2.step` is already a fixture elsewhere in here."""
+    command = commands.parse('/mesh prepare @"/work/study/uploads/chassis v2.step"')
+    assert command.inputs == ("/work/study/uploads/chassis v2.step",)
+    assert command.text == "prepare /work/study/uploads/chassis v2.step"
+
+
+def test_a_bare_path_is_prose_and_is_not_handed_over():
+    """The whole reason for the sigil: naming a file is not offering it."""
+    command = commands.parse("/mesh build it like the duct in /work/old/duct.step")
+    assert command.inputs == ()
+    assert command.text == "build it like the duct in /work/old/duct.step"
+
+
+def test_an_address_is_not_a_handover():
+    """`@` only counts where it starts a token, or every email is a file."""
+    command = commands.parse("tell ziming@inviscidai.com it is done")
+    assert command.inputs == ()
+    assert command.text == "tell ziming@inviscidai.com it is done"
+
+
+def test_sentence_punctuation_is_not_part_of_the_filename():
+    command = commands.parse("/mesh mesh @/work/plan.png, 2.7 m ceilings.")
+    assert command.inputs == ("/work/plan.png",)
+    assert command.text == "mesh /work/plan.png, 2.7 m ceilings."
+
+
+def test_a_handover_works_in_an_ordinary_message_too():
+    """The sigil is the session's, not one command's, so it means the same everywhere."""
+    command = commands.parse("have a look at @/work/uploads/plan.png")
+    assert command.kind == commands.SAY
+    assert command.inputs == ("/work/uploads/plan.png",)
+    assert command.text == "have a look at /work/uploads/plan.png"
+
+
+def test_a_path_argument_command_is_left_alone():
+    """`/files` takes a path as its whole argument; there is no sentence to mark up."""
+    command = commands.parse("/files /work/uploads")
+    assert command.text == "/work/uploads"
+    assert command.inputs == ()
+
+
+def test_mesh_with_nothing_after_it_is_still_a_mesh_command():
+    """So the caller can say what it needs rather than the parser guessing."""
+    command = commands.parse("/mesh")
+    assert command.kind == commands.MESH
+    assert command.text == ""

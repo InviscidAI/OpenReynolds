@@ -167,24 +167,26 @@ class Config:
     out a five-minute solve."""
     desk_model: str = DEFAULT_DESK_MODEL
     mesher_model: str = ""
-    """The model the mesh desk (`mesher/`) builds geometry with. Empty means the main
-    model: building the shape is the work, not the narration."""
+    """The model the CAD desk (`cad/`) builds geometry with. Empty means the main
+    model: building the shape is the work, not the narration.
+    `OPENREYNOLDS_CAD_MODEL`, or `OPENREYNOLDS_MESHER_MODEL` as it was."""
     mesher_effort: str = "high"
-    """The effort the mesh desk reasons at, whatever the main loop's is. Placing an
+    """The effort the CAD desk reasons at, whatever the main loop's is. Placing an
     arc's end and a row's pitch is arithmetic the model gets right one time in six at
     medium, and the hosted app runs the main loop at medium.
-    `OPENREYNOLDS_MESHER_EFFORT` overrides."""
+    `OPENREYNOLDS_CAD_EFFORT`, or `OPENREYNOLDS_MESHER_EFFORT` as it was."""
     mesh_tool: bool = True
-    """Whether the `mesh` tool is offered at all (`OPENREYNOLDS_MESH_TOOL=0` takes it
-    away). It exists to be measured against: the argument that a slow natural-language
-    sub-agent is a worse interface than the bash the caller already has is settled by
-    running the same prompt both ways, not by preferring one."""
+    """Whether the `cad` tool is offered at all (`OPENREYNOLDS_CAD_TOOL=0`, or
+    `OPENREYNOLDS_MESH_TOOL=0` as it was, takes it away). It exists to be measured
+    against: the argument that a slow natural-language sub-agent is a worse interface
+    than the bash the caller already has is settled by running the same prompt both
+    ways, not by preferring one."""
     mesher_max_steps: int = 0
-    """Commands the mesh desk may run in one call; 0 takes the default (30).
-    `OPENREYNOLDS_MESHER_MAX_STEPS`."""
+    """Cells the CAD desk may run in one call; 0 takes the default (30).
+    `OPENREYNOLDS_CAD_MAX_STEPS`, or `OPENREYNOLDS_MESHER_MAX_STEPS` as it was."""
     mesher_max_seconds: float = 0.0
     """Wall clock for one call; 0 takes the default (900 s).
-    `OPENREYNOLDS_MESHER_MAX_SECONDS`."""
+    `OPENREYNOLDS_CAD_MAX_SECONDS`, or `OPENREYNOLDS_MESHER_MAX_SECONDS` as it was."""
     mode: str = "auto"
     """How much the person wants to be consulted: `auto`, `partial` or `structured`
     (`modes.py`). `OPENREYNOLDS_MODE` or the config file's `mode`; `--mode` for one
@@ -236,6 +238,24 @@ class Config:
         def pick(env: str, key: str, default: str = "") -> str:
             return os.environ.get(env) or str(stored.get(key) or "") or default
 
+        def pick_renamed(env: str, key: str, was_env: str, was_key: str,
+                         default: str = "") -> str:
+            """A setting whose name changed, read under either name.
+
+            The desk these five configure was called `mesher` and is called `cad`; the
+            settings are env-or-JSON only, so nothing persists them and nothing
+            migrates them -- a rename with no alias silently reverts every environment
+            that sets one to the default, which for `OPENREYNOLDS_MESH_TOOL=0` means
+            quietly turning the tool back on in the middle of the A/B that variable
+            exists to run. The new name wins where both are set, because that is the
+            one somebody typed most recently; otherwise the old name is honoured
+            exactly as it was. The dataclass field keeps its old name: renaming it
+            would rename the attribute the desk reads, and nothing is gained.
+            """
+            return (os.environ.get(env) or os.environ.get(was_env)
+                    or str(stored.get(key) or "") or str(stored.get(was_key) or "")
+                    or default)
+
         provider = pick("OPENREYNOLDS_PROVIDER", "provider", "anthropic").strip().lower()
         preset = preset_for(provider)
         # The vendor's own variable name works too (ANTHROPIC_API_KEY, OPENAI_API_KEY...),
@@ -278,12 +298,22 @@ class Config:
             capture=not switched_off("OPENREYNOLDS_CAPTURE"),
             desk=not switched_off("OPENREYNOLDS_DESK"),
             desk_model=named_desk or (preset.desk_model if preset else DEFAULT_DESK_MODEL),
-            mesher_model=pick("OPENREYNOLDS_MESHER_MODEL", "mesher_model"),
-            mesher_effort=pick("OPENREYNOLDS_MESHER_EFFORT", "mesher_effort", "high"),
-            mesh_tool=str(pick("OPENREYNOLDS_MESH_TOOL", "mesh_tool", "1")).strip().lower()
+            mesher_model=pick_renamed(
+                "OPENREYNOLDS_CAD_MODEL", "cad_model",
+                "OPENREYNOLDS_MESHER_MODEL", "mesher_model"),
+            mesher_effort=pick_renamed(
+                "OPENREYNOLDS_CAD_EFFORT", "cad_effort",
+                "OPENREYNOLDS_MESHER_EFFORT", "mesher_effort", "high"),
+            mesh_tool=str(pick_renamed(
+                "OPENREYNOLDS_CAD_TOOL", "cad_tool",
+                "OPENREYNOLDS_MESH_TOOL", "mesh_tool", "1")).strip().lower()
             not in ("0", "false", "no", "off"),
-            mesher_max_steps=int(pick("OPENREYNOLDS_MESHER_MAX_STEPS", "mesher_max_steps", 0) or 0),
-            mesher_max_seconds=float(pick("OPENREYNOLDS_MESHER_MAX_SECONDS", "mesher_max_seconds", 0) or 0),
+            mesher_max_steps=int(pick_renamed(
+                "OPENREYNOLDS_CAD_MAX_STEPS", "cad_max_steps",
+                "OPENREYNOLDS_MESHER_MAX_STEPS", "mesher_max_steps", 0) or 0),
+            mesher_max_seconds=float(pick_renamed(
+                "OPENREYNOLDS_CAD_MAX_SECONDS", "cad_max_seconds",
+                "OPENREYNOLDS_MESHER_MAX_SECONDS", "mesher_max_seconds", 0) or 0),
             foamd_url=pick("FOAMD_URL", "foamd_url", DEFAULT_FOAMD_URL).rstrip("/"),
             foamd_api_key=pick("FOAMD_API_KEY", "foamd_api_key"),
             provider=provider,

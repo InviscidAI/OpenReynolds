@@ -467,9 +467,13 @@ def test_a_remark_typed_mid_run_reaches_the_desk_at_the_next_step(backend, store
     assert "actually make it 2 mm wider" in thread
     assert "takes precedence" in thread
 
+    # `mesh_text` is now `tools.cad_text` under its old name, and it says "CAD desk"
+    # because that is the desk it renders in production. This desk is kept only until
+    # C10 has measured its baseline against it; what is asserted here is that a remark
+    # reaches the caller's answer, not which noun the answer uses for the desk.
     from openreynolds.tools import mesh_text
     assert "actually make it 2 mm wider" in mesh_text(result)
-    assert "the user said this to the mesh desk directly" in mesh_text(result)
+    assert "the user said this to the CAD desk directly" in mesh_text(result)
 
 
 def test_a_remark_arriving_with_done_keeps_the_run_going(backend, store):

@@ -348,6 +348,19 @@ def test_end_pressed_during_a_held_job_check_ends_the_wait_and_the_turn(
     assert reader.poll() == leaving, "still there for whoever reads next, as before"
 
 
+def test_leaving_stops_the_cad_desk_at_its_next_cell(loop):
+    """The desk this replaced was stopped when the person left (#43); the CAD desk that
+    took its place holds the turn for up to its whole budget, so it has to be too. Its
+    budgets are read at every lap (`cad.agent`), which is where zero lands."""
+    desk = type("Desk", (), {"max_steps": 12, "max_seconds": 900.0})()
+    loop.ctx.cad = desk
+
+    loop.leave()
+
+    assert loop.leaving is True
+    assert (desk.max_steps, desk.max_seconds) == (0, 0.0)
+
+
 def test_words_typed_in_the_same_breath_as_end_ride_along_but_are_not_answered(
     loop, backend, store, view, monkeypatch
 ):

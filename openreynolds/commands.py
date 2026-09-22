@@ -9,6 +9,9 @@ session run, answered by the harness.
 
 Nothing here inspects, rewrites or withholds an ordinary message.
 
+`/mesh` is the one verb that is not answered here and is not an ordinary message
+either: it is said straight to the CAD desk, past the main agent.
+
 `COMMANDS` is the one list of verbs. The parser, `/help`, the terminal's Tab completion
 and the web composer's suggestion list (`as_json`) are all read off it, so a verb cannot
 exist in one place and be missing from another.
@@ -16,6 +19,7 @@ exist in one place and be missing from another.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -23,6 +27,7 @@ from .llm.presets import EFFORTS
 
 SAY = "say"
 ASIDE = "aside"
+MESH = "mesh"
 STATUS = "status"
 FILES = "files"
 RENDERS = "renders"
@@ -62,6 +67,11 @@ class Spec:
 
 
 COMMANDS: tuple[Spec, ...] = (
+    Spec("/mesh", ("/geometry",), MESH, "<request>",
+         "build a geometry and its mesh, said straight to the CAD desk",
+         "Your words go to the CAD desk as the request, past the main agent, which "
+         "hears about it when the desk reports. Name a file with @ to hand it over: "
+         "/mesh prepare @/work/uploads/part.step."),
     Spec("/btw", ("/bytheway", "/aside"), ASIDE, "<something>",
          "say it without asking the agent to stop what it is doing",
          "Your words reach the agent at its next step, marked as an aside, so it can "
@@ -88,8 +98,8 @@ COMMANDS: tuple[Spec, ...] = (
     Spec("/mode", (), MODE, "[name]",
          "how much the agent does before asking you: auto, partial or structured",
          "With no name, says which mode the session is in. With one, switches from the "
-         "next tool call: auto runs everything, partial asks before each job_start and "
-         "mesh, structured works in stages you approve. See /help modes."),
+         "next tool call: auto runs everything, partial asks before each job_start, "
+         "structured works in stages you approve. See /help modes."),
     Spec("/model", (), MODEL, "[model]",
          "which model the agent runs on, or switch it",
          "With nothing after it, shows the provider, model, effort and mode, and the "
@@ -103,7 +113,7 @@ COMMANDS: tuple[Spec, ...] = (
          choices=EFFORTS),
     Spec("/yes", ("/approve", "/y"), YES, "",
          "approve what the agent is asking to run",
-         "Answers an open question: in partial mode a job_start or mesh call, in "
+         "Answers an open question: in partial mode a job_start call, in "
          "structured mode a checkpoint. Typing y, yes or ok on its own does the same."),
     Spec("/no", ("/deny", "/n"), NO, "[reason]",
          "decline it; anything after /no goes back to the agent as your reason",
@@ -145,30 +155,85 @@ class Command:
     text: str = ""
     """For `say` and `aside`, what goes to the model. For `files`, the path asked for;
     for `mode`, `model`, `effort` and `help`, the argument; for `no`, the reason."""
+    inputs: tuple[str, ...] = ()
+    """The files the line handed over with `@`, in the order they were typed.
+
+    A path the user marked, never one inferred from the prose: `@/work/plan.png` is a
+    handover and `/work/plan.png` is a sentence mentioning a path. The difference is the
+    whole reason for the sigil -- "it is like the duct in /work/old/duct.step" names a
+    file nobody is asking to have opened, and no amount of care in a heuristic tells
+    that apart from a request to open it."""
 
 
 def parse(line: str) -> Command:
     """Classify one typed line. Anything unrecognised is a message, not an error."""
     text = line.strip()
     if not text.startswith("/"):
-        return Command(SAY, text)
+        spoken, handed = handovers(text)
+        return Command(SAY, spoken, handed)
 
     verb, _, rest = text.partition(" ")
     kind = _VERBS.get(verb.lower())
     if kind is None:
         # A path, a formula, a sentence that happens to start with a slash: the user
         # meant to say it. Guessing "unknown command" at them would be worse.
-        return Command(SAY, text)
+        spoken, handed = handovers(text)
+        return Command(SAY, spoken, handed)
 
     rest = rest.strip()
     if kind is ASIDE and not rest:
         # "/btw" on its own is someone asking what is going on, not an empty aside.
         return Command(STATUS)
-    if kind is ASIDE:
-        return Command(ASIDE, aside(rest))
+    if kind in (ASIDE, SAY, MESH):
+        spoken, handed = handovers(rest)
+        if kind is ASIDE:
+            return Command(ASIDE, aside(spoken), handed)
+        return Command(kind, spoken, handed)
     if kind is YES and rest.lower() == "all":
         return Command(ALL)
+    # `/files`, `/open` and the rest take a path as their whole argument, not a
+    # sentence with a file named inside it, so the sigil means nothing there.
     return Command(kind, rest)
+
+
+_HANDOVER = re.compile(r"""(?:(?<=\s)|^)@(?:"([^"]+)"|'([^']+)'|(\S+))""")
+r"""A file handed over. The `@` has to start a token, so an address
+like `name@example.com` and a decorator pasted into a sentence are left alone.
+
+Quoted forms exist because a path with a space in it is not hypothetical here: the
+tests already carry `/work/study/uploads/chassis v2.step`."""
+
+_TRAILING = ".,;:!?)]}\'\""
+"""Punctuation that ends a sentence rather than a filename. `@/work/plan.png,` is a
+path followed by a comma every time, and a file whose name really ends in a comma is
+not worth the ambiguity -- it can be quoted."""
+
+
+def handovers(text: str) -> tuple[str, tuple[str, ...]]:
+    """Split a typed line into what was said and what was handed over.
+
+    The `@` is terminal syntax, so it is taken back out: the desk is given an ordinary
+    sentence naming an ordinary path, and never has to know how the person typed it.
+
+    Order is the order they were typed, and a file named twice is handed over once --
+    somebody writing "compare @a.step against @a.step" means one file, and staging it
+    twice would put the same path into the record twice for no reason.
+    """
+    handed: list[str] = []
+
+    def take(match: re.Match) -> str:
+        quoted = match.group(1) or match.group(2)
+        path = quoted if quoted else match.group(3).rstrip(_TRAILING)
+        if not path:
+            return match.group(0)
+        if path not in handed:
+            handed.append(path)
+        # What is left behind is the path as prose, with whatever punctuation the
+        # stripping took off put back, so the sentence still reads as written.
+        return path + (match.group(3)[len(path):] if not quoted else "")
+
+    spoken = _HANDOVER.sub(take, text).strip()
+    return spoken, tuple(handed)
 
 
 def aside(text: str) -> str:
@@ -244,14 +309,14 @@ def _modes_topic() -> list[str]:
         "",
         "auto holds nothing: the agent runs every tool as it judges best, which is how "
         "OpenReynolds has always worked.",
-        "partial puts each job_start and mesh call to you before it runs, since those "
-        "are what spend compute. bash, read_file, write_file, fetch, job_check and "
-        "job_kill run freely. Answer /yes, /no <reason> or /all (approve and switch to "
+        "partial puts each job_start call to you before it runs, since that is what "
+        "spends compute. bash, read_file, write_file, fetch, job_check, job_kill and "
+        "cad run freely. Answer /yes, /no <reason> or /all (approve and switch to "
         "auto for the rest of the session).",
         "structured gives the agent a checkpoint tool. Each checkpoint shows you a "
         "summary and what comes next, and waits for your answer: /yes carries on, "
-        "anything else goes back as the changes you want. job_start and mesh are held "
-        "until you have approved a first checkpoint, the plan.",
+        "anything else goes back as the changes you want. job_start is held until you "
+        "have approved a first checkpoint, the plan.",
     ]
     if stages:
         lines.append("stages: " + ", ".join(str(stage) for stage in stages))
@@ -305,12 +370,8 @@ TOOL_HELP: tuple[tuple[str, str], ...] = (
     ("job_check", "reports a job's status and new log lines, and can wait for it to finish"),
     ("job_kill", "stops a running job"),
     ("fetch", "copies files from the workspace to this machine"),
-    ("mesh", "hands a geometry described in words to the mesh desk, a second agent that "
-             "builds and checks the mesh in the background while the conversation goes on"),
-    ("mesh_note", "passes a remark to the mesh desk while it builds; it reads it at its "
-                  "next command"),
-    ("mesh_wait", "holds for the mesh desk's result, up to five minutes a call, and "
-                  "returns early the moment you type"),
+    ("cad", "hands a shape described in words, or a CAD file already on the workspace, "
+            "to the CAD desk: a second agent that builds it, meshes it and checks it"),
     ("checkpoint", "structured mode only: shows you a stage summary and what comes next, "
                    "and waits for your answer"),
 )

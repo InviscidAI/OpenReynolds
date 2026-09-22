@@ -1,0 +1,129 @@
+{
+  "arm": "desk",
+  "prompt": "T5",
+  "title": "T5 \u2014 STEP assembly, fluid domain extracted",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "Here is a STEP file of an assembly. Take the fluid volume inside it \u2014 the space the air actually flows through \u2014 cap the openings, and mesh it. Remove the small fillets that will not survive the cell size. Name the inlet, the outlet and the walls separately.",
+  "properties": [
+    "number of solids read, and how many it kept",
+    "what `healShapes` changed: face count, free-edge count, volume, before and after",
+    "number of fillets removed, and the volume that added",
+    "extracted fluid volume against enclosure minus solids",
+    "the capping faces, each planar, with its area",
+    "every exported patch, exhaustive and disjoint over the domain's faces"
+  ],
+  "geometry": "/work/.accept/assembly.step",
+  "attempts": 1,
+  "started_at": "2026-09-11T10:43:49",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": false,
+    "stopped": "steps",
+    "error": "",
+    "summary": "",
+    "case_dir": "/work/accept-t5",
+    "seconds": 322.1,
+    "desk_seconds": 312.8,
+    "steps": 30,
+    "tokens": {
+      "input": 60,
+      "cache_read": 494983,
+      "cache_write": 33613,
+      "output": 20684
+    },
+    "usd": 0.39,
+    "script_lines": 273,
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "there is no constant/polyMesh in accept-t5 -- nothing has been meshed yet",
+        "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+        "the mesh has no boundary patch with any faces on it",
+        "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+        "no picture of the mesh was drawn"
+      ],
+      "regions": [],
+      "cells": 0,
+      "two_d": false,
+      "patches": [],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "fail",
+          "measured": "there is no constant/polyMesh in accept-t5 -- nothing has been meshed yet"
+        },
+        {
+          "check": "checkmesh",
+          "status": "fail",
+          "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks"
+        },
+        {
+          "check": "patches",
+          "status": "fail",
+          "measured": "the mesh has no boundary patch with any faces on it"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "no cellZones in this mesh"
+        },
+        {
+          "check": "build",
+          "status": "fail",
+          "measured": "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh"
+        },
+        {
+          "check": "render",
+          "status": "fail",
+          "measured": "no picture of the mesh was drawn"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        },
+        {
+          "check": "replay",
+          "status": "ok",
+          "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3"
+        }
+      ],
+      "replay": {
+        "ran": true,
+        "exit_code": 0,
+        "before": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "after": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "output_tail": "(CenterOf.MASS)) for f in fs]\nreport = cad_convert.export_patches(\n \u001b[32;1m\n*******************************************************************\n******        Statistics on Transfer (Write)                 ******\u001b[0m\n\u001b[32;1m\n*******************************************************************\n******        Transfer Mode = 0  I.E.  As Is       ******\u001b[0m\n\u001b[32;1m******        Transferring Shape, ShapeType = 0                      ******\u001b[0m\n\u001b[32;1m** WorkSession : Sending all data\u001b[0m\n\u001b[32;1m Step File Name : prep/healed.step(6196 ents)  Write  Done\u001b[0m\n\nsolids 3 -> 3, surfaces 78\nnum solids: 3\nbbox: bbox: -26.975000100000006 <= x <= 26.975000099999992, -19.418991148451 <= y <= 26.871008951549005, -1e-07 <= z <= 31.300000100000002\n3 solids\nvolume (m^3): 4.119415909208399e-05\nbbox (m): bbox: -0.026975100000000012 <= x <= 0.02697509999999999, -0.01941899114845049 <= y <= 0.026871108851549034, -1e-07 <= z <= 0.031300100000000004\nnum cylindrical faces: 28\ncyl radii (mm): [0.1   0.1   0.1   0.5   0.5   0.5   0.5   1.25  1.25  1.25  2.25  2.25\n 2.25  3.575 3.575 3.575 5.    5.    5.    5.    5.    5.    5.    5.\n 5.    5.    5.    5.   ]\nnum toroidal faces: 2\ntor minor radii (mm): [0.5 0.5]\n"
+      }
+    },
+    "artifacts": [
+      "build.py",
+      "renders/mesh_look.json",
+      "build.py",
+      "check.json",
+      "steps.json"
+    ]
+  },
+  "seconds": 322.6,
+  "verdict": "check-not-ok"
+}

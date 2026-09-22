@@ -1,0 +1,501 @@
+"""The silent failures, on surfaces built to hold each one.
+
+Every probe here is `dormant`, which means the agent is told nothing about any of them.
+That makes these tests the only demonstration that they work at all -- a dormant probe has
+no run behind it yet, and the day it fires is not the day to find out it was measuring the
+wrong thing. Each test builds the defect deliberately: a cube with a face missing, a cube
+with one triangle wound backwards, a meshing point outside the part, a surface a thousand
+times the size the request asked for.
+
+The geometry is a unit cube because the numbers have to be checkable by eye. The machinery
+underneath is the toolbox's -- `cad_audit.py`, `domain_probe.py`, `surfaces.py` -- and is
+tested where it lives; what is pinned here is what counts as fired.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from openreynolds.buildup import probes
+
+DOC = Path(__file__).resolve().parents[1] / "docs" / "cad-silent-failures.md"
+
+CORNERS = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+           (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+
+CUBE = [(0, 2, 1), (0, 3, 2),      # z = 0
+        (4, 5, 6), (4, 6, 7),      # z = 1
+        (0, 1, 5), (0, 5, 4),      # y = 0
+        (1, 2, 6), (1, 6, 5),      # x = 1
+        (2, 3, 7), (2, 7, 6),      # y = 1
+        (3, 0, 4), (3, 4, 7)]      # x = 0
+"""A closed unit cube, wound outwards. Twelve triangles, no free edges, one winding."""
+
+
+def stl(triangles, scale: float = 1.0) -> str:
+    lines = ["solid part"]
+    for a, b, c in triangles:
+        lines.append("facet normal 0 0 0")
+        lines.append("  outer loop")
+        for corner in (a, b, c):
+            x, y, z = (value * scale for value in CORNERS[corner])
+            lines.append(f"    vertex {x:.6f} {y:.6f} {z:.6f}")
+        lines += ["  endloop", "endfacet"]
+    return "\n".join(lines + ["endsolid part", ""])
+
+
+def case(tmp_path: Path, triangles=None, *, scale: float = 1.0, point=None,
+         manifest: dict | None = None) -> Path:
+    """A case directory with an exported patch set, as a run would leave one."""
+    root = tmp_path / "case"
+    surface = root / "constant" / "triSurface"
+    surface.mkdir(parents=True, exist_ok=True)
+    (surface / "walls.stl").write_text(stl(CUBE if triangles is None else triangles,
+                                           scale), encoding="utf-8")
+    if manifest is not None:
+        (surface / "patches.json").write_text(json.dumps(manifest), encoding="utf-8")
+    if point is not None:
+        system = root / "system"
+        system.mkdir(parents=True, exist_ok=True)
+        (system / "snappyHexMeshDict").write_text(
+            "castellatedMeshControls\n{\n    locationInMesh (%s %s %s);\n}\n" % tuple(point),
+            encoding="utf-8")
+    return root
+
+
+def one(results, probe_id):
+    return next(result for result in results if result.id == probe_id)
+
+
+# -- the surface itself ----------------------------------------------------------
+
+
+def test_a_closed_cube_reads_as_closed_wound_and_clear(tmp_path):
+    """The numbers a clean surface produces. Not "passes": these are instruments, and a
+    reading of zero free edges is a reading, not a verdict."""
+    found = probes.run_all(case(tmp_path, point=(0.5, 0.5, 0.5)), {"extent_m": 1.0})
+    assert probes.fired(found) == []
+    assert {one(found, name).state for name in
+            ("union_closure", "normals", "self_intersection", "location_in_mesh",
+             "scale")} == {probes.MEASURED}
+    assert one(found, "union_closure").measured["open_edges"] == 0
+    assert one(found, "normals").measured["flipped_edges"] == 0
+    assert one(found, "self_intersection").measured["pairs"] == 0
+    assert one(found, "location_in_mesh").measured["classification"] == "inside"
+
+
+def test_a_face_missing_from_the_export_fires_union_closure(tmp_path):
+    """The leak that gives the wrong fluid volume and still checks clean."""
+    leaky = [tri for tri in CUBE if tri not in ((4, 5, 6), (4, 6, 7))]
+    result = one(probes.run_all(case(tmp_path, leaky), {}), "union_closure")
+    assert result.state == probes.MEASURED
+    assert result.measured["open_edges"] == 4
+
+
+def test_the_closure_check_is_on_the_union_and_not_per_file(tmp_path):
+    """A patch file is an open surface by construction -- an inlet disc has a rim -- so a
+    per-file check fails every correct export there has ever been. Split the same closed
+    cube across two files and it stays closed."""
+    root = case(tmp_path, CUBE[:6])
+    (root / "constant" / "triSurface" / "lid.stl").write_text(stl(CUBE[6:]),
+                                                              encoding="utf-8")
+    result = one(probes.run_all(root, {}), "union_closure")
+    assert result.measured["open_edges"] == 0 and len(result.measured["files"]) == 2
+
+
+def test_one_triangle_wound_backwards_fires_normals(tmp_path):
+    """What snappy reads as a hole, and why it meshes the outside of the object."""
+    flipped = [(0, 1, 2) if tri == (0, 2, 1) else tri for tri in CUBE]
+    result = one(probes.run_all(case(tmp_path, flipped), {}), "normals")
+    assert result.state == probes.MEASURED and result.measured["flipped_edges"] > 0
+
+
+def test_a_surface_that_crosses_itself_fires_self_intersection(tmp_path):
+    root = case(tmp_path)
+    crossing = ("solid x\n"
+                "facet normal 0 0 0\n outer loop\n"
+                "  vertex 0.2 0.5 0.2\n  vertex 0.8 0.5 0.2\n  vertex 0.5 0.5 0.8\n"
+                " endloop\nendfacet\n"
+                "facet normal 0 0 0\n outer loop\n"
+                "  vertex 0.5 0.2 0.3\n  vertex 0.5 0.8 0.3\n  vertex 0.5 0.5 0.7\n"
+                " endloop\nendfacet\nendsolid x\n")
+    (root / "constant" / "triSurface" / "fin.stl").write_text(crossing, encoding="utf-8")
+    result = one(probes.run_all(root, {}), "self_intersection")
+    assert result.state == probes.MEASURED and result.measured["pairs"] >= 1
+
+
+# -- the point, the scale, the manifest -------------------------------------------
+
+
+def test_a_meshing_point_outside_the_part_fires(tmp_path):
+    """`checkMesh` passes a perfectly valid mesh of the volume around the part, and
+    nothing inside the run can see it."""
+    result = one(probes.run_all(case(tmp_path, point=(5, 5, 5)), {}), "location_in_mesh")
+    assert result.state == probes.MEASURED
+    assert result.measured["classification"] == "outside"
+    assert result.measured["source"] == "system/snappyHexMeshDict"
+    # And `outside` is reported, never judged: T2 of the first baseline was a correct
+    # external-flow case whose seed point is outside the part by definition.
+    assert "outside" in result.why and "wrong" not in result.why
+
+
+def test_the_point_is_read_off_the_case_and_not_off_the_conversation(tmp_path):
+    """What was meshed is what the dictionary said. A desk that discussed one point and
+    wrote another is exactly the run this probe is for."""
+    root = case(tmp_path, point=(0.5, 0.5, 0.5),
+                manifest={"location_in_mesh": [9, 9, 9], "patches": []})
+    result = one(probes.run_all(root, {}), "location_in_mesh")
+    assert result.measured["point"] == [0.5, 0.5, 0.5]
+    assert result.measured["classification"] == "inside"
+
+
+def test_a_case_with_no_meshing_point_is_not_applicable_rather_than_clean(tmp_path):
+    """The instrument had nothing to read. Named `n/a` rather than `skipped` because a
+    column of `skipped` reads as a check that ran -- which is how the first baseline came
+    to report 79% of its probe verdicts as screening when nothing had been screened."""
+    result = one(probes.run_all(case(tmp_path), {}), "location_in_mesh")
+    assert result.state == probes.NOT_APPLICABLE
+
+
+def test_millimetres_read_as_metres_show_up_as_a_ratio_of_a_thousand(tmp_path):
+    result = one(probes.run_all(case(tmp_path, scale=1000.0), {"extent_m": 1.0}), "scale")
+    assert result.state == probes.MEASURED and round(result.measured["ratio"]) == 1000
+
+
+def test_scale_needs_a_stated_dimension_and_the_case_that_matters_has_none(tmp_path):
+    """The probe written for the factor of a thousand cannot read the factor-of-a-thousand
+    case. T6 of the first baseline is a STEP that declares no unit, the desk guessed
+    millimetres and shipped a mesh checkMesh passed -- and this probe measures against
+    "the extent the case states", which T6 by construction does not."""
+    result = one(probes.run_all(case(tmp_path, scale=1000.0), {}), "scale")
+    assert result.state == probes.NOT_APPLICABLE and "state" in result.why
+
+
+def test_coverage_reads_the_partition_the_directory_itself_declares(tmp_path):
+    """This test used to assert the opposite, on the grounds that without a manifest
+    "double-assignment is unmeasurable". That premise was wrong about the mechanism:
+    `coverage_finding` finds a doubled face geometrically, off welded corners, and uses
+    the manifest only to name the patches it landed in. The cost of the old reading was
+    total -- `coverage` returned n/a on 26 of 26 cases of the sol corpus and on every
+    case of every sweep before it, so a probe id appeared in the reports screening
+    nothing."""
+    result = one(probes.run_all(case(tmp_path), {}), "coverage")
+    assert result.state == probes.MEASURED
+    assert "every face in exactly one patch" in result.why
+    assert result.measured["manifest"] == "derived-from-directory"
+
+
+def test_a_stale_whole_surface_stl_beside_the_patches_reads_as_double_assigned(tmp_path):
+    """Why deriving the manifest is not merely a way to get a reading: this is a real
+    failure already on the corpus -- `exported_surface_duplicated_in_trisurface`, where
+    T22 and T25 each left a whole-surface STL from an abandoned route beside the live
+    per-patch files. Every face is then exported twice. The manifest-gated probe could
+    never see it, because the core desk writes no manifest; derived from the directory
+    it is exactly what the check is for."""
+    root = case(tmp_path)
+    surface = root / "constant" / "triSurface"
+    (surface / "whole.stl").write_text(stl(CUBE), encoding="utf-8")
+    result = one(probes.run_all(root, {}), "coverage")
+    assert result.state == probes.MEASURED
+    assert "double-assigned" in result.why
+
+
+def test_a_derived_manifest_says_it_cannot_vouch_for_which_files_were_meant(tmp_path):
+    """The one question a derived manifest genuinely cannot answer, said out loud in the
+    reading rather than implied by a state. A declared manifest can tell you a file on
+    disk was never meant to be a patch; the directory cannot, because it is the thing
+    being asked."""
+    result = one(probes.run_all(case(tmp_path), {}), "coverage")
+    assert "whether every file there was meant to be a patch is not read here" in result.why
+
+
+def test_coverage_stays_n_a_when_there_is_no_patch_set_at_all(tmp_path):
+    """A gmsh-native route that goes straight to polyMesh writes no STLs -- T12 of the
+    sol corpus. There is no partition to check, and inventing a pass for one is the
+    thing the old test was right to guard against."""
+    root = tmp_path / "bare"
+    (root / "constant" / "triSurface").mkdir(parents=True)
+    result = one(probes.run_all(root, {}), "coverage")
+    assert result.state == probes.NOT_APPLICABLE and "no patch files" in result.why
+
+
+def test_a_probe_that_throws_is_a_probe_result_and_not_a_dead_supervisor(tmp_path, monkeypatch):
+    monkeypatch.setattr(probes, "_scale", lambda case, spec: 1 / 0)
+    monkeypatch.setitem(probes._ONE, "scale", probes._scale)
+    result = one(probes.run_all(case(tmp_path), {}), "scale")
+    assert result.state == probes.ERROR and "ZeroDivisionError" in result.why
+
+
+# -- the registry ----------------------------------------------------------------
+
+
+def test_no_probe_carries_a_verdict_any_more():
+    """The registry measures; the supervisor judges.
+
+    Three probes fired across the first baseline and the supervisor overturned all three,
+    while the two runs that were really wrong produced no probe signal at all. Every
+    measurement was right and every verdict was wrong, so the verdicts are gone: nothing
+    in the registry returns `fired` or `pass`, and no exit code turns on one.
+
+    This used to assert every row was `dormant`, which was a census of the registry rather
+    than the property the test is named for -- and it went false on 2026-09-13 when four
+    rows were activated. **Activation is orthogonal to verdicts**, and that is the thing
+    worth pinning: an active probe still only measures, and what its numbers mean is still
+    the supervisor's to say and now also the desk's to answer at `declare_complete`."""
+    assert {probe.state for probe in probes.REGISTRY} <= {probes.DORMANT, probes.ACTIVE}
+    assert probes.ACTIVE in {probe.state for probe in probes.REGISTRY}, (
+        "four rows are active; a registry that has gone all-dormant again has lost them")
+    root = case(Path(tempfile.mkdtemp()), point=(5, 5, 5))
+    found = probes.run_all(root, {"extent_m": 1.0})
+    assert probes.fired(found) == []
+    assert {r.state for r in found} <= {probes.MEASURED, probes.NOT_APPLICABLE,
+                                        probes.ERROR}
+
+
+def test_the_registry_document_and_the_code_hold_the_same_probes():
+    """A row that has drifted from the code is a failing test rather than a stale
+    document -- the registry is cited from run records, so it has to be true."""
+    rows = re.findall(r"^\| `([a-z_]+)` \|.*\| (dormant|active) \|",
+                      DOC.read_text(encoding="utf-8"), re.M)
+    assert [row[0] for row in rows] == [probe.id for probe in probes.REGISTRY]
+    assert [row[1] for row in rows] == [probe.state for probe in probes.REGISTRY]
+
+
+# -- what the corpus sweep proved the probes were getting wrong ---------------------
+#
+# Each test below is one reading that this sweep demonstrated was false, on a real run,
+# in a way nothing downstream could detect. They fail without the repair beside them.
+
+
+def test_a_file_the_mesh_dict_does_not_name_is_not_welded_in(tmp_path):
+    """T22's regression, and the sharpest failure in the sweep.
+
+    The desk left `brakeDisc.stl` -- a byte-for-byte duplicate of its five patch files --
+    in `constant/triSurface` after abandoning a cfMesh route, and `snappyHexMeshDict`
+    named only the five. Welding all six put every triangle in twice: the open-edge count
+    stays at zero, because each edge's reverse is always present from the duplicate, while
+    every undirected edge now looks walked twice the same way. The gate warned `normals`
+    on 62,208 phantom flipped edges at the run's last turn and the run ended `steps` one
+    turn later, never having seen the warning. The mesh that shipped was built from five
+    files and was correct.
+    """
+    root = case(tmp_path, point=(5, 5, 5))
+    surface = root / "constant" / "triSurface"
+    (surface / "leftover_whole_surface.stl").write_text(stl(CUBE), encoding="utf-8")
+    (root / "system" / "snappyHexMeshDict").write_text(
+        'geometry { walls.stl { type triSurfaceMesh; name walls; } }\n'
+        "castellatedMeshControls\n{\n    locationInMesh (5 5 5);\n}\n", encoding="utf-8")
+
+    normals = one(probes.run_all(root, {}), "normals")
+    assert normals.state == probes.MEASURED
+    assert normals.measured["flipped_edges"] == 0, (
+        "the duplicate was welded in and every edge now reads as walked twice the same "
+        "way -- this is the 62,208 that cost T22 its pass")
+    assert normals.measured["triangles"] == len(CUBE)
+    assert "leftover_whole_surface.stl" in normals.why
+
+
+def test_a_patch_set_outside_tri_surface_is_found_rather_than_called_absent(tmp_path):
+    """T3, T10 and T11 each exported a good surface to the case root.
+
+    Their route was gmsh to gmshToFoam, which never needs `constant/triSurface`, so all
+    three surface probes reported `n/a: does not exist` with four to eight STLs on disk.
+    `n/a` there meant "not wired to this case's route", and nothing downstream could tell
+    that from "this case exported nothing"."""
+    root = tmp_path / "case"
+    root.mkdir(parents=True)
+    (root / "walls.stl").write_text(stl(CUBE), encoding="utf-8")
+
+    closure = one(probes.run_all(root, {}), "union_closure")
+    assert closure.state == probes.MEASURED, "a surface in the case root read as absent"
+    assert closure.measured["open_edges"] == 0
+    assert "patch set read from ." in closure.why
+
+
+def test_a_surface_too_large_to_count_is_not_reported_as_one_that_is_absent(tmp_path):
+    """T15's 695,308 triangles and T1's nothing-at-all came back in the same word.
+
+    The two ceilings are different numbers -- 400,000 for the edge walk, 200,000 for the
+    crossing sweep -- so a surface can be over one and under the other, and neither was
+    stated anywhere a reader could find it."""
+    root = case(tmp_path, point=(5, 5, 5))
+    monkey = probes.TRIANGLE_LIMIT
+    try:
+        probes.TRIANGLE_LIMIT = 4  # the cube has twelve
+        crossings = one(probes.run_all(root, {}), "self_intersection")
+    finally:
+        probes.TRIANGLE_LIMIT = monkey
+    assert crossings.state == probes.OVER_LIMIT
+    assert crossings.state != probes.NOT_APPLICABLE
+    assert crossings.measured["triangles"] == len(CUBE)
+    assert crossings.measured["limit"] == 4
+    assert "not absent" in crossings.why
+
+
+def test_zero_pairs_tested_is_not_a_clean_surface(tmp_path):
+    """T2 reported `measured` with `pairs_tested: 0` on a 20,480-triangle sphere.
+
+    It is reported identically to T13's genuine 1,448-pair clean reading, and a zero
+    numerator over a zero denominator is not a result. This is the one probe state that
+    says the probe ran and still measured nothing."""
+    root = case(tmp_path, point=(5, 5, 5))
+    crossings = one(probes.run_all(root, {}), "self_intersection")
+    if crossings.measured.get("pairs_tested") == 0:
+        assert crossings.state == probes.UNTESTED
+        assert crossings.state != probes.MEASURED
+    else:  # the cube does test pairs; the branch above is the contract
+        assert crossings.state == probes.MEASURED
+
+
+def test_scale_says_the_spec_is_missing_rather_than_that_the_case_states_no_dimension(
+        tmp_path):
+    """The old string was false on every case that states a dimension in prose.
+
+    T8, T9, T14 and T24 all state theirs and all read "the case states no dimension".
+    What is missing is the `extent_m` the spec has to carry, which is a different fact
+    about a different thing, and the report that repeated it was wrong about the corpus."""
+    result = one(probes.run_all(case(tmp_path), {}), "scale")
+    assert result.state == probes.NOT_APPLICABLE
+    assert "extent_m" in result.why and "spec" in result.why
+    assert "the case states no dimension" not in result.why
+
+
+def test_the_dict_restriction_does_not_drop_a_patch_the_surface_needs(tmp_path):
+    """T14 is why this check exists rather than the argument for it.
+
+    Its `snappyHexMeshDict` names three of six genuinely closed patch files -- snappy
+    took the domain box from `blockMesh`, so the box's STLs are exported but unnamed --
+    and restricting the union to the named three turned a true reading of 0 free edges
+    into a false 158. The asymmetry that makes the rule safe: a duplicate can only ever
+    leave the open-edge count where it was, because every edge of a doubled surface still
+    has its reverse, so dropping one never opens a closed surface. Dropping a load-bearing
+    patch does. The restriction therefore has to prove itself on every case that uses it.
+    """
+    root = tmp_path / "case"
+    surface = root / "constant" / "triSurface"
+    surface.mkdir(parents=True)
+    # Two halves that are closed only together, and a dict that names one of them.
+    lower = [t for t in CUBE if 0 in t or 1 in t or 2 in t or 3 in t]
+    upper = [t for t in CUBE if t not in lower]
+    (surface / "lower.stl").write_text(stl(lower), encoding="utf-8")
+    (surface / "upper.stl").write_text(stl(upper), encoding="utf-8")
+    (root / "system").mkdir(parents=True)
+    (root / "system" / "snappyHexMeshDict").write_text(
+        "geometry { lower.stl { type triSurfaceMesh; name lower; } }\n", encoding="utf-8")
+
+    closure = one(probes.run_all(root, {}), "union_closure")
+    assert closure.state == probes.MEASURED
+    assert closure.measured["open_edges"] == 0, (
+        "the restriction dropped a patch the surface needed and opened it -- "
+        "this is T14's true 0 turning into a false 158")
+    assert sorted(closure.measured["files"]) == ["lower.stl", "upper.stl"]
+    assert "opens the surface" in closure.why
+
+
+def test_open_edges_are_located_rather_than_only_counted(tmp_path):
+    """A count is not a lead, and T12 is what a count alone costs.
+
+    Told its union had 2,177 free edges, the desk spent nine cells -- STL byte
+    inspection, two re-tessellations, feature-edge extraction, a z histogram, an OCCT
+    adjacency walk -- working out where they were, settled on a float32 explanation a
+    tolerance sweep refutes, and ran out of budget with the defect untouched. The edge
+    walk already knows: on T12 the answer is `hub.stl` (890 of 890 triangles) and
+    `inlet.stl` (830 of 830), in a box 16 mm in radius. That is the inlet-eye junction,
+    and it is one line rather than nine cells."""
+    missing = [t for t in CUBE if t not in ((0, 2, 1), (0, 3, 2))]  # one face gone
+    root = case(tmp_path, missing, point=(5, 5, 5))
+    closure = one(probes.run_all(root, {}), "union_closure")
+    assert closure.state == probes.MEASURED
+    assert closure.measured["open_edges"] > 0
+    assert closure.measured["by_file"]["walls.stl"]["open_edges"] > 0
+    lower, upper = closure.measured["bounds_m"]
+    assert lower == [0.0, 0.0, 0.0] and upper == [1.0, 1.0, 0.0], (
+        "the hole is the z = 0 face and the bounds should say so")
+    assert "walls.stl" in closure.why
+
+
+def test_a_surface_whose_overlapping_pairs_are_all_adjacent_reads_clean(tmp_path):
+    """Two triangles sharing an edge: the one pair with overlapping bounds shares welded
+    vertices, so the broad phase finds candidates and the narrow phase has nothing left to
+    test. That is a proof of no self-intersection among non-adjacent triangles, not an
+    absence of a reading, and it used to return `untested` -- on 8 of 26 runs of the sol
+    corpus, across surfaces from 768 to 77,848 triangles, which read in the report as a
+    probe that tests nothing at any size."""
+    result = one(probes.run_all(case(tmp_path, triangles=CUBE[:2]), {}),
+                 "self_intersection")
+    assert result.state == probes.MEASURED
+    assert result.measured["pairs"] == 0
+    assert result.measured["pairs_tested"] == 0
+    assert result.measured["candidate_pairs"] > 0
+    assert "share a vertex" in result.why
+
+
+def test_the_reading_says_what_an_all_adjacent_result_does_not_cover(tmp_path):
+    """Two triangles sharing a single vertex and folding back to cross each other are
+    excluded as adjacent, so this result cannot see them. Said in the reading rather than
+    left for a reader to assume it is a clean bill of health."""
+    result = one(probes.run_all(case(tmp_path, triangles=CUBE[:2]), {}),
+                 "self_intersection")
+    assert "folding back is not covered" in result.why
+
+
+def test_no_candidates_at_all_is_still_not_a_reading(tmp_path):
+    """The distinction the old behaviour was reaching for, kept: nothing to test because
+    there is nothing there is not the same as nothing to test because everything that
+    overlaps is adjacent."""
+    root = tmp_path / "empty"
+    (root / "constant" / "triSurface").mkdir(parents=True)
+    result = one(probes.run_all(root, {}), "self_intersection")
+    assert result.state != probes.MEASURED
+
+
+def test_a_clean_coverage_reading_is_not_a_concern():
+    """`coverage` said "warned" on every correct partition it ever read.
+
+    `gate.concern_of` returned the probe's own prose for `coverage` and `scale`
+    unconditionally, on the stated grounds that "neither has ever returned a verdict" --
+    true when it was written, because `coverage` refused without a `patches.json` the
+    core desk never wrote. The branch was dead code, and its unconditional return was
+    invisible for as long as it stayed dead.
+
+    `core+cad_export-20260917-022129-dd05` is the sweep in which the desk started writing
+    that manifest, and `coverage` warned on **19 of the 20 runs that measured it** -- every
+    one an exhaustive, disjoint, entirely correct partition. Eighteen desks spent a
+    declare turn waiving it. T12's only declare landed on turn 30 of 30, was bounced for
+    want of a waiver it had no turn left to give, and a 29,831-cell mesh at the requested
+    volume scored `passed: false`.
+    """
+    from openreynolds.buildup import gate
+
+    clean = {"id": "coverage", "state": "measured",
+             "why": "6 patches over 7,634 triangles; every face in exactly one patch",
+             "measured": {"status": "ok"}}
+    assert gate.concern_of(clean) == ""
+
+    doubled = {"id": "coverage", "state": "measured",
+               "why": "a face is claimed by two patches",
+               "measured": {"status": "fail"}}
+    assert "two patches" in gate.concern_of(doubled)
+
+
+def test_a_scale_ratio_inside_the_band_is_not_a_concern():
+    """`scale` fires outside a factor of `SCALE_FACTOR`; inside it, 1 is the answer.
+
+    It escaped the `coverage` bug only by accident: the declare runs its probes with an
+    empty spec, so `scale` was `n/a` there and never reached the branch. Give it the
+    spec -- which the supervisor now does -- and it would have warned on all 20.
+    """
+    from openreynolds.buildup import gate
+
+    right = {"id": "scale", "state": "measured", "why": "a factor of 1",
+             "measured": {"extent_m": 0.116, "stated_m": 0.116, "ratio": 1.0}}
+    assert gate.concern_of(right) == ""
+
+    millimetres = {"id": "scale", "state": "measured", "why": "a factor of 1000",
+                   "measured": {"extent_m": 116.0, "stated_m": 0.116, "ratio": 1000.0}}
+    assert "1000" in gate.concern_of(millimetres)

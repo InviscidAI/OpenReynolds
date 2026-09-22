@@ -1,0 +1,21 @@
+{
+  "arm": "desk",
+  "prompt": "T2",
+  "title": "T2 \u2014 body in a flow box",
+  "max_seconds": 1800.0,
+  "max_steps": 0,
+  "request": "A 40 mm diameter sphere in an open air flow, for an external aerodynamics solve. Put it in a domain that extends 5 diameters upstream, 15 downstream, and 5 to each side and above and below. Name the inlet, the outlet, the far field and the sphere separately. Resolve the boundary layer on the sphere with prism layers.",
+  "properties": [
+    "sphere diameter, 40 mm",
+    "domain extent in diameters, upstream / downstream / lateral: 5 / 15 / 5",
+    "blockage ratio \u2014 sphere frontal area over domain cross-section",
+    "achieved layer coverage on the sphere, as a percentage, **read off the mesh**",
+    "the four patches, each with its area and mean normal"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T09:23:37",
+  "completed": false,
+  "model": "claude-sonnet-5",
+  "effort": "high"
+}

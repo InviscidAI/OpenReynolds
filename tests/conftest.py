@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import functools
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,6 +30,30 @@ def pytest_configure(config):
     the command did the right thing."""
     del config
     os.environ["COLUMNS"] = "200"
+
+
+@functools.lru_cache(maxsize=1)
+def a_kernel_can_come_up() -> bool:
+    """Whether a real kernel can start in a `LocalBackend` workspace on this machine.
+
+    The precondition of every test that starts one. A kernel comes up as
+    `python3 .kernel/<id>/driver.py` run through `bash -lc` (`backend/kernel.py`), so
+    that is what is asked -- rather than the platform, which answers wrongly in both
+    directions. On Windows it is two different "no"s: a CI runner's `bash` is WSL's stub
+    ("Windows Subsystem for Linux has no installed distributions"), and a developer box
+    with Git Bash has the shell but answers `python3` with the Microsoft Store alias.
+    """
+    try:
+        done = subprocess.run(["bash", "-lc", "python3 -c 'print(1)'"],
+                              capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0 and done.stdout.strip() == b"1"
+
+
+needs_a_kernel = pytest.mark.skipif(
+    not a_kernel_can_come_up(),
+    reason="no `bash -lc python3` here, so no kernel can come up in a workspace")
 
 
 class FakeBackend(Backend):

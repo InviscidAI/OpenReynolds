@@ -12,6 +12,7 @@ from openreynolds import llm
 from openreynolds.llm.anthropic_api import AnthropicProvider
 from openreynolds.llm.base import Listener, TextBlock, ToolUseBlock, Turn, neutral_blocks, split_result
 from openreynolds.llm.openai_api import OpenAIProvider
+from openreynolds.llm.responses_api import ResponsesProvider
 
 from conftest import FakeMessages, message, text_block, tool_block
 
@@ -439,3 +440,134 @@ def test_a_stray_model_key_never_reaches_the_service_under_reynolds():
     assert p.client.api_key == "of_live_k"
     assert str(p.client.base_url).rstrip("/") == "https://api.example/v1/llm"
 
+
+
+# -- the Responses API -----------------------------------------------------------
+#
+# The dialect exists here for one reason: OpenAI refuses function tools beside a
+# reasoning effort on Chat Completions above gpt-5.2. So what these tests guard is the
+# part Chat Completions cannot express -- the reasoning item surviving a tool round.
+
+
+def _item(**kw):
+    """An output item shaped like the SDK's, including the dump `raw` is built from."""
+    data = dict(kw)
+    return SimpleNamespace(model_dump=lambda exclude_none=True: data, **kw)
+
+
+def test_responses_tools_are_flat_not_nested_under_function():
+    assert ResponsesProvider.tools([{"name": "bash", "description": "run", "input_schema": {"type": "object"}}]) == [
+        {"type": "function", "name": "bash", "description": "run", "parameters": {"type": "object"}}
+    ]
+
+
+def test_responses_sends_its_own_output_items_back_carrying_the_reasoning():
+    """The whole point of the adapter. A rebuilt turn is a turn whose encrypted chain of
+    thought was dropped, and the model then re-derives it every tool round."""
+    provider = ResponsesProvider("k")
+    raw = [
+        {"type": "reasoning", "id": "rs_1", "encrypted_content": "gAAAA", "summary": []},
+        {"type": "function_call", "call_id": "c1", "name": "run_cell", "arguments": '{"source": "1"}'},
+    ]
+    rendered = provider.render([{"role": "assistant", "provider": "openai-responses", "raw": raw, "content": []}])
+    assert rendered == raw
+    assert rendered[0]["encrypted_content"] == "gAAAA"
+
+
+def test_responses_rebuilds_another_providers_turn_and_loses_only_the_reasoning():
+    provider = ResponsesProvider("k")
+    rendered = provider.render([
+        {"role": "assistant", "provider": "anthropic",
+         "content": [text_block("thinking about it"), tool_block("run_cell", {"source": "1"}, "c9")]},
+    ])
+    assert rendered[0]["content"][0]["text"] == "thinking about it"
+    assert rendered[1] == {"type": "function_call", "call_id": "c9", "name": "run_cell",
+                           "arguments": '{"source": "1"}'}
+
+
+def test_responses_renders_a_tool_result_as_function_call_output_with_the_image_after_it():
+    """`function_call_output` carries no picture, exactly as a `tool` message does not."""
+    provider = ResponsesProvider("k")
+    rendered = provider.render([{ "role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "c1",
+         "content": [{"type": "text", "text": "meshed"},
+                     {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAA"}}]},
+    ]}])
+    assert rendered[0] == {"type": "function_call_output", "call_id": "c1", "output": "meshed"}
+    assert rendered[1]["role"] == "user"
+    assert rendered[1]["content"][1] == {"type": "input_image", "image_url": "data:image/png;base64,AAA"}
+
+
+def test_responses_turn_reads_the_reasoning_summary_and_the_tool_call():
+    provider = ResponsesProvider("k")
+    response = SimpleNamespace(
+        status="completed", incomplete_details=None,
+        output=[
+            _item(type="reasoning", summary=[SimpleNamespace(text="weigh it")], encrypted_content="gAAAA"),
+            _item(type="function_call", call_id="c1", name="run_cell", arguments='{"source": "print(1)"}'),
+        ],
+        usage=SimpleNamespace(input_tokens=100, output_tokens=20,
+                              input_tokens_details=SimpleNamespace(cached_tokens=40)),
+    )
+    turn = provider._turn(response)
+    assert turn.stop_reason == "tool_use"
+    assert [b.thinking for b in turn.content if b.type == "thinking"] == ["weigh it"]
+    assert [(c.name, c.input) for c in turn.tool_calls] == [("run_cell", {"source": "print(1)"})]
+    # Cached input is priced 10x below fresh input, so it is counted apart, and the four
+    # classes still sum to the whole request.
+    assert turn.tokens == {"input": 60, "cache_read": 40, "cache_write": 0, "output": 20}
+    assert turn.context_tokens == 120
+    assert turn.raw[0]["encrypted_content"] == "gAAAA"
+
+
+def test_responses_running_out_of_room_is_max_tokens_not_end_turn():
+    provider = ResponsesProvider("k")
+    response = SimpleNamespace(
+        status="incomplete", incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        output=[_item(type="message", content=[SimpleNamespace(type="output_text", text="half a th")])],
+        usage=None)
+    turn = provider._turn(response)
+    assert turn.stop_reason == "max_tokens"
+    assert turn.text == "half a th"
+
+
+def test_responses_invalid_tool_arguments_reach_the_handler_as_a_marker():
+    provider = ResponsesProvider("k")
+    response = SimpleNamespace(status="completed", incomplete_details=None, usage=None,
+        output=[_item(type="function_call", call_id="c", name="run_cell", arguments="{not json")])
+    assert provider._turn(response).tool_calls[0].input == {"__invalid_json__": "{not json"}
+
+
+def test_responses_asks_for_the_encrypted_reasoning_and_stores_nothing():
+    provider = ResponsesProvider("k")
+    kwargs = provider._kwargs("m", "sys", [], [{"name": "run_cell", "input_schema": {}}], "medium", 500)
+    assert kwargs["reasoning"] == {"effort": "medium", "summary": "auto"}
+    assert kwargs["include"] == ["reasoning.encrypted_content"]
+    assert kwargs["store"] is False
+    assert kwargs["instructions"] == "sys"
+    # Below the API's own floor is a 400 about the wrong thing.
+    assert provider._kwargs("m", "s", [], [], "", 1)["max_output_tokens"] == 16
+
+
+def test_responses_drops_the_extras_it_is_refused_and_remembers():
+    provider = ResponsesProvider("k")
+    provider.plain = True
+    assert "include" not in provider._kwargs("m", "s", [], [], "medium", 500)
+    provider.lean = True
+    assert "reasoning" not in provider._kwargs("m", "s", [], [], "medium", 500)
+
+
+def test_a_model_served_by_two_vendors_is_priced_by_vendor():
+    """kimi-k3 is 20% dearer at Moonshot than at Aster, so the model id alone cannot
+    price a run. An unqualified id has no price at all rather than a plausible wrong
+    one -- `cad_buildup` refuses to start on `None`, and that refusal is the point."""
+    from openreynolds.llm.presets import prices, spend
+
+    assert prices("kimi-k3", "aster")["output"] == 12.50
+    assert prices("kimi-k3", "moonshot")["output"] == 15.00
+    assert prices("kimi-k3") is None
+    # A model sold by one vendor stays keyed on its own id.
+    assert prices("claude-opus-5", "anthropic") == prices("claude-opus-5")
+    tokens = {"input": 1_000_000, "output": 1_000_000}
+    assert spend(tokens, "kimi-k3", "moonshot") > spend(tokens, "kimi-k3", "aster")
+    assert spend(tokens, "kimi-k3") == 0.0

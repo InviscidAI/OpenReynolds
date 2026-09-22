@@ -1,0 +1,443 @@
+{
+  "ok": false,
+  "unreachable": false,
+  "missing": [
+    "there is no constant/polyMesh in accept-t4 -- nothing has been meshed yet",
+    "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+    "the mesh has no boundary patch with any faces on it",
+    "no picture of the mesh was drawn",
+    "no point to validate: constant/triSurface has no location_in_mesh in patches.json and none was passed",
+    "the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: inlet, outlet, wall; in the replay but not on disk: none; union volume 3.48e-06 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable"
+  ],
+  "regions": [],
+  "cells": 0,
+  "bounds": [],
+  "patches": [],
+  "checkmesh": "",
+  "metrics": {},
+  "two_d": false,
+  "build": [
+    "build.py",
+    "system/blockMeshDict",
+    "system/snappyHexMeshDict"
+  ],
+  "error": "",
+  "findings": [
+    {
+      "check": "mesh",
+      "status": "fail",
+      "measured": "there is no constant/polyMesh in accept-t4 -- nothing has been meshed yet",
+      "meaning": "neither a single-region mesh nor any constant/<region>/polyMesh is on disk",
+      "repair": "mesh it and leave the script that did: blockMesh, snappyHexMesh or cartesianMesh, then checkMesh"
+    },
+    {
+      "check": "checkmesh",
+      "status": "fail",
+      "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+      "meaning": "the mesh OpenFOAM was given is one OpenFOAM refuses",
+      "repair": "fix the checks checkMesh names -- it lists them by name with cell counts in log.checkMesh -- and run it again"
+    },
+    {
+      "check": "patches",
+      "status": "fail",
+      "measured": "the mesh has no boundary patch with any faces on it",
+      "meaning": "a mesh with no boundary is a mesh nothing can be solved on",
+      "repair": "name the surfaces where they are built, and check the mesher wrote a boundary file with faces in it"
+    },
+    {
+      "check": "cellzones",
+      "status": "ok",
+      "measured": "no cellZones in this mesh",
+      "meaning": "nothing is driven from inside the domain: every source this case has is on a boundary",
+      "repair": ""
+    },
+    {
+      "check": "build",
+      "status": "ok",
+      "measured": "rebuilds with: build.py, system/blockMeshDict, system/snappyHexMeshDict",
+      "meaning": "the bundle captures these, so the script leaves with the case",
+      "repair": ""
+    },
+    {
+      "check": "render",
+      "status": "fail",
+      "measured": "no picture of the mesh was drawn",
+      "meaning": "a mesh nobody has seen is a mesh nobody has checked the shape of",
+      "repair": "run `python3 /tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/mesh_look.py . --out renders/mesh_look.png --json renders/mesh_look.json` and keep the PNG"
+    },
+    {
+      "check": "cad_audit.manifest",
+      "status": "ok",
+      "measured": "3 patches, each with its file on disk and no unlisted STL beside them: inlet, outlet, wall",
+      "meaning": "every triangle in this directory belongs to a named patch",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.scale",
+      "status": "ok",
+      "measured": "the union spans 0.06 x 0.018 x 0.005 m",
+      "meaning": "the bounding box is the size of a thing OpenFOAM meshes in metres",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.closure",
+      "status": "ok",
+      "measured": "0 open edges in the union of 3 patch files (3,544 triangles); per file: inlet 14, outlet 14, wall 28",
+      "meaning": "the union is watertight -- the per-file counts are the seams between patches and are what a correct export looks like",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.manifold",
+      "status": "ok",
+      "measured": "0 non-manifold edges in the union",
+      "meaning": "every edge has exactly one or two triangles on it",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.normals",
+      "status": "ok",
+      "measured": "0 same-direction edges in the union",
+      "meaning": "every shared edge is walked one way by one triangle and the other way by its neighbour, so the normals agree",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.degenerate",
+      "status": "ok",
+      "measured": "0 triangles with a repeated corner",
+      "meaning": "every triangle has three corners and some area",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.coverage",
+      "status": "ok",
+      "measured": "3 patches over 3,544 triangles (inlet 34, outlet 34, wall 3,476); every face in exactly one patch",
+      "meaning": "the partition is exhaustive and disjoint, so every face of the meshed domain takes the boundary condition somebody chose for it",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.self_intersection",
+      "status": "ok",
+      "measured": "0 triangles in 0 crossing pairs, out of 23,005 pairs whose boxes overlap",
+      "meaning": "no triangle meets a triangle it is not a neighbour of",
+      "repair": ""
+    },
+    {
+      "check": "domain_probe.location_in_mesh",
+      "status": "fail",
+      "measured": "no point to validate: constant/triSurface has no location_in_mesh in patches.json and none was passed",
+      "meaning": "snappyHexMesh is told which side of the surface the fluid is on by this point alone. Unvalidated, a mesh of the volume outside the part comes out and passes checkMesh.",
+      "repair": "run with --suggest for a point at the deepest part of the domain, and write it into patches.json as location_in_mesh"
+    },
+    {
+      "check": "domain_probe.min_width",
+      "status": "ok",
+      "measured": "narrowest of 93 measured samples is 0.00399404 m, at 0.0248635 0.0217207 0.00407871 (27 further samples set aside as corners)",
+      "meaning": "the diameter of the largest sphere that fits in the domain and holds the sample -- found, not proved: it is the narrowest place sampling reached.",
+      "repair": "raise --width-samples to search harder for a narrower one"
+    },
+    {
+      "check": "domain_probe.min_wall_thickness",
+      "status": "skipped",
+      "measured": "the union is one connected shell of 3,544 triangles",
+      "meaning": "wall thickness is the width of material between two surfaces, and one shell has no material between anything. If these surfaces bound the part rather than the fluid, min_width above is the part's thinnest section.",
+      "repair": ""
+    },
+    {
+      "check": "replay",
+      "status": "fail",
+      "measured": "the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: inlet, outlet, wall; in the replay but not on disk: none; union volume 3.48e-06 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable",
+      "meaning": "the script exits 0 and is still not the artifact it claims to be: what is on disk was made by a session that held state the script does not rebuild -- a cell run twice, or one that edits a file in place",
+      "repair": "make every cell rebuild its own inputs rather than modifying what is already there, then re-run the log from empty and compare"
+    }
+  ],
+  "lines": [
+    "rebuilds with: build.py, system/blockMeshDict, system/snappyHexMeshDict",
+    "checks: 6 fail, 11 ok, 1 skipped",
+    "  fail: mesh -- there is no constant/polyMesh in accept-t4 -- nothing has been meshed yet",
+    "  fail: checkmesh -- checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+    "  fail: patches -- the mesh has no boundary patch with any faces on it",
+    "  fail: render -- no picture of the mesh was drawn",
+    "  fail: domain_probe.location_in_mesh -- no point to validate: constant/triSurface has no location_in_mesh in patches.json and none was passed",
+    "  fail: replay -- the build script re-ran clean from empty and produced different geometry: patches on disk but not in the replay: inlet, outlet, wall; in the replay but not on disk: none; union volume 3.48e-06 m3 on disk, 0 m3 from the replay; the replay's bounds and the accepted bounds are not both measurable"
+  ],
+  "raw": {
+    "regions": {
+      "": {
+        "look": {
+          "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t4",
+          "polymesh": false,
+          "patches": [],
+          "build": [
+            "build.py",
+            "system/blockMeshDict",
+            "system/snappyHexMeshDict"
+          ],
+          "cells": 0,
+          "faces": 0,
+          "points": 0,
+          "bounds": [],
+          "two_d": false,
+          "checkmesh": "",
+          "checkmesh_ok": false,
+          "metrics": {},
+          "render": ""
+        },
+        "output": "{\n \"case\": \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t4\",\n \"polymesh\": false,\n \"patches\": [],\n \"build\": [\n  \"build.py\",\n  \"system/blockMeshDict\",\n  \"system/snappyHexMeshDict\"\n ],\n \"cells\": 0,\n \"faces\": 0,\n \"points\": 0,\n \"bounds\": [],\n \"two_d\": false,\n \"checkmesh\": \"\",\n \"checkmesh_ok\": false,\n \"metrics\": {},\n \"render\": \"\"\n}",
+        "cellzones": []
+      }
+    },
+    "meshed": false,
+    "cad": [
+      {
+        "script": "cad_audit",
+        "ok": true,
+        "findings": [
+          {
+            "check": "manifest",
+            "status": "ok",
+            "measured": "3 patches, each with its file on disk and no unlisted STL beside them: inlet, outlet, wall",
+            "means": "every triangle in this directory belongs to a named patch",
+            "repair": ""
+          },
+          {
+            "check": "scale",
+            "status": "ok",
+            "measured": "the union spans 0.06 x 0.018 x 0.005 m",
+            "means": "the bounding box is the size of a thing OpenFOAM meshes in metres",
+            "repair": ""
+          },
+          {
+            "check": "closure",
+            "status": "ok",
+            "measured": "0 open edges in the union of 3 patch files (3,544 triangles); per file: inlet 14, outlet 14, wall 28",
+            "means": "the union is watertight -- the per-file counts are the seams between patches and are what a correct export looks like",
+            "repair": ""
+          },
+          {
+            "check": "manifold",
+            "status": "ok",
+            "measured": "0 non-manifold edges in the union",
+            "means": "every edge has exactly one or two triangles on it",
+            "repair": ""
+          },
+          {
+            "check": "normals",
+            "status": "ok",
+            "measured": "0 same-direction edges in the union",
+            "means": "every shared edge is walked one way by one triangle and the other way by its neighbour, so the normals agree",
+            "repair": ""
+          },
+          {
+            "check": "degenerate",
+            "status": "ok",
+            "measured": "0 triangles with a repeated corner",
+            "means": "every triangle has three corners and some area",
+            "repair": ""
+          },
+          {
+            "check": "coverage",
+            "status": "ok",
+            "measured": "3 patches over 3,544 triangles (inlet 34, outlet 34, wall 3,476); every face in exactly one patch",
+            "means": "the partition is exhaustive and disjoint, so every face of the meshed domain takes the boundary condition somebody chose for it",
+            "repair": ""
+          },
+          {
+            "check": "self_intersection",
+            "status": "ok",
+            "measured": "0 triangles in 0 crossing pairs, out of 23,005 pairs whose boxes overlap",
+            "means": "no triangle meets a triangle it is not a neighbour of",
+            "repair": ""
+          }
+        ],
+        "measured": {
+          "directory": "constant/triSurface",
+          "manifest": {
+            "source": "channel_fluid.step",
+            "unit_metres": 1.0,
+            "location_in_mesh": null,
+            "patches": 3
+          },
+          "patches": [
+            {
+              "name": "inlet",
+              "file": "inlet.stl",
+              "triangles": 34,
+              "open_edges": 14,
+              "non_manifold_edges": 0,
+              "flipped_edges": 0
+            },
+            {
+              "name": "outlet",
+              "file": "outlet.stl",
+              "triangles": 34,
+              "open_edges": 14,
+              "non_manifold_edges": 0,
+              "flipped_edges": 0
+            },
+            {
+              "name": "wall",
+              "file": "wall.stl",
+              "triangles": 3476,
+              "open_edges": 28,
+              "non_manifold_edges": 0,
+              "flipped_edges": 0
+            }
+          ],
+          "triangles": 3544,
+          "vertices": 1774,
+          "union_topology": {
+            "triangles": 3544,
+            "computed": true,
+            "open_edges": 0,
+            "non_manifold_edges": 0,
+            "flipped_edges": 0,
+            "degenerate_triangles": 0
+          },
+          "topology_triangle_limit": 400000,
+          "worst": "ok",
+          "counts": {
+            "fail": 0,
+            "warn": 0,
+            "ok": 8,
+            "skipped": 0
+          },
+          "bounding_box": {
+            "min": [
+              0.0,
+              0.011,
+              0.001500000000000057
+            ],
+            "max": [
+              0.060000000000002,
+              0.029,
+              0.00649999999999995
+            ]
+          },
+          "self_intersection": {
+            "pairs": 0,
+            "triangles": 0,
+            "pairs_tested": 0,
+            "box_overlapping_pairs": 23005,
+            "triangle_ids": []
+          }
+        }
+      },
+      {
+        "script": "domain_probe",
+        "ok": false,
+        "findings": [
+          {
+            "check": "location_in_mesh",
+            "status": "fail",
+            "measured": "no point to validate: constant/triSurface has no location_in_mesh in patches.json and none was passed",
+            "means": "snappyHexMesh is told which side of the surface the fluid is on by this point alone. Unvalidated, a mesh of the volume outside the part comes out and passes checkMesh.",
+            "repair": "run with --suggest for a point at the deepest part of the domain, and write it into patches.json as location_in_mesh"
+          },
+          {
+            "check": "min_width",
+            "status": "ok",
+            "measured": "narrowest of 93 measured samples is 0.00399404 m, at 0.0248635 0.0217207 0.00407871 (27 further samples set aside as corners)",
+            "means": "the diameter of the largest sphere that fits in the domain and holds the sample -- found, not proved: it is the narrowest place sampling reached.",
+            "repair": "raise --width-samples to search harder for a narrower one"
+          },
+          {
+            "check": "min_wall_thickness",
+            "status": "skipped",
+            "measured": "the union is one connected shell of 3,544 triangles",
+            "means": "wall thickness is the width of material between two surfaces, and one shell has no material between anything. If these surfaces bound the part rather than the fluid, min_width above is the part's thinnest section.",
+            "repair": ""
+          }
+        ],
+        "measured": {
+          "directory": "constant/triSurface",
+          "files": [
+            "inlet.stl",
+            "outlet.stl",
+            "wall.stl"
+          ],
+          "triangles": 3544,
+          "shells": 1,
+          "bounds": [
+            0.0,
+            0.011,
+            0.001500000000000057,
+            0.060000000000002,
+            0.029,
+            0.00649999999999995
+          ],
+          "diagonal_m": 0.0628410693734618,
+          "band_m": 6.28410693734618e-08,
+          "margin_m": 6.28410693734618e-05,
+          "manifest": true,
+          "manifest_point": null,
+          "point": null,
+          "point_source": "",
+          "classification": null,
+          "clearance_m": null,
+          "width_at_point_m": null,
+          "suggested_point": null,
+          "suggested_radius_m": null,
+          "width": {
+            "samples": 120,
+            "draws": 240,
+            "qualified": 93,
+            "converging": 27,
+            "min_width": 0.003994041014012997,
+            "min_width_at": [
+              0.024863526889539328,
+              0.021720747225391565,
+              0.004078713471370024
+            ],
+            "min_width_any": 0.00025338636585295126,
+            "max_inscribed_radius": 0.0023415970091783464,
+            "max_inscribed_at": [
+              0.05465739099751088,
+              0.013341597009178346,
+              0.0038531784463813707
+            ],
+            "min_wall_thickness": null,
+            "min_wall_thickness_at": null
+          }
+        }
+      }
+    ],
+    "replay": {
+      "ran": true,
+      "script": "\"\"\"Built by the CAD desk, one accepted cell at a time.\n\nThis file is not a record written beside the work; it is the work. Every cell below ran\nin the desk's kernel, in this order, and was accepted only after the names it uses were\nshown to be bound by a cell above it. It is run from empty at the finish, and what it\nmakes there is compared against what is in the case directory.\n\nThe prose above each cell is the desk's own reasoning for it, carried with the action\nrather than thrown away -- it is the only record of why this shape is this shape.\n\"\"\"\n\n# -- cell 1 -------------------------------------------------------------------------\n# Let me start by setting up parameters and building the channel footprint as a 2D sketch (union of re\nimport build123d as bd\nfrom build123d import *\nimport math\n\n# ---- Parameters (mm, as given in the request) ----\nBLOCK_L_MM = 60.0   # X\nBLOCK_W_MM = 40.0   # Y\nBLOCK_H_MM = 8.0    # Z\n\nCH_W_MM = 4.0       # channel width\nCH_D_MM = 5.0       # channel depth (vertical extent of duct cross-section)\nMETAL_BETWEEN_MM = 3.0   # metal between passes (Y direction wall)\nN_PASSES = 3\n\n# Wall thickness left at the U-turn ends (not specified in the request;\n# chosen equal to METAL_BETWEEN_MM for a consistent wall thickness). Flagged in closing notes.\nTURN_END_WALL_MM = 3.0\n\n# ---- Y layout of the 3 passes, centered in the 40 mm width ----\ntotal_span = N_PASSES * CH_W_MM + (N_PASSES - 1) * METAL_BETWEEN_MM\nmargin = (BLOCK_W_MM - total_span) / 2.0\npass_y0 = []\ny = margin\nfor i in range(N_PASSES):\n    pass_y0.append(y)\n    y += CH_W_MM + METAL_BETWEEN_MM\n# pass i occupies y in [pass_y0[i], pass_y0[i]+CH_W_MM]\nprint(\"pass y-ranges (mm):\", [(p, p+CH_W_MM) for p in pass_y0])\nprint(\"margin each side (mm):\", margin)\n\n# ---- X layout ----\nx_right_turn = BLOCK_L_MM - TURN_END_WALL_MM   # right end of pass1/pass2 (turn1 region)\nx_left_turn  = TURN_END_WALL_MM                # left end of pass2/pass3 (turn2 region)\n\nprint(\"x_right_turn:\", x_right_turn, \"x_left_turn:\", x_left_turn)\n\n# pass1: inlet at x=0, right end merges into turn1\np1_y0, p1_y1 = pass_y0[0], pass_y0[0] + CH_W_MM\npass1 = Rectangle(x_right_turn, CH_W_MM).moved(Location((x_right_turn/2, (p1_y0+p1_y1)/2, 0)))\n\n# pass2: spans between turn2 and turn1 (both ends internal)\np2_y0, p2_y1 = pass_y0[1], pass_y0[1] + CH_W_MM\npass2_len = x_right_turn - x_left_turn\npass2 = Rectangle(pass2_len, CH_W_MM).moved(Location(((x_left_turn+x_right_turn)/2, (p2_y0+p2_y1)/2, 0)))\n\n# pass3: outlet at x=60, left end merges into turn2\np3_y0, p3_y1 = pass_y0[2], pass_y0[2] + CH_W_MM\npass3_len = BLOCK_L_MM - x_left_turn\npass3 = Rectangle(pass3_len, CH_W_MM).moved(Location(((x_left_turn+BLOCK_L_MM)/2, (p3_y0+p3_y1)/2, 0)))\n\n# turn1: near x = x_right_turn, bridges pass1 (y0..) to pass2 (..y1)\nturn1 = Rectangle(CH_W_MM, p2_y1 - p1_y0).moved(\n    Location((x_right_turn - CH_W_MM/2, (p1_y0 + p2_y1)/2, 0)))\n\n# turn2: near x = x_left_turn, bridges pass2 to pass3\nturn2 = Rectangle(CH_W_MM, p3_y1 - p2_y0).moved(\n    Location((x_left_turn + CH_W_MM/2, (p2_y0 + p3_y1)/2, 0)))\n\nfootprint = pass1 + pass2 + pass3 + turn1 + turn2\nprint(\"footprint area (mm^2):\", footprint.area)\nprint(\"footprint is single face/region:\", len(footprint.faces()))\n\n# -- cell 2 -------------------------------------------------------------------------\n# You're right \u2014 the previous cell errored, so it wasn't accepted and `block_mm`/`channel_mm` aren't i\n# Extrude footprint into the fluid (channel) solid, centered vertically in block thickness\nZ_CENTER_MM = BLOCK_H_MM / 2.0\nz0 = Z_CENTER_MM - CH_D_MM/2.0\nz1 = Z_CENTER_MM + CH_D_MM/2.0\nprint(\"channel z-range (mm):\", z0, z1, \"block wall top/bottom (mm):\", BLOCK_H_MM - z1, z0)\n\nchannel_mm = extrude(footprint, amount=CH_D_MM).moved(Location((0,0,z0)))\n\n# Block (context only, not meshed) - aluminium solid, for the picture\nblock_mm = Box(BLOCK_L_MM, BLOCK_W_MM, BLOCK_H_MM).moved(\n    Location((BLOCK_L_MM/2, BLOCK_W_MM/2, BLOCK_H_MM/2)))\n\nprint(\"channel volume (mm^3):\", channel_mm.volume, \" expected ~\", footprint.area*CH_D_MM)\nprint(\"channel bbox:\", channel_mm.bounding_box())\nprint(\"block bbox:\", block_mm.bounding_box())\n\n# sanity: channel must be fully inside block\ninside = channel_mm & block_mm\ninside_vol = sum(s.volume for s in inside.solids())\nprint(\"channel volume vs intersect-with-block volume (should match if fully enclosed):\",\n      channel_mm.volume, inside_vol)\n\n# -- cell 3 -------------------------------------------------------------------------\n# Good \u2014 the channel is fully enclosed within the block. Now let's look at the shape before going furt\nimport pyvista as pv\npv.set_jupyter_backend(None)\nplotter = pv.Plotter(off_screen=True, window_size=(1000, 700))\n\ndef bd_to_pv(shape, color, opacity=1.0):\n    verts, tris = shape.tessellate(tolerance=0.1)\n    pts = np.array([(v.X, v.Y, v.Z) for v in verts])\n    faces = np.hstack([[3, *t] for t in tris])\n    mesh = pv.PolyData(pts, faces)\n    plotter.add_mesh(mesh, color=color, opacity=opacity, show_edges=False)\n\nimport numpy as np\nbd_to_pv(block_mm, \"lightgray\", opacity=0.25)\nbd_to_pv(channel_mm, \"dodgerblue\", opacity=1.0)\n\nplotter.camera_position = \"iso\"\nplotter.camera.azimuth = 30\nplotter.camera.elevation = 20\nplotter.reset_camera()\nplotter.screenshot(\"look_channel_in_block.png\")\nprint(\"saved\")\n\n# -- cell 4 -------------------------------------------------------------------------\nimport matplotlib.pyplot as plt\nimport matplotlib.image as mpimg\nimg = mpimg.imread(\"look_channel_in_block.png\")\nplt.figure(figsize=(10,7))\nplt.imshow(img)\nplt.axis(\"off\")\nplt.show()\n\n# -- cell 5 -------------------------------------------------------------------------\n# ShapeList doesn't have `.filter`; I'll use Python's `filter()` builtin / list comprehension instead,\nfrom build123d import Axis, ShapeList\n\nfaces = channel_mm.faces()\nfaces_x = faces.filter_by(Axis.X)  # faces whose normal is along X\n\ninlet_faces = ShapeList([f for f in faces_x if abs(f.center().X - 0.0) < 1e-3])\noutlet_faces = ShapeList([f for f in faces_x if abs(f.center().X - BLOCK_L_MM) < 1e-3])\nwall_faces = ShapeList([f for f in faces if f not in inlet_faces and f not in outlet_faces])\n\nprint(\"num inlet faces:\", len(inlet_faces))\nprint(\"num outlet faces:\", len(outlet_faces))\nprint(\"num wall faces:\", len(wall_faces))\nprint(\"total faces:\", len(faces))\n\nfor name, fl in [(\"inlet\", inlet_faces), (\"outlet\", outlet_faces)]:\n    for f in fl:\n        print(name, \"center:\", f.center(), \"area(mm^2):\", f.area, \"normal:\", f.normal_at(f.center()))\n\nprint(\"expected inlet/outlet area = CH_W*CH_D (mm^2):\", CH_W_MM*CH_D_MM)\nprint(\"sum of wall face areas (mm^2):\", sum(f.area for f in wall_faces))\n\n# -- cell 6 -------------------------------------------------------------------------\n# Inlet and outlet faces measure exactly 4\u00d75 = 20 mm\u00b2, centered at the correct pass locations (y=13 fo\nimport subprocess\nresult = subprocess.run(\n    [\"python3\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/cad_convert.py\", \"--help\"],\n    capture_output=True, text=True\n)\nprint(result.stdout)\nprint(result.stderr)\n\n# -- cell 7 -------------------------------------------------------------------------\n# The CLI takes a STEP/IGES file path, not in-memory faces. The mention of `export_patches()` suggests\nimport sys\nsys.path.insert(0, \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/\")\nimport cad_convert\nhelp(cad_convert.export_patches)\n\n# -- cell 8 -------------------------------------------------------------------------\nimport inspect\nprint(inspect.signature(channel_mm.scale))\nprint(channel_mm.scale.__doc__)\n\n# -- cell 9 -------------------------------------------------------------------------\nfrom build123d import export_step\nfrom pathlib import Path\n\nMM_TO_M = 0.001\nCASE_DIR = Path(\"/work/accept-t4\")\n\nchannel_m = channel_mm.scale(MM_TO_M, about=(0, 0, 0))\nprint(\"channel_m bbox (m):\", channel_m.bounding_box())\nprint(\"channel_m volume (m^3):\", channel_m.volume, \" expected:\", channel_mm.volume * MM_TO_M**3)\n\nstep_path = CASE_DIR / \"channel_fluid.step\"\nexport_step(channel_m, str(step_path))\nprint(\"wrote\", step_path, step_path.exists(), step_path.stat().st_size)\n\n# -- cell 10 ------------------------------------------------------------------------\n# This is the classic STEP-units gotcha: `export_step` writes the file with a millimetre header regard\nimport subprocess\nresult = subprocess.run(\n    [\"grep\", \"-n\", \"-i\", \"-A\", \"8\", \"unit\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/prep/README.md\"],\n    capture_output=True, text=True\n)\nprint(result.stdout[:4000])\n\n# -- cell 11 ------------------------------------------------------------------------\n# Found it \u2014 I need `export_step(shape, path, unit=Unit.M)` to declare the file truthfully as metres o\nfrom build123d import export_step, Unit\nfrom pathlib import Path\n\nCASE_DIR = Path(\"/work/accept-t4\")\nstep_path = CASE_DIR / \"channel_fluid.step\"\n\nexport_step(channel_m, str(step_path), unit=Unit.M)\nprint(\"wrote\", step_path, step_path.stat().st_size)\n\nimport cad_convert\nfrom build123d import CenterOf\n\nBLOCK_L_M = 0.060\nfaces_m = channel_m.faces()\nfaces_x_m = faces_m.filter_by(Axis.X)\ninlet_faces_m = [f for f in faces_x_m if abs(f.center(CenterOf.MASS).X - 0.0) < 1e-6]\noutlet_faces_m = [f for f in faces_x_m if abs(f.center(CenterOf.MASS).X - BLOCK_L_M) < 1e-6]\n\ninlet_centroids = [tuple(f.center(CenterOf.MASS)) for f in inlet_faces_m]\noutlet_centroids = [tuple(f.center(CenterOf.MASS)) for f in outlet_faces_m]\n\ngroups = {\n    \"inlet\": {\"role\": \"inlet\", \"faces\": inlet_centroids},\n    \"outlet\": {\"role\": \"outlet\", \"faces\": outlet_centroids},\n    \"wall\": {\"role\": \"wall\", \"faces\": None},\n}\n\nCLMAX_M = 0.0015  # 1.5 mm facets, coarse first pass\n\nout_dir = CASE_DIR / \"constant\" / \"triSurface\"\nout_dir.mkdir(parents=True, exist_ok=True)\n\nreport = cad_convert.export_patches(\n    step_path, groups, out_dir, clmax=CLMAX_M, unit=\"m\", binary=False\n)\nprint(report)\n\n# -- cell 12 ------------------------------------------------------------------------\n# Patch export succeeded: 14/14 faces claimed, inlet/outlet areas exactly 20 mm\u00b2 each (2e-5 m\u00b2), match\nresult = subprocess.run(\n    [\"python3\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/cad_audit.py\",\n     str(CASE_DIR / \"constant\" / \"triSurface\"), \"--json\"],\n    capture_output=True, text=True\n)\nprint(result.stdout)\nprint(result.stderr)\n\n# -- cell 13 ------------------------------------------------------------------------\n# The audit is fully clean: watertight union, manifold, consistent normals, no degenerate/self-interse\nresult = subprocess.run(\n    [\"python3\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/domain_probe.py\",\n     str(CASE_DIR / \"constant\" / \"triSurface\"), \"--suggest\", \"--json\"],\n    capture_output=True, text=True\n)\nprint(result.stdout[:4000])\nprint(result.stderr[:2000])\n\n# -- cell 14 ------------------------------------------------------------------------\n# Good \u2014 the suggested `locationInMesh` point is confirmed inside, with min channel width ~4.0 mm matc\nresult = subprocess.run(\n    [\"cat\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/snappy/README.md\"],\n    capture_output=True, text=True\n)\nprint(result.stdout[:6000])\n\n# -- cell 15 ------------------------------------------------------------------------\n# Now let's copy the templates into the case, run `patch_entries.py` to fill in the dictionaries, and \nimport subprocess, shutil\nfrom pathlib import Path\n\nCASE_DIR = Path(\"/work/accept-t4\")\nTOOLBOX = Path(\"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\")\n\n(CASE_DIR / \"system\").mkdir(parents=True, exist_ok=True)\nfor f in (TOOLBOX / \"templates\" / \"snappy\").glob(\"*Dict\"):\n    shutil.copy(f, CASE_DIR / \"system\" / f.name)\n    print(\"copied\", f.name)\n\nresult = subprocess.run(\n    [\"python3\", str(TOOLBOX / \"patch_entries.py\"), str(CASE_DIR),\n     \"--insert\", \"system/snappyHexMeshDict\",\n     \"--insert\", \"system/surfaceFeatureExtractDict\"],\n    capture_output=True, text=True\n)\nprint(result.stdout)\nprint(result.stderr)\n\n# -- cell 16 ------------------------------------------------------------------------\n# Now let's fill the two `CHANGE_ME` values: the `blockMeshDict` background box and the `locationInMes\nprint((CASE_DIR / \"system\" / \"blockMeshDict\").read_text())\nprint(\"=\" * 60)\nprint((CASE_DIR / \"system\" / \"snappyHexMeshDict\").read_text()[:3000])\n\n# -- cell 17 ------------------------------------------------------------------------\nprint((CASE_DIR / \"system\" / \"snappyHexMeshDict\").read_text()[3000:7000])\n\n# -- cell 18 ------------------------------------------------------------------------\n# Now let's set the two `CHANGE_ME` values and adjust the background cell size and surface refinement \nimport re\n\nCASE_DIR = Path(\"/work/accept-t4\")\n\n# Domain bounds from the audit: x 0..0.06, y 0.011..0.029, z 0.0015..0.0065 (metres)\nDOM_X = (0.0, 0.060)\nDOM_Y = (0.011, 0.029)\nDOM_Z = (0.0015, 0.0065)\n\nDX = 0.002          # background cell size (m); channel is 4x5mm so this gives ~2 cells across at level 0\nPAD = 2 * DX         # padding beyond the surface, in background cells\n\nbox_min = (DOM_X[0]-PAD, DOM_Y[0]-PAD, DOM_Z[0]-PAD)\nbox_max = (DOM_X[1]+PAD, DOM_Y[1]+PAD, DOM_Z[1]+PAD)\nprint(\"boxMin:\", box_min, \"boxMax:\", box_max)\n\nLOC_IN_MESH = (0.00536089, 0.0266661, 0.00413173)  # from domain_probe.py --suggest, confirmed inside\n\nbmd_path = CASE_DIR / \"system\" / \"blockMeshDict\"\nbmd = bmd_path.read_text()\nbmd = bmd.replace(\n    \"boxMin  (CHANGE_ME CHANGE_ME CHANGE_ME);\",\n    f\"boxMin  ({box_min[0]:.6f} {box_min[1]:.6f} {box_min[2]:.6f});\"\n)\nbmd = bmd.replace(\n    \"boxMax  (CHANGE_ME CHANGE_ME CHANGE_ME);\",\n    f\"boxMax  ({box_max[0]:.6f} {box_max[1]:.6f} {box_max[2]:.6f});\"\n)\nbmd = bmd.replace(\"dx      0.005;\", f\"dx      {DX};\")\nbmd_path.write_text(bmd)\n\nshd_path = CASE_DIR / \"system\" / \"snappyHexMeshDict\"\nshd = shd_path.read_text()\nshd = shd.replace(\n    \"locationInMesh (CHANGE_ME CHANGE_ME CHANGE_ME);\",\n    f\"locationInMesh ({LOC_IN_MESH[0]:.8f} {LOC_IN_MESH[1]:.8f} {LOC_IN_MESH[2]:.8f});\"\n)\n# Coarse-first surface refinement: level (1 1) at the wall surfaces -> 1 mm cells there,\n# enough to get a few cells across the 4mm channel width for a first look.\nshd = shd.replace(\"level (0 0);\\n            patchInfo { type patch; }\",\n                   \"level (1 1);\\n            patchInfo { type patch; }\")\nshd = shd.replace(\"level (0 0);\\n            patchInfo { type wall; }\",\n                   \"level (1 1);\\n            patchInfo { type wall; }\")\nshd_path.write_text(shd)\n\nprint(\"--- blockMeshDict box+dx lines ---\")\nfor line in bmd.splitlines():\n    if \"boxMin\" in line or \"boxMax\" in line or line.strip().startswith(\"dx \"):\n        print(line)\nprint(\"--- snappyHexMeshDict locationInMesh + levels ---\")\nfor line in shd.splitlines():\n    if \"locationInMesh\" in line or \"level (\" in line:\n        print(line)\n\n# -- cell 19 ------------------------------------------------------------------------\n# Now let's check with `preflight.py` that nothing obviously wrong remains (no leftover `CHANGE_ME`, b\n# minimal fvSchemes / fvSolution, required by snappyHexMesh though it solves nothing\nfvSchemes = \"\"\"\nFoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object fvSchemes;\n}\nddtSchemes {}\ngradSchemes {}\ndivSchemes {}\nlaplacianSchemes {}\ninterpolationSchemes {}\nsnGradSchemes {}\n\"\"\"\nfvSolution = \"\"\"\nFoamFile\n{\n    version 2.0;\n    format ascii;\n    class dictionary;\n    object fvSolution;\n}\nsolvers {}\n\"\"\"\n(CASE_DIR / \"system\" / \"fvSchemes\").write_text(fvSchemes)\n(CASE_DIR / \"system\" / \"fvSolution\").write_text(fvSolution)\n\nresult = subprocess.run(\n    [\"python3\", str(TOOLBOX / \"preflight.py\"), str(CASE_DIR), \"--json\"],\n    capture_output=True, text=True\n)\nprint(result.stdout[:5000])\nprint(result.stderr[:2000])\n",
+      "before": {
+        "patches": {
+          "inlet": {
+            "triangles": 34,
+            "area_m2": 1.9999999999999575e-05
+          },
+          "outlet": {
+            "triangles": 34,
+            "area_m2": 1.999999999999957e-05
+          },
+          "wall": {
+            "triangles": 3476,
+            "area_m2": 0.0031319999999998784
+          }
+        },
+        "volume_m3": 3.479999999999864e-06,
+        "bounds": [
+          0.0,
+          0.011,
+          0.0015,
+          0.06,
+          0.029,
+          0.0065
+        ],
+        "triangles": 3544
+      },
+      "exit_code": 0,
+      "output": "ed, so snappyHexMesh cannot tell inside from outside and castellation leaks out through the hole\",\n      \"repair\": \"surfaceCheck the file, then close it in the CAD tool, or run surfaceClean on it before meshing\"\n    },\n    {\n      \"check\": \"geometry\",\n      \"status\": \"fail\",\n      \"measured\": \"wall.stl: 3,476 triangles, bbox 0.06 x 0.018 x 0.005 m, area 0.003132 m2; open edges 28, non-manifold 0, same-direction (flipped) 0\",\n      \"means\": \"28 open edges: the surface is not closed, so snappyHexMesh cannot tell inside from outside and castellation leaks out through the hole\",\n      \"repair\": \"surfaceCheck the file, then close it in the CAD tool, or run surfaceClean on it before meshing\"\n    },\n    {\n      \"check\": \"change_me\",\n      \"status\": \"ok\",\n      \"measured\": \"no CHANGE_ME left in the 5 files read under system, constant, 0, 0.orig, 0.org\",\n      \"means\": \"every placeholder the templates ship with has been replaced\",\n      \"repair\": \"\"\n    },\n    {\n      \"check\": \"method\",\n      \"status\": \"skipped\",\n      \"measured\": \"no feature named\",\n      \"means\": \"nothing said what this run has to show, so there is nothing to check the discretisation against\",\n      \"repair\": \"pass --resolve shock|interface|wake to have this checked\"\n    },\n    {\n      \"check\": \"patches\",\n      \"status\": \"skipped\",\n      \"measured\": \"constant/polyMesh/boundary is missing or unreadable\",\n      \"means\": \"the mesh has not been built yet, so there is nothing to compare fields against\",\n      \"repair\": \"\"\n    },\n    {\n      \"check\": \"empty\",\n      \"status\": \"skipped\",\n      \"measured\": \"no patch of type empty and no single-cell direction in the blockMeshDict\",\n      \"means\": \"nothing here says this is a 2D study, so the empty rules do not apply\",\n      \"repair\": \"\"\n    },\n    {\n      \"check\": \"reynolds\",\n      \"status\": \"skipped\",\n      \"measured\": \"no nu found in constant/transportProperties, physicalProperties or momentumTransport\",\n      \"means\": \"either this is a compressible case, where the viscosity is a function of state, or the transport properties have not been written yet\",\n      \"repair\": \"\"\n    },\n    {\n      \"check\": \"cells\",\n      \"status\": \"skipped\",\n      \"measured\": \"no readable blockMeshDict and no built mesh\",\n      \"means\": \"nothing to predict from and nothing to compare with\",\n      \"repair\": \"\"\n    },\n    {\n      \"check\": \"checkmesh\",\n      \"status\": \"skipped\",\n      \"measured\": \"no log.checkMesh in the case directory\",\n      \"means\": \"checkMesh has not been run, or its output was not kept\",\n      \"repair\": \"run checkMesh and keep the output: checkMesh > log.checkMesh 2>&1\"\n    },\n    {\n      \"check\": \"probe\",\n      \"status\": \"skipped\",\n      \"measured\": \"system/controlDict names no application\",\n      \"means\": \"there is no solver to run for a step\",\n      \"repair\": \"set 'application <solver>;' in system/controlDict\"\n    },\n    {\n      \"check\": \"courant\",\n      \"status\": \"skipped\",\n      \"measured\": \"could not compute a Courant number: no U, no a cell size, no deltaT\",\n      \"means\": \"one of the three numbers it needs is not readable from the case\",\n      \"repair\": \"pass --u, or run checkMesh so the minimum cell volume is on disk\"\n    },\n    {\n      \"check\": \"residuals\",\n      \"status\": \"skipped\",\n      \"measured\": \"log.replay: 0 time step(s)\",\n      \"means\": \"the log has no 'Solving for' lines yet, so there are no residuals to read\",\n      \"repair\": \"\"\n    },\n    {\n      \"check\": \"units\",\n      \"status\": \"skipped\",\n      \"measured\": \"0/p dimensions unreadable; force function objects: none\",\n      \"means\": \"no forces or forceCoeffs function object, so nothing is computing a force from p here\",\n      \"repair\": \"\"\n    },\n    {\n      \"check\": \"disk\",\n      \"status\": \"skipped\",\n      \"measured\": \"write times unknown, bytes per write unknown, free 29.11 GB\",\n      \"means\": \"not enough is known about the run or the mesh to size its output\",\n      \"repair\": \"check endTime, writeInterval and writeControl in system/controlDict\"\n    }\n  ]\n}\n\n\n",
+      "after": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      }
+    }
+  }
+}

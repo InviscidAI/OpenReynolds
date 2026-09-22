@@ -26,7 +26,7 @@ from .backend.pending import PendingBackend
 from .browse import Browser
 from . import casebundle
 from .capture import Capture
-from . import commands, images, mesher, switch
+from . import cad, commands, images, switch
 from . import convergence, modes
 from .approval import Approver
 from .llm.presets import EFFORTS, models_for
@@ -42,7 +42,7 @@ from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
 from . import trace
-from .tools import CORES_PROBE, ToolContext, take_desk
+from .tools import CORES_PROBE, ToolContext, cad_text, refuse_input as tools_refuse_input
 from .view import ConsoleView, View, plain_console
 from .jsonview import JsonReader, JsonView
 from .watch import NOTHING, LineReader, NullReader, situation, watch
@@ -1476,30 +1476,31 @@ def session(
             loop.approver = approver
             ctx.approver = approver
         ctx.on_mode = getattr(loop, "set_mode", None)
-        # The mesh desk: geometry and its mesh built by a second agent on this same
-        # workspace, one bash block at a time, with its own model client (mesher/).
-        # It needs nothing in this process but a key -- the machine it works on is the
-        # one the session is already talking to.
+        # The CAD desk: geometry and its mesh built by a second agent on this same
+        # workspace, one python cell at a time in a kernel there, with its own model
+        # client (cad/). It needs nothing in this process but a key -- the machine it
+        # works on is the one the session is already talking to.
         ctx.on_tokens = loop.add_tokens
         if cfg.mesh_tool and not cfg.model_key_missing():
-            # This instance is what a `mesh` call with `wait: true` runs on, in the
-            # foreground, and the template a background run is copied from
-            # (`mesher.DeskRun`). Its `interject` is the session's own inbox, read late
-            # on purpose because the loop's drain is attached a few lines below -- and
-            # it is the foreground path's alone: a background run gets ears of its own
-            # (`mesh_note`), because a desk reading the inbox from another thread is
-            # exactly what left the person's lines pending for minutes. `on_step` is
-            # the step display both paths share.
-            with _timed("mesher"):
-                ctx.mesher = mesher.Mesher(
+            # `interject` is read late on purpose: the loop's own drain is attached a
+            # few lines below, and the desk needs the same one. It is what lets a
+            # person change the shape while it is being built instead of waiting out
+            # the whole call and asking the main agent to start again.
+            # `CoreDesk`, which is the desk the corpus measures: the same loop and the
+            # same finish check as `CadDesk`, briefed without an instrument catalogue and
+            # handed two reference files by name instead. That configuration is the one
+            # with evidence behind it -- three times the steps on eight of eight prompts
+            # for the catalogue version, p = 0.008, and no more meshes for the cost.
+            with _timed("cad"):
+                ctx.cad = cad.CoreDesk(
                     cfg, backend, store, store.session.home,
                     interject=lambda: loop.interject() if loop.interject else None,
-                    on_step=lambda step: _mesh_desk_step(view, tracker, step),
+                    on_step=lambda step: _cad_desk_step(view, tracker, step),
                 )
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
         )
-        # A held job_check or mesh_wait ends early the moment the person says something
+        # A held job_check ends early the moment the person says something
         # for the model -- asked of the loop, whose drain (just above) is the one thing
         # that can tell a message from a `/status`, a `/exit` or an EOF. It used to be
         # `reader.pending()`, a peek at the queue: a `/exit` the drain had put back kept
@@ -1557,14 +1558,11 @@ def session(
                 _run_interactive(
                     loop, backend, store, view, browser, reader,
                     live=live_mirror, progress=tracker, concierge=concierge,
+                    cad=ctx.cad,
                 )
         except KeyboardInterrupt:
             view.info(_interrupt_note(keep_alive))
         finally:
-            if ctx.desk is not None:
-                # A desk still building belongs to a session that is over. Its record
-                # stays on the session, so a resume is told it was cut off.
-                ctx.desk.abandon()
             with _timed("close.tracker_stop"):
                 tracker.stop()
             if concierge is not None:
@@ -1890,24 +1888,24 @@ def _when(mtime: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.gmtime(mtime)) + "Z"
 
 
-def _mesh_desk_step(view: Any, tracker: Any, step: Any) -> None:
-    """Say what the mesh desk just did, while it is doing it.
+def _cad_desk_step(view: Any, tracker: Any, step: Any) -> None:
+    """Say what the CAD desk just did, while it is doing it.
 
     The desk holds the session's one thread for minutes at a time, and until this
     the screen said nothing about what was happening inside -- a reviewer's word for
     it was "a black box", and the person watching had no way to tell a desk building
-    a mesh from a desk stuck. One line per command, the way a tool call is announced,
+    a mesh from a desk stuck. One line per cell, the way a tool call is announced,
     plus the bar's own narration so it survives the next redraw.
     """
     first = (step.cmd or "").strip().splitlines()[0][:90]
     seen = "  <picture>" if step.image else ""
-    line = f"mesh desk [{step.exit_code}] {step.seconds:.0f}s  {first}{seen}"
+    line = f"cad desk [{step.exit_code}] {step.seconds:.0f}s  {first}{seen}"
     try:
         view.narration(line)
         if tracker is not None:
             # The bar's own activity, so the next redraw still says what the desk is
-            # on rather than reverting to "mesh" for the whole call.
-            tracker.begin("tool", "mesh desk", cmd=first)
+            # on rather than reverting to "cad" for the whole call.
+            tracker.begin("tool", "cad desk", cmd=first)
     except Exception:  # noqa: BLE001 - a progress line may never end a mesh
         pass
 
@@ -1939,9 +1937,6 @@ def _situation_brief(
         # resume ahead of its workspace cannot do yet: there it says what the study
         # recorded, and the ready note re-reads it.
         lines.append(situation(store, None if starting_eta_s is not None else backend))
-        interrupted = _interrupted_desk_note(store)
-        if interrupted:
-            lines.append(interrupted)
     else:
         lines.append(f"study {store.session.study_id} on instance {store.session.instance_id}.")
     if starting_eta_s is not None:
@@ -1984,36 +1979,6 @@ def _situation_brief(
             "can arrive, so a question asked here will not be seen."
         )
     return "\n".join(lines)
-
-
-def _interrupted_desk_note(store: Store) -> str:
-    """The one fact about the mesh desk a resume knows and the model cannot find out:
-    it was mid-build when the previous run of this session ended.
-
-    A job outlives the process on the instance and `situation` re-reads it there; the
-    desk's thread dies with the process, and the only trace it leaves is the record the
-    `mesh` tool wrote when it started (`Session.desk`, cleared when a result is handed
-    over). Said once: the record is cleared here, so a second resume does not repeat
-    what the first already said. What the desk had built when it was cut off is still
-    in its case directory, and that is the fact worth carrying -- a model told nothing
-    would build it again from scratch.
-    """
-    record = store.session.desk
-    if not record:
-        return ""
-    store.session.desk = {}
-    store.save()
-    case_rel = str(record.get("case_rel") or "mesh")
-    request = " ".join(str(record.get("request") or "").split())[:300]
-    when = record.get("started_at") or "an earlier run"
-    asked = f"; asked for: {request}" if request else ""
-    return (
-        f"The mesh desk was building `{case_rel}` when the previous run of this session "
-        f"ended (started {when}{asked}), so it was interrupted with the runner and no "
-        f"result was delivered. Whatever it had built is on disk under `{case_rel}`, worth "
-        f"a look before it is built again: `python3 {WORKSPACE_ROOT}/.toolbox/mesh_look.py "
-        f"{case_rel} --out look.png` measures what is there."
-    )
 
 
 def _workspace_facts(
@@ -2708,6 +2673,8 @@ def _apply(
     browser: Browser,
     store: Store,
     progress: Any = None,
+    cad: Any = None,
+    backend: Backend | None = None,
 ) -> Any:
     """Act on one typed line. Returns what goes to the model, or None, or QUIT."""
     if command.kind == commands.EXIT:
@@ -2717,8 +2684,52 @@ def _apply(
             return None
         loop.say(command.text)
         return command.text
+    if command.kind == commands.MESH:
+        # Answered here, like `/status`: it is the person's own instruction to the
+        # desk, so putting a turn in front of it would be the paraphrase this exists
+        # to skip. The agent hears about it the same way it hears about anything else
+        # that happened in the workspace, at its next turn.
+        _mesh_here(command, view, cad, backend)
+        return None
     _local(command, view, browser, store, loop, progress)
     return None
+
+
+def _mesh_here(
+    command: commands.Command,
+    view: View,
+    cad: Any,
+    backend: Backend,
+) -> None:
+    """`/mesh`: the person talking to the CAD desk, with nobody paraphrasing.
+
+    Every other route to this desk goes through the session agent, which decides
+    whether to call the tool and writes the `request` itself. That is the right default
+    -- the agent knows the study -- but it means the desk the corpus measures
+    (`cad_accept.py` and `cad_buildup.py` both construct `CadDesk` and call `run`) is
+    reached by a path no person has. This is that path, and it is the same object the
+    tool calls: one desk, two callers.
+
+    The typed line is the request, word for word. Files come from the `@` handovers on
+    it, checked here so a typo costs a `stat` rather than nine steps of a build.
+    """
+    if cad is None:
+        view.warn("the CAD desk is not available in this session (it needs a model "
+                  "key of its own); build geometry with bash instead")
+        return
+    if not command.text:
+        view.warn("say what to build: /mesh a 10 mm U-bend in water, "
+                  "or /mesh prepare @/work/uploads/part.step")
+        return
+    for path in command.inputs:
+        refusal = tools_refuse_input(backend, path)
+        if refusal:
+            view.warn(f"nothing was run: {refusal}")
+            return
+    for path in command.inputs:
+        view.info(f"input: {path}")
+    result = cad.run(command.text, inputs=list(command.inputs))
+    view.info(cad_text(result))
 
 
 def _local(
@@ -2817,6 +2828,15 @@ def _typed_while_working(
             for_model.append(command.text)
             if concierge is not None:
                 concierge.ask(command.text)
+        elif command.kind == commands.MESH:
+            # Not started here, and not dropped either. The agent holds the session's
+            # one thread and may be inside a desk run of its own on the same kernel,
+            # which is sequential -- so a second desk started from under it would
+            # queue behind whatever is running and come back having done nothing.
+            # Saying so is the whole of the fix; `/btw` is the channel that works
+            # while something else is going.
+            view.warn("the agent is working; /mesh runs when the prompt is back. "
+                      "To say something now, use /btw")
         else:
             _local(command, view, browser, store, loop, progress)
     return "\n".join(for_model) or None
@@ -2975,12 +2995,6 @@ def _run_turn(loop: Loop, view: View) -> bool:
     return False
 
 
-def _desk_of(loop: Loop) -> Any:
-    """The mesh desk's background run, if one is live: what the session loop waits on
-    beside the jobs. Read off the loop's tool context, where the `mesh` tool put it."""
-    return getattr(loop.ctx, "desk", None)
-
-
 def _run_interactive(
     loop: Loop,
     backend: Backend,
@@ -2991,33 +3005,26 @@ def _run_interactive(
     live: LiveMirror | None = None,
     progress: Any = None,
     concierge: Any = None,
+    cad: Any = None,
 ) -> None:
     while True:
-        desk = _desk_of(loop)
-        if store.live_jobs() or desk is not None:
+        if store.live_jobs():
             if progress is not None:
                 progress.idle()
             wake = watch(
                 backend, store, view, reader,
                 narrate_every_s=loop.cfg.narrate_every_s,
                 progress=progress,
-                desk=desk,
             )
             if wake.kind == "eof":
                 return
-            if wake.kind == "desk":
-                # The mesh desk is done. Its tokens are counted and the registry
-                # cleared here, before the model hears of it, so that a `mesh_wait`
-                # in the turn that follows finds nothing left to wait on.
-                take_desk(loop.ctx, wake.run)
-            if wake.kind in ("job", "narrate", "desk"):
+            if wake.kind in ("job", "narrate"):
                 if loop.blocked_reason:
                     # The service is refusing calls for a reason waiting does not fix.
-                    # A job ending, or the mesh desk finishing, is a fact worth keeping
-                    # in the thread for whenever this resumes; progress chatter is
-                    # not, and neither is a turn -- it would be refused exactly as the
-                    # last ninety were.
-                    if wake.kind in ("job", "desk"):
+                    # A job ending is a fact worth keeping in the thread for whenever
+                    # this resumes; progress chatter is not, and neither is a turn --
+                    # it would be refused exactly as the last ninety were.
+                    if wake.kind == "job":
                         loop.inform(wake.text)
                     continue
                 loop.inform(wake.text)
@@ -3034,7 +3041,8 @@ def _run_interactive(
                 ):
                     concierge.ask(commands.parse(wake.text).text)
                 spoken = _apply(
-                    commands.parse(wake.text), loop, view, browser, store, progress
+                    commands.parse(wake.text), loop, view, browser, store, progress,
+                    cad=cad, backend=backend,
                 )
                 if spoken is QUIT:
                     return
@@ -3053,7 +3061,8 @@ def _run_interactive(
                 return
             loop.blocked_reason = None
             with _timed("idle.apply"):
-                spoken = _apply(commands.parse(line), loop, view, browser, store, progress)
+                spoken = _apply(commands.parse(line), loop, view, browser, store, progress,
+                                cad=cad, backend=backend)
             if spoken is QUIT:
                 return
             if spoken is None:
@@ -3126,32 +3135,17 @@ def _run_one_shot(
         live.catch_up()
 
     deadline = time.monotonic() + max_wait_minutes * 60 if max_wait_minutes else None
-    while store.live_jobs() or _desk_of(loop) is not None:
-        # The mesh desk's background run counts as work in flight: a `-p` run that
-        # returned while the desk was still building would exit mid-mesh, its thread
-        # dying with the process, and the study would carry a case nobody reported on.
+    while store.live_jobs():
         if progress is not None:
             progress.idle()
-        wake = watch(backend, store, view, reader, deadline=deadline, progress=progress,
-                     desk=_desk_of(loop))
+        wake = watch(backend, store, view, reader, deadline=deadline, progress=progress)
         if wake.kind == "timeout":
-            still = "the job is still running"
-            if _desk_of(loop) is not None:
-                # A job outlives this process; the desk's thread does not. Said
-                # plainly, because "still running" would be a promise about a thread
-                # that is about to end with the process.
-                still = ("the mesh desk's run ends with this process, and what it "
-                         "built so far is on disk")
-                if store.live_jobs():
-                    still = f"the job is still running, and {still}"
             view.info(
-                f"stopped waiting after {max_wait_minutes:g} min; {still} - resume "
-                f"with --study {store.session.study_id}"
+                f"stopped waiting after {max_wait_minutes:g} min; the job is still "
+                f"running - resume with --study {store.session.study_id}"
             )
             return "timeout"
-        if wake.kind == "desk":
-            take_desk(loop.ctx, wake.run)
-        elif wake.kind != "job":
+        if wake.kind != "job":
             break
         loop.inform(wake.text)
         if not _run_turn(loop, view):

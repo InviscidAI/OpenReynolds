@@ -303,10 +303,13 @@ def test_no_attested_name_can_claim_a_run_without_naming_where_it_ran(preflight)
             )
 
 
-def test_motion_did_not_become_a_twelfth_top_level_check(preflight):
-    """It lives in `--resolve`, where the case that does not move pays nothing for it."""
+def test_motion_did_not_become_a_top_level_check(preflight):
+    """It lives in `--resolve`, where the case that does not move pays nothing for it.
+
+    The count is a guard against a check arriving unnoticed, not a claim about the
+    number: the thirteenth is `change_me`, which the CAD desk added."""
     assert "motion" not in preflight.CHECKS
-    assert len(preflight.CHECKS) == 12
+    assert len(preflight.CHECKS) == 13
 
 
 # -- reading a motion failure out of the probe ---------------------------------

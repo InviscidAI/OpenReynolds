@@ -129,7 +129,7 @@ class View(Protocol):
 
     def approval(self, request_id: str, kind: str, title: str, detail: str, choices: list[str]) -> None:
         """A question for the person, because they chose to be consulted (`modes.py`).
-        `kind` is job, mesh or checkpoint. The answer arrives as a typed line; the view
+        `kind` is job or checkpoint. The answer arrives as a typed line; the view
         only has to make the question impossible to miss."""
 
     def approval_done(self, request_id: str, outcome: str, note: str = "") -> None:

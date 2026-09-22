@@ -1,0 +1,72 @@
+{
+  "arm": "replay",
+  "prompt": "T2",
+  "completed": true,
+  "started_at": "2026-09-11T11:27:43",
+  "run": {
+    "ran": true,
+    "seconds": 300.1,
+    "script_exit": "?",
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "there is no constant/polyMesh in replay-t2 -- nothing has been meshed yet",
+        "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks",
+        "the mesh has no boundary patch with any faces on it",
+        "no picture of the mesh was drawn"
+      ],
+      "regions": [],
+      "cells": 0,
+      "two_d": false,
+      "patches": [],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "fail",
+          "measured": "there is no constant/polyMesh in replay-t2 -- nothing has been meshed yet"
+        },
+        {
+          "check": "checkmesh",
+          "status": "fail",
+          "measured": "checkMesh does not pass: no verdict was read -- read log.checkMesh for the failing checks"
+        },
+        {
+          "check": "patches",
+          "status": "fail",
+          "measured": "the mesh has no boundary patch with any faces on it"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "no cellZones in this mesh"
+        },
+        {
+          "check": "build",
+          "status": "ok",
+          "measured": "rebuilds with: build.py"
+        },
+        {
+          "check": "render",
+          "status": "fail",
+          "measured": "no picture of the mesh was drawn"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        }
+      ],
+      "replay": {
+        "ran": false
+      }
+    },
+    "output_tail": "\n[timed out after 300s]"
+  }
+}

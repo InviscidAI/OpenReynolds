@@ -355,7 +355,7 @@ class Loop:
                         # bash command, a job_start -- was not cut: each is bounded by
                         # its own deadline, and its result was recorded when it came
                         # back. Only the held waits (`job_check` with `wait_s`,
-                        # `mesh_wait`) look for this and return at once
+                        # and a `bash` following a promoted job) look for this and return at once
                         # (`ToolContext.on_leaving`): a wait is the one call whose
                         # whole purpose is to keep the turn going.
                         self.view.tool(block.name, _summarize(block.input))
@@ -413,31 +413,26 @@ class Loop:
         session at the prompt, met mid-turn. The drain still puts the line back for
         the prompt, as before; this is the part the put-back could not do. From here
         the turn ends at its next safe point (`_turns`), and a wait in progress ends
-        at once (`ToolContext.on_leaving`, asked by `job_check` and `mesh_wait` once
-        a second beside `heard`).
+        at once (`ToolContext.on_leaving`, asked by every held wait once a second
+        beside `heard`).
 
-        The mesh desk is told now rather than at the close-down: a background run
-        (`ctx.desk`) reads its budgets at every lap and stops at its next command once
-        they are zero (`DeskRun.abandon`), and a foreground run on the session's own
-        desk (`mesh` with `wait: true`, holding this very turn) is stopped the same
-        way. Neither would otherwise stop for a person who has left: the background
-        run spends model calls for as long as the call in flight takes to come back,
-        and the foreground one holds the turn for up to its whole budget. The
-        session's desk is never used again after this, so nothing is lost by it.
+        The CAD desk is told now rather than at the close-down: a run in flight
+        (`ctx.cad`, holding this very turn) reads its budgets at every lap and stops
+        at its next cell once they are zero (`cad.agent`, `max_steps`/`max_seconds`).
+        It would not otherwise stop for a person who has left: it holds the turn for
+        up to its whole budget, spending model calls the whole way. The session's desk
+        is never used again after this, so nothing is lost by it.
 
         Idempotent: the drain meets the same put-back line every second a wait asks.
         """
         if self.leaving:
             return
         self.leaving = True
-        desk = getattr(self.ctx, "desk", None)
-        if desk is not None:
-            desk.abandon()
-        mesher = getattr(self.ctx, "mesher", None)
-        if mesher is not None:
+        cad = getattr(self.ctx, "cad", None)
+        if cad is not None:
             try:
-                mesher.max_steps = 0
-                mesher.max_seconds = 0.0
+                cad.max_steps = 0
+                cad.max_seconds = 0.0
             except Exception:  # noqa: BLE001 - a desk without budgets has nothing to stop
                 pass
 
@@ -454,7 +449,7 @@ class Loop:
         """Whether the person has said something the model has not seen yet.
 
         What a tool that holds its answer asks, once a second, to know whether to stop
-        holding it (`ToolContext.on_wait_input`; `job_check` with `wait_s`, `mesh_wait`).
+        holding it (`ToolContext.on_wait_input`; `job_check` with `wait_s`, a promoted `bash`).
         It drains the inbox the way the loop does between tool calls -- commands are
         answered on the spot, words for the model are kept for this batch's results --
         and answers whether anything is kept. So a wait that ends on it ends for words
@@ -600,9 +595,8 @@ class Loop:
         The only place a tool call is ever held, and it holds only what the person
         chose to have held (`modes.py`). In auto this returns None without looking.
 
-        The mesh desk runs its own bash loop on its own model client; the gate is on
-        the outer `mesh` call, which is enough -- approving that call is approving the
-        mesh desk's work, and nothing it does inside spends a job."""
+        The CAD desk is not gated: it runs its own model loop on the same workspace,
+        and what it spends is model time rather than a job."""
         mode = self.ctx.mode
         if not modes.gated(mode, name):
             return None
@@ -614,7 +608,7 @@ class Loop:
         title, detail = _question(name, tool_input, self.ctx.home)
         self._busy("waiting")
         try:
-            decision = self.approver.ask("job" if name == "job_start" else "mesh", title, detail)
+            decision = self.approver.ask("job", title, detail)
         finally:
             self._unbusy()
         if decision.approved:
@@ -885,8 +879,9 @@ def _question(name: str, tool_input: dict[str, Any], home: str) -> tuple[str, st
         cmd = str(tool_input.get("cmd") or "")
         label = tool_input.get("name") or (cmd.splitlines()[0][:60] if cmd else "")
         return f"Start a job: {label}", f"cmd: {cmd}\ncwd: {tool_input.get('cwd') or home}"
-    request = str(tool_input.get("request") or "")
-    return "Build a mesh", f"{request}\ncase: {tool_input.get('case') or 'mesh'}"
+    # Only `job_start` is gated (`modes.COMPUTE_TOOLS`); this is the fallback for a
+    # tool that is gated later without a question of its own being written for it.
+    return f"Run {name}", _summarize(tool_input, width=400)
 
 
 ToolFactory = Callable[[], ToolContext]

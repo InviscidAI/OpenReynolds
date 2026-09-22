@@ -4,6 +4,7 @@
     python3 mesh_look.py /work/study/mesh                      # picture + report
     python3 mesh_look.py . --out look.png --json look.json     # and the machine-readable one
     python3 mesh_look.py . --no-check                          # skip checkMesh (faster)
+    python3 mesh_look.py . --region heater                     # one region of a CHT case
 
 `--out` and `--json` are taken relative to where you run this from -- the working
 directory, as for every other toolbox script -- and NOT relative to the case. Without
@@ -15,7 +16,10 @@ read `look.png` where it stood -- a 404 and three turns to find the file, in stu
 20260920-161908-c7ef.)
 
 Every panel is drawn from `constant/polyMesh` -- no solve, no fields, no time
-directory needed. The boundary is coloured **one colour per patch**, because the
+directory needed. `--region` reads `constant/<name>/polyMesh` instead, which is the
+only thing it changes: one region per call, the same report with the same keys, so a
+multi-region case is looked at one payload at a time rather than in a shape nothing
+downstream knows how to read. The boundary is coloured **one colour per patch**, because the
 question that gets answered wrong most often is not "is this the right shape" but "is
 the inlet the end I think it is": a picture where the inlet patch is a different colour
 from the outlet answers it in one look, and the table under it gives each patch's area,
@@ -60,13 +64,18 @@ CHECK_TIMEOUT_S = 240
 # -- the files ----------------------------------------------------------------
 
 
-def boundary_entries(case: Path) -> list[dict]:
+def mesh_dir(case: Path, region: str = "") -> Path:
+    """Where this case's mesh files are: `constant/polyMesh`, or one region's."""
+    return case / "constant" / region / "polyMesh" if region else case / "constant" / "polyMesh"
+
+
+def boundary_entries(case: Path, region: str = "") -> list[dict]:
     """Patch name, type and face count straight out of `constant/polyMesh/boundary`.
 
     Read as text on purpose: it works with no OpenFOAM environment, no reader and no
     time directory, so a mesh that nothing else can open still reports its patches.
     """
-    path = case / "constant" / "polyMesh" / "boundary"
+    path = mesh_dir(case, region) / "boundary"
     if not path.exists():
         return []
     text = path.read_text(errors="replace")
@@ -252,7 +261,7 @@ def build_files(case: Path) -> list[str]:
 # -- checkMesh ----------------------------------------------------------------
 
 
-def run_check(case: Path) -> dict:
+def run_check(case: Path, region: str = "") -> dict:
     """`checkMesh`, its verdict, its counts and the three metrics that matter.
 
     The log is kept at `log.checkMesh` whatever happens: the summary here is the news,
@@ -260,7 +269,10 @@ def run_check(case: Path) -> dict:
     """
     out = {"ok": False, "verdict": "", "metrics": {}, "counts": {}, "bounds": []}
     try:
-        proc = subprocess.run(["checkMesh", "-case", str(case)], cwd=str(case),
+        command = ["checkMesh", "-case", str(case)]
+        if region:
+            command += ["-region", region]
+        proc = subprocess.run(command, cwd=str(case),
                               capture_output=True, text=True, timeout=CHECK_TIMEOUT_S)
         log = proc.stdout + proc.stderr
     except FileNotFoundError:
@@ -269,7 +281,8 @@ def run_check(case: Path) -> dict:
     except subprocess.TimeoutExpired:
         out["verdict"] = f"checkMesh did not finish in {CHECK_TIMEOUT_S} s"
         return out
-    (case / "log.checkMesh").write_text(log, errors="replace")
+    name = f"log.checkMesh.{region}" if region else "log.checkMesh"
+    (case / name).write_text(log, errors="replace")
     return parse_check(log)
 
 
@@ -336,8 +349,8 @@ def parse_check(log: str) -> dict:
 # -- the picture --------------------------------------------------------------
 
 
-def open_mesh(case: Path):
-    """(internal mesh, {patch name: surface}) from `constant/polyMesh`.
+def open_mesh(case: Path, region: str = ""):
+    """(internal mesh, {patch name: surface}) from `constant/polyMesh`, or one region's.
 
     An empty `0/` is made when the case has no time directory at all: the reader wants
     one time to exist and a mesh-only case has none, which is the normal state of a
@@ -362,6 +375,10 @@ def open_mesh(case: Path):
     except Exception:  # noqa: BLE001 - older pyvista names it differently; internal is enough
         pass
     block = reader.read()
+    if region and region in block.keys():
+        # A multi-region case comes back with one block per region, named for it. Asking
+        # for the region by name is the whole of what `--region` does to the picture.
+        block = block[region]
     internal = block["internalMesh"] if "internalMesh" in block.keys() else None
     patches: dict = {}
     if "boundary" in block.keys():
@@ -759,13 +776,18 @@ def report(payload: dict) -> str:
     return "\n".join(lines)
 
 
-def look(case: Path, out_png: Path | None, check: bool = True) -> dict:
-    """Everything this script knows about the mesh, as one dictionary."""
+def look(case: Path, out_png: Path | None, check: bool = True, region: str = "") -> dict:
+    """Everything this script knows about the mesh, as one dictionary.
+
+    `region` selects `constant/<region>/polyMesh`. The dictionary's keys do not change
+    with it: `case_gen.py` and the hosted Mesh panel both read this shape, so a region
+    is a different payload rather than a different payload shape.
+    """
     case = case.resolve()
-    entries = boundary_entries(case)
+    entries = boundary_entries(case, region)
     payload: dict = {
         "case": str(case),
-        "polymesh": (case / "constant" / "polyMesh" / "points").exists(),
+        "polymesh": (mesh_dir(case, region) / "points").exists(),
         "patches": entries,
         # Additive: `mesher/check.py` and `case_gen.py` read this payload by key and
         # ignore what they do not know, so an older reader of a newer mesh_look keeps
@@ -782,7 +804,7 @@ def look(case: Path, out_png: Path | None, check: bool = True) -> dict:
     measure_cell_zones(case, payload["zones"])
 
     if check:
-        verdict = run_check(case)
+        verdict = run_check(case, region)
         payload["checkmesh"] = verdict.get("verdict", "")
         payload["checkmesh_ok"] = bool(verdict.get("ok"))
         payload["metrics"] = verdict.get("metrics") or {}
@@ -796,7 +818,7 @@ def look(case: Path, out_png: Path | None, check: bool = True) -> dict:
     internal, surfaces = None, {}
     made_time = not any(p.is_dir() and _is_time(p.name) for p in case.iterdir())
     try:
-        internal, surfaces = open_mesh(case)
+        internal, surfaces = open_mesh(case, region)
     except Exception as exc:  # noqa: BLE001 - the numbers survive a reader that will not open
         payload["error"] = f"the mesh could not be opened for drawing ({type(exc).__name__}: {exc})"
     finally:
@@ -856,11 +878,14 @@ def main() -> None:
                         help="also write the machine-readable report here (relative to where "
                              "you run this from)")
     parser.add_argument("--no-check", action="store_true", help="skip checkMesh")
+    parser.add_argument("--region", default="",
+                        help="read constant/<region>/polyMesh instead (a CHT case has one "
+                             "mesh per region; this looks at one of them)")
     args = parser.parse_args()
 
     case = from_cwd(args.case)
     out = from_cwd(args.out) if args.out is not None else case / "look.png"
-    payload = look(case, out, check=not args.no_check)
+    payload = look(case, out, check=not args.no_check, region=args.region)
     if payload.get("render"):
         # `render` stays relative to the case when the picture is inside it -- that is
         # what `mesher/check.py` has always read and joins to the case's two paths --

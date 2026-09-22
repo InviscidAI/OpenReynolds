@@ -1,0 +1,478 @@
+{
+  "ok": false,
+  "unreachable": false,
+  "missing": [
+    "the build script did not re-run from empty: [timed out after 280s] (exit 124)"
+  ],
+  "regions": [
+    ""
+  ],
+  "cells": 16000,
+  "bounds": [
+    -0.2,
+    -0.2,
+    -0.2,
+    0.6,
+    0.2,
+    0.2
+  ],
+  "patches": [
+    {
+      "name": "inlet",
+      "type": "patch",
+      "nFaces": 400,
+      "touches": 3,
+      "area": 0.16000000476837162,
+      "center": [
+        -0.20000000298023182,
+        5.421010862427522e-20,
+        -7.37257477290143e-18
+      ],
+      "normal": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "outlet",
+      "type": "patch",
+      "nFaces": 400,
+      "touches": 3,
+      "area": 0.16000000476837162,
+      "center": [
+        0.6000000238418589,
+        5.421010862427522e-20,
+        -7.37257477290143e-18
+      ],
+      "normal": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "farfield",
+      "type": "patch",
+      "nFaces": 3200,
+      "touches": 3,
+      "area": 1.2800000619888312,
+      "center": [
+        0.20000001043081275,
+        2.1914436411363258e-17,
+        2.1169047417779474e-17
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "flat": false
+    }
+  ],
+  "checkmesh": "Mesh OK.",
+  "metrics": {
+    "max_non_orthogonality": 0.0,
+    "max_skewness": 2.46783e-14,
+    "max_aspect_ratio": 1.0,
+    "min_volume": 8e-06
+  },
+  "two_d": false,
+  "build": [
+    "system/blockMeshDict",
+    "system/snappyHexMeshDict"
+  ],
+  "error": "",
+  "findings": [
+    {
+      "check": "mesh",
+      "status": "ok",
+      "measured": "16,000 cells, 50,000 faces, 18,081 points",
+      "meaning": "3D",
+      "repair": ""
+    },
+    {
+      "check": "checkmesh",
+      "status": "ok",
+      "measured": "Mesh OK. -- max non-orthogonality 0 (under 70), max skewness 2.46783e-14 (under 4), max aspect-ratio 1 (under 1000)",
+      "meaning": "checkMesh accepts this mesh; the thresholds beside the numbers are there to read them by and do not overrule it, because it has already judged them",
+      "repair": ""
+    },
+    {
+      "check": "patches",
+      "status": "ok",
+      "measured": "3 boundary patch(es) with faces, all named: inlet, outlet, farfield",
+      "meaning": "the names are somebody's choice rather than a mesher's default",
+      "repair": ""
+    },
+    {
+      "check": "cellzones",
+      "status": "ok",
+      "measured": "no cellZones in this mesh",
+      "meaning": "nothing is driven from inside the domain: every source this case has is on a boundary",
+      "repair": ""
+    },
+    {
+      "check": "build",
+      "status": "ok",
+      "measured": "rebuilds with: system/blockMeshDict, system/snappyHexMeshDict",
+      "meaning": "the bundle captures these, so the script leaves with the case",
+      "repair": ""
+    },
+    {
+      "check": "render",
+      "status": "ok",
+      "measured": "a picture of the mesh is at accept-t2/renders/mesh_look.png",
+      "meaning": "somebody can look at this mesh without opening ParaView",
+      "repair": ""
+    },
+    {
+      "check": "scale",
+      "status": "ok",
+      "measured": "the mesh is 0.8 m across and the request's largest dimension is 0.04 m",
+      "meaning": "within the factor of 100 a flow box round a small body needs",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.manifest",
+      "status": "ok",
+      "measured": "1 patches, each with its file on disk and no unlisted STL beside them: sphere",
+      "meaning": "every triangle in this directory belongs to a named patch",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.scale",
+      "status": "ok",
+      "measured": "the union spans 0.03988 x 0.03995 x 0.04 m",
+      "meaning": "the bounding box is the size of a thing OpenFOAM meshes in metres",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.closure",
+      "status": "ok",
+      "measured": "0 open edges in the union of 1 patch files (1,386 triangles); per file: sphere 0",
+      "meaning": "the union is watertight -- the per-file counts are the seams between patches and are what a correct export looks like",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.manifold",
+      "status": "ok",
+      "measured": "0 non-manifold edges in the union",
+      "meaning": "every edge has exactly one or two triangles on it",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.normals",
+      "status": "ok",
+      "measured": "0 same-direction edges in the union",
+      "meaning": "every shared edge is walked one way by one triangle and the other way by its neighbour, so the normals agree",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.degenerate",
+      "status": "ok",
+      "measured": "0 triangles with a repeated corner",
+      "meaning": "every triangle has three corners and some area",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.coverage",
+      "status": "ok",
+      "measured": "1 patches over 1,386 triangles (sphere 1,386); every face in exactly one patch",
+      "meaning": "the partition is exhaustive and disjoint, so every face of the meshed domain takes the boundary condition somebody chose for it",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit.self_intersection",
+      "status": "ok",
+      "measured": "0 triangles in 0 crossing pairs, out of 8,375 pairs whose boxes overlap",
+      "meaning": "no triangle meets a triangle it is not a neighbour of",
+      "repair": ""
+    },
+    {
+      "check": "domain_probe",
+      "status": "skipped",
+      "measured": "domain_probe did not report: [timed out after 280s]",
+      "meaning": "either no patch set has been exported yet, or the script did not run",
+      "repair": ""
+    },
+    {
+      "check": "replay",
+      "status": "fail",
+      "measured": "the build script did not re-run from empty: [timed out after 280s] (exit 124)",
+      "meaning": "a cell that only runs in the session that wrote it depends on a binding the log does not rebuild -- usually one defined in a cell that was never accepted",
+      "repair": "make the failing cell define what it uses, or accept the cell that defines it, and check the log runs from empty before saying done"
+    }
+  ],
+  "lines": [
+    "16,000 cells, 50,000 faces, 18,081 points, 3D",
+    "bounds 0.8 x 0.4 x 0.4 m (x -0.2..0.6, y -0.2..0.2, z -0.2..0.2)",
+    "checkMesh: Mesh OK.",
+    "  max_aspect_ratio 1, max_non_orthogonality 0, max_skewness 2.46783e-14, min_volume 8e-06",
+    "patches:",
+    "  inlet patch 400 faces area 0.16 m2 normal (-1.00 +0.00 +0.00) at (-0.2 5.421e-20 -7.373e-18)",
+    "  outlet patch 400 faces area 0.16 m2 normal (+1.00 +0.00 +0.00) at (0.6 5.421e-20 -7.373e-18)",
+    "  farfield patch 3,200 faces area 1.28 m2 normal (+0.00 +0.00 +0.00) at (0.2 2.191e-17 2.117e-17)",
+    "rebuilds with: system/blockMeshDict, system/snappyHexMeshDict",
+    "checks: 1 fail, 15 ok, 1 skipped",
+    "  fail: replay -- the build script did not re-run from empty: [timed out after 280s] (exit 124)"
+  ],
+  "raw": {
+    "regions": {
+      "": {
+        "look": {
+          "case": "/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/accept-t2",
+          "polymesh": true,
+          "patches": [
+            {
+              "name": "inlet",
+              "type": "patch",
+              "nFaces": 400,
+              "touches": 3,
+              "area": 0.16000000476837162,
+              "center": [
+                -0.20000000298023182,
+                5.421010862427522e-20,
+                -7.37257477290143e-18
+              ],
+              "normal": [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              "flat": true,
+              "inward": -1
+            },
+            {
+              "name": "outlet",
+              "type": "patch",
+              "nFaces": 400,
+              "touches": 3,
+              "area": 0.16000000476837162,
+              "center": [
+                0.6000000238418589,
+                5.421010862427522e-20,
+                -7.37257477290143e-18
+              ],
+              "normal": [
+                1.0,
+                0.0,
+                0.0
+              ],
+              "flat": true,
+              "inward": -1
+            },
+            {
+              "name": "farfield",
+              "type": "patch",
+              "nFaces": 3200,
+              "touches": 3,
+              "area": 1.2800000619888312,
+              "center": [
+                0.20000001043081275,
+                2.1914436411363258e-17,
+                2.1169047417779474e-17
+              ],
+              "normal": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "flat": false
+            }
+          ],
+          "build": [
+            "system/blockMeshDict",
+            "system/snappyHexMeshDict"
+          ],
+          "cells": 16000,
+          "faces": 50000,
+          "points": 18081,
+          "bounds": [
+            -0.2,
+            -0.2,
+            -0.2,
+            0.6,
+            0.2,
+            0.2
+          ],
+          "two_d": false,
+          "checkmesh": "Mesh OK.",
+          "checkmesh_ok": true,
+          "metrics": {
+            "max_non_orthogonality": 0.0,
+            "max_skewness": 2.46783e-14,
+            "max_aspect_ratio": 1.0,
+            "min_volume": 8e-06
+          },
+          "render": "renders/mesh_look.png",
+          "enclosure": [
+            "inlet",
+            "outlet"
+          ]
+        },
+        "output": "0,\n    0.0\n   ],\n   \"flat\": true,\n   \"inward\": -1\n  },\n  {\n   \"name\": \"farfield\",\n   \"type\": \"patch\",\n   \"nFaces\": 3200,\n   \"touches\": 3,\n   \"area\": 1.2800000619888312,\n   \"center\": [\n    0.20000001043081275,\n    2.1914436411363258e-17,\n    2.1169047417779474e-17\n   ],\n   \"normal\": [\n    0.0,\n    0.0,\n    0.0\n   ],\n   \"flat\": false\n  }\n ],\n \"build\": [\n  \"system/blockMeshDict\",\n  \"system/snappyHexMeshDict\"\n ],\n \"cells\": 16000,\n \"faces\": 50000,\n \"points\": 18081,\n \"bounds\": [\n  -0.2,\n  -0.2,\n  -0.2,\n  0.6,\n  0.2,\n  0.2\n ],\n \"two_d\": false,\n \"checkmesh\": \"Mesh OK.\",\n \"checkmesh_ok\": true,\n \"metrics\": {\n  \"max_non_orthogonality\": 0.0,\n  \"max_skewness\": 2.46783e-14,\n  \"max_aspect_ratio\": 1.0,\n  \"min_volume\": 8e-06\n },\n \"render\": \"renders/mesh_look.png\",\n \"enclosure\": [\n  \"inlet\",\n  \"outlet\"\n ]\n}",
+        "cellzones": []
+      }
+    },
+    "meshed": true,
+    "cad": [
+      {
+        "script": "cad_audit",
+        "ok": true,
+        "findings": [
+          {
+            "check": "manifest",
+            "status": "ok",
+            "measured": "1 patches, each with its file on disk and no unlisted STL beside them: sphere",
+            "means": "every triangle in this directory belongs to a named patch",
+            "repair": ""
+          },
+          {
+            "check": "scale",
+            "status": "ok",
+            "measured": "the union spans 0.03988 x 0.03995 x 0.04 m",
+            "means": "the bounding box is the size of a thing OpenFOAM meshes in metres",
+            "repair": ""
+          },
+          {
+            "check": "closure",
+            "status": "ok",
+            "measured": "0 open edges in the union of 1 patch files (1,386 triangles); per file: sphere 0",
+            "means": "the union is watertight -- the per-file counts are the seams between patches and are what a correct export looks like",
+            "repair": ""
+          },
+          {
+            "check": "manifold",
+            "status": "ok",
+            "measured": "0 non-manifold edges in the union",
+            "means": "every edge has exactly one or two triangles on it",
+            "repair": ""
+          },
+          {
+            "check": "normals",
+            "status": "ok",
+            "measured": "0 same-direction edges in the union",
+            "means": "every shared edge is walked one way by one triangle and the other way by its neighbour, so the normals agree",
+            "repair": ""
+          },
+          {
+            "check": "degenerate",
+            "status": "ok",
+            "measured": "0 triangles with a repeated corner",
+            "means": "every triangle has three corners and some area",
+            "repair": ""
+          },
+          {
+            "check": "coverage",
+            "status": "ok",
+            "measured": "1 patches over 1,386 triangles (sphere 1,386); every face in exactly one patch",
+            "means": "the partition is exhaustive and disjoint, so every face of the meshed domain takes the boundary condition somebody chose for it",
+            "repair": ""
+          },
+          {
+            "check": "self_intersection",
+            "status": "ok",
+            "measured": "0 triangles in 0 crossing pairs, out of 8,375 pairs whose boxes overlap",
+            "means": "no triangle meets a triangle it is not a neighbour of",
+            "repair": ""
+          }
+        ],
+        "measured": {
+          "directory": "constant/triSurface",
+          "manifest": {
+            "source": "sphere_m.step",
+            "unit_metres": 1.0,
+            "location_in_mesh": null,
+            "patches": 1
+          },
+          "patches": [
+            {
+              "name": "sphere",
+              "file": "sphere.stl",
+              "triangles": 1386,
+              "open_edges": 0,
+              "non_manifold_edges": 0,
+              "flipped_edges": 0
+            }
+          ],
+          "triangles": 1386,
+          "vertices": 695,
+          "union_topology": {
+            "triangles": 1386,
+            "computed": true,
+            "open_edges": 0,
+            "non_manifold_edges": 0,
+            "flipped_edges": 0,
+            "degenerate_triangles": 0
+          },
+          "topology_triangle_limit": 400000,
+          "worst": "ok",
+          "counts": {
+            "fail": 0,
+            "warn": 0,
+            "ok": 8,
+            "skipped": 0
+          },
+          "bounding_box": {
+            "min": [
+              -0.01993506910474286,
+              -0.0199698726796818,
+              -0.02
+            ],
+            "max": [
+              0.0199440759436236,
+              0.01997831720026293,
+              0.02
+            ]
+          },
+          "self_intersection": {
+            "pairs": 0,
+            "triangles": 0,
+            "pairs_tested": 0,
+            "box_overlapping_pairs": 8375,
+            "triangle_ids": []
+          }
+        }
+      },
+      {
+        "script": "domain_probe",
+        "unavailable": "[timed out after 280s]"
+      }
+    ],
+    "replay": {
+      "ran": true,
+      "script": "\"\"\"Built by the CAD desk, one accepted cell at a time.\n\nThis file is not a record written beside the work; it is the work. Every cell below ran\nin the desk's kernel, in this order, and was accepted only after the names it uses were\nshown to be bound by a cell above it. It is run from empty at the finish, and what it\nmakes there is compared against what is in the case directory.\n\nThe prose above each cell is the desk's own reasoning for it, carried with the action\nrather than thrown away -- it is the only record of why this shape is this shape.\n\"\"\"\n\n# -- cell 1 -------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"ls\", \"-la\"], capture_output=True, text=True).stdout)\nprint(subprocess.run([\"cat\", \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/templates/snappy/README.md\"], capture_output=True, text=True).stdout)\n\n# -- cell 2 -------------------------------------------------------------------------\nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nprint(subprocess.run([\"cat\", f\"{tb}/templates/prep/README.md\"], capture_output=True, text=True).stdout)\nprint(subprocess.run([\"ls\", f\"{tb}/templates/snappy\"], capture_output=True, text=True).stdout)\nprint(subprocess.run([\"cat\", f\"{tb}/templates/snappy/blockMeshDict\"], capture_output=True, text=True).stdout)\n\n# -- cell 3 -------------------------------------------------------------------------\nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nprint(subprocess.run([\"grep\", \"-n\", \"-i\", \"sphere\", f\"{tb}/b123d_api.md\"], capture_output=True, text=True).stdout[:3000])\nprint(subprocess.run([\"python3\", f\"{tb}/cad_convert.py\", \"--help\"], capture_output=True, text=True).stdout)\n\n# -- cell 4 -------------------------------------------------------------------------\nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nprint(subprocess.run([\"grep\", \"-n\", \"def export_patches\", \"-A\", \"40\", f\"{tb}/cad_convert.py\"], capture_output=True, text=True).stdout)\n\n# -- cell 5 -------------------------------------------------------------------------\nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nprint(subprocess.run([\"grep\", \"-n\", \"PATCH_ROLES\", f\"{tb}/cad_convert.py\"], capture_output=True, text=True).stdout)\n\n# -- cell 6 -------------------------------------------------------------------------\nimport os\nos.makedirs(\"/work/accept-t2\", exist_ok=True)\nos.chdir(\"/work/accept-t2\")\n\nfrom build123d import *\n\n# Sphere: 40 mm diameter -> 20 mm radius, built directly in metres.\nSPHERE_D_M = 0.040\nSPHERE_R_M = SPHERE_D_M / 2.0\n\nsphere = Sphere(radius=SPHERE_R_M)\n\nprint(\"solids:\", len(sphere.solids()))\nprint(\"faces:\", len(sphere.faces()))\nprint(\"volume (m^3):\", sphere.volume, \" expected:\", 4/3*3.141592653589793*SPHERE_R_M**3)\nbb = sphere.bounding_box()\nprint(\"bbox min/max (m):\", bb.min, bb.max)\n\n# -- cell 7 -------------------------------------------------------------------------\nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nprint(subprocess.run([\"grep\", \"-n\", \"-i\", \"export_step\", f\"{tb}/b123d_api.md\"], capture_output=True, text=True).stdout)\n\n# -- cell 8 -------------------------------------------------------------------------\nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nprint(subprocess.run([\"grep\", \"-n\", \"-i\", \"class Unit\", \"-A\", \"10\", f\"{tb}/b123d_api.md\"], capture_output=True, text=True).stdout)\n\n# -- cell 9 -------------------------------------------------------------------------\nfrom build123d import Unit\nprint(list(Unit))\n\n# -- cell 10 ------------------------------------------------------------------------\n# Good \u2014 `Unit.M` exists. Export the sphere STEP declaring metres, since it was built with metre-value\nfrom build123d import export_step, Unit\n\nSPHERE_STEP = \"sphere_m.step\"\nexport_step(sphere, SPHERE_STEP, unit=Unit.M)\nprint(\"wrote\", SPHERE_STEP)\n\n# -- cell 11 ------------------------------------------------------------------------\nimport sys\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nsys.path.insert(0, tb)\nimport cad_convert\nimport importlib\nimportlib.reload(cad_convert)\n\nfrom pathlib import Path\n\ngroups = {\n    \"sphere\": {\"role\": \"wall\", \"faces\": None},\n}\n\nreport = cad_convert.export_patches(\n    path=Path(\"sphere_m.step\"),\n    groups=groups,\n    out_dir=Path(\"constant/triSurface\"),\n    clmax=0.003,\n    unit=\"m\",\n    curvature=20,\n)\nimport json\nprint(json.dumps(report, indent=2, default=str)[:3000])\n\n# -- cell 12 ------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"grep\", \"-a\", \"-i\", \"SI_UNIT\\|FILE_SCHEMA\\|CARTESIAN_POINT\", \"sphere_m.step\"], capture_output=True, text=True).stdout[:3000])\n\n# -- cell 13 ------------------------------------------------------------------------\nimport os\nos.makedirs(\"system\", exist_ok=True)\nos.makedirs(\"constant\", exist_ok=True)\n\n# Domain: sphere D=0.04 m centered at origin.\n# 5D upstream, 15D downstream, 5D each side and above/below.\nD_M = 0.040\nXMIN = -5 * D_M   # -0.20\nXMAX = 15 * D_M   #  0.60\nYMIN = -5 * D_M   # -0.20\nYMAX =  5 * D_M   #  0.20\nZMIN = -5 * D_M   # -0.20\nZMAX =  5 * D_M   #  0.20\n\nDX_BG = 0.020  # coarse background cell, metres -- first look only\n\nnx = round((XMAX - XMIN) / DX_BG)\nny = round((YMAX - YMIN) / DX_BG)\nnz = round((ZMAX - ZMIN) / DX_BG)\nprint(\"domain (m):\", (XMIN, XMAX), (YMIN, YMAX), (ZMIN, ZMAX))\nprint(\"background cells:\", nx, ny, nz, \"total\", nx*ny*nz)\n\nblockMeshDict = f\"\"\"/*--------------------------------*- C++ -*----------------------------------*\\\\\n\\\\*---------------------------------------------------------------------------*/\nFoamFile\n{{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      blockMeshDict;\n}}\n\nscale   1;   // geometry built and STLs exported in metres\n\nvertices\n(\n    ({XMIN} {YMIN} {ZMIN})\n    ({XMAX} {YMIN} {ZMIN})\n    ({XMAX} {YMAX} {ZMIN})\n    ({XMIN} {YMAX} {ZMIN})\n    ({XMIN} {YMIN} {ZMAX})\n    ({XMAX} {YMIN} {ZMAX})\n    ({XMAX} {YMAX} {ZMAX})\n    ({XMIN} {YMAX} {ZMAX})\n);\n\nblocks\n(\n    hex (0 1 2 3 4 5 6 7) ({nx} {ny} {nz}) simpleGrading (1 1 1)\n);\n\nedges ();\n\nboundary\n(\n    inlet\n    {{\n        type patch;\n        faces ((0 4 7 3));\n    }}\n    outlet\n    {{\n        type patch;\n        faces ((1 2 6 5));\n    }}\n    farfield\n    {{\n        type patch;\n        faces\n        (\n            (0 1 5 4)\n            (3 7 6 2)\n            (0 3 2 1)\n            (4 5 6 7)\n        );\n    }}\n);\n\nmergePatchPairs ();\n\n// ************************************************************************* //\n\"\"\"\n\nwith open(\"system/blockMeshDict\", \"w\") as f:\n    f.write(blockMeshDict)\nprint(\"wrote system/blockMeshDict\")\n\n# -- cell 14 ------------------------------------------------------------------------\nimport subprocess\nres = subprocess.run([\"blockMesh\"], capture_output=True, text=True, cwd=\".\")\nprint(res.stdout[-3000:])\nprint(res.stderr[-3000:])\n\n# -- cell 15 ------------------------------------------------------------------------\ncontrolDict = \"\"\"/*--------------------------------*- C++ -*----------------------------------*\\\\\n\\\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      controlDict;\n}\n\napplication     simpleFoam;\nstartFrom        startTime;\nstartTime        0;\nstopAt           endTime;\nendTime          1;\ndeltaT           1;\nwriteControl     timeStep;\nwriteInterval    1;\npurgeWrite       0;\nwriteFormat      ascii;\nwritePrecision   6;\nwriteCompression off;\ntimeFormat       general;\ntimePrecision    6;\nrunTimeModifiable true;\n\n// ************************************************************************* //\n\"\"\"\nwith open(\"system/controlDict\", \"w\") as f:\n    f.write(controlDict)\n\nfvSchemes = \"\"\"/*--------------------------------*- C++ -*----------------------------------*\\\\\n\\\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      fvSchemes;\n}\nddtSchemes { default steadyState; }\ngradSchemes { default Gauss linear; }\ndivSchemes { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes { default corrected; }\n// ************************************************************************* //\n\"\"\"\nwith open(\"system/fvSchemes\", \"w\") as f:\n    f.write(fvSchemes)\n\nfvSolution = \"\"\"/*--------------------------------*- C++ -*----------------------------------*\\\\\n\\\\*---------------------------------------------------------------------------*/\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      fvSolution;\n}\nsolvers {}\n// ************************************************************************* //\n\"\"\"\nwith open(\"system/fvSolution\", \"w\") as f:\n    f.write(fvSolution)\n\nimport subprocess\nres = subprocess.run([\"blockMesh\"], capture_output=True, text=True, cwd=\".\")\nprint(res.stdout[-2000:])\nprint(res.stderr[-1000:])\n\n# -- cell 16 ------------------------------------------------------------------------\n# Background mesh built: 16000 cells, bounds match the requested domain (-0.2..0.6, -0.2..0.2, -0.2..0\nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nprint(subprocess.run([\"cat\", f\"{tb}/templates/snappy/snappyHexMeshDict\"], capture_output=True, text=True).stdout)\n\n# -- cell 17 ------------------------------------------------------------------------\nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nd = subprocess.run([\"cat\", f\"{tb}/templates/snappy/snappyHexMeshDict\"], capture_output=True, text=True).stdout\nprint(d[1400:3200])\n\n# -- cell 18 ------------------------------------------------------------------------\n# Now let's check `patch_entries.py --help` and `domain_probe.py --suggest` to fill in locationInMesh \nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nprint(subprocess.run([\"python3\", f\"{tb}/patch_entries.py\", \"--help\"], capture_output=True, text=True).stdout)\nprint(subprocess.run([\"python3\", f\"{tb}/domain_probe.py\", \"--help\"], capture_output=True, text=True).stdout)\n\n# -- cell 19 ------------------------------------------------------------------------\nres.poll() if hasattr(res, \"poll\") else None\nprint(\"waiting...\")\n\n# -- cell 20 ------------------------------------------------------------------------\nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\nres = subprocess.run([\"python3\", f\"{tb}/domain_probe.py\", \"constant/triSurface\", \"--point\", \"0.3\", \"0.0\", \"0.0\"],\n                      capture_output=True, text=True)\nprint(res.stdout)\nprint(res.stderr[-2000:])\n\n# -- cell 21 ------------------------------------------------------------------------\nprint(\"still checking previous cell status\")\n\n# -- cell 22 ------------------------------------------------------------------------\nprint(res.stdout)\nprint(res.stderr[-2000:])\n\n# -- cell 23 ------------------------------------------------------------------------\nimport subprocess\ntb = \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox\"\n\n# Copy the template dictionaries into place.\nfor name in [\"blockMeshDict\"]:  # blockMeshDict already hand-written for the named 6 far-field patches\n    pass\n\nsubprocess.run([\"cp\", f\"{tb}/templates/snappy/snappyHexMeshDict\", \"system/snappyHexMeshDict\"], check=True)\nsubprocess.run([\"cp\", f\"{tb}/templates/snappy/surfaceFeatureExtractDict\", \"system/surfaceFeatureExtractDict\"], check=True)\n\nres = subprocess.run(\n    [\"python3\", f\"{tb}/patch_entries.py\", \"accept-t2\" if False else \".\",\n     \"--insert\", \"system/snappyHexMeshDict\",\n     \"--insert\", \"system/surfaceFeatureExtractDict\",\n     \"--level\", \"2 3\"],   # sphere surface refined to level 2-3 relative to background dx=0.02\n    capture_output=True, text=True,\n)\nprint(res.stdout)\nprint(res.stderr[-3000:])\n\n# -- cell 24 ------------------------------------------------------------------------\n# Now set `locationInMesh` manually (outside the sphere, inside the box, off any background cell face)\nimport re\n\nLOCATION_IN_MESH = (0.25, 0.03, 0.03)  # well inside the domain, outside the sphere, off any dx=0.02 cell face\n\nwith open(\"system/snappyHexMeshDict\") as f:\n    content = f.read()\n\ncontent = content.replace(\n    \"locationInMesh (CHANGE_ME CHANGE_ME CHANGE_ME);\",\n    f\"locationInMesh ({LOCATION_IN_MESH[0]} {LOCATION_IN_MESH[1]} {LOCATION_IN_MESH[2]});\",\n)\n\nwith open(\"system/snappyHexMeshDict\", \"w\") as f:\n    f.write(content)\n\nprint(\"CHANGE_ME\" in content)\nimport subprocess\nprint(subprocess.run([\"grep\", \"-n\", \"locationInMesh\", \"system/snappyHexMeshDict\"], capture_output=True, text=True).stdout)\n\n# -- cell 25 ------------------------------------------------------------------------\n# Good, no `CHANGE_ME` left. Now enable prism layers on the sphere patch \u2014 the request asks specifical\nwith open(\"system/snappyHexMeshDict\") as f:\n    content = f.read()\n\n# turn on the layer stage and request layers on the sphere patch\ncontent = content.replace(\"addLayers       false;\", \"addLayers       true;\")\n\nold_layers_block = \"\"\"    layers\n    {\n        // One entry per patch that is to carry a layer, by name or by regex. A patch\n        // that is not named here gets no layer and no warning. Coverage is what was\n        // achieved, not what was asked for:\n        //   python3 layer_report.py <case> --patch <wall> --ref <the same case, no layers>\n        //\n        // \"walls\"\n        // {\n        //     nSurfaceLayers 3;\n        // }\n    }\"\"\"\n\nnew_layers_block = \"\"\"    layers\n    {\n        // One entry per patch that is to carry a layer, by name or by regex. A patch\n        // that is not named here gets no layer and no warning. Coverage is what was\n        // achieved, not what was asked for:\n        //   python3 layer_report.py <case> --patch <wall> --ref <the same case, no layers>\n        \"sphere\"\n        {\n            nSurfaceLayers 3;   // coarse first pass; raise once castellate+snap is clean\n        }\n    }\"\"\"\n\nassert old_layers_block in content\ncontent = content.replace(old_layers_block, new_layers_block)\n\nwith open(\"system/snappyHexMeshDict\", \"w\") as f:\n    f.write(content)\n\nprint(\"addLayers true\" in content)\nimport subprocess\nprint(subprocess.run([\"grep\", \"-n\", \"-A3\", \"\\\"sphere\\\"\", \"system/snappyHexMeshDict\"], capture_output=True, text=True).stdout)\n\n# -- cell 26 ------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"grep\", \"-n\", \"addLayers\", \"system/snappyHexMeshDict\"], capture_output=True, text=True).stdout)\n\n# -- cell 27 ------------------------------------------------------------------------\n# Good \u2014 it did apply; the earlier check string just wasn't exact due to the trailing comment. Now let\nimport subprocess\nprint(subprocess.run([\"python3\",\n    \"/tmp/claude-1001/-home-qiuzi-PycharmProjects-OpenReynolds/b0fa9eb3-70e4-4403-8113-987906f361e4/scratchpad/trials3/work3/.toolbox/patch_entries.py\",\n    \".\", \"--print\"], capture_output=True, text=True).stdout)\n\n# -- cell 28 ------------------------------------------------------------------------\nimport subprocess\nprint(subprocess.run([\"grep\", \"-n\", \"-A5\", \"refinementSurfaces\", \"system/snappyHexMeshDict\"], capture_output=True, text=True).stdout)\n",
+      "before": {
+        "patches": {
+          "sphere": {
+            "triangles": 1386,
+            "area_m2": 0.0050041762899034475
+          }
+        },
+        "volume_m3": 3.324043942318217e-05,
+        "bounds": [
+          -0.019935069105,
+          -0.01996987268,
+          -0.02,
+          0.019944075944,
+          0.0199783172,
+          0.02
+        ],
+        "triangles": 1386
+      },
+      "exit_code": 124,
+      "output": "\n[timed out after 280s]",
+      "after": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      }
+    }
+  }
+}

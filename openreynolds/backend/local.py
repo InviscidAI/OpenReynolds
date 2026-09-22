@@ -46,6 +46,7 @@ from .base import (
     JobStatus,
     Stat,
 )
+from .kernel import KernelHost
 
 DEFAULT_ROOT = Path.home() / ".openreynolds" / "work"
 """Where the workspace lives when nothing says otherwise."""
@@ -98,7 +99,7 @@ class _Job:
     watcher: threading.Thread | None = None
 
 
-class LocalBackend(Backend):
+class LocalBackend(KernelHost, Backend):
     """A workspace on this machine."""
 
     def __init__(self, root: str | Path | None = None, bashrc: str | None = None):
@@ -367,6 +368,10 @@ class LocalBackend(Backend):
         """Nothing to stop: the workspace is a directory, and it stays."""
 
     def close(self) -> None:
-        """Jobs outlive the session by design, so this only lets go of the handles."""
+        """Jobs outlive the session by design, so this only lets go of the handles.
+
+        The kernel is the exception: it is this session's, holds this session's
+        bindings, and nothing else can use it, so it goes down here."""
+        self.kernel_stop()
         with self._lock:
             self._jobs.clear()

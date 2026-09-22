@@ -1,0 +1,32 @@
+{
+  "arm": "bash",
+  "prompt": "T2",
+  "title": "T2 \u2014 body in a flow box",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A 40 mm diameter sphere in an open air flow, for an external aerodynamics solve. Put it in a domain that extends 5 diameters upstream, 15 downstream, and 5 to each side and above and below. Name the inlet, the outlet, the far field and the sphere separately. Resolve the boundary layer on the sphere with prism layers.",
+  "properties": [
+    "sphere diameter, 40 mm",
+    "domain extent in diameters, upstream / downstream / lateral: 5 / 15 / 5",
+    "blockage ratio \u2014 sphere frontal area over domain cross-section",
+    "achieved layer coverage on the sphere, as a percentage, **read off the mesh**",
+    "the four patches, each with its area and mean normal"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T11:50:12",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": true,
+    "returncode": 0,
+    "seconds": 158.0,
+    "steps": 36,
+    "tokens": {},
+    "study": "20260911-115012-431e",
+    "tail": "verified. Summary:\n\n**Case:** `/work/20260911-115012-431e/bash-t2`\n\n**Geometry:** 40 mm diameter sphere (r = 0.02 m) centered at the origin, inside a rectangular domain sized off the diameter:\n- inlet at x = \u22120.2 m (5D upstream)\n- outlet at x = +0.6 m (15D downstream)\n- far-field sides/top/bottom at y,z = \u00b10.2 m (5D each way)\n\nBuilt with `build123d` (sphere STL) + `/work/.toolbox/cfmesh.py box` to close it inside the flow box, one ASCII multi-solid STL with named solids (sphere, inlet, outlet, yMin/yMax/zMin/zMax \u2192 merged into `farField`).\n\n**Mesh:** cfMesh `cartesianMesh`, background cell 20 mm, refined to ~2.5 mm at the sphere surface, 5 prism/boundary layers (growth ratio 1.2) extruded off the sphere wall. Four named patches came out exactly as intended:\n\n| patch | type | faces |\n|---|---|---|\n| sphere | wall | 1,360 |\n| inlet | patch | 484 |\n| outlet | patch | 484 |\n| farField | patch | 3,696 |\n\n32,528 cells total (31,528 hex + 1,000 polyhedra from the layer/octree transition, 0 degenerate).\n\n**Verification done, not assumed:**\n- `checkMesh -allGeometry` \u2192 **Mesh OK** (max non-orthogonality 25.2\u00b0, max skewness 0.52, max aspect ratio 8.6 \u2014 all comfortably inside the usual pass thresholds).\n- Boundary-layer coverage measured against a same-mesh no-layer reference build (not just the mesher's own say-so): **100.0% of sphere faces** carry a layer-thinned first cell, ~11.7\u00d7 thinner (median) than the no-layer wall spacing \u2014 first-cell height 0.14\u20130.19 mm.\n- `mesh_look.py` render (`look.png`, left in the case dir and visible to you already) confirms the enclosure shape, patch identity, and that refinement is concentrated on the sphere and into its wake toward the outlet.\n\nNot yet done, since this was a meshing request: no fields/BCs/solver setup \u2014 `0/`, `constant/transportProperties`, `turbulenceProperties`, a real `f  meshing cartesianMesh-sphere \u00b7 1 s\n       writing \u00b7 9 s\nvSchemes`/`fvSolution` for whatever solver (`simpleFoam`/`incompressibleFluid` etc.) \u2014 the `system/controlDict,fvSchemes,fvSolution` currently in the case are minimal stubs cfMesh needed to run, not a solver-ready set. Say the word if you want that built out next, and what Reynolds number / velocity you want the flow run at.\n  -- step 36: 0 tool calls, 13s --\nmirrored 16 file(s) -> \n/home/qiuzi/PycharmProjects/OpenReynolds-wt/c10/studies/20260911-115012-431e/fil\nes  (2 round trips, 0 s)\nmirrored 16 file(s), 7.9M -> \n/home/qiuzi/PycharmProjects/OpenReynolds-wt/c10/studies/20260911-115012-431e/fil\nes  (2 round trips, 0 s)\nleft on the instance: 1 file(s) - 1 written for a viewer that is not on this \nmachine  (openreynolds pull --study 20260911-115012-431e tries them again)\n\nthis study's files are in \n/home/qiuzi/PycharmProjects/OpenReynolds-wt/c10/studies/20260911-115012-431e\non the instance they are at /work/20260911-115012-431e\n  nothing was running\nthis workspace was already running when this session joined it, so it is left up\n  resume: openreynolds --study 20260911-115012-431e\n"
+  },
+  "seconds": 158.0,
+  "verdict": "check-ok"
+}

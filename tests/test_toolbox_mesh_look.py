@@ -204,8 +204,9 @@ def test_the_report_says_when_nothing_would_rebuild_it(tmp_path):
 def _drive(monkeypatch, argv, cwd, recorded):
     import sys
 
-    def standing_in(case, out_png, check=True):
+    def standing_in(case, out_png, check=True, region=""):
         recorded["case"], recorded["out"], recorded["check"] = case, out_png, check
+        recorded["region"] = region
         payload = {"case": str(case), "polymesh": True, "patches": [], "zones": [],
                    "build": [], "cells": 0, "faces": 0, "points": 0, "bounds": [],
                    "two_d": False, "checkmesh": "", "checkmesh_ok": False, "metrics": {},

@@ -1,0 +1,94 @@
+{
+  "arm": "old",
+  "prompt": "T7",
+  "title": "T7 \u2014 sealed cavity driven by cell zones",
+  "max_seconds": 0.0,
+  "max_steps": 0,
+  "request": "A sealed rectangular cavity of air, 100 mm x 60 mm x 40 mm, for a natural convection solve. There is no inlet and no outlet \u2014 every boundary is an adiabatic wall. Inside it, mark two cell zones I can put a heat source and a heat sink on: a 20 mm cube near the floor at one end called `heater`, and a matching one near the ceiling at the other end called `cooler`.",
+  "properties": [
+    "cavity dimensions, 100 x 60 x 40 mm",
+    "both cell zones present by name, with their cell counts and their centroids",
+    "zone size, 20 mm cube each, and their positions relative to floor and ceiling",
+    "the boundary is a single named patch covering the whole cavity"
+  ],
+  "geometry": "",
+  "attempts": 2,
+  "started_at": "2026-09-11T09:52:00",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "previous": [
+    {
+      "arm": "old",
+      "prompt": "T7",
+      "title": "T7 \u2014 sealed cavity driven by cell zones",
+      "max_seconds": 0.0,
+      "max_steps": 0,
+      "request": "A sealed rectangular cavity of air, 100 mm x 60 mm x 40 mm, for a natural convection solve. There is no inlet and no outlet \u2014 every boundary is an adiabatic wall. Inside it, mark two cell zones I can put a heat source and a heat sink on: a 20 mm cube near the floor at one end called `heater`, and a matching one near the ceiling at the other end called `cooler`.",
+      "properties": [
+        "cavity dimensions, 100 x 60 x 40 mm",
+        "both cell zones present by name, with their cell counts and their centroids",
+        "zone size, 20 mm cube each, and their positions relative to floor and ceiling",
+        "the boundary is a single named patch covering the whole cavity"
+      ],
+      "geometry": "",
+      "attempts": 1,
+      "started_at": "2026-09-11T09:36:05",
+      "completed": true,
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "run": {
+        "ok": true,
+        "stopped": "",
+        "error": "",
+        "summary": "Now 6 named wall patches (`westWall`, `eastWall`, `southWall`, `northWall`, `floor`, `ceiling`), each measured with correct area/centre/outward normal, all type `wall`, forming a full closed enclosure (mesh_look confirms `\"enclosure\"` lists all six as a closed set) \u2014 no inlet/outlet patches exist, consistent with the sealed adiabatic cavity requested. Same 100\u00d760\u00d740 mm domain, same `heater`/`cooler` 20 mm cellZones as before, checkMesh clean.",
+        "case_dir": "/work/old-t7",
+        "seconds": 123.9,
+        "steps": 14,
+        "tokens": {
+          "input": 34,
+          "cache_read": 175023,
+          "cache_write": 36784,
+          "output": 10004
+        },
+        "usd": 0.2271,
+        "missing": [],
+        "artifacts": [
+          "check.json",
+          "render.png"
+        ]
+      },
+      "seconds": 125.0,
+      "verdict": "check-ok"
+    }
+  ],
+  "run": {
+    "ok": true,
+    "stopped": "",
+    "error": "",
+    "summary": "All 6 patches present, areas correct (endA/endB = 0.06\u00d70.04=0.0024 m\u00b2, sideA/sideB = 0.1\u00d70.04=0.004 m\u00b2, floor/ceiling = 0.1\u00d70.06=0.006 m\u00b2), normals point outward correctly. checkMesh clean, mesh unchanged (1920 cells, 2 zones of 64 cells/8e-6 m\u00b3 each, correctly placed). Sum of patch areas = 2*(0.0024+0.004+0.006)=0.0248 m\u00b2 matching total surface area of the box.\nBuilt a sealed 100\u00d760\u00d740 mm rectangular cavity as an 18-block structured hex mesh (blockMesh), 1920 cells, with two 20 mm cube `cellZones` (`heater`, `cooler`) placed at opposite ends \u2014 heater on the floor at x=0..20mm, cooler at the ceiling at x=80..100mm, both centered in y \u2014 and 6 named adiabatic `wall` patches (`floor`, `ceiling`, `endA`, `endB`, `sideA`, `sideB`), no inlet/outlet as the cavity is sealed. checkMesh reports a clean orthogonal mesh (max skewness ~1.6e-14, non-orthogonality 0). Not checked: no BCs or fluid properties were set, per the task's scope \u2014 only patch names/types and cellZones were established for a later solver setup.",
+    "case_dir": "/work/old-t7",
+    "seconds": 145.4,
+    "steps": 9,
+    "tokens": {
+      "input": 24,
+      "cache_read": 148397,
+      "cache_write": 25166,
+      "output": 14363
+    },
+    "usd": 0.2363,
+    "missing": [],
+    "artifacts": [
+      "build.py",
+      "constant/polyMesh/boundary",
+      "look.png",
+      "renders/mesh_look.json",
+      "renders/mesh_look.png",
+      "check.json",
+      "render.png",
+      "steps.json"
+    ]
+  },
+  "seconds": 146.5,
+  "verdict": "check-ok"
+}

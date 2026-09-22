@@ -42,7 +42,7 @@ The agent decides everything about how to work. The harness is plumbing. Concret
 - inject step-by-step instructions, checklists, or mandated workflows — in the system prompt, in wake messages, or in any file the agent is required to obey;
 - grade, veto, or amend the model's outputs.
 
-**When the person chooses to be consulted.** Everything above holds, unchanged, in the default mode, `auto`: the briefing is the same bytes it was before modes existed and no tool call is ever held. The person may instead choose to be asked before compute is spent (`partial`: every `job_start` and `mesh` call is put to them before it runs) or to run a study in approved stages (`structured`: a `checkpoint` tool is offered, and `job_start` and `mesh` are held until a checkpoint has been approved). The harness then gates exactly what the person asked to have gated and nothing else. This is the same principle as `commands.py`: the user's own words about how they want to be heard, not the harness's opinion about how the model should work. The modes live in `modes.py`, the question and its answer in `approval.py`, and the one place a call is held is `Loop._consult`.
+**When the person chooses to be consulted.** Everything above holds, unchanged, in the default mode, `auto`: the briefing is the same bytes it was before modes existed and no tool call is ever held. The person may instead choose to be asked before compute is spent (`partial`: every `job_start` call is put to them before it runs) or to run a study in approved stages (`structured`: a `checkpoint` tool is offered, and `job_start` is held until a checkpoint has been approved). The harness then gates exactly what the person asked to have gated and nothing else. This is the same principle as `commands.py`: the user's own words about how they want to be heard, not the harness's opinion about how the model should work. The modes live in `modes.py`, the question and its answer in `approval.py`, and the one place a call is held is `Loop._consult`.
 
 There is no gate DAG, no state machine, no lock, no watchdog with authority, no budget the model must reason about. If the agent wants to write itself a spec, tests, or a checklist, it can — and nothing verifies that it did.
 
@@ -127,12 +127,10 @@ The session does not wait for the instance to be up. `hosted.reserve` settles wh
 | `job_check` | `(job_id, log_offset?)` | status + incremental log tail in one call (cheap to use repeatedly) |
 | `job_kill` | `(job_id)` | |
 | `fetch` | `(paths[])` | pull files to the local mirror `./studies/<id>/`, print local paths, register as platform artifacts |
-| `mesh` | `(request, case?, wait?)` | a shape in words handed to the mesh desk (`mesher/`), a second agent that builds and checks the mesh on the same workspace, on a thread of its own: the call returns at once, the conversation carries on, and the finished mesh wakes the model through the same watch loop as a job's end (`mesher/background.py`, `watch.py`); `wait` holds the call instead; offered when the desk is configured |
-| `mesh_note` | `(text)` | a remark for the running desk, read at its next command; the desk no longer reads the session's inbox itself |
-| `mesh_wait` | `(wait_s?)` | hold for the running desk's result, bounded like `job_check`'s wait and ending early when the user types |
+| `cad` | `(request, case?, geometry?, inputs[]?)` | a shape in words -- or a `.step`/`.iges` already on the workspace, plus any files to work from -- handed to the CAD desk (`cad/`), a second agent that builds, meshes and checks it on the same workspace, one python cell a step in a kernel there; the call holds until the desk is finished; offered when the desk is configured |
 | `checkpoint` | `(stage, summary, next)` | **structured mode only**: puts the summary and what comes next in front of the person and waits for their answer (§1) |
 
-That is the entire surface. No `run_gate`, no `amend_spec`, no `ask_user` tool — asking is just talking; this is a chat. Meshing, checking, rendering, post-processing are all `bash` or `mesh`. `checkpoint` is not an exception to that: it exists only when the person chose to approve a study in stages, and it is their gate, not the harness's. In full auto it is not in the list.
+That is the entire surface. No `run_gate`, no `amend_spec`, no `ask_user` tool — asking is just talking; this is a chat. Meshing, checking, rendering, post-processing are all `bash` or `cad`. `checkpoint` is not an exception to that: it exists only when the person chose to approve a study in stages, and it is their gate, not the harness's. In full auto it is not in the list.
 
 ---
 

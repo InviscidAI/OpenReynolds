@@ -1,0 +1,144 @@
+{
+  "arm": "desk",
+  "prompt": "T1",
+  "title": "T1 \u2014 2D U-bend",
+  "max_seconds": 1800.0,
+  "max_steps": 0,
+  "request": "A plane (2D) U-bend duct in water. The passage is 10 mm wide throughout. Both legs run horizontally, 120 mm long, and are joined by a 180 degree bend whose centreline radius is 15 mm. The inlet is the open end of the lower leg and the outlet is the open end of the upper leg. Mesh it for an incompressible solve.",
+  "properties": [
+    "passage width, 10 mm, at the inlet, at mid-leg and at the crown of the bend",
+    "leg length, 120 mm, both legs",
+    "centreline bend radius, 15 mm",
+    "included angle of the bend, 180 degrees",
+    "the mesh is exactly one cell thick, and both side patches are typed `empty`"
+  ],
+  "geometry": "",
+  "attempts": 1,
+  "started_at": "2026-09-11T09:02:20",
+  "completed": true,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "run": {
+    "ok": false,
+    "stopped": "steps",
+    "error": "",
+    "summary": "Let's do a final sanity listing of the case directory and confirm the mesh files are in place before finishing.",
+    "case_dir": "/work/accept-t1",
+    "seconds": 1238.9,
+    "desk_seconds": 1185.8,
+    "steps": 28,
+    "tokens": {
+      "input": 60,
+      "cache_read": 890327,
+      "cache_write": 129507,
+      "output": 36784
+    },
+    "usd": 0.8698,
+    "script_lines": 646,
+    "check": {
+      "ran": true,
+      "ok": false,
+      "unreachable": false,
+      "missing": [
+        "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh"
+      ],
+      "regions": [
+        ""
+      ],
+      "cells": 11696,
+      "two_d": true,
+      "patches": [
+        "frontAndBack",
+        "wall",
+        "outlet",
+        "inlet"
+      ],
+      "findings": [
+        {
+          "check": "mesh",
+          "status": "ok",
+          "measured": "11,696 cells, 47,379 faces, 24,584 points"
+        },
+        {
+          "check": "checkmesh",
+          "status": "ok",
+          "measured": "Mesh OK. -- max non-orthogonality 33.1672 (under 70), max skewness 0.569733 (under 4), max aspect-ratio 1.86551 (under 1000)"
+        },
+        {
+          "check": "patches",
+          "status": "ok",
+          "measured": "4 boundary patch(es) with faces, all named: frontAndBack, wall, outlet, inlet"
+        },
+        {
+          "check": "cellzones",
+          "status": "ok",
+          "measured": "1 cellZone(s): internal 11,696 cells"
+        },
+        {
+          "check": "build",
+          "status": "fail",
+          "measured": "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh"
+        },
+        {
+          "check": "render",
+          "status": "ok",
+          "measured": "a picture of the mesh is at accept-t1/renders/mesh_look.png"
+        },
+        {
+          "check": "scale",
+          "status": "ok",
+          "measured": "the mesh is 0.14 m across and the request's largest dimension is 0.12 m"
+        },
+        {
+          "check": "cad_audit",
+          "status": "skipped",
+          "measured": "cad_audit did not report: no patch set"
+        },
+        {
+          "check": "domain_probe",
+          "status": "skipped",
+          "measured": "domain_probe did not report: no patch set"
+        },
+        {
+          "check": "replay",
+          "status": "ok",
+          "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3"
+        }
+      ],
+      "replay": {
+        "ran": true,
+        "exit_code": 0,
+        "before": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "after": {
+          "patches": {},
+          "volume_m3": 0.0,
+          "bounds": [],
+          "triangles": 0
+        },
+        "output_tail": "aces  area 0.001148 m2  at (0.07158, 0.015, 0.001)  faces (+1.00, -0.00, +0.00) (curved)\n    outlet        patch               6 faces  area 2e-05 m2  at (0, 0.03, 0.001)  faces (-1.00, +0.00, +0.00)\n    inlet         patch               6 faces  area 2e-05 m2  at (0, -1.355e-19, 0.001)  faces (-1.00, +0.00, +0.00)\n  rebuilds with: build.py\n  picture: look_coarse.png\n\n/work/.toolbox/mesh_look.py:308: PyVistaFutureWarning: The default value of `algorithm` for the filter\n`PolyData.extract_surface` will change in the future. It currently defaults to\n`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to\nsilence this warning.\n  normals = surface.extract_surface().compute_normals(\n/work/.toolbox/mesh_look.py:473: PyVistaFutureWarning: The default value of `algorithm` for the filter\n`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to\n`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to\nsilence this warning.\n  plotter.add_mesh(internal.extract_surface(), color=\"#ececec\",\n\n(1600, 457)\nwrote ubend2d.msh 2788482 bytes\n+ gmshToFoam ubend2d.msh\n/*------------------------------------------"
+      }
+    },
+    "artifacts": [
+      "build.py",
+      "constant/polyMesh/boundary",
+      "look_coarse.json",
+      "look_coarse.png",
+      "look_fine.json",
+      "look_fine.png",
+      "outline_check.png",
+      "renders/mesh_look.json",
+      "renders/mesh_look.png",
+      "build.py",
+      "check.json",
+      "render.png",
+      "steps.json"
+    ]
+  },
+  "seconds": 1277.1,
+  "verdict": "check-not-ok"
+}

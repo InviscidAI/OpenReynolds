@@ -1,0 +1,341 @@
+{
+  "ok": false,
+  "unreachable": false,
+  "missing": [
+    "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh"
+  ],
+  "regions": [
+    ""
+  ],
+  "cells": 11696,
+  "bounds": [
+    0.0,
+    -0.005,
+    0.0,
+    0.14,
+    0.035,
+    0.0005
+  ],
+  "patches": [
+    {
+      "name": "frontAndBack",
+      "type": "empty",
+      "nFaces": 23392,
+      "touches": 2,
+      "area": 0.0057424735719256515,
+      "center": [
+        0.0714725662763024,
+        0.01500000255881816,
+        0.00025000001187436
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "flat": false
+    },
+    {
+      "name": "wall",
+      "type": "wall",
+      "nFaces": 1150,
+      "touches": 2,
+      "area": 0.0002871215130409899,
+      "center": [
+        0.07158822580092214,
+        0.015000000105789398,
+        0.00025000001187436093
+      ],
+      "normal": [
+        1.0,
+        5.2974829556491e-09,
+        0.0
+      ],
+      "flat": false,
+      "inward": 0
+    },
+    {
+      "name": "outlet",
+      "type": "patch",
+      "nFaces": 20,
+      "touches": 2,
+      "area": 5.000000125728542e-06,
+      "center": [
+        0.0,
+        0.03000000026077033,
+        0.0002500000118743628
+      ],
+      "normal": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    },
+    {
+      "name": "inlet",
+      "type": "patch",
+      "nFaces": 20,
+      "touches": 2,
+      "area": 5.000000125728542e-06,
+      "center": [
+        0.0,
+        5.421010862427522e-20,
+        0.0002500000118743628
+      ],
+      "normal": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "flat": true,
+      "inward": -1
+    }
+  ],
+  "checkmesh": "Mesh OK.",
+  "metrics": {
+    "max_non_orthogonality": 33.1672,
+    "max_skewness": 0.569733,
+    "max_aspect_ratio": 1.86551,
+    "min_volume": 3.24524e-11
+  },
+  "two_d": true,
+  "build": [],
+  "error": "",
+  "findings": [
+    {
+      "check": "mesh",
+      "status": "ok",
+      "measured": "11,696 cells, 47,379 faces, 24,584 points",
+      "meaning": "2D (one cell thick)",
+      "repair": ""
+    },
+    {
+      "check": "checkmesh",
+      "status": "ok",
+      "measured": "Mesh OK. -- max non-orthogonality 33.1672 (under 70), max skewness 0.569733 (under 4), max aspect-ratio 1.86551 (under 1000)",
+      "meaning": "checkMesh accepts this mesh; the thresholds beside the numbers are there to read them by and do not overrule it, because it has already judged them",
+      "repair": ""
+    },
+    {
+      "check": "patches",
+      "status": "ok",
+      "measured": "4 boundary patch(es) with faces, all named: frontAndBack, wall, outlet, inlet",
+      "meaning": "the names are somebody's choice rather than a mesher's default",
+      "repair": ""
+    },
+    {
+      "check": "cellzones",
+      "status": "ok",
+      "measured": "1 cellZone(s): internal 11,696 cells",
+      "meaning": "a zone is where a volumetric source, a porous region or a solid region acts",
+      "repair": ""
+    },
+    {
+      "check": "build",
+      "status": "fail",
+      "measured": "there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh",
+      "meaning": "a mesh that cannot be rebuilt cannot be changed, and a run's artifact is the script rather than the polyMesh",
+      "repair": "leave the script that built this mesh in the case under one of: Allbuild, Allclean, Allmesh, Allpost, Allprep, Allrun, build.py, build.sh, cad.py, case.foam, make.py, model.py, prep.py"
+    },
+    {
+      "check": "render",
+      "status": "ok",
+      "measured": "a picture of the mesh is at accept-t1/renders/mesh_look.png",
+      "meaning": "somebody can look at this mesh without opening ParaView",
+      "repair": ""
+    },
+    {
+      "check": "scale",
+      "status": "ok",
+      "measured": "the mesh is 0.14 m across and the request's largest dimension is 0.12 m",
+      "meaning": "within the factor of 100 a flow box round a small body needs",
+      "repair": ""
+    },
+    {
+      "check": "cad_audit",
+      "status": "skipped",
+      "measured": "cad_audit did not report: no patch set",
+      "meaning": "either no patch set has been exported yet, or the script did not run",
+      "repair": ""
+    },
+    {
+      "check": "domain_probe",
+      "status": "skipped",
+      "measured": "domain_probe did not report: no patch set",
+      "meaning": "either no patch set has been exported yet, or the script did not run",
+      "repair": ""
+    },
+    {
+      "check": "replay",
+      "status": "ok",
+      "measured": "the build script re-ran clean from empty and produced the same geometry: 0 patch(es), 0 triangles, union volume 0 m3",
+      "meaning": "the concatenated cells are runnable top to bottom by somebody who was not there, which is what makes the script the artifact",
+      "repair": ""
+    }
+  ],
+  "lines": [
+    "11,696 cells, 47,379 faces, 24,584 points, 2D (one cell thick)",
+    "bounds 0.14 x 0.04 x 0.0005 m (x 0..0.14, y -0.005..0.035, z 0..0.0005)",
+    "checkMesh: Mesh OK.",
+    "  max_aspect_ratio 1.86551, max_non_orthogonality 33.1672, max_skewness 0.569733, min_volume 3.24524e-11",
+    "patches:",
+    "  frontAndBack empty 23,392 faces area 0.005742 m2 normal (+0.00 +0.00 +0.00) at (0.07147 0.015 0.00025)",
+    "  wall wall 1,150 faces area 0.0002871 m2 normal (+1.00 +0.00 +0.00) at (0.07159 0.015 0.00025)",
+    "  outlet patch 20 faces area 5e-06 m2 normal (-1.00 +0.00 +0.00) at (0 0.03 0.00025)",
+    "  inlet patch 20 faces area 5e-06 m2 normal (-1.00 +0.00 +0.00) at (0 5.421e-20 0.00025)",
+    "checks: 1 fail, 7 ok, 2 skipped",
+    "  fail: build -- there is no Allmesh (or build script) in the case, so nothing here can be rebuilt or edited -- leave the script that made this mesh"
+  ],
+  "raw": {
+    "regions": {
+      "": {
+        "look": {
+          "case": "/__modal/volumes/vo-bOyNivKMQsmb07ENeEbuUg/accept-t1",
+          "polymesh": true,
+          "patches": [
+            {
+              "name": "frontAndBack",
+              "type": "empty",
+              "nFaces": 23392,
+              "touches": 2,
+              "area": 0.0057424735719256515,
+              "center": [
+                0.0714725662763024,
+                0.01500000255881816,
+                0.00025000001187436
+              ],
+              "normal": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "flat": false
+            },
+            {
+              "name": "wall",
+              "type": "wall",
+              "nFaces": 1150,
+              "touches": 2,
+              "area": 0.0002871215130409899,
+              "center": [
+                0.07158822580092214,
+                0.015000000105789398,
+                0.00025000001187436093
+              ],
+              "normal": [
+                1.0,
+                5.2974829556491e-09,
+                0.0
+              ],
+              "flat": false,
+              "inward": 0
+            },
+            {
+              "name": "outlet",
+              "type": "patch",
+              "nFaces": 20,
+              "touches": 2,
+              "area": 5.000000125728542e-06,
+              "center": [
+                0.0,
+                0.03000000026077033,
+                0.0002500000118743628
+              ],
+              "normal": [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              "flat": true,
+              "inward": -1
+            },
+            {
+              "name": "inlet",
+              "type": "patch",
+              "nFaces": 20,
+              "touches": 2,
+              "area": 5.000000125728542e-06,
+              "center": [
+                0.0,
+                5.421010862427522e-20,
+                0.0002500000118743628
+              ],
+              "normal": [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              "flat": true,
+              "inward": -1
+            }
+          ],
+          "build": [],
+          "cells": 11696,
+          "faces": 47379,
+          "points": 24584,
+          "bounds": [
+            0.0,
+            -0.005,
+            0.0,
+            0.14,
+            0.035,
+            0.0005
+          ],
+          "two_d": true,
+          "checkmesh": "Mesh OK.",
+          "checkmesh_ok": true,
+          "metrics": {
+            "max_non_orthogonality": 33.1672,
+            "max_skewness": 0.569733,
+            "max_aspect_ratio": 1.86551,
+            "min_volume": 3.24524e-11
+          },
+          "render": "renders/mesh_look.png",
+          "enclosure": [
+            "frontAndBack",
+            "inlet",
+            "outlet"
+          ]
+        },
+        "output": "ormal\": [\n    -1.0,\n    0.0,\n    0.0\n   ],\n   \"flat\": true,\n   \"inward\": -1\n  },\n  {\n   \"name\": \"inlet\",\n   \"type\": \"patch\",\n   \"nFaces\": 20,\n   \"touches\": 2,\n   \"area\": 5.000000125728542e-06,\n   \"center\": [\n    0.0,\n    5.421010862427522e-20,\n    0.0002500000118743628\n   ],\n   \"normal\": [\n    -1.0,\n    0.0,\n    0.0\n   ],\n   \"flat\": true,\n   \"inward\": -1\n  }\n ],\n \"build\": [],\n \"cells\": 11696,\n \"faces\": 47379,\n \"points\": 24584,\n \"bounds\": [\n  0.0,\n  -0.005,\n  0.0,\n  0.14,\n  0.035,\n  0.0005\n ],\n \"two_d\": true,\n \"checkmesh\": \"Mesh OK.\",\n \"checkmesh_ok\": true,\n \"metrics\": {\n  \"max_non_orthogonality\": 33.1672,\n  \"max_skewness\": 0.569733,\n  \"max_aspect_ratio\": 1.86551,\n  \"min_volume\": 3.24524e-11\n },\n \"render\": \"renders/mesh_look.png\",\n \"enclosure\": [\n  \"frontAndBack\",\n  \"inlet\",\n  \"outlet\"\n ]\n}",
+        "cellzones": [
+          [
+            "internal",
+            11696
+          ]
+        ]
+      }
+    },
+    "meshed": true,
+    "cad": [
+      {
+        "script": "cad_audit",
+        "unavailable": "no patch set"
+      },
+      {
+        "script": "domain_probe",
+        "unavailable": "no patch set"
+      }
+    ],
+    "replay": {
+      "ran": true,
+      "script": "\"\"\"Built by the CAD desk, one accepted cell at a time.\n\nThis file is not a record written beside the work; it is the work. Every cell below ran\nin the desk's kernel, in this order, and was accepted only after the names it uses were\nshown to be bound by a cell above it. It is run from empty at the finish, and what it\nmakes there is compared against what is in the case directory.\n\nThe prose above each cell is the desk's own reasoning for it, carried with the action\nrather than thrown away -- it is the only record of why this shape is this shape.\n\"\"\"\n\n# -- cell 1 -------------------------------------------------------------------------\nimport subprocess\nresult = subprocess.run([\"grep\", \"-i\", \"-A\", \"8\", \"-B\", \"2\", \"class CenterArc\\\\|class RadiusArc\\\\|class Line\\\\b\",\n                          \"/work/.toolbox/b123d_api.md\"], capture_output=True, text=True)\nprint(result.stdout[:4000])\nprint(\"----STDERR----\")\nprint(result.stderr[:2000])\n\n# -- cell 2 -------------------------------------------------------------------------\nimport subprocess\nr = subprocess.run([\"ls\", \"/work/.toolbox/\"], capture_output=True, text=True)\nprint(r.stdout, r.stderr)\nr2 = subprocess.run([\"grep\", \"-in\", \"arc\", \"/work/.toolbox/b123d_api.md\"], capture_output=True, text=True)\nprint(r2.stdout[:4000])\n\n# -- cell 3 -------------------------------------------------------------------------\n# Endpoints line up correctly. `is_closed` is a property, not a method \u2014 fix that and continue.\nfrom build123d import *\nimport math\n\nWIDTH_M   = 0.010\nLEG_LEN_M = 0.120\nBEND_R_M  = 0.015\nHALF_W    = WIDTH_M / 2.0\n\nOUTER_R = BEND_R_M + HALF_W\nINNER_R = BEND_R_M - HALF_W\nBEND_CTR = (LEG_LEN_M, BEND_R_M)\n\ny_lo_outer = -HALF_W\ny_lo_inner =  HALF_W\ny_hi_inner = 2*BEND_R_M - HALF_W\ny_hi_outer = 2*BEND_R_M + HALF_W\n\ne1 = Line((0, y_lo_outer), (LEG_LEN_M, y_lo_outer))\ne2 = CenterArc(BEND_CTR, OUTER_R, -90, 180)\ne3 = Line((LEG_LEN_M, y_hi_outer), (0, y_hi_outer))\ne4 = Line((0, y_hi_outer), (0, y_hi_inner))\ne5 = Line((0, y_hi_inner), (LEG_LEN_M, y_hi_inner))\ne6 = CenterArc(BEND_CTR, INNER_R, 90, -180)\ne7 = Line((LEG_LEN_M, y_lo_inner), (0, y_lo_inner))\ne8 = Line((0, y_lo_inner), (0, y_lo_outer))\n\nwire = Wire([e1, e2, e3, e4, e5, e6, e7, e8])\nprint(\"wire closed:\", wire.is_closed)\n\nface = Face(wire)\nexpected_area = WIDTH_M * (2*LEG_LEN_M + math.pi*BEND_R_M)\nprint(\"face area (m^2):\", face.area, \" expected approx:\", expected_area)\n\n# -- cell 4 -------------------------------------------------------------------------\n# Face area matches the expected centreline-length \u00d7 width to within rounding. Now extrude this planar\nTHICKNESS_M = 0.001   # slab thickness in z, one cell later -- arbitrary for a 2D case\n\nsolid = extrude(face, amount=THICKNESS_M)\nprint(\"solid volume (m^3):\", solid.volume, \" expected:\", face.area*THICKNESS_M)\nprint(\"bounding box:\", solid.bounding_box())\n\nfrom build123d import export_step\nexport_step(solid, \"ubend_solid.step\")\nprint(\"exported ubend_solid.step\")\n\n# -- cell 5 -------------------------------------------------------------------------\n# Volume matches, bounding box is as expected (x: 0\u2013140mm, y: -5\u201335mm, z: 0\u20131mm). Now let's tag the fa\nfaces = solid.faces()\n\n# front/back: the two z-normal faces (the extrusion caps) -> empty patches for 2D\nfront = faces.filter_by(Axis.Z).sort_by(Axis.Z)[0]\nback  = faces.filter_by(Axis.Z).sort_by(Axis.Z)[-1]\n\n# inlet / outlet: faces whose plane is x=0 (the two end caps of the duct)\nx0_faces = faces.filter_by(Axis.X).filter_by(lambda f: abs(f.center().X) < 1e-9)\nprint(\"num x=0 faces:\", len(x0_faces))\nfor f in x0_faces:\n    print(\"  center:\", f.center(), \"area:\", f.area)\n\n# -- cell 6 -------------------------------------------------------------------------\ninlet_face  = x0_faces.filter_by(lambda f: abs(f.center().Y - 0.0) < 1e-6)[0]\noutlet_face = x0_faces.filter_by(lambda f: abs(f.center().Y - 2*BEND_R_M) < 1e-6)[0]\n\nprint(\"inlet center:\", inlet_face.center(), \"area:\", inlet_face.area)\nprint(\"outlet center:\", outlet_face.center(), \"area:\", outlet_face.area)\n\nnamed_ids = {front.center().to_tuple(), back.center().to_tuple(),\n             inlet_face.center().to_tuple(), outlet_face.center().to_tuple()}\nwall_faces = faces.filter_by(lambda f: f.center().to_tuple() not in named_ids)\nprint(\"num wall faces:\", len(wall_faces))\nfor f in wall_faces:\n    print(\"  center:\", f.center(), \"area:\", f.area)\n\n# -- cell 7 -------------------------------------------------------------------------\n# All 6 wall faces are identified and their areas match expectation (leg walls = 0.120\u00d70.001 m\u00b2, outer\nimport subprocess\nr = subprocess.run([\"python3\", \"/work/.toolbox/cad_convert.py\", \"--help\"], capture_output=True, text=True)\nprint(r.stdout)\nprint(r.stderr)\n\n# -- cell 8 -------------------------------------------------------------------------\n# This is the CLI STEP\u2192STL path. `export_patches()` was mentioned as a python function \u2014 let's inspect\nimport sys\nsys.path.insert(0, \"/work/.toolbox\")\nimport cad_convert\nhelp(cad_convert.export_patches)\n\n# -- cell 9 -------------------------------------------------------------------------\nprint(cad_convert.PATCH_ROLES)\n\n# -- cell 10 ------------------------------------------------------------------------\nimport subprocess\nr = subprocess.run([\"cat\", \"/work/.toolbox/templates/snappy/README.md\"], capture_output=True, text=True)\nprint(r.stdout)\n\n# -- cell 11 ------------------------------------------------------------------------\nimport subprocess\nr = subprocess.run([\"find\", \"/work/.toolbox\", \"-ipath\", \"*duct*\"], capture_output=True, text=True)\nprint(r.stdout)\n\n# -- cell 12 ------------------------------------------------------------------------\n# There's a ready template for exactly this kind of case. Let's read it before continuing \u2014 it likely \nimport subprocess\nr = subprocess.run([\"cat\", \"/work/.toolbox/templates/duct2d.py\"], capture_output=True, text=True)\nprint(r.stdout)\n\n# -- cell 13 ------------------------------------------------------------------------\n# This confirms the far better-suited path: gmsh OCC quad-mesh + extrude for a genuinely 2D case, not \nimport subprocess\nr = subprocess.run([\"cat\", \"/work/.toolbox/templates/duct2d.py\"], capture_output=True, text=True)\nprint(r.stdout)\n\n# -- cell 14 ------------------------------------------------------------------------\n# The full text seems to get truncated by the transport. Let me read the file directly in Python and s\ntext = open(\"/work/.toolbox/templates/duct2d.py\").read()\nprint(len(text))\nprint(text[1800:5200])\n\n# -- cell 15 ------------------------------------------------------------------------\n# Good, let's see the rest.\nprint(text[5200:9000])\n\n# -- cell 16 ------------------------------------------------------------------------\nimport gmsh\nimport numpy as np\nimport matplotlib.pyplot as plt\n\nWIDTH_M   = 0.010\nLEG_LEN_M = 0.120\nBEND_R_M  = 0.015\nHALF_W    = WIDTH_M / 2.0\nBEND_CTR  = (LEG_LEN_M, BEND_R_M)\n\ny_lo_outer = -HALF_W\ny_lo_inner =  HALF_W\ny_hi_inner = 2*BEND_R_M - HALF_W\ny_hi_outer = 2*BEND_R_M + HALF_W\n\nCELL_SIZE_TEST = WIDTH_M / 5.0\n\ngmsh.initialize()\ngmsh.model.add(\"outline_check\")\n\np1 = gmsh.model.geo.addPoint(0, y_lo_outer, 0, CELL_SIZE_TEST)\np2 = gmsh.model.geo.addPoint(LEG_LEN_M, y_lo_outer, 0, CELL_SIZE_TEST)\np3 = gmsh.model.geo.addPoint(LEG_LEN_M, y_hi_outer, 0, CELL_SIZE_TEST)\np4 = gmsh.model.geo.addPoint(0, y_hi_outer, 0, CELL_SIZE_TEST)\np5 = gmsh.model.geo.addPoint(0, y_hi_inner, 0, CELL_SIZE_TEST)\np6 = gmsh.model.geo.addPoint(LEG_LEN_M, y_hi_inner, 0, CELL_SIZE_TEST)\np7 = gmsh.model.geo.addPoint(LEG_LEN_M, y_lo_inner, 0, CELL_SIZE_TEST)\np8 = gmsh.model.geo.addPoint(0, y_lo_inner, 0, CELL_SIZE_TEST)\npc = gmsh.model.geo.addPoint(BEND_CTR[0], BEND_CTR[1], 0, CELL_SIZE_TEST)\n\nl1 = gmsh.model.geo.addLine(p1, p2)\nl2 = gmsh.model.geo.addCircleArc(p2, pc, p3, nx=0, ny=0, nz=1)\nl3 = gmsh.model.geo.addLine(p3, p4)\nl4 = gmsh.model.geo.addLine(p4, p5)\nl5 = gmsh.model.geo.addLine(p5, p6)\nl6 = gmsh.model.geo.addCircleArc(p6, pc, p7, nx=0, ny=0, nz=-1)\nl7 = gmsh.model.geo.addLine(p7, p8)\nl8 = gmsh.model.geo.addLine(p8, p1)\n\nloop = gmsh.model.geo.addCurveLoop([l1, l2, l3, l4, l5, l6, l7, l8])\nsurf = gmsh.model.geo.addPlaneSurface([loop])\ngmsh.model.geo.synchronize()\n\ngmsh.model.mesh.generate(2)\nnode_tags, node_coords, _ = gmsh.model.mesh.getNodes()\ncoords = np.array(node_coords).reshape(-1, 3)\ngmsh.finalize()\n\nfig, ax = plt.subplots(figsize=(7, 4))\nax.scatter(coords[:, 0], coords[:, 1], s=4)\nax.set_aspect(\"equal\")\nax.set_title(\"outline check: node cloud\")\nplt.savefig(\"outline_check.png\", dpi=120)\nplt.show()\nprint(\"num nodes:\", len(coords))\nprint(\"x range:\", coords[:,0].min(), coords[:,0].max())\nprint(\"y range:\", coords[:,1].min(), coords[:,1].max())\n\n# -- cell 17 ------------------------------------------------------------------------\n# The outline is correct: a proper U-bend shape, x from 0 to 0.140 m, y from -0.005 to 0.035 m, bend b\nimport subprocess, sys\nfrom pathlib import Path\n\nWIDTH_M   = 0.010\nLEG_LEN_M = 0.120\nBEND_R_M  = 0.015\nHALF_W    = WIDTH_M / 2.0\nBEND_CTR  = (LEG_LEN_M, BEND_R_M)\n\ny_lo_outer = -HALF_W\ny_lo_inner =  HALF_W\ny_hi_inner = 2*BEND_R_M - HALF_W\ny_hi_outer = 2*BEND_R_M + HALF_W\n\nCELL_SIZE_M = WIDTH_M / 5.0   # coarse first pass: ~5 cells across the passage width\nTHICK_M = CELL_SIZE_M         # one layer, kept roughly cubic\n\ndef build_mesh(msh_path: Path, cell_size: float, thick: float) -> None:\n    import gmsh\n    gmsh.initialize()\n    gmsh.model.add(\"ubend2d\")\n\n    p1 = gmsh.model.geo.addPoint(0, y_lo_outer, 0, cell_size)\n    p2 = gmsh.model.geo.addPoint(LEG_LEN_M, y_lo_outer, 0, cell_size)\n    p3 = gmsh.model.geo.addPoint(LEG_LEN_M, y_hi_outer, 0, cell_size)\n    p4 = gmsh.model.geo.addPoint(0, y_hi_outer, 0, cell_size)\n    p5 = gmsh.model.geo.addPoint(0, y_hi_inner, 0, cell_size)\n    p6 = gmsh.model.geo.addPoint(LEG_LEN_M, y_hi_inner, 0, cell_size)\n    p7 = gmsh.model.geo.addPoint(LEG_LEN_M, y_lo_inner, 0, cell_size)\n    p8 = gmsh.model.geo.addPoint(0, y_lo_inner, 0, cell_size)\n    pc = gmsh.model.geo.addPoint(BEND_CTR[0], BEND_CTR[1], 0, cell_size)\n\n    l_wall_lo_outer = gmsh.model.geo.addLine(p1, p2)\n    l_wall_bend_outer = gmsh.model.geo.addCircleArc(p2, pc, p3, nx=0, ny=0, nz=1)\n    l_wall_hi_outer = gmsh.model.geo.addLine(p3, p4)\n    l_outlet = gmsh.model.geo.addLine(p4, p5)\n    l_wall_hi_inner = gmsh.model.geo.addLine(p5, p6)\n    l_wall_bend_inner = gmsh.model.geo.addCircleArc(p6, pc, p7, nx=0, ny=0, nz=-1)\n    l_wall_lo_inner = gmsh.model.geo.addLine(p7, p8)\n    l_inlet = gmsh.model.geo.addLine(p8, p1)\n\n    loop = gmsh.model.geo.addCurveLoop([l_wall_lo_outer, l_wall_bend_outer, l_wall_hi_outer,\n                                         l_outlet, l_wall_hi_inner, l_wall_bend_inner,\n                                         l_wall_lo_inner, l_inlet])\n    surf = gmsh.model.geo.addPlaneSurface([loop])\n    gmsh.model.geo.synchronize()\n\n    gmsh.option.setNumber(\"Mesh.Algorithm\", 8)\n    gmsh.option.setNumber(\"Mesh.RecombinationAlgorithm\", 3)\n    gmsh.model.mesh.setRecombine(2, surf)\n\n    out = gmsh.model.geo.extrude([(2, surf)], 0, 0, thick, numElements=[1], recombine=True)\n    gmsh.model.geo.synchronize()\n    # out order: [top_surf, volume, side(l_wall_lo_outer), side(l_wall_bend_outer),\n    #             side(l_wall_hi_outer), side(l_outlet), side(l_wall_hi_inner),\n    #             side(l_wall_bend_inner), side(l_wall_lo_inner), side(l_inlet)]\n    top_surf, volume = out[0][1], out[1][1]\n    (side_lo_outer, side_bend_outer, side_hi_outer, side_outlet,\n     side_hi_inner, side_bend_inner, side_lo_inner, side_inlet) = (e[1] for e in out[2:10])\n\n    wall_sides = [side_lo_outer, side_bend_outer, side_hi_outer,\n                  side_hi_inner, side_bend_inner, side_lo_inner]\n\n    gmsh.model.addPhysicalGroup(2, [surf, top_surf], name=\"frontAndBack\")\n    gmsh.model.addPhysicalGroup(2, [side_inlet], name=\"inlet\")\n    gmsh.model.addPhysicalGroup(2, [side_outlet], name=\"outlet\")\n    gmsh.model.addPhysicalGroup(2, wall_sides, name=\"wall\")\n    gmsh.model.addPhysicalGroup(3, [volume], name=\"internal\")\n\n    gmsh.model.mesh.generate(3)\n    gmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\n    gmsh.write(str(msh_path))\n    gmsh.finalize()\n\nmsh_path = Path(\"ubend2d.msh\")\nbuild_mesh(msh_path, CELL_SIZE_M, THICK_M)\nprint(\"wrote\", msh_path, msh_path.stat().st_size, \"bytes\")\n\n# -- cell 18 ------------------------------------------------------------------------\n# Now write the OpenFOAM system stubs and convert with `gmshToFoam`, then retype patches (`wall`, `emp\nimport subprocess, sys\nfrom pathlib import Path\n\nCONTROL_DICT_STUB = \"\"\"\\\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      controlDict;\n}\napplication     foamRun;\nstartFrom       startTime;\nstartTime       0;\nstopAt          endTime;\nendTime         1;\ndeltaT          1;\nwriteControl    timeStep;\nwriteInterval   1;\npurgeWrite      0;\nwriteFormat     ascii;\nwritePrecision  6;\nwriteCompression off;\ntimeFormat      general;\ntimePrecision   6;\nrunTimeModifiable true;\n\"\"\"\n\nFV_SCHEMES_STUB = \"\"\"\\\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      fvSchemes;\n}\nddtSchemes      { default steadyState; }\ngradSchemes     { default Gauss linear; }\ndivSchemes      { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes   { default corrected; }\n\"\"\"\n\nFV_SOLUTION_STUB = \"\"\"\\\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      fvSolution;\n}\nsolvers\n{\n}\n\"\"\"\n\ndef write_system_stubs(case: Path) -> None:\n    (case / \"system\").mkdir(parents=True, exist_ok=True)\n    (case / \"system\" / \"controlDict\").write_text(CONTROL_DICT_STUB)\n    (case / \"system\" / \"fvSchemes\").write_text(FV_SCHEMES_STUB)\n    (case / \"system\" / \"fvSolution\").write_text(FV_SOLUTION_STUB)\n\ndef run(cmd, **kw):\n    print(\"+\", \" \".join(cmd))\n    proc = subprocess.run(cmd, text=True, capture_output=True, **kw)\n    if proc.stdout:\n        print(proc.stdout[-4000:])\n    if proc.returncode != 0:\n        print(proc.stderr[-4000:], file=sys.stderr)\n        raise SystemExit(f\"{cmd[0]} failed (exit {proc.returncode})\")\n    return proc\n\ndef retype(patch: str, kind: str) -> None:\n    run([\"foamDictionary\", \"constant/polyMesh/boundary\",\n         \"-entry\", f\"entry0.{patch}.type\", \"-set\", kind])\n\ncase = Path.cwd()\nwrite_system_stubs(case)\nrun([\"gmshToFoam\", \"ubend2d.msh\"])\nretype(\"wall\", \"wall\")\nretype(\"frontAndBack\", \"empty\")\nrun([\"checkMesh\", \"-case\", \".\"])\n\n# -- cell 19 ------------------------------------------------------------------------\n# The mesh reports 0 hexahedra and 1458 prisms \u2014 the 2D surface came out triangulated despite the quad\nimport gmsh\nimport numpy as np\n\nWIDTH_M   = 0.010\nLEG_LEN_M = 0.120\nBEND_R_M  = 0.015\nHALF_W    = WIDTH_M / 2.0\nBEND_CTR  = (LEG_LEN_M, BEND_R_M)\ny_lo_outer = -HALF_W\ny_lo_inner =  HALF_W\ny_hi_inner = 2*BEND_R_M - HALF_W\ny_hi_outer = 2*BEND_R_M + HALF_W\nCELL_SIZE_TEST = WIDTH_M / 5.0\n\ngmsh.initialize()\ngmsh.model.add(\"quad_check\")\np1 = gmsh.model.geo.addPoint(0, y_lo_outer, 0, CELL_SIZE_TEST)\np2 = gmsh.model.geo.addPoint(LEG_LEN_M, y_lo_outer, 0, CELL_SIZE_TEST)\np3 = gmsh.model.geo.addPoint(LEG_LEN_M, y_hi_outer, 0, CELL_SIZE_TEST)\np4 = gmsh.model.geo.addPoint(0, y_hi_outer, 0, CELL_SIZE_TEST)\np5 = gmsh.model.geo.addPoint(0, y_hi_inner, 0, CELL_SIZE_TEST)\np6 = gmsh.model.geo.addPoint(LEG_LEN_M, y_hi_inner, 0, CELL_SIZE_TEST)\np7 = gmsh.model.geo.addPoint(LEG_LEN_M, y_lo_inner, 0, CELL_SIZE_TEST)\np8 = gmsh.model.geo.addPoint(0, y_lo_inner, 0, CELL_SIZE_TEST)\npc = gmsh.model.geo.addPoint(BEND_CTR[0], BEND_CTR[1], 0, CELL_SIZE_TEST)\n\nl1 = gmsh.model.geo.addLine(p1, p2)\nl2 = gmsh.model.geo.addCircleArc(p2, pc, p3, nx=0, ny=0, nz=1)\nl3 = gmsh.model.geo.addLine(p3, p4)\nl4 = gmsh.model.geo.addLine(p4, p5)\nl5 = gmsh.model.geo.addLine(p5, p6)\nl6 = gmsh.model.geo.addCircleArc(p6, pc, p7, nx=0, ny=0, nz=-1)\nl7 = gmsh.model.geo.addLine(p7, p8)\nl8 = gmsh.model.geo.addLine(p8, p1)\nloop = gmsh.model.geo.addCurveLoop([l1, l2, l3, l4, l5, l6, l7, l8])\nsurf = gmsh.model.geo.addPlaneSurface([loop])\ngmsh.model.geo.synchronize()\n\ngmsh.option.setNumber(\"Mesh.Algorithm\", 8)\ngmsh.option.setNumber(\"Mesh.RecombinationAlgorithm\", 3)\ngmsh.option.setNumber(\"Mesh.RecombineAll\", 1)\ngmsh.model.mesh.setRecombine(2, surf)\ngmsh.model.mesh.generate(2)\n\nelem_types, elem_tags, node_tags = gmsh.model.mesh.getElements(2, surf)\nfor et, tags in zip(elem_types, elem_tags):\n    name, dim, order, nnodes, *_ = gmsh.model.mesh.getElementProperties(et)\n    print(name, \"count:\", len(tags))\ngmsh.finalize()\n\n# -- cell 20 ------------------------------------------------------------------------\n# `Mesh.RecombineAll = 1` was the missing option \u2014 with it set, recombination gives 872 quads, 0 trian\nimport subprocess, sys\nfrom pathlib import Path\n\nWIDTH_M   = 0.010\nLEG_LEN_M = 0.120\nBEND_R_M  = 0.015\nHALF_W    = WIDTH_M / 2.0\nBEND_CTR  = (LEG_LEN_M, BEND_R_M)\n\ny_lo_outer = -HALF_W\ny_lo_inner =  HALF_W\ny_hi_inner = 2*BEND_R_M - HALF_W\ny_hi_outer = 2*BEND_R_M + HALF_W\n\nCELL_SIZE_M = WIDTH_M / 5.0   # coarse first pass: ~5 cells across the passage width\nTHICK_M = CELL_SIZE_M\n\ndef build_mesh(msh_path: Path, cell_size: float, thick: float) -> None:\n    import gmsh\n    gmsh.initialize()\n    gmsh.model.add(\"ubend2d\")\n\n    p1 = gmsh.model.geo.addPoint(0, y_lo_outer, 0, cell_size)\n    p2 = gmsh.model.geo.addPoint(LEG_LEN_M, y_lo_outer, 0, cell_size)\n    p3 = gmsh.model.geo.addPoint(LEG_LEN_M, y_hi_outer, 0, cell_size)\n    p4 = gmsh.model.geo.addPoint(0, y_hi_outer, 0, cell_size)\n    p5 = gmsh.model.geo.addPoint(0, y_hi_inner, 0, cell_size)\n    p6 = gmsh.model.geo.addPoint(LEG_LEN_M, y_hi_inner, 0, cell_size)\n    p7 = gmsh.model.geo.addPoint(LEG_LEN_M, y_lo_inner, 0, cell_size)\n    p8 = gmsh.model.geo.addPoint(0, y_lo_inner, 0, cell_size)\n    pc = gmsh.model.geo.addPoint(BEND_CTR[0], BEND_CTR[1], 0, cell_size)\n\n    l_wall_lo_outer = gmsh.model.geo.addLine(p1, p2)\n    l_wall_bend_outer = gmsh.model.geo.addCircleArc(p2, pc, p3, nx=0, ny=0, nz=1)\n    l_wall_hi_outer = gmsh.model.geo.addLine(p3, p4)\n    l_outlet = gmsh.model.geo.addLine(p4, p5)\n    l_wall_hi_inner = gmsh.model.geo.addLine(p5, p6)\n    l_wall_bend_inner = gmsh.model.geo.addCircleArc(p6, pc, p7, nx=0, ny=0, nz=-1)\n    l_wall_lo_inner = gmsh.model.geo.addLine(p7, p8)\n    l_inlet = gmsh.model.geo.addLine(p8, p1)\n\n    loop = gmsh.model.geo.addCurveLoop([l_wall_lo_outer, l_wall_bend_outer, l_wall_hi_outer,\n                                         l_outlet, l_wall_hi_inner, l_wall_bend_inner,\n                                         l_wall_lo_inner, l_inlet])\n    surf = gmsh.model.geo.addPlaneSurface([loop])\n    gmsh.model.geo.synchronize()\n\n    gmsh.option.setNumber(\"Mesh.Algorithm\", 8)\n    gmsh.option.setNumber(\"Mesh.RecombinationAlgorithm\", 3)\n    gmsh.option.setNumber(\"Mesh.RecombineAll\", 1)\n    gmsh.model.mesh.setRecombine(2, surf)\n\n    out = gmsh.model.geo.extrude([(2, surf)], 0, 0, thick, numElements=[1], recombine=True)\n    gmsh.model.geo.synchronize()\n    top_surf, volume = out[0][1], out[1][1]\n    (side_lo_outer, side_bend_outer, side_hi_outer, side_outlet,\n     side_hi_inner, side_bend_inner, side_lo_inner, side_inlet) = (e[1] for e in out[2:10])\n\n    wall_sides = [side_lo_outer, side_bend_outer, side_hi_outer,\n                  side_hi_inner, side_bend_inner, side_lo_inner]\n\n    gmsh.model.addPhysicalGroup(2, [surf, top_surf], name=\"frontAndBack\")\n    gmsh.model.addPhysicalGroup(2, [side_inlet], name=\"inlet\")\n    gmsh.model.addPhysicalGroup(2, [side_outlet], name=\"outlet\")\n    gmsh.model.addPhysicalGroup(2, wall_sides, name=\"wall\")\n    gmsh.model.addPhysicalGroup(3, [volume], name=\"internal\")\n\n    gmsh.model.mesh.generate(3)\n    gmsh.option.setNumber(\"Mesh.MshFileVersion\", 2.2)\n    gmsh.write(str(msh_path))\n    gmsh.finalize()\n\nmsh_path = Path(\"ubend2d.msh\")\nbuild_mesh(msh_path, CELL_SIZE_M, THICK_M)\nprint(\"wrote\", msh_path, msh_path.stat().st_size, \"bytes\")\n\n# -- cell 21 ------------------------------------------------------------------------\n# Now convert to OpenFOAM, retype patches, and run checkMesh.\nimport subprocess, sys\nfrom pathlib import Path\n\nCONTROL_DICT_STUB = \"\"\"\\\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      controlDict;\n}\napplication     foamRun;\nstartFrom       startTime;\nstartTime       0;\nstopAt          endTime;\nendTime         1;\ndeltaT          1;\nwriteControl    timeStep;\nwriteInterval   1;\npurgeWrite      0;\nwriteFormat     ascii;\nwritePrecision  6;\nwriteCompression off;\ntimeFormat      general;\ntimePrecision   6;\nrunTimeModifiable true;\n\"\"\"\n\nFV_SCHEMES_STUB = \"\"\"\\\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      fvSchemes;\n}\nddtSchemes      { default steadyState; }\ngradSchemes     { default Gauss linear; }\ndivSchemes      { default none; }\nlaplacianSchemes { default Gauss linear corrected; }\ninterpolationSchemes { default linear; }\nsnGradSchemes   { default corrected; }\n\"\"\"\n\nFV_SOLUTION_STUB = \"\"\"\\\nFoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       dictionary;\n    object      fvSolution;\n}\nsolvers\n{\n}\n\"\"\"\n\ndef write_system_stubs(case: Path) -> None:\n    (case / \"system\").mkdir(parents=True, exist_ok=True)\n    (case / \"system\" / \"controlDict\").write_text(CONTROL_DICT_STUB)\n    (case / \"system\" / \"fvSchemes\").write_text(FV_SCHEMES_STUB)\n    (case / \"system\" / \"fvSolution\").write_text(FV_SOLUTION_STUB)\n\ndef run(cmd, **kw):\n    print(\"+\", \" \".join(cmd))\n    proc = subprocess.run(cmd, text=True, capture_output=True, **kw)\n    if proc.stdout:\n        print(proc.stdout[-4000:])\n    if proc.returncode != 0:\n        print(proc.stderr[-4000:], file=sys.stderr)\n        raise SystemExit(f\"{cmd[0]} failed (exit {proc.returncode})\")\n    return proc\n\ndef retype(patch: str, kind: str) -> None:\n    run([\"foamDictionary\", \"constant/polyMesh/boundary\",\n         \"-entry\", f\"entry0.{patch}.type\", \"-set\", kind])\n\ncase = Path.cwd()\nwrite_system_stubs(case)\nrun([\"gmshToFoam\", \"ubend2d.msh\"])\nretype(\"wall\", \"wall\")\nretype(\"frontAndBack\", \"empty\")\nrun([\"checkMesh\", \"-case\", \".\"])\n\n# -- cell 22 ------------------------------------------------------------------------\n# Now we have 872 hexahedra, 0 prisms \u2014 \"Mesh OK.\" Let's look at it with `mesh_look.py` to confirm the\nimport subprocess\nr = subprocess.run([\"python3\", \"/work/.toolbox/mesh_look.py\", \".\", \"--out\", \"look_coarse.png\", \"--json\", \"look_coarse.json\"],\n                    capture_output=True, text=True)\nprint(r.stdout[-4000:])\nprint(r.stderr[-2000:])\n\n# -- cell 23 ------------------------------------------------------------------------\n# All patch areas and positions match expectation: inlet at (0,0), outlet at (0,0.03), wall length mat\nfrom PIL import Image\nimg = Image.open(\"look_coarse.png\")\nprint(img.size)\nimg\n\n# -- cell 24 ------------------------------------------------------------------------\n# The coarse mesh matches the requested U-bend shape well: 120 mm legs, 15 mm-radius bend, inlet/outle\nimport subprocess, sys\nfrom pathlib import Path\n\nCELL_SIZE_M = WIDTH_M / 20.0   # refine: ~20 cells across the passage width\nTHICK_M = CELL_SIZE_M\n\nmsh_path = Path(\"ubend2d.msh\")\nbuild_mesh(msh_path, CELL_SIZE_M, THICK_M)\nprint(\"wrote\", msh_path, msh_path.stat().st_size, \"bytes\")\n\ncase = Path.cwd()\nwrite_system_stubs(case)\nrun([\"gmshToFoam\", \"ubend2d.msh\"])\nretype(\"wall\", \"wall\")\nretype(\"frontAndBack\", \"empty\")\nr = run([\"checkMesh\", \"-case\", \".\"])\n\n# -- cell 25 ------------------------------------------------------------------------\n# checkMesh passes cleanly at the finer resolution: 11,696 hexahedra, 0 prisms, max non-orthogonality \nimport subprocess\nr = subprocess.run([\"python3\", \"/work/.toolbox/mesh_look.py\", \".\", \"--out\", \"look_fine.png\", \"--json\", \"look_fine.json\"],\n                    capture_output=True, text=True)\nprint(r.stdout[-4000:])\nprint(r.stderr[-1500:])\n\n# -- cell 26 ------------------------------------------------------------------------\nfrom PIL import Image\nimg = Image.open(\"look_fine.png\")\nprint(img.size)\nimg\n\n# -- cell 27 ------------------------------------------------------------------------\n# Let's do a final sanity listing of the case directory and confirm the mesh files are in place before\nimport subprocess\nr = subprocess.run([\"find\", \".\", \"-maxdepth\", \"3\", \"-type\", \"f\"], capture_output=True, text=True)\nprint(r.stdout)\nr2 = subprocess.run([\"ls\", \"constant/polyMesh\"], capture_output=True, text=True)\nprint(r2.stdout)\n",
+      "before": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      },
+      "exit_code": 0,
+      "output": "40%] Meshing curve 10 (Extruded)\nInfo    : [ 40%] Meshing curve 11 (Extruded)\nInfo    : [ 50%] Meshing curve 12 (Extruded)\nInfo    : [ 50%] Meshing curve 13 (Extruded)\nInfo    : [ 60%] Meshing curve 14 (Extruded)\nInfo    : [ 60%] Meshing curve 15 (Extruded)\nInfo    : [ 60%] Meshing curve 16 (Extruded)\nInfo    : [ 70%] Meshing curve 17 (Extruded)\nInfo    : [ 70%] Meshing curve 19 (Extruded)\nInfo    : [ 80%] Meshing curve 20 (Extruded)\nInfo    : [ 80%] Meshing curve 24 (Extruded)\nInfo    : [ 80%] Meshing curve 28 (Extruded)\nInfo    : [ 90%] Meshing curve 32 (Extruded)\nInfo    : [ 90%] Meshing curve 36 (Extruded)\nInfo    : [100%] Meshing curve 40 (Extruded)\nInfo    : [100%] Meshing curve 44 (Extruded)\nInfo    : Done meshing 1D (Wall 0.00418931s, CPU 0s)\nInfo    : Meshing 2D...\nInfo    : [  0%] Meshing surface 1 (Plane, Frontal-Delaunay for Quads)\nWarning : Cannot apply Blossom: odd number of triangles (5821) in surface 1\nInfo    : [  0%] Blossom recombination completed (Wall 0.0417246s, CPU 0.04s): 2880 quads, 59 triangles, 0 invalid quads, 0 quads with Q < 0.1, avg Q = 0.977689, min Q = 0.396342\nInfo    : [  0%] Blossom recombination completed (Wall 0.102286s, CPU 0.1s): 11696 quads, 0 triangles, 0 invalid quads, 0 quads with Q < 0.1, avg Q = 0.979092, min Q = 0.506242\nInfo    : [ 20%] Meshing surface 21 (Extruded)\nInfo    : [ 30%] Meshing surface 25 (Extruded)\nInfo    : [ 40%] Meshing surface 29 (Extruded)\nInfo    : [ 50%] Meshing surface 33 (Extruded)\nInfo    : [ 60%] Meshing surface 37 (Extruded)\nInfo    : [ 70%] Meshing surface 41 (Extruded)\nInfo    : [ 80%] Meshing surface 45 (Extruded)\nInfo    : [ 90%] Meshing surface 49 (Extruded)\nInfo    : [100%] Meshing surface 50 (Extruded)\nInfo    : Done meshing 2D (Wall 0.245545s, CPU 0.22s)\nInfo    : Meshing 3D...\nInfo    : Meshing volume 1 (Extruded)\nInfo    : Done meshing 3D (Wall 0.0470745s, CPU 0.04s)\nInfo    : Optimizing mesh...\nInfo    : Done optimizing mesh (Wall 0.000211591s, CPU 0s)\nInfo    : 24586 nodes 38684 elements\nWarning : ------------------------------\nWarning : Mesh generation error summary\nWarning :     1 warning\nWarning :     0 errors\nWarning : Check the full log for details\nWarning : ------------------------------\nInfo    : Writing 'ubend2d.msh'...\nInfo    : Done writing 'ubend2d.msh'\n\n/__modal/volumes/vo-bOyNivKMQsmb07ENeEbuUg/accept-t1/.replay\n  872 cells, 3,638 faces, 2,046 points  (one cell thick: a plane case)\n  bounds 0.14 x 0.04 x 0.002 m   x 0..0.14   y -0.005..0.035   z 0..0.002   [140 x 40 x 2 mm]\n  checkMesh: Mesh OK.\n    max aspect ratio: 3.0664\n    max non orthogonality: 52.5464\n    max skewness: 1.06127\n    min volume: 2.37062e-09\n  patches:\n    frontAndBack  empty           1,744 faces  area 0.005742 m2  at (0.07147, 0.015, 0.001)\n    wall          wall              288 faces  area 0.001148 m2  at (0.07158, 0.015, 0.001)  faces (+1.00, -0.00, +0.00) (curved)\n    outlet        patch               6 faces  area 2e-05 m2  at (0, 0.03, 0.001)  faces (-1.00, +0.00, +0.00)\n    inlet         patch               6 faces  area 2e-05 m2  at (0, -1.355e-19, 0.001)  faces (-1.00, +0.00, +0.00)\n  rebuilds with: build.py\n  picture: look_coarse.png\n\n/work/.toolbox/mesh_look.py:308: PyVistaFutureWarning: The default value of `algorithm` for the filter\n`PolyData.extract_surface` will change in the future. It currently defaults to\n`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to\nsilence this warning.\n  normals = surface.extract_surface().compute_normals(\n/work/.toolbox/mesh_look.py:473: PyVistaFutureWarning: The default value of `algorithm` for the filter\n`UnstructuredGrid.extract_surface` will change in the future. It currently defaults to\n`'dataset_surface'`, but will change to `None`. Explicitly set the `algorithm` keyword to\nsilence this warning.\n  plotter.add_mesh(internal.extract_surface(), color=\"#ececec\",\n\n(1600, 457)\nwrote ubend2d.msh 2788482 bytes\n+ gmshToFoam ubend2d.msh\n/*------------------------------------------",
+      "after": {
+        "patches": {},
+        "volume_m3": 0.0,
+        "bounds": [],
+        "triangles": 0
+      }
+    }
+  }
+}

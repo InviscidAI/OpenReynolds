@@ -1,0 +1,80 @@
+{
+  "sweep_id": "20260921-061918-84cb",
+  "label": "merge-smoke",
+  "cases": [
+    "T1",
+    "T7"
+  ],
+  "repeat": 1,
+  "model": "gpt-5.6-sol",
+  "effort": "medium",
+  "git_sha": "185db0d",
+  "noise_fraction": 0.3,
+  "asked": {
+    "T1": "588461e155623e3f",
+    "T7": "dd0287b0f66402ef"
+  },
+  "baseline": "",
+  "started_at": "2026-09-21T06:19:18",
+  "runs": [
+    {
+      "case": "T1",
+      "run_dir": "/home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/merge-smoke-20260921-061918-84cb/runs/T1",
+      "aborted": false,
+      "run_id": "20260921-061919-9973",
+      "arm": "core",
+      "model": "gpt-5.6-sol",
+      "workspace": "/home/qiuzi/.openreynolds-buildup/work/T1-20260921-061919-9973",
+      "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T1-20260921-061919-9973/t1",
+      "started_at": "2026-09-21T06:19:19",
+      "ended_at": "2026-09-21T06:22:30",
+      "seconds": 189.8,
+      "n_turns": 21,
+      "n_steps": 19,
+      "first_mesh_step": 6,
+      "mesh_exists": true,
+      "checkmesh_ok": true,
+      "usd": 0.3696,
+      "stopped": "done",
+      "expects": "done",
+      "passed": true,
+      "why": "",
+      "contaminated": false,
+      "completed": true,
+      "measured": [
+        "union_closure",
+        "normals",
+        "coverage",
+        "scale",
+        "self_intersection"
+      ]
+    },
+    {
+      "case": "T7",
+      "run_dir": "/home/qiuzi/PycharmProjects/OpenReynolds/docs/cad-buildup/sweeps/merge-smoke-20260921-061918-84cb/runs/T7",
+      "aborted": false,
+      "run_id": "20260921-061919-45f1",
+      "arm": "core",
+      "model": "gpt-5.6-sol",
+      "workspace": "/home/qiuzi/.openreynolds-buildup/work/T7-20260921-061919-45f1",
+      "case_dir": "/home/qiuzi/.openreynolds-buildup/work/T7-20260921-061919-45f1/t7",
+      "started_at": "2026-09-21T06:19:19",
+      "ended_at": "2026-09-21T06:21:10",
+      "seconds": 108.2,
+      "n_turns": 8,
+      "n_steps": 7,
+      "first_mesh_step": 2,
+      "mesh_exists": true,
+      "checkmesh_ok": true,
+      "usd": 0.2012,
+      "stopped": "done",
+      "expects": "done",
+      "passed": true,
+      "why": "",
+      "contaminated": false,
+      "completed": true,
+      "measured": []
+    }
+  ],
+  "ended_at": "2026-09-21T06:22:30"
+}
