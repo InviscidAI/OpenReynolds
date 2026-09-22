@@ -22,6 +22,14 @@ from openreynolds.tools import CORES_PROBE, ToolContext
 from openreynolds.view import View
 
 
+def pytest_configure(config):
+    """Windows terminals report 80 columns; pytest then folds workspace paths
+    in the middle of a token and assertions on `str(files_dir)` fail even when
+    the command did the right thing."""
+    del config
+    os.environ["COLUMNS"] = "200"
+
+
 class FakeBackend(Backend):
     """An in-memory workspace. No network, no service."""
 

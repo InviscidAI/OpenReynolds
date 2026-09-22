@@ -393,7 +393,11 @@ def test_leaving_says_where_the_local_copy_is(backend, store, monkeypatch):
     from rich.console import Console
 
     written = _io.StringIO()
-    monkeypatch.setattr(cli, "console", Console(file=written, width=200))
+    monkeypatch.setattr(
+        cli,
+        "console",
+        Console(file=written, width=200, force_terminal=False, soft_wrap=True),
+    )
     store.session.home = HOME
 
     cli._report_on_exit(backend, store)
@@ -567,7 +571,11 @@ def wide_console(monkeypatch):
     these tests are about."""
     from rich.console import Console
 
-    monkeypatch.setattr(cli, "console", Console(width=200))
+    monkeypatch.setattr(
+        cli,
+        "console",
+        Console(width=200, force_terminal=False, soft_wrap=True),
+    )
 
 
 def as_the_only_study(monkeypatch, backend, store):

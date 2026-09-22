@@ -587,9 +587,15 @@ def test_a_console_nobody_is_looking_at_is_not_folded_at_eighty_columns():
     """rich falls back to eighty columns off a terminal, which folds a workspace path
     in the middle of a token and makes a piped run harder to read than the terminal it
     was copied from."""
+    import io
+
+    from rich.console import Console
+
     from openreynolds.view import PIPED_WIDTH, plain_console
 
-    assert plain_console().width == PIPED_WIDTH
+    if Console(file=io.StringIO()).is_terminal:
+        pytest.skip("rich reports a StringIO as a terminal on this platform")
+    assert plain_console(file=io.StringIO()).width == PIPED_WIDTH
 
 
 def test_a_piped_line_longer_than_the_console_is_not_folded():
