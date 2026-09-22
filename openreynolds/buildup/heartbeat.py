@@ -157,6 +157,8 @@ def alive(pid: int | None) -> bool:
     """`kill -0`, and nothing else. See this module's first paragraph."""
     if not pid:
         return False
+    if os.name != "posix":
+        return _alive_on_windows(int(pid))
     try:
         os.kill(int(pid), 0)
     except ProcessLookupError:
@@ -166,6 +168,35 @@ def alive(pid: int | None) -> bool:
     except OSError:
         return False
     return True
+
+
+def _alive_on_windows(pid: int) -> bool:
+    """The same question, asked the way Windows answers it.
+
+    `os.kill(pid, 0)` is not `kill -0` there: signal 0 is `CTRL_C_EVENT`, and CPython
+    turns it into `GenerateConsoleCtrlEvent` -- a Ctrl+C to the console, not a query.
+    Asking whether the *test process itself* was alive therefore interrupted the test
+    run: every Windows CI job on this branch ended at 5%, `KeyboardInterrupt` inside a
+    `sleep`, 261 of 3200 tests run and a green summary above a red exit.
+
+    `OpenProcess` with `PROCESS_QUERY_LIMITED_INFORMATION` asks instead, and `259` is
+    `STILL_ACTIVE` -- a handle stays openable after the process ends, so the exit code
+    is the part that answers. `ERROR_ACCESS_DENIED` (5) is the `PermissionError` arm
+    above: a process there is one we may not look at, which is still a process.
+    """
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return ctypes.get_last_error() == 5
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == 259
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def attach(desk: Any, run_dir: Path) -> Heartbeat:
