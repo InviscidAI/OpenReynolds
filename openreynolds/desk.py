@@ -35,6 +35,7 @@ import time
 from typing import Any
 
 from .llm import ProviderError, make_provider
+from .view import desk_step_line
 
 DESK_SYSTEM = """\
 You are the front desk of a CFD assistant running a long OpenFOAM job on a remote \
@@ -249,6 +250,11 @@ def _render(content: Any) -> str:
     if isinstance(content, str):
         return " ".join(content.split())
     if isinstance(content, dict):
+        if content.get("desk") == "cad":
+            # A CAD desk step (`cad.agent.Step.as_event`): the concierge can say what
+            # the desk is on right now, which is the question it is most often asked
+            # while a mesh builds.
+            return desk_step_line(content)
         if "tool" in content:
             inp = content.get("input") or {}
             arg = inp.get("cmd") or inp.get("path") or ""

@@ -356,6 +356,10 @@ class JsonView(View):
     def desk(self, text: str) -> None:
         self.emit("desk", text=text)
 
+    def desk_step(self, event: dict[str, Any]) -> None:
+        """One step of the CAD desk's work, the dict the transcript holds."""
+        self.emit("desk_step", **event)
+
     def approval(self, request_id: str, kind: str, title: str, detail: str, choices: list[str]) -> None:
         """Answered by sending a message: `/yes`, `/no [reason]` or `/all`."""
         self.emit("approval", id=request_id, kind=kind, title=title, detail=detail,

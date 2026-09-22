@@ -26,6 +26,35 @@ SLOW_MIRROR_CYCLE_S = 30.0
 empty cycle runs every twenty seconds all session and rightly says nothing."""
 
 
+def desk_step_line(event: dict[str, Any]) -> str:
+    """One line for one CAD desk step, as every text view prints it.
+
+    `event` is `cad.agent.Step.as_event()` -- the same dict the transcript holds, so
+    a person reading the study's log later and a person watching the terminal read
+    the same words. A review step names its round and verdict; a cell step its
+    number, its exit and the desk's own sentence about it, falling back to the first
+    line of code when the desk said nothing.
+    """
+    kind = str(event.get("kind") or "cell")
+    number = int(event.get("step") or 0)
+    seconds = float(event.get("seconds") or 0.0)
+    text = " ".join(str(event.get("text") or "").split())
+    if kind == "review":
+        head = f"cad review {number}" if number else "cad review"
+        first = text.splitlines()[0] if text else ""
+        return f"{head} · {seconds:.0f}s · {first[:220]}"
+    head = f"cad desk step {number}" if number else "cad desk"
+    exit_code = event.get("exit_code")
+    state = "ok" if exit_code == 0 else f"exit {exit_code}"
+    seen = " · picture" if event.get("image") else ""
+    return f"{head} · {seconds:.0f}s · {state}{seen} · {text[:220]}"
+
+
+def _desk_step_blocks(event: dict[str, Any]) -> bool:
+    """A review that handed work back, which is the one desk line worth colour."""
+    return str(event.get("kind") or "") == "review" and event.get("exit_code") not in (0, None)
+
+
 @runtime_checkable
 class View(Protocol):
     """Everything a session needs to show."""
@@ -117,6 +146,14 @@ class View(Protocol):
     def desk(self, text: str) -> None:
         """The front desk answering the user while the main agent is mid-turn.
         Shown as speech, clearly attributed to the desk and not the agent."""
+
+    def desk_step(self, event: dict[str, Any]) -> None:
+        """One step of the CAD desk's work, or the reviewer's verdict on it, as the
+        transcript records it (`cad.agent.Step.as_event`). Shown in the conversation,
+        not only on the status line: the desk holds the session for minutes and the
+        person watching is owed a line per step, the same as a tool call gets. A view
+        that follows the transcript file (the web app) may leave this empty -- the
+        row is already in the store by the time this is called."""
 
     def delivered(self, event: Any) -> None:
         """The mirror surfaced new renders (and maybe assembled a gif). Announce
@@ -412,6 +449,13 @@ class ConsoleView(View):
 
     def desk(self, text: str) -> None:
         self.console.print(f"\n[bold cyan]desk[/] [cyan]{text}[/]", highlight=False)
+
+    def desk_step(self, event: dict[str, Any]) -> None:
+        """One line per step of the CAD desk's work, in the conversation, dim: the
+        reviewer's verdict in the same place and brighter when it hands work back."""
+        self.console.print(f"  {escape(desk_step_line(event))}",
+                           style="yellow" if _desk_step_blocks(event) else "dim",
+                           highlight=False)
 
     def model(self, model: str, effort: str, provider: str) -> None:
         self.console.print(f"[bold]model[/] {model}   [bold]effort[/] {effort}   "

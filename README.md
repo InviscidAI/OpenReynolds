@@ -423,6 +423,7 @@ three cases exit code `1` alone cannot tell apart. In between:
 | `jobs` | Every job and its state, whenever any of it changes. |
 | `progress` | What is running and how far along, when the picture changes. |
 | `stage` / `narration` / `desk` / `status` | What is happening now, in words. |
+| `desk_step` | One step of the CAD desk's work while the `cad` tool runs, or the independent reviewer's verdict on it (`kind` is `cell` or `review`): `step`, `text` (the desk's own sentence, or the verdict), `cmd`, `exit_code`, `seconds`, `image`. The same object is an `event` row in the study's transcript. |
 | `mirrored` / `delivered` / `files` / `renders` | Files coming home, and what is in the workspace. |
 | `notice` / `warn` / `info` / `usage` / `watching` / `interjection` / `prompt` | The rest of the terminal's own reporting. |
 | `model` | The session's `model`, `effort` and `provider`: once at the start, and again whenever `/model` or `/effort` changes one. |

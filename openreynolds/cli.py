@@ -1492,7 +1492,8 @@ def session(
             with _timed("review"):
                 reviewer = cad.Reviewer(
                     cfg, backend,
-                    on_step=lambda step: _cad_desk_step(view, tracker, step),
+                    on_step=lambda step: _cad_desk_step(view, tracker, step,
+                                                        store=store, capture=capture),
                 )
             ctx.reviewer = reviewer
         if cfg.mesh_tool and not cfg.model_key_missing():
@@ -1509,7 +1510,8 @@ def session(
                 ctx.cad = cad.CoreDesk(
                     cfg, backend, store, store.session.home,
                     interject=lambda: loop.interject() if loop.interject else None,
-                    on_step=lambda step: _cad_desk_step(view, tracker, step),
+                    on_step=lambda step: _cad_desk_step(view, tracker, step,
+                                                        store=store, capture=capture),
                     reviewer=reviewer if cfg.cad_review else None,
                 )
         loop.interject = lambda: _typed_while_working(
@@ -1903,8 +1905,9 @@ def _when(mtime: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.gmtime(mtime)) + "Z"
 
 
-def _cad_desk_step(view: Any, tracker: Any, step: Any) -> None:
-    """Say what the CAD desk just did, while it is doing it.
+def _cad_desk_step(view: Any, tracker: Any, step: Any,
+                   store: Any = None, capture: Any = None) -> None:
+    """Say what the CAD desk just did, while it is doing it -- and write it down.
 
     The desk holds the session's one thread for minutes at a time, and until this
     the screen said nothing about what was happening inside -- a reviewer's word for
@@ -1912,17 +1915,43 @@ def _cad_desk_step(view: Any, tracker: Any, step: Any) -> None:
     a mesh from a desk stuck. One line per cell, the way a tool call is announced,
     plus the bar's own narration so it survives the next redraw.
 
+    **And a row in the transcript.** The status line is gone at the next redraw and
+    was never in the study's log, so a study read back afterwards (`study_log.py`)
+    showed a 700 s gap and then a mesh, with twenty-three cells and two reviews
+    invisible in between -- the person asking "what did the reviewer say about each
+    iteration" could not be answered. Each step now lands in the store as an `event`
+    row whose content is `Step.as_event()` (`"desk": "cad"`), uploaded to the capture
+    plane like every other row, so the web chat (which follows the transcript file),
+    the local chat (`view.desk_step`) and the operator's log all carry the same line.
+    It is recorded and **not** told to the model: `loop.inform` would put it in the
+    thread, and the desk's progress is the person's to read, not the agent's.
+
     The reviewer reports through the same hook (`cad.Reviewer._report`), one synthetic
-    step whose `cmd` opens with `[review]` and whose `image` counts the views it
-    looked at -- so it renders as a line of the desk's work, which is what it is.
-    A step with nothing in `cmd` is a line with no words, not an exception.
+    step of `kind="review"` whose `cmd` opens with `[review]` and whose `image`
+    counts the views it looked at -- so it renders as a line of the desk's work, which
+    is what it is. A step with nothing in `cmd` is a line with no words, not an
+    exception, and nothing here may end a mesh.
     """
     heads = (step.cmd or "").strip().splitlines()
     first = heads[0][:90] if heads else ""
     seen = "  <picture>" if step.image else ""
     line = f"cad desk [{step.exit_code}] {step.seconds:.0f}s  {first}{seen}"
+    event: dict[str, Any] | None = None
+    try:
+        event = step.as_event()
+    except Exception:  # noqa: BLE001 - a step that cannot describe itself still shows
+        event = None
+    if event is not None and store is not None:
+        try:
+            seq = store.append_message("event", event)
+            if capture is not None:
+                capture.message(seq, "event", event)
+        except Exception:  # noqa: BLE001 - a transcript row may never end a mesh
+            pass
     try:
         view.narration(line)
+        if event is not None:
+            view.desk_step(event)
         if tracker is not None:
             # The bar's own activity, so the next redraw still says what the desk is
             # on rather than reverting to "cad" for the whole call.
