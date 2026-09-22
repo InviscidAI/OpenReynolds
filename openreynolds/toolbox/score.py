@@ -68,8 +68,25 @@ column the file has."""
 
 BOUND_FRACTION = 0.5
 """A field whose `bounding` message appears on at least this fraction of the parsed
-time steps is being held at its bound rather than solved for, and that is a run that
-is failing slowly. Early bounding on k or omega is ordinary and is not this."""
+time steps, and whose clip is material (`BOUND_DEPTH`), is being held at its bound
+rather than solved for, and that is a run that is failing slowly. Early bounding on k
+or omega is ordinary and is not this."""
+
+BOUND_DEPTH = 0.1
+"""How far below zero the field is being clipped from, as a fraction of its mean
+(`log_digest`'s `bounding_depth`: the median over the run of `|min| / average`),
+before the count above means anything.
+
+The count alone labelled a converged case diverged. The ground-effect section at its
+baseline (2026-09-22, 26,004 cells, 1500 iterations of simpleFoam on 4 ranks): every
+residual at 1e-5 and flat, the force coefficients steady to six figures, and
+`bounding k, min: -9e-4 max: 1.98 average: 0.094` on 1355 of the 1500 steps -- a
+handful of cells at the trailing edge dipping under zero by half a percent of the
+field's mean. That is k-omega SST's ordinary housekeeping and would have been on
+every candidate of the study. A field genuinely held at its bound reads the other
+way -- `bounding omega, min: -5.6e3 max: 8.1e6 average: 22` -- a clip many times the
+mean. One tenth of the mean is a decade above the healthy case and two below the
+failing ones."""
 
 
 # -- the pieces --------------------------------------------------------------------
@@ -196,12 +213,15 @@ def read_log(log: Path | None) -> dict:
         out["diverged"] = "a residual is climbing off its own best"
     else:
         steps = max(1, out["steps"])
+        depth = data.get("bounding_depth") or {}
         held = [field for field, count in sorted(data["bounding"].items())
-                if count >= BOUND_FRACTION * steps and count >= log_digest.MIN_STEPS]
+                if count >= BOUND_FRACTION * steps and count >= log_digest.MIN_STEPS
+                and depth.get(field, 0.0) >= BOUND_DEPTH]
         if held:
             out["diverged"] = (f"{', '.join(held)} held at its bound on "
                                f"{', '.join(str(data['bounding'][f]) for f in held)} of "
-                               f"{out['steps']} steps")
+                               f"{out['steps']} steps (clipped from "
+                               f"{', '.join(f'{depth[f]:.2g}' for f in held)} x the mean below zero)")
     if not data["residuals"] and not data["fatal"]:
         out["shape"] = "short"
     return out

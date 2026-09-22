@@ -103,7 +103,10 @@ def climbing() -> list[float]:
 
 
 def log(case: Path, series: list[float], *, name: str = "log.simpleFoam",
-        fatal: str = "", bounding_every: int = 0, end: bool = True) -> Path:
+        fatal: str = "", bounding_every: int = 0, end: bool = True,
+        bounding_line: str = "bounding omega, min: -1.2e+02 max: 3.4e+05 average: 4.5\n") -> Path:
+    """`bounding_line` defaults to a field genuinely held at its bound -- the clip
+    27x the field's mean, as `locate.py`'s cascade fixture has it."""
     body = []
     for step, value in enumerate(series, start=1):
         body.append(f"Time = {step}\n\n")
@@ -112,7 +115,7 @@ def log(case: Path, series: list[float], *, name: str = "log.simpleFoam",
         body.append(f"GAMG:  Solving for p, Initial residual = {2 * value:.6e}, "
                     f"Final residual = {value / 5:.6e}, No Iterations 5\n")
         if bounding_every and step % bounding_every == 0:
-            body.append("bounding omega, min: -12 max: 4e5 average: 300\n")
+            body.append(bounding_line)
         body.append(f"ExecutionTime = {step * 0.5:.1f} s  ClockTime = {step} s\n\n")
     if fatal:
         body.append(f"--> FOAM FATAL ERROR: {fatal}\n")
@@ -263,6 +266,37 @@ def test_a_field_held_at_its_bound_for_most_of_the_run_is_diverged(score, tmp_pa
     out = score.score(case, LOCK)
     assert out["label"] == "diverged"
     assert "omega held at its bound" in out["detail"]
+    assert "27 x the mean" in out["detail"]
+
+
+def test_a_shallow_clip_on_most_steps_of_a_converged_run_is_not_diverged(score, tmp_path):
+    """The ground-effect section at its baseline, 2026-09-22: residuals levelled at
+    1e-5, forces steady, and `bounding k` on 1355 of 1500 steps with the minimum half
+    a percent of the mean below zero. k-omega SST does that on a healthy run, and the
+    count-only rule scored the campaign's first candidate `diverged` on it."""
+    case = tmp_path / "shallow"
+    mesh(case)
+    forces(case)
+    log(case, levelled(), bounding_every=1,
+        bounding_line="bounding k, min: -0.00092155 max: 1.97875 average: 0.0943649\n")
+    out = score.score(case, LOCK)
+    assert out["label"] == "ok", out["detail"]
+    assert out["converged"] is True
+
+
+def test_the_depth_gate_reads_the_typical_step_not_the_first(score, tmp_path):
+    """A first-iteration `bounding omega` at a hundred times the mean and a shallow
+    clip after it is the healthy kOmegaSST start; the median is what decides."""
+    case = tmp_path / "median"
+    mesh(case)
+    forces(case)
+    path = log(case, levelled(), bounding_every=1,
+               bounding_line="bounding omega, min: -0.01 max: 3e3 average: 30\n")
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("bounding omega, min: -0.01 max: 3e3 average: 30\n",
+                        "bounding omega, min: -3000 max: 3e3 average: 30\n", 3)
+    path.write_text(text, encoding="utf-8")
+    assert score.score(case, LOCK)["label"] == "ok"
 
 
 def test_early_bounding_on_a_run_that_then_settles_is_not_diverged(score, tmp_path):
