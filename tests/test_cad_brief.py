@@ -273,7 +273,13 @@ def test_the_index_is_not_inlined_into_the_brief(brief, index):
     # leaving it would have been worse than the length. A desk cannot waive a check it
     # was never told it could waive, and it cannot call a tool nobody described. The
     # refusal section was folded into the same protocol to pay for part of it.
-    assert chars < 16_000, f"the brief has grown to {chars} chars (~{chars // 4} tokens)"
+    #
+    # 17,000 on 2026-09-22, for the independent reviewer -- one paragraph in the
+    # finishing section. The brief was at 15,529 and the paragraph is ~700 chars. A desk
+    # that is handed a reviewer's problems as work and was never told a reviewer exists
+    # reads them as a check it cannot find and argues with the wrong thing; the
+    # paragraph is what makes "say why in your closing summary" a move it knows it has.
+    assert chars < 17_000, f"the brief has grown to {chars} chars (~{chars // 4} tokens)"
     assert len(index) > chars, "the index is meant to be the bigger of the two"
     headings = [line for line in index.splitlines() if line.startswith("## ")]
     for heading in headings:

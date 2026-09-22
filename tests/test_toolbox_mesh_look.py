@@ -204,9 +204,9 @@ def test_the_report_says_when_nothing_would_rebuild_it(tmp_path):
 def _drive(monkeypatch, argv, cwd, recorded):
     import sys
 
-    def standing_in(case, out_png, check=True, region=""):
+    def standing_in(case, out_png, check=True, region="", views=None):
         recorded["case"], recorded["out"], recorded["check"] = case, out_png, check
-        recorded["region"] = region
+        recorded["region"], recorded["views"] = region, views
         payload = {"case": str(case), "polymesh": True, "patches": [], "zones": [],
                    "build": [], "cells": 0, "faces": 0, "points": 0, "bounds": [],
                    "two_d": False, "checkmesh": "", "checkmesh_ok": False, "metrics": {},
@@ -214,6 +214,8 @@ def _drive(monkeypatch, argv, cwd, recorded):
         if out_png is not None:
             payload["render"] = str(out_png)
             payload["render_abs"] = str(Path(out_png).resolve())
+        if views is not None:
+            payload["views"] = [str(Path(views) / name) for name in mesh_look.VIEWS_3D]
         return payload
 
     monkeypatch.chdir(cwd)
@@ -301,6 +303,30 @@ def test_the_desk_and_the_templates_run_from_the_case_and_are_unchanged(tmp_path
     assert (case / "renders" / "mesh_look.json").is_file()
 
 
+def test_views_follow_the_same_path_rule_and_work_with_no_check(tmp_path, monkeypatch):
+    """`--views DIR` is read against the working directory like `--out`, and in the JSON
+    the three pictures are listed relative to the case when they are inside it -- the
+    reviewer runs `mesh_look.py . --no-check --views renders/review` from the case and
+    fetches what the list names."""
+    import json
+
+    case = case_with(tmp_path)
+    recorded: dict = {}
+
+    code = _drive(monkeypatch, [".", "--no-check", "--views", "renders/review",
+                                "--json", "renders/look.json"], case, recorded)
+
+    assert code == 0
+    assert recorded["check"] is False
+    assert recorded["views"] == case / "renders" / "review"
+    written = json.loads((case / "renders" / "look.json").read_text(encoding="utf-8"))
+    assert written["views"] == [str(Path("renders/review") / name) for name in mesh_look.VIEWS_3D]
+
+    recorded.clear()
+    _drive(monkeypatch, ["mesh"], tmp_path, recorded)
+    assert recorded["views"] is None, "without --views nothing is drawn and nothing is listed"
+
+
 def test_the_report_prints_the_absolute_path_when_it_has_one():
     payload = {"case": "/work/s/mesh", "polymesh": True, "patches": [], "zones": [],
                "build": ["Allmesh"], "render": "look.png",
@@ -342,6 +368,121 @@ def test_a_patchs_normal_is_reported_out_of_the_fluid(tmp_path):
     for patch in payload["patches"]:
         if patch.get("inward"):
             assert patch["inward"] == -1, "a measured normal must point out of the fluid"
+
+
+# -- several views, for a reviewer who did not build it ------------------------
+#
+# `draw()` is one picture for whoever made the mesh. `draw_views` is three composite
+# pictures for a reviewer with no context: 2D gets the patches, the cells and a 2x2
+# zoom into the quadrants; 3D gets four isometric corners, six orthographic sides and
+# four cuts. These run the real renderer on the hand-written box from
+# `test_toolbox_layer_report`, so they skip where pyvista or its OpenFOAM reader is not
+# there to run.
+
+
+_CAN_RENDER: bool | None = None
+
+_RENDER_PROBE = (
+    "import pyvista as pv\n"
+    "pv.OFF_SCREEN = True\n"
+    "p = pv.Plotter(off_screen=True, window_size=(64, 64))\n"
+    "p.add_mesh(pv.Cube())\n"
+    "p.screenshot(return_img=True)\n"
+    "p.close()\n"
+)
+
+
+def _offscreen_render_works() -> bool:
+    """Whether this machine can draw a pyvista screenshot at all, asked once.
+
+    Asked in a **subprocess**, because the way a machine without OSMesa or EGL says no
+    is a segmentation fault inside VTK's render call -- which no `try` in this process
+    catches and which takes the whole pytest run down with it. GitHub's hosted runners
+    are exactly that machine: the `vtk` wheel imports, `Plotter()` constructs, and
+    `screenshot()` kills the interpreter. `importorskip("pyvista")` cannot see it.
+    """
+    global _CAN_RENDER
+    if _CAN_RENDER is None:
+        import subprocess
+        import sys
+        try:
+            done = subprocess.run([sys.executable, "-c", _RENDER_PROBE],
+                                  capture_output=True, timeout=120)
+            _CAN_RENDER = done.returncode == 0
+        except Exception:  # noqa: BLE001 - a probe that will not run is a no
+            _CAN_RENDER = False
+    return _CAN_RENDER
+
+
+def _views_fixture(tmp_path, two_d: bool):
+    pytest.importorskip("pyvista")
+    if not _offscreen_render_works():
+        pytest.skip("this machine cannot render offscreen (VTK has no OSMesa/EGL here)")
+    from test_toolbox_layer_report import write_box
+
+    if two_d:
+        case = write_box(tmp_path / "flat", [0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0],
+                         [0, 0.2, 0.4, 0.7, 1.0], [0, 0.1], wall=("zmin", "zmax"))
+        boundary = case / "constant" / "polyMesh" / "boundary"
+        # The one-cell-thick faces become `empty`, which is what makes it a plane case.
+        boundary.write_text(boundary.read_text().replace("type            wall;",
+                                                         "type            empty;"))
+    else:
+        case = write_box(tmp_path / "box", [0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0],
+                         [0, 0.4, 1.0], [0, 0.2, 0.5, 1.0])
+    return case
+
+
+def _views_of(case, views_dir):
+    payload = mesh_look.look(case, None, check=False, views=views_dir)
+    if str(payload.get("error", "")).startswith("the mesh could not be opened"):
+        pytest.skip(payload["error"])
+    return payload
+
+
+def test_a_3d_case_gets_iso_ortho_and_cuts(tmp_path):
+    case = _views_fixture(tmp_path, two_d=False)
+    views_dir = case / "renders" / "review"
+
+    payload = _views_of(case, views_dir)
+
+    assert payload["two_d"] is False
+    assert not payload.get("error"), payload.get("error")
+    assert [Path(p).name for p in payload["views"]] == list(mesh_look.VIEWS_3D)
+    assert list(mesh_look.VIEWS_3D) == ["iso.png", "ortho.png", "cuts.png"]
+    for written in payload["views"]:
+        assert Path(written).is_file() and Path(written).parent == views_dir
+        assert Path(written).stat().st_size > 1000, "a blank picture is not a picture"
+    assert sorted(p.name for p in views_dir.iterdir()) == sorted(mesh_look.VIEWS_3D), (
+        "exactly three pictures, no more")
+
+
+def test_a_2d_case_gets_overview_cells_and_detail(tmp_path):
+    case = _views_fixture(tmp_path, two_d=True)
+    views_dir = case / "renders" / "review"
+
+    payload = _views_of(case, views_dir)
+
+    assert payload["two_d"] is True
+    assert not payload.get("error"), payload.get("error")
+    assert [Path(p).name for p in payload["views"]] == list(mesh_look.VIEWS_2D)
+    assert list(mesh_look.VIEWS_2D) == ["overview.png", "cells.png", "detail.png"]
+    for written in payload["views"]:
+        assert Path(written).is_file() and Path(written).parent == views_dir
+        assert Path(written).stat().st_size > 1000
+    assert "views" in mesh_look.report(payload)
+
+
+def test_without_views_the_payload_is_what_it_always_was(tmp_path):
+    payload = mesh_look.look(case_with(tmp_path), None, check=False)
+    assert "views" not in payload
+
+
+def test_looking_at_a_case_for_its_views_leaves_no_time_directory_behind(tmp_path):
+    """`open_mesh` makes an empty `0/` for the reader; looking must not change the case."""
+    case = _views_fixture(tmp_path, two_d=False)
+    _views_of(case, case / "renders" / "review")
+    assert not (case / "0").exists()
 
 
 # -- the zones -----------------------------------------------------------------

@@ -44,6 +44,7 @@ from .brief import (CAD_DONE, CAD_REFUSED, remark_message, system_prompt,
                     task_message)
 from .cells import Cell, CellLog
 from .check import Check, mesh_regions, verify
+from .review import MAX_ROUNDS, REVIEW_TIMEOUT_S, Review, facts_from_check
 from . import gate
 
 MAX_STEPS = 30
@@ -342,6 +343,17 @@ class CadResult:
     """Empty when it finished on its own terms; else 'steps', 'time' or 'provider'."""
     script: str = ""
     """The accepted cells, concatenated. The artifact, not a record of it."""
+    review: Any | None = None
+    """The independent look that decided the finish (`cad/review.py`), or None.
+
+    A `Review` when a reviewer was wired and the finish went past it: the pass that let
+    the declare stand, the skipped review that could not look, or -- when the rounds
+    ran out on a fail -- the last failing review with `unresolved` set, which is the
+    concern the main agent and the person are handed. None when no reviewer was wired,
+    and None on the paths nobody reviews: a refusal, and the end-of-run check over a
+    run that stopped on steps, time or the provider."""
+    reviews: list = field(default_factory=list)
+    """Every review this run made, in order. `review` is the one that counted."""
 
 
 class CadDesk:
@@ -355,10 +367,24 @@ class CadDesk:
     def __init__(self, cfg: Any, backend: Any, store: Any, home: str,
                  on_step: Callable[[Step], None] | None = None,
                  interject: Callable[[], str | None] | None = None,
-                 on_turn: Callable[..., None] | None = None):
+                 on_turn: Callable[..., None] | None = None,
+                 reviewer: Any | None = None):
         self.cfg = cfg
         self.backend = backend
         self.store = store
+        self.reviewer = reviewer
+        """The independent reviewer (`cad/review.py`), or None for a desk whose finish is
+        `checkMesh` and the gates alone.
+
+        Consulted at the accept points and nowhere else: a declare that passes the checks
+        is shown to it before it stands, and a confident, blocking fail comes back to the
+        desk as work, `MAX_ROUNDS` times at most. Constructed outside, like the provider,
+        because it has its own model and its own progress hook."""
+        self._review_fails = 0
+        """Blocking fail verdicts this run has been handed. Per run; reset in `run`."""
+        self._last_review: Review | None = None
+        """The most recent review, handed to the next as `prior` so a re-review closes
+        the loop it opened rather than opening another."""
         """The session's transcript, read for what the person actually said."""
         self.home = (home or backend.workspace_root).rstrip("/")
         self.toolbox = f"{str(backend.workspace_root).rstrip('/')}/.toolbox"
@@ -438,9 +464,13 @@ class CadDesk:
         """A cell that outran its window and has not been judged yet."""
         started = time.monotonic()
         self._started = started
-        """The same clock the loop breaks on, where `_poll` can reach it: a wait the
-        desk asks for has to be measured against the run's budget and not only against
-        its own argument."""
+        """The clock the loop breaks on, where `_poll` and `_review` can reach it: a wait
+        the desk asks for has to be measured against the run's budget and not only
+        against its own argument, and a wait the desk did not ask for -- the reviewer's
+        render and model call -- is credited back to it here. `started` stays what it
+        is, because `result.seconds` is the wall clock and not the budget."""
+        self._review_fails = 0
+        self._last_review = None
         result = CadResult(case_rel=case_rel, case_dir=case_dir)
         try:
             self.backend.exec(f"mkdir -p {shlex.quote(case_dir)}", timeout_s=60)
@@ -492,7 +522,10 @@ class CadDesk:
             if turns >= self.max_steps:
                 result.stopped = "steps"
                 break
-            if time.monotonic() - started >= self.max_seconds:
+            if time.monotonic() - self._started >= self.max_seconds:
+                # `self._started`, not `started`: the reviewer's time is credited to
+                # it, and a desk charged for waiting on its reviewer would run out of
+                # clock for having been looked at.
                 result.stopped = "time"
                 break
             try:
@@ -556,8 +589,10 @@ class CadDesk:
                 result.check = check
                 result.summary = _summary(turn.text) or result.summary
                 if check.ok and not unresolved:
-                    result.ok = True
-                    break
+                    if self._accept(check, request, result, messages, ids):
+                        result.ok = True
+                        break
+                    continue
                 # One path, because a declare is either accepted or it is not. A failing
                 # `checkMesh` and an unresolved advisory warning come back the same way
                 # and are bounded the same way -- `turns >= max_steps`, and `no-progress`
@@ -604,8 +639,10 @@ class CadDesk:
                 check = self._verify(case_rel, request, self.log.script())
                 result.check = check
                 if check.ok:
-                    result.ok = True
-                    break
+                    if self._accept(check, request, result, messages, ids):
+                        result.ok = True
+                        break
+                    continue
                 _answer(messages, ids, check.as_refusal(), is_error=True,
                         note=self._drain())
                 continue
@@ -633,11 +670,22 @@ class CadDesk:
             # mesh nobody looked at is exactly the failure this desk exists to end.
             # Measured, not assumed: a T10 run built 91,000 cells, hit a 400 on its
             # next model call, and was reported as "nothing was meshed".
+            #
+            # Not reviewed, and not by oversight. The reviewer judges a shape the desk
+            # says is finished against the request; a run that stopped on steps, time
+            # or the provider said no such thing, and there is no desk left to hand a
+            # fail back to. `result.review` stays None and the tool result says "not
+            # reviewed", which is the truth about it. A refusal is not reviewed for the
+            # plainer reason that there is nothing to look at.
             result.check = self._verify(case_rel, request, result.script)
             result.ok = result.check.ok
         if not result.summary:
             result.summary = _summary(last_text)
         result.png = self._render_bytes(result)
+        if result.png is None and result.review is not None and result.review.png:
+            # The shipped desk's finish check draws nothing, so the reviewer's first view
+            # is the one picture the main agent gets of what was built.
+            result.png = result.review.png
         return result
 
     # -- the three seams a differently-briefed desk replaces ---------------------
@@ -846,6 +894,79 @@ class CadDesk:
                          if s.state in (gate.WARNED, gate.XFAIL, gate.WAIVED)}
         unresolved = [s.check for s in states if s.state == gate.WARNED]
         return check, gate.render(states, self.case_dir), unresolved
+
+    # -- the independent look, at the finish --------------------------------------
+
+    def _accept(self, check: Check, request: str, result: CadResult,
+                messages: list[dict[str, Any]], ids: list[str]) -> bool:
+        """The checks passed; whether the finish stands, or the reviewer hands it back.
+
+        One method for both accept points -- the declare and the legacy finish cell --
+        because the question is the same at each: `checkMesh` and the gates have said
+        yes, and the only thing left that can say no is a second pair of eyes that did
+        not build the shape. Returns True when the run may break on `ok`, False when
+        the reviewer's problems have been posted as work and the loop should continue.
+
+        Bounded by construction. `MAX_ROUNDS` blocking fails and the next declare that
+        passes the checks is accepted without asking again, with the last failing
+        review marked `unresolved` so the concern travels up rather than being argued
+        about forever -- the desk was told twice, and either fixed it or said why not
+        in a summary the main agent reads too. Everything that is not a confident,
+        blocking fail is a pass: `Review.blocks_finish` is the whole of the rule.
+        """
+        if self.reviewer is None:
+            return True
+        if self._review_fails >= MAX_ROUNDS:
+            last = self._last_review
+            if last is not None:
+                last.unresolved = True
+            result.review = last
+            return True
+        review = self._review(check, request, result)
+        if review is not None and review.blocks_finish():
+            self._review_fails += 1
+            _answer(messages, ids, review.as_work(self._review_fails, MAX_ROUNDS),
+                    is_error=True, note=self._drain())
+            return False
+        result.review = review
+        return True
+
+    def _review(self, check: Check, request: str, result: CadResult) -> Review | None:
+        """One look by the reviewer, with its time given back to the desk's budget.
+
+        The reviewer renders over the backend and makes a model call of its own, and
+        neither is the desk's doing: a desk that lost a minute of its clock every time
+        it was looked at would be charged for the harness's caution. So the wait is
+        added to `self._started`, which is the clock the loop and `_poll` measure
+        against; `result.seconds` reads the untouched local clock and stays the wall
+        time the caller actually waited.
+
+        `_mark` first, for the reason `_mark("gates", ...)` exists: the render and the
+        call are a turn-free stretch, and the watcher outside would otherwise read the
+        silence as a stall. The reviewer reports its own progress line, so none is
+        emitted here. `Reviewer.review` never raises by contract; a reviewer that does
+        anyway is recorded as skipped, because a fault in the second opinion may not
+        end the build it was asked about.
+        """
+        if self.reviewer is None:
+            return None
+        self._mark("review", REVIEW_TIMEOUT_S)
+        t0 = time.monotonic()
+        try:
+            review = self.reviewer.review(
+                self.case_dir, result.case_rel, request, self._said(), result.summary,
+                facts_from_check(check), prior=self._last_review)
+        except Exception as exc:  # noqa: BLE001 - the reviewer, not the mesh
+            review = Review(
+                verdict="skipped",
+                round=(self._last_review.round + 1) if self._last_review else 1,
+                error=f"the reviewer raised: {type(exc).__name__}: {exc}")
+        finally:
+            self._started += time.monotonic() - t0
+        _add(result.tokens, getattr(review, "tokens", None) or {})
+        result.reviews.append(review)
+        self._last_review = review
+        return review
 
     # -- the kernel ------------------------------------------------------------
 

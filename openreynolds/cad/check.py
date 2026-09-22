@@ -48,13 +48,14 @@ shipped broken:
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import math
 import pathlib
 import re
 import shlex
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
@@ -528,6 +529,61 @@ def _closure(*roots: str) -> tuple[str, ...]:
 GATE_SCRIPTS = _closure(*GATE_ROOTS)
 """What travels to the workspace: the two that answer and everything they import."""
 
+VIEW_SCRIPTS = ("mesh_look.py",)
+"""What the independent reviewer stages to draw the mesh from several sides.
+
+One file and no closure: `mesh_look.py` imports the standard library and pyvista and
+nothing beside it in the toolbox, which is what lets it stand alone in `.gate` on a
+workspace that has no toolbox. (`measure_cell_zones` reaches for `layer_report` and
+carries on without it, saying the extents were not measured.)"""
+
+
+@contextlib.contextmanager
+def staged(backend: Any, case_dir: str, scripts: Sequence[str]) -> Iterator[str]:
+    """Toolbox scripts on the workspace under `<case_dir>/.gate`, for the block only.
+
+    Yields the staged directory as a path the workspace understands -- what goes after
+    `python3` -- and removes it in `finally`, swallowing whatever the removal says: a
+    leftover is not a verdict about the mesh, and neither is a failed cleanup.
+
+    **The scripts are not there the rest of the time, and that is the point.** This
+    desk is measured on having no toolbox -- `isolation` asserts the workspace is clean
+    before the run and greps the record after it -- so nothing can live there, and
+    running from `toolbox_for(backend)` finds nothing, which is the bug this replaced: a
+    case with `inlet.stl`, `walls.stl` and a `patches.json` still came back "no patch
+    set", because `python3` could not open the file. The gate reported `n/a` on every
+    case and read exactly like a clean surface.
+
+    Staged rather than imported here, unlike `buildup/probes.py`, because that reads the
+    case with a local `Path` and a session's case is on a volume. Over the backend works
+    on both.
+
+    The window is the caller's own call, with the kernel idle -- the desk is not running
+    a cell while the harness is deciding whether its declare is accepted -- and the desk
+    is never handed a path into here: `gate.concern_of` carries `measured` and `meaning`,
+    which are prose about the geometry, and `gate.render` scrubs what is left.
+
+    Raises before yielding when a script is not in `TOOLBOX_SOURCE` (`FileNotFoundError`)
+    or the workspace will not take it; nothing has been yielded then, and the directory
+    that may have been made is removed on the way out. The `advisory_findings` gate and
+    the reviewer's `mesh_look.py --views` share this, so that the two never disagree about
+    where a script goes or whether it is gone afterwards.
+    """
+    directory = f"{case_dir.rstrip('/')}/{GATE_DIR}"
+    try:
+        _ask(backend, f"mkdir -p {shlex.quote(directory)}", "", timeout_s=60)
+        for name in scripts:
+            source = TOOLBOX_SOURCE / name
+            if not source.is_file():
+                raise FileNotFoundError(f"{name} is not in {TOOLBOX_SOURCE}")
+            backend.put_file(f"{directory}/{name}", source.read_bytes())
+        yield directory
+    finally:
+        try:
+            backend.exec(f"rm -rf {shlex.quote(directory)}", cwd=case_dir, timeout_s=60)
+        except Exception:  # noqa: BLE001 - a leftover is not a verdict about the mesh
+            pass
+
 
 def advisory_findings(backend: Any, case_dir: str,
                       toolbox: str = "") -> list[Finding]:
@@ -547,49 +603,13 @@ def advisory_findings(backend: Any, case_dir: str,
     """
     if toolbox:
         return _ask_advisory(backend, case_dir, toolbox)
-    staged = f"{case_dir.rstrip('/')}/{GATE_DIR}"
     try:
-        _stage_gate(backend, staged)
+        with staged(backend, case_dir, GATE_SCRIPTS) as directory:
+            return _ask_advisory(backend, case_dir, directory)
     except Exception as exc:  # noqa: BLE001 - say it could not be measured, not that it passed
+        # Only staging can get here: `_ask_advisory` catches its own, per script.
         return _cad_findings([{"script": name, "unavailable": f"could not be staged: {exc}"}
                               for name in ("cad_audit", "domain_probe")])
-    try:
-        return _ask_advisory(backend, case_dir, staged)
-    finally:
-        try:
-            backend.exec(f"rm -rf {shlex.quote(staged)}", cwd=case_dir, timeout_s=60)
-        except Exception:  # noqa: BLE001 - a leftover is not a verdict about the mesh
-            pass
-
-
-def _stage_gate(backend: Any, staged: str) -> None:
-    """Put the advisory scripts on the workspace, for as long as they are running.
-
-    **They are not there the rest of the time, and that is the point.** This desk is
-    measured on having no toolbox -- `isolation` asserts the workspace is clean before the
-    run and greps the record after it -- so the scripts cannot live there, and running
-    them from `toolbox_for(backend)` finds nothing, which is the bug this replaces: a case
-    with `inlet.stl`, `walls.stl` and a `patches.json` still came back "no patch set",
-    because `python3` could not open the file. The gate reported `n/a` on every case and
-    read exactly like a clean surface.
-
-    Staged rather than imported here, unlike `buildup/probes.py`, because that reads the
-    case with a local `Path` and a session's case is on a volume. Over the backend works
-    on both.
-
-    The window is the gate's own call, with the kernel idle -- the desk is not running a
-    cell while the harness is deciding whether its declare is accepted -- and the
-    directory is removed in a `finally`. `isolation.scan_run` reads the run record rather
-    than the workspace, and the desk is never handed a path into here: `gate.concern_of`
-    carries `measured` and `meaning`, which are prose about the geometry, and
-    `gate.render` scrubs what is left.
-    """
-    _ask(backend, f"mkdir -p {shlex.quote(staged)}", "", timeout_s=60)
-    for name in GATE_SCRIPTS:
-        source = TOOLBOX_SOURCE / name
-        if not source.is_file():
-            raise FileNotFoundError(f"{name} is not in {TOOLBOX_SOURCE}")
-        backend.put_file(f"{staged}/{name}", source.read_bytes())
 
 
 def _ask_advisory(backend: Any, case_dir: str, toolbox: str) -> list[Finding]:

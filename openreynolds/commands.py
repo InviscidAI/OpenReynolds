@@ -372,6 +372,9 @@ TOOL_HELP: tuple[tuple[str, str], ...] = (
     ("fetch", "copies files from the workspace to this machine"),
     ("cad", "hands a shape described in words, or a CAD file already on the workspace, "
             "to the CAD desk: a second agent that builds it, meshes it and checks it"),
+    ("mesh_review", "has an independent reviewer look at a mesh that already exists from "
+                    "several views and say whether it is the shape that was asked for; "
+                    "it changes nothing and runs no checkMesh"),
     ("checkpoint", "structured mode only: shows you a stage summary and what comes next, "
                    "and waits for your answer"),
 )

@@ -21,6 +21,7 @@ def test_tool_list_is_deterministic():
         "job_check",
         "job_kill",
         "job_start",
+        "mesh_review",
         "read_file",
         "write_file",
     ]
@@ -43,11 +44,12 @@ def test_the_cad_tool_says_what_comes_back_and_what_does_not():
 
 
 def test_the_checkpoint_tool_is_offered_only_in_structured_mode(ctx):
-    """Eight tools in every mode; a ninth, `checkpoint`, only when the person chose
+    """Nine tools in every mode; a tenth, `checkpoint`, only when the person chose
     structured mode. Still sorted, so a mode's tool list is always the same bytes."""
     from openreynolds.tools import tools_for
 
     ctx.cad = object()
+    ctx.reviewer = object()
     for mode in ("auto", "partial"):
         ctx.mode = mode
         assert "checkpoint" not in [tool["name"] for tool in tools_for(ctx)]
@@ -124,8 +126,307 @@ def test_the_cad_tool_is_offered_only_when_there_is_a_desk_behind_it(ctx):
     assert "cad" not in [tool["name"] for tool in tools_for(ctx)]
     ctx.cad = object()
     assert "cad" in [tool["name"] for tool in tools_for(ctx)]
+    # With every conditional tool wired the list is `TOOLS` itself, the same object
+    # each call, so the prefix the cache is keyed on never moves between requests.
+    ctx.reviewer = object()
     assert tools_for(ctx) is TOOLS
     assert tools_for(ctx) is TOOLS
+
+
+def test_the_mesh_review_tool_is_offered_only_when_there_is_a_reviewer_behind_it(ctx):
+    """The same rule as `cad`, for the same reason: a reviewer is a model call with
+    pictures in it, and without one the tool could only say so. Each of the two is
+    withheld on its own, so a session with a desk and no reviewer -- or the reverse --
+    offers exactly what it can serve."""
+    from openreynolds.tools import tools_for
+
+    def names():
+        return [tool["name"] for tool in tools_for(ctx)]
+
+    assert "mesh_review" not in names() and "cad" not in names()
+    ctx.reviewer = object()
+    assert "mesh_review" in names() and "cad" not in names()
+    assert names() == sorted(names())
+    ctx.reviewer = None
+    ctx.cad = object()
+    assert "cad" in names() and "mesh_review" not in names()
+
+
+def test_the_mesh_review_description_says_what_it_is_not():
+    """Read on its own by a model deciding whether to call it, the description has to
+    carry the two facts a reviewer is most easily mistaken about: it is not checkMesh,
+    and it judges the shape rather than the mesh. And it is a statement of what comes
+    back, in the register every tool description here keeps -- no instruction."""
+    import re
+
+    from test_prompt import IMPERATIVE_PATTERNS
+
+    tool = next(t for t in TOOLS if t["name"] == "mesh_review")
+    description = tool["description"]
+    assert "does not run checkMesh" in description
+    assert "Not a substitute for checkMesh" in description
+    assert "PASS or FAIL" in description and "picture" in description
+    for pattern in IMPERATIVE_PATTERNS:
+        assert not re.search(pattern, description, re.IGNORECASE), pattern
+    schema = tool["input_schema"]
+    assert set(schema["properties"]) == {"case", "request", "notes"}
+    assert schema["required"] == ["case", "request"]
+    assert "/work" in schema["properties"]["case"]["description"]
+
+
+# -- mesh_review: the reviewer reached without the desk ---------------------------
+
+
+class ScriptedReviewer:
+    """A `cad.Reviewer` that answers with the review it was handed and remembers what
+    it was asked. It never renders and never calls a model: the handler under test is
+    the plumbing round it, not the review itself (`tests/test_cad_review.py`)."""
+
+    def __init__(self, review):
+        self.review_ = review
+        self.calls: list[dict] = []
+
+    def review(self, case_dir, case_rel, request, said, summary, facts, prior=None):
+        self.calls.append(dict(case_dir=case_dir, case_rel=case_rel, request=request,
+                               said=said, summary=summary, facts=facts, prior=prior))
+        return self.review_
+
+
+def _passing_review(png=b"\x89PNG-first-view", tokens=None):
+    from openreynolds.cad.review import Review
+
+    return Review(verdict="pass", confidence="sure", views=["renders/review/overview.png",
+                                                             "renders/review/cells.png",
+                                                             "renders/review/detail.png"],
+                  png=png, tokens=tokens if tokens is not None else {"input_tokens": 3000,
+                                                                      "output_tokens": 200})
+
+
+def _failing_review(png=b"\x89PNG-first-view"):
+    from openreynolds.cad.review import Problem, Review
+
+    return Review(verdict="fail", confidence="likely", views=["iso.png", "ortho.png", "cuts.png"],
+                  png=png, problems=[Problem(
+                      what="the lobes are polygons, not curves",
+                      seen_in="detail.png, top-left quadrant",
+                      why_it_matters="the flow separates at each corner", severity="blocking")])
+
+
+def _a_case(backend, case="/work/study-test/mesh"):
+    backend.dirs[case] = ["constant", "system", "Allmesh"]
+    backend.dirs[f"{case}/constant/polyMesh"] = ["points", "faces", "owner", "neighbour", "boundary"]
+    return case
+
+
+def test_without_a_reviewer_the_tool_says_so_rather_than_pretending(ctx):
+    answer, is_error = dispatch(ctx, "mesh_review", {"case": "mesh", "request": "a duct"})
+    assert not is_error
+    assert "not available" in answer and "mesh_look.py" in answer
+
+
+def test_a_review_comes_back_as_the_first_view_and_the_verdict(ctx, backend):
+    """The picture first and the words second, the shape every image result here has:
+    when the picture is evicted from the thread the caption still carries the verdict.
+    The tokens the reviewer spent join the session's totals through the same hook the
+    desk's do, and the case is handed over as the workspace path with its study name."""
+    ctx.home = "/work/study-test"
+    case = _a_case(backend)
+    ctx.reviewer = ScriptedReviewer(_passing_review())
+    spent = []
+    ctx.on_tokens = spent.append
+
+    content, is_error = dispatch(ctx, "mesh_review", {
+        "case": "mesh", "request": "a 2D Tesla valve, 40 mm long, inlet on the left",
+        "notes": "the desk says 38.5 mm along x"})
+
+    assert not is_error
+    assert isinstance(content, list) and content[0]["type"] == "image"
+    assert content[0]["source"]["media_type"] == "image/png"
+    text = content[1]["text"]
+    assert text.startswith("independent review: PASS -- looked at 3 views")
+    assert "no checkMesh ran here and nothing about the mesh was changed" in text
+    assert "fix the shape" not in text, "a pass has nothing to fix"
+    assert spent == [{"input_tokens": 3000, "output_tokens": 200}]
+    call = ctx.reviewer.calls[0]
+    assert call["case_dir"] == case and call["case_rel"] == "mesh"
+    assert call["request"].startswith("a 2D Tesla valve")
+    assert call["summary"] == "the desk says 38.5 mm along x"
+    assert call["said"] is None and call["facts"] is None and call["prior"] is None
+
+
+def test_a_failing_review_names_the_problems_and_what_to_do_next(ctx, backend):
+    ctx.home = "/work/study-test"
+    _a_case(backend)
+    ctx.reviewer = ScriptedReviewer(_failing_review())
+
+    content, is_error = dispatch(ctx, "mesh_review", {"case": "mesh", "request": "a Tesla valve"})
+
+    assert not is_error
+    text = content[1]["text"]
+    assert text.startswith("independent review: FAIL -- looked at 3 views:")
+    assert "the lobes are polygons, not curves (seen in detail.png, top-left quadrant)" in text
+    assert "fix the shape and call this again, or hand the problems to the cad tool" in text
+
+
+def test_a_review_with_no_picture_is_words_alone(ctx, backend):
+    """A render that could not be fetched is a `skipped` review with no PNG; the tool
+    result is then text, never an image block with nothing in it."""
+    from openreynolds.cad.review import Review
+
+    ctx.home = "/work/study-test"
+    _a_case(backend)
+    ctx.reviewer = ScriptedReviewer(Review(verdict="skipped", error="could not render the mesh for review: no pyvista"))
+
+    content, is_error = dispatch(ctx, "mesh_review", {"case": "mesh", "request": "a duct"})
+
+    assert not is_error and isinstance(content, str)
+    assert content.startswith("not reviewed: could not render the mesh for review")
+    assert "nothing about the mesh was changed" in content
+
+
+def test_an_absolute_case_under_the_workspace_is_taken_as_it_is(ctx, backend):
+    ctx.home = "/work/study-test"
+    case = _a_case(backend, "/work/other-study/run")
+    ctx.reviewer = ScriptedReviewer(_passing_review(png=None))
+
+    content, _ = dispatch(ctx, "mesh_review", {"case": case, "request": "a duct"})
+
+    assert isinstance(content, str) and content.startswith("independent review: PASS")
+    call = ctx.reviewer.calls[0]
+    assert call["case_dir"] == case
+    assert call["case_rel"] == case, "outside this study, the name is the whole path"
+
+
+@pytest.mark.parametrize("case", [
+    "/home/someone/case",
+    "../../etc",
+    "/work/../home/someone",
+])
+def test_a_case_outside_the_workspace_is_refused_before_anything_is_spent(ctx, backend, case):
+    """`refuse_input`'s rule, applied where the path lands rather than how it is spelled:
+    a `..` that climbs out of the root is the same refusal as an absolute path outside
+    it. Nothing is rendered and nothing is asked of a model for a path like that."""
+    ctx.home = "/work/study-test"
+    ctx.reviewer = ScriptedReviewer(_passing_review())
+
+    answer, is_error = dispatch(ctx, "mesh_review", {"case": case, "request": "a duct"})
+
+    assert not is_error
+    assert answer.startswith("nothing was reviewed:")
+    assert "not under /work/" in answer
+    assert ctx.reviewer.calls == [] and backend.execs == []
+
+
+def test_a_case_that_is_not_there_costs_a_stat_and_a_sentence(ctx, backend):
+    ctx.home = "/work/study-test"
+    ctx.reviewer = ScriptedReviewer(_passing_review())
+
+    answer, is_error = dispatch(ctx, "mesh_review", {"case": "absent", "request": "a duct"})
+
+    assert not is_error
+    assert answer.startswith("nothing was reviewed: /work/study-test/absent could not be read")
+    assert "not_found" in answer
+    assert ctx.reviewer.calls == []
+
+
+def test_a_case_with_no_polymesh_is_refused_without_a_render(ctx, backend):
+    ctx.home = "/work/study-test"
+    backend.dirs["/work/study-test/empty"] = ["system"]
+    ctx.reviewer = ScriptedReviewer(_passing_review())
+
+    answer, _ = dispatch(ctx, "mesh_review", {"case": "empty", "request": "a duct"})
+
+    assert answer.startswith("nothing was reviewed:")
+    assert "no constant/polyMesh" in answer
+    assert ctx.reviewer.calls == []
+
+
+def test_a_review_needs_a_request_and_a_case(ctx, backend):
+    """The reviewer compares the pictures to the request; without one there is nothing
+    to compare against, and a review of "whatever this is" would pass anything."""
+    ctx.home = "/work/study-test"
+    _a_case(backend)
+    ctx.reviewer = ScriptedReviewer(_passing_review())
+
+    answer, _ = dispatch(ctx, "mesh_review", {"case": "mesh", "request": "  "})
+    assert answer.startswith("nothing was reviewed:") and "`request`" in answer
+    answer, _ = dispatch(ctx, "mesh_review", {"case": "", "request": "a duct"})
+    assert answer.startswith("nothing was reviewed:") and "`case`" in answer
+    assert ctx.reviewer.calls == []
+
+
+# -- the desk's answer carries the review -------------------------------------------
+
+
+def _desk_result(**fields):
+    """A `CadResult` as `test_cad_wiring.py` fakes one, with whatever this test sets."""
+    base = {"tokens": {}, "png": None, "check": None, "ok": True, "error": "",
+            "case_rel": "mesh", "summary": "", "steps": [], "seconds": 60.0,
+            "stopped": "", "remarks": []}
+    base.update(fields)
+    return type("R", (), base)()
+
+
+def test_cad_text_puts_the_review_right_after_the_state_of_the_mesh(ctx):
+    """First the state of `constant/polyMesh`, as the docstring demands; then the one
+    judgement about the shape. A mesh that passed checkMesh and did not pass review is
+    the case the reviewer exists for, and it has to be read before the desk's own
+    account of what it built."""
+    from openreynolds.tools import cad_text
+
+    review = _failing_review()
+    review.unresolved = True
+    review.round = 2
+    text = cad_text(_desk_result(review=review, summary="built and measured, 40 mm"))
+    lines = text.splitlines()
+    assert lines[0] == "nothing was meshed in mesh", "no check: the first line says so"
+    assert lines[1] == ("independent review: did not pass after 2 rounds -- treat this "
+                        "mesh as suspect:")
+    assert "the lobes are polygons" in lines[2]
+    assert text.index("independent review") < text.index("the CAD desk says:")
+    assert "call mesh_review to have it looked at again independently" in text
+
+
+def test_cad_text_says_when_a_finished_mesh_was_never_reviewed(ctx):
+    """The end-of-run check accepts what is there when the desk runs out of steps or
+    time, and nobody looked at the shape. A missing line would read as a clean bill."""
+    from openreynolds.tools import NOT_REVIEWED_BUDGET, cad_text
+
+    for stopped in ("steps", "time", "provider"):
+        text = cad_text(_desk_result(stopped=stopped))
+        assert NOT_REVIEWED_BUDGET in text, stopped
+    assert NOT_REVIEWED_BUDGET not in cad_text(_desk_result(stopped=""))
+    assert NOT_REVIEWED_BUDGET not in cad_text(_desk_result(ok=False, stopped="steps"))
+    assert NOT_REVIEWED_BUDGET not in cad_text(_desk_result(stopped="steps",
+                                                            review=_passing_review()))
+
+
+def test_the_cad_tool_falls_back_to_the_reviewers_first_view(ctx):
+    """`CoreDesk` draws nothing at its finish, so without this the caller of the
+    measured desk got words about a shape and no shape. The reviewer's first view is
+    a picture of exactly that mesh, and the desk's own PNG still wins when there is one."""
+
+    class Desk:
+        def __init__(self, result):
+            self.result = result
+
+        def run(self, request, case=None, geometry="", inputs=()):
+            return self.result
+
+    ctx.cad = Desk(_desk_result(review=_passing_review(png=b"\x89PNG-review")))
+    content, is_error = dispatch(ctx, "cad", {"request": "a duct"})
+    assert not is_error and isinstance(content, list)
+    import base64
+    assert base64.b64decode(content[0]["source"]["data"]) == b"\x89PNG-review"
+    assert "independent review: PASS -- looked at 3 views" in content[1]["text"]
+
+    ctx.cad = Desk(_desk_result(png=b"\x89PNG-desk", review=_passing_review(png=b"\x89PNG-review")))
+    content, _ = dispatch(ctx, "cad", {"request": "a duct"})
+    assert base64.b64decode(content[0]["source"]["data"]) == b"\x89PNG-desk"
+
+    ctx.cad = Desk(_desk_result(review=_passing_review(png=None)))
+    content, _ = dispatch(ctx, "cad", {"request": "a duct"})
+    assert isinstance(content, str), "no picture anywhere: words alone"
 
 
 def test_reading_a_file_is_bounded_in_time(ctx, backend):

@@ -187,6 +187,17 @@ class Config:
     mesher_max_seconds: float = 0.0
     """Wall clock for one call; 0 takes the default (900 s).
     `OPENREYNOLDS_CAD_MAX_SECONDS`, or `OPENREYNOLDS_MESHER_MAX_SECONDS` as it was."""
+    review_model: str = ""
+    """The model the independent geometry reviewer (`cad/review.py`) looks with. Empty
+    means the CAD desk's own model in a fresh thread -- still not the eyes that built
+    it. A different model is the interesting arm. `OPENREYNOLDS_REVIEW_MODEL`, or the
+    config file's `review_model`."""
+    cad_review: bool = True
+    """Whether the desk's finish is put past the reviewer at all
+    (`OPENREYNOLDS_CAD_REVIEW=0` turns the desk-side loop off; the standalone
+    `mesh_review` tool stays). The A/B knob, on the same argument as `mesh_tool`: the
+    claim that a second pair of eyes catches what `checkMesh` cannot is settled by
+    running the sweep both ways, not by preferring one."""
     mode: str = "auto"
     """How much the person wants to be consulted: `auto`, `partial` or `structured`
     (`modes.py`). `OPENREYNOLDS_MODE` or the config file's `mode`; `--mode` for one
@@ -314,6 +325,9 @@ class Config:
             mesher_max_seconds=float(pick_renamed(
                 "OPENREYNOLDS_CAD_MAX_SECONDS", "cad_max_seconds",
                 "OPENREYNOLDS_MESHER_MAX_SECONDS", "mesher_max_seconds", 0) or 0),
+            review_model=pick("OPENREYNOLDS_REVIEW_MODEL", "review_model"),
+            cad_review=str(pick("OPENREYNOLDS_CAD_REVIEW", "cad_review", "1"))
+            .strip().lower() not in ("0", "false", "no", "off"),
             foamd_url=pick("FOAMD_URL", "foamd_url", DEFAULT_FOAMD_URL).rstrip("/"),
             foamd_api_key=pick("FOAMD_API_KEY", "foamd_api_key"),
             provider=provider,

@@ -216,6 +216,17 @@ waive it; two triangles wound opposite ways is. A surface can be correctly outwa
 throughout and still fail it, and a count of zero says nothing about which way the \
 normals point.
 
+**After `checkMesh` and the gates accept a declare, an independent reviewer looks at the \
+mesh.** It did not build the shape and has not read this thread: it is shown the request, \
+your closing summary and the mesh drawn from several views, and it judges whether what is \
+there is what was asked for. It may hand back problems it is confident change the answer \
+-- the wrong topology, sharp corners where the request implies curves, proportions off, a \
+named gap one cell wide, inlet and outlet on the wrong ends. Those come back to you as \
+work, exactly as a failing check does, at most twice. Fix what is wrong, or if the \
+reviewer is mistaken say why in your closing summary, and declare again; the third declare \
+is accepted, and any concern still standing is reported up with the result rather than \
+argued about.
+
 **When the request cannot be answered correctly** -- a file that declares no length unit, a \
 request that states no dimension at all -- call `declare_complete` with \
 `outcome: "refuse"` and a one-line `reason`, and build nothing. Reporting up is the work in \
