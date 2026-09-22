@@ -21,6 +21,14 @@ from openreynolds.buildup import alarms, heartbeat, record, supervise
 from openreynolds.buildup.heartbeat import Beat
 
 
+# `Supervisor.group` reads `os.getpgid` and `stop` signals with `os.killpg`/`SIGKILL`:
+# the observer is a POSIX tool, and the sweeps it watches run on Linux. The tests that
+# actually kill something say so rather than failing a Windows run.
+posix_only = pytest.mark.skipif(
+    os.name != "posix",
+    reason="the watcher signals a process group (`os.killpg`), which is POSIX only")
+
+
 def beats(*rows, at: float = 0.0):
     """Turns as `(turn, steps, stop_reason, text_chars)`, all at one moment."""
     return [Beat(turn=t, steps=s, stop_reason=r, text_chars=c, at=at)
@@ -136,6 +144,7 @@ class Clock:
         self.at += seconds
 
 
+@posix_only
 def test_the_watch_aborts_on_an_alarm_rather_than_letting_the_clock_run_out(tmp_path):
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     try:
@@ -161,6 +170,7 @@ def test_the_watch_returns_quietly_when_the_run_ends_on_its_own_terms(tmp_path):
     assert seen.alarm is None and not seen.killed and seen.steps == 1
 
 
+@posix_only
 def test_the_supervisors_own_deadline_is_an_alarm_not_a_silence(tmp_path):
     """A run that is alive, beating and going nowhere still ends named rather than
     quietly: the supervisor's own deadline is reported as `wedged`, with its reason."""
@@ -307,6 +317,7 @@ def test_what_the_watch_saw_reaches_the_grading_without_a_human_carrying_it(
     assert graded["ended_at"]
 
 
+@posix_only
 def test_an_alarm_survives_into_the_grading_run_too(tmp_path):
     """The killed run's ending is in the watch's file, not in the record the run wrote --
     a killed run does not get to write its own ending."""
@@ -438,6 +449,7 @@ def test_the_desk_declares_the_finish_check_it_is_about_to_run(backend, store):
 # -- killing what the run started -------------------------------------------------
 
 
+@posix_only
 def test_a_kill_reaches_the_mesher_and_not_the_supervisor(tmp_path):
     """A mesher is a grandchild: the desk runs cells in a kernel and a cell starts
     snappyHexMesh from there. Signalling the runner alone leaves a runaway mesh on the
@@ -473,6 +485,7 @@ def test_a_kill_reaches_the_mesher_and_not_the_supervisor(tmp_path):
                 os.kill(pid, 9)
 
 
+@posix_only
 def test_a_run_that_took_no_group_is_killed_on_its_own_and_nothing_elses(tmp_path):
     """Deriving a group with `getpgid` would sooner or later name the supervisor's own --
     under a sweep both are children of one driver -- and killing that kills the sweep."""

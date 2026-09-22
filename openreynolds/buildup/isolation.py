@@ -293,7 +293,9 @@ def scan_run(run_dir: Path, *, toolbox: Path | None = None,
         if path.name in skip:
             continue
         try:
-            texts[str(path.relative_to(directory))] = path.read_text(
+            # `as_posix`, not `str`: `where` is quoted into the record and read on
+            # another machine, so a backslash here would make the same hit two hits.
+            texts[path.relative_to(directory).as_posix()] = path.read_text(
                 encoding="utf-8", errors="replace")
         except OSError:
             continue

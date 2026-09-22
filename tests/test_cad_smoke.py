@@ -98,8 +98,12 @@ def test_the_expected_set_can_be_learned_from_a_known_good_sweep(smoke, tmp_path
 def test_the_real_baseline_sweep_is_whole(smoke):
     """The check, against the sweep it was calibrated on. Skipped where it is not on disk."""
     sweep = ROOT / "docs" / "cad-buildup" / "sweeps" / "core+cad_export-20260917-022129-dd05"
-    if not sweep.is_dir():
-        pytest.skip("the baseline sweep is not in this checkout")
+    # The sweep's reading -- `report.md`, `sweep.json`, `findings.jsonl` -- is committed
+    # and its `runs/` are not (`.gitignore`), so the directory being there is not the
+    # same as the runs being there. This reads the runs, so that is what it asks for.
+    if not smoke.runs(sweep):
+        pytest.skip("the baseline sweep's run records are not in this checkout "
+                    "(`sweeps/*/runs/` is gitignored)")
     assert smoke.check(sweep, smoke.EXPECTED) == [], (
         "the sweep this was calibrated against no longer passes it")
     assert len(smoke.runs(sweep)) == 26

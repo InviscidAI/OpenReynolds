@@ -32,6 +32,20 @@ def load_runner():
 runner = load_runner()
 
 
+@pytest.fixture(autouse=True)
+def a_reachable_model(monkeypatch):
+    """`drive` refuses to start without a model key, and every desk in this file is a
+    stub, so nothing here spends one. Without this the file passes only on a machine
+    with a provider configured -- CI has none, and the four tests that reach `drive`
+    failed there with `missing configuration: ANTHROPIC_API_KEY`. Whatever the key is
+    called for the configured provider is what gets set."""
+    from openreynolds.config import Config
+
+    missing = Config.load().model_key_missing()
+    if missing:
+        monkeypatch.setenv(missing, "not-spent: every desk in this file is a stub")
+
+
 def test_a_workspace_inside_the_repository_is_refused(tmp_path):
     """The task message names the case directory, so a workspace under the tree puts the
     repo path into the desk's own thread -- and then every run greps as contaminated,
@@ -141,7 +155,12 @@ def test_the_record_carries_the_accounting_before_the_run_returns(tmp_path, monk
 
     monkeypatch.setattr(module, "prepare", prepare)
     monkeypatch.setattr(module.core, "CoreDesk", StubDesk)
-    monkeypatch.setattr(module, "find_bashrc", lambda: "/dev/null", raising=False)
+    # `drive` imports `find_bashrc` from the backend inside itself, so the script module
+    # is not where it lives; `raising=False` was hiding that, and the two tests below
+    # patch the right place. Without this the run stops at "no OpenFOAM installation".
+    import openreynolds.backend.local as local_backend
+
+    monkeypatch.setattr(local_backend, "find_bashrc", lambda: "/dev/null")
 
     with pytest.raises(AssertionError, match="the kill lands here"):
         module.drive("T1", tmp_path / "work", tmp_path / "runs", 0, 0.0)
@@ -198,7 +217,12 @@ def test_the_record_carries_the_named_properties_before_the_run_returns(tmp_path
 
     monkeypatch.setattr(module, "prepare", prepare)
     monkeypatch.setattr(module.core, "CoreDesk", StubDesk)
-    monkeypatch.setattr(module, "find_bashrc", lambda: "/dev/null", raising=False)
+    # `drive` imports `find_bashrc` from the backend inside itself, so the script module
+    # is not where it lives; `raising=False` was hiding that, and the two tests below
+    # patch the right place. Without this the run stops at "no OpenFOAM installation".
+    import openreynolds.backend.local as local_backend
+
+    monkeypatch.setattr(local_backend, "find_bashrc", lambda: "/dev/null")
 
     with pytest.raises(AssertionError, match="the kill lands here"):
         module.drive("T1", tmp_path / "work", tmp_path / "runs", 0, 0.0)

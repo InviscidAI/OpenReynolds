@@ -26,7 +26,16 @@ ROOT = Path(__file__).resolve().parent.parent
 T26 = (ROOT / "docs" / "cad-buildup" / "sweeps"
        / "core+bench26-20260912-133719-4bbd" / "runs" / "T26" / "record.json")
 
+# `.gitignore` keeps `sweeps/*/runs/` out of the repository on purpose -- the raw per-run
+# trail is evidence on the machine that produced it, and the sweep's own `report.md` and
+# `findings.jsonl` are the reading of it that travels. So this test runs where the record
+# is and is skipped where it is not, rather than failing every clone and every CI job.
+needs_t26 = pytest.mark.skipif(
+    not T26.is_file(),
+    reason="T26's run record is not in this checkout (`sweeps/*/runs/` is gitignored)")
 
+
+@needs_t26
 def test_t26_measured_its_own_defect_and_nothing_told_the_desk():
     """The failure, in the gate's absence, off the run that produced it.
 
