@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx2 as httpx
 import pytest
+from conftest import needs_a_kernel
 
 from openreynolds import images
 from openreynolds.backend.base import BackendError
@@ -29,6 +30,9 @@ from openreynolds.backend.local import LocalBackend
 
 pytest.importorskip("ipykernel", reason="the cell channel needs a kernel to talk to")
 pytest.importorskip("jupyter_client", reason="the cell channel needs a kernel to talk to")
+
+
+pytestmark = needs_a_kernel
 
 
 # -- the two workspaces --------------------------------------------------------

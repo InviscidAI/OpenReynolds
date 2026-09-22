@@ -26,6 +26,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from conftest import a_kernel_can_come_up
 
 from openreynolds import images
 from openreynolds.backend.base import BackendError, ExecResult
@@ -1101,6 +1102,8 @@ def workspace(tmp_path):
     is being asked is whether a script runs from empty, which a fake cannot answer."""
     pytest.importorskip("ipykernel", reason="the invariant is checked in a kernel")
     pytest.importorskip("jupyter_client", reason="the invariant is checked in a kernel")
+    if not a_kernel_can_come_up():
+        pytest.skip("no `bash -lc python3` here, so no kernel can come up in a workspace")
     from openreynolds.backend.local import LocalBackend
 
     made = LocalBackend(root=tmp_path / "work", bashrc="")
