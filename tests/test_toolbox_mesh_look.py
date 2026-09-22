@@ -380,8 +380,44 @@ def test_a_patchs_normal_is_reported_out_of_the_fluid(tmp_path):
 # there to run.
 
 
+_CAN_RENDER: bool | None = None
+
+_RENDER_PROBE = (
+    "import pyvista as pv\n"
+    "pv.OFF_SCREEN = True\n"
+    "p = pv.Plotter(off_screen=True, window_size=(64, 64))\n"
+    "p.add_mesh(pv.Cube())\n"
+    "p.screenshot(return_img=True)\n"
+    "p.close()\n"
+)
+
+
+def _offscreen_render_works() -> bool:
+    """Whether this machine can draw a pyvista screenshot at all, asked once.
+
+    Asked in a **subprocess**, because the way a machine without OSMesa or EGL says no
+    is a segmentation fault inside VTK's render call -- which no `try` in this process
+    catches and which takes the whole pytest run down with it. GitHub's hosted runners
+    are exactly that machine: the `vtk` wheel imports, `Plotter()` constructs, and
+    `screenshot()` kills the interpreter. `importorskip("pyvista")` cannot see it.
+    """
+    global _CAN_RENDER
+    if _CAN_RENDER is None:
+        import subprocess
+        import sys
+        try:
+            done = subprocess.run([sys.executable, "-c", _RENDER_PROBE],
+                                  capture_output=True, timeout=120)
+            _CAN_RENDER = done.returncode == 0
+        except Exception:  # noqa: BLE001 - a probe that will not run is a no
+            _CAN_RENDER = False
+    return _CAN_RENDER
+
+
 def _views_fixture(tmp_path, two_d: bool):
     pytest.importorskip("pyvista")
+    if not _offscreen_render_works():
+        pytest.skip("this machine cannot render offscreen (VTK has no OSMesa/EGL here)")
     from test_toolbox_layer_report import write_box
 
     if two_d:
