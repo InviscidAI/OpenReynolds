@@ -675,6 +675,9 @@ class Reviewer:
                 seconds=review.seconds,
                 output="\n".join(review.lines()),
                 image=("1 picture" if count == 1 else f"{count} pictures") if count else "",
+                kind="review",
+                number=review.round,
+                reasoning=review.summary,
             ))
         except Exception:  # noqa: BLE001 - a progress line may not end a review
             pass

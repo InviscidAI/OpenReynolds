@@ -54,7 +54,7 @@ from .mirror import local_for
 from .modes import label as mode_label
 from .progress import BAR_WIDTH, Progress
 from .progress import bar as draw_bar
-from .view import View
+from .view import View, _desk_step_blocks, desk_step_line
 
 TOOL_STYLE = {
     "bash": "cyan",
@@ -1088,6 +1088,15 @@ class TuiView(View):
         """A front-desk reply, in the conversation pane, clearly the desk and not
         the agent -- so nobody reads it as the agent having answered."""
         self._to("conversation", f"\n[bold cyan]desk[/bold cyan]  {_escape(text)}")
+
+    def desk_step(self, event: dict[str, Any]) -> None:
+        """One step of the CAD desk's work, in the conversation pane where the person
+        is reading -- dim, the way a tool call is announced, and yellow for a review
+        that handed work back. The status line already carries the newest one; this
+        is the record of all of them."""
+        line = _escape(desk_step_line(event))
+        style = "yellow" if _desk_step_blocks(event) else "dim"
+        self._to("conversation", f"  [{style}]{line}[/{style}]")
 
     def delivered(self, event: Any) -> None:
         """New renders arrived from the mirror: say so and refresh the renders tab.

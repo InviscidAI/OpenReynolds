@@ -321,6 +321,45 @@ class Step:
     image: str = ""
     """What came back as a picture, in words -- there is no path any more, because the
     bytes arrive with the result. Read for whether there was one."""
+    kind: str = "cell"
+    """`cell` for a cell the desk ran, `review` for the reviewer's verdict on it --
+    the same hook carries both, and whoever renders the line wants to know which."""
+    number: int = 0
+    """Which step of the run this is, counting from 1; 0 when nobody numbered it."""
+    reasoning: str = ""
+    """The desk's own words beside the cell -- what it says it is doing and why.
+
+    The code is the record; the prose is what a person watching can read. Until this
+    field the only thing a step carried out of the run was its first line of code,
+    which for most cells is an import, and a chat that shows `import build123d as bd`
+    twenty times tells nobody what the desk is building."""
+
+    def as_event(self) -> dict[str, Any]:
+        """The step as a transcript row -- what `cli._cad_desk_step` writes to the
+        store so the study's log, the web chat and the local chat all carry it.
+
+        A dict rather than a line, so a reader can lay it out and a grep can find it
+        (`"desk": "cad"`). `text` is the one sentence a plain reader wants: the
+        desk's reasoning when it gave any, the cell's first line when it did not, and
+        the reviewer's verdict for a review step. `cmd` and `output` are clipped
+        because a transcript row is a record, not a second copy of the kernel."""
+        heads = (self.cmd or "").strip().splitlines()
+        first = heads[0][:160] if heads else ""
+        if self.kind == "review":
+            text = (self.output or "").strip() or first
+        else:
+            text = " ".join((self.reasoning or "").split())[:400] or first
+        return {
+            "desk": "cad",
+            "kind": self.kind,
+            "step": self.number,
+            "text": text,
+            "cmd": (self.cmd or "")[:600],
+            "exit_code": self.exit_code,
+            "seconds": round(float(self.seconds), 1),
+            "output": (self.output or "")[-600:],
+            "image": self.image,
+        }
 
 
 @dataclass
@@ -650,6 +689,7 @@ class CadDesk:
             nudge = ""
             step = self._cell(source, _summary(turn.text), messages, ids)
             result.steps.append(step)
+            step.number = len(result.steps)
             if len(result.steps) == NUDGE_AT_STEP and not self._has_mesh():
                 nudge = self._nudge()
             if nudge:
@@ -786,7 +826,15 @@ class CadDesk:
         words rather than a paraphrase of them.
         """
         try:
-            rows = self.store.recent_messages(TRANSCRIPT_ROWS)
+            # The person's rows only: this desk's own steps are transcript rows now,
+            # and a window of forty of everything would be full of them by the second
+            # call (`Store.recent_messages` says the rest).
+            rows = self.store.recent_messages(TRANSCRIPT_ROWS, roles=("user",))
+        except TypeError:  # a store without the filter: the older reading
+            try:
+                rows = self.store.recent_messages(TRANSCRIPT_ROWS)
+            except Exception:  # noqa: BLE001
+                return []
         except Exception:  # noqa: BLE001 - no transcript is not a reason not to build
             return []
         said = [" ".join(str(row.get("content") or "").split())
@@ -985,7 +1033,8 @@ class CadDesk:
                 # was invoked and the API wants an answer for it either way.
                 _answer(messages, ids, f"the cell could not be run: {exc}",
                         is_error=True, note=self._drain())
-                return Step(cmd=source, exit_code=-1, seconds=seconds, output=str(exc))
+                return Step(cmd=source, exit_code=-1, seconds=seconds, output=str(exc),
+                            reasoning=cell.reasoning)
         seconds = time.monotonic() - t0
         return self._report(cell, outcome, seconds, messages, ids)
 
@@ -1136,7 +1185,7 @@ class CadDesk:
         _answer(messages, ids, blocks, is_error=not outcome.ok,
                 note=self._drain(refusal))
         return Step(cmd=cell.source, exit_code=0 if outcome.ok else 1, seconds=seconds,
-                    output=body, image=_picture_words(outcome))
+                    output=body, image=_picture_words(outcome), reasoning=cell.reasoning)
 
     def _judge(self, cell: Cell, outcome: Any) -> str:
         """Whether this cell goes in the script, and what to tell the desk either way.

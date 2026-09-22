@@ -130,12 +130,20 @@ class Store:
 
     # -- jobs ------------------------------------------------------------------
 
-    def recent_messages(self, limit: int = 30) -> list[dict[str, Any]]:
+    def recent_messages(self, limit: int = 30,
+                        roles: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
         """The last few transcript rows, oldest-first.
 
         The concierge reads these to answer the user without a turn from the main
         thread. Append-only, so reading the tail never races an appending writer:
-        a half-written final line is dropped rather than raised on."""
+        a half-written final line is dropped rather than raised on.
+
+        `roles` keeps the last `limit` rows **of those roles** rather than the last
+        `limit` rows of everything. The CAD desk reads the person's own words this way
+        (`cad.agent.CadDesk._said`), and since the desk's own steps are transcript
+        rows too -- up to thirty a run, plus the reviews -- a second call to the desk
+        in one session would otherwise find its forty-row window full of the first
+        call's progress and none of what the person said."""
         path = self._messages_path
         if not path.exists():
             return []
@@ -143,12 +151,18 @@ class Store:
             lines = path.read_text(encoding="utf-8").splitlines()
         except OSError:
             return []
-        rows = []
-        for line in lines[-limit:]:
+        rows: list[dict[str, Any]] = []
+        for line in reversed(lines):
             try:
-                rows.append(json.loads(line))
+                row = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if roles is not None and row.get("role") not in roles:
+                continue
+            rows.append(row)
+            if len(rows) >= limit:
+                break
+        rows.reverse()
         return rows
 
     def record_job(self, job_id: str, cmd: str, name: str | None, cwd: str = "") -> JobRecord:
