@@ -48,6 +48,20 @@ to be re-written to save re-reading about 107,000 cached ones, a net loss of rou
 Bytes are what actually failed, so bytes are what triggers it now. Under the budget
 nothing is evicted and the cache prefix is never touched."""
 
+LEFT_MID_TURN = (
+    "The person ended the session while this turn was running, so the turn stops here: "
+    "the tool calls already in flight finished, no further call was made, and the model "
+    "was not asked again."
+)
+"""The one line the transcript carries when a turn is ended by the person rather than by
+the model. In the harness's voice (`tell`): the person did not say it, and the model
+did not decide it."""
+
+NOT_RUN_LEFT = "This call did not run: the person ended the session."
+"""The result of a tool call the model asked for and the turn did not start, because the
+person had left by the time it was reached. The shape `settle` gives an interrupted
+turn's calls, so the thread stays one the API would accept."""
+
 
 class Loop:
     """One conversation thread against one workspace."""
@@ -82,7 +96,20 @@ class Loop:
         """Harness facts waiting for a place in the thread. Said mid-turn (a `/mode`
         switch typed while tools run) they cannot be a message of their own: the next
         message has to be the tool results. They ride in that message instead."""
+        self._typed: list[str] = []
+        """What the person typed mid-turn that is for the model, waiting to ride after
+        this batch's tool results (`_turns`). Filled by `_gather`, which drains the
+        inbox before each tool call, after the batch, and -- through `heard` -- every
+        second a tool is waiting. One list rather than a local, because a waiting tool
+        has to be able to ask whether it is empty."""
         self._mid_turn = False
+        self.leaving = False
+        """Whether the person has ended the session: `/exit`, `/quit` or an EOF, met by
+        the drain while a turn was running (`leave`, from `cli._typed_while_working`).
+        From then on the turn ends at its next safe point -- a wait in progress returns
+        (`ToolContext.on_leaving`), a call already running finishes, no further call
+        starts, the model is not asked again -- and the session's close-down follows.
+        A prompt-time `/exit` never sets this: nothing is running to stop."""
         self._posted: list[str] = []
         """Harness facts said from another thread (`post`), waiting for this thread to
         pick them up at one of its own safe points. `messages` is read while a request
@@ -309,7 +336,6 @@ class Loop:
                 return response
 
             results: list[Any] = []
-            typed: list[str] = []
             self._mid_turn = True
             try:
                 for block in tool_uses:
@@ -319,7 +345,22 @@ class Loop:
                     # call), and a line typed before a question exists is an
                     # interjection, never the answer to a question the person has not
                     # seen yet (`Approver.ask` reads only what arrives after this).
-                    self._gather(typed)
+                    self._gather()
+                    if self.leaving:
+                        # The person ended the session while an earlier call in this
+                        # batch ran, or before the first one started. A call not yet
+                        # started is not started, and is answered the way `settle`
+                        # answers an interrupted turn's, so every tool_use still has
+                        # its tool_result. A call already running when they left -- a
+                        # bash command, a job_start -- was not cut: each is bounded by
+                        # its own deadline, and its result was recorded when it came
+                        # back. Only the held waits (`job_check` with `wait_s`,
+                        # and a `bash` following a promoted job) look for this and return at once
+                        # (`ToolContext.on_leaving`): a wait is the one call whose
+                        # whole purpose is to keep the turn going.
+                        self.view.tool(block.name, _summarize(block.input))
+                        results.append(self._result(block, NOT_RUN_LEFT, True))
+                        continue
                     results.append(self._run_tool(block))
 
                 # One round of think-then-act is over. Marking where each ends is what
@@ -332,26 +373,109 @@ class Loop:
                 # follow them. That is how something typed while the model is working
                 # reaches it at the next turn instead of sitting unread until the whole
                 # turn ends -- the difference between being heard and being ignored.
-                self._gather(typed)
-                said = "\n".join(typed) or None
+                self._gather()
+                said = "\n".join(self._typed) or None
+                self._typed = []
                 if said:
                     results.append({"type": "text", "text": said})
                     self.view.interjection(said)
                     self._record("user", said)
+                if self.leaving:
+                    # Said once, here, where the turn actually stops: in the thread as
+                    # a harness note after this batch's results, and in the transcript
+                    # as an event. Whatever the person typed before pressing End is
+                    # above it, delivered and recorded like any other interjection.
+                    self.tell(LEFT_MID_TURN)
                 results.extend(self._take_notes())
             finally:
                 self._mid_turn = False
 
             self.messages.append({"role": "user", "content": results})
 
-    def _gather(self, into: list[str]) -> None:
+            if self.leaving:
+                # The turn ends here rather than at the model's next reply. The thread
+                # is whole -- every call the model asked for has an answer -- so a
+                # resume finds nothing dangling; the model is simply not asked again,
+                # because nobody is here to read what it would say. Measured before
+                # this (study 20260921-033019-e1b4): End pressed at 03:33:40 was
+                # honoured at 04:10:46, when the turn ended on its own.
+                self.view.notice(
+                    "the session was ended mid-turn: the turn stopped after the call "
+                    "in flight, and nothing more was sent to the model"
+                )
+                return response
+
+    def leave(self) -> None:
+        """The person has ended the session while a turn is running.
+
+        Called by the drain (`cli._typed_while_working`) when what it takes from the
+        inbox is a `/exit`, a `/quit` or an EOF -- the same three things that end the
+        session at the prompt, met mid-turn. The drain still puts the line back for
+        the prompt, as before; this is the part the put-back could not do. From here
+        the turn ends at its next safe point (`_turns`), and a wait in progress ends
+        at once (`ToolContext.on_leaving`, asked by every held wait once a second
+        beside `heard`).
+
+        The CAD desk is told now rather than at the close-down: a run in flight
+        (`ctx.cad`, holding this very turn) reads its budgets at every lap and stops
+        at its next cell once they are zero (`cad.agent`, `max_steps`/`max_seconds`).
+        It would not otherwise stop for a person who has left: it holds the turn for
+        up to its whole budget, spending model calls the whole way. The session's desk
+        is never used again after this, so nothing is lost by it.
+
+        Idempotent: the drain meets the same put-back line every second a wait asks.
+        """
+        if self.leaving:
+            return
+        self.leaving = True
+        cad = getattr(self.ctx, "cad", None)
+        if cad is not None:
+            try:
+                cad.max_steps = 0
+                cad.max_seconds = 0.0
+            except Exception:  # noqa: BLE001 - a desk without budgets has nothing to stop
+                pass
+
+    def _gather(self) -> None:
         """Drain what has been typed (`interject`): commands are answered on the spot,
-        and words for the model are kept in `into` to ride with this batch's results.
+        and words for the model are kept in `_typed` to ride with this batch's results.
         What other threads posted meanwhile rides with them too (`_notes`)."""
         self._drain_posted()
         said = self.interject() if self.interject else None
         if said:
-            into.append(said)
+            self._typed.append(said)
+
+    def heard(self) -> bool:
+        """Whether the person has said something the model has not seen yet.
+
+        What a tool that holds its answer asks, once a second, to know whether to stop
+        holding it (`ToolContext.on_wait_input`; `job_check` with `wait_s`, a promoted `bash`).
+        It drains the inbox the way the loop does between tool calls -- commands are
+        answered on the spot, words for the model are kept for this batch's results --
+        and answers whether anything is kept. So a wait that ends on it ends for words
+        the model is about to read, in the same message as the result that ended.
+
+        WHY THIS IS THE LOOP'S TO ANSWER. It used to be the reader's `pending()`: is
+        there anything in the queue, without taking it. But the loop's own drain does
+        not take everything. `/exit` is put back for whoever waits at the prompt, an
+        EOF likewise, and a `/status` is answered without a word reaching the model.
+        Measured in production (study 20260921-033019-e1b4): a line the drain put back
+        sat in the queue for the rest of the turn, `pending()` answered true to every
+        wait from then on, and `mesh_wait` returned three times in nine seconds with
+        `[waited 0s] [the user said something]` -- and the model, handed nothing the
+        person had said, concluded the tool did not wait and paced the remaining
+        thirty-seven minutes with `bash sleep`. The same shape ran side by side with
+        an unaffected session (20260921-033356-076b) whose `job_check(wait_s=...)`
+        waited its full 120-300 s throughout. A line that is nobody's to deliver to
+        the model cannot end a wait on the model's behalf, and the only way to know
+        which kind of line it is, is to drain it.
+
+        A `/exit` met by that drain is still not "heard" -- there are no words for the
+        model in it -- but it does end the wait, by another question: the drain calls
+        `leave`, and the wait asks `leaving` beside this (`ToolContext.on_leaving`).
+        """
+        self._gather()
+        return bool(self._typed)
 
     def _send(self) -> Turn:
         """One streamed request, printing as it arrives."""

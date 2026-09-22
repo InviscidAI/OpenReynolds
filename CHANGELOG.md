@@ -8,6 +8,174 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **A `bash` command the workspace moved to a job no longer comes back as `exit_code:
+  0`; the call waits the job out for the rest of its `timeout_s`, and a command still
+  running when that is up says so in its first line.** The hosted service caps a
+  synchronous exec at 120 s (`FOAMD_SYNC_EXEC_MAX_S`); a command still running there,
+  whose caller asked for longer, is started again from scratch as a detached job and the
+  answer is `{exit_code: null, promoted: true, job_id, output, note}`
+  (`OpenFoam_Instance/app/execs.py`, `spec/openapi.yaml`). `HostedBackend.exec` turned
+  that into `ExecResult(exit_code=0, output=note, job_id=...)`, and `_bash` printed the
+  zero first and the note about the job second. Measured in production on 2026-09-21
+  (study 20260921-033019-e1b4, workspace 35c9f018): `bash sleep 240; ls -R .../mesh |
+  head -40` at 03:37:36, `bash sleep 200; ... grep "^Time =" log.pisoFoam | tail -1` at
+  03:48:23 and `bash sleep 180; ... tail -3 log.recon` at 04:04:22, each asked with
+  `timeout_s=300`, each answered after the 120 s window, and each transcript row reads
+  `-> exit_code: 0` for a command that was still running (jobs 808edf10, 5432459d,
+  e839ac57). The model read three commands that had finished with no output: it
+  `job_check`ed the first once, two seconds in (a wait answered at 0 s by the put-back
+  line #41 fixed), and none of them again, and paced the rest of the study with `bash
+  sleep` calls of 60-115 s. Nothing on the control plane read the jobs either -- a row was only
+  reconciled by a `GET /jobs/{id}` or by the reaper once the workspace had gone idle --
+  so the three rows read `running` for 46, 35 and 20 minutes after their commands had
+  ended, until the 04:27 sweep closed them off the store. foamd #55 fixed the service's
+  half (the promoted job is watched and its row closed with the real exit code); this is
+  the agent's. `ExecResult` carries the truth: `exit_code=None`, a new `promoted` flag,
+  `job_id`, and `output` as what the synchronous run had produced (empty from today's
+  service; carried in case that changes), with the wrapper's `stderr` through -- never
+  `exit_code=0`. `EXEC_SYNC_WINDOW_S = 120` joins `EXEC_MAX_TIMEOUT_S` on the protocol,
+  because the tool states the number to the model. `_bash` on a promoted answer records
+  the job as the session's (`store.record_job`, the way `job_start` does) and follows it
+  for what is left of the caller's own `timeout_s` -- the same held wait `job_check
+  wait_s` makes (`_hold`, now the one loop behind both), ended by the same things: the
+  job ending, the time running out, the person writing (`ToolContext.on_wait_input`,
+  #41) or leaving (`on_leaving`, #43). A job that ends in time is the command's result:
+  `exit_code: <the job's>` first, a note naming the job and the two spans (`moved to
+  job <id> at 120s ... waited 130s more`), the job's status line and its log as the
+  output. One still running when the time is up, or when the wait was cut, leads with
+  the fact -- `still running as job <id> (promoted after 120 s; 180 s waited)` -- then
+  the mechanism, `job_check <id>` as what follows it and "not a command to run again",
+  the wait's own note when the person wrote or left (the written one says `job_check`,
+  not "call bash again": `bash` again would run the command a third time), the job's
+  status line and the log so far. Never `exit_code: 0`. The record's `log_offset` is
+  where this left the log, so the model's `job_check <id>` continues rather than
+  repeats; a job handed back still running stays `running` in the record, so the watch
+  loop polls it and wakes the model when it ends -- the poll that never happened. A
+  status or log that could not be read is a note under the first line, which stands.
+  The `bash` description says that a command still running at 120 s may become a job
+  the call waits on and what the two answers look like, as a fact about the workspace
+  (the local backend never promotes: it runs a command to its `timeout_s`, and nothing
+  there changed). The mesh desk's step observation, which asked for 240 s and read the
+  same shape, says `no exit code yet: running as job <id>` where it would now have said
+  `exit None`. Unchanged: a `timeout_s` at or under 120 (the service never promotes
+  it), `-1` and its note, truncation, `[took Ns]`, the workspace `stderr` note, `idle`.
+  Tests: the hosted backend on the service's promoted answer (direct, through the
+  edge's 303, with `stderr` and output through, the other three shapes untouched);
+  `_bash` with `timeout_s=300` on a promotion under a hand-turned clock -- the job ends
+  with rc 0 and a log (`exit_code: 0`, the log, the job named, `[took 130s]`, the record
+  closed), ends with rc 1 (`exit_code: 1`), outlives the caller's timeout (the first
+  line, `job_check <id>`, the log so far, exactly 300 s held, the record left running),
+  is cut by the person writing and by the person leaving (the same notes the other waits
+  carry), has no time left after the exec, cannot be read; the first run's output kept
+  apart from the job's log; a `timeout_s` within the window byte-identical to before;
+  the description's words and register.
+- **The workspace is listed by the service, running or stopped; the `find` over the
+  exec channel is the fallback, and a cut output can no longer invent a file.**
+  `Browser.tree` listed a workspace with `find ... | sort | cut | head -n 4001` over
+  the exec channel, and the hosted workspace's daemon caps a command's output at 64 KB
+  and cuts it mid-line (`OpenFoam_Instance/daemon/settings.py` `EXEC_OUTPUT_CAP_BYTES`,
+  `daemon/runner.py` `out[:cap]`; the answer carries `truncated: true`, which
+  `HostedBackend.exec` mapped onto `ExecResult.truncated` and `Browser.tree` ignored).
+  Measured in production on 2026-09-21 (study 20260921-033356-076b, workspace
+  35c9f018): the listing is ~1,532 rows at ~83 bytes each, ~127 KB, against the 64 KB
+  cap -- so the 4,000-entry cap never bound anything, the byte cap did, at ~850 rows.
+  The partial last row, `f\t1528155\t<mtime>\t/work/20260921-033356-076b` -- the row
+  for `mesh/zoom.png`, 1,528,155 bytes, cut right after the study id -- has four
+  well-formed fields, and `_parse` accepted it: an `Entry` with that path,
+  `is_dir: False` and `size: 1.5 MB` -- a file at the study root. Everything that
+  followed was measured too: the page's tree collapsed to one unexpandable "remote
+  1.5M" leaf (ui #31 now hardens the page); the mirror asked the service to archive
+  that "file" every cycle (`tar?mode=pack&paths=/work/20260921-033356-076b` -> 502/504
+  each 20 s from 04:07 to 04:16), plus 404s for the other paths a cut produced (`/r`,
+  `/run/processor`, `/run/p`); and the live tree during a run held ~850 of the
+  study's 1,532 rows -- since #36 the order is breadth-first, so the cut lands in
+  `run/processors4/<time>/`, but everything past it was invisible to the live pane and
+  to the mirror until the workspace was stopped. Meanwhile #38/#39 had given the
+  hosted backend `list_stored` -- `GET /v1/instances/{id}/files?list=1`, recursive,
+  5,000 entries -- which lists any path under `/work` from the live daemon while the
+  workspace is up and from the service's copy once it is stopped, breadth-first,
+  capped at 5,000 with its own `truncated`, never starting a machine and never
+  counting as use of one (foamd #53) -- and `Browser.tree` used it only when a poll
+  said the workspace was idle. Now `tree()` asks `list_stored` first, whatever state
+  the workspace is in and whether or not the call is a background poll; the answer is
+  the listing, cut to the depth and to 4,000 entries breadth-first, the service's
+  `truncated` carried. No `find`, no exec channel, no byte cap, no partial line, and
+  one path for both states. The walk runs only when `list_stored` answers None -- a
+  local backend, a workspace still coming up (`PendingBackend.list_stored` is None
+  until the machine is there, and the walk then waits for it as every call did), a
+  service without the route, a failed request -- and then exactly as before: a poll,
+  then work only when nothing is running and somebody is asking; a background walk
+  that finds nothing running still raises `workspace_idle` and starts nothing. The
+  walk itself is made safe for the local backend and for the fallback: when the
+  backend says the output was cut, the tail after the last newline is dropped
+  unparsed, and the listing is marked truncated with a notice that names the output
+  cap (a listing of 850 rows told it was "capped at 4,000 entries" would contradict
+  what is in front of the reader); and `_parse` refuses a row whose path is the
+  listed root or is not under it -- the walk is `-mindepth 1`, so such a row can only
+  be a cut or noise. The listing request is bounded at 60 s, the minute the `find`
+  had (`FoamdClient.request` with no timeout is no timeout at all, and the mirror
+  asks this every twenty seconds). The route's `mtime` are whole seconds where
+  `find`'s carried a fraction; `Entry.mtime` stays a float and nothing that reads it
+  is finer than two machines' clocks. Behaviour changed for the background cycles of
+  a session whose workspace is stopped: they now read the service's copy each cycle
+  -- one bounded request, nothing started, nothing pulled when nothing has changed --
+  where before they waited out the idle workspace. Unchanged: a backend without
+  `list_stored` (a test's, an embedder's) lists as it always did; the 4,000-entry cap
+  and its notice; the poll-first order of the walk.
+- **End pressed mid-turn ends the turn at its next safe point, then the session -- the
+  way a Stop button is expected to work.** The web's End button sends `/exit` into the
+  session's inbox (the runner's `relay.py`); typed, `/exit` and `/quit` are the same
+  command, and an EOF (the interface's ctrl+C, a closed stdin) is the same leaving. Met
+  by the loop's drain between tool calls (`cli._typed_while_working`), all of them were
+  put back for whoever waits at the prompt -- and honoured there, when the turn ended on
+  its own. In production on 2026-09-21 (study 20260921-033019-e1b4) the person pressed
+  End at 03:33:40 into a turn that was waiting on the mesh desk; the turn went on for
+  another thirty-seven minutes (to 04:10:46: eighteen `bash sleep 60..240` calls, eight
+  held waits, a fifteen-minute `pisoFoam` solve on four ranks launched at 03:44:36, a
+  reconstruction, a 300-frame animation and a gif, all for a person who had left) and
+  the session ended 27 s after the turn did, at 04:11:13. (#41 fixed what the put-back
+  line did to the waits in that same turn -- `mesh_wait` and `job_check` answering at
+  0 s with nothing to deliver -- and deliberately left the End semantics for this
+  item.) Now the drain tells the loop (`Loop.leave`) when what it meets is a `/exit`, a
+  `/quit` or an EOF, and still puts the line back as before; from then on the turn ends
+  at its next safe point. A held `job_check` or `mesh_wait` asks the loop a second
+  question beside "did the person write?" (`ToolContext.on_leaving`, wired to
+  `Loop.leaving`) and returns within a poll: `[waited 12s] [the person ended the
+  session, so this answered early; the session is closing down]`. A call already
+  running when End was pressed -- a `bash` command, a `job_start` -- is not cut: each is
+  bounded by its own deadline, and its result is recorded when it comes back. A call the
+  model asked for in the same batch that had not started is not started, and is answered
+  `This call did not run: the person ended the session.` (the shape `settle` gives an
+  interrupted turn's calls, so the thread stays whole). After that batch's results the
+  model is not asked again -- no further tool call, no reply -- and the transcript
+  carries one line in the harness's voice: `The person ended the session while this
+  turn was running, so the turn stops here: the tool calls already in flight finished,
+  no further call was made, and the model was not asked again.` The session loop
+  (`cli._run_interactive`) returns straight to the close-down -- the final sync, the
+  capture, `_close_down`, unchanged -- without another prompt. A mesh desk still
+  building is told at that moment rather than at the close-down: a background run's
+  budgets are zeroed (`DeskRun.abandon`) so it stops at its next command instead of
+  spending model calls for as long as the call in flight takes to come back, and the
+  session's own desk is stopped the same way, so a foreground `mesh` (`wait: true`)
+  holding the turn ends at its next lap rather than at its fifteen-minute budget. What
+  a typed line does mid-turn is otherwise exactly as #41 left it: words for the model
+  cut a wait once and ride with that batch's results; `/status` and its kind are
+  answered on the spot and cut nothing. A prompt-time `/exit` -- typed when the model is
+  waiting for input -- is unchanged. Tests drive the real loop, drain and wiring: End
+  (`/exit`, `/quit`, EOF) pressed during a held `job_check` and a held `mesh_wait` ends
+  the wait within a poll, the model is not called again, the last message carries the
+  one line, the desk's budgets are zero and the line is still in the reader; words
+  typed in the same breath as End ride with the result and the note says the person
+  left; End pressed during a `bash` lets it finish, marks the next call in the batch as
+  not run and makes no further call; the session loop returns without a second prompt;
+  `/exit` typed to an open question (partial mode) declines the call and ends the turn
+  there; a whole session through `drive` ends with the ordinary close-down and the
+  workspace put down; a prompt-time `/exit`, `/quit` and EOF are as before; a real
+  `Mesher` run told by `Loop.leave` ends at its next lap; #41's typed-words and
+  `/status` tests pass unchanged. Two warm-start tests that queued a `/exit` behind
+  their first message as the way to end afterwards now end on the reader's EOF at the
+  prompt instead: a `/exit` in the inbox at the first tool call is, correctly, the
+  person leaving. `docs/session-commands.md` says what `/exit` does mid-turn.
 - **A steady solver's residuals levelling off on an unsteady flow is no longer reported
   to the person as a run that "did not converge".** The owner, after five solving
   studies in three days: "In each solve I just wanted a quick look, not a mesh
@@ -74,6 +242,52 @@ All notable changes to this project are recorded here. The format follows
   text (the failure words appear once, as the words ruled out; no imperative workflow
   language), the briefing and launch note carrying it, and the digest's reading of a
   steady stall, a divergence, a still-falling series and a run sitting at its floor.
+- **A held `mesh_wait` or `job_check` ends early only for words the model is about to
+  read, and says so.** The wait asked the reader's `pending()` -- is anything in the
+  queue -- while the loop's drain between tool calls (`cli._typed_while_working`) does
+  not take everything out of it: `/exit` is put back for whoever waits at the prompt,
+  an EOF likewise, and a `/status` is answered without a word reaching the model. In
+  production on 2026-09-21 (study 20260921-033019-e1b4) a put-back line sat in the
+  queue for the rest of a forty-minute turn: `mesh_wait` returned three times in nine
+  seconds -- 03:33:40 after 126 s, then 03:33:41 and 03:33:45 with `[waited 0s] [the
+  user said something, so this answered early]` -- and nothing the person had said
+  followed, because there was nothing to deliver. The model concluded the tool did not
+  wait, switched to `bash sleep 60..240` and paced the remaining thirty-seven minutes
+  with it (eighteen sleeps between 03:35 and 04:09; the eight waits it still tried,
+  four of them `job_check(wait_s=...)`, all answered in 0 s the same way). The same
+  prompt on the same model, started beside it sixteen seconds after that first cut
+  (20260921-033356-076b), held its `job_check(wait_s=120..300)` waits in full
+  throughout, and every line the person typed reached the model. The
+  question is the loop's to answer now (`Loop.heard`, wired as
+  `ToolContext.on_wait_input`): it drains the inbox the way the loop does between tool
+  calls -- commands answered on the spot, words for the model kept for this batch's
+  results -- and answers whether anything is kept. So a wait ends for a message that is
+  in the same user message as the result that ended, once (delivered, it cannot end the
+  next wait too), and a line that is nobody's to deliver to the model never ends one.
+  The result says what happened and what comes next: `[the person wrote, so this
+  answered early; their words follow this result. Answer them, then call mesh_wait again
+  -- the desk is still building]` (`job_check` says the same of the job). `job_check`
+  also decided its note by asking the question a second time after its loop, which
+  with a draining answer would have dropped the note; it remembers instead. What a
+  typed `/exit` does is unchanged: it is honoured when the turn ends, as before.
+- **`mesh_look.py --out` is relative to where you run it, like every other toolbox
+  script, and the report prints the absolute path it wrote.** A relative `--out` (and
+  `--json`) was joined to the case; `render.py`, `results.py`, `showcase.py`,
+  `geometry_view.py` and `animate.py` all read one against the working directory. In
+  production (study 20260920-161908-c7ef, 16:26:34 UTC) `cd /work/<study> && python3
+  /work/.toolbox/mesh_look.py mesh --out look.png` wrote `mesh/look.png` and printed
+  `picture: look.png`; four seconds later `read_file /work/<study>/look.png` answered
+  `not_found (404)`, and three turns went on finding the file -- for a command the
+  harness itself suggests in those words (`mesh_look.py <case> --out look.png`, in the
+  desk's result and the resume briefing). Now `--out` and `--json` resolve against the
+  working directory, the default without `--out` is still `<case>/look.png`, and the
+  `picture:` line is the absolute path. The JSON's `render` keeps its shape -- relative
+  to the case when the picture is inside it, which is what `mesher/check.py` reads and
+  joins to the case's paths -- and a `render_abs` beside it is absolute either way. The
+  mesh desk (`check.py`: `mesh_look.py . --out renders/mesh_look.png`, run in the case)
+  and the templates (`. --out look.png`, run in the case) name the case as `.`, so
+  nothing changes for them. `--help`, the script's docstring, `ENVIRONMENT.md` and the
+  toolbox `README.md` say where the file goes.
 - **The workspace listing is breadth-first, so the cap falls in the solver's bulk, not
   on the pictures.** `Browser.tree` ran `find | head -n 4001`, and `find` walks
   depth-first in directory order. In a transient study (20260920-161908-c7ef, in

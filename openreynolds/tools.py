@@ -29,7 +29,14 @@ from typing import Any, Callable
 from . import convergence, images
 from . import trace
 from .progress import case_dir_from_cmd, parse_control_dict, phase_from_cmd
-from .backend.base import Backend, BackendError, EXEC_MAX_TIMEOUT_S, JobStatus, WORKSPACE_ROOT
+from .backend.base import (
+    Backend,
+    BackendError,
+    EXEC_MAX_TIMEOUT_S,
+    EXEC_SYNC_WINDOW_S,
+    JobStatus,
+    WORKSPACE_ROOT,
+)
 from .store import Store
 
 SLOW_COMMAND_S = 10.0
@@ -73,10 +80,28 @@ class ToolContext:
     on_fetch: Callable[[list[Any]], None] | None = None
     """Called with the local paths `fetch` produced, for artifact capture."""
     on_wait_input: Callable[[], bool] | None = None
-    """Whether the user has said something not yet delivered, without taking it.
+    """Whether the person has said something for the model that it has not seen yet.
 
-    A waiting `job_check` ends early on it, so a person who speaks during a held
-    call is heard in seconds rather than when the wait runs out."""
+    A waiting `job_check` ends early on it, so a person who speaks
+    during a held call is heard in seconds rather than when the wait runs out. The
+    session loop answers it (`Loop.heard`): it drains the inbox as the loop does
+    between tool calls, answers commands on the spot, and holds the words for the
+    model to ride after this batch's results -- so what ended the wait is in the same
+    message as the result that says so, and a line that is nobody's to deliver to the
+    model (`/exit`, an EOF, a `/status`) ends nothing. It used to be the reader's
+    `pending()`, a peek at the queue, and a put-back `/exit` made every wait for the
+    rest of a turn answer at once with `waited 0s` (study 20260921-033019-e1b4)."""
+    on_leaving: Callable[[], bool] | None = None
+    """Whether the person has ended the session while this turn runs (`Loop.leaving`).
+
+    The other question a held `job_check` asks once a second, after
+    `on_wait_input`: a `/exit`, a `/quit` or an EOF met by the drain is nobody's to
+    deliver to the model, so it is not "heard" -- but it is the person leaving, and a
+    wait held for them is held for nobody. The wait returns at once, saying so, and
+    the loop ends the turn after this batch's results rather than at the model's next
+    reply. Measured before this (study 20260921-033019-e1b4): End pressed at 03:33:40
+    into a turn was honoured when the turn ended on its own, thirty-seven minutes
+    later. None when nobody is wired to answer, and then no wait ends on it."""
     cores: int | None = None
     """What `nproc` reported, once it has been asked: hardware threads. See `_core_count`."""
     physical_cores: int | None = None
@@ -186,7 +211,15 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "Run a shell command in the workspace and wait for it. "
             f"{FRESH_SHELL} Capped at {EXEC_MAX_TIMEOUT_S} seconds; use "
-            "job_start for anything longer. Returns the exit code and the output, "
+            "job_start for anything longer. A command still running at "
+            f"{EXEC_SYNC_WINDOW_S} seconds may be moved by the workspace to a detached "
+            "job that runs it again from the start (the hosted workspace does this; a "
+            "local one runs the command to its timeout_s), and this call then waits on "
+            "that job for what is left of timeout_s: a job that ends in time gives its "
+            "exit code and log here as the command's own; one still running when the "
+            "time is up comes back as `still running as job <id>` with the log so far, "
+            "and job_check <id> follows it from there -- the command is running, so it "
+            "is not one to run again. Returns the exit code and the output, "
             "with a pointer to the full log on disk if the output was long."
         ),
         "input_schema": {
@@ -297,8 +330,9 @@ TOOLS: list[dict[str, Any]] = [
             "Get a job's status together with whatever log has appeared since "
             "log_offset. Cheap to call repeatedly. With wait_s it holds the answer "
             "until the job ends or the wait runs out, ending early if the user says "
-            "something - quieter than pacing with sleep in bash, which counts "
-            "against the bash time cap."
+            "something (their words then follow this result in the same message; "
+            "answer them and call again) - quieter than pacing with sleep in bash, "
+            "which counts against the bash time cap."
         ),
         "input_schema": {
             "type": "object",
@@ -338,6 +372,8 @@ TOOLS: list[dict[str, Any]] = [
             "Start a long command detached and return a job id immediately. The job "
             "keeps running after your turn ends, and after this session closes. "
             f"{FRESH_SHELL} "
+            "Do not redirect stdout or stderr to a file: the detached job already "
+            "captures both, and `job_check` can only stream what the job captures. "
             "A solver started serially holds one core for the whole run, however "
             "many the container has; a case put through `decomposePar` and started "
             "with `mpirun -np N` holds N. What the extra ranks return falls away as "
@@ -374,7 +410,9 @@ TOOLS: list[dict[str, Any]] = [
                     "items": {"type": "string"},
                     "description": (
                         "Regexes matched against log lines. The first match terminates "
-                        "the job and the matching line is reported back. Optional."
+                        "the job and the matching line is reported back. Optional. Do not "
+                        "use a broad `Floating point exception` pattern: OpenFOAM prints "
+                        "that phrase in its harmless trapFpe startup banner."
                     ),
                 },
                 "overwrite": {
@@ -551,6 +589,10 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     started = time.monotonic()
     result = ctx.backend.exec(args["cmd"], cwd=args.get("cwd") or ctx.home, timeout_s=asked)
     elapsed = time.monotonic() - started
+    if getattr(result, "promoted", False) or getattr(result, "job_id", ""):
+        # The command belongs to a job now, and nothing below applies to it: there is
+        # no exit code to print, and the output is the job's log.
+        return _promoted(ctx, args, result, asked=asked, window=elapsed)
     notes = []
     if elapsed >= SLOW_COMMAND_S:
         # A four-minute command and a two-second one read identically otherwise, so
@@ -583,14 +625,6 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
         # instead of reading like a command that merely produced nothing and being
         # retried into the same wall.
         notes.append(f"[workspace: {result.stderr.strip()[:300]}]")
-    if getattr(result, "job_id", ""):
-        # The command ran past the synchronous window and became a detached job. Said
-        # plainly so the next step is job_check on this id, not a re-run of a command
-        # that is already running.
-        notes.append(
-            f"[moved to detached job {result.job_id}: it outran the synchronous exec "
-            f"window and is running now -- follow it with job_check, do not re-run it]"
-        )
     total = None
     if result.truncated and result.log_path:
         try:
@@ -603,6 +637,145 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     lines.extend(notes)
     if result.truncated or clipped:
         lines.append(_truncation_marker(len(body.encode("utf-8")), total, result.log_path))
+    lines.append("")
+    lines.append(body)
+    return "\n".join(lines)
+
+
+def _promoted(ctx: ToolContext, args: dict[str, Any], result: Any, *, asked: int,
+              window: float) -> str:
+    """A `bash` whose command the workspace moved to a detached job, waited out.
+
+    The caller asked for `asked` seconds and the workspace held the command for
+    `window` of them before starting it again from scratch as job `result.job_id`
+    (`ExecResult.promoted`). What the caller wanted was the command's result, so this
+    follows the job for the rest of the time it asked for -- the same held wait a
+    `job_check` with `wait_s` makes, ended by the same three things: the job ending,
+    the time running out, the person writing or leaving -- and hands back the job's
+    exit code and log as the command's own when the job ends in time. When it does
+    not, the first line says so, `still running as job <id>`, and never `exit_code`.
+
+    Measured before this (production, 2026-09-21, study 20260921-033019-e1b4): `bash
+    sleep 240`, `sleep 200` and `sleep 180`, each with `timeout_s=300`, came back
+    after the 120 s window as `exit_code: 0` with the service's note beneath it, and
+    the model read three commands that had finished with no output. It polled the
+    first job once, two seconds in, and none of them again; the rows stayed `running`
+    for 46, 35 and 20 minutes, until the reaper read the exit codes off the store
+    (fixed on the service's side by watching the job it makes -- `jobs.watch_job`).
+
+    The job is recorded as the session's, the way `job_start` records one: a
+    `job_check` on it continues the log from where this left off instead of sending
+    it again, the jobs panel shows it, and a job handed back still running is polled
+    by the watch loop, which wakes the model when it ends -- the poll that never
+    happened above. The transport can fail between the promotion and the answer, and
+    the promotion is the fact that must not be lost behind that: a status or a log
+    that could not be read is a note, and the first line stands.
+    """
+    job_id = str(result.job_id)
+    cwd = args.get("cwd") or ctx.home
+    ctx.store.record_job(job_id, cmd=args["cmd"], name=None, cwd=cwd)
+    _announce_jobs(ctx)
+    budget = min(asked, EXEC_MAX_TIMEOUT_S)
+    notes: list[str] = []
+    if asked > EXEC_MAX_TIMEOUT_S:
+        notes.append(
+            f"[timeout_s={asked} exceeds the {EXEC_MAX_TIMEOUT_S}s ceiling for a "
+            f"synchronous command; this call holds for {EXEC_MAX_TIMEOUT_S}s at most]"
+        )
+    if getattr(result, "stderr", "").strip():
+        notes.append(f"[workspace: {result.stderr.strip()[:300]}]")
+    mesher = _mesher_note(ctx, args)
+    if mesher:
+        # A snappyHexMesh that outran its window on a one-cell-thick mesh is the very
+        # stall this note describes, so it is worth its round trip here too.
+        notes.append(mesher.strip())
+
+    status: JobStatus | None = None
+    remaining = max(0.0, budget - window)
+    waited = 0.0
+    heard = left = False
+    data, next_offset, eof = "", 0, False
+    trouble = ""
+    try:
+        status = ctx.backend.job_status(job_id)
+        if remaining > 0 and status.running:
+            status, waited, heard, left = _hold(ctx, job_id, status, remaining)
+        data, next_offset, eof = ctx.backend.job_tail(job_id, offset=0)
+    except BackendError as exc:
+        trouble = f"[the job could not be read just now: {exc}]"
+    if status is not None:
+        ctx.store.update_job(
+            job_id,
+            status=status.status,
+            end_reason=status.end_reason,
+            exit_code=status.exit_code,
+            log_offset=next_offset,
+        )
+        _announce_jobs(ctx)
+
+    first_run = (result.output or "").strip()
+    output = data
+    if first_run:
+        # Two runs of one command: what the synchronous run printed before it was
+        # moved, then the job's log from the start. Labelled, so the repeat of a
+        # command's opening lines reads as what it is.
+        output = (f"[what the command printed in its first run, before it was moved:]\n"
+                  f"{first_run}\n[the job's log, from the start:]\n{data}")
+    body, clipped = _clip(output, ctx.max_output)
+    log_line = f"log: bytes 0–{next_offset}, eof={eof}"
+    if clipped:
+        log_line += (f" (this window clipped at {ctx.max_output} bytes; job_check from "
+                     f"{len(body.encode('utf-8'))})")
+
+    ended = status is not None and not status.running
+    if ended:
+        # The command's own result, arrived at the long way: the job's exit code where
+        # the exit code goes, and the job's log where the output goes.
+        first = (f"exit_code: {status.exit_code}" if status.exit_code is not None
+                 else describe_job(status))
+        lines = [first]
+        if window + waited >= SLOW_COMMAND_S:
+            lines.append(f"[took {window + waited:.0f}s]")
+        lines.append(
+            f"[moved to job {job_id} at {window:.0f}s: the command was still running "
+            f"at the synchronous window, so the workspace started it again from the "
+            f"start as a detached job, and this call waited {waited:.0f}s more for it. "
+            f"The exit code and output here are the job's]"
+        )
+        lines.extend(notes)
+        if trouble:
+            lines.append(trouble)
+        if status.exit_code is not None:
+            lines.append(describe_job(status))
+        lines.append(log_line)
+        lines.append("")
+        lines.append(body)
+        return "\n".join(lines)
+
+    lines = [f"still running as job {job_id} (promoted after {window:.0f} s; "
+             f"{waited:.0f} s waited)"]
+    lines.append(
+        f"[the command was still running at the synchronous window, so the workspace "
+        f"started it again from the start as detached job {job_id}, and this call "
+        f"followed the job for {waited:.0f}s of the {remaining:.0f}s left of its "
+        f"timeout_s={asked}. It is running now: job_check {job_id} follows it (wait_s "
+        f"holds the answer until it ends), and it is not a command to run again]"
+    )
+    lines.extend(notes)
+    if left:
+        lines.append(_left_note())
+    elif heard:
+        # Remembered from the wait rather than asked again: the question drains the
+        # inbox, and a second asking would drop the one sentence that explains a wait
+        # cut short. Not `_heard_note`'s usual "call this again" -- calling `bash`
+        # again would run the command a third time.
+        lines.append(_heard_note("job_check", "the command is still running as that job",
+                                 then=f"follow it with job_check {job_id}"))
+    if trouble:
+        lines.append(trouble)
+    if status is not None:
+        lines.append(describe_job(status))
+        lines.append(log_line)
     lines.append("")
     lines.append(body)
     return "\n".join(lines)
@@ -782,6 +955,18 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
     refusal = _restart_guard(ctx, args)
     if refusal:
         return refusal
+    trapfpe_banner = "trapFpe: Floating point exception trapping enabled"
+    for pattern in args.get("kill_on") or []:
+        try:
+            matches_banner = re.search(pattern, trapfpe_banner)
+        except re.error as exc:
+            return f"not started: invalid kill_on regex {pattern!r}: {exc}"
+        if matches_banner:
+            return (
+                f"not started: kill_on regex {pattern!r} also matches OpenFOAM's harmless "
+                f"startup line `{trapfpe_banner}`. Anchor or narrow the regex so the job "
+                "is killed only by an actual crash line."
+            )
     job_id = ctx.backend.job_start(
         args["cmd"],
         cwd=args.get("cwd") or ctx.home,
@@ -1108,21 +1293,20 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
     wait_s = min(asked_wait, JOB_WAIT_MAX_S)
     waited_note = ""
     if wait_s > 0 and status.running:
-        began = time.monotonic()
-        while status.running and time.monotonic() - began < wait_s:
-            if ctx.on_wait_input is not None and ctx.on_wait_input():
-                break
-            remaining = wait_s - (time.monotonic() - began)
-            time.sleep(max(0.0, min(JOB_WAIT_POLL_S, remaining)))
-            status = ctx.backend.job_status(job_id)
-        waited_note = f"[waited {time.monotonic() - began:.0f}s]"
+        status, waited, heard, left = _hold(ctx, job_id, status, wait_s)
+        waited_note = f"[waited {waited:.0f}s]"
         if asked_wait > JOB_WAIT_MAX_S:
             waited_note += (
                 f" [wait_s={asked_wait} exceeds the {JOB_WAIT_MAX_S}s ceiling for "
                 "one call; waiting again is free]"
             )
-        if status.running and ctx.on_wait_input is not None and ctx.on_wait_input():
-            waited_note += " [the user said something, so this answered early]"
+        if left:
+            waited_note += " " + _left_note()
+        elif heard:
+            # Remembered from the loop rather than asked again here: the question
+            # drains the inbox, so a second asking would find it empty and drop the
+            # one sentence that explains a wait of 0 s.
+            waited_note += " " + _heard_note("job_check", "the job is still running")
     data, next_offset, eof = ctx.backend.job_tail(job_id, offset=offset)
     ctx.store.update_job(
         job_id,
@@ -1142,6 +1326,33 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
     if clipped:
         header += f" (this window clipped at {ctx.max_output} bytes; call again from {offset + len(body.encode('utf-8'))})"
     return f"{header}\n\n{body}" if body else header
+
+
+def _hold(ctx: ToolContext, job_id: str, status: JobStatus,
+          wait_s: float) -> tuple[JobStatus, float, bool, bool]:
+    """Watch a running job until it ends, `wait_s` runs out, or the person writes or
+    leaves. Returns the last status read, the seconds spent, and those two answers.
+
+    The one waiting loop behind a held `job_check` and a `bash` whose command became a
+    job (`_promoted`): the job is looked at every `JOB_WAIT_POLL_S`, and before each
+    pause the person is asked after. `_heard` drains the inbox, which is also how the
+    loop learns of a `/exit`; asked second, the leaving question sees one the drain
+    has just met. Both are handed back rather than asked again by the caller, because
+    the question drains the inbox and a second asking would find it empty -- and drop
+    the one sentence that explains a wait of 0 s. Leaving wins the caller's note:
+    words typed in the same breath as End ride with the result, but are not answered.
+    """
+    began = time.monotonic()
+    heard = left = False
+    while status.running and time.monotonic() - began < wait_s:
+        heard = _heard(ctx)
+        left = _leaving(ctx)
+        if heard or left:
+            break
+        remaining = wait_s - (time.monotonic() - began)
+        time.sleep(max(0.0, min(JOB_WAIT_POLL_S, remaining)))
+        status = ctx.backend.job_status(job_id)
+    return status, time.monotonic() - began, heard, left
 
 
 def _running_on(ctx: ToolContext, record: Any, status: JobStatus) -> str:
@@ -1248,6 +1459,52 @@ def refuse_input(backend: Any, path: str, brep: bool = False) -> str | None:
     if not data:
         return f"{path} is there and gave back no bytes when it was read"
     return None
+
+
+def _heard(ctx: ToolContext) -> bool:
+    """Whether the person has said something the model has not seen yet -- asked of the
+    loop, which drains the inbox to answer and holds the words for this batch's results
+    (`ToolContext.on_wait_input`, `Loop.heard`). False when nobody is wired to answer."""
+    return ctx.on_wait_input is not None and bool(ctx.on_wait_input())
+
+
+def _leaving(ctx: ToolContext) -> bool:
+    """Whether the person has ended the session -- asked of the loop, which learned it
+    from the same drain `_heard` runs (`ToolContext.on_leaving`, `Loop.leaving`). False
+    when nobody is wired to answer, so a wait with no session behind it holds as it
+    always did."""
+    return ctx.on_leaving is not None and bool(ctx.on_leaving())
+
+
+def _left_note() -> str:
+    """Why a held answer came back before its time when the person ended the session.
+
+    Says only what the tool knows: the wait ended because the person left, and the
+    session is on its way down. Not what becomes of the job or the desk -- the
+    close-down decides that (`cli._close_down`, `--keep-alive`), and the loop says the
+    rest in its own line right after this result (`loop.LEFT_MID_TURN`). The model is
+    not asked again, so this is for whoever reads the transcript."""
+    return "[the person ended the session, so this answered early; the session is closing down]"
+
+
+def _heard_note(again: str, still: str, *, then: str | None = None) -> str:
+    """Why a held answer came back before its time, and what comes next.
+
+    Three facts, because a wait cut short with fewer read as a tool that does not
+    wait: the person wrote (the reason); their words are in this same message, after
+    the tool results (where to look -- the loop puts them there, `Loop._turns`); and
+    what was being waited on is still going, so the same call, made again after
+    answering them, holds as it did. Measured without the last two (study
+    20260921-033019-e1b4): three returns in nine seconds saying only "the user said
+    something", no words following, and the model switched to `bash sleep 115` for
+    the rest of the study.
+
+    `then` replaces "call {again} again" where the same call is the wrong next step:
+    a `bash` whose command became a job is followed with `job_check`, because `bash`
+    again would run the command a third time."""
+    then = then or f"call {again} again"
+    return (f"[the person wrote, so this answered early; their words follow this result. "
+            f"Answer them, then {then} -- {still}]")
 
 
 def _cad(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:

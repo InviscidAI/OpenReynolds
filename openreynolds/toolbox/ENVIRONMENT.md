@@ -56,6 +56,14 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
 
+## OpenFOAM dictionaries
+
+Hand-written dictionaries can start directly with `FoamFile`; the large decorative
+OpenFOAM C++ banner above it is optional. A partial decorative banner is not harmless:
+if its opening `/*...` is copied without the matching closing line, OpenFOAM reads the
+dictionary as a comment and reports that the `FoamFile` token is missing. Omit the
+banner unless copying a complete known-good file.
+
 ## Binaries on PATH
 
 - **OpenFOAM 2512** (ESI): the classic solver and utility names — `blockMesh`,
@@ -90,7 +98,10 @@ on `render.py --help` before rendering anything):
   without `--time` the latest time is drawn.
 - `python3 /work/.toolbox/mesh_look.py [<case>] [--out look.png] [--json measured.json]
   [--no-check]` — one captioned picture of a mesh plus its measured bounds, cell count and
-  patch table; runs `checkMesh` unless told not to.
+  patch table; runs `checkMesh` unless told not to. A relative `--out` (and `--json`) is
+  relative to the directory you run it from, as for every script here — not to the case —
+  and without `--out` the picture is `<case>/look.png`; the report's `picture:` line is the
+  absolute path it wrote.
 - `python3 /work/.toolbox/results.py <case> [--preset NAME | --list] [--time latest|first|T]
   [--normal z] [--out DIR]` — the preset picture and plot set and a `results.md` from a
   finished case; `--out` defaults to `<case>/results`.

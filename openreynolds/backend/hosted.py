@@ -132,6 +132,11 @@ answer is one whole tree rather than a walk to a depth: `browse.MAX_ENTRIES` is 
 on this side, after the depth is applied, and asking for less here would cut the tree
 before the depth had been looked at."""
 
+LISTING_TIMEOUT_S = 60.0
+"""How long one `list_files` request may run. The `find` it replaced was sent with
+`timeout_s=60`; a listing that takes longer than a minute is the service stuck, not a
+big workspace, and the mirror's cycle behind it should find that out rather than sit."""
+
 _MAX_ATTEMPTS = 5
 _DEFAULT_RETRY_AFTER_S = 10.0
 _SERVER_ERROR_RETRY_S = 1.0
@@ -760,9 +765,12 @@ class FoamdClient:
         return _json(self.request("GET", f"/v1/studies/{study_id}"))
 
     def list_files(self, instance_id: str, path: str) -> dict[str, Any]:
-        """The tree under `path` as the service's own copy of the workspace holds it,
-        scoped to the instance: `GET /v1/instances/{id}/files?list=1`. No instance is
-        started, whatever state the workspace is in.
+        """The tree under `path`, scoped to the instance: `GET /v1/instances/{id}/
+        files?list=1`. Answered from the live machine when the workspace is up and
+        from the service's own copy of the workspace when it is stopped; no instance
+        is started, whatever state the workspace is in, and the workspace's
+        last-activity clock is left alone (the route resolves the instance row without
+        touching it -- foamd `files.read_or_stat`, #53).
 
         The instance's twin of `list_workspace`, and the one `list_stored` asks,
         because the study route refuses the one path a study whose home is the
@@ -776,12 +784,20 @@ class FoamdClient:
         `root` the resolved absolute path, entries workspace-absolute, cut breadth-first
         at `STORED_LISTING_LIMIT`. A path outside `/work` is a 400, a path the copy does
         not have is a 404; both arrive as the `BackendError` `request` makes of them.
+
+        Bounded, unlike the other listings on this client: this one is asked every
+        twenty seconds for the life of a session by the mirror's background cycles,
+        and `request` given no timeout passes `None` through to httpx, which is no
+        timeout at all rather than the client's default. The `find` this replaces ran
+        under `timeout_s=60`; the same minute is the bound here. Retries are the
+        client's ordinary ones for a GET.
         """
         return _json(
             self.request(
                 "GET",
                 f"/v1/instances/{instance_id}/files",
                 params={"path": path, "list": 1, "recursive": 1, "entries": STORED_LISTING_LIMIT},
+                timeout=LISTING_TIMEOUT_S,
             )
         )
 
@@ -856,38 +872,42 @@ class HostedBackend(KernelHost, Backend):
         an explicit instance id never lists, because there was no choice to make."""
         self.study_id: str | None = None
         """Which study this session is serving, as the platform names it. Set by the
-        session once it has opened or resumed the study's row (`cli.session`); the
-        service keeps its copy of the workspace per study, so `list_stored` cannot
-        ask without it and answers None until it is told."""
+        session once it has opened or resumed the study's row (`cli.session`). Carried
+        for the study-scoped routes; `list_stored` asks the instance's own route and
+        needs no study id (see `FoamdClient.list_files` for why)."""
 
     def shutdown(self) -> None:
         """Put the container down. The volume is untouched, so nothing is lost."""
         self._client.stop_instance(self.instance_id)
 
     def list_stored(self, path: str, depth: int) -> StoredListing | None:
-        """The files under `path` from the service's own copy of the workspace, cut
-        to `depth`. None when the ask did not work.
+        """The files under `path` as the service lists them, cut to `depth`. None
+        when the ask did not work.
 
-        The copy is what the service writes at every checkpoint and stop, and
-        `GET /v1/instances/{id}/files?list=1` reads it whether or not a machine is
-        up -- the same copy `get_file` and `get_tree` are served from once the
-        workspace is stopped, so a sync that lists this way stays off the machine end
-        to end. Asked of the instance, not the study: the study route refuses the
-        workspace root, and a study whose home is the root (three of the owner's are)
-        lists exactly that path on its way out -- which is how the first cut of this
-        (asking `/v1/studies/{id}/workspace`) still started a machine on 2026-09-21.
-        Nothing here needs a study id. The route answers the whole tree, so the
-        caller's depth is applied here, counted from `path` as `find -maxdepth`
-        counts it.
+        `GET /v1/instances/{id}/files?list=1` answers from the live machine while the
+        workspace is up (the daemon's own directory listing, no command run and no
+        cap on the answer's bytes) and from the copy the service writes at every
+        checkpoint and stop once it is down -- the same copy `get_file` and
+        `get_tree` are served from then, so a sync that lists this way stays off the
+        machine end to end. It never starts a machine and never counts as use of one.
+        "Stored" is the name from when only the stopped case came this way; since the
+        listing of a running workspace over the exec channel was found cut at 64 KB
+        mid-line (`browse.LIST_PIPELINE` has the incident), `Browser.tree` asks this
+        first in both states. Asked of the instance, not the study: the study route
+        refuses the workspace root, and a study whose home is the root (three of the
+        owner's are) lists exactly that path on its way out -- which is how the first
+        cut of this (asking `/v1/studies/{id}/workspace`) still started a machine on
+        2026-09-21. Nothing here needs a study id. The route answers the whole tree,
+        so the caller's depth is applied here, counted from `path` as `find
+        -maxdepth` counts it.
 
-        Every failure is None and none of them is raised: this is asked on the way
-        out of a session by a caller that has a machine to fall back on, and the
-        one thing it must not do is turn a listing into an exception. A 400 is a
-        path outside `/work`; a 404 is a path the copy does not have, a workspace
-        never written to it, or a service without the route; the rest is the network.
-        In each case the fallback is what always happened -- a foreground `exec`,
-        which may start the workspace -- so nothing is lost by being quiet here,
-        only the saving.
+        Every failure is None and none of them is raised: the caller has the exec
+        walk to fall back on, and the one thing this must not do is turn a listing
+        into an exception. A 400 is a path outside `/work`; a 404 is a path the
+        service does not have, a workspace never written to the copy, or a service
+        without the route; the rest is the network. In each case the fallback is
+        what always happened -- a poll, then a foreground `exec`, which may start
+        the workspace -- so nothing is lost by being quiet here, only the saving.
         """
         try:
             body = self._client.list_files(self.instance_id, path)
@@ -908,6 +928,12 @@ class HostedBackend(KernelHost, Backend):
                         path=where,
                         is_dir=bool(item.get("is_dir")),
                         size=int(item.get("size") or 0),
+                        # Whole seconds on the wire (`workspace.listing_payload` casts
+                        # to int), where `find`'s `%T@` carried a fraction. Kept as
+                        # the float the walk's rows became, unrounded: the one reader
+                        # that compares it (`mirror._already_here`) sets this machine's
+                        # clock against the workspace's, and no fraction of a second
+                        # survives that.
                         mtime=float(item.get("mtime") or 0),
                     )
                 )
@@ -976,15 +1002,34 @@ class HostedBackend(KernelHost, Backend):
             return ExecResult(exit_code=-1, output="", truncated=False, log_path=None,
                               stderr="", idle=True)
         if body.get("promoted") and body.get("job_id"):
-            # The command outran the synchronous window and the service moved it to a
-            # detached job rather than hold a fragile long exec connection (which used to
-            # 500 and get retried, re-running a 13-minute command). Surface it as the job
-            # it now is, so the next step is a job_check, not a re-run.
-            note = body.get("note") or (
-                f"moved to detached job {body['job_id']}; follow it with job_check"
+            # The command was still running at the service's synchronous window and
+            # the service started it again from scratch as a detached job rather than
+            # hold a fragile long exec connection (which used to 500 and get retried,
+            # re-running a 13-minute command). The answer is `{exit_code: null,
+            # promoted: true, job_id, output, stderr, note}` (`OpenFoam_Instance/app/
+            # execs.py`), and it is carried here as what it says: no exit code, the
+            # flag, the job. Until 2026-09-21 this line read `ExecResult(exit_code=0,
+            # output=note, job_id=...)`, and `tools._bash` printed `exit_code: 0` as
+            # its first line for `sleep 240`, `sleep 200` and `sleep 180`, each of
+            # them still running (study 20260921-033019-e1b4; jobs 808edf10, 5432459d,
+            # e839ac57). The model read three commands that had finished with no
+            # output and never polled a job; the rows stayed `running` for 46, 35 and
+            # 20 minutes until the reaper closed them. The service's `note` is prose
+            # about this shape for a human reading the raw answer; the tool says the
+            # same from the fields, in the words its caller reads, so it is not kept.
+            # `output` is what the synchronous run had produced when it was moved --
+            # empty from today's service, carried in case that changes -- and `stderr`
+            # is the wrapper's own, the one field that tells a command that was still
+            # running from an exec that never got one started.
+            return ExecResult(
+                exit_code=None,
+                output=body.get("output", "") or "",
+                truncated=bool(body.get("truncated")),
+                log_path=body.get("log_path") or None,
+                stderr=body.get("stderr", "") or "",
+                job_id=str(body["job_id"]),
+                promoted=True,
             )
-            return ExecResult(exit_code=0, output=note, truncated=False, log_path=None,
-                              stderr="", job_id=str(body["job_id"]))
         return ExecResult(
             exit_code=body.get("exit_code", -1),
             output=body.get("output", ""),

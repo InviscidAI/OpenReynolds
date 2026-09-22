@@ -536,7 +536,10 @@ def test_the_header_goes_out_and_the_model_is_briefed_while_the_workspace_starts
     view.before_step = lambda: loops[0].posted.wait(5.0)
 
     def interface(drive):
-        drive(view, ScriptedReader(["what is this machine?", "/exit"]))
+        # The reader's EOF ends the session at the prompt after the turn. A `/exit`
+        # queued behind the message would be met by the drain before the first tool
+        # call, and read as the person leaving mid-turn: the call would not run.
+        drive(view, ScriptedReader(["what is this machine?"]))
         return False
 
     cli.session(_config(tmp_path), study_id=None, instance_id=None, one_shot=None, interface=interface)
@@ -656,7 +659,8 @@ def test_a_start_that_fails_tells_the_view_and_the_model_and_keeps_the_conversat
     view.on_tool = failure_has_been_said
 
     def interface(drive):
-        drive(view, ScriptedReader(["go", "/exit"]))
+        # EOF at the prompt ends the session; see the test above for why not `/exit`.
+        drive(view, ScriptedReader(["go"]))
         return False
 
     cli.session(_config(tmp_path), study_id=None, instance_id=None, one_shot=None, interface=interface)
@@ -668,6 +672,47 @@ def test_a_start_that_fails_tells_the_view_and_the_model_and_keeps_the_conversat
     assert any("unavailable" in e for e in view.tool_errors), "the tool call failed with the start's own error"
     assert loop.fake.calls, "and the conversation went on"
     assert backend.stopped == 0
+
+
+def test_end_pressed_mid_turn_ends_the_turn_and_then_the_session_the_ordinary_way(
+    tmp_path, monkeypatch, quiet_console
+):
+    """A whole session, through `drive`. End (`/exit`) arrives while a `bash` runs: the
+    command finishes and its result is recorded, the model is not asked for the next
+    batch, the transcript carries the harness's line, and the ordinary close-down puts
+    the workspace down. Before this the `/exit` waited for the turn to end on its own
+    -- thirty-seven minutes, in production (study 20260921-033019-e1b4)."""
+    from openreynolds.loop import LEFT_MID_TURN
+
+    backend = _Stoppable()
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(backend))
+    loops = []
+    monkeypatch.setattr(cli, "Loop", _scripted_loop([
+        message([tool_block("bash", {"cmd": "sleep 60; ls mesh"})], stop_reason="tool_use"),
+        message([tool_block("bash", {"cmd": "sleep 115"})], stop_reason="tool_use"),
+        message([text_block("never said")]),
+    ], loops))
+    view = _WatchingView(threading.Event())
+    reader = ScriptedReader(["mesh it"])
+    # `tool` is said as a call starts, so this is End pressed while the command runs.
+    view.on_tool = lambda: reader._lines.append("/exit")
+
+    def interface(drive):
+        drive(view, reader)
+        return False
+
+    cli.session(_config(tmp_path), study_id=None, instance_id=None, one_shot=None, interface=interface)
+
+    (loop,) = loops
+    assert [c for c in backend.execs if c.startswith("sleep")] == ["sleep 60; ls mesh"], (
+        "the command in flight ran; the next batch's did not")
+    assert len(loop.fake.calls) == 1, "the model was not asked again"
+    assert loop.leaving is True
+    assert any("ended mid-turn" in n for n in view.notices)
+    last = loop.messages[-1]["content"]
+    assert last[0]["type"] == "tool_result" and "exit_code" in last[0]["content"]
+    assert any(b.get("type") == "text" and b["text"].endswith(LEFT_MID_TURN) for b in last)
+    assert backend.stopped == 1, "the ordinary close-down put the workspace down"
 
 
 def test_the_stream_json_reader_hears_workspace_ready(tmp_path, monkeypatch):

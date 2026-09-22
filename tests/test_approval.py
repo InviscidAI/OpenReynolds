@@ -203,6 +203,34 @@ def test_a_mode_switch_typed_during_one_call_governs_the_next_in_the_same_turn(c
     assert backend.started == []
 
 
+def test_leaving_at_a_question_ends_the_turn_without_asking_the_model_again(ctx, store, backend):
+    """`/exit` typed to an open question declines the call and is put back, as before;
+    the loop's next drain meets the put-back line, so the turn ends there -- the model
+    is not asked for the reply nobody would read -- and the session follows."""
+    from openreynolds.loop import LEFT_MID_TURN
+
+    reader = ScriptedReader([])
+    view = AnsweringView(reader, "/exit")
+    ctx.mode = "partial"
+    loop = _wired(Loop(Config(llm_api_key="k", model="claude-opus-5", mode="partial"), ctx, store, view),
+                  ctx, store, backend, view, reader)
+    fake = install_model(loop, [
+        message([tool_block("job_start", {"cmd": "simpleFoam", "name": "solve"})], stop_reason="tool_use"),
+        message([text_block("understood, leaving it")]),
+    ])
+    loop.say("start the solve")
+    loop.run()
+
+    assert [a[1:] for a in view.answers] == [("declined", LEAVING)]
+    assert backend.started == []
+    assert len(fake.calls) == 1, "the model was not asked again"
+    assert loop.leaving is True
+    carrier = next(m for m in loop.messages if m["role"] == "user" and isinstance(m["content"], list))
+    assert carrier["content"][0]["is_error"] and LEAVING in carrier["content"][0]["content"]
+    assert carrier["content"][-1]["text"].endswith(LEFT_MID_TURN)
+    assert reader.poll() == "/exit", "still there for the prompt, as before"
+
+
 def test_a_partial_session_waits_for_yes_before_starting_the_job(ctx, store, backend):
     """End to end through the interactive loop: the question is answered by the same
     reader the prompt reads, and the job starts only after the "/yes"."""
