@@ -259,12 +259,14 @@ def test_every_captured_name_is_captured_wherever_it_sits(tmp_path, name):
 # -- the tool ------------------------------------------------------------------
 
 
-def test_the_tool_names_are_exactly_the_sorted_eight_with_cad_second():
+def test_the_tool_names_are_exactly_the_sorted_nine_with_cad_second():
+    """Nine since the reviewer was offered on its own as `mesh_review`; `mesh`, the
+    desk's old name, is still not one of them."""
     names = [tool["name"] for tool in TOOLS]
     assert names == sorted(names)
-    assert len(names) == 8
+    assert len(names) == 9
     assert names[:2] == ["bash", "cad"]
-    assert "mesh" not in names
+    assert "mesh" not in names and "mesh_review" in names
 
 
 def test_the_cad_tool_takes_a_geometry_path():

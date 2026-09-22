@@ -2,7 +2,7 @@
 
 **A CFD agent with a real OpenFOAM workspace.**
 
-OpenReynolds is a tool-use loop with eight tools pointed at a Linux machine that has
+OpenReynolds is a tool-use loop with nine tools pointed at a Linux machine that has
 OpenFOAM v2512 on it. You describe the flow; it writes the case, meshes it, launches
 the solver, reads the residuals while they come in, looks at its own renders, and
 hands back the figures and the files that made them.
@@ -98,7 +98,7 @@ workspace** gets a file tree you can open things from.
 `--plain` gives a plain streaming terminal instead, which is what you want in CI or
 over a poor connection.
 
-## The eight tools
+## The nine tools
 
 That is the whole surface. Anything the agent does to a case, it does through one of
 these.
@@ -113,8 +113,9 @@ these.
 | `job_kill` | Stop a job, and confirm it actually stopped. |
 | `fetch` | Copy files or directories out of the workspace onto your own machine, and say where they landed. Renders and reports come home this way. |
 | `cad` | Describe a shape in words — or point at a `.step`/`.iges` file already on the workspace — and get back an OpenFOAM mesh of it there. A separate agent does the work on the same machine, one python cell at a time in a kernel: it builds or imports the shape, repairs and tags it, picks the mesher (`snappyHexMesh`, cfMesh, gmsh body-fitted, `blockMesh`), renders the mesh, measures it, and revises until `checkMesh` passes and the shape measures up to what was asked for. Saying it is done is not what ends it — the mesh has to be there, pass, carry patch names somebody chose, and have a script that rebuilds it. You get the picture, the patch table, `checkMesh`'s verdict, the script and where the case is. A mesh only: fields, boundary conditions and the solve stay with the agent. |
+| `mesh_review` | Have an independent reviewer look at a mesh that already exists — one built with `bash`, one the `cad` tool returned, one you uploaded — from several views (2D: overview, cells, zoomed quadrants; 3D: isometric corners, orthographic faces, mid-plane cuts) and say whether it is the shape that was asked for. A fresh model that did not build it and has not seen the conversation, judging the pictures against the request: it fails only for what would change the CFD answer, does not run `checkMesh` and changes nothing. The `cad` desk consults the same reviewer at its own finish. |
 
-A ninth, `checkpoint`, exists only when you choose structured mode (see *Modes*):
+A tenth, `checkpoint`, exists only when you choose structured mode (see *Modes*):
 it puts a summary of where the study stands, and what comes next, in front of you and
 waits for your answer. In full auto it is not in the tool list at all.
 

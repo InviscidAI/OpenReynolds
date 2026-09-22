@@ -1,4 +1,4 @@
-"""The tool surface: eight tools, thin handlers, everything delegating to `Backend`.
+"""The tool surface: nine tools, thin handlers, everything delegating to `Backend`.
 
 There is no `run_gate`, no `amend_spec`, no `ask_user` — asking is just talking. Nothing
 here inspects what the model is doing or refuses it on policy grounds. The handlers cap
@@ -12,7 +12,14 @@ desk cannot check for itself in time: whether the `geometry` file it was pointed
 there and readable. That is asked before the run starts, because a path that is wrong
 is worth a sentence rather than nine steps and a model bill.
 
-A ninth, `checkpoint`, exists only when the person chose structured mode (`modes.py`):
+The ninth, `mesh_review`, is the desk's independent reviewer (`cad/review.py`) offered
+on its own: a fresh model that did not build the mesh looks at it from several views
+and says whether it is the shape that was asked for. It is a second opinion about any
+`constant/polyMesh` under the workspace -- one built with bash, one the desk returned,
+one somebody uploaded -- and it changes nothing. Like `cad`, it is in the list only when
+there is a reviewer to serve it.
+
+A tenth, `checkpoint`, exists only when the person chose structured mode (`modes.py`):
 it puts a summary in front of them and waits for their answer. It is the person asking
 to be consulted, not the harness deciding to consult them, so in full auto it is not in
 the list at all.
@@ -20,6 +27,7 @@ the list at all.
 
 from __future__ import annotations
 
+import posixpath
 import re
 import shlex
 import time
@@ -140,9 +148,14 @@ class ToolContext:
     """The CAD desk (`cad.CadDesk`), when there is a model key to run one with.
     None means the `cad` tool answers with why not, and CAD and meshing are the
     caller's own work like any other command."""
+    reviewer: Any = None
+    """The independent geometry reviewer (`cad.Reviewer`), when there is a model key to
+    run one with. None means the `mesh_review` tool is not offered: a reviewer is a
+    model call with pictures in it, and there is nothing else it could be."""
     on_tokens: Callable[[dict], None] | None = None
     """Called with the model usage a tool spent on the session's behalf -- the CAD
-    desk's steps -- so it lands in the same totals as the main loop's."""
+    desk's steps, the reviewer's look -- so it lands in the same totals as the main
+    loop's."""
     mode: str = "auto"
     """How much the person chose to be consulted (`modes.py`). Read at every tool call,
     so a `/mode` switch applies from the next one."""
@@ -160,12 +173,13 @@ class ToolContext:
 def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     """The tools this session can actually serve.
 
-    Only `cad` is conditional: without a desk behind it the tool can do nothing
-    but explain that, and a tool in the list that answers "not available" costs the
-    model a call to find out. Taking it out of the list is also what makes the
-    question answerable -- the same prompt run with the desk and without it, which is
-    the only honest way to settle whether a slow natural-language sub-agent beats the
-    bash the caller already has.
+    `cad` and `mesh_review` are conditional: without a desk, or a reviewer, behind it
+    the tool can do nothing but explain that, and a tool in the list that answers "not
+    available" costs the model a call to find out. Taking it out of the list is also
+    what makes the question answerable -- the same prompt run with the desk and without
+    it, which is the only honest way to settle whether a slow natural-language
+    sub-agent beats the bash the caller already has. With both wired the list is
+    `TOOLS` itself, the same object every call, so the cache prefix does not move.
 
     `checkpoint` is the other: it is offered only in structured mode. A `/mode` switch
     into or out of structured therefore changes the tool list once, which rewrites the
@@ -173,8 +187,13 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     is paid only when they make it. Sorted by name either way, so the list for a given
     mode is always the same bytes.
     """
-    offered = TOOLS if ctx.cad is not None else [
-        tool for tool in TOOLS if tool["name"] != "cad"
+    withheld = set()
+    if ctx.cad is None:
+        withheld.add("cad")
+    if ctx.reviewer is None:
+        withheld.add("mesh_review")
+    offered = TOOLS if not withheld else [
+        tool for tool in TOOLS if tool["name"] not in withheld
     ]
     if ctx.mode != "structured":
         return offered
@@ -426,6 +445,51 @@ TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["cmd"],
+        },
+    },
+    {
+        "name": "mesh_review",
+        "description": (
+            "Have an independent reviewer look at an OpenFOAM mesh that already exists "
+            "-- one this session built with bash, one the cad tool returned, or one "
+            "somebody uploaded -- from several views (2D: overview, cells, zoomed "
+            "quadrants; 3D: four isometric corners, six orthographic faces, mid-plane "
+            "cuts) and judge whether it is the shape that was asked for. It does not "
+            "run checkMesh and does not judge mesh quality: it compares the pictures to "
+            "the request and fails only for what changes the CFD answer -- wrong "
+            "topology, sharp corners where curves were asked for, proportions, a gap "
+            "one cell wide, inlet and outlet on the wrong ends. Returns PASS or FAIL "
+            "with each problem and the view it was seen in, plus the first view as a "
+            "picture. Takes about a minute. Not a substitute for checkMesh."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case": {
+                    "type": "string",
+                    "description": (
+                        "The case directory holding constant/polyMesh: relative to this "
+                        f"study's own directory, or absolute under {WORKSPACE_ROOT}."
+                    ),
+                },
+                "request": {
+                    "type": "string",
+                    "description": (
+                        "What the geometry is supposed to be, with sizes and units, "
+                        "which end is which, whether it is 2D or 3D, and every property "
+                        "that has to be right. The reviewer judges the pictures against "
+                        "this and nothing else."
+                    ),
+                },
+                "notes": {
+                    "type": "string",
+                    "description": (
+                        "What you or the desk believe was built and measured, so the "
+                        "reviewer can check those claims against the pictures. Optional."
+                    ),
+                },
+            },
+            "required": ["case", "request"],
         },
     },
     {
@@ -1560,19 +1624,38 @@ def _cad(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     if ctx.on_tokens and result.tokens:
         ctx.on_tokens(result.tokens)
     text = cad_text(result)
-    if result.png:
-        return [images.attachment(images.downscale(result.png, "image/png"), "image/png"),
+    # The picture: the desk's own when it drew one, else the reviewer's first view.
+    # `CoreDesk` never draws at the finish, so without this the caller of the measured
+    # desk got words about a shape and no shape.
+    png = result.png
+    if not png:
+        review = getattr(result, "review", None)
+        png = getattr(review, "png", None) if review is not None else None
+    if png:
+        return [images.attachment(images.downscale(png, "image/png"), "image/png"),
                 {"type": "text", "text": text}]
     return text
 
 
+BUDGET_STOPS = ("steps", "time", "provider")
+"""The `CadResult.stopped` values that mean the desk did not finish on its own terms.
+A mesh accepted at the end of one of those runs was checked and never reviewed, and
+`cad_text` says so rather than leaving the review line out as if nobody had one."""
+
+NOT_REVIEWED_BUDGET = "not reviewed: the desk ran out of budget before it could be reviewed"
+
+
 def cad_text(result: Any) -> str:
     """The words of the CAD tool's answer: whether it is a mesh, what the mesh is,
-    what the desk says it built, what is still to do, and how to change it.
+    what an independent reviewer made of the shape, what the desk says it built,
+    what is still to do, and how to change it.
 
     The order is deliberate. A tool result that opened with "case written" was once
     read as "meshed" and the solve that followed had nothing to solve, so the first
-    line here is always the state of `constant/polyMesh` and never anything else.
+    line here is always the state of `constant/polyMesh` and never anything else. The
+    review comes second, because it is the one judgement about the *shape* -- and a
+    mesh that passed checkMesh and did not pass review is the case the reviewer
+    exists for (`cad/review.py`).
     """
     check = result.check
     lines: list[str] = []
@@ -1600,6 +1683,13 @@ def cad_text(result: Any) -> str:
         lines.append(f"NOT a usable mesh yet in {result.case_rel}: {why}")
     else:
         lines.append(f"nothing was meshed in {result.case_rel}")
+    review = getattr(result, "review", None)
+    if review is not None:
+        lines.extend(review.lines())
+    elif result.ok and getattr(result, "stopped", "") in BUDGET_STOPS:
+        # The end-of-run check accepted what was there; nobody but the desk looked at
+        # the shape. Said, because a missing line reads as a clean bill.
+        lines.append(NOT_REVIEWED_BUDGET)
     if getattr(result, "remarks", None):
         lines.append("")
         lines.append("while this ran, the user said this to the CAD desk directly, and it "
@@ -1618,10 +1708,117 @@ def cad_text(result: Any) -> str:
         f"this is a mesh and nothing else: no 0/ fields, no boundary conditions, no "
         f"solver settings, nothing solved. Look at it again yourself with "
         f"`python3 {WORKSPACE_ROOT}/.toolbox/mesh_look.py {result.case_rel} --out look.png`, "
-        f"rebuild it after an edit with `cd {result.case_rel} && sh Allmesh`, or call this "
-        "tool again with what to change."
+        f"rebuild it after an edit with `cd {result.case_rel} && sh Allmesh`, call "
+        "mesh_review to have it looked at again independently, or call this tool again "
+        "with what to change."
     )
     return "\n".join(lines)
+
+
+REVIEW_IS_AN_OPINION = (
+    "this is an independent opinion about the shape and nothing else: no checkMesh ran "
+    "here and nothing about the mesh was changed"
+)
+
+REVIEW_FAILED_NEXT = (
+    "fix the shape and call this again, or hand the problems to the cad tool with what "
+    "to change"
+)
+
+
+def _mesh_review(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    """A second pair of eyes on a mesh that already exists, wherever it came from.
+
+    The same `Reviewer` the desk consults at its finish, reached without the desk: the
+    caller names a case and says what the shape is meant to be, and gets back the
+    verdict and the first view. Nothing here opens the mesh -- the rendering runs where
+    the mesh is (`Reviewer._render`) -- and nothing here judges it; the words are the
+    reviewer's, and the two lines after them say what kind of answer this is.
+
+    The path is checked before anything is spent, on the `refuse_input` argument: a
+    directory that is not there is worth a `stat`, not a render and a model call. It
+    has to be under the workspace root, because that is the only filesystem the
+    reviewer can render from; a relative name is under this study's own directory,
+    which is where the desk puts what it builds.
+    """
+    if ctx.reviewer is None:
+        return (
+            "the independent reviewer is not available in this session (it needs a "
+            "model key of its own to look with); look at the mesh yourself with "
+            f"`python3 {WORKSPACE_ROOT}/.toolbox/mesh_look.py <case> --out look.png` "
+            "and read_file the picture"
+        )
+    request = str(args.get("request") or "").strip()
+    if not request:
+        return ("nothing was reviewed: say what the geometry is supposed to be in "
+                "`request` -- the reviewer compares the pictures to that and to nothing "
+                "else")
+    resolved = _case_under_workspace(ctx, str(args.get("case") or ""))
+    if isinstance(resolved, str):
+        return f"nothing was reviewed: {resolved}"
+    case_dir, case_rel = resolved
+    try:
+        info = ctx.backend.stat(case_dir)
+    except BackendError as exc:
+        return f"nothing was reviewed: {case_dir} could not be read: {exc}"
+    if not info.is_dir:
+        return f"nothing was reviewed: {case_dir} is a file, not a case directory"
+    try:
+        ctx.backend.stat(f"{case_dir}/constant/polyMesh")
+    except BackendError as exc:
+        return (f"nothing was reviewed: {case_dir} holds no constant/polyMesh, so there "
+                f"is no mesh to look at ({exc})")
+
+    review = ctx.reviewer.review(case_dir, case_rel, request, said=None,
+                                 summary=str(args.get("notes") or "").strip(),
+                                 facts=None)
+    if ctx.on_tokens and getattr(review, "tokens", None):
+        ctx.on_tokens(review.tokens)
+    text = mesh_review_text(review)
+    png = getattr(review, "png", None)
+    if png:
+        return [images.attachment(images.downscale(png, "image/png"), "image/png"),
+                {"type": "text", "text": text}]
+    return text
+
+
+def mesh_review_text(review: Any) -> str:
+    """The reviewer's own report, then what kind of answer it is and what follows it."""
+    lines = list(review.lines())
+    lines.append("")
+    lines.append(REVIEW_IS_AN_OPINION)
+    blocks = getattr(review, "blocks_finish", None)
+    if callable(blocks) and blocks():
+        lines.append(REVIEW_FAILED_NEXT)
+    return "\n".join(lines)
+
+
+def _case_under_workspace(ctx: ToolContext, case: str) -> tuple[str, str] | str:
+    """The case directory as an absolute workspace path, with its name relative to the
+    study -- or the sentence saying why the path cannot be used.
+
+    The rule is `refuse_input`'s: under the workspace root, or nowhere. A relative name
+    is taken under this study's own directory (`ctx.home`), and a `..` that climbs out
+    of the root is refused by the same test after `normpath` has folded it -- the check
+    is on where the path lands, not on how it was spelled."""
+    root = str(getattr(ctx.backend, "workspace_root", WORKSPACE_ROOT)).rstrip("/") or "/"
+    raw = case.strip()
+    if not raw:
+        return ("say which case to look at in `case`: the directory holding "
+                "constant/polyMesh, relative to this study or absolute under "
+                f"{root}/")
+    home = (ctx.home or root).rstrip("/") or root
+    path = posixpath.normpath(raw if raw.startswith("/") else f"{home}/{raw}")
+    if not (path == root or path.startswith(root + "/")):
+        return (f"{path} is not under {root}/, which is the only filesystem this "
+                "session can reach; there is no upload from your machine here")
+    if path == home:
+        case_rel = "."
+    elif path.startswith(home + "/"):
+        case_rel = path[len(home) + 1:]
+    else:
+        case_rel = path
+    return path, case_rel
 
 
 mesh_text = cad_text
@@ -1679,6 +1876,7 @@ _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "job_check": _job_check,
     "job_kill": _job_kill,
     "job_start": _job_start,
+    "mesh_review": _mesh_review,
     "read_file": _read_file,
     "write_file": _write_file,
 }

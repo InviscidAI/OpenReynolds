@@ -1481,6 +1481,20 @@ def session(
         # client (cad/). It needs nothing in this process but a key -- the machine it
         # works on is the one the session is already talking to.
         ctx.on_tokens = loop.add_tokens
+        # The independent reviewer: a fresh model that did not build the mesh, shown it
+        # from several views with the request, asked one question (cad/review.py). It
+        # is built whenever there is a key, because it serves two callers -- the desk
+        # consults it at its finish, and the main agent reaches it as `mesh_review` for
+        # any mesh under the workspace, whoever built it. `OPENREYNOLDS_CAD_REVIEW=0`
+        # takes it away from the desk only; that is the A/B, and the tool stays.
+        reviewer = None
+        if not cfg.model_key_missing():
+            with _timed("review"):
+                reviewer = cad.Reviewer(
+                    cfg, backend,
+                    on_step=lambda step: _cad_desk_step(view, tracker, step),
+                )
+            ctx.reviewer = reviewer
         if cfg.mesh_tool and not cfg.model_key_missing():
             # `interject` is read late on purpose: the loop's own drain is attached a
             # few lines below, and the desk needs the same one. It is what lets a
@@ -1496,6 +1510,7 @@ def session(
                     cfg, backend, store, store.session.home,
                     interject=lambda: loop.interject() if loop.interject else None,
                     on_step=lambda step: _cad_desk_step(view, tracker, step),
+                    reviewer=reviewer if cfg.cad_review else None,
                 )
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, concierge=concierge
@@ -1896,8 +1911,14 @@ def _cad_desk_step(view: Any, tracker: Any, step: Any) -> None:
     it was "a black box", and the person watching had no way to tell a desk building
     a mesh from a desk stuck. One line per cell, the way a tool call is announced,
     plus the bar's own narration so it survives the next redraw.
+
+    The reviewer reports through the same hook (`cad.Reviewer._report`), one synthetic
+    step whose `cmd` opens with `[review]` and whose `image` counts the views it
+    looked at -- so it renders as a line of the desk's work, which is what it is.
+    A step with nothing in `cmd` is a line with no words, not an exception.
     """
-    first = (step.cmd or "").strip().splitlines()[0][:90]
+    heads = (step.cmd or "").strip().splitlines()
+    first = heads[0][:90] if heads else ""
     seen = "  <picture>" if step.image else ""
     line = f"cad desk [{step.exit_code}] {step.seconds:.0f}s  {first}{seen}"
     try:

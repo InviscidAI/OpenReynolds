@@ -286,6 +286,17 @@ form does not, and cut-cell meshers routinely leave a few percent of cells that 
 on meshes that solve fine. Do not rebuild a working mesh to satisfy it, and never re-run \
 the barer form after the stricter one failed as though that repaired something.
 
+**After `checkMesh` and the gates accept a declare, an independent reviewer looks at the \
+mesh.** It did not build the shape and has not read this thread: it is shown the request, \
+your closing summary and the mesh drawn from several views, and it judges whether what is \
+there is what was asked for. It may hand back problems it is confident change the answer \
+-- the wrong topology, sharp corners where the request implies curves, proportions off, a \
+named gap one cell wide, inlet and outlet on the wrong ends. Those come back to you as \
+work, exactly as a failing check does, at most twice. Fix what is wrong, or if the \
+reviewer is mistaken say why in your closing summary, and declare again; the third declare \
+is accepted, and any concern still standing is reported up with the result rather than \
+argued about.
+
 # Refusing
 
 Some requests cannot be answered correctly, and answering them anyway is worse than \

@@ -453,7 +453,7 @@ persona harness exists (`scripts/user_test.py`, `scripts/personas.py`), `a4-acce
 is a written acceptance evaluation, and the desk's own finish check is a continuous
 invariant grader that costs nothing because it is the gate rather than a second suite.
 
-### Reviewer agent — deferred
+### Reviewer agent — built 2026-09-22
 
 A reviewer inspecting renders and measurements would target the residual failure: geometry
 that passes every numeric check and is visibly wrong. There is no deterministic check for
@@ -463,9 +463,46 @@ Against it: latency, and under BYOK it is the customer's model reviewing its own
 the self-confirmation problem CADSmith addressed by making the judge deliberately stronger
 than the coder. A reviewer that mostly returns "looks fine" is worse than none.
 
-**Closing condition:** a one-off manual pass over authoring output the checks accepted.
-Outputs that pass everything and are visibly wrong define the reviewer's job and give its
-false-negative rate; if there are none, it is not needed. Scheduled after everything else.
+**Closing condition, as written when this was deferred:** a one-off manual pass over
+authoring output the checks accepted. Outputs that pass everything and are visibly wrong
+define the reviewer's job and give its false-negative rate; if there are none, it is not
+needed.
+
+**The condition was met by `core-postmerge-20260921-062240-cd5e`.** The harness scored 24
+of 26 green; the vet passed 21. Three runs `checkMesh` accepted and every probe read benign
+on did not deliver the geometry asked for: T10 (the blunt trailing edge was never built --
+no wall in `boundary` could be the cap), T19 and T9 (a named clearance spanned by exactly
+one cell, everywhere, with the desk reading the single-layer signature as confirmation).
+None of the six probes fired on any of the three. So the reviewer exists, in
+`openreynolds/cad/review.py`, and this is what was decided about the two objections above:
+
+- **Independence rather than strength.** The judge is a fresh thread with a different brief
+  (`REVIEW_SYSTEM`), not a different model by default: `OPENREYNOLDS_REVIEW_MODEL` may point
+  it at a stronger one, and under BYOK with one key the fresh context is what there is. What
+  it sees is not what the desk saw -- three composite renders `mesh_look.py --views` draws
+  at the finish (2D: overview, cells, four zoomed quadrants; 3D: four isometric corners, six
+  orthographic faces, mid-plane cuts) staged onto the workspace and removed again, plus the
+  request, the person's own words, and the desk's closing claims to check against the
+  pictures.
+- **"Looks fine" is guarded against on the other side too.** The verdict is a tool call
+  (`verdict`), and the harness -- not the model -- decides whether it binds: only `fail` with
+  at least one `blocking` problem at `sure` or `likely` confidence hands work back. Notes,
+  unsure fails and a reviewer that could not run (`skipped`) never block, and `skipped` is
+  reported as "not reviewed", never as a pass. The brief names what is not a failure (mesh
+  density, `checkMesh` numbers, choices the request left open, render artefacts) as
+  precisely as what is.
+- **Bounded.** `MAX_ROUNDS = 2` blocking verdicts per desk run; the third declare is
+  accepted with the last review carried up marked `unresolved`, so the calling agent and the
+  person see the concern instead of the desk looping on it. A re-review is told what it
+  flagged last time and asked to say fixed or not fixed per item, adding a new blocking
+  problem only where it would be negligent not to. The reviewer's wall clock is credited
+  back to the desk's budget. `OPENREYNOLDS_CAD_REVIEW=0` takes the desk-side loop away for
+  the A/B, on the same argument `OPENREYNOLDS_CAD_TOOL=0` stands on.
+- **Also a tool.** `mesh_review` lets the main agent have any case directory looked at the
+  same way -- a mesh it built with bash, one the desk returned, one somebody uploaded.
+
+What is not yet known is the false-negative rate the closing condition asked for. The next
+sweep should carry the reviewer's verdict beside the vet's for every run.
 
 ---
 

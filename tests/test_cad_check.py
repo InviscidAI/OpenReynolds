@@ -1063,6 +1063,48 @@ def test_staging_that_fails_says_so_rather_than_reporting_a_clean_surface(tmp_pa
     assert all("could not be staged" in s.concern for s in states)
 
 
+def test_staged_is_one_helper_the_gate_and_the_reviewer_share(tmp_path):
+    """`staged` puts the named scripts under `<case>/.gate`, yields that directory, and
+    removes it on the way out whatever happened inside -- the reviewer stages
+    `mesh_look.py` alone through the same helper the advisory gate stages its nine files
+    through, so the two cannot disagree about where a script goes or whether it is gone."""
+    from openreynolds.cad.check import GATE_DIR, VIEW_SCRIPTS, staged
+
+    commands: list[str] = []
+    files: dict[str, bytes] = {}
+
+    class Workspace:
+        workspace_root = str(tmp_path)
+
+        def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
+            commands.append(cmd)
+            return ExecResult(0, "", False, None)
+
+        def put_file(self, path, data):
+            files[path] = data
+
+    assert VIEW_SCRIPTS == ("mesh_look.py",)
+    case = f"{tmp_path}/case"
+    with pytest.raises(RuntimeError):
+        with staged(Workspace(), case, VIEW_SCRIPTS) as directory:
+            assert directory == f"{case}/{GATE_DIR}"
+            assert set(files) == {f"{directory}/mesh_look.py"}
+            assert files[f"{directory}/mesh_look.py"].startswith(b"#!/usr/bin/env python3")
+            assert not any(cmd.startswith("rm -rf") for cmd in commands), "not before the block ends"
+            raise RuntimeError("the review blew up mid-block")
+    assert commands[0].startswith("mkdir -p") and GATE_DIR in commands[0]
+    assert commands[-1].startswith("rm -rf") and GATE_DIR in commands[-1], "removed in finally"
+
+    # A script that is not in the toolbox is refused before anything is sent, and the
+    # directory that was made for it is taken away again.
+    commands.clear()
+    files.clear()
+    with pytest.raises(FileNotFoundError):
+        with staged(Workspace(), case, ("no_such_script.py",)):
+            raise AssertionError("nothing should be yielded")
+    assert not files and commands[-1].startswith("rm -rf")
+
+
 def test_the_gate_and_the_probes_look_in_the_same_places():
     """They did not, and the supervisor measured a surface the desk was told was absent.
 

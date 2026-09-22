@@ -33,6 +33,7 @@ from .brief import CAD_DONE, CAD_SYSTEM, remark_message, system_prompt, task_mes
 from .cells import Cell, CellLog
 from .core import CORE_SYSTEM, CoreDesk
 from .check import Check, Finding, look_command, mesh_regions, read, verify
+from .review import REVIEW_SYSTEM, Problem, Review, Reviewer
 
 __all__ = [
     "CAD_DONE",
@@ -47,6 +48,10 @@ __all__ = [
     "Finding",
     "MAX_SECONDS",
     "MAX_STEPS",
+    "Problem",
+    "REVIEW_SYSTEM",
+    "Review",
+    "Reviewer",
     "STEP_TIMEOUT_S",
     "Step",
     "look_command",

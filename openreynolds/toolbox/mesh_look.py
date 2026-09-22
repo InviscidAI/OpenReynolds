@@ -691,6 +691,260 @@ def draw(case: Path, internal, surfaces: dict, out_png: Path, two_d: bool,
     return str(out_png)
 
 
+# -- several views, for a reviewer who did not build it -----------------------
+
+VIEWS_2D = ("overview.png", "cells.png", "detail.png")
+VIEWS_3D = ("iso.png", "ortho.png", "cuts.png")
+"""What `draw_views` writes, by name, so a reader knows what to expect before it runs.
+
+Three composite pictures either way, and no more: the reviewer that reads them pays
+for every pixel, and three at about a thousand pixels across is the budget it has."""
+
+# Looking at the mesh from one side: pyvista's `tight` names a view by the axis that
+# points right and the axis that points up, and `negative` puts the camera on the far
+# side. `+x` is the camera on the +x side looking back toward -x, and so on.
+_AXIS_VIEWS = {
+    "+x": ("yz", False, (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+    "-x": ("yz", True, (-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+    "+y": ("xz", True, (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    "-y": ("xz", False, (0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
+    "+z": ("xy", False, (0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
+    "-z": ("xy", True, (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)),
+}
+
+_ISO_CORNERS = (
+    ((1.0, 1.0, 1.0), "from +x +y +z"),
+    ((-1.0, 1.0, 1.0), "from -x +y +z"),
+    ((1.0, -1.0, 1.0), "from +x -y +z"),
+    ((-1.0, -1.0, -1.0), "from -x -y -z (underneath)"),
+)
+
+
+def draw_views(case: Path, internal, surfaces: dict, out_dir: Path, two_d: bool,
+               types: dict | None = None) -> list[str]:
+    """Three composite PNGs into `out_dir`, for someone judging the shape who was not
+    there when it was built. Returns the paths written, as strings.
+
+    `draw()` is one picture for the person who made the mesh and knows what they are
+    looking at. These are for a reviewer who does not: the same shape from enough
+    sides that a missing feature, a polygonal corner on what should be a curve, or an
+    inlet on the wrong end is visible in at least one of them.
+
+    2D (`two_d`): `overview.png` -- the patches coloured, looking down z, the `empty`
+    front and back left out as `draw()` leaves them out; `cells.png` -- every cell with
+    its edges, looking down z; `detail.png` -- a 2x2 grid of that cell view, one
+    quadrant of the domain's bounding box per panel, which is where a curve built from
+    six straight segments stops looking like a curve.
+
+    3D: `iso.png` -- 2x2, the patches from four corners, the enclosure faint at the
+    opacity `draw()` uses so the body inside it is what shows; `ortho.png` -- 2x3, the
+    patches from +x, -x, +y, -y, +z, -z with parallel projection, so proportions can be
+    read off; `cuts.png` -- 2x2, the cells on the mid-plane through x, y and z, and one
+    more cut a quarter of the way along the longest axis, which is where a passage that
+    the mid-plane happens to miss shows up.
+
+    Tolerance is `draw()`'s: a panel that fails leaves the others alone, and a whole
+    picture that fails is said on stderr and leaves the other two alone. The caller
+    compares what came back against `VIEWS_2D` / `VIEWS_3D` to know what is missing.
+    """
+    import numpy as np
+    import pyvista as pv
+
+    pv.OFF_SCREEN = True
+    types = types or {}
+    colours = {name: PALETTE[i % len(PALETTE)] for i, name in enumerate(sorted(surfaces))}
+    domain = as_box(internal.bounds) if internal is not None else []
+    enclosure = set() if two_d else enclosure_patches(surfaces, domain, types)
+    if len(enclosure) == len(surfaces):
+        enclosure = set()  # a bare box: there is nothing else to see past it
+    shown = {name: s for name, s in surfaces.items()
+             if not (two_d and types.get(name) == "empty")}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[str] = []
+
+    def aim(plotter, side: str, padding: float = 0.06) -> None:
+        """Axis-aligned framing that fills the panel; never resizes the window, which
+        `camera.tight` does by default and which a grid of panels cannot survive."""
+        view, negative, direction, up = _AXIS_VIEWS[side]
+        try:
+            plotter.camera.tight(padding=padding, adjust_render_window=False,
+                                 view=view, negative=negative)
+        except Exception:  # noqa: BLE001 - older pyvista: aim and zoom by hand
+            aim_from(plotter, direction, up, zoom=1.3)
+            try:
+                plotter.enable_parallel_projection()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def aim_from(plotter, direction, up, zoom: float = 1.05) -> None:
+        """Look at whatever is in the panel from `direction`, and fit it."""
+        x0, x1, y0, y1, z0, z1 = plotter.renderer.bounds
+        focal = np.array([(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2])
+        radius = max(x1 - x0, y1 - y0, z1 - z0, 1e-9) * 3.0
+        vector = np.asarray(direction, dtype=float)
+        vector = vector / (np.linalg.norm(vector) or 1.0)
+        plotter.camera_position = [tuple(focal + radius * vector), tuple(focal), tuple(up)]
+        plotter.reset_camera()
+        plotter.camera.zoom(zoom)
+
+    def add_patches(plotter, legend: bool) -> None:
+        if two_d and internal is not None:
+            plotter.add_mesh(internal.extract_surface(), color="#ececec",
+                             show_edges=False, lighting=False)
+        for name, surface in shown.items():
+            if two_d:
+                # Edge-on looking down z: a filled quad is zero pixels wide, a thick
+                # line is the coloured outline it should be (see `draw`).
+                plotter.add_mesh(surface, color=colours[name], style="wireframe",
+                                 line_width=7, render_lines_as_tubes=True,
+                                 lighting=False, label=name)
+            else:
+                plotter.add_mesh(surface, color=colours[name],
+                                 opacity=0.10 if name in enclosure else 1.0,
+                                 show_edges=False, label=name)
+        if legend and shown:
+            # The patch names in their own colours, stacked top-right. Not `add_legend`:
+            # VTK's legend box scales its text to the box and on this stack it comes
+            # out cut off at the edge of the panel, which for a reviewer telling the
+            # inlet from the outlet by colour is the one thing that cannot be cut off.
+            for index, name in enumerate(sorted(shown)):
+                try:
+                    plotter.add_text(name, position=(0.66, 0.90 - 0.05 * index),
+                                     viewport=True, font_size=10, color=colours[name],
+                                     shadow=False, name=f"legend_{index}")
+                except Exception:  # noqa: BLE001 - the legend is a nicety
+                    break
+
+    def add_cut(plotter, normal: str, origin=None) -> None:
+        if internal is None:
+            return
+        try:
+            cut = internal.slice(normal=normal, origin=origin)
+            plotter.add_mesh(cut, color="#dddddd", show_edges=True, edge_color="#3b3b3b",
+                             line_width=1)
+        except Exception:  # noqa: BLE001
+            plotter.add_mesh(internal.extract_surface(), color="#dddddd", show_edges=True)
+
+    def composite(name: str, shape: tuple, size: tuple, panels: list) -> None:
+        """One PNG of `panels`, each `(row, col, title, fill)`; a panel that fails is
+        left blank under its title, and a picture that fails is said and skipped."""
+        try:
+            plotter = pv.Plotter(shape=shape, off_screen=True, window_size=size,
+                                 border=len(panels) > 1, border_color="#c8c8c8")
+        except Exception as exc:  # noqa: BLE001
+            print(f"mesh_look: {name} could not be drawn ({type(exc).__name__}: {exc})",
+                  file=sys.stderr)
+            return
+        try:
+            for row, col, title, fill in panels:
+                plotter.subplot(row, col)
+                plotter.add_text(title, font_size=9)
+                try:
+                    fill(plotter)
+                except Exception:  # noqa: BLE001 - a partial picture beats no picture
+                    continue
+            target = out_dir / name
+            plotter.screenshot(str(target))
+            written.append(str(target))
+        except Exception as exc:  # noqa: BLE001 - the other pictures are still worth having
+            print(f"mesh_look: {name} could not be drawn ({type(exc).__name__}: {exc})",
+                  file=sys.stderr)
+        finally:
+            try:
+                plotter.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    if two_d:
+        def overview(plotter) -> None:
+            add_patches(plotter, legend=True)
+            aim(plotter, "+z")
+
+        def cells(plotter) -> None:
+            add_cut(plotter, "z")
+            aim(plotter, "+z")
+
+        def quadrant(x_lo: bool, y_lo: bool):
+            def within(dataset):
+                """The cells of `dataset` whose centres are in this quadrant -- whole
+                cells, because a cell cut in half looks like a mesh that is wrong."""
+                x0, y0, _z0, x1, y1, _z1 = domain
+                xm, ym = (x0 + x1) / 2, (y0 + y1) / 2
+                centres = np.asarray(dataset.cell_centers().points, dtype=float)
+                if not len(centres):
+                    return None
+                keep = (((centres[:, 0] <= xm) if x_lo else (centres[:, 0] >= xm)) &
+                        ((centres[:, 1] <= ym) if y_lo else (centres[:, 1] >= ym)))
+                return dataset.extract_cells(np.flatnonzero(keep)) if keep.any() else None
+
+            def fill(plotter) -> None:
+                if internal is None or len(domain) != 6:
+                    return
+                part = within(internal.slice(normal="z"))
+                if part is not None:
+                    plotter.add_mesh(part, color="#dddddd", show_edges=True,
+                                     edge_color="#3b3b3b", line_width=1)
+                for name, surface in shown.items():
+                    # The patch outline in its colour, so the corner being looked at
+                    # is known to be a wall and not the inlet. Clipped to the quadrant
+                    # too, or the framing would take in the whole domain again.
+                    edge = within(surface)
+                    if edge is not None and edge.n_cells:
+                        plotter.add_mesh(edge, color=colours[name], style="wireframe",
+                                         line_width=4, lighting=False)
+                aim(plotter, "+z", padding=0.03)
+            return fill
+
+        composite("overview.png", (1, 1), (1500, 1000), [
+            (0, 0, "boundary patches (looking down z; front and back left out)", overview)])
+        composite("cells.png", (1, 1), (1500, 1000), [(0, 0, "cells (looking down z)", cells)])
+        composite("detail.png", (2, 2), (1500, 1250), [
+            (0, 0, "detail: upper-left quadrant (low x, high y)", quadrant(True, False)),
+            (0, 1, "detail: upper-right quadrant (high x, high y)", quadrant(False, False)),
+            (1, 0, "detail: lower-left quadrant (low x, low y)", quadrant(True, True)),
+            (1, 1, "detail: lower-right quadrant (high x, low y)", quadrant(False, True)),
+        ])
+    else:
+        def corner(direction, legend: bool):
+            def fill(plotter) -> None:
+                add_patches(plotter, legend=legend)
+                aim_from(plotter, direction, (0.0, 0.0, 1.0))
+            return fill
+
+        def side(name: str):
+            def fill(plotter) -> None:
+                add_patches(plotter, legend=False)
+                aim(plotter, name)
+            return fill
+
+        def cut(normal: str, origin=None, side_of: str = ""):
+            def fill(plotter) -> None:
+                add_cut(plotter, normal, origin)
+                aim(plotter, side_of or {"x": "+x", "y": "-y", "z": "+z"}[normal])
+            return fill
+
+        faint = " (the enclosure faint)" if enclosure else ""
+        composite("iso.png", (2, 2), (1500, 1300), [
+            (index // 2, index % 2, f"boundary patches {label}{faint}", corner(vector, index == 0))
+            for index, (vector, label) in enumerate(_ISO_CORNERS)])
+        sides = ("+x", "-x", "+y", "-y", "+z", "-z")
+        composite("ortho.png", (2, 3), (1600, 1000), [
+            (index // 3, index % 3, f"patches seen from {name} (orthographic){faint}", side(name))
+            for index, name in enumerate(sides)])
+        panels = [(index // 2, index % 2, f"cells, cut through {axis} (mid-plane)", cut(axis))
+                  for index, axis in enumerate("xyz")]
+        if len(domain) == 6:
+            span = [domain[3] - domain[0], domain[4] - domain[1], domain[5] - domain[2]]
+            longest = int(np.argmax(span))
+            axis = "xyz"[longest]
+            origin = [(domain[i] + domain[i + 3]) / 2 for i in range(3)]
+            origin[longest] = domain[longest] + 0.25 * span[longest]
+            panels.append((1, 1, f"cells, cut through {axis} at 25% along ({axis} = {origin[longest]:.4g})",
+                           cut(axis, origin)))
+        composite("cuts.png", (2, 2), (1500, 1300), panels)
+    return written
+
+
 # -- the report ---------------------------------------------------------------
 
 
@@ -771,17 +1025,24 @@ def report(payload: dict) -> str:
         # from wherever they ran it, and a path relative to the case read as one
         # relative to the caller's directory cost a 404 and three turns (c7ef).
         lines.append(f"  picture: {payload.get('render_abs') or payload['render']}")
+    if payload.get("views"):
+        lines.append("  views: " + ", ".join(payload["views"]))
     if payload.get("error"):
         lines.append(f"  {payload['error']}")
     return "\n".join(lines)
 
 
-def look(case: Path, out_png: Path | None, check: bool = True, region: str = "") -> dict:
+def look(case: Path, out_png: Path | None, check: bool = True, region: str = "",
+         views: Path | None = None) -> dict:
     """Everything this script knows about the mesh, as one dictionary.
 
     `region` selects `constant/<region>/polyMesh`. The dictionary's keys do not change
     with it: `case_gen.py` and the hosted Mesh panel both read this shape, so a region
     is a different payload rather than a different payload shape.
+
+    `views` is a directory: when given, `draw_views` writes its three composite
+    pictures there and the payload carries `"views": [paths]`, the paths as written.
+    Without it the key is absent and the payload is exactly what it always was.
     """
     case = case.resolve()
     entries = boundary_entries(case, region)
@@ -850,7 +1111,26 @@ def look(case: Path, out_png: Path | None, check: bool = True, region: str = "")
             payload["render_abs"] = str(Path(payload["render"]).resolve())
         except Exception as exc:  # noqa: BLE001
             payload["error"] = f"the picture could not be drawn ({type(exc).__name__}: {exc})"
+    if views is not None:
+        payload["views"] = []
+        if surfaces or internal is not None:
+            expected = VIEWS_2D if payload["two_d"] else VIEWS_3D
+            try:
+                payload["views"] = draw_views(case, internal, surfaces, views, payload["two_d"],
+                                              {e["name"]: e.get("type", "") for e in entries})
+            except Exception as exc:  # noqa: BLE001
+                _add_error(payload, f"the views could not be drawn ({type(exc).__name__}: {exc})")
+            missing = [name for name in expected
+                       if not any(Path(p).name == name for p in payload["views"])]
+            if missing:
+                _add_error(payload, f"{len(missing)} of the {len(expected)} views could not "
+                                    f"be drawn: {', '.join(missing)}")
     return payload
+
+
+def _add_error(payload: dict, text: str) -> None:
+    """One more thing that went wrong, kept beside what already did rather than over it."""
+    payload["error"] = f"{payload['error']}; {text}" if payload.get("error") else text
 
 
 def from_cwd(path: Path) -> Path:
@@ -881,11 +1161,17 @@ def main() -> None:
     parser.add_argument("--region", default="",
                         help="read constant/<region>/polyMesh instead (a CHT case has one "
                              "mesh per region; this looks at one of them)")
+    parser.add_argument("--views", type=Path, default=None,
+                        help="also write three composite pictures of the mesh from several "
+                             "sides into this directory (2D: overview, cells, detail; 3D: "
+                             "iso, ortho, cuts); relative to where you run this from, like "
+                             "--out. The JSON lists them under `views`.")
     args = parser.parse_args()
 
     case = from_cwd(args.case)
     out = from_cwd(args.out) if args.out is not None else case / "look.png"
-    payload = look(case, out, check=not args.no_check, region=args.region)
+    views = from_cwd(args.views) if args.views is not None else None
+    payload = look(case, out, check=not args.no_check, region=args.region, views=views)
     if payload.get("render"):
         # `render` stays relative to the case when the picture is inside it -- that is
         # what `mesher/check.py` has always read and joins to the case's two paths --
@@ -895,6 +1181,15 @@ def main() -> None:
             payload["render"] = str(Path(payload["render"]).relative_to(case.resolve()))
         except ValueError:
             pass
+    if payload.get("views"):
+        # The same rule as `render`: relative to the case when inside it, absolute when not.
+        relative: list[str] = []
+        for written in payload["views"]:
+            try:
+                relative.append(str(Path(written).relative_to(case.resolve())))
+            except ValueError:
+                relative.append(written)
+        payload["views"] = relative
     if args.json is not None:
         target = from_cwd(args.json)
         target.parent.mkdir(parents=True, exist_ok=True)
