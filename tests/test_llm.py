@@ -10,7 +10,8 @@ import pytest
 
 from openreynolds import llm
 from openreynolds.llm.anthropic_api import AnthropicProvider
-from openreynolds.llm.base import Listener, TextBlock, ToolUseBlock, Turn, neutral_blocks, split_result
+from openreynolds.llm.base import (Listener, ProviderError, TextBlock, ToolUseBlock, Turn,
+                                   neutral_blocks, split_result)
 from openreynolds.llm.openai_api import OpenAIProvider
 from openreynolds.llm.responses_api import ResponsesProvider
 
@@ -571,3 +572,80 @@ def test_a_model_served_by_two_vendors_is_priced_by_vendor():
     tokens = {"input": 1_000_000, "output": 1_000_000}
     assert spend(tokens, "kimi-k3", "moonshot") > spend(tokens, "kimi-k3", "aster")
     assert spend(tokens, "kimi-k3") == 0.0
+
+
+class _DyingStream:
+    """A stream that emits, then dies partway through, the way a reset actually arrives."""
+
+    def __init__(self, fail: bool, error: type[BaseException]):
+        self.fail, self.error = fail, error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        yield SimpleNamespace(type="response.output_text.delta", delta="half a th")
+        if self.fail:
+            raise self.error("[Errno 104] Connection reset by peer")
+
+    def get_final_response(self):
+        return SimpleNamespace(
+            status="completed", incomplete_details=None, usage=None,
+            output=[_item(type="message",
+                          content=[SimpleNamespace(type="output_text", text="done")])])
+
+
+def _transport_error() -> type[BaseException]:
+    for name in ("httpx2", "httpx"):
+        try:
+            return __import__(name).ReadError
+        except ImportError:
+            continue
+    pytest.skip("no httpx installed")
+
+
+def test_responses_retries_a_stream_that_dies_mid_flight(monkeypatch):
+    """A connection reset used to end the whole session.
+
+    The failure arrives from inside the SDK's own `with` block, under the layer that
+    wraps errors as `openai.APIError`, so it escaped the adapter's retry loop entirely
+    and one dropped packet threw away everything the run had not yet written down.
+    """
+    monkeypatch.setattr("openreynolds.llm.responses_api.time.sleep", lambda _: None)
+    provider = ResponsesProvider("k")
+    calls: list[dict] = []
+
+    def stream(**kwargs):
+        calls.append(kwargs)
+        return _DyingStream(fail=len(calls) == 1, error=_transport_error())
+
+    provider.client = SimpleNamespace(responses=SimpleNamespace(stream=stream))
+    said: list[str] = []
+    turn = provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
+                           max_tokens=500, listener=Listener(text=said.append))
+
+    assert len(calls) == 2, "the dropped stream was not retried"
+    assert turn.text == "done"
+    # The first attempt already printed. Saying so beats printing the reply twice with
+    # no explanation.
+    assert any("retrying" in s for s in said)
+
+
+def test_responses_gives_up_on_a_connection_that_keeps_dying(monkeypatch):
+    """Three attempts, then a ProviderError -- not an httpx traceback out of the loop."""
+    monkeypatch.setattr("openreynolds.llm.responses_api.time.sleep", lambda _: None)
+    provider = ResponsesProvider("k")
+    calls: list[dict] = []
+
+    def stream(**kwargs):
+        calls.append(kwargs)
+        return _DyingStream(fail=True, error=_transport_error())
+
+    provider.client = SimpleNamespace(responses=SimpleNamespace(stream=stream))
+    with pytest.raises(ProviderError, match="connection lost mid-stream"):
+        provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
+                        max_tokens=500, listener=Listener())
+    assert len(calls) == 3
