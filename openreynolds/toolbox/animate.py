@@ -49,13 +49,17 @@ what this is built to survive
 
 Labels are burned into each frame -- field, simulation time, and Reynolds number
 when it is known (`--reynolds`, or `--length` with the case's `nu` and inlet
-velocity, or an `Re = ...` written in the case dictionaries).
+velocity, or an `Re = ...` written in the case dictionaries). `--bare` leaves all
+of it off, for frames that become panels of a side-by-side: the bar and the words
+belong to the composite, drawn once across both, and `frames.json` still records
+the colour range so a bare directory can say what scale it was drawn on.
 
     python3 animate.py /work/case --field vorticity
     python3 animate.py /work/case --field velocity --every 2 --clim -5 5
     python3 animate.py /work/case --field pressure --clim-from all --format mp4 --fps 24
     python3 animate.py /work/case --field k --streamlines --reynolds 1.65e4
     python3 animate.py /work/case --out /work/case/wake_frames --from 2.0 --to 8.0
+    python3 animate.py /work/case_A --field velocity --clim-from all --bare --cmap jet
 """
 
 from __future__ import annotations
@@ -359,7 +363,7 @@ def stray_frames(out_dir: Path, plan) -> list[str]:
     return sorted(name for name in names if name not in planned)
 
 
-RENDER_IDENTITY = ("field", "component", "normal", "cmap", "streamlines", "size")
+RENDER_IDENTITY = ("field", "component", "normal", "cmap", "streamlines", "size", "bare")
 """What the PNGs in a frames directory are a picture of.
 
 Every one of these changes what a frame looks like, so a run whose settings differ
@@ -388,6 +392,8 @@ def same_render(sidecar: dict | None, settings: dict) -> bool:
         before, now = recorded[key], settings.get(key)
         if key == "streamlines":
             before, now = int(before or 0), int(now or 0)
+        elif key == "bare":
+            before, now = bool(before), bool(now)
         elif key == "size":
             before = [int(v) for v in (before or [])]
             now = [int(v) for v in (now or [])]
@@ -400,7 +406,8 @@ def build_sidecar(plan, *, frames_dir_name: str = "", container: str = "gif",
                   fps: float = 10.0, field: str = "", scalar: str = "",
                   clim=None, case: str = "", reynolds: float | None = None,
                   streamlines: int = 0, normal: str = "z", cmap: str = "",
-                  component: str = "", window=(1000, 750), stray=()) -> dict:
+                  component: str = "", window=(1000, 750), stray=(),
+                  bare: bool = False) -> dict:
     """The contents of `frames.json`: everything the encoding machine needs and
     nothing it has to guess."""
     ready = [row for row in plan if row.get("ready")]
@@ -427,6 +434,10 @@ def build_sidecar(plan, *, frames_dir_name: str = "", container: str = "gif",
         "size": [int(window[0]), int(window[1])],
         "clim": [float(clim[0]), float(clim[1])] if clim is not None else None,
         "streamlines": int(streamlines),
+        # The compositor draws one bar across both panels, so a bare sequence
+        # carries its colour range only here. Frames that do not show their scale
+        # are unreadable without it.
+        "bare": bool(bare),
         "case": case,
         "reynolds": float(reynolds) if reynolds is not None else None,
         "encoded_by": "the user's machine; this image has no encoder",
@@ -705,18 +716,25 @@ def streamlines_over(mesh, cut, count: int, vectors: str = "U"):
 
 def render_frame(mesh, scalar: str, out: Path, *, normal: str = "z", clim=None,
                  cmap: str = "viridis", camera: dict | None = None, label: str = "",
-                 streamlines: int = 0, window=(1000, 750)) -> Path:
-    """One frame, written under a dotted temporary name and moved into place."""
+                 streamlines: int = 0, window=(1000, 750), bare: bool = False) -> Path:
+    """One frame, written under a dotted temporary name and moved into place.
+
+    `bare` draws the flow and nothing else -- no scalar bar, no burned label --
+    for a frame that is going to become one panel of a composite. Two panels each
+    carrying their own bar is two scales the eye has to reconcile, and the whole
+    point of a side-by-side is that there is only one.
+    """
     pv = _pyvista()
     cut = slice_at(mesh, normal)
     plotter = pv.Plotter(off_screen=True, window_size=list(window))
     plotter.add_mesh(cut, scalars=scalar, clim=clim, cmap=cmap, show_edges=False,
                      show_scalar_bar=False)
-    # Under the picture, not across it: with a parallel projection filling the frame,
-    # pyvista's default put the tick labels on top of the flow.
-    plotter.add_scalar_bar(title=scalar, n_labels=5, vertical=False,
-                           position_x=0.15, position_y=0.02, width=0.7, height=0.06,
-                           title_font_size=14, label_font_size=12)
+    if not bare:
+        # Under the picture, not across it: with a parallel projection filling the frame,
+        # pyvista's default put the tick labels on top of the flow.
+        plotter.add_scalar_bar(title=scalar, n_labels=5, vertical=False,
+                               position_x=0.15, position_y=0.02, width=0.7, height=0.06,
+                               title_font_size=14, label_font_size=12)
     lines = streamlines_over(mesh, cut, streamlines)
     if lines is not None:
         plotter.add_mesh(lines, color="black", line_width=1.0, opacity=0.5)
@@ -732,7 +750,7 @@ def render_frame(mesh, scalar: str, out: Path, *, normal: str = "z", clim=None,
         # is believed rather than checked. The first frame's camera is then reused
         # for the rest, so one wrong frame is a wrong animation.
         plotter.view_vector(NORMALS[normal], viewup=VIEWUP.get(normal, (0.0, 1.0, 0.0)))
-    if label:
+    if label and not bare:
         plotter.add_text(label, font_size=10, position="upper_left")
 
     out = Path(out)
@@ -802,6 +820,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cmap", default=None, help="Colour map (default: per field).")
     parser.add_argument("--size", type=int, nargs=2, default=(1000, 750), metavar=("W", "H"))
     parser.add_argument("--label", default="", help="Extra line burned into every frame.")
+    parser.add_argument("--bare", action="store_true",
+                        help="Draw the flow only -- no scalar bar, no labels -- for a "
+                             "frame that becomes one panel of a composite. The colour "
+                             "range is still recorded in frames.json.")
     parser.add_argument("--force", action="store_true",
                         help="Redraw frames that are already on disk.")
     return parser
@@ -833,6 +855,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = {
         "field": field, "component": component, "normal": args.normal, "cmap": cmap,
         "streamlines": int(args.streamlines), "size": [int(window[0]), int(window[1])],
+        "bare": bool(args.bare),
     }
     previous = read_sidecar(out)
     stale = bool(previous) and not same_render(previous, settings)
@@ -861,6 +884,7 @@ def main(argv: list[str] | None = None) -> int:
             field=field, scalar=scalar, clim=clim, case=case.name,
             reynolds=reynolds, streamlines=args.streamlines, normal=args.normal, cmap=cmap,
             component=component, window=window, stray=stray_frames(out, plan),
+            bare=args.bare,
         )
 
     print(f"{len(plan)} frames -> {out}", flush=True)
@@ -891,7 +915,7 @@ def main(argv: list[str] | None = None) -> int:
                                       window=window, padding=0.05)
             render_frame(
                 mesh, scalar, row["path"], normal=args.normal, clim=clim, cmap=cmap,
-                camera=camera, streamlines=args.streamlines, window=window,
+                camera=camera, streamlines=args.streamlines, window=window, bare=args.bare,
                 label=frame_label(row["time"], scalar, reynolds, case=case.name,
                                   note=args.label),
             )

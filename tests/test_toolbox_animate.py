@@ -204,7 +204,7 @@ def test_nothing_recorded_means_sample_them(animate):
 
 def SETTINGS(**overrides):
     base = {"field": "vorticity", "component": "z", "normal": "z", "cmap": "RdBu_r",
-            "streamlines": 0, "size": [1000, 750]}
+            "streamlines": 0, "size": [1000, 750], "bare": False}
     base.update(overrides)
     return base
 
@@ -216,7 +216,7 @@ def test_the_same_settings_continue_the_sequence(animate):
 @pytest.mark.parametrize(
     "changed",
     [{"field": "p"}, {"component": "mag"}, {"normal": "y"}, {"cmap": "viridis"},
-     {"streamlines": 200}, {"size": [640, 480]}],
+     {"streamlines": 200}, {"size": [640, 480]}, {"bare": True}],
 )
 def test_a_setting_that_changes_the_picture_ends_the_sequence(animate, changed):
     """The frames directory is named after the case and nothing else, so
@@ -237,6 +237,13 @@ def test_a_sidecar_missing_a_setting_is_not_a_disagreement(animate):
 def test_streamline_counts_compare_as_numbers(animate):
     assert animate.same_render(SETTINGS(streamlines=None), SETTINGS(streamlines=0)) is True
     assert animate.same_render(SETTINGS(streamlines=200), SETTINGS(streamlines=50)) is False
+
+
+def test_bare_compares_as_a_flag(animate):
+    """A sidecar written before `--bare` existed carries no key, and an older
+    sequence is not redrawn for it; a recorded `false` against `--bare` is."""
+    assert animate.same_render(SETTINGS(bare=None), SETTINGS(bare=False)) is True
+    assert animate.same_render(SETTINGS(bare=False), SETTINGS(bare=True)) is False
 
 
 # -- the sidecar ---------------------------------------------------------------
@@ -260,6 +267,20 @@ def test_the_sidecar_names_the_container_the_rate_and_the_order(tmp_path, animat
     assert data["complete"] == data["expected"] == 3
     assert data["partial"] is False
     json.dumps(data)
+
+
+def test_a_bare_sequence_records_the_range_it_does_not_show(tmp_path, animate):
+    """`--bare` takes the scalar bar off the frame because the compositor draws one
+    across both panels. The number has to survive somewhere, or a directory of bare
+    frames is a picture with no scale at all."""
+    frames_on_disk(tmp_path / "frames", [0, 1])
+    plan = animate.plan_frames(tmp_path / "frames", [0.0, 1.0])
+
+    data = animate.build_sidecar(plan, frames_dir_name="frames", clim=(-5.0, 5.0), bare=True)
+
+    assert data["bare"] is True
+    assert data["clim"] == [-5.0, 5.0]
+    assert animate.build_sidecar(plan, frames_dir_name="frames")["bare"] is False
 
 
 def test_the_sidecar_counts_a_run_that_is_still_going(tmp_path, animate):
@@ -760,6 +781,28 @@ def test_pyvista_is_not_imported_until_something_is_drawn(animate):
     assert "import pyvista" in (TOOLBOX / "animate.py").read_text(encoding="utf-8")
 
 
+def test_nothing_but_the_flow_is_drawn_on_a_bare_frame(animate):
+    """`render_frame` needs VTK, so the guard is checked in the source: every call
+    that puts furniture on the picture -- the scalar bar, the burned label -- has to
+    sit under a test of `bare`. A composite whose panels each carry their own bar is
+    two scales where the whole point was one, and it looks fine."""
+    tree = ast.parse((TOOLBOX / "animate.py").read_text(encoding="utf-8"))
+    func = next(node for node in ast.walk(tree)
+                if isinstance(node, ast.FunctionDef) and node.name == "render_frame")
+    assert "bare" in {arg.arg for arg in func.args.kwonlyargs}
+
+    guarded = set()
+    for branch in [n for n in ast.walk(func) if isinstance(n, ast.If)]:
+        if not any(isinstance(n, ast.Name) and n.id == "bare" for n in ast.walk(branch.test)):
+            continue
+        for call in [n for n in ast.walk(branch) if isinstance(n, ast.Call)]:
+            if isinstance(call.func, ast.Attribute):
+                guarded.add(call.func.attr)
+
+    assert "add_scalar_bar" in guarded, "the scalar bar is drawn on every frame"
+    assert "add_text" in guarded, "the label is burned into every frame"
+
+
 def test_the_docstring_says_where_the_encoding_happens(animate):
     """The container has no encoder at all, and a frames directory that does not
     explain itself gets treated as a failed animation."""
@@ -790,6 +833,7 @@ def test_the_new_flags_have_the_documented_defaults(animate):
     assert args.clim_from is None  # meaning "last", or "explicit" when --clim is given
     assert args.streamlines == 0
     assert args.force is False
+    assert args.bare is False
 
     with_streamlines = animate.build_parser().parse_args(["/work/case", "--streamlines"])
     assert with_streamlines.streamlines == animate.DEFAULT_SEEDS
