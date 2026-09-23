@@ -308,6 +308,48 @@ under-relaxation makes a marginally stable steady solve diverge, that is not a n
 failure to be patched; it is among the strongest evidence available that the steady
 formulation was holding an unsteady flow together by numerical damping.
 
+**A boundary that does work on the fluid.** Mass conservation does not catch this one:
+flux balances exactly while the domain quietly receives more power than anything in it
+could deliver. Two common choices do it.
+
+A `fixedValue` velocity patch with `zeroGradient` pressure is a pump with no stall curve —
+it delivers its flow rate at whatever back pressure the interior develops, so once the
+static pressure at the patch falls below `-0.5|U_patch|²` the sign of its head flips and
+the boundary does unbounded work. Observed: a 3 m/s fixed-velocity fan extracting from a
+2D room held full flow against −53.6 Pa, roughly twice a domestic fan's shutoff, and drove
+the room to 21 m/s mean and 36 m/s peak. Replacing it with `fanPressure` and a
+pressure–flow curve cut the peak to 1.1 m/s. Anything driven by a real device wants that
+device's characteristic, not a velocity.
+
+A `fixedValue` static pressure on an opening that has *inflow* through it is the same
+failure wearing different clothes: it pins static pressure while the incoming air arrives
+carrying kinetic energy, so the total head there is `+0.5|U|²` instead of zero, and all of
+it is free. Measured on a room with a 1 m² opening, that boundary supplied 91 of the 103
+units of mechanical power the room received — about 124 W of air power where the fan
+delivers 5 to 15. `totalPressure` with `p0 = 0` sets `p = p0 − 0.5|U|²` on inflow and pins
+total head to zero, which is what an opening to still air actually does.
+
+The detector is one sum per patch:
+
+```
+Σ_faces (p + 0.5|U|²)(U·n) dA        p kinematic, n outward
+```
+
+A patch with a negative total is giving energy to the fluid, and the sum over all patches
+is the power being fed in. Compare it against what the physical device could plausibly
+deliver. **The asymmetry is the tell**: an opening that is an outlet in one run of a
+matched pair and an inlet in the other misbehaves in only one of them, so a supply/exhaust
+pair disagreeing far more than the geometry suggests is worth budgeting before it is worth
+explaining.
+
+**A steady solve can relax into a state transient integration never reaches.** Distinct
+from the trap above, and it survives converged residuals. The same 2D room gave a
+domain-mean speed of 0.484 m/s under steady SIMPLE against 0.236 m/s transient — a factor
+of two — while the *other* direction of the same matched pair agreed between solvers to
+0.5%. Where the answer being reported is a transient one, verify it transiently, and
+prefer a cold start from rest, which inherits nothing from either solver and so cannot be
+sitting in a basin one of them found and the other does not visit.
+
 ## When the picture and the answer say different numbers
 
 Three studies have now shipped a deliverable that contradicted itself, and all three

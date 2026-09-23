@@ -626,3 +626,333 @@ the deployment story does not say so anywhere.
 `reynolds_app/settings.py:55` (`turnstile_site_key`, public, "never this server");
 `web/src/turnstile.ts`.
 
+---
+
+## 23. `animate.py` draws its scalar bar on top of the flow, and a comment says it does not
+
+**What happened.** Every non-`--bare` frame from `animate.py` puts the colour bar's title
+and tick labels over the bottom of the picture. On the `cavity` tutorial at
+`--field velocity` the numbers `0.00 0.250 0.500 0.750 1.00` and the title `U_mag` sit on
+the dark fluid, not below it.
+
+**The code believes this was already fixed.** `animate.py:715` carries a comment — "Under
+the picture, not across it: with a parallel projection filling the frame, pyvista's
+default put the tick labels on top of the flow" — above an `add_scalar_bar` call moved to
+`position_y=0.02, height=0.06`. That moved the bar out of the *middle* of the frame. It
+reserved no space, so the picture still reaches the bottom edge and the two occupy the
+same band.
+
+**Root cause, confirmed by reading both ends.** `camera_setup` (`animate.py:502`) fits the
+slice to the full viewport with `padding=0.05`, and the bar is drawn into that same
+viewport at y = 0.02–0.08. Nothing subtracts one from the other. The fix is to shrink the
+renderer's viewport to the top ~88% and let the bar own the strip beneath it, rather than
+repositioning the bar inside a full-bleed picture.
+
+**Why it hid.** The collision needs a slice that fills the frame vertically. `cavity` is
+square in a 4:3 window, so the fit is height-limited and the flow runs edge to edge. A
+wide slice — the cylinder wake most of the corpus renders — is width-limited, leaves
+letterbox at the bottom, and the bar lands in it looking correct.
+
+**Why it matters.** This is the engineering path. `--bare` is an opt-out taken by the
+content pipeline, not a fix: anyone rendering to read a number off the picture wants the
+bar, and gets it printed over the data. The stale comment is the part worth keeping in
+mind: the next person reads line 715, believes the problem is handled, and never opens a
+frame.
+
+**Also worth a pass, but cosmetic and not a defect.** The burned label is VTK's default
+bitmap font at `font_size=10` with no outline, pinned to `position="upper_left"`. Legible,
+ugly, and carrying no correctness claim.
+
+**What to do.** Shrink the viewport, then look at a cavity render — the only check that
+would have caught this. A unit test cannot see the overlap; the guard that fits is an
+assertion that the bar's band and the camera's band do not intersect.
+
+**Evidence.** Reproducible in three commands, which is cheaper than storing the frames
+(the ones this was found from were under `/tmp` and are gone):
+
+    blockMesh -case <case> && icoFoam -case <case>   # tutorials/incompressible/icoFoam/cavity/cavity
+    python openreynolds/toolbox/animate.py <case> --field velocity --clim-from all --out /tmp/f
+    # then look at /tmp/f/frame_0005.png
+
+Found while adding `--bare` (commit `e8df53f`), which is why the flag's own frames are
+clean and this was not.
+
+---
+
+## 24. `LocalBackend` jobs die with the session, and the interface says they do not
+
+**What happened.** Stopping a `-p` study on the local backend killed both running
+`pimpleFoam` jobs. Their logs stop mid-timestep — no `End`, no fatal error, just a
+truncated residual block — and `pgrep pimpleFoam` returns nothing.
+
+**Why it matters.** The interface promises the opposite, in two places. The session panel
+is headed "jobs keep running if you leave", and the refusal path prints "Your work is safe
+-- every job is still running on the instance and every file is mirrored here"
+(`cli.py:2250`). Both are true of `HostedBackend`, where the job lives in a container that
+outlives the client. Neither is true locally, where the job is a subprocess of the session
+that started it.
+
+It cost four minutes here because the solve was young. The same stop against a
+three-hour run loses three hours, and the message on screen while it happens says the work
+is safe.
+
+**Where to look.** `backend/local.py:254` (`job_start`) launches into the session's own
+process group. The docstring at the top of the file is careful about the two things local
+deliberately does not reproduce — no sandbox, and a real directory instead of `/work` —
+and job lifetime is a third that is not named.
+
+**What to do.** Either detach local jobs (new session/process group, so a dying client does
+not take them), or make the "jobs keep running" copy backend-aware. The second is smaller
+and honest; the first is what makes `--study` resume mean the same thing on both backends.
+
+**Evidence.** Study `20260915-073602-3917`, the third and fourth `-p` runs against it.
+`room_fan_in_large/log.pimpleFoam` and `room_fan_out_large/log.pimpleFoam` end mid-iteration
+at the moment the client was stopped.
+
+---
+
+## 25. The reasoning-effort degrade path retries with a variant the API also rejects
+
+**What happened.** `gpt-5.6-sol` cannot be run at all. Every turn comes back as
+
+    Function tools with reasoning_effort are not supported for gpt-5.6-sol in
+    /v1/chat/completions. To use function tools, use /v1/responses or set
+    reasoning_effort to 'none'.
+
+and the study stops with "That is a refusal, not a hiccup".
+
+**Why the existing fallback does not save it.** `openai_api.py:177-189` already handles this
+shape: on a `BadRequestError` it sets `self.lean = True` and retries, and `lean` means *omit
+`reasoning_effort`*. But omission is itself one of the rejected cases. Measured against the
+live API, for both `gpt-5.6-sol` and `gpt-5.6-terra`:
+
+| `reasoning_effort` | result |
+|---|---|
+| omitted | 400 |
+| `"none"` | **accepted, tool call returned** |
+| `low` / `medium` / `high` | 400 |
+
+So the retry spends its attempts on a variant that fails the same way, and the turn is
+reported as a refusal. The one accepted value is the one the error message names, and the
+adapter never sends it.
+
+**How far it reaches.** Every OpenAI model above `gpt-5.2` refuses tools beside a reasoning
+effort on Chat Completions — measured: `5.6-sol`, `5.6-terra`, `5.6-luna`, `5.5`, `5.4` all
+refuse; `5.2`, `5.1` and `gpt-5` accept. Commit `4e5a058` adds the Responses API, which is
+the real fix for OpenAI's own models. **This issue is the remaining half:** the Chat
+Completions degrade path is still wrong for any other endpoint that returns this error
+shape, and a vendor imitating the API will hit it.
+
+**What to do.** In that `elif`, distinguish "this endpoint does not know the field" (omit,
+what `lean` does today) from "this endpoint wants the field set to `none`". One extra flag
+beside `lean`.
+
+**Evidence.** Study `20260915-073602-3917`, first `-p` run. Reproducible with a three-line
+`chat.completions.create` carrying one function tool, against any model above `gpt-5.2`.
+
+---
+
+## 26. The agent says a case is settled without looking, and says so in the same sentence
+
+**What happened.** Asked for two transient cases run "far enough for the room-scale flow
+pattern to establish", the agent solved both to a fixed `endTime 30` and reported:
+
+> The 30 s duration is roughly three room-volume exchanges for this setup. **Room-scale flow
+> is established**, but no formal statistical-stationarity or mesh-convergence assessment was
+> performed.
+
+The two clauses contradict each other. The first is a claim about the flow; the second says
+the work that would support it was not done. Across 51 tool calls it never sampled a field
+at two times.
+
+It was wrong. Measured afterwards on the z-midplane, the exhaust case's median speed ran
+1.88 → 4.04 → 5.51 → 5.94 m/s at t = 2, 10, 20, 30 and was still climbing at the end, from a
+3 m/s fan that moves ~3.1 m³/s through a 7.5 m² room section — a flow that cannot be. The
+inflow case was genuinely steady from t ≈ 5. So a settled case and an unsettled one were
+handed over as a matched pair, which is the one thing a side-by-side must not be.
+
+**Why it matters.** The check that falsified it is fifteen lines and reads the solver's own
+`postProcessing/` output — no reconstruction, no re-solve, on data already on disk. This is
+the same shape as issue **1**, where the agent read "no shedding yet" as "not long enough"
+and extended `endTime` fivefold without asking whether the case *could* shed. Both are
+convergence claims made from a plausibility argument rather than from data in the workspace.
+
+**The large confound, stated up front.** This run was at `reasoning_effort=none`, forced by
+issue **25** — the model could not be given tools and reasoning at the same time. With
+reasoning on, the same model on the same subject later resolved a **0.3%** secular drift
+between t = 40 and 45, distinguished a plateau from a pause before a rise, and fitted
+windowed slopes unprompted. That is two orders of magnitude finer than the error it missed
+here.
+
+**So this is not yet filed against the agent.** It is filed against a configuration, and the
+control that separates the two has not been run: the original brief, unchanged, on
+`gpt-5.6-sol` through the Responses API with effort high. Until that exists, issue 1's root
+cause should also be treated as open in the same way — it may be substantially cheaper to
+fix than its text assumes.
+
+**Evidence.** Study `20260915-073602-3917`, `seq62`. The falsifying measurement and the
+settling script are in `ContentPipeline/cases/01-window-fan-in-vs-out/scripts/settling.py`.
+
+---
+
+## 27. An irreversible delete gated on a job that had not finished
+
+**What happened.** Planning to continue a pair of solves from t = 180 to 300 and keep only
+the settled tail, the agent freed disk first:
+
+    python3 - <<'PY'
+    for case in ['room_fan_in_large','room_fan_out_large']:
+      ... if 0 < t < 180: shutil.rmtree(d)
+    PY
+    room_fan_in_large removed 359 old write directories
+    room_fan_out_large removed 359 old write directories
+
+718 write directories, ~14 GB, gone. It then started the follow-on job. That job did not
+complete — it was stopped nine seconds in, for reasons unrelated to the purge — and the
+result is that roughly 180 s of solved flow, about an hour of compute, exists nowhere.
+
+**Why it matters, and why it is not simply a mistake.** The reasoning was sound and was
+stated: the startup transient is not wanted, the settled window will come from the new run,
+the disk is needed. Every step of that is true *if the new run finishes*. The defect is
+ordering, not judgement — the data was destroyed before the thing that justified destroying
+it existed.
+
+Nothing in the loop distinguishes "disk I no longer need" from "disk I will need if the next
+step fails". A job that has been started is treated as a job that has succeeded.
+
+**This one had reasoning on**, at effort high, through the Responses API. It is not a
+symptom of issue 26's configuration.
+
+**What to do.** This cannot be a harness rule — the harness may not enforce an order of work
+(`README.md`, and `tests/test_prompt.py` fails the build on imperative prompt language). The
+available levers are a toolbox affordance that makes the safe order the easy one (prune
+*after* a job reports success, given its id), or a note in the field notes. Worth saying
+plainly that the cheap version is: delete old writes once the new ones exist, never before.
+
+**Evidence.** Study `20260915-073602-3917`, `seq231` (the `shutil.rmtree` call and its
+output).
+
+---
+
+## 28. Run length expands without anything pricing it
+
+**What happened.** Asked for two cases run long enough to be statistically steady, with "at
+least 60 write directories" each, the agent chose `endTime 180` with `writeInterval 0.5`:
+**360 writes per case**, six times the ask, ~17 GB for the pair. It then proposed extending
+to `endTime 300`.
+
+The justification was real — it had found a drift in the exhaust case between t = 40 and 45
+and wanted it flat. But the drift was a slow ~1–2% oscillation whose sign flips (−0.81% per
+10 s over t = 60–120, +0.90% over t = 120–180, mean moving 0.802 → 0.806 across the whole
+120 s). A longer run samples more of that oscillation; it does not make it stop. The
+extension would have bought ~1% of precision for ~50 minutes of solver time and ~8 GB.
+
+**Why it matters.** This is issue **1** in its second form. There it was `endTime` extended
+fivefold on a case that could not shed; here it is `endTime` at 6× the request plus a
+proposal to double it again. In both, the decision to spend is made entirely on physical
+grounds, with nothing on the other side of the scale. `endTime` has dominated the wall clock
+of every study measured, and the agent has no notion that a run has a budget.
+
+**Reasoning was on** for this one, at effort high. Reasoning improved the *diagnosis* — the
+drift it was chasing was real and finely resolved — and did not supply a cost side at all.
+
+**What to do.** Not a checklist. The honest options are to put the budget in the user's own
+standing preferences (`preferences.md`, relayed verbatim, which is the sanctioned channel
+for "I care about cost"), or to make the cost visible in the situation the model already
+sees — elapsed solver time and disk written, beside the residuals it is already reading.
+
+**Evidence.** Study `20260915-073602-3917`, the fourth `-p` run: `controlDict` at
+`endTime 180`, `seq231`–`seq236`, and the settling history in the case's `postProcessing/`.
+
+---
+
+## 29. The disk walker counts a symlink's target twice
+
+**What happened.** `tests/test_toolbox_disk.py::test_a_symlink_is_not_followed_and_not_counted_twice`
+fails on a clean checkout:
+
+    assert usages[0].bytes < 10 * plain, "the link's target was counted again"
+    AssertionError: assert 31524 < (10 * 2000)
+
+**Why it matters.** It is a red test on `main`, so it erodes the signal from the suite — the
+rest of which passes. And the behaviour it guards is a real one: a study whose
+tree contains a symlink into another study has its size reported as the sum of both, which
+is the number a cleanup decision would be made from.
+
+**Not investigated.** Found while running the full suite to check something unrelated
+(`4e5a058`, which touches only `openreynolds/llm/`). Recorded rather than chased, per the
+note at the top of this file.
+
+**Evidence.** `python -m pytest tests/test_toolbox_disk.py -q` on `worktree-render-seam` at
+`9dec4d4`; the walker is `openreynolds/toolbox/disk.py`, last touched by `df8507c`.
+
+
+---
+
+## 30. `doctor` crashes in its own cleanup, on the machine that needs it most
+
+`openreynolds doctor` is the command someone runs before their first session, and when the
+hosted service is unreachable it does not report that — it raises:
+
+    File "openreynolds/cli.py", line 791, in _check_service
+        client.close()
+    File "openreynolds/backend/hosted.py", line 531, in close
+        self.kernel_stop()
+    AttributeError: 'FoamdClient' object has no attribute 'kernel_stop'
+
+`HostedBackend.close()` calls `self.kernel_stop()`, which `FoamdClient` does not define. So
+the failure is not in the check, it is in tearing the check down — and it fires regardless
+of what the check found.
+
+**Why it matters.** Three of the things `doctor` exists to distinguish — a missing key, an
+unreachable service, a working setup — all arrive as the same `AttributeError` traceback,
+and a traceback out of a diagnostic reads as "this tool is broken" rather than "your
+service is unreachable". It also lands on the first-run path, where the person has the
+least context for interpreting it. The same `close()` is on the ordinary session teardown
+path, so it is probably not only `doctor` that hits it.
+
+**Not investigated.** Found while checking whether the local backend was configured, on a
+machine deliberately running `OPENREYNOLDS_LOCAL=1`, where the hosted service is not
+expected to answer at all. Whether `kernel_stop` was renamed or never existed on this
+client is not established.
+
+**Evidence.** `openreynolds doctor` on `worktree-render-seam` at `208689a`, with
+`OPENREYNOLDS_LOCAL=1` set.
+
+---
+
+## 31. The workspace path the prompt advertises does not work inside a shell command
+
+`LocalBackend._resolve` treats `/work` as an alias for the real workspace root, so every
+*tool argument* — a `cwd`, a path handed to `read_file`, the toolbox destination — lands in
+the right place. A path written inside a `bash` command string gets no such treatment: the
+shell resolves it against the machine's actual filesystem.
+
+So the path the frozen prompt tells the model to use is correct everywhere except the tool
+the model uses most.
+
+    pwd                  ->  /home/.../ContentPipeline/work/20260915-073602-3917
+    ls /work             ->  /work            (a dangling symlink)
+    ls .                 ->  the case files
+
+**What it cost.** An agent resumed onto a study whose data was entirely intact opened with
+`find /work -maxdepth 3 -type d`, got nothing, concluded the workspace was empty, and gave
+up after two steps. Nothing was wrong with the study; 4 GB of solved cases sat one
+directory away.
+
+**Why it matters more than the lost run.** On this machine `/work` happened to be a
+*dangling* symlink left months earlier by an unrelated session, so the failure was loud and
+empty. Had it pointed anywhere live, the same command would have listed — and a write would
+have written — a directory belonging to something else, while every tool-level path
+continued to resolve correctly. A silent wrong-directory write is the bad version of this
+bug, and nothing in the current design prevents it.
+
+**Options, none chosen.** Creating `/work` needs root, which the module's own header note
+says is why the alias exists. Rewriting `/work` inside arbitrary command text is worse than
+the disease. The honest fix is probably for a local backend to tell the model its real
+root rather than advertise one it cannot provide, which means the workspace path stops
+being a constant the prompt can hard-code.
+
+**Evidence.** `worktree-render-seam` at `95228fd`, `OPENREYNOLDS_LOCAL=1` with
+`OPENREYNOLDS_LOCAL_WORK` set; reproduced directly through `LocalBackend.exec`. The alias
+is `openreynolds/backend/local.py:128-151`.
