@@ -246,6 +246,45 @@ def _client_against(transport: httpx.MockTransport) -> FoamdClient:
     return client
 
 
+def test_closing_the_client_closes_the_pool_and_nothing_else():
+    """`FoamdClient.close` once called `self.kernel_stop()`, a method only `KernelHost`
+    has. Every hosted session's close-down raised `AttributeError` there, so the
+    session was recorded as `error` and its workspace left running for the reaper
+    (2026-09-22 to 09-24, found while testing ui #35). The client owns one thing --
+    the HTTP pool -- and closing it must be exactly that."""
+    client = FoamdClient("https://svc.example", "of_live_test")
+    client.close()  # must not raise
+    assert client._client.is_closed
+
+
+def test_the_backend_puts_the_kernel_down_and_then_closes_its_client():
+    """The kernel is the backend's, not the client's: `HostedBackend.close` stops it
+    first and closes the transport second, and the client is asked for nothing it
+    does not have."""
+    from openreynolds.backend.hosted import HostedBackend
+
+    order: list[str] = []
+    client = _client_against(httpx.MockTransport(lambda request: httpx.Response(200, json={})))
+    backend = HostedBackend(client, "inst-1")
+
+    class Channel:
+        def stop(self):
+            order.append("kernel_stop")
+
+    backend._channel = Channel()
+    real_close = client.close
+
+    def closing():
+        order.append("client_close")
+        real_close()
+
+    client.close = closing
+    backend.close()
+
+    assert order == ["kernel_stop", "client_close"]
+    assert client._client.is_closed
+
+
 def test_a_redirect_with_nowhere_to_go_is_named_not_a_json_decode_failure():
     """The whole of F-45, as the model saw it: `bad_response (303): the body was empty`.
     True, and useless -- it named the symptom and hid the one thing to act on.
