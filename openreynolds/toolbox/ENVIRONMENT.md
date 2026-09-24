@@ -46,12 +46,15 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 - `mesh_look.py` in the toolbox draws any meshed case with one colour per patch and prints
   its cells, bounds, patch areas and normals and checkMesh's verdict — the fastest way to
   see whether a mesh is the shape that was meant and whether the inlet is the end you think.
-- `templates/` in the toolbox holds two working scripts, not snippets: `duct2d.py` (a
+- `templates/` in the toolbox holds working scripts, not snippets: `duct2d.py` (a
   closed planar outline meshed in quads, extruded one cell into hexahedra, converted with
-  `gmshToFoam` and retyped) and `body_in_box.py` (an OCC primitive cut out of a flow box,
-  meshed body-fitted with tetrahedra, converted and retyped). Both run `checkMesh` and end
-  with a `mesh_look.py` call. Copy one into a case directory, edit the two numbers marked
-  at the top, and run it — the whole 2D or 3D meshing recipe, gotchas included, rather
+  `gmshToFoam` and retyped), `body_in_box.py` (an OCC primitive cut out of a flow box,
+  meshed body-fitted with tetrahedra, converted and retyped), and `evaluate_steady.py`
+  (a cambered section over a ground plane, the `build.py` of a parametric round -- its
+  section comes from a `design_constants.py` beside it, and `--write-round DIR` writes
+  the round out with a sample `hooks.py` and `goal.lock.json`). All run `checkMesh` and
+  end with a `mesh_look.py` call. Copy one into a case directory, edit the two numbers
+  marked at the top, and run it — the whole meshing recipe, gotchas included, rather
   than a page to reconstruct from memory.
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
@@ -111,3 +114,31 @@ on `render.py --help` before rendering anything):
 A decomposed run's time steps live in `processorN/` (or `processors<N>/` with the collated
 handler) until `reconstructPar` puts them together; `reconstructPar -latestTime` reconstructs
 one time, and a series (an animation) needs `reconstructPar` without it, or `-time 'a:b'`.
+
+## A parametric study: the files two scripts agree on
+
+`parametric.py` builds, meshes, dresses, solves and scores one candidate; `score.py`
+writes its `metrics.json` and nothing else does. They meet on three files, and the
+keys below are the whole of what they read (`templates/evaluate_steady.py --write-round
+DIR` writes a sample of each):
+
+- `CANDIDATE_DIR/design_constants.py` -- the caller's numbers, one `NAME = <number>` per
+  line. The round's `build.py` begins with `from design_constants import *`; a `build.py`
+  without that line is refused.
+- `ROUND_DIR/hooks.py` (optional) -- `def case_args() -> list[str]` and imports, nothing
+  else; the flags it returns go to `case_gen.py` after the lock's and may not repeat one
+  of them.
+- `goal.lock.json` -- harness-owned, written once: `solver` (default `simpleFoam`);
+  `case_gen_args` (a list of `case_gen.py` flags: the physics); `body_patch` (where
+  forces are taken, passed as `--body`); `fidelity: {ranks, iters, window, cells: {min,
+  max}, yplus: {min, max}, reference}` (`iters` becomes `--iterations`, or `--end-time`
+  under `--study transient`; `window` is the tail fraction the coefficients are averaged
+  over, default 0.2; either side of a band may be left out; `reference` is a tag copied
+  through); `trim` (optional: `{variable, metric, target, tol, max_solves}`, the
+  fixed-lift secant over one design constant); `template_version` (copied through).
+
+`metrics.json` carries, always: `label` (`ok`, `mesh`, `diverged`, `timeout`,
+`unconverged`, `yplus`, `cells`), `detail`, `fidelity`, `template_version`,
+`build_sha256`, `case_args`, `trim` (or null), `metrics` (`Cd`, `Cl`, `CmPitch` as
+tail means), `window` (rows averaged), `converged`, `residual_shape`, `yplus` (`{min,
+max}` or null), `cells`, `wall_seconds`, `versions` (`foam`, `gmsh`, `build123d`).

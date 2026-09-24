@@ -433,12 +433,34 @@ def test_forces_are_computed_only_where_there_is_a_body_to_take_them(case_gen, t
     rename_patches(plain, {"movingWall": ("inlet", "patch"), "fixedWalls": ("walls", "wall")})
     run(case_gen, plain, "--length", "0.1")
     assert "forceCoeffs" not in (plain / "system" / "controlDict").read_text()
+    assert "yPlus" not in (plain / "system" / "controlDict").read_text()
 
     withbody = mesh_only(tmp_path, "withbody")
     rename_patches(withbody, {"movingWall": ("inlet", "patch"), "fixedWalls": ("body", "wall")})
     run(case_gen, withbody, "--length", "0.1", "--body", "body")
     text = (withbody / "system" / "controlDict").read_text()
     assert "forceCoeffs" in text and "patches         (body);" in text
+
+
+def test_yplus_is_a_function_object_only_when_asked_for(case_gen, tmp_path):
+    """`score.py` reads `postProcessing/yPlus/` to hold a design study inside its
+    wall-treatment band; the object is written at field writes, not every step, and it
+    does not need a body -- a duct's walls have a y+ too."""
+    plain = mesh_only(tmp_path, "plain")
+    rename_patches(plain, {"movingWall": ("inlet", "patch"), "fixedWalls": ("walls", "wall")})
+    run(case_gen, plain, "--length", "0.1", "--yplus")
+    text = (plain / "system" / "controlDict").read_text()
+    assert "type            yPlus;" in text
+    assert "libs            (fieldFunctionObjects);" in text
+    assert "writeControl    writeTime;" in text
+    assert "forceCoeffs" not in text, "no body, no forces; the y+ object stands alone"
+
+    withbody = mesh_only(tmp_path, "withbody")
+    rename_patches(withbody, {"movingWall": ("inlet", "patch"), "fixedWalls": ("body", "wall")})
+    run(case_gen, withbody, "--length", "0.1", "--body", "body", "--yplus")
+    text = (withbody / "system" / "controlDict").read_text()
+    assert "forceCoeffs" in text and "yPlus" in text
+    assert text.count("functions") == 1, "one functions block carries both"
 
 
 def test_writing_over_a_case_needs_force(case_gen, duct):
