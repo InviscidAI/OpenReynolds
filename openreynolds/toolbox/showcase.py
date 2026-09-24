@@ -20,6 +20,12 @@ show a flow --
 - **surface**     the body itself under its own pressure field, which is what a person
                   recognises as the thing they uploaded.
 - **slice**       a cut plane, styled the same way, for when the interior is the point.
+- **section**     both at once: the body under a surface field, cut by one plane through
+                  the flow around it. `surface` shows what the flow did to the object and
+                  nothing about the flow; `slice` shows the flow and hides the object in
+                  it. This is the one a 3D run was worth doing for, and it is viewed
+                  off-axis on purpose -- face-on, the body sits in its own section and
+                  the picture is a 2D one again.
 
 and two ways to make them move, both of which work on a **steady** solution, because most
 studies are steady and a still picture of a steady field is where the story usually stops:
@@ -139,12 +145,49 @@ def patches(block) -> dict:
     return out
 
 
-def body_patch(block, wanted: str | None):
-    """The patch that is most likely to be the thing the study is about.
+def _merge_patches(pool: dict):
+    """Several patches as one surface, so a body split into parts is still a body.
 
-    Named if named. Otherwise the smallest patch that is not obviously part of the
-    domain box -- the same reasoning `first_look.py` uses to pick a region of interest,
-    and for the same reason: the object is small and the tunnel is large."""
+    Welded afterwards, which is not tidiness. Each patch carries its own copy of the
+    points along its border with the next one, so an unwelded merge of the OpenFOAM
+    motorBike's 67 patches reports 146,099 open edges on a surface that is in fact
+    closed -- 75 open edges once the duplicates are fused. Smooth shading then has no
+    shared point to average a normal across, so it shades each patch as an island and
+    the body renders faceted along every border."""
+    surfaces = list(pool.values())
+    merged = surfaces[0].copy()
+    if len(surfaces) > 1:
+        merged = merged.merge(surfaces[1:], merge_points=False)
+    try:
+        return merged.clean(tolerance=1e-6)
+    except Exception:  # noqa: BLE001 - a surface that will not clean is still drawable
+        return merged
+
+
+def _common_name(names) -> str:
+    """What the parts of one body are all called, if they agree on a prefix."""
+    shortest = min(names, key=len)
+    for cut in range(len(shortest), 2, -1):
+        head = shortest[:cut]
+        if all(n.startswith(head) for n in names):
+            return head.rstrip("_-.: ")
+    return ""
+
+
+def body_patch(block, wanted: str | None):
+    """The thing the study is about, as one surface.
+
+    Named if named -- exactly, or as a prefix, so `--patch motorBike` takes every
+    `motorBike_*` part.
+
+    Otherwise every patch that is not obviously part of the domain box, **merged**. The
+    earlier rule took the *smallest* such patch, on the reasoning that the object is
+    small and the tunnel is large. That holds only when the object arrives as one patch,
+    and a body that came from CAD does not: the OpenFOAM motorBike is 67 patches, and the
+    smallest of them is a six-cell instrument dial. So `surface` drew a dial under its
+    pressure field, and `vortices` framed its camera on one -- silently, because a
+    six-cell patch is a perfectly valid surface. Merging is a no-op when there is one
+    candidate and the fix when there are sixty-seven."""
     found = patches(block)
     if not found:
         return None, ""
@@ -152,14 +195,21 @@ def body_patch(block, wanted: str | None):
         for name, surface in found.items():
             if name.lower() == wanted.lower():
                 return surface, name
+        group = {n: s for n, s in found.items() if n.lower().startswith(wanted.lower())}
+        if group:
+            return _merge_patches(group), f"{wanted}* ({len(group)} patches)"
         raise SystemExit(f"no patch called {wanted!r}; this case has: {', '.join(sorted(found))}")
     box = ("inlet", "outlet", "top", "bottom", "side", "front", "back", "wall",
            "frontandback", "symmetry", "farfield", "atmosphere", "upperwall", "lowerwall")
     candidates = {n: s for n, s in found.items()
                   if not any(word in n.lower() for word in box)}
     pool = candidates or found
-    name = min(pool, key=lambda n: pool[n].n_cells)
-    return pool[name], name
+    if len(pool) == 1:
+        name = next(iter(pool))
+        return pool[name], name
+    shared = _common_name(list(pool))
+    return _merge_patches(pool), (f"{shared}* ({len(pool)} patches)" if shared
+                                  else f"{len(pool)} patches")
 
 
 def speed_of(mesh):
@@ -188,7 +238,33 @@ def stage(size=WINDOW) -> pv.Plotter:
     return plotter
 
 
-def coloured(plotter, mesh, scalars: str | None, cmap: str, bar: str = "", **kw):
+BAR_FULL = (0.31, 0.38)
+BAR_LEFT = (0.07, 0.38)
+BAR_RIGHT = (0.55, 0.38)
+"""Where a colour bar sits along the bottom. One quantity takes the middle; a scene that
+shows two gives them one each, because two bars in the same place is one bar with the
+wrong numbers under it."""
+
+
+_BAR_KEYS: dict[str, str] = {}
+
+
+def _bar_key(scalars: str) -> str:
+    """A blank-looking bar title that is nevertheless unique per quantity.
+
+    VTK keys scalar bars by their title, so two bars titled `" "` are one bar: a scene
+    drawing two quantities got a single bar showing the first one's range, sitting under
+    both labels. The title still has to *look* empty -- see the note below on why -- so
+    the quantities are told apart by how much whitespace they get. Assigned in order of
+    first use rather than hashed, because `hash` on a string is salted per process and a
+    frame sequence must not depend on which process drew it."""
+    if scalars not in _BAR_KEYS:
+        _BAR_KEYS[scalars] = " " * (len(_BAR_KEYS) + 1)
+    return _BAR_KEYS[scalars]
+
+
+def coloured(plotter, mesh, scalars: str | None, cmap: str, bar: str = "",
+             bar_at=BAR_FULL, **kw):
     """Add a mesh coloured by a named array, with its colour bar made in the same call.
 
     Both halves of this are the fix for one bug. A streamtube inherits every array the
@@ -214,17 +290,19 @@ def coloured(plotter, mesh, scalars: str | None, cmap: str, bar: str = "", **kw)
     if not bar:
         return plotter.add_mesh(mesh, scalars=scalars, cmap=cmap,
                                 show_scalar_bar=False, **kw)
+    bar_x, bar_w = bar_at
     kw.setdefault("clim", [float(np.nanmin(values)), float(np.nanmax(values))])
     actor = plotter.add_mesh(
         mesh, scalars=scalars, cmap=cmap, show_scalar_bar=True,
         scalar_bar_args=dict(
-            title=" ", vertical=False, position_x=0.31, position_y=0.045,
-            width=0.38, height=0.030, label_font_size=12,
+            title=_bar_key(scalars),
+            vertical=False, position_x=bar_x, position_y=0.045,
+            width=bar_w, height=0.030, label_font_size=12,
             color="#dfe6ec", n_labels=5, fmt="%.3g",
         ), **kw)
     # The bar carries no title of its own: VTK lays a horizontal bar's title across its
     # own tick labels at these proportions. The quantity is named just above instead.
-    plotter.add_text(bar, position=(0.31, 0.088), viewport=True,
+    plotter.add_text(bar, position=(bar_x, 0.088), viewport=True,
                      font_size=10, color="#8fa0ad")
     return actor
 
@@ -465,6 +543,105 @@ def scene_surface(block, out: Path, title: str, patch: str | None,
     return _still_or_frames(draw, surface, out, "surface", frames, fps, 0, None)
 
 
+def _around(bounds, pad: float):
+    """A box around the body: `pad` body-lengths of room, and more of it downstream
+    because the wake is the half worth seeing."""
+    lo = np.array(bounds[::2], dtype=float)
+    hi = np.array(bounds[1::2], dtype=float)
+    length = float(np.max(hi - lo))
+    out = []
+    for i in range(3):
+        back = pad * (2.0 if i == 0 else 1.0)
+        out += [lo[i] - pad * length, hi[i] + back * length]
+    return out
+
+
+def _trimmed(values, low: float = 1.0, high: float = 99.0):
+    """Limits that ignore the outliers. A stagnation point and one bad cell set a range
+    that leaves everything else the same colour."""
+    finite = np.asarray(values)[np.isfinite(values)]
+    if finite.size == 0:
+        return None
+    return [float(np.percentile(finite, low)), float(np.percentile(finite, high))]
+
+
+def scene_section(block, mesh, out: Path, title: str, *, patch: str | None = None,
+                  surface_field: str = "p", field: str = "speed", normal: str = "y",
+                  cmap: str = "", surface_cmap: str = "", pad: float = 0.45,
+                  frames: int = 0, fps: float = 20.0) -> list[Path]:
+    """The body under a surface field, cut by one plane through the flow around it.
+
+    The two scenes either side of this one each answer half a question. `surface` shows
+    what the flow did *to* the object and nothing about the flow; `slice` shows the flow
+    and hides the object in it, so a room or a car arrives as a coloured rectangle. Put
+    together they are the picture a 3D run was worth doing for -- and a study that can
+    only produce the cut plane has spent a 3D solve to draw something a 2D one would
+    have drawn.
+
+    Deliberately *not* viewed down the plane normal. Face-on, the body sits exactly in
+    its own section and the result looks like the 2D picture again; the camera is set
+    off-axis so the surface field reads as a surface and the plane reads as a plane.
+    """
+    body, name = body_patch(block, patch)
+    if body is None:
+        print("  section: this case exposes no boundary patches, so there is no body to cut")
+        return []
+    speed = speed_of(mesh)
+    scalars = speed if field in ("speed", "U", "u") else field
+    if scalars not in mesh.point_data:
+        print(f"  section: no field called {field!r}; this case has "
+              f"{', '.join(sorted(mesh.point_data.keys()))}")
+        return []
+
+    axis = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[normal]
+    cut = mesh.slice(normal=axis, origin=mesh.center)
+    if cut.n_points == 0:
+        print(f"  section: the {normal}-normal cut through the centre is empty")
+        return []
+    # Clipped to a box around the body, because an external-aero domain is tens of body
+    # lengths across and an unclipped cut plane is a wall of freestream behind the
+    # subject -- the plane stops being the flow around the object and becomes a backdrop.
+    cut = cut.clip_box(_around(body.bounds, pad), invert=False)
+    if cut.n_points == 0:
+        print("  section: nothing left of the cut after clipping to the body")
+        return []
+
+    body_scalars = surface_field if surface_field in body.point_data else ""
+    if not body_scalars and surface_field in body.cell_data:
+        body = body.cell_data_to_point_data()
+        body_scalars = surface_field
+    if not body_scalars:
+        print(f"  section: patch '{name}' carries no {surface_field!r}; "
+              "drawing it plain and colouring only the cut")
+
+    flow_map = cmap or MAPS.get(field, MAPS["speed"])
+    body_map = surface_cmap or MAPS.get(surface_field, MAPS["p"])
+
+    body_clim = _trimmed(body.point_data[body_scalars]) if body_scalars else None
+    flow_clim = _trimmed(cut.point_data[scalars])
+    # A speed cannot be negative and zero is a real value on it, so the scale starts
+    # there. Trimming the bottom instead sets the floor at the freestream's own lower
+    # percentile, and then everything that is not a wake is one flat colour -- which is
+    # most of the plane.
+    if flow_clim and scalars == speed:
+        flow_clim[0] = 0.0
+
+    def draw(plotter):
+        coloured(plotter, body, body_scalars or None, body_map,
+                 bar=surface_field if body_scalars else "", bar_at=BAR_LEFT,
+                 smooth_shading=True, specular=0.35, specular_power=22,
+                 **({"clim": body_clim} if body_clim else {}),
+                 **({} if body_scalars else {"color": "#5a6672"}))
+        coloured(plotter, cut, scalars, flow_map, bar=scalars, bar_at=BAR_RIGHT,
+                 **({"clim": flow_clim} if flow_clim else {}))
+        caption(plotter, title,
+                f"'{name}' under {surface_field}, cut on the {normal}-normal plane")
+
+    # Framed on the body rather than the cut: the plane spans the whole tunnel and
+    # framing on it puts the subject in the middle distance.
+    return _still_or_frames(draw, body, out, f"section_{scalars}", frames, fps, 0, None)
+
+
 def scene_slice(mesh, out: Path, title: str, field: str, normal: str,
                 frames: int = 0, fps: float = 20.0, sweep: int = 0) -> list[Path]:
     """A cut plane, styled like the rest."""
@@ -624,7 +801,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("case", type=Path)
     ap.add_argument("--out", type=Path, default=None, help="defaults to <case>/renders")
     ap.add_argument("--scene", default="vortices",
-                    choices=["vortices", "streamlines", "surface", "slice"])
+                    choices=["vortices", "streamlines", "surface", "slice", "section"])
+    ap.add_argument("--surface-field", default="p",
+                    help="for --scene section: what to colour the body by")
+    ap.add_argument("--cmap", default="", help="override the colour map for the flow field")
+    ap.add_argument("--surface-cmap", default="", help="override it for the body")
     ap.add_argument("--all", action="store_true", help="one still of every scene, then an orbit")
     ap.add_argument("--time", type=float, default=None)
     ap.add_argument("--field", default="speed", help="for --scene slice")
@@ -659,7 +840,8 @@ def main(argv: list[str] | None = None) -> int:
           flush=True)
 
     written: list[Path] = []
-    scenes = ["vortices", "streamlines", "surface", "slice"] if args.all else [args.scene]
+    scenes = (["vortices", "streamlines", "surface", "slice", "section"]
+              if args.all else [args.scene])
     for scene in scenes:
         label = f"{title}  |  {scene}"
         orbit = args.orbit if (not args.all or scene == "vortices") else 0
@@ -673,6 +855,12 @@ def main(argv: list[str] | None = None) -> int:
                                              args.fps, context=context)
             elif scene == "surface":
                 written += scene_surface(block, out, label, args.patch, orbit, args.fps)
+            elif scene == "section":
+                written += scene_section(block, mesh, out, label, patch=args.patch,
+                                         surface_field=args.surface_field,
+                                         field=args.field, normal=args.normal,
+                                         cmap=args.cmap, surface_cmap=args.surface_cmap,
+                                         frames=orbit, fps=args.fps)
             else:
                 written += scene_slice(mesh, out, label, args.field, args.normal,
                                        orbit, args.fps, args.sweep)

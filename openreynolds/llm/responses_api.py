@@ -26,7 +26,9 @@ on a thirty-step mesh that is the difference the API exists to make.
 
 from __future__ import annotations
 
+import importlib
 import json
+import time
 from typing import Any
 
 import openai
@@ -185,6 +187,28 @@ class ResponsesProvider(Provider):
                 kwargs["include"] = ["reasoning.encrypted_content"]
         return kwargs
 
+    @staticmethod
+    def _transport_errors() -> tuple[type[BaseException], ...]:
+        """The exceptions a stream that dies in the middle actually raises.
+
+        A request that fails before it opens comes back wrapped as
+        `openai.APIConnectionError`. One that dies *during* iteration does not: it raises
+        from inside the SDK's own `with` block, below the layer that does the wrapping, so
+        the raw transport exception escapes. The httpx package is `httpx2` in this
+        environment and plain `httpx` in others, so probe for whichever is installed
+        rather than importing one and failing on the other.
+        """
+        found: list[type[BaseException]] = [openai.APIConnectionError]
+        for name in ("httpx2", "httpx"):
+            try:
+                module = importlib.import_module(name)
+            except ImportError:
+                continue
+            base = getattr(module, "TransportError", None)
+            if isinstance(base, type) and issubclass(base, BaseException):
+                found.append(base)
+        return tuple(found)
+
     def stream(
         self,
         *,
@@ -197,10 +221,28 @@ class ResponsesProvider(Provider):
         listener: Listener,
     ) -> Turn:
         items = self.render(messages)
+        transport = self._transport_errors()
+        progress: dict[str, bool] = {}
         for attempt in (1, 2, 3):
             kwargs = self._kwargs(model, system, items, tools, effort, max_tokens)
             try:
-                return self._stream_once(kwargs, listener)
+                return self._stream_once(kwargs, listener, progress)
+            except transport as exc:
+                # A reset mid-stream used to end the whole session: nothing between here
+                # and the top of the loop caught it, so one dropped connection threw away
+                # an hour of solved case and the report that went with it. Nothing has
+                # been committed to the thread yet -- the turn only lands when
+                # `_stream_once` returns -- so the request is safe to send again.
+                if attempt == 3:
+                    raise ProviderError(f"connection lost mid-stream: {exc}") from exc
+                if progress.get("emitted"):
+                    # Say so rather than silently printing the reply twice.
+                    listener.on_text(
+                        "\n[connection dropped mid-reply; retrying, "
+                        "the text above may repeat]\n"
+                    )
+                progress.clear()
+                time.sleep(2 ** attempt)
             except openai.BadRequestError as exc:
                 text = _message(exc)
                 lowered = text.lower()
@@ -218,13 +260,19 @@ class ResponsesProvider(Provider):
                 raise ProviderError(str(exc)) from exc
         raise AssertionError("unreachable")
 
-    def _stream_once(self, kwargs: dict[str, Any], listener: Listener) -> Turn:
+    def _stream_once(
+        self, kwargs: dict[str, Any], listener: Listener,
+        progress: dict[str, bool] | None = None,
+    ) -> Turn:
         final: Any = None
         opened = False
+        if progress is None:
+            progress = {}
         with self.client.responses.stream(**kwargs) as stream:
             for event in stream:
                 kind = getattr(event, "type", "")
                 if kind == "response.output_text.delta":
+                    progress["emitted"] = True
                     listener.on_text(getattr(event, "delta", "") or "")
                 elif kind == "response.reasoning_summary_text.delta":
                     if not opened:
