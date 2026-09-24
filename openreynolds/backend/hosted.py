@@ -580,9 +580,14 @@ class FoamdClient:
         )
 
     def close(self) -> None:
-        """The kernel goes down with the session that started it; the volume, and
-        everything its cells wrote, stays."""
-        self.kernel_stop()
+        """Close the HTTP connection pool. Nothing else lives here: the kernel is the
+        backend's (`HostedBackend.close` puts it down before it closes this client),
+        and the volume, with everything the session wrote, stays.
+
+        This once called `self.kernel_stop()` -- a method only `KernelHost` has -- so
+        every hosted session's close-down raised `AttributeError` after 2026-09-22,
+        the session was recorded as `error`, and its workspace was left running for
+        the reaper (ui #35 found it). `tests/test_hosted.py` pins the shape now."""
         self._client.close()
 
     def request(
