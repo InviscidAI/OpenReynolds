@@ -1175,3 +1175,33 @@ def test_cad_audit_derives_a_patch_set_when_no_manifest_declares_one(tmp_path):
         [sys.executable, str(TOOLBOX / "cad_audit.py"), "constant/triSurface", "--json"],
         cwd=tmp_path, capture_output=True, text=True)
     assert bare.returncode == 2 and "no patches.json" in bare.stderr
+
+
+def test_the_advisory_gate_does_not_compute_the_width_field(tmp_path):
+    """`min_width` never reached the desk and was the whole of `domain_probe`'s cost.
+
+    `gate.ACTIVATED` passes `location_in_mesh` alone from that script, so the width field
+    was computed and dropped -- a median 42 s a declare on the post-merge workspaces, and
+    past `TIMEOUT_S` on T2, which then lost the seed-point check with it. The audit is
+    asked exactly what it was before, and the full `verify` command is untouched.
+    """
+    from openreynolds.cad import check as cadcheck
+
+    commands: list[str] = []
+
+    class Workspace:
+        workspace_root = str(tmp_path)
+
+        def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
+            commands.append(cmd)
+            return ExecResult(0, "", False, None)
+
+        def put_file(self, path, data):
+            pass
+
+    cadcheck.advisory_findings(Workspace(), f"{tmp_path}/case")
+    probe = [c for c in commands if "domain_probe.py" in c]
+    audit = [c for c in commands if "cad_audit.py" in c]
+    assert len(probe) == 1 and probe[0].endswith("--json --width-samples 0")
+    assert len(audit) == 1 and "--width-samples" not in audit[0]
+    assert "--width-samples" not in cadcheck._cad_command("/x/domain_probe.py")

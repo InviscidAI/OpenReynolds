@@ -371,7 +371,7 @@ def _region_command(region: str, toolbox: str = TOOLBOX) -> str:
     )
 
 
-def _cad_command(script_path: str) -> str:
+def _cad_command(script_path: str, extra: str = "") -> str:
     """One toolbox audit, over the exported surface.
 
     **The `patches.json` guard that used to wrap this is gone.** It was a shell `if`
@@ -410,7 +410,7 @@ def _cad_command(script_path: str) -> str:
     return (f"d={shlex.quote(SURFACE_REL)}; "
             f"for c in {candidates}; do "
             f'if ls "$c"/*.stl >/dev/null 2>&1; then d="$c"; break; fi; done; '
-            f'python3 {script_path} "$d" --derive --json')
+            f'python3 {script_path} "$d" --derive --json{extra}')
 
 
 def verify(backend: Any, case_dir: str, case_rel: str, request: str = "",
@@ -612,24 +612,40 @@ def advisory_findings(backend: Any, case_dir: str,
                               for name in ("cad_audit", "domain_probe")])
 
 
+ADVISORY_ARGS = {"domain_probe": " --width-samples 0"}
+"""The width field is off in the advisory gate, because the gate never delivered it.
+
+`gate.ACTIVATED` passes `domain_probe.location_in_mesh` and nothing else of that
+script's, and `CoreDesk._declare` keeps only the gate states, so `min_width` was
+computed and thrown away. It was also the whole of the script's cost: 99% of its time
+under a profile, a median of 42 s a declare on the `core-postmerge-20260921-062240-cd5e`
+workspaces run one at a time, and more than 900 s on T2, which timed out at `TIMEOUT_S`
+on all three of that sweep's declares and so never delivered the seed-point check
+either. Without it the script is 0.6 s and `location_in_mesh` is identical (T10, T11,
+T14). The full `verify` path is unchanged."""
+
+
 def _ask_advisory(backend: Any, case_dir: str, toolbox: str) -> list[Finding]:
     envelopes = []
     for name in ("cad_audit", "domain_probe"):
         try:
-            envelopes.append(_cad_entry(backend, case_dir, name, f"{toolbox}/{name}.py"))
+            envelopes.append(_cad_entry(backend, case_dir, name, f"{toolbox}/{name}.py",
+                                        ADVISORY_ARGS.get(name, "")))
         except Exception as exc:  # noqa: BLE001 - an advisory check may not end a run
             envelopes.append({"script": name, "unavailable": str(exc)})
     return _cad_findings(envelopes)
 
 
-def _cad_entry(backend: Any, case_dir: str, name: str, script_path: str) -> dict[str, Any]:
+def _cad_entry(backend: Any, case_dir: str, name: str, script_path: str,
+               extra: str = "") -> dict[str, Any]:
     """One toolbox audit's I2 envelope, or a note saying why there is none.
 
     A toolbox script that will not run is not a mesh failure: it comes back `skipped`
     with what happened in it, on the same rule as everything else here.
     """
     try:
-        outcome = backend.exec(_cad_command(script_path), cwd=case_dir, timeout_s=TIMEOUT_S)
+        outcome = backend.exec(_cad_command(script_path, extra), cwd=case_dir,
+                               timeout_s=TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 - the toolbox, not the geometry
         return {"script": name, "unavailable": str(exc)}
     payload = _json_in(outcome.output or "")
