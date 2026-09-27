@@ -327,6 +327,18 @@ def test_a_point_on_the_surface_is_a_failed_location_and_says_why(probe, tmp_pat
     assert not probe.envelope(report, probe.findings(report))["ok"]
 
 
+
+def test_no_width_samples_says_not_measured_rather_than_empty(probe, tmp_path):
+    """Asked for none is not found none: "the surface encloses nothing" is a claim about
+    a surface this never sampled, and the advisory gate asks for none on every declare."""
+    directory = patch_dir(tmp_path, "unasked", {"box": box((0, 0, 0), (0.2, 0.3, 0.4))})
+    report = probe.probe(directory, point=[0.1, 0.15, 0.2], width_samples=0)
+    found = {f.check: f for f in probe.findings(report)}
+    assert found["location_in_mesh"].status == "ok"
+    assert found["min_width"].status == "skipped"
+    assert "not measured" in found["min_width"].measured
+    assert "encloses nothing" not in found["min_width"].measured
+
 # -- item 3: clearance is a number -------------------------------------------------
 
 
