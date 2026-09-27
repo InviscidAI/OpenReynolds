@@ -30,6 +30,20 @@ what it measures, and how
     patch's own row at the last write, min and max. The cell count is read off
     `constant/polyMesh/owner`'s header, which is the mesh's own statement of it.
 
+a transient case
+
+    A lock whose fidelity says `solver_mode: "transient"` (with `end_time`,
+    `write_interval` and `average_from` in convective times H/U, `transient_of`) is a
+    shedding body, and its coefficients are a mean over TIME from `average_from` to the
+    end of the record -- a trapezoid, because the adjustable step writes uneven rows --
+    not over the last rows. Two more metrics come with it: `St`, the lift's dominant
+    frequency on the lock's `--length` and `--speed`, and `Cd_rms`, the drag's rms about
+    its mean. `converged` is then not the residual shape (a shedding run's residuals
+    oscillate with the flow and never level) but whether the window spans
+    `fidelity.min_periods` (default 5) periods of that lift; a shorter one is
+    `unconverged` with the count it saw, and `shedding` in the output carries the
+    frequency, the period count and the window. A steady lock never sees any of this.
+
 the label
 
     One word the optimizer reads, in this order of precedence, the first that applies:
@@ -122,6 +136,16 @@ every candidate of the study. A field genuinely held at its bound reads the othe
 way -- `bounding omega, min: -5.6e3 max: 8.1e6 average: 22` -- a clip many times the
 mean. One tenth of the mean is a decade above the healthy case and two below the
 failing ones."""
+
+MIN_PERIODS = 5
+"""How many shedding periods a transient case's averaging window must span, when the
+lock does not say (`fidelity.min_periods`). A mean over a fraction of a cycle is a
+phase, not a coefficient; over two it is still a few percent off a bluff body's Cd from
+where the window happened to start and stop. Five is the usual floor for quoting one."""
+
+HYSTERESIS = 0.25
+"""The lift must swing this many rms fluctuations below its mean before an upward
+crossing counts (`shedding_frequency`): solver noise about the mean is not a cycle."""
 
 
 # -- the pieces --------------------------------------------------------------------
@@ -221,6 +245,149 @@ def force_metrics(case: Path, fraction: float = DEFAULT_WINDOW) -> tuple[dict, i
         if values.size:
             out[name] = results.tail_mean(values, fraction)
     return out, keep
+
+
+def _flag(args: list[str], flag: str) -> str | None:
+    """One `case_gen.py` flag's value off an argument list, `--flag=value` included."""
+    for index, item in enumerate(args):
+        if item.startswith(f"{flag}="):
+            return item.split("=", 1)[1]
+        if item == flag and index + 1 < len(args):
+            return args[index + 1]
+    return None
+
+
+def transient_of(lock: dict) -> dict | None:
+    """The lock's transient fidelity in seconds, or None for the steady default.
+
+    `fidelity.solver_mode: "transient"` says the answer is a time average, and the lock
+    states its clock in convective times (H/U) -- `end_time`, `write_interval`,
+    `average_from` -- because that is the unit a shedding period is known in (St 0.2 is
+    five of them) and it does not move when a goal changes its speed. The seconds follow
+    from `--length` and `--speed` in the lock's `case_gen_args`, which is why a lock
+    without both is refused here rather than run on a clock nobody can read: this is
+    called by `parametric.py` before anything is paid for, and by `score` after.
+
+    `min_periods` (default `MIN_PERIODS`) is how many shedding periods the averaging
+    window must span before its mean is a number.
+    """
+    fidelity = fidelity_of(lock)
+    if fidelity.get("solver_mode", "steady") == "steady":
+        return None
+    if fidelity["solver_mode"] != "transient":
+        raise SystemExit(f"fidelity.solver_mode: {fidelity['solver_mode']!r}; steady or transient")
+    args = [str(a) for a in (lock.get("case_gen_args") or [])]
+    if (_flag(args, "--study") or "transient") != "transient":
+        raise SystemExit("a transient fidelity with --study " + str(_flag(args, "--study"))
+                         + " in case_gen_args: the lock says two different things")
+    if str(lock.get("solver") or "simpleFoam") == "simpleFoam":
+        raise SystemExit("a transient fidelity with the solver simpleFoam: a steady solver "
+                         "has no time to average over (the lock's solver is pimpleFoam)")
+    numbers = {}
+    for key in ("end_time", "write_interval", "average_from"):
+        value = fidelity.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise SystemExit(f"fidelity.{key}: a positive number of convective times, got {value!r}")
+        numbers[key] = float(value)
+    if numbers["average_from"] >= numbers["end_time"]:
+        raise SystemExit(f"fidelity.average_from ({numbers['average_from']:g}) is not before "
+                         f"end_time ({numbers['end_time']:g}): there is no window to average over")
+    scale = {}
+    for flag in ("--length", "--speed"):
+        value = _flag(args, flag)
+        if value is None:
+            raise SystemExit(f"a transient fidelity needs {flag} in case_gen_args: the clock is "
+                             "in convective times H/U and that is half of it")
+        scale[flag] = float(value)
+    convective = scale["--length"] / scale["--speed"]
+    return {"convective_s": convective,
+            "end_s": numbers["end_time"] * convective,
+            "average_from_s": numbers["average_from"] * convective,
+            "writes": max(1, int(round(numbers["end_time"] / numbers["write_interval"]))),
+            "min_periods": int(fidelity.get("min_periods") or MIN_PERIODS)}
+
+
+def shedding_frequency(times, values) -> float | None:
+    """The dominant frequency of a signal, from its upward crossings of its own mean.
+
+    A Schmitt trigger rather than a bare sign change: a crossing counts only when the
+    signal climbs from below `-HYSTERESIS` x its rms fluctuation to above `+HYSTERESIS`
+    x it, so solver noise riding on the mean is not counted as extra cycles. Zero
+    crossings rather than an FFT because the adjustable time step writes uneven rows and
+    a crossing needs no resampling. None under two crossings -- no period is measured.
+    """
+    import numpy as np
+
+    t = np.asarray(times, dtype=float)
+    x = np.asarray(values, dtype=float)
+    x = x - np.mean(x)
+    rms = float(np.sqrt(np.mean(x * x))) if x.size else 0.0
+    if rms <= 1e-9:
+        return None
+    level = HYSTERESIS * rms
+    ups: list[float] = []
+    armed = False
+    for i in range(1, x.size):
+        if x[i] < -level:
+            armed = True
+        if armed and x[i - 1] < 0 <= x[i]:
+            ups.append(t[i - 1] + (t[i] - t[i - 1]) * (-x[i - 1]) / (x[i] - x[i - 1]))
+            armed = False
+    if len(ups) < 2:
+        return None
+    return (len(ups) - 1) / (ups[-1] - ups[0])
+
+
+def transient_force_metrics(case: Path, window: dict) -> tuple[dict, int, dict]:
+    """(coefficients, rows in the window, the shedding record) for a transient case.
+
+    The mean is over TIME, a trapezoid over `[average_from, end of record]`: the step is
+    adjustable, so a mean over rows weighs whichever part of the cycle the Courant
+    number made the step small in. `Cd_rms` is the rms of Cd about that mean, and `St`
+    the lift's dominant frequency on the lock's length and speed. `periods` is the
+    window's length times that frequency, which is what `score` holds to
+    `min_periods`.
+    """
+    import numpy as np
+
+    shed = {"periods": 0.0, "frequency_hz": None, "window_s": None,
+            "min_periods": window["min_periods"], "average_from_s": window["average_from_s"]}
+    grouped = results.find_force_files(case)
+    if not grouped:
+        return {}, 0, shed
+    history = results.read_history(grouped[results.choose_force_series(grouped)])
+    if not history["rows"]:
+        return {}, 0, shed
+    t = np.array([row[0] for row in history["rows"]], dtype=float)
+    keep = t >= window["average_from_s"]
+    if keep.sum() < 2:
+        shed["last_s"] = float(t[-1])
+        return {}, 0, shed
+    tw = t[keep]
+    span = float(tw[-1] - tw[0])
+    shed["window_s"] = [float(tw[0]), float(tw[-1])]
+
+    def mean(values):
+        return float(np.trapezoid(values, tw) / span) if hasattr(np, "trapezoid") \
+            else float(np.trapz(values, tw) / span)
+
+    columns = list(history["columns"])
+    out: dict = {}
+    for name in COEFFICIENTS:
+        column = "Cm" if name == "CmPitch" and name not in columns and "Cm" in columns else name
+        values = results.column(history, column)
+        if values.size:
+            out[name] = mean(values[keep])
+    if "Cd" in out:
+        cd = results.column(history, "Cd")[keep]
+        out["Cd_rms"] = float(np.sqrt(mean((cd - out["Cd"]) ** 2)))
+    if "Cl" in columns:
+        frequency = shedding_frequency(tw, results.column(history, "Cl")[keep])
+        if frequency:
+            shed["frequency_hz"] = frequency
+            shed["periods"] = span * frequency
+            out["St"] = frequency * window["convective_s"]
+    return out, int(keep.sum()), shed
 
 
 def pressure_series(case: Path, function: str) -> dict[float, float]:
@@ -511,6 +678,7 @@ def score(case: Path, lock: dict, run: dict | None = None, *, label: str = "",
     fraction = float(fidelity.get("window") or DEFAULT_WINDOW)
     solver = str(lock.get("solver") or "simpleFoam")
     body = str(lock.get("body_patch") or "")
+    transient = transient_of(lock)
 
     mesh_ok, mesh_why = mesh_verdict(case)
     cells = cell_count(case)
@@ -520,14 +688,22 @@ def score(case: Path, lock: dict, run: dict | None = None, *, label: str = "",
     shape = ""
     yplus = None
     diverged = ""
+    shed = None
     if not mesh_only and mesh_ok:
-        metrics, window = force_metrics(case, fraction)
+        if transient:
+            metrics, window, shed = transient_force_metrics(case, transient)
+        else:
+            metrics, window = force_metrics(case, fraction)
         dp, dp_window = pressure_drop(case, fraction)
         if dp is not None:
             metrics["dp"] = dp
             window = window or dp_window
         log = read_log(solver_log(case, solver))
         converged, shape, diverged = log["converged"], log["shape"], log["diverged"]
+        if transient:
+            # A shedding run's residuals oscillate with the flow and never level; what
+            # says its mean is a number is whether the window spans whole cycles.
+            converged = shed["periods"] >= transient["min_periods"]
         yplus = yplus_range(case, body)
 
     yplus_band = band(fidelity.get("yplus"))
@@ -543,6 +719,8 @@ def score(case: Path, lock: dict, run: dict | None = None, *, label: str = "",
             decided, why = "mesh", mesh_why
         elif not mesh_only and diverged:
             decided, why = "diverged", diverged
+        elif not mesh_only and not converged and shed is not None:
+            decided, why = "unconverged", unshed(shed)
         elif not mesh_only and not converged:
             decided, why = "unconverged", (f"residuals {shape}" if shape else "no residuals in the log")
         elif not mesh_only and yplus_bad:
@@ -552,7 +730,7 @@ def score(case: Path, lock: dict, run: dict | None = None, *, label: str = "",
         else:
             decided, why = "ok", ""
 
-    return {
+    out = {
         "label": decided,
         "detail": why,
         "fidelity": fidelity,
@@ -569,6 +747,21 @@ def score(case: Path, lock: dict, run: dict | None = None, *, label: str = "",
         "wall_seconds": float(run.get("wall_seconds") or 0.0),
         "versions": versions(),
     }
+    if shed is not None:
+        out["shedding"] = shed
+    return out
+
+
+def unshed(shed: dict) -> str:
+    """Why a transient case's window is not a mean yet, in the numbers it saw."""
+    if shed["window_s"] is None:
+        if "last_s" in shed:
+            return (f"the force record ends at {shed['last_s']:.4g} s, before the averaging "
+                    f"window opens at {shed['average_from_s']:.4g} s")
+        return "no force record in the case"
+    t0, t1 = shed["window_s"]
+    return (f"{shed['periods']:.1f} shedding periods in the averaging window "
+            f"({t0:.4g}..{t1:.4g} s); {shed['min_periods']} needed")
 
 
 def worst(labels: list[str]) -> str:

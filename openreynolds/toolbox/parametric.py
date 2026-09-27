@@ -24,7 +24,10 @@ what happens, in order
        `--mode mesh` stops here: the score is `mesh` or `ok` (or `cells`, when the count
        is outside the lock's band) and there are no coefficients.
     4. `case_gen.py CANDIDATE_DIR <lock.case_gen_args> <hooks.case_args()> --iterations
-       <fidelity.iters> --yplus --force [--body <lock.body_patch>]` dresses the mesh. A
+       <fidelity.iters> --yplus --force [--body <lock.body_patch>]` dresses the mesh
+       (a transient fidelity, `solver_mode: "transient"`, puts `--study transient
+       --end-time <s> --writes <n>` there instead of `--iterations`, its convective
+       times turned into seconds by `score.transient_of`). A
        hook may add flags; it may not repeat one the lock already sets -- the lock is the
        harness's physics and a hook that overrode `--reynolds` would be scoring a
        different problem under the same name.
@@ -98,8 +101,11 @@ HOOK = "case_args"
 that computes a metric, writes a file or redefines a constant is a second scorer, and
 `score.py` is the only one."""
 
-OWNED_FLAGS = ("--iterations", "--end-time", "--force", "--yplus", "--dry-run")
-"""`case_gen.py` flags this script sets itself; a hook may not."""
+OWNED_FLAGS = ("--iterations", "--end-time", "--force", "--yplus", "--dry-run", "--study", "--writes")
+"""`case_gen.py` flags this script sets itself; a hook may not. `--study` and `--writes`
+are the transient fidelity's (`score.transient_of`): a hook that made a steady lock's
+case transient, or re-spaced a transient one's writes, would be changing the clock the
+score is averaged on."""
 
 TRIM_STEP = 1.0
 """The second trim point is the caller's value plus this: one degree of incidence, the
@@ -306,11 +312,18 @@ def case_gen_args(lock: dict, hook_args: list[str], case_args: list[str] | None 
     case_args = [str(a) for a in (case_args or [])]
     fidelity = score.fidelity_of(lock)
     iters = fidelity.get("iters")
+    transient = score.transient_of(lock)
     args = [*lock_args, *case_args, *hook_args]
     body = lock.get("body_patch")
     if body and "--body" not in flag_names(lock_args):
         args += ["--body", str(body)]
-    if iters is not None:
+    if transient is not None:
+        # The clock is in convective times in the lock and in seconds here; `iters`
+        # is not a clock for a transient fidelity and does not reach case_gen.
+        if "--study" not in flag_names(lock_args):
+            args += ["--study", "transient"]
+        args += ["--end-time", f"{transient['end_s']:.6g}", "--writes", str(transient["writes"])]
+    elif iters is not None:
         # `fidelity.iters` is a count of iterations, which is `--iterations` on the
         # steady study `case_gen.py` defaults to; only a lock that asks for a transient
         # study means seconds by it, and that flag is `--end-time`.
@@ -609,6 +622,11 @@ def main(argv: list[str] | None = None) -> int:
             "case's metric and there is no one case to take it on"
         )
     check_cases(lock_args, hook_args, cases)
+    # A transient fidelity that cannot be read is refused here, in either mode, before
+    # a build is paid for -- and the trim's secant reads a steady tail mean, not this.
+    if score.transient_of(lock) is not None and isinstance(spec, dict) and spec:
+        raise SystemExit("the lock has a transient fidelity and a `trim`: the trim's secant "
+                         "reads a steady tail mean")
     solving = args.mode == "solve"
     gen_args = case_gen_args(lock, hook_args) if solving else []
     per_case = [(c["name"], case_gen_args(lock, hook_args, c["case_gen_args"])) for c in cases] if solving else []

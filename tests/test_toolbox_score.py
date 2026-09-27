@@ -730,3 +730,159 @@ def test_wall_seconds_falls_back_to_the_start_time_of_a_killed_run(score, good_c
     score.main([str(good_case), "--lock", str(lock), "--label", "timeout"])
     written = json.loads((good_case / "metrics.json").read_text())
     assert 99 < written["wall_seconds"] < 200
+
+
+# -- a transient case: averaged in time over whole shedding cycles ---------------
+#
+# The drag benchmark (Archimedes `goals/max_drag.md`): a bluff body at Re 1e5 sheds, so
+# the solve is pimpleFoam and the score is Cd averaged over whole cycles after the
+# start-up transient. H = 0.1 m at 15 m/s is a convective time of 1/150 s; the windows
+# below are in those units, as the lock states them.
+
+H_M, U_MS = 0.1, 15.0
+CONVECTIVE_S = H_M / U_MS
+
+TRANSIENT_LOCK = dict(
+    LOCK,
+    solver="pimpleFoam",
+    case_gen_args=["--speed", "15", "--nu", "1.5e-5", "--length", "0.1"],
+    fidelity={"ranks": 1, "iters": 400, "window": 0.2,
+              "solver_mode": "transient", "end_time": 60, "write_interval": 10,
+              "average_from": 20, "cells": {"min": 10000, "max": 60000},
+              "yplus": {"max": 300}, "reference": True},
+)
+
+
+def shedding(case: Path, *, st: float = 0.2, end: float = 60.0, cl_amp: float = 0.8,
+             cd_mean: float = 1.2, cd_amp: float = 0.05, cd=None) -> None:
+    """A `forceCoeffs.dat` with a time column in seconds: Cl a sinusoid at Strouhal `st`
+    on H, Cd its mean plus a ripple at twice that frequency (the drag sees both vortices
+    of a cycle). The step is uneven -- fine for the first half of the record, four times
+    coarser after it -- as an adjustable-time-step pimpleFoam writes it. `cd`, when
+    given, is Cd as a function of convective time instead."""
+    f = st * U_MS / H_M
+    lines = ["# Force coefficients", "# magUInf           : 1.5000e+01",
+             "# Time              Cd              Cl              CmPitch"]
+    t, fine = 0.0, CONVECTIVE_S / 40
+    while t <= end * CONVECTIVE_S + 1e-12:
+        tc = t / CONVECTIVE_S
+        cd_value = cd(tc) if cd else cd_mean + cd_amp * math.sin(4 * math.pi * f * t)
+        lines.append(f"{t:.8e}  {cd_value:.6e}  {cl_amp * math.sin(2 * math.pi * f * t):.6e}  "
+                     f"{0.01:.6e}")
+        t += fine if tc < end / 2 else 4 * fine
+    target = case / "postProcessing" / "forceCoeffs" / "0"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "coefficient.dat").write_text("\n".join(lines) + "\n")
+
+
+@pytest.fixture
+def shedding_case(tmp_path):
+    case = tmp_path / "plate"
+    mesh(case)
+    shedding(case)
+    yplus(case, body=(0.1, 1.5))
+    log(case, levelled(), name="log.pimpleFoam")
+    return case
+
+
+def test_a_transient_case_scores_cd_over_whole_cycles_with_st_and_cd_rms(score, shedding_case):
+    out = score.score(shedding_case, TRANSIENT_LOCK)
+    assert out["label"] == "ok", out["detail"]
+    m = out["metrics"]
+    assert m["Cd"] == pytest.approx(1.2, abs=2e-3)
+    assert m["Cl"] == pytest.approx(0.0, abs=2e-2)
+    assert m["St"] == pytest.approx(0.2, rel=0.02)
+    assert m["Cd_rms"] == pytest.approx(0.05 / math.sqrt(2), rel=0.03)
+    assert out["converged"] is True
+    shed = out["shedding"]
+    assert shed["periods"] == pytest.approx(8.0, rel=0.03), "40 convective times at St 0.2"
+    assert shed["window_s"][0] == pytest.approx(20 * CONVECTIVE_S, rel=1e-2), "the first row at or after it"
+    assert shed["min_periods"] == 5
+    json.dumps(out)
+
+
+def test_the_transient_mean_is_in_time_not_in_rows(score, tmp_path):
+    """Cd 1.0 over the first half of the window, 2.0 over the second -- but the first
+    half has four times the rows, because the step was finer there. The mean over time
+    is 1.5; a mean over rows would say 1.2 and be a statement about the time step."""
+    case = tmp_path / "steps"
+    mesh(case)
+    shedding(case, cd=lambda tc: 1.0 if tc < 40 else 2.0)
+    log(case, levelled(), name="log.pimpleFoam")
+    assert score.score(case, TRANSIENT_LOCK)["metrics"]["Cd"] == pytest.approx(1.5, abs=0.01)
+
+
+def test_a_window_shorter_than_five_periods_is_unconverged_and_says_how_many(score, tmp_path):
+    case = tmp_path / "short"
+    mesh(case)
+    shedding(case, end=40.0)   # 20 convective times of window at St 0.2: four periods
+    log(case, levelled(), name="log.pimpleFoam")
+    out = score.score(case, TRANSIENT_LOCK)
+    assert out["label"] == "unconverged"
+    assert "4.0 shedding periods" in out["detail"] and "5" in out["detail"]
+    assert out["metrics"]["Cd"] == pytest.approx(1.2, abs=5e-3), "measured and reported anyway"
+
+
+def test_the_period_count_is_the_locks_to_set(score, tmp_path):
+    case = tmp_path / "short"
+    mesh(case)
+    shedding(case, end=40.0)
+    log(case, levelled(), name="log.pimpleFoam")
+    lock = dict(TRANSIENT_LOCK, fidelity=dict(TRANSIENT_LOCK["fidelity"], min_periods=3))
+    assert score.score(case, lock)["label"] == "ok"
+
+
+def test_a_lift_that_never_oscillates_is_unconverged_not_a_steady_answer(score, tmp_path):
+    """A symmetric start can hold a bluff body's wake symmetric for a long while before
+    it breaks: no shedding yet, and a Cd that is not the shedding body's. Unconverged."""
+    case = tmp_path / "symmetric"
+    mesh(case)
+    shedding(case, cl_amp=0.0)
+    log(case, levelled(), name="log.pimpleFoam")
+    out = score.score(case, TRANSIENT_LOCK)
+    assert out["label"] == "unconverged"
+    assert "0.0 shedding periods" in out["detail"]
+    assert "St" not in out["metrics"]
+
+
+def test_a_record_that_ends_before_the_window_opens_has_no_coefficients(score, tmp_path):
+    case = tmp_path / "killed"
+    mesh(case)
+    shedding(case, end=15.0)
+    log(case, levelled(), name="log.pimpleFoam")
+    out = score.score(case, TRANSIENT_LOCK)
+    assert out["label"] == "unconverged" and out["metrics"] == {}
+    assert "before the averaging window" in out["detail"]
+
+
+def test_a_transient_case_that_blew_up_is_still_diverged(score, shedding_case):
+    log(shedding_case, levelled(), name="log.pimpleFoam", fatal="Floating point exception")
+    assert score.score(shedding_case, TRANSIENT_LOCK)["label"] == "diverged"
+
+
+def test_the_steady_path_carries_no_transient_keys(score, good_case):
+    out = score.score(good_case, LOCK)
+    assert "shedding" not in out and "St" not in out["metrics"] and "Cd_rms" not in out["metrics"]
+
+
+@pytest.mark.parametrize("change,message", [
+    ({"case_gen_args": ["--speed", "15"]}, "--length"),
+    ({"case_gen_args": ["--length", "0.1"]}, "--speed"),
+    ({"fidelity": dict(TRANSIENT_LOCK["fidelity"], average_from=60)}, "average_from"),
+    ({"fidelity": dict(TRANSIENT_LOCK["fidelity"], end_time=0)}, "end_time"),
+    ({"fidelity": dict(TRANSIENT_LOCK["fidelity"], write_interval=-1)}, "write_interval"),
+    ({"solver": "simpleFoam"}, "simpleFoam"),
+    ({"case_gen_args": ["--speed", "15", "--length", "0.1", "--study", "steady"]}, "--study"),
+])
+def test_a_transient_fidelity_that_cannot_be_measured_is_refused(score, change, message):
+    with pytest.raises(SystemExit, match=message):
+        score.transient_of(dict(TRANSIENT_LOCK, **change))
+
+
+def test_the_transient_window_is_convective_times_in_seconds(score):
+    t = score.transient_of(TRANSIENT_LOCK)
+    assert t["convective_s"] == pytest.approx(CONVECTIVE_S)
+    assert t["end_s"] == pytest.approx(0.4)
+    assert t["average_from_s"] == pytest.approx(20 * CONVECTIVE_S)
+    assert t["writes"] == 6
+    assert score.transient_of(LOCK) is None, "a steady lock has no transient window"

@@ -666,3 +666,80 @@ def test_the_template_round_passes_every_check_parametric_makes(parametric, tmp_
         assert name in constants, name
     args = parametric.case_gen_args(lock, hook_args)
     assert args[-2:] == ["--yplus", "--force"] and "--iterations" in args
+
+
+# -- a transient fidelity: the clock in convective times -----------------------------
+
+TRANSIENT_LOCK = dict(
+    LOCK,
+    solver="pimpleFoam",
+    case_gen_args=["--speed", "15", "--nu", "1.5e-5", "--length", "0.1", "--turbulence", "kOmegaSST"],
+    fidelity=dict(LOCK["fidelity"], solver_mode="transient", end_time=60, write_interval=10,
+                  average_from=20),
+)
+
+
+def test_a_transient_fidelity_dresses_a_pimple_case_in_seconds(parametric):
+    """60 convective times of H/U = 0.1 m / 15 m/s is 0.4 s; a write every 10 of them is
+    six writes. The lock's `iters` is not a clock here and does not reach case_gen."""
+    args = parametric.case_gen_args(TRANSIENT_LOCK, [])
+    assert args == ["--speed", "15", "--nu", "1.5e-5", "--length", "0.1", "--turbulence", "kOmegaSST",
+                    "--body", "body", "--study", "transient", "--end-time", "0.4", "--writes", "6",
+                    "--yplus", "--force"]
+
+
+def test_a_transient_fidelity_does_not_repeat_a_study_the_lock_already_states(parametric):
+    lock = dict(TRANSIENT_LOCK, case_gen_args=[*TRANSIENT_LOCK["case_gen_args"], "--study", "transient"])
+    assert parametric.case_gen_args(lock, []).count("--study") == 1
+
+
+def test_a_transient_fidelity_without_a_length_is_refused_before_anything_runs(parametric, study):
+    lock = dict(TRANSIENT_LOCK, case_gen_args=["--speed", "15", "--nu", "1.5e-5"])
+    study["lock"].write_text(json.dumps(lock))
+    with pytest.raises(SystemExit, match="--length"):
+        parametric.main(argv(study, "solve"))
+    assert not (study["candidate"] / "metrics.json").exists()
+
+
+def test_a_hook_may_not_set_the_study(parametric):
+    with pytest.raises(SystemExit, match="--study"):
+        parametric.check_no_override(["--speed", "1"], ["--study", "transient"])
+
+
+def test_a_transient_solve_scores_the_shedding_window(parametric, study, fake_image, monkeypatch):
+    import math
+
+    lock = dict(TRANSIENT_LOCK, case_gen_args=["--speed", "15", "--length", "0.1"])
+    study["lock"].write_text(json.dumps(lock))
+
+    def solve(case, solver, ranks):
+        fake_image["solve"].append((case, solver, ranks))
+        levelled_log(case, solver)
+        f = 0.2 * 15 / 0.1
+        rows = [f"{k * 1e-4:.6e} {1.3:.6e} {0.7 * math.sin(2 * math.pi * f * k * 1e-4):.6e} 0.0"
+                for k in range(4001)]
+        target = case / "postProcessing" / "forceCoeffs" / "0"
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "coefficient.dat").write_text("# Time Cd Cl CmPitch\n" + "\n".join(rows) + "\n")
+        return ""
+
+    monkeypatch.setattr(parametric, "solve", solve)
+    assert parametric.main(argv(study, "solve")) == 0
+    assert fake_image["solve"] == [(study["candidate"], "pimpleFoam", 1)]
+    metrics = json.loads((study["candidate"] / "metrics.json").read_text())
+    assert metrics["label"] == "ok", metrics["detail"]
+    assert metrics["metrics"]["Cd"] == pytest.approx(1.3)
+    assert metrics["metrics"]["St"] == pytest.approx(0.2, rel=0.02)
+    assert metrics["shedding"]["periods"] >= 5
+
+
+def test_a_transient_fidelity_is_refused_in_mesh_mode_too_and_never_with_a_trim(parametric, study):
+    lock = dict(TRANSIENT_LOCK, case_gen_args=["--speed", "15"])
+    study["lock"].write_text(json.dumps(lock))
+    with pytest.raises(SystemExit, match="--length"):
+        parametric.main(argv(study, "mesh"))
+    assert not (study["candidate"] / "look.json").exists(), "refused before the build"
+    lock = dict(TRANSIENT_LOCK, trim={"variable": "ALPHA_DEG", "metric": "Cl", "target": 0.8})
+    study["lock"].write_text(json.dumps(lock))
+    with pytest.raises(SystemExit, match="trim"):
+        parametric.main(argv(study, "solve"))
