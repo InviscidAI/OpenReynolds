@@ -13,6 +13,12 @@ one place, on measurements, the same way for every point of the study.
 
 what it measures, and how
 
+    A pressure drop is the mean over the same window of `p_inlet - p_outlet`, read off
+    the two `surfaceFieldValue` records `case_gen.py --dp` leaves
+    (`postProcessing/pInlet/`, `postProcessing/pOutlet/`), aligned by time so a restart
+    cannot subtract two different iterations. It is reported as `dp`, in the solver's
+    own pressure units.
+
     Force coefficients are the mean over the last `fidelity.window` fraction of the
     `forceCoeffs.dat` rows (default the last 20%), never the last row: on a steady
     solver a bluff section's coefficients oscillate about their mean, and a point read
@@ -35,12 +41,31 @@ the label
     long a run was allowed -- so the caller that killed the run passes `--label timeout`,
     and a stated label wins over everything measured.
 
+several cases per candidate
+
+    A lock may declare `cases` -- `[{"name": "forward", "case_gen_args": [...]},
+    {"name": "reverse", "case_gen_args": [...]}]` -- and then one candidate is several
+    solves off one mesh, each in `CANDIDATE_DIR/<name>/`, and this writes ONE
+    `metrics.json` for the candidate. Every case is scored on its own and its metrics
+    arrive namespaced: `forward.dp`, `reverse.dp`, `forward.Cd`. The candidate's label
+    is the worst of theirs (`SEVERITY`), so a diverged reverse solve is not averaged
+    away by a converged forward one, and `cases` in the output carries each case's own
+    label, detail, window and case_gen arguments.
+
+    `derived` in the lock names metrics computed from those: `{"diodicity":
+    "reverse.dp / forward.dp"}`. The expression is arithmetic over metric names and
+    numbers -- `+ - * /`, parentheses, nothing else, checked as a syntax tree rather
+    than trusted to `eval` -- because the lock is data that arrives from a goal file and
+    an objective is not a place to run code. A derived metric whose inputs are missing,
+    or whose arithmetic divides by zero, is left out rather than written as a number.
+
 The schema is a contract with whatever reads the leaderboard; the keys stay.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -48,6 +73,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import log_digest  # noqa: E402
@@ -56,10 +82,19 @@ import results  # noqa: E402
 LABELS = ("ok", "mesh", "diverged", "timeout", "unconverged", "yplus", "cells")
 """Every label this can write. `timeout` only ever arrives through `--label`."""
 
+SEVERITY = ("mesh", "diverged", "timeout", "unconverged", "yplus", "cells", "ok")
+"""The labels worst first, which is how a multi-case candidate gets one: the worst of
+its cases. Same order as the precedence a single case is decided by, so "the candidate's
+label" and "the label this case would have had on its own" mean the same thing."""
+
 DEFAULT_WINDOW = 0.2
 """The fraction of the force record the coefficients are averaged over when the lock
 does not say. `results.py` quotes the last quarter; a design study wants the flatter
 tail of a run that was sized to converge, so a fifth."""
+
+DP_FUNCTIONS = ("pInlet", "pOutlet")
+"""The two function objects `case_gen.py --dp` writes (`PRESSURE_FUNCTIONS` there), in
+the order the drop subtracts them: `dp = p_inlet - p_outlet`."""
 
 COEFFICIENTS = ("Cd", "Cl", "CmPitch")
 """The whole-body coefficients reported under their forceCoeffs names. `Cm` is what
@@ -188,6 +223,182 @@ def force_metrics(case: Path, fraction: float = DEFAULT_WINDOW) -> tuple[dict, i
     return out, keep
 
 
+def pressure_series(case: Path, function: str) -> dict[float, float]:
+    """`{time: areaAverage(p)}` off one `surfaceFieldValue` function object's record.
+
+    Every time directory of the object is read and merged, later writes winning, the
+    way `results.read_history` merges a restarted force record. The value column is the
+    one whose header names an operation on a field (`areaAverage(p)`); failing that,
+    the second column, which is where a one-field object puts it.
+    """
+    base = case / "postProcessing" / function
+    if not base.is_dir():
+        return {}
+    out: dict[float, float] = {}
+    for time_dir in sorted((d for d in base.iterdir() if d.is_dir()), key=lambda d: results.time_key(d.name)):
+        for dat in sorted(time_dir.glob("*.dat")):
+            try:
+                data = results.parse_dat(dat.read_text(errors="replace"))
+            except OSError:
+                continue
+            if not data["rows"]:
+                continue
+            columns = list(data["columns"])
+            index = next((i for i, name in enumerate(columns)
+                          if i and "(" in name and ")" in name), 1)
+            for row in data["rows"]:
+                if len(row) > index:
+                    out[float(row[0])] = float(row[index])
+    return out
+
+
+def pressure_drop(case: Path, fraction: float = DEFAULT_WINDOW) -> tuple[float | None, int]:
+    """(`dp` over the tail of the record, rows the mean was taken over).
+
+    `p_inlet - p_outlet` is formed per time step, on the times both records have, and
+    only then averaged: subtracting two tail means would be the same number on a clean
+    run and a silently wrong one on a case where the two objects wrote different
+    iterations. (None, 0) when either record is missing -- a case run without
+    `case_gen.py --dp` has no pressure drop, and zero is not one.
+    """
+    inlet, outlet = (pressure_series(case, name) for name in DP_FUNCTIONS)
+    times = sorted(set(inlet) & set(outlet))
+    if not times:
+        return None, 0
+    keep = max(1, int(round(len(times) * fraction)))
+    window = times[-keep:]
+    return sum(inlet[t] - outlet[t] for t in window) / len(window), len(window)
+
+
+# -- derived metrics: arithmetic over metric names, checked as a tree ----------------
+
+
+_BINOPS = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
+           ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b}
+
+
+class DerivedError(ValueError):
+    """The expression is not arithmetic over metric names; the message says what was in it."""
+
+
+def dotted(node: ast.AST) -> str | None:
+    """`reverse.dp` out of the tree `Attribute(Name('reverse'), 'dp')`, or None.
+
+    Namespaced metric names are not Python identifiers, so they parse as attribute
+    access; reading them back as one dotted string is what lets the lock write
+    `reverse.dp / forward.dp` and mean the two numbers `cases` put in `metrics`.
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        head = dotted(node.value)
+        return f"{head}.{node.attr}" if head else None
+    return None
+
+
+def derived_names(expression: str) -> list[str]:
+    """Every metric name an expression reads, after refusing anything that is not
+    arithmetic over names and numbers. Raises DerivedError with what it found."""
+    try:
+        tree = ast.parse(expression.strip(), mode="eval")
+    except SyntaxError as exc:
+        raise DerivedError(f"{expression!r} does not parse: {exc.msg}") from exc
+    names: list[str] = []
+
+    def walk(node: ast.AST) -> None:
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+                raise DerivedError(f"{expression!r} has the constant {node.value!r}; only numbers")
+            return
+        if isinstance(node, (ast.Name, ast.Attribute)):
+            name = dotted(node)
+            if name is None:
+                raise DerivedError(f"{expression!r} reads something that is not a metric name")
+            names.append(name)
+            return
+        if isinstance(node, ast.BinOp) and type(node.op) in _BINOPS:
+            walk(node.left)
+            walk(node.right)
+            return
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            walk(node.operand)
+            return
+        raise DerivedError(
+            f"{expression!r} is not arithmetic over metric names: it has a "
+            f"{type(node).__name__}. Only names, numbers, + - * / and parentheses."
+        )
+
+    walk(tree.body)
+    return names
+
+
+def evaluate_derived(expression: str, values: dict[str, float]) -> float | None:
+    """The expression's value, or None when a name it reads is missing or the
+    arithmetic will not stand (a division by zero, an overflow)."""
+    names = derived_names(expression)
+    if any(name not in values or values[name] != values[name] for name in names):
+        return None
+
+    def run(node: ast.AST) -> float:
+        if isinstance(node, ast.Constant):
+            return float(node.value)
+        if isinstance(node, (ast.Name, ast.Attribute)):
+            return float(values[dotted(node)])
+        if isinstance(node, ast.UnaryOp):
+            value = run(node.operand)
+            return -value if isinstance(node.op, ast.USub) else value
+        return _BINOPS[type(node.op)](run(node.left), run(node.right))  # type: ignore[attr-defined]
+
+    try:
+        out = float(run(ast.parse(expression.strip(), mode="eval").body))
+    except (ZeroDivisionError, OverflowError, ValueError):
+        return None
+    return out if out == out and abs(out) != float("inf") else None
+
+
+def derived_metrics(values: dict[str, float], spec: Any) -> dict[str, float]:
+    """The lock's `derived` block evaluated against the metrics measured so far.
+
+    In the order the lock wrote them, so one derived metric may read another. A
+    refused expression raises; a merely unanswerable one is left out.
+    """
+    if not isinstance(spec, dict):
+        return {}
+    out: dict[str, float] = {}
+    known = dict(values)
+    for name, expression in spec.items():
+        value = evaluate_derived(str(expression), known)
+        if value is not None:
+            out[name] = value
+            known[name] = value
+    return out
+
+
+def cases_of(lock: dict) -> list[dict]:
+    """The lock's `cases`, checked: a name that can be a directory and a namespace, and
+    a list of `case_gen.py` flags. Empty for the one-case lock, which is most of them."""
+    raw = lock.get("cases") or []
+    if not isinstance(raw, list):
+        raise SystemExit("cases: expected a list of {name, case_gen_args}")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for i, case in enumerate(raw):
+        if not isinstance(case, dict):
+            raise SystemExit(f"cases[{i}]: expected an object with name and case_gen_args")
+        name = str(case.get("name") or "")
+        if not name.isidentifier():
+            raise SystemExit(f"cases[{i}].name: {name!r} must be an identifier -- it is a "
+                             "directory name and a metric namespace")
+        if name in seen:
+            raise SystemExit(f"cases[{i}].name: {name!r} twice")
+        seen.add(name)
+        args = case.get("case_gen_args") or []
+        if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+            raise SystemExit(f"cases[{i}].case_gen_args: expected a list of strings")
+        out.append({"name": name, "case_gen_args": [str(a) for a in args]})
+    return out
+
+
 def solver_log(case: Path, solver: str) -> Path | None:
     """`log.<solver>` when it is there -- that is the file `parametric.py` writes -- else
     whatever `results.find_solver_log` picks out of the case."""
@@ -311,6 +522,10 @@ def score(case: Path, lock: dict, run: dict | None = None, *, label: str = "",
     diverged = ""
     if not mesh_only and mesh_ok:
         metrics, window = force_metrics(case, fraction)
+        dp, dp_window = pressure_drop(case, fraction)
+        if dp is not None:
+            metrics["dp"] = dp
+            window = window or dp_window
         log = read_log(solver_log(case, solver))
         converged, shape, diverged = log["converged"], log["shape"], log["diverged"]
         yplus = yplus_range(case, body)
@@ -354,6 +569,86 @@ def score(case: Path, lock: dict, run: dict | None = None, *, label: str = "",
         "wall_seconds": float(run.get("wall_seconds") or 0.0),
         "versions": versions(),
     }
+
+
+def worst(labels: list[str]) -> str:
+    """The worst of several labels by `SEVERITY`; `ok` when there are none."""
+    ranked = [label for label in SEVERITY if label in labels]
+    if ranked:
+        return ranked[0]
+    return labels[0] if labels else "ok"
+
+
+def score_cases(candidate: Path, lock: dict, run: dict | None = None, *, label: str = "",
+                detail: str = "", mesh_only: bool = False) -> dict:
+    """One `metrics.json` for a candidate the lock gave several cases.
+
+    Each case is `CANDIDATE_DIR/<name>/` -- the same mesh, dressed and solved under its
+    own `case_gen.py` arguments -- and is scored by `score` as if it were the whole
+    candidate. What comes out is one record: the cases' metrics namespaced by case name,
+    the lock's `derived` arithmetic over them, and the worst of their labels, because a
+    candidate is only as good as its worst case.
+
+    `mesh_only` scores the mesh in the candidate root and no case: a probe meshes once
+    and there is nothing per-case about it.
+    """
+    candidate = Path(candidate)
+    run = dict(run or {})
+    cases = cases_of(lock)
+    if mesh_only or not cases:
+        return score(candidate, lock, run, label=label, detail=detail, mesh_only=mesh_only)
+
+    per_case: dict[str, Any] = {}
+    values: dict[str, float] = {}
+    labels: list[str] = []
+    details: list[str] = []
+    windows: list[int] = []
+    ran = dict(run.get("cases") or {})
+    for case in cases:
+        name = case["name"]
+        directory = candidate / name
+        case_args = list((ran.get(name) or {}).get("case_args") or case["case_gen_args"])
+        if not directory.is_dir():
+            per_case[name] = {"label": "mesh", "detail": f"{name}/ is not there: the case did not run",
+                              "metrics": {}, "window": 0, "converged": False, "case_args": case_args}
+            labels.append("mesh")
+            details.append(f"{name}: the case did not run")
+            continue
+        one = score(directory, lock, {"case_args": case_args}, mesh_only=False)
+        per_case[name] = {
+            "label": one["label"], "detail": one["detail"], "metrics": one["metrics"],
+            "window": one["window"], "converged": one["converged"],
+            "residual_shape": one["residual_shape"], "yplus": one["yplus"],
+            "case_args": case_args,
+        }
+        labels.append(one["label"])
+        if one["detail"]:
+            details.append(f"{name}: {one['detail']}")
+        windows.append(int(one["window"]))
+        for metric, value in one["metrics"].items():
+            values[f"{name}.{metric}"] = value
+    values.update(derived_metrics(values, lock.get("derived")))
+
+    # The mesh is the candidate's, not a case's: it was built and measured once in the
+    # candidate root and every case is a copy of it, so the mesh verdict and the cell
+    # band are read there -- and they count among the labels, or a candidate whose mesh
+    # is outside the band would pass on two happy solves.
+    root = score(candidate, lock, run, mesh_only=True)
+    if root["label"] != "ok":
+        labels.append(root["label"])
+        if root["detail"]:
+            details.append(f"mesh: {root['detail']}")
+    decided = label or worst(labels)
+    why = detail or ("; ".join(details) if decided != "ok" else "")
+    root.update({
+        "label": decided, "detail": why, "metrics": values, "cases": per_case,
+        "window": min(windows) if windows else 0,
+        "converged": all(bool(c.get("converged")) for c in per_case.values()) if per_case else False,
+        "residual_shape": "/".join(str(c.get("residual_shape") or "") for c in per_case.values()),
+        "yplus": next((c["yplus"] for c in per_case.values() if c.get("yplus")), None),
+        "wall_seconds": float(run.get("wall_seconds") or 0.0),
+    })
+    return root
 
 
 def write(metrics: dict, out: Path) -> Path:
@@ -400,12 +695,16 @@ def main(argv: list[str] | None = None) -> int:
     run = read_run(case, args.run)
     if not run.get("wall_seconds") and run.get("started"):
         run["wall_seconds"] = max(0.0, time.time() - float(run["started"]))
-    metrics = score(case, lock, run, label=args.label, detail=args.detail,
-                    mesh_only=args.mesh_only)
+    # A lock with `cases` means the candidate is several solves off one mesh, and
+    # `score_cases` falls back to `score` when it has none, so one call serves both.
+    metrics = score_cases(case, lock, run, label=args.label, detail=args.detail,
+                          mesh_only=args.mesh_only)
     out = write(metrics, args.out or case / "metrics.json")
     print(f"{metrics['label']}" + (f"  ({metrics['detail']})" if metrics["detail"] else ""))
     for name, value in sorted(metrics["metrics"].items()):
         print(f"  {name} = {value:.5g}   (mean of the last {metrics['window']} rows)")
+    for name, one in (metrics.get("cases") or {}).items():
+        print(f"  [{name}] {one['label']}" + (f": {one['detail']}" if one["detail"] else ""))
     print(out)
     return 0
 

@@ -352,6 +352,155 @@ def test_a_solver_that_diverged_is_scored_off_its_log(parametric, study, fake_im
     assert "Floating point exception" in metrics["detail"]
 
 
+# -- several cases off one mesh --------------------------------------------------------
+
+
+CASES = [{"name": "forward", "case_gen_args": ["--inlet", "west", "--outlet", "east"]},
+         {"name": "reverse", "case_gen_args": ["--inlet", "east", "--outlet", "west"]}]
+
+
+def pressure_record(case: Path, dp: float) -> None:
+    """What `case_gen.py --dp` leaves: area-averaged p on the inlet and the outlet."""
+    for name, value in (("pInlet", dp), ("pOutlet", 0.0)):
+        target = case / "postProcessing" / name / "0"
+        target.mkdir(parents=True, exist_ok=True)
+        rows = "\n".join(f"{step}\t{value:.6e}" for step in range(1, 11))
+        (target / "surfaceFieldValue.dat").write_text(
+            "# Time                areaAverage(p)\n" + rows + "\n")
+
+
+@pytest.fixture
+def valve_lock(study):
+    """The wing lock with the valve's two directions and a diodicity over them."""
+    lock = dict(LOCK, body_patch="", cases=CASES,
+                derived={"diodicity": "reverse.dp / forward.dp"},
+                case_gen_args=["--speed", "0.15", "--nu", "1e-6", "--turbulence", "laminar", "--dp"])
+    study["lock"].write_text(json.dumps(lock))
+    return study
+
+
+@pytest.fixture
+def valve_image(parametric, monkeypatch, fake_image):
+    """The fake image again, but the solver leaves a pressure record whose drop is
+    twice as big in the reverse direction -- a diodicity of 2 by construction."""
+    def solve(case, solver, ranks):
+        fake_image["solve"].append((case, solver, ranks))
+        levelled_log(case, solver)
+        pressure_record(case, dp=10.0 if case.name == "reverse" else 5.0)
+        return ""
+
+    monkeypatch.setattr(parametric, "solve", solve)
+    return fake_image
+
+
+def test_two_cases_are_two_solves_off_one_mesh_and_one_metrics_file(parametric, valve_lock, valve_image):
+    candidate = valve_lock["candidate"]
+    assert parametric.main(argv(valve_lock, "solve")) == 0
+
+    assert (candidate / "built.txt").exists(), "built once, in the candidate root"
+    assert [case.name for case, _ in valve_image["dress"]] == ["forward", "reverse"]
+    assert [case.name for case, _, _ in valve_image["solve"]] == ["forward", "reverse"]
+    for name in ("forward", "reverse"):
+        case = candidate / name
+        assert (case / "constant" / "polyMesh" / "owner").exists(), "the mesh was copied in"
+        assert (case / "look.json").exists() and (case / "build.py").exists()
+        assert not (case / "built.txt").exists(), "gmsh did not run again"
+
+    metrics = json.loads((candidate / "metrics.json").read_text())
+    assert metrics["label"] == "ok", metrics["detail"]
+    assert metrics["metrics"]["forward.dp"] == pytest.approx(5.0)
+    assert metrics["metrics"]["reverse.dp"] == pytest.approx(10.0)
+    assert metrics["metrics"]["diodicity"] == pytest.approx(2.0)
+    assert set(metrics["cases"]) == {"forward", "reverse"}
+    assert not (candidate / "forward" / "metrics.json").exists(), "one file per candidate"
+
+
+def test_each_case_dresses_with_the_lock_then_its_own_args_then_the_hook(parametric, valve_lock, valve_image):
+    parametric.main(argv(valve_lock, "solve"))
+    shared = ["--speed", "0.15", "--nu", "1e-6", "--turbulence", "laminar", "--dp"]
+    tail = ["--slip", "top", "--iterations", "400", "--force"]
+    assert [args for _, args in valve_image["dress"]] == [
+        [*shared, "--inlet", "west", "--outlet", "east", *tail],
+        [*shared, "--inlet", "east", "--outlet", "west", *tail],
+    ]
+    run = json.loads((valve_lock["candidate"] / "run.json").read_text())
+    assert run["cases"]["reverse"]["case_args"] == [*shared, "--inlet", "east", "--outlet", "west", *tail]
+    assert run["case_args"] == [*shared, *tail], "the shared line, without any case's"
+
+
+def test_a_laminar_case_is_not_asked_for_a_wall_function_measurement(parametric, valve_lock):
+    """`--yplus` on a laminar run leaves no record and score.py would read a band that
+    does not apply; the wing's kOmegaSST line still gets it."""
+    lock = json.loads(valve_lock["lock"].read_text())
+    assert "--yplus" not in parametric.case_gen_args(lock, [])
+    assert "--yplus" in parametric.case_gen_args(LOCK, [])
+    assert parametric.turbulence_of(["--turbulence=laminar"]) == "laminar"
+
+
+def test_a_case_that_repeats_a_lock_flag_is_refused_because_those_flags_append(parametric, valve_lock):
+    lock = json.loads(valve_lock["lock"].read_text())
+    lock["case_gen_args"] = [*lock["case_gen_args"], "--inlet", "west"]
+    valve_lock["lock"].write_text(json.dumps(lock))
+    with pytest.raises(SystemExit) as raised:
+        parametric.main(argv(valve_lock, "solve"))
+    assert "--inlet" in str(raised.value) and "append" in str(raised.value)
+
+
+def test_a_case_that_repeats_a_hook_flag_is_refused(parametric, valve_lock):
+    (valve_lock["round"] / "hooks.py").write_text(
+        "def case_args():\n    return ['--inlet', 'west']\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="--inlet"):
+        parametric.main(argv(valve_lock, "solve"))
+
+
+def test_a_lock_with_both_cases_and_a_trim_is_refused(parametric, valve_lock):
+    lock = json.loads(valve_lock["lock"].read_text())
+    lock["trim"] = {"variable": "ALPHA_DEG", "metric": "Cl", "target": 0.8, "tol": 0.01, "max_solves": 3}
+    valve_lock["lock"].write_text(json.dumps(lock))
+    with pytest.raises(SystemExit, match="both `cases` and a `trim`"):
+        parametric.main(argv(valve_lock, "solve"))
+
+
+def test_a_probe_meshes_once_and_ignores_the_cases(parametric, valve_lock, valve_image):
+    assert parametric.main(argv(valve_lock, "mesh")) == 0
+    candidate = valve_lock["candidate"]
+    assert valve_image["dress"] == [] and valve_image["solve"] == []
+    assert not (candidate / "forward").exists()
+    metrics = json.loads((candidate / "metrics.json").read_text())
+    assert metrics["label"] == "ok" and metrics["metrics"] == {}
+
+
+def test_a_build_that_fails_is_the_candidates_mesh_failure_and_no_case_runs(parametric, valve_lock, valve_image):
+    (valve_lock["round"] / "build.py").write_text(
+        "from design_constants import *\nraise SystemExit('the channel is thinner than 0.8 mm')\n")
+    parametric.main(argv(valve_lock, "solve"))
+    metrics = json.loads((valve_lock["candidate"] / "metrics.json").read_text())
+    assert metrics["label"] == "mesh"
+    assert "0.8 mm" in metrics["detail"]
+    assert valve_image["dress"] == []
+
+
+def test_a_case_that_diverges_makes_the_candidate_diverged(parametric, valve_lock, monkeypatch, valve_image):
+    def solve(case, solver, ranks):
+        if case.name == "reverse":
+            (case / f"log.{solver}").write_text(
+                "Time = 1\nsmoothSolver:  Solving for Ux, Initial residual = 1, "
+                "Final residual = 1e30, No Iterations 1000\n"
+                "--> FOAM FATAL ERROR: Floating point exception\n")
+            return f"{solver} exited 1"
+        levelled_log(case, solver)
+        pressure_record(case, dp=5.0)
+        return ""
+
+    monkeypatch.setattr(parametric, "solve", solve)
+    parametric.main(argv(valve_lock, "solve"))
+    metrics = json.loads((valve_lock["candidate"] / "metrics.json").read_text())
+    assert metrics["label"] == "diverged"
+    assert "reverse" in metrics["detail"]
+    assert metrics["metrics"]["forward.dp"] == pytest.approx(5.0)
+    assert "diodicity" not in metrics["metrics"], "no drop off a diverged solve"
+
+
 # -- the trim --------------------------------------------------------------------------
 
 

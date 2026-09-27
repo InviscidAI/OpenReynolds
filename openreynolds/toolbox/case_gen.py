@@ -1030,11 +1030,19 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str) -> str:
     per wall patch of min, max and mean y+ into `postProcessing/yPlus/`. It is what
     `score.py` reads to hold a design study inside its wall-treatment band, and it is
     the measurement `turbulence_notes` can only estimate before the run.
+
+    `--dp` adds the two `surfaceFieldValue` objects a pressure drop is: the
+    area-averaged `p` on the inlet and on the outlet, at every iteration. See
+    `pressure_objects`.
     """
     body = str(opts.get("body_patch") or "body")
     blocks: list[str] = []
     if body in plan.mesh.patch_face_counts():
         blocks.append(force_coefficients(plan, flow, body))
+    if opts.get("dp"):
+        drop = pressure_objects(plan)
+        if drop:
+            blocks.append(drop)
     if opts.get("yplus"):
         blocks.append("\n".join([
             "    yPlus", "    {",
@@ -1080,6 +1088,52 @@ def force_coefficients(plan: Plan, flow: Flow, body: str) -> str:
         "    }",
     ]
     return "\n".join(entries)
+
+
+PRESSURE_FUNCTIONS = (("inlet", "pInlet"), ("outlet", "pOutlet"))
+"""The role each pressure probe sits on and the function object's name, which is also
+the `postProcessing/` directory it writes into. `score.py` reads these two names and
+subtracts them (`DP_FUNCTIONS` there); the pair is pinned by a test in both files,
+because a rename on one side would leave the other silently reporting no pressure drop."""
+
+
+def pressure_objects(plan: Plan) -> str:
+    """Area-averaged `p` on the inlet and on the outlet, every iteration.
+
+    A pressure drop is the number an internal flow is judged by -- a valve, a manifold,
+    a cold plate -- and it is not a force on a body, so `forceCoeffs` does not have it
+    and no amount of reading the log recovers it. Two `surfaceFieldValue` objects do:
+    `areaAverage` of `p` over one patch each, written at every time step so the tail of
+    the record can be averaged the same way the coefficients are (`score.py`'s
+    `fidelity.window`), rather than read off whichever iteration wrote last.
+
+    The first inlet and the first outlet in patch order, one each: a case with two
+    inlets has a pressure drop per inlet and no single number, and guessing which one
+    was meant is worse than reporting none. `p` is the solver's own field, so on
+    `simpleFoam` it is kinematic (m2/s2) and the drop is too; a ratio of two drops --
+    a diodicity -- does not care, and a drop in pascals is rho times this.
+    """
+    lines: list[str] = []
+    for kind, function in PRESSURE_FUNCTIONS:
+        patch = next((name for name in patch_order(plan.roles)
+                      if plan.roles[name].get("kind") == kind), "")
+        if not patch:
+            continue
+        lines += [
+            f"    {function}", "    {",
+            "        type            surfaceFieldValue;",
+            "        libs            (fieldFunctionObjects);",
+            "        regionType      patch;",
+            f"        name            {patch};",
+            "        operation       areaAverage;",
+            "        fields          (p);",
+            "        writeFields     false;",
+            "        writeControl    timeStep;",
+            "        writeInterval   1;",
+            "        log             false;",
+            "    }",
+        ]
+    return "\n".join(lines)
 
 
 def purge_write(study: str, opts) -> int:
@@ -1501,6 +1555,11 @@ def main(argv: list[str] | None = None) -> int:
     patches.add_argument("--body", default="body", dest="body_patch",
                          help="The patch forces are taken on, when there is one (default 'body'). "
                               "A patch by that name gets a forceCoeffs function object.")
+    patches.add_argument("--dp", action="store_true",
+                         help="Add the two surfaceFieldValue objects a pressure drop is: "
+                              "area-averaged p on the first inlet and the first outlet at "
+                              "every iteration, into postProcessing/pInlet/ and pOutlet/. "
+                              "score.py reads them as dp = p_inlet - p_outlet.")
     patches.add_argument("--yplus", action="store_true",
                          help="Add a yPlus function object: min, max and mean y+ per wall "
                               "patch at every write, into postProcessing/yPlus/.")

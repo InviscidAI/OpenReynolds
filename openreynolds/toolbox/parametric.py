@@ -33,6 +33,23 @@ what happens, in order
        -latestTime` above it.
     6. `score.py` writes `CANDIDATE_DIR/metrics.json`. Nothing else does.
 
+several cases off one mesh
+
+    When the lock carries `cases` -- `[{"name": "forward", "case_gen_args": ["--inlet",
+    "west", "--outlet", "east"]}, {"name": "reverse", "case_gen_args": ["--inlet",
+    "east", "--outlet", "west"]}]` -- steps 1 to 3 happen once and steps 4 and 5 happen
+    per case, each in `CANDIDATE_DIR/<name>/` with `constant/polyMesh` copied in from
+    the candidate root. A valve's diodicity is two solves of one geometry and meshing it
+    twice would be paying twice for the same mesh and risking two different meshes; a
+    copy of the polyMesh is cheaper than gmsh and is provably the same grid.
+
+    Each case's arguments go on the `case_gen.py` line after the lock's and before the
+    hook's, and may not repeat a flag the lock already sets -- `--inlet` in a case and
+    `--inlet` in `case_gen_args` would accumulate, because those flags append, and the
+    case would have two inlets rather than a swapped one. `score.py` writes ONE
+    `metrics.json` for the candidate, with the cases' metrics namespaced (`forward.dp`)
+    and the worst of their labels. A lock cannot ask for both `cases` and a `trim`.
+
 the trim
 
     When the lock carries `trim` -- `{"variable": "ALPHA_DEG", "metric": "Cl", "target":
@@ -192,6 +209,34 @@ def check_no_override(lock_args: list[str], hook_args: list[str]) -> None:
         )
 
 
+def check_cases(lock_args: list[str], hook_args: list[str], cases: list[dict]) -> None:
+    """Every case's arguments against the lock's and the hook's.
+
+    `case_gen.py`'s patch flags append, so a flag given twice is two patches in that
+    role and not the second one winning: a `--inlet` in the lock and a `--inlet` in the
+    case would mean a case with two inlets, which is the one failure this shape exists
+    to avoid, and it would run and converge and be wrong.
+    """
+    for case in cases:
+        args = list(case["case_gen_args"])
+        names = flag_names(args)
+        for other, whose in ((lock_args, "the lock's case_gen_args"),
+                             (hook_args, "hooks.case_args()")):
+            repeated = sorted(names & flag_names(other))
+            if repeated:
+                raise SystemExit(
+                    f"cases[{case['name']!r}] sets " + ", ".join(repeated) + f", which {whose} "
+                    "already sets; case_gen.py's patch flags append, so the case would have "
+                    "both rather than its own"
+                )
+        owned = sorted(set(OWNED_FLAGS) & names)
+        if owned:
+            raise SystemExit(
+                f"cases[{case['name']!r}] sets " + ", ".join(owned) + ", which parametric.py "
+                "sets itself from the lock's fidelity"
+            )
+
+
 def prepare(candidate: Path, round_dir: Path) -> list[str]:
     """Copy the round's scripts in beside the constants and read both. Returns the
     hook's `case_args()` (empty without a `hooks.py`)."""
@@ -252,12 +297,16 @@ def measure_mesh(case: Path) -> dict:
     return payload
 
 
-def case_gen_args(lock: dict, hook_args: list[str]) -> list[str]:
-    """Everything after the case path on the `case_gen.py` command line."""
+def case_gen_args(lock: dict, hook_args: list[str], case_args: list[str] | None = None) -> list[str]:
+    """Everything after the case path on the `case_gen.py` command line.
+
+    In order: the lock's physics, then this case's own (a swapped inlet and outlet, for
+    one direction of a valve), then the hook's additions, then what this script owns."""
     lock_args = [str(a) for a in (lock.get("case_gen_args") or [])]
+    case_args = [str(a) for a in (case_args or [])]
     fidelity = score.fidelity_of(lock)
     iters = fidelity.get("iters")
-    args = [*lock_args, *hook_args]
+    args = [*lock_args, *case_args, *hook_args]
     body = lock.get("body_patch")
     if body and "--body" not in flag_names(lock_args):
         args += ["--body", str(body)]
@@ -267,18 +316,33 @@ def case_gen_args(lock: dict, hook_args: list[str]) -> list[str]:
         # study means seconds by it, and that flag is `--end-time`.
         args += ["--end-time" if study_of(lock_args) == "transient" else "--iterations",
                  str(iters)]
-    args += ["--yplus", "--force"]
+    # y+ is a wall-function measurement and there is no wall function in a laminar case:
+    # the function object has no turbulence model to ask and writes nothing, so asking
+    # for it would leave `score.py` reading a file that is not there and reporting it as
+    # a missing band rather than as a question that does not apply.
+    if turbulence_of(lock_args) != "laminar":
+        args += ["--yplus"]
+    args += ["--force"]
     return args
 
 
 def study_of(args: list[str]) -> str:
     """The `--study` value in a `case_gen.py` argument list, `steady` when unsaid."""
+    return flag_value(args, "--study", "steady")
+
+
+def turbulence_of(args: list[str]) -> str:
+    """The `--turbulence` value in a `case_gen.py` argument list, `auto` when unsaid."""
+    return flag_value(args, "--turbulence", "auto")
+
+
+def flag_value(args: list[str], flag: str, default: str) -> str:
     for index, item in enumerate(args):
-        if item.startswith("--study="):
+        if item.startswith(f"{flag}="):
             return item.split("=", 1)[1]
-        if item == "--study" and index + 1 < len(args):
+        if item == flag and index + 1 < len(args):
             return args[index + 1]
-    return "steady"
+    return default
 
 
 def dress(case: Path, args: list[str]) -> str:
@@ -345,15 +409,75 @@ class Outcome:
         self.detail = detail
 
 
-def evaluate(case: Path, lock: dict, args: list[str], mode: str) -> Outcome:
+def build_and_mesh(case: Path) -> str:
+    """`build.py`, `mesh_look.py` and `checkMesh` in the case; why it is not a mesh, or
+    empty."""
     why = build(case)
     if why:
-        return Outcome(case, "mesh", why)
+        return why
     payload = measure_mesh(case)
     if not payload.get("polymesh"):
-        return Outcome(case, "mesh", "build.py left no constant/polyMesh")
+        return "build.py left no constant/polyMesh"
     if not payload.get("checkmesh_ok"):
-        return Outcome(case, "mesh", f"checkMesh: {payload.get('checkmesh') or 'no verdict'}")
+        return f"checkMesh: {payload.get('checkmesh') or 'no verdict'}"
+    return ""
+
+
+def case_off_mesh(candidate: Path, name: str) -> Path:
+    """`CANDIDATE_DIR/<name>/` holding a copy of the candidate's mesh and scripts.
+
+    The copy is what makes several cases one mesh rather than several: `gmsh` is not run
+    again, so the two directions of a valve cannot differ by a grid. `build.py` and
+    `design_constants.py` travel too, because `score.py` reads the build hash out of the
+    directory it scores, and `look.json` because that is where `checkMesh`'s verdict is.
+    """
+    case = candidate / name
+    case.mkdir(exist_ok=True)
+    for script in ("build.py", "hooks.py", "design_constants.py", "look.json"):
+        if (candidate / script).is_file():
+            shutil.copyfile(candidate / script, case / script)
+    mesh = case / "constant" / "polyMesh"
+    if mesh.exists():
+        shutil.rmtree(mesh)
+    mesh.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(candidate / "constant" / "polyMesh", mesh)
+    if (candidate / "system").is_dir():
+        shutil.copytree(candidate / "system", case / "system", dirs_exist_ok=True)
+    return case
+
+
+def evaluate_cases(candidate: Path, lock: dict, cases: list[tuple[str, list[str]]],
+                   checkpoint=None) -> Outcome:
+    """One build and mesh, then one dress and solve per case in its own directory.
+
+    The outcome's case is the candidate itself: what is scored is the candidate, out of
+    the several directories under it (`score.score_cases`). A case that cannot be
+    dressed is the candidate's failure -- the same mesh is in all of them, so a
+    `case_gen.py` that refuses one direction would refuse the other.
+    """
+    why = build_and_mesh(candidate)
+    if why:
+        return Outcome(candidate, "mesh", why)
+    solver = str(lock.get("solver") or "simpleFoam")
+    ranks = int(score.fidelity_of(lock).get("ranks") or 1)
+    for name, args in cases:
+        case = case_off_mesh(candidate, name)
+        why = dress(case, args)
+        if why:
+            return Outcome(candidate, "mesh", f"{name}: {why}")
+        why = solve(case, solver, ranks)
+        if why:
+            # Reported, not decided on: score.py reads each case's own log.
+            print(f"{name}: {why}", file=sys.stderr)
+        if checkpoint is not None:
+            checkpoint()
+    return Outcome(candidate)
+
+
+def evaluate(case: Path, lock: dict, args: list[str], mode: str) -> Outcome:
+    why = build_and_mesh(case)
+    if why:
+        return Outcome(case, "mesh", why)
     if mode == "mesh":
         return Outcome(case)
     why = dress(case, args)
@@ -477,14 +601,28 @@ def main(argv: list[str] | None = None) -> int:
     hook_args = prepare(candidate, args.round_dir.resolve())
     lock_args = [str(a) for a in (lock.get("case_gen_args") or [])]
     check_no_override(lock_args, hook_args)
-    gen_args = case_gen_args(lock, hook_args) if args.mode == "solve" else []
+    cases = score.cases_of(lock)
+    spec = lock.get("trim")
+    if cases and isinstance(spec, dict) and spec:
+        raise SystemExit(
+            "the lock has both `cases` and a `trim`: the trim is a secant over one "
+            "case's metric and there is no one case to take it on"
+        )
+    check_cases(lock_args, hook_args, cases)
+    solving = args.mode == "solve"
+    gen_args = case_gen_args(lock, hook_args) if solving else []
+    per_case = [(c["name"], case_gen_args(lock, hook_args, c["case_gen_args"])) for c in cases] if solving else []
 
     info: dict = {"started": time.time(), "mode": args.mode, "case_args": gen_args,
                   "trim": None, "case": "."}
+    if per_case:
+        info["cases"] = {name: {"case_args": args_} for name, args_ in per_case}
     write_run(candidate, info)
 
-    spec = lock.get("trim")
-    if args.mode == "solve" and isinstance(spec, dict) and spec:
+    if solving and per_case:
+        outcome = evaluate_cases(candidate, lock, per_case,
+                                 checkpoint=lambda: write_run(candidate, info))
+    elif solving and isinstance(spec, dict) and spec:
         record: dict = {}
         info["trim"] = record
         outcome = trim(candidate, lock, gen_args, spec, record,
@@ -494,12 +632,14 @@ def main(argv: list[str] | None = None) -> int:
     info["case"] = str(outcome.case.relative_to(candidate)) if outcome.case != candidate else "."
     write_run(candidate, info)
 
-    metrics = score.score(outcome.case, lock, info, label=outcome.label,
-                          detail=outcome.detail, mesh_only=args.mode == "mesh")
+    metrics = score.score_cases(outcome.case, lock, info, label=outcome.label,
+                                detail=outcome.detail, mesh_only=args.mode == "mesh")
     out = score.write(metrics, candidate / "metrics.json")
     print(f"{metrics['label']}" + (f"  ({metrics['detail']})" if metrics["detail"] else ""))
     for name, value in sorted(metrics["metrics"].items()):
         print(f"  {name} = {value:.5g}")
+    for name, one in (metrics.get("cases") or {}).items():
+        print(f"  [{name}] {one['label']}" + (f": {one['detail']}" if one["detail"] else ""))
     if metrics.get("trim"):
         t = metrics["trim"]
         print(f"  trim {t['variable']} = {t['value']:.4g} -> {t.get('achieved')} "

@@ -177,6 +177,210 @@ def test_every_key_of_the_contract_is_present_and_typed(score, good_case):
 def test_labels_are_the_closed_set(score):
     assert set(score.LABELS) == {"ok", "mesh", "diverged", "timeout", "unconverged",
                                  "yplus", "cells"}
+    assert set(score.SEVERITY) == set(score.LABELS), "one order over the same labels"
+
+
+# -- the pressure drop ---------------------------------------------------------
+
+
+def pressures(case: Path, inlet: list[float], outlet: list[float], time_dir: str = "0",
+              function=("pInlet", "pOutlet")) -> None:
+    """The two `surfaceFieldValue` records `case_gen.py --dp` leaves, one row per
+    iteration, in the shape OpenFOAM writes them."""
+    for name, series in zip(function, (inlet, outlet)):
+        target = case / "postProcessing" / name / time_dir
+        target.mkdir(parents=True, exist_ok=True)
+        lines = [f"# Region type : patch {name}", "# Faces  : 40",
+                 "# Area    : 1.6e-05", "# Time                areaAverage(p)"]
+        for step, value in enumerate(series, start=1):
+            lines.append(f"{step}\t{value:.6e}")
+        (target / "surfaceFieldValue.dat").write_text("\n".join(lines) + "\n")
+
+
+def test_dp_is_the_windowed_mean_of_the_difference(score, good_case):
+    """Ten rows, the last two the window: inlet 5.0/5.4 against outlet 1.0/1.4, so the
+    drop is 4.0 in both of them and 4.0 is the mean. The last row alone would say 4.0
+    too here; the point of the window is the settling part before it, which is 9.0."""
+    pressures(good_case, inlet=[13.0] * 8 + [5.0, 5.4], outlet=[4.0] * 8 + [1.0, 1.4])
+    out = score.score(good_case, LOCK)
+    assert out["metrics"]["dp"] == pytest.approx(4.0, abs=1e-9)
+
+
+def test_dp_is_formed_per_time_step_and_not_as_two_tail_means(score, good_case):
+    """The two objects wrote different iterations: the inlet has one row the outlet does
+    not. Aligned by time the drop is 2.0 on the shared rows; two separate tail means
+    would mix an inlet row with an outlet row from somewhere else."""
+    pressures(good_case, inlet=[3.0] * 10, outlet=[1.0] * 10)
+    extra = good_case / "postProcessing" / "pInlet" / "0" / "surfaceFieldValue.dat"
+    extra.write_text(extra.read_text() + "11\t9.900000e+01\n")
+    assert score.score(good_case, LOCK)["metrics"]["dp"] == pytest.approx(2.0)
+
+
+def test_a_restarted_record_is_merged_and_the_later_write_wins(score, good_case):
+    pressures(good_case, inlet=[3.0] * 10, outlet=[1.0] * 10)
+    pressures(good_case, inlet=[7.0] * 10, outlet=[1.0] * 10, time_dir="10")
+    assert score.score(good_case, LOCK)["metrics"]["dp"] == pytest.approx(6.0)
+
+
+def test_a_case_run_without_the_dp_objects_has_no_dp(score, good_case):
+    out = score.score(good_case, LOCK)
+    assert "dp" not in out["metrics"], "no record is not a drop of zero"
+    assert score.pressure_drop(good_case) == (None, 0)
+
+
+def test_one_side_of_the_drop_alone_is_not_a_drop(score, good_case):
+    pressures(good_case, inlet=[3.0] * 10, outlet=[1.0] * 10)
+    import shutil
+
+    shutil.rmtree(good_case / "postProcessing" / "pOutlet")
+    assert "dp" not in score.score(good_case, LOCK)["metrics"]
+
+
+def test_the_function_object_names_are_the_ones_case_gen_writes(score):
+    """A rename on either side would leave the other reporting no pressure drop, quietly."""
+    spec = importlib.util.spec_from_file_location("toolbox_case_gen", TOOLBOX / "case_gen.py")
+    case_gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(case_gen)
+    assert score.DP_FUNCTIONS == tuple(name for _, name in case_gen.PRESSURE_FUNCTIONS)
+
+
+# -- derived metrics -----------------------------------------------------------
+
+
+def test_a_derived_metric_is_arithmetic_over_metric_names(score):
+    values = {"forward.dp": 2.0, "reverse.dp": 5.0}
+    assert score.evaluate_derived("reverse.dp / forward.dp", values) == pytest.approx(2.5)
+    assert score.evaluate_derived("(reverse.dp - forward.dp) * 2 + 1", values) == pytest.approx(7.0)
+    assert score.evaluate_derived("-forward.dp", values) == pytest.approx(-2.0)
+
+
+@pytest.mark.parametrize("expression", [
+    "__import__('os').system('rm -rf /')",
+    "open('/etc/passwd').read()",
+    "forward.dp ** 99999",
+    "forward.dp if forward.dp else 1",
+    "[forward.dp][0]",
+    "max(forward.dp, 1)",
+    "forward.dp // 2",
+    "'a' + 'b'",
+])
+def test_anything_that_is_not_arithmetic_is_refused(score, expression):
+    with pytest.raises(score.DerivedError):
+        score.derived_names(expression)
+
+
+def test_a_derived_metric_whose_inputs_are_missing_is_left_out(score):
+    assert score.evaluate_derived("reverse.dp / forward.dp", {"forward.dp": 1.0}) is None
+    assert score.derived_metrics({"forward.dp": 1.0}, {"diodicity": "reverse.dp / forward.dp"}) == {}
+
+
+def test_a_derived_metric_that_divides_by_zero_is_left_out(score):
+    assert score.derived_metrics({"forward.dp": 0.0, "reverse.dp": 1.0},
+                                 {"diodicity": "reverse.dp / forward.dp"}) == {}
+
+
+def test_a_derived_metric_may_read_one_written_before_it(score):
+    out = score.derived_metrics({"forward.dp": 2.0, "reverse.dp": 6.0},
+                                {"diodicity": "reverse.dp / forward.dp",
+                                 "excess": "diodicity - 1"})
+    assert out == {"diodicity": pytest.approx(3.0), "excess": pytest.approx(2.0)}
+
+
+# -- several cases per candidate -----------------------------------------------
+
+
+CASES_LOCK = dict(
+    LOCK,
+    body_patch="",
+    cases=[{"name": "forward", "case_gen_args": ["--inlet", "west", "--outlet", "east"]},
+           {"name": "reverse", "case_gen_args": ["--inlet", "east", "--outlet", "west"]}],
+    derived={"diodicity": "reverse.dp / forward.dp"},
+)
+
+
+def solved_case(case: Path, dp: float, *, series=None, ok: bool = True) -> None:
+    mesh(case, cells=30000)
+    pressures(case, inlet=[dp] * 10, outlet=[0.0] * 10)
+    log(case, levelled() if ok else climbing())
+    (case / "build.py").write_text("from design_constants import *\nprint(1)\n")
+
+
+@pytest.fixture
+def valve(tmp_path):
+    """One candidate, one mesh, two solved cases under it."""
+    candidate = tmp_path / "cand"
+    mesh(candidate, cells=30000)
+    (candidate / "build.py").write_text("from design_constants import *\nprint(1)\n")
+    solved_case(candidate / "forward", dp=2.0)
+    solved_case(candidate / "reverse", dp=5.0)
+    return candidate
+
+
+def test_the_cases_metrics_are_namespaced_and_the_derived_one_is_computed(score, valve):
+    out = score.score_cases(valve, CASES_LOCK, {"wall_seconds": 61.0})
+    assert out["label"] == "ok", out["detail"]
+    assert out["metrics"]["forward.dp"] == pytest.approx(2.0)
+    assert out["metrics"]["reverse.dp"] == pytest.approx(5.0)
+    assert out["metrics"]["diodicity"] == pytest.approx(2.5)
+    assert set(out["cases"]) == {"forward", "reverse"}
+    assert out["cases"]["forward"]["label"] == "ok"
+    assert out["cells"] == 30000, "the mesh is the candidate's, measured once"
+    assert out["wall_seconds"] == 61.0
+    assert out["converged"] is True
+    json.dumps(out)
+
+
+def test_the_candidates_label_is_the_worst_of_its_cases(score, valve):
+    log(valve / "reverse", climbing())
+    out = score.score_cases(valve, CASES_LOCK)
+    assert out["label"] == "diverged"
+    assert "reverse:" in out["detail"]
+    assert out["cases"]["forward"]["label"] == "ok"
+    assert out["metrics"]["forward.dp"] == pytest.approx(2.0), "the good case is still reported"
+
+
+def test_a_case_that_did_not_run_is_a_mesh_failure_of_the_candidate(score, valve):
+    import shutil
+
+    shutil.rmtree(valve / "reverse")
+    out = score.score_cases(valve, CASES_LOCK)
+    assert out["label"] == "mesh"
+    assert "reverse" in out["detail"]
+    assert "diodicity" not in out["metrics"]
+
+
+def test_a_mesh_outside_the_band_is_the_candidates_label_even_when_both_cases_solved(score, valve):
+    lock = dict(CASES_LOCK, fidelity=dict(CASES_LOCK["fidelity"], cells={"min": 1, "max": 100}))
+    out = score.score_cases(valve, lock)
+    assert out["label"] == "cells"
+    assert out["metrics"]["diodicity"] == pytest.approx(2.5), "measured anyway, and reported"
+
+
+def test_the_callers_label_still_wins_over_the_cases(score, valve):
+    out = score.score_cases(valve, CASES_LOCK, label="timeout", detail="killed at 3x median")
+    assert out["label"] == "timeout" and out["detail"] == "killed at 3x median"
+
+
+def test_mesh_only_scores_the_candidates_mesh_and_no_case(score, valve):
+    out = score.score_cases(valve, CASES_LOCK, mesh_only=True)
+    assert out["label"] == "ok" and out["metrics"] == {} and "cases" not in out
+    assert out["cells"] == 30000
+
+
+def test_a_lock_without_cases_goes_the_one_case_way(score, good_case):
+    out = score.score_cases(good_case, LOCK)
+    assert "cases" not in out and set(out["metrics"]) == {"Cd", "Cl", "CmPitch"}
+
+
+@pytest.mark.parametrize("cases,message", [
+    ([{"name": "forward flow", "case_gen_args": []}], "identifier"),
+    ([{"name": "forward", "case_gen_args": []}, {"name": "forward", "case_gen_args": []}], "twice"),
+    ([{"name": "forward", "case_gen_args": [1, 2]}], "list of strings"),
+    (["forward"], "name and case_gen_args"),
+])
+def test_a_malformed_cases_block_is_refused(score, cases, message):
+    with pytest.raises(SystemExit, match=message):
+        score.cases_of(dict(LOCK, cases=cases))
 
 
 # -- the windowed mean ---------------------------------------------------------

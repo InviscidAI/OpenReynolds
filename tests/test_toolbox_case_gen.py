@@ -463,6 +463,36 @@ def test_yplus_is_a_function_object_only_when_asked_for(case_gen, tmp_path):
     assert text.count("functions") == 1, "one functions block carries both"
 
 
+def test_dp_is_two_surface_field_values_on_the_inlet_and_the_outlet(case_gen, duct_with_outlet):
+    """A pressure drop is not a force on a body, so `forceCoeffs` does not have it and
+    nothing in the log does: `score.py` reads these two records and subtracts them."""
+    run(case_gen, duct_with_outlet, "--length", "0.1", "--dp")
+    text = (duct_with_outlet / "system" / "controlDict").read_text()
+    assert text.count("type            surfaceFieldValue;") == 2
+    assert "    pInlet\n" in text and "    pOutlet\n" in text
+    assert "operation       areaAverage;" in text
+    assert "fields          (p);" in text
+    assert "regionType      patch;" in text
+    assert "name            inlet;" in text and "name            outlet;" in text
+    # every iteration, as the coefficients are, so the tail of the record is a window
+    assert text.count("writeControl    timeStep;") >= 2
+    assert text.count("functions") == 1
+
+
+def test_without_dp_there_are_no_pressure_probes(case_gen, duct_with_outlet):
+    run(case_gen, duct_with_outlet, "--length", "0.1")
+    assert "surfaceFieldValue" not in (duct_with_outlet / "system" / "controlDict").read_text()
+
+
+def test_dp_on_a_case_with_no_outlet_writes_the_inlet_probe_alone(case_gen, duct):
+    """One side is not a drop -- `score.py` reports none -- but the probe that exists is
+    still worth having, and the case must not fail over the other."""
+    run(case_gen, duct, "--length", "0.1", "--dp")
+    text = (duct / "system" / "controlDict").read_text()
+    assert text.count("type            surfaceFieldValue;") == 1
+    assert "    pInlet\n" in text and "pOutlet" not in text
+
+
 def test_writing_over_a_case_needs_force(case_gen, duct):
     run(case_gen, duct, "--length", "0.1")
     with pytest.raises(SystemExit) as raised:
