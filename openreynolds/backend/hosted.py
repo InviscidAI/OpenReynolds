@@ -7,6 +7,7 @@ in the package that knows the contract exists.
 from __future__ import annotations
 
 import io
+import random
 import tarfile
 import threading
 import time
@@ -144,6 +145,19 @@ _SERVER_ERROR_RETRY_S = 1.0
 the way a 429 or a cold-start 503 is."""
 
 
+def _retry_after_of(response: httpx.Response | None) -> float | None:
+    """The service's own `Retry-After`, in seconds, or None when it did not say."""
+    if response is None:
+        return None
+    raw = response.headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return None
+
+
 def _decode_error(response: httpx.Response) -> BackendError:
     """Decode either error shape the service produces.
 
@@ -151,17 +165,20 @@ def _decode_error(response: httpx.Response) -> BackendError:
     the web framework as a 422 `{"detail": [...]}`.
     """
     status = response.status_code
+    after = _retry_after_of(response)
     try:
         body: Any = response.json()
     except Exception:
         text = (response.text or "").strip()
-        return BackendError(text or f"HTTP {status}", code="http_error", status=status)
+        return BackendError(text or f"HTTP {status}", code="http_error", status=status,
+                            retry_after=after)
 
     if isinstance(body, dict) and "error" in body:
         return BackendError(
             str(body.get("message") or body["error"]),
             code=str(body["error"]),
             status=status,
+            retry_after=after,
         )
 
     if isinstance(body, dict) and "detail" in body:
@@ -400,14 +417,41 @@ def _send_following_safe_redirects(
     return response
 
 
+_THROTTLE_STATUS = 429
+_THROTTLE_ATTEMPTS = 200
+_THROTTLE_MAX_DELAY_S = 120.0
+"""How patient a caller is with `429 rate_limited`, and how long one wait may grow to.
+
+**On 2026-09-27 three campaigns died inside eight minutes of each other on a 429 nobody
+retried far enough.** Six workspaces were polling one account's key; `_MAX_ATTEMPTS` is
+five and the backoff topped out at 30 s, so a sustained overload -- which is what six
+pollers on one key IS -- exhausted the budget in about a minute and handed
+`rate_limited` to whatever had asked. The callers were `Archive.record` writing a label
+file, `layout.make_dirs`, and a bare `stat`; none of them had any answer but to die, and
+each took a three-hour campaign with it (`Archimedes
+results/status/20260927T070346Z/STATUS.md`).
+
+A rate limit is not a failure. It is the service saying "later", and the only correct
+response is to go slower: so 429 gets its own patience, its own cap on one wait, full
+jitter, and -- the point -- it does NOT spend the ordinary attempt budget. Two hundred
+attempts is minutes to an hour depending on what the service asks for, and whatever is
+above this gives up on its own terms (Archimedes bounds it by the campaign's budget
+clock, `archimedes/throttle.py`, which is where "unbounded while the clock runs" lives).
+
+**Only 429, and 503 is deliberately left alone.** They read alike -- both mean the
+handler never ran -- but they fail differently: a 429 always clears, because the window
+always rolls, while a 503 is a workspace still booting and a workspace that cannot boot
+answers 503 for ever. Retrying that one two hundred times turns a five-attempt failure
+into a half-hour hang with nothing at the end of it, so it keeps `_MAX_ATTEMPTS` and its
+cold-start `Retry-After`. Same for 500/502/504: those may mean the work was done and
+only the answer lost, and waiting an hour to find out is not patience."""
+
+
 def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
     if response is not None:
-        raw = response.headers.get("retry-after")
-        if raw:
-            try:
-                return max(0.0, float(raw))
-            except ValueError:
-                pass
+        after = _retry_after_of(response)
+        if after is not None:
+            return after
         if response.status_code == 503:
             return _DEFAULT_RETRY_AFTER_S
         if response.status_code == 500:
@@ -416,6 +460,23 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
             # absorbed hiccup into a visible stall.
             return _SERVER_ERROR_RETRY_S
     return min(2.0**attempt, 30.0)
+
+
+def _throttle_delay(response: httpx.Response | None, attempt: int) -> float:
+    """How long to wait out a 429.
+
+    The service's own `Retry-After` wins outright when it sent one: it knows when its
+    window rolls, and second-guessing it is how a client that means to be polite ends
+    up hammering. Only when it says nothing does the exponential term apply, and then
+    the jitter is uniform over the whole interval rather than a wobble on top of it --
+    the failure mode being avoided is several campaigns synchronising, because they
+    were all throttled by the same window and without jitter they all sleep the same
+    eight seconds and all come back together."""
+    after = _retry_after_of(response)
+    if after is not None:
+        return after
+    ceiling = min(_THROTTLE_MAX_DELAY_S, max(1.0, 2.0 ** min(attempt, 8)))
+    return random.uniform(0.5 * ceiling, ceiling)
 
 
 # -- signing in from a terminal --------------------------------------------------------
@@ -626,7 +687,12 @@ class FoamdClient:
         # Counted separately from `attempt`, because a vanished Sandbox is its own
         # kind of failure with its own much shorter patience.
         gone_attempts = 0
-        for attempt in range(attempts):
+        # And so is being told "not now": a throttle does not spend the ordinary
+        # attempt budget, because a caller that has been refused five times in five
+        # seconds has learned nothing except that the window has not rolled yet.
+        throttle_attempts = 0
+        attempt = 0
+        while True:
             response = None
             # Whether this failure leaves it unknown whether the service acted.
             ambiguous = False
@@ -700,13 +766,27 @@ class FoamdClient:
                 # answer about the real request, and it is treated like any other.
                 if response.status_code not in _RETRY_STATUSES:
                     raise last_error
+                # "Not now" is not "it failed". A 429 is the rate limiter: the handler
+                # never ran, so asking again cannot double an effect, and the only
+                # thing that changes the answer is time. It gets `_THROTTLE_ATTEMPTS`
+                # and a jittered backoff of its own, and it does NOT spend the
+                # ordinary attempt budget -- which is the whole of what killed three
+                # campaigns on 2026-09-27. 503 stays on the budget; see the constant.
+                if response.status_code == _THROTTLE_STATUS:
+                    throttle_attempts += 1
+                    if throttle_attempts >= _THROTTLE_ATTEMPTS:
+                        raise last_error
+                    time.sleep(_throttle_delay(response, throttle_attempts))
+                    continue
                 ambiguous = response.status_code not in _DECLINED_STATUSES
 
             if ambiguous and not repeat_ok:
                 raise last_error
 
-            if attempt < attempts - 1:
-                time.sleep(_retry_delay(response, attempt))
+            attempt += 1
+            if attempt >= attempts:
+                break
+            time.sleep(_retry_delay(response, attempt - 1))
 
         raise last_error or BackendError("request failed", code="unreachable")
 
