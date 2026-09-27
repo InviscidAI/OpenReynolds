@@ -370,6 +370,40 @@ def test_a_patchs_normal_is_reported_out_of_the_fluid(tmp_path):
             assert patch["inward"] == -1, "a measured normal must point out of the fluid"
 
 
+def test_patch_normals_keep_the_surface_extractor_they_were_measured_with():
+    """PyVista 0.49 warned that its implicit default will change from
+    `dataset_surface` to automatic selection. A dependency update must not silently
+    choose a different extractor for this geometry measurement."""
+    called = {}
+
+    class Normals:
+        cell_data = {"Normals": [[0.0, 0.0, 1.0]]}
+
+        def compute_normals(self, **kwargs):
+            return self
+
+    class Surface:
+        n_cells = 1
+        points = []
+
+        def compute_cell_sizes(self, **kwargs):
+            return type("Sizes", (), {"cell_data": {"Area": [1.0]}})()
+
+        def cell_centers(self):
+            return type("Centres", (), {"points": [[0.0, 0.0, 0.0]]})()
+
+        def extract_surface(self, **kwargs):
+            called.update(kwargs)
+            return Normals()
+
+    row = mesh_look.measure_patches(
+        [{"name": "inlet"}], {"inlet": Surface()}, internal=None
+    )[0]
+
+    assert called["algorithm"] == "dataset_surface"
+    assert row["normal"] == [0.0, 0.0, 1.0]
+
+
 # -- several views, for a reviewer who did not build it ------------------------
 #
 # `draw()` is one picture for whoever made the mesh. `draw_views` is three composite
