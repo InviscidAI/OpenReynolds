@@ -291,6 +291,92 @@ def test_the_pending_backend_is_a_backend():
     assert isinstance(PendingBackend("iid-1"), Backend)
 
 
+def test_the_pending_backend_defines_every_method_the_protocol_has():
+    """A method it does not define is not an error, which is the whole danger.
+
+    `PendingBackend` subclasses the `Backend` Protocol, so a method missing here falls
+    through to the Protocol's `...` body and returns None. The five kernel methods were
+    missing: `kernel_start` "succeeded" with no kernel, the CAD desk's first cell came
+    back None, and every hosted desk run failed with `'NoneType' object has no attribute
+    'stdout'`. This fails the day a method is added to the Protocol and not here.
+    """
+    from openreynolds.backend.base import Backend
+
+    protocol = {name for name, value in vars(Backend).items()
+                if callable(value) and not name.startswith("_")}
+    missing = sorted(name for name in protocol if name not in vars(PendingBackend))
+    assert "kernel_run" in protocol, "the walk found the Protocol's methods"
+    assert not missing, f"PendingBackend inherits the Protocol's no-op for {missing}"
+
+
+def test_the_kernel_waits_for_the_workspace_and_then_runs_on_it():
+    """The desk's cell channel, through the stand-in every hosted session holds."""
+    calls = []
+
+    class Kernel:
+        def kernel_start(self, cwd):
+            calls.append(("start", cwd))
+            return "session-1"
+
+        def kernel_run(self, code, timeout_s=60):
+            calls.append(("run", code, timeout_s))
+            return "cell result"
+
+        def kernel_poll(self):
+            calls.append(("poll",))
+            return "poll result"
+
+        def kernel_interrupt(self):
+            calls.append(("interrupt",))
+
+        def kernel_restart(self):
+            calls.append(("restart",))
+
+    pending = PendingBackend("iid-1")
+    started = []
+    thread = threading.Thread(
+        target=lambda: started.append(pending.kernel_start("/work/case")), daemon=True)
+    thread.start()
+    time.sleep(0.1)
+    assert not started and not calls, "blocked: no kernel before the workspace"
+    pending.resolve(Kernel())
+    thread.join(2.0)
+    assert started == ["session-1"], "the live backend's session id, not None"
+    assert pending.kernel_run("print(1)", timeout_s=240) == "cell result"
+    assert pending.kernel_poll() == "poll result"
+    pending.kernel_interrupt()
+    pending.kernel_restart()
+    assert calls == [("start", "/work/case"), ("run", "print(1)", 240), ("poll",),
+                     ("interrupt",), ("restart",)]
+
+
+def test_a_failed_start_fails_the_kernel_too():
+    pending = PendingBackend("iid-1")
+    pending.fail(BackendError("no capacity", code="unavailable", status=503))
+    with pytest.raises(BackendError) as raised:
+        pending.kernel_start("/work/case")
+    assert raised.value.code == "unavailable", "raised, so the desk says no kernel"
+
+
+def test_a_real_cell_runs_through_the_stand_in(tmp_path):
+    """End to end on a real kernel: what the desk sends, and what `_report` reads."""
+    pytest.importorskip("jupyter_client")
+    pytest.importorskip("ipykernel")
+    from openreynolds.backend.local import LocalBackend
+
+    live = LocalBackend(root=tmp_path)
+    pending = PendingBackend("iid-1")
+    pending.resolve(live)
+    try:
+        assert pending.kernel_start(str(tmp_path))
+        outcome = pending.kernel_run("x = 6 * 7\nprint(x)", timeout_s=60)
+        assert outcome.ok and outcome.stdout.strip() == "42"
+        assert pending.kernel_run("print(x + 1)", timeout_s=60).stdout.strip() == "43", (
+            "the same kernel, so the binding survived the step")
+    finally:
+        pending.close()
+
+
 def test_the_pending_module_knows_nothing_about_transport():
     from pathlib import Path
 
