@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
+import random
 from pathlib import Path
 
 import pytest
@@ -754,12 +755,12 @@ TRANSIENT_LOCK = dict(
 
 
 def shedding(case: Path, *, st: float = 0.2, end: float = 60.0, cl_amp: float = 0.8,
-             cd_mean: float = 1.2, cd_amp: float = 0.05, cd=None) -> None:
+             cd_mean: float = 1.2, cd_amp: float = 0.05, cd=None, cl=None) -> None:
     """A `forceCoeffs.dat` with a time column in seconds: Cl a sinusoid at Strouhal `st`
     on H, Cd its mean plus a ripple at twice that frequency (the drag sees both vortices
     of a cycle). The step is uneven -- fine for the first half of the record, four times
     coarser after it -- as an adjustable-time-step pimpleFoam writes it. `cd`, when
-    given, is Cd as a function of convective time instead."""
+    given, is Cd as a function of convective time instead, and `cl` Cl."""
     f = st * U_MS / H_M
     lines = ["# Force coefficients", "# magUInf           : 1.5000e+01",
              "# Time              Cd              Cl              CmPitch"]
@@ -767,7 +768,8 @@ def shedding(case: Path, *, st: float = 0.2, end: float = 60.0, cl_amp: float = 
     while t <= end * CONVECTIVE_S + 1e-12:
         tc = t / CONVECTIVE_S
         cd_value = cd(tc) if cd else cd_mean + cd_amp * math.sin(4 * math.pi * f * t)
-        lines.append(f"{t:.8e}  {cd_value:.6e}  {cl_amp * math.sin(2 * math.pi * f * t):.6e}  "
+        cl_value = cl(tc) if cl else cl_amp * math.sin(2 * math.pi * f * t)
+        lines.append(f"{t:.8e}  {cd_value:.6e}  {cl_value:.6e}  "
                      f"{0.01:.6e}")
         t += fine if tc < end / 2 else 4 * fine
     target = case / "postProcessing" / "forceCoeffs" / "0"
@@ -845,6 +847,70 @@ def test_a_lift_that_never_oscillates_is_unconverged_not_a_steady_answer(score, 
     assert "St" not in out["metrics"]
 
 
+def noise(scale: float, seed: int = 1):
+    """Cl as solver noise about a mean: a seeded normal draw per row, no cycle in it."""
+    rng = random.Random(seed)
+    return lambda tc: rng.gauss(0.0, scale)
+
+
+@pytest.mark.parametrize("cl,why", [
+    (noise(1e-6), "not shedding"),
+    (lambda tc, n=noise(1e-6): 1e-3 * tc / 60 + n(tc), "not shedding"),
+    (noise(0.05), "St"),
+], ids=["solver-noise", "noise-on-a-slow-drift", "loud-noise"])
+def test_a_lift_that_is_noise_is_unconverged_with_no_strouhal(score, tmp_path, cl, why):
+    """A symmetric wake's lift is never exactly zero: pimpleFoam leaves round-off and
+    solver noise on it. Measured relative to its own rms, that noise crosses its mean
+    thousands of times and reads as a shedding frequency far past any bluff body's. It
+    is not one: under the lift-rms floor the wake is not shedding, and a frequency whose
+    Strouhal number no bluff body has is noise, however loud."""
+    case = tmp_path / "noisy"
+    mesh(case)
+    shedding(case, cl=cl)
+    log(case, levelled(), name="log.pimpleFoam")
+    out = score.score(case, TRANSIENT_LOCK)
+    assert out["label"] == "unconverged", out["detail"]
+    assert "St" not in out["metrics"]
+    assert out["shedding"]["periods"] == 0.0
+    assert why in out["detail"]
+
+
+def test_real_shedding_under_noise_still_counts(score, tmp_path):
+    case = tmp_path / "shedding-noisy"
+    mesh(case)
+    f, n = 0.2, noise(0.02)
+    shedding(case, cl=lambda tc: 0.8 * math.sin(2 * math.pi * f * tc) + n(tc))
+    log(case, levelled(), name="log.pimpleFoam")
+    out = score.score(case, TRANSIENT_LOCK)
+    assert out["label"] == "ok", out["detail"]
+    assert out["metrics"]["St"] == pytest.approx(0.2, rel=0.02)
+
+
+def test_the_lift_rms_floor_is_the_locks_to_set(score, tmp_path):
+    case = tmp_path / "weak"
+    mesh(case)
+    shedding(case, cl_amp=0.005)
+    log(case, levelled(), name="log.pimpleFoam")
+    assert score.score(case, TRANSIENT_LOCK)["label"] == "unconverged"
+    lock = dict(TRANSIENT_LOCK, fidelity=dict(TRANSIENT_LOCK["fidelity"], min_lift_rms=1e-3))
+    assert score.score(case, lock)["label"] == "ok"
+
+
+def test_a_low_strouhal_body_holds_five_periods_on_the_drag_goals_window(score, tmp_path):
+    """Archimedes' max_drag lock averages from 20 to 80 convective times so that a wide
+    wake shedding at St 0.1 (a deep cup, URANS under-predicting it) still spans six
+    periods; St 0.11 is 6.6."""
+    case = tmp_path / "deep-cup"
+    mesh(case)
+    shedding(case, st=0.11, end=80.0)
+    log(case, levelled(), name="log.pimpleFoam")
+    lock = dict(TRANSIENT_LOCK, fidelity=dict(TRANSIENT_LOCK["fidelity"], end_time=80))
+    out = score.score(case, lock)
+    assert out["label"] == "ok", out["detail"]
+    assert out["shedding"]["periods"] == pytest.approx(6.6, rel=0.03)
+    assert out["metrics"]["St"] == pytest.approx(0.11, rel=0.02)
+
+
 def test_a_record_that_ends_before_the_window_opens_has_no_coefficients(score, tmp_path):
     case = tmp_path / "killed"
     mesh(case)
@@ -871,6 +937,7 @@ def test_the_steady_path_carries_no_transient_keys(score, good_case):
     ({"fidelity": dict(TRANSIENT_LOCK["fidelity"], average_from=60)}, "average_from"),
     ({"fidelity": dict(TRANSIENT_LOCK["fidelity"], end_time=0)}, "end_time"),
     ({"fidelity": dict(TRANSIENT_LOCK["fidelity"], write_interval=-1)}, "write_interval"),
+    ({"fidelity": dict(TRANSIENT_LOCK["fidelity"], min_lift_rms=0)}, "min_lift_rms"),
     ({"solver": "simpleFoam"}, "simpleFoam"),
     ({"case_gen_args": ["--speed", "15", "--length", "0.1", "--study", "steady"]}, "--study"),
 ])

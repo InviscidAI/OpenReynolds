@@ -42,7 +42,10 @@ a transient case
     oscillate with the flow and never level) but whether the window spans
     `fidelity.min_periods` (default 5) periods of that lift; a shorter one is
     `unconverged` with the count it saw, and `shedding` in the output carries the
-    frequency, the period count and the window. A steady lock never sees any of this.
+    frequency, the period count and the window. A lift that is not shedding -- its rms
+    under `fidelity.min_lift_rms` (default `MIN_LIFT_RMS`), or crossings that say a
+    Strouhal number no bluff body has -- counts no periods at all, so solver noise on a
+    symmetric wake is `unconverged`, not a frequency. A steady lock never sees any of this.
 
 the label
 
@@ -146,6 +149,19 @@ where the window happened to start and stop. Five is the usual floor for quoting
 HYSTERESIS = 0.25
 """The lift must swing this many rms fluctuations below its mean before an upward
 crossing counts (`shedding_frequency`): solver noise about the mean is not a cycle."""
+
+MIN_LIFT_RMS = 1e-2
+"""The smallest rms fluctuation of Cl about its mean that is a shedding wake, when the
+lock does not say (`fidelity.min_lift_rms`). The hysteresis is relative to the signal's
+own rms, so on its own it counts solver noise on a symmetric wake's lift as thousands of
+cycles; this floor is absolute. A shedding bluff body's lift swings by tenths (a plate's
+rms Cl is of order 1, a cylinder's at Re 1e5 about 0.3 on URANS); a wake that has not
+broken symmetry carries 1e-6 of round-off. A hundredth sits two decades from either."""
+
+MAX_STROUHAL = 1.0
+"""The highest lift frequency, as a Strouhal number on the lock's length and speed, that
+is read as shedding. Bluff bodies shed at 0.1-0.3 on their frontal height; a frequency
+that says St 3 is noise loud enough to clear the floor, crossing its mean every few rows."""
 
 
 # -- the pieces --------------------------------------------------------------------
@@ -269,7 +285,8 @@ def transient_of(lock: dict) -> dict | None:
     called by `parametric.py` before anything is paid for, and by `score` after.
 
     `min_periods` (default `MIN_PERIODS`) is how many shedding periods the averaging
-    window must span before its mean is a number.
+    window must span before its mean is a number, and `min_lift_rms` (default
+    `MIN_LIFT_RMS`) the smallest lift fluctuation that is a shedding wake at all.
     """
     fidelity = fidelity_of(lock)
     if fidelity.get("solver_mode", "steady") == "steady":
@@ -289,6 +306,9 @@ def transient_of(lock: dict) -> dict | None:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
             raise SystemExit(f"fidelity.{key}: a positive number of convective times, got {value!r}")
         numbers[key] = float(value)
+    floor = fidelity.get("min_lift_rms", MIN_LIFT_RMS)
+    if isinstance(floor, bool) or not isinstance(floor, (int, float)) or floor <= 0:
+        raise SystemExit(f"fidelity.min_lift_rms: a positive rms of Cl, got {floor!r}")
     if numbers["average_from"] >= numbers["end_time"]:
         raise SystemExit(f"fidelity.average_from ({numbers['average_from']:g}) is not before "
                          f"end_time ({numbers['end_time']:g}): there is no window to average over")
@@ -304,7 +324,8 @@ def transient_of(lock: dict) -> dict | None:
             "end_s": numbers["end_time"] * convective,
             "average_from_s": numbers["average_from"] * convective,
             "writes": max(1, int(round(numbers["end_time"] / numbers["write_interval"]))),
-            "min_periods": int(fidelity.get("min_periods") or MIN_PERIODS)}
+            "min_periods": int(fidelity.get("min_periods") or MIN_PERIODS),
+            "min_lift_rms": float(floor)}
 
 
 def shedding_frequency(times, values) -> float | None:
@@ -347,6 +368,10 @@ def transient_force_metrics(case: Path, window: dict) -> tuple[dict, int, dict]:
     the lift's dominant frequency on the lock's length and speed. `periods` is the
     window's length times that frequency, which is what `score` holds to
     `min_periods`.
+
+    A lift whose rms about its mean is under `min_lift_rms`, or whose crossings say a
+    Strouhal number over `MAX_STROUHAL`, is not shedding: no `St`, no periods, and
+    `why` in the record says which, for `unshed`.
     """
     import numpy as np
 
@@ -382,11 +407,22 @@ def transient_force_metrics(case: Path, window: dict) -> tuple[dict, int, dict]:
         cd = results.column(history, "Cd")[keep]
         out["Cd_rms"] = float(np.sqrt(mean((cd - out["Cd"]) ** 2)))
     if "Cl" in columns:
-        frequency = shedding_frequency(tw, results.column(history, "Cl")[keep])
-        if frequency:
+        cl = results.column(history, "Cl")[keep]
+        rms = float(np.std(cl))
+        shed["lift_rms"] = rms
+        floor = window.get("min_lift_rms", MIN_LIFT_RMS)
+        frequency = shedding_frequency(tw, cl) if rms >= floor else None
+        strouhal = frequency * window["convective_s"] if frequency else None
+        if rms < floor:
+            shed["why"] = (f"the lift's rms fluctuation {rms:.3g} is under {floor:g}: "
+                           "the wake is not shedding")
+        elif strouhal is not None and strouhal > MAX_STROUHAL:
+            shed["why"] = (f"the lift's crossings say St {strouhal:.3g}, over {MAX_STROUHAL:g}: "
+                           "noise, not shedding")
+        elif frequency:
             shed["frequency_hz"] = frequency
             shed["periods"] = span * frequency
-            out["St"] = frequency * window["convective_s"]
+            out["St"] = strouhal
     return out, int(keep.sum()), shed
 
 
@@ -760,8 +796,9 @@ def unshed(shed: dict) -> str:
                     f"window opens at {shed['average_from_s']:.4g} s")
         return "no force record in the case"
     t0, t1 = shed["window_s"]
-    return (f"{shed['periods']:.1f} shedding periods in the averaging window "
+    said = (f"{shed['periods']:.1f} shedding periods in the averaging window "
             f"({t0:.4g}..{t1:.4g} s); {shed['min_periods']} needed")
+    return f"{said} -- {shed['why']}" if shed.get("why") else said
 
 
 def worst(labels: list[str]) -> str:
