@@ -355,6 +355,24 @@ def test_what_a_cell_drew_comes_back_without_anybody_naming_it(backend, store, m
     assert blocks[1]["source"]["data"] == images.attachment(RAW_PNG, "image/png")["source"]["data"]
 
 
+def test_a_cell_that_drew_and_then_raised_sends_its_picture_beside_the_error(
+        backend, store, monkeypatch):
+    """The API refuses an `is_error` tool result holding anything but text, and the
+    refusal is of the whole request -- it ended a Sonnet run at its fifth cell. The
+    picture still reaches the model, next to the result rather than inside it."""
+    checking(monkeypatch, PASSES)
+    kernelled(backend, {"plot": CellResult(ok=False, stdout="", error="ValueError: bad",
+                                           traceback="Traceback: bad", images=[RAW_PNG])})
+    made = desk(backend, store, [block("fig = 1  # plot the body"), DONE])
+    made.run("a duct")
+    content = made.provider.calls[1]["messages"][-1]["content"]
+    result = content[0]
+    assert result["type"] == "tool_result" and result["is_error"] is True
+    assert all(b["type"] == "text" for b in result["content"])
+    assert "Traceback: bad" in result["content"][0]["text"]
+    assert [b["type"] for b in content[1:]][:1] == ["image"]
+
+
 def test_a_cell_that_drew_forty_times_does_not_put_forty_pictures_in_one_message(
         backend, store, monkeypatch):
     """Eviction counts messages, so a cell that drew in a loop would slip past it whole

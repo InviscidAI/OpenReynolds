@@ -1518,6 +1518,14 @@ def _answer(messages: list[dict[str, Any]], ids: list[str], content: Any,
         text = content if isinstance(content, str) else str(content)
         _observe(messages, "\n\n".join(t for t in (text, note) if (t or "").strip()))
         return
+    # An error result may hold text only -- the API refuses the whole request
+    # otherwise ("all content must be type `text` if `is_error` is true"), which ended
+    # a run the first time a failing cell had also drawn something. The pictures still
+    # go back, just beside the result instead of inside it.
+    beside: list[dict[str, Any]] = []
+    if is_error and isinstance(content, list):
+        beside = [b for b in content if b.get("type") != "text"]
+        content = [b for b in content if b.get("type") == "text"]
     blocks: list[dict[str, Any]] = [{
         "type": "tool_result",
         "tool_use_id": ids[0],
@@ -1529,6 +1537,7 @@ def _answer(messages: list[dict[str, Any]], ids: list[str], content: Any,
             "type": "tool_result", "tool_use_id": extra, "is_error": True,
             "content": "This call did not run: one cell per message.",
         })
+    blocks.extend(beside)
     if note:
         blocks.append({"type": "text", "text": note})
     messages.append({"role": "user", "content": blocks})
