@@ -526,6 +526,31 @@ def test_none_of_these_are_persisted_and_that_has_not_changed(clean_env, monkeyp
     assert "mesher_model" not in written and "cad_model" not in written
 
 
+def test_the_hosted_desk_builds_with_opus_while_the_conversation_stays_on_sonnet(
+        clean_env, monkeypatch):
+    """What the hosted app exports for a default session: the Reynolds provider and
+    Sonnet. Sonnet finished none of 16 build-up runs in the desk's 30 steps; the desk
+    and its reviewer (which looks with the desk's model) take Opus."""
+    monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "reynolds")
+    monkeypatch.setenv("OPENREYNOLDS_MODEL", "claude-sonnet-5")
+    cfg = Config.load()
+    assert cfg.model == "claude-sonnet-5"
+    assert cfg.mesher_model == "claude-opus-5"
+
+
+def test_a_named_cad_model_still_wins_on_the_hosted_preset(clean_env, monkeypatch):
+    monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "reynolds")
+    monkeypatch.setenv("OPENREYNOLDS_CAD_MODEL", "claude-sonnet-5")
+    assert Config.load().mesher_model == "claude-sonnet-5"
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_other_providers_keep_building_with_the_main_model(clean_env, monkeypatch,
+                                                           provider):
+    monkeypatch.setenv("OPENREYNOLDS_PROVIDER", provider)
+    assert Config.load().mesher_model == ""
+
+
 # -- the prompt ----------------------------------------------------------------
 
 

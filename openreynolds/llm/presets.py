@@ -107,6 +107,9 @@ class Preset:
     key_env: str
     note: str
     needs_key: bool = True
+    cad_model: str = ""
+    """The model the CAD desk builds geometry with when none is configured. Empty
+    means the main model."""
 
 
 REYNOLDS = "reynolds"
@@ -125,6 +128,11 @@ PRESETS: dict[str, Preset] = {
             "claude-sonnet-5", "claude-haiku-4-5", 1_000_000,
             "", "Reynolds' model: Claude through the workspace service, metered to your account.",
             needs_key=False,
+            # But not for the CAD desk. On 8 build-up cases, one run each on the old gate
+            # and the new (2026-09-27), Sonnet 5 finished 0/16 in the desk's 30 steps and
+            # 7/16 given 50; Opus 5 finished 9/16 in 30, at $3.26 a finished case against
+            # Sonnet's $4.35 -- the cheaper token bought more turns and a longer thread.
+            cad_model="claude-opus-5",
         ),
         Preset(
             "anthropic", "anthropic", None,

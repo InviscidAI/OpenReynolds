@@ -167,8 +167,9 @@ class Config:
     out a five-minute solve."""
     desk_model: str = DEFAULT_DESK_MODEL
     mesher_model: str = ""
-    """The model the CAD desk (`cad/`) builds geometry with. Empty means the main
-    model: building the shape is the work, not the narration.
+    """The model the CAD desk (`cad/`) builds geometry with. Empty means the preset's
+    CAD model (Opus 5 on `reynolds`), else the main model: building the shape is the
+    work, not the narration.
     `OPENREYNOLDS_CAD_MODEL`, or `OPENREYNOLDS_MESHER_MODEL` as it was."""
     mesher_effort: str = "high"
     """The effort the CAD desk reasons at, whatever the main loop's is. Placing an
@@ -221,6 +222,8 @@ class Config:
                 self.model = preset.model
             if self.desk_model == DEFAULT_DESK_MODEL:
                 self.desk_model = preset.desk_model
+        if preset is not None and not self.mesher_model:
+            self.mesher_model = preset.cad_model
 
     def model_key_missing(self) -> str | None:
         """The name of the model-key setting that is absent, or `None` when the model
