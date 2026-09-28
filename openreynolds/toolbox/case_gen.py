@@ -84,6 +84,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import reference_area  # noqa: E402
 import study_state
 
 TOLERANCE = 1e-9
@@ -656,7 +657,25 @@ def build_plan(case: Path, opts) -> Plan:
         notes.append(f"periodic {facts['patches'][0]} -> {facts['patches'][1]} ({facts['type']}), "
                      f"pitch {facts['pitch']:.4g} m, driven along {vector(facts['drive'])} by "
                      "meanVelocityForce: dp per period = its pressure gradient x the pitch")
+    body = str(opts.get("body_patch") or "body")
+    if body in mesh.patch_face_counts():
+        info["reference"] = body_reference(case, body, opts)
     return Plan(mesh, roles, length, info, notes)
+
+
+def body_reference(case: Path, body: str, opts) -> dict:
+    """The body's mirror factor and as-meshed areas, or why they could not be read.
+
+    `reference_area.py` reads them off `constant/polyMesh`, whoever made the mesh: a
+    symmetry patch that shares points with the body cuts it, and the areas are the
+    meshed part's, so a half model's force over them is the whole body's coefficient.
+    This is the fix F-43 asked for, lost with `snappy_gen.py` on 2026-09-07."""
+    try:
+        return reference_area.assess(case, [body], (1.0, 0.0, 0.0),
+                                     opts.get("not_mirror") or (),
+                                     frontal=(opts.get("area") or "frontal") == "frontal")
+    except reference_area.MeshError as exc:
+        return {"error": str(exc)}
 
 
 # -- the numbers, and which of them was derived ------------------------------------
@@ -1368,7 +1387,7 @@ def force_coeffs(plan: Plan, flow: Flow, opts) -> list[str]:
     body = str(opts.get("body_patch") or "body")
     entries: list[str] = []
     if body in plan.mesh.patch_face_counts():
-        entries += force_coefficients(plan, flow, body)
+        entries += force_coefficients(plan, flow, body, opts)
     if opts.get("dp"):
         entries += pressure_objects(plan)
     if opts.get("yplus"):
@@ -1385,9 +1404,13 @@ def force_coeffs(plan: Plan, flow: Flow, opts) -> list[str]:
     return entries
 
 
-def force_coefficients(plan: Plan, flow: Flow, body: str) -> list[str]:
-    """The `forceCoeffs` block on `body`, and the residual log beside it."""
-    area = plan.length * plan.mesh.thickness
+def force_coefficients(plan: Plan, flow: Flow, body: str, opts) -> list[str]:
+    """The `forceCoeffs` block on `body`, and the residual log beside it.
+
+    `opts` is here for the reference area: `reference_aref` reads the mirror
+    factor and the as-meshed areas off `plan.info['reference']` and picks between
+    frontal and wetted by `--area`."""
+    area, why = reference_aref(plan, opts)
     magnitude = flow.speed
     entries = [
         "    forceCoeffs", "    {",
@@ -1402,8 +1425,7 @@ def force_coefficients(plan: Plan, flow: Flow, body: str) -> list[str]:
         "        pitchAxis       (0 0 1);",
         f"        magUInf         {magnitude:g};",
         f"        lRef            {plan.length:.6g};",
-        f"        Aref            {area:.6g};   // {plan.length:g} m span-chord x "
-        f"{plan.mesh.thickness:g} m thickness",
+        f"        Aref            {area:.6g};   // {why}",
         "        writeControl    timeStep;",
         "        writeInterval   1;",
         "    }",
@@ -1464,6 +1486,39 @@ def pressure_objects(plan: Plan) -> list[str]:
             "        log             false;",
             "    }",
         ]
+def reference_aref(plan: Plan, opts) -> tuple[float, str]:
+    """The area `forceCoeffs` divides by, and the comment that says what it is.
+
+    3D: the body patch's own frontal (default) or wetted area, measured off the mesh
+    as meshed -- on a half model, half the body's. 2D: span-chord times the one cell's
+    thickness, over the mirror factor when a symmetry plane cuts the body, since the
+    chord is not halved by a cut along it but the force is."""
+    ref = plan.info.get("reference") or {}
+    factor = int(ref.get("mirror_factor") or 1)
+    cut = f", 1/{factor} of the body's because a symmetry plane cuts it" if factor > 1 else ""
+    if plan.mesh.two_d or "error" in ref or not ref:
+        area = plan.length * plan.mesh.thickness / factor
+        why = f"{plan.length:g} m span-chord x {plan.mesh.thickness:g} m thickness{cut}"
+        if not plan.mesh.two_d:
+            why += " -- UNMEASURED, check it: " + ref.get("error", "no body patch read")
+        return area, why
+    kind = "frontal" if (opts.get("area") or "frontal") == "frontal" else "wetted"
+    return ref[f"{kind}_meshed_m2"], f"{kind} area of the body as meshed{cut}"
+
+
+def reference_lines(plan: Plan, flow: Flow, model: str) -> list[str]:
+    """The mirror factor and the friction floor, for the summary."""
+    ref = plan.info.get("reference")
+    if not ref:
+        return []
+    if "error" in ref:
+        return [f"forces     reference area not measured ({ref['error']}): Aref in "
+                "controlDict is span x thickness, which is not a 3D body's area -- set it"]
+    lines = [f"forces     {line}" for line in reference_area.lines(ref)[1:]]
+    floor, name = reference_area.friction_floor(flow.reynolds, model != "laminar")
+    lines.append(f"           floor: flat-plate friction alone at Re {flow.reynolds:.3g} is "
+                 f"Cf = {floor:.5f} ({name}); a total Cd below it on these areas is "
+                 "impossible, not tight")
     return lines
 
 
@@ -2180,6 +2235,7 @@ def summary(case: Path, plan: Plan, flow: Flow, study: str, model: str, why: str
         end = float(opts["end_time"] if study == "transient" else opts["iterations"])
         lines += [f"{note}" for note in start_entries(case, end)[1]]
     lines += [f"           {note}" for note in plan.notes]
+    lines += reference_lines(plan, flow, model)
     return lines
 
 
@@ -2288,6 +2344,13 @@ def main(argv: list[str] | None = None) -> int:
     patches.add_argument("--yplus", action="store_true",
                          help="Add a yPlus function object: min, max and mean y+ per wall "
                               "patch at every write, into postProcessing/yPlus/.")
+    patches.add_argument("--area", default="frontal", choices=["frontal", "wetted"],
+                         help="Which area of the body, measured off the mesh as meshed, "
+                              "forceCoeffs divides by (3D; default frontal).")
+    patches.add_argument("--not-mirror", action="append", default=[], dest="not_mirror",
+                         help="A symmetry patch where the body ends rather than is mirrored "
+                              "-- a double-body waterline. Otherwise a symmetry plane that "
+                              "cuts the body halves its areas and its forces.")
 
     args = ap.parse_args(argv)
 
