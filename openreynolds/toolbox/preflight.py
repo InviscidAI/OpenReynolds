@@ -2305,6 +2305,9 @@ def _force_entry(name: str, values: dict[str, str]) -> dict[str, Any]:
         "magUInf": as_float(values.get("magUInf")),
         "lRef": as_float(values.get("lRef")),
         "Aref": as_float(values.get("Aref")),
+        "patches": values.get("patches", "").replace("(", " ").replace(")", " ")
+        .replace('"', " ").split(),
+        "dragDir": values.get("dragDir", ""),
     }
 
 
@@ -2400,14 +2403,21 @@ def force_units_diagnosis(
     return result
 
 
-def check_units(case: Case, intent: Intent) -> list[Finding]:
-    objects = find_force_objects(case.read("system/controlDict"))
-    system = case.path / "system"
-    # A function object is as often in its own file under system/ and pulled in with
-    # #includeFunc as it is written out inside controlDict.
+def force_objects_in(case_dir: Path) -> list[dict[str, Any]]:
+    """Every forces/forceCoeffs object a case defines, wherever it is written.
+
+    A function object is as often in its own file under system/ and pulled in with
+    #includeFunc as it is written out inside controlDict."""
+    system = Path(case_dir) / "system"
+    objects = find_force_objects(read_text(system / "controlDict"))
     for entry in sorted(system.glob("*")) if system.is_dir() else []:
         if entry.is_file() and entry.name != "controlDict":
             objects.extend(find_force_objects(read_text(entry), name_if_bare=entry.name))
+    return objects
+
+
+def check_units(case: Case, intent: Intent) -> list[Finding]:
+    objects = force_objects_in(case.path)
     dimensions = parse_dimensions(case.field_texts.get("p", ""))
     result = force_units_diagnosis(dimensions, objects, has_fields=bool(case.field_texts))
 
