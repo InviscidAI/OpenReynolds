@@ -58,6 +58,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import reference_area  # noqa: E402
 import study_state
 
 TOLERANCE = 1e-9
@@ -534,7 +535,25 @@ def build_plan(case: Path, opts) -> Plan:
         notes.append("the smallest cell could not be measured, so the y+ estimate and "
                      "the Courant time step are left out")
     info = {"external": external, "bodies": bodies, "length_from": source}
+    body = str(opts.get("body_patch") or "body")
+    if body in mesh.patch_face_counts():
+        info["reference"] = body_reference(case, body, opts)
     return Plan(mesh, roles, length, info, notes)
+
+
+def body_reference(case: Path, body: str, opts) -> dict:
+    """The body's mirror factor and as-meshed areas, or why they could not be read.
+
+    `reference_area.py` reads them off `constant/polyMesh`, whoever made the mesh: a
+    symmetry patch that shares points with the body cuts it, and the areas are the
+    meshed part's, so a half model's force over them is the whole body's coefficient.
+    This is the fix F-43 asked for, lost with `snappy_gen.py` on 2026-09-07."""
+    try:
+        return reference_area.assess(case, [body], (1.0, 0.0, 0.0),
+                                     opts.get("not_mirror") or (),
+                                     frontal=(opts.get("area") or "frontal") == "frontal")
+    except reference_area.MeshError as exc:
+        return {"error": str(exc)}
 
 
 # -- the numbers, and which of them was derived ------------------------------------
@@ -1029,7 +1048,7 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str) -> str:
     body = str(opts.get("body_patch") or "body")
     if body not in plan.mesh.patch_face_counts():
         return ""
-    area = plan.length * plan.mesh.thickness
+    area, why = reference_aref(plan, opts)
     magnitude = flow.speed
     entries = [
         "functions", "{",
@@ -1045,8 +1064,7 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str) -> str:
         "        pitchAxis       (0 0 1);",
         f"        magUInf         {magnitude:g};",
         f"        lRef            {plan.length:.6g};",
-        f"        Aref            {area:.6g};   // {plan.length:g} m span-chord x "
-        f"{plan.mesh.thickness:g} m thickness",
+        f"        Aref            {area:.6g};   // {why}",
         "        writeControl    timeStep;",
         "        writeInterval   1;",
         "    }",
@@ -1061,6 +1079,42 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str) -> str:
         "}",
     ]
     return "\n" + "\n".join(entries)
+
+
+def reference_aref(plan: Plan, opts) -> tuple[float, str]:
+    """The area `forceCoeffs` divides by, and the comment that says what it is.
+
+    3D: the body patch's own frontal (default) or wetted area, measured off the mesh
+    as meshed -- on a half model, half the body's. 2D: span-chord times the one cell's
+    thickness, over the mirror factor when a symmetry plane cuts the body, since the
+    chord is not halved by a cut along it but the force is."""
+    ref = plan.info.get("reference") or {}
+    factor = int(ref.get("mirror_factor") or 1)
+    cut = f", 1/{factor} of the body's because a symmetry plane cuts it" if factor > 1 else ""
+    if plan.mesh.two_d or "error" in ref or not ref:
+        area = plan.length * plan.mesh.thickness / factor
+        why = f"{plan.length:g} m span-chord x {plan.mesh.thickness:g} m thickness{cut}"
+        if not plan.mesh.two_d:
+            why += " -- UNMEASURED, check it: " + ref.get("error", "no body patch read")
+        return area, why
+    kind = "frontal" if (opts.get("area") or "frontal") == "frontal" else "wetted"
+    return ref[f"{kind}_meshed_m2"], f"{kind} area of the body as meshed{cut}"
+
+
+def reference_lines(plan: Plan, flow: Flow, model: str) -> list[str]:
+    """The mirror factor and the friction floor, for the summary."""
+    ref = plan.info.get("reference")
+    if not ref:
+        return []
+    if "error" in ref:
+        return [f"forces     reference area not measured ({ref['error']}): Aref in "
+                "controlDict is span x thickness, which is not a 3D body's area -- set it"]
+    lines = [f"forces     {line}" for line in reference_area.lines(ref)[1:]]
+    floor, name = reference_area.friction_floor(flow.reynolds, model != "laminar")
+    lines.append(f"           floor: flat-plate friction alone at Re {flow.reynolds:.3g} is "
+                 f"Cf = {floor:.5f} ({name}); a total Cd below it on these areas is "
+                 "impossible, not tight")
+    return lines
 
 
 def purge_write(study: str, opts) -> int:
@@ -1410,6 +1464,7 @@ def summary(case: Path, plan: Plan, flow: Flow, study: str, model: str, why: str
     if opts is not None:
         lines += turbulence_notes(plan, flow, model, opts)
     lines += [f"           {note}" for note in plan.notes]
+    lines += reference_lines(plan, flow, model)
     return lines
 
 
@@ -1482,6 +1537,13 @@ def main(argv: list[str] | None = None) -> int:
     patches.add_argument("--body", default="body", dest="body_patch",
                          help="The patch forces are taken on, when there is one (default 'body'). "
                               "A patch by that name gets a forceCoeffs function object.")
+    patches.add_argument("--area", default="frontal", choices=["frontal", "wetted"],
+                         help="Which area of the body, measured off the mesh as meshed, "
+                              "forceCoeffs divides by (3D; default frontal).")
+    patches.add_argument("--not-mirror", action="append", default=[], dest="not_mirror",
+                         help="A symmetry patch where the body ends rather than is mirrored "
+                              "-- a double-body waterline. Otherwise a symmetry plane that "
+                              "cuts the body halves its areas and its forces.")
 
     args = ap.parse_args(argv)
 

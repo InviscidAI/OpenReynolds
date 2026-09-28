@@ -10,7 +10,7 @@ from openreynolds.llm import BadRequest, Turn
 from openreynolds.loop import KEEP_LIVE_IMAGES, Loop
 from openreynolds.tools import ToolContext
 
-from conftest import install_model as install, message, text_block, tool_block
+from conftest import install_model as install, message, model_cmd, text_block, tool_block
 
 
 @pytest.fixture
@@ -413,7 +413,7 @@ def test_end_pressed_between_two_ordinary_tool_calls_makes_no_further_call(
     def pressed_end_during(cmd, *args, **kwargs):
         # End arrives while the first command runs: it is in the inbox by the time
         # the drain runs before the second call.
-        if cmd == "sleep 60; ls mesh":
+        if model_cmd(cmd) == "sleep 60; ls mesh":
             reader._lines.append("/exit")
         return real(cmd, *args, **kwargs)
 
