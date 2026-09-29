@@ -953,3 +953,54 @@ def test_the_transient_window_is_convective_times_in_seconds(score):
     assert t["average_from_s"] == pytest.approx(20 * CONVECTIVE_S)
     assert t["writes"] == 6
     assert score.transient_of(LOCK) is None, "a steady lock has no transient window"
+
+
+# -- a periodic cell: dp per period off the momentum source ------------------------
+
+
+def periodic(case: Path, gradients: list[float], pitch: float = 0.004) -> None:
+    """What `case_gen.py --periodic` leaves (`periodic.json`) and what `meanVelocityForce`
+    prints once per iteration, appended to the solver log the fixture already wrote."""
+    (case / "periodic.json").write_text(json.dumps({"patches": ["west", "east"], "pitch": pitch}))
+    lines = "".join(f"Pressure gradient source: uncorrected Ubar = 0.1, pressure gradient = {g:.6e}\n"
+                    for g in gradients)
+    with open(case / "log.simpleFoam", "a", encoding="utf-8") as f:
+        f.write(lines)
+
+
+def test_a_periodic_cell_reports_dp_per_period_as_the_gradient_times_the_pitch(score, good_case):
+    """No inlet and no outlet, so no pInlet/pOutlet: the drop per period is the force the
+    source needed to hold the mean velocity, i.e. the tail mean of its gradient (2.5 over
+    the last two of ten rows; the settling 9.0 is outside the window) times the pitch."""
+    periodic(good_case, [9.0] * 8 + [2.0, 3.0], pitch=0.004)
+    out = score.score(good_case, LOCK)
+    assert out["metrics"]["dp"] == pytest.approx(2.5 * 0.004)
+    assert score.periodic_drop(good_case, good_case / "log.simpleFoam") == (pytest.approx(0.01), 2)
+
+
+def test_the_outlet_probes_win_when_a_case_has_both(score, good_case):
+    pressures(good_case, inlet=[3.0] * 10, outlet=[1.0] * 10)
+    periodic(good_case, [5.0] * 10)
+    assert score.score(good_case, LOCK)["metrics"]["dp"] == pytest.approx(2.0)
+
+
+def test_a_periodic_case_whose_log_has_no_gradient_has_no_dp(score, good_case):
+    """The source never ran (an fvOptions that did not load): no number, not zero."""
+    periodic(good_case, [])
+    assert "dp" not in score.score(good_case, LOCK)["metrics"]
+
+
+def test_a_stage_ratio_is_the_derived_reverse_over_forward_per_period(score, tmp_path):
+    lock = {**LOCK, "body_patch": "", "fidelity": {**LOCK["fidelity"], "yplus": None},
+            "cases": [{"name": "forward", "case_gen_args": ["--direction", "x"]},
+                      {"name": "reverse", "case_gen_args": ["--direction=-x"]}],
+            "derived": {"stage_ratio": "reverse.dp / forward.dp"}}
+    cell = tmp_path / "cell"
+    mesh(cell)
+    for name, g in (("forward", 2.0), ("reverse", 5.0)):
+        mesh(cell / name)
+        log(cell / name, levelled())
+        periodic(cell / name, [g] * 10)
+    out = score.score_cases(cell, lock)
+    assert out["metrics"]["stage_ratio"] == pytest.approx(2.5)
+    assert out["metrics"]["forward.dp"] == pytest.approx(2.0 * 0.004)
