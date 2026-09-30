@@ -19,6 +19,14 @@ what it measures, and how
     cannot subtract two different iterations. It is reported as `dp`, in the solver's
     own pressure units.
 
+    A periodic cell (`case_gen.py --periodic`) has no inlet and no outlet to probe: it
+    is driven at a fixed mean velocity by a `meanVelocityForce` source, and the drop
+    per period is the pressure gradient that source had to apply -- the tail mean of
+    the `pressure gradient = ...` lines it prints each iteration -- times the pitch
+    `case_gen.py` measured and left in `periodic.json`. It is reported as `dp` too, so
+    a lock's `reverse.dp / forward.dp` is a per-stage ratio with no change to the lock
+    grammar. The outlet probes win when a case somehow has both.
+
     Force coefficients are the mean over the last `fidelity.window` fraction of the
     `forceCoeffs.dat` rows (default the last 20%), never the last row: on a steady
     solver a bluff section's coefficients oscillate about their mean, and a point read
@@ -112,6 +120,16 @@ tail of a run that was sized to converge, so a fifth."""
 DP_FUNCTIONS = ("pInlet", "pOutlet")
 """The two function objects `case_gen.py --dp` writes (`PRESSURE_FUNCTIONS` there), in
 the order the drop subtracts them: `dp = p_inlet - p_outlet`."""
+
+PERIODIC_FILE = "periodic.json"
+"""What `case_gen.py --periodic` writes into the case (`PERIODIC_FILE` there): the
+pair, the drive, and the `pitch` the gradient is multiplied by. Pinned in both files'
+tests for the reason `DP_FUNCTIONS` is."""
+
+GRADIENT = re.compile(r"pressure gradient\s*=\s*([-+0-9.eE]+)")
+"""`meanVelocityForce`'s log line, once per momentum solve: `Pressure gradient source:
+uncorrected Ubar = 0.1, pressure gradient = 12.3`. The gradient is kinematic (m/s2)
+and along the drive, so it is positive whichever way the cell is driven."""
 
 COEFFICIENTS = ("Cd", "Cl", "CmPitch")
 """The whole-body coefficients reported under their forceCoeffs names. `Cm` is what
@@ -473,6 +491,26 @@ def pressure_drop(case: Path, fraction: float = DEFAULT_WINDOW) -> tuple[float |
     return sum(inlet[t] - outlet[t] for t in window) / len(window), len(window)
 
 
+def periodic_drop(case: Path, log: Path | None,
+                  fraction: float = DEFAULT_WINDOW) -> tuple[float | None, int]:
+    """(`dp` per period over the tail of the record, rows the mean was taken over).
+
+    The same window as every other metric, over the source's own gradient lines rather
+    than a point read of the last one. (None, 0) for a case that is not periodic, or
+    whose log never printed a gradient: a source that did not run is no drop, not zero.
+    """
+    spec = case / PERIODIC_FILE
+    if not spec.is_file() or log is None or not log.is_file():
+        return None, 0
+    pitch = float(json.loads(spec.read_text(encoding="utf-8"))["pitch"])
+    values = [float(m.group(1)) for m in GRADIENT.finditer(log.read_text(errors="replace"))]
+    if not values:
+        return None, 0
+    keep = max(1, int(round(len(values) * fraction)))
+    window = values[-keep:]
+    return pitch * sum(window) / len(window), len(window)
+
+
 # -- derived metrics: arithmetic over metric names, checked as a tree ----------------
 
 
@@ -730,11 +768,14 @@ def score(case: Path, lock: dict, run: dict | None = None, *, label: str = "",
             metrics, window, shed = transient_force_metrics(case, transient)
         else:
             metrics, window = force_metrics(case, fraction)
+        log_path = solver_log(case, solver)
         dp, dp_window = pressure_drop(case, fraction)
+        if dp is None:
+            dp, dp_window = periodic_drop(case, log_path, fraction)
         if dp is not None:
             metrics["dp"] = dp
             window = window or dp_window
-        log = read_log(solver_log(case, solver))
+        log = read_log(log_path)
         converged, shape, diverged = log["converged"], log["shape"], log["diverged"]
         if transient:
             # A shedding run's residuals oscillate with the flow and never level; what
