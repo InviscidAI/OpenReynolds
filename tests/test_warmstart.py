@@ -24,6 +24,7 @@ from conftest import (
     ScriptedReader,
     install_model,
     message,
+    needs_a_kernel,
     reserved,
     text_block,
     tool_block,
@@ -358,6 +359,7 @@ def test_a_failed_start_fails_the_kernel_too():
     assert raised.value.code == "unavailable", "raised, so the desk says no kernel"
 
 
+@needs_a_kernel
 def test_a_real_cell_runs_through_the_stand_in(tmp_path):
     """End to end on a real kernel: what the desk sends, and what `_report` reads."""
     pytest.importorskip("jupyter_client")
