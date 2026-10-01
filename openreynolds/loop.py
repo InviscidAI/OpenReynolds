@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from . import modes
 from .config import CONTEXT_REFRESH_FRACTION, CONTEXT_WINDOW_TOKENS, Config
-from .llm import BadRequest, Listener, Turn, make_provider
+from .llm import BadRequest, Listener, Turn, make_provider, refusal_line
 from .prompt import system_prompt
 from .store import Store
 from .tools import TOOLS, ToolContext, describe, dispatch, tools_for
@@ -313,9 +313,10 @@ class Loop:
             self._drain_posted()
             response = self._send()
 
+            if response.declined:
+                self._fell_back(response)
             if response.stop_reason == "refusal":
-                reason = response.stop_explanation or "no explanation given"
-                self.view.notice(f"The model declined this request: {reason}")
+                self.view.notice(refusal_line(response))
                 return response
 
             self.messages.append(response.as_message())
@@ -476,6 +477,37 @@ class Loop:
         """
         self._gather()
         return bool(self._typed)
+
+    def _fell_back(self, response: Turn) -> None:
+        """The model asked for declined this request and another answered it (or
+        declined too): say so, and when one answered, make it the session's model.
+
+        The vendor's advice for a multi-turn conversation is to stay on the model that
+        accepted rather than switch back, and the provider already pins the pair
+        (`Provider.pinned`). Moving `cfg.model` as well keeps `/model` and the status
+        line honest about who is answering, and it is what `/model <the first one>`
+        undoes -- `switch.apply` clears the pin with the switch. Done here, between two
+        complete assistant turns, the same moment a `/model` switch is applied."""
+        if response.stop_reason == "refusal":
+            return  # `refusal_line` says it all in the caller
+        from . import switch
+
+        asked = response.declined[0][0]
+        served = response.model
+        self.view.notice(
+            f"{refusal_line(response)} The session stays on {served}; "
+            f"/model {asked} goes back."
+        )
+        if served == self.cfg.model or not served:
+            return
+        self.cfg.model = served
+        # The declined model's reasoning blocks carry its signature; the one that
+        # answered is the one that will be asked next, so they go the way they do on
+        # any other switch.
+        switch.strip_thinking(self.messages)
+        self.store.session.model = served
+        self.store.save()
+        self.view.model(self.cfg.model, self.cfg.effort, self.cfg.provider)
 
     def _send(self) -> Turn:
         """One streamed request, printing as it arrives."""

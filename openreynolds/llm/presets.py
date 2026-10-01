@@ -226,6 +226,26 @@ def context_window_for(model: str) -> int | None:
     return MODEL_CONTEXT_WINDOWS.get((model or "").strip())
 
 
+def fallbacks_for(provider: str) -> tuple[str, ...]:
+    """The models a refused request on `provider` is retried on, in order.
+
+    Only the models the provider is known to serve (`KNOWN_MODELS`), so `reynolds` --
+    which meters exactly two -- falls from Opus to Sonnet and from Sonnet to Opus, and a
+    direct Anthropic key does the same. The desk model is never one of them: Haiku's
+    window would not hold a study's thread, and a 400 for an oversized request is a
+    worse answer than the refusal it replaced. A preset with no list has no fallback,
+    because guessing a second model id at a vendor we know one id for is how a session
+    ends on a 404 instead. `OPENREYNOLDS_FALLBACK_MODELS` names a chain of its own.
+
+    The requested model is left in: `Provider.chain` takes it out at request time, so
+    the same tuple serves whichever of the two is the session's model."""
+    preset = preset_for(provider)
+    if preset is None:
+        return ()
+    listed = KNOWN_MODELS.get(preset.name) or ()
+    return tuple(m for m in listed if m != preset.desk_model)
+
+
 def models_for(provider: str) -> tuple[str, ...]:
     """The model ids known for a provider, its default first. Empty for a bare family.
 

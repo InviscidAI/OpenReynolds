@@ -165,6 +165,25 @@ class OpenAIProvider(Provider):
         max_tokens: int,
         listener: Listener,
     ) -> Turn:
+        return self.with_fallback(
+            model,
+            lambda asked: self._stream_model(
+                asked, system=system, messages=messages, tools=tools,
+                effort=effort, max_tokens=max_tokens, listener=listener,
+            ),
+        )
+
+    def _stream_model(
+        self,
+        model: str,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        effort: str,
+        max_tokens: int,
+        listener: Listener,
+    ) -> Turn:
         for attempt in range(1, 4):
             kwargs: dict[str, Any] = dict(
                 model=model,
@@ -268,6 +287,7 @@ class OpenAIProvider(Provider):
             content=content,
             stop_reason=stop,
             stop_explanation="the endpoint's content filter" if stop == "refusal" else "",
+            model=str(kwargs.get("model") or ""),
             context_tokens=_context_tokens(usage),
             tokens=_token_classes(usage),
             provider=self.name,

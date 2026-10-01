@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from openreynolds.config import CONTEXT_WINDOW_TOKENS, Config
@@ -77,6 +79,78 @@ def test_refusal_stops_without_appending_a_turn(loop):
 
     assert response.stop_reason == "refusal"
     assert [m["role"] for m in loop.messages] == ["user"]
+
+
+def refusal(explanation="This request was blocked as it seems to violate ..."):
+    turn = message([], stop_reason="refusal")
+    turn.model = "claude-opus-5"
+    turn.stop_details = SimpleNamespace(type="refusal", category="frontier_llm",
+                                        explanation=explanation)
+    return turn
+
+
+def test_a_refused_turn_is_answered_by_the_fallback_and_the_session_stays_on_it(loop):
+    """The live failure of 2026-10-01: Opus declined a CFD request under the "reverse
+    engineering or duplicating model outputs" rule, and the session stopped with the
+    sentence on screen. The vendor's remedy is the same request on another Claude
+    model, and to stay there for the rest of the conversation."""
+    answered = message([text_block("The mesh has 94,321 cells.")])
+    answered.model = "claude-sonnet-5"
+    fake = install(loop, [refusal(), answered])
+    loop.say("how many cells?")
+
+    response = loop.run()
+
+    assert response.stop_reason == "end_turn" and response.model == "claude-sonnet-5"
+    assert [m["role"] for m in loop.messages] == ["user", "assistant"]
+    assert [c["model"] for c in fake.calls] == ["claude-opus-5", "claude-sonnet-5"]
+    # The session moved with the answer, and says so.
+    assert loop.cfg.model == "claude-sonnet-5"
+    assert loop.store.session.model == "claude-sonnet-5"
+    said = "\n".join(loop.view.notices)
+    assert "claude-opus-5 (frontier_llm: This request was blocked" in said
+    assert "claude-sonnet-5 answered it instead" in said
+    assert "stays on claude-sonnet-5" in said and "/model claude-opus-5" in said
+    # And the next turn asks Sonnet first, once, rather than paying for another refusal.
+    fake._responses = [answered]
+    loop.say("and the volume?")
+    loop.run()
+    assert fake.calls[-1]["model"] == "claude-sonnet-5" and len(fake.calls) == 3
+
+
+def test_a_refused_turn_strips_the_declined_models_reasoning_from_the_thread(loop):
+    """What `switch.apply` does on any model change: a thinking block carries a
+    signature only the model that wrote it accepts."""
+    first = message([SimpleNamespace(type="thinking", thinking="hmm", signature="sig"),
+                     text_block("done")])
+    answered = message([text_block("ok")])
+    answered.model = "claude-sonnet-5"
+    install(loop, [first, refusal(), answered])
+    loop.say("go")
+    loop.run()
+    loop.say("again")
+    loop.run()
+
+    kinds = [getattr(b, "type", None) for b in loop.messages[1]["content"]]
+    assert "thinking" not in kinds and "text" in kinds
+
+
+def test_when_the_whole_chain_declines_the_notice_names_every_model(loop):
+    second = refusal("declined")
+    second.model = "claude-sonnet-5"
+    second.stop_details.category = "general_harms"
+    fake = install(loop, [refusal(), second])
+    loop.say("something")
+
+    response = loop.run()
+
+    assert response.stop_reason == "refusal"
+    assert [m["role"] for m in loop.messages] == ["user"]
+    assert [c["model"] for c in fake.calls] == ["claude-opus-5", "claude-sonnet-5"]
+    assert loop.cfg.model == "claude-opus-5"  # nothing answered, nothing moved
+    notice = loop.view.notices[-1]
+    assert notice.startswith("Every model declined this request")
+    assert "claude-opus-5 (frontier_llm" in notice and "claude-sonnet-5 (general_harms: declined)" in notice
 
 
 def test_facts_use_the_operator_channel_after_a_user_turn(loop):

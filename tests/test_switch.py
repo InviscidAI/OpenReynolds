@@ -291,6 +291,25 @@ def test_a_model_change_on_the_same_client_clears_what_it_latched(loop, models):
     assert client.lean is False and client.legacy_max_tokens is False
 
 
+def test_a_model_change_clears_the_pin_a_refusal_made(loop, models):
+    """`Provider.with_fallback` pins a refused model to the one that answered for it.
+    The person naming a model is asking for that model, not for where its refusals
+    went -- so `/model claude-opus-5` after a fallback to Sonnet really asks Opus."""
+    client = loop.provider
+    client.pinned = {"claude-opus-5": "claude-sonnet-5"}
+    switch.request(loop, "claude-sonnet-5", env={})
+    loop.say("go")
+    loop.run()
+    assert client.pinned == {}
+
+
+def test_the_status_names_the_fallback_chain(loop):
+    loop.provider.fallbacks = ("claude-opus-5", "claude-sonnet-5")
+    text = "\n".join(switch.request(loop, ""))
+    assert "declines a request, it is retried on: claude-sonnet-5" in text
+    assert "retried on: claude-opus-5" not in text  # not on itself
+
+
 def test_a_same_provider_switch_takes_the_new_models_own_window(loop, models):
     loop.context_tokens = 600_000  # fits 1M, not Haiku's 200k
     said = "\n".join(switch.request(loop, "claude-haiku-4-5", env={}))
