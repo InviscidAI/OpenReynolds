@@ -78,6 +78,20 @@ class Turn:
     content: list[Any]
     stop_reason: str = "end_turn"
     stop_explanation: str = ""
+    stop_category: str = ""
+    """On a `refusal`, the policy area the provider's classifier named (Anthropic's
+    `stop_details.category`: `cyber`, `bio`, `frontier_llm`, `reasoning_extraction`,
+    `general_harms`), or empty when it named none. Shown, never parsed: the vendor says
+    the wording is not stable."""
+    model: str = ""
+    """The model that served this turn, by the id it was asked for. Usually the
+    session's; after a refusal it is the fallback that answered
+    (`Provider.with_fallback`)."""
+    declined: list[tuple[str, str]] = field(default_factory=list)
+    """`(model, why)` for every model that refused this request before `model` was
+    asked. Empty on an ordinary turn. When `stop_reason` is itself `refusal`, these are
+    the models that declined before the one whose refusal this is -- the whole chain
+    said no."""
     context_tokens: int = 0
     """Everything this request occupied in the model's window -- input, cached input
     and output together -- so the loop can tell when a refresh is due. Each provider
@@ -143,6 +157,66 @@ class Provider:
 
     name = ""
 
+    fallbacks: tuple[str, ...] = ()
+    """The models a refused request is retried on, in order (`make_provider` sets it
+    from the configuration or the preset). Empty means a refusal is final.
+
+    A refusal here is the vendor's own safety classifier declining a request --
+    Anthropic answers it as a normal 200 with `stop_reason: "refusal"`, and its
+    documentation says the remedy is to send the same request to another Claude model.
+    One did, live, on 2026-10-01: a CFD study was declined under the "reverse
+    engineering or duplicating model outputs" rule, and the session stopped dead with
+    the sentence on screen and nothing else to do. The classifier is per model, so the
+    same request on the next model usually goes through."""
+
+    @property
+    def pinned(self) -> dict[str, str]:
+        """`requested model -> the fallback that answered`, for the rest of this
+        provider's life. The vendor's advice is to stay on the model that accepted
+        rather than re-ask the one that refused on every turn, and a refusal that
+        arrives before any output is still billed in some categories. A desk running
+        its own thirty-step loop on the model that just declined would otherwise pay
+        for thirty refusals. `switch.apply` clears it: a switch the person asked for
+        outranks a pin a refusal made."""
+        pins = self.__dict__.get("_pinned")
+        if pins is None:
+            pins = self.__dict__["_pinned"] = {}
+        return pins
+
+    def chain(self, model: str) -> list[str]:
+        """The models to ask, in order: the one named (or the fallback pinned for it),
+        then every fallback not yet in the list."""
+        asked = self.pinned.get(model, model)
+        out = [asked]
+        for alt in self.fallbacks:
+            if alt not in out and alt != model:
+                out.append(alt)
+        return out
+
+    def with_fallback(self, model: str, send: Callable[[str], "Turn"]) -> "Turn":
+        """`send(model)`; on a refusal, `send` again down `fallbacks`, pinning the
+        model that answers. The turn that comes back names the model that served it and
+        every model that declined before it. When the whole chain declines, the last
+        refusal is returned with the earlier ones listed on it."""
+        declined: list[tuple[str, str]] = []
+        turn: Turn | None = None
+        for asked in self.chain(model):
+            turn = send(asked)
+            # The id as it was asked for, not the dated one the vendor resolves it to:
+            # this is what the next request (and a hosted allowlist) will be given.
+            turn.model = asked
+            if turn.stop_reason != "refusal":
+                if asked != model:
+                    self.pinned[model] = asked
+                break
+            declined.append((asked, _why(turn)))
+        assert turn is not None
+        if turn.stop_reason == "refusal":
+            # The last refusal is the turn; the models before it are the record.
+            declined = declined[:-1]
+        turn.declined = declined
+        return turn
+
     def stream(
         self,
         *,
@@ -168,6 +242,27 @@ class Provider:
         `ProviderError` -- with `CANNOT_SEE` in the message when it is the image that
         was refused."""
         raise NotImplementedError
+
+
+def _why(turn: "Turn") -> str:
+    """A refusal's reason as one line: the category, then the vendor's sentence."""
+    parts = [p for p in (turn.stop_category, turn.stop_explanation) if p]
+    return ": ".join(parts) if parts else "no explanation given"
+
+
+def refusal_line(turn: "Turn") -> str:
+    """What to tell a person about a turn that is a refusal, or that was served only
+    after one. Empty for an ordinary turn."""
+    if turn.stop_reason == "refusal":
+        chain = [*turn.declined, (turn.model or "the model", _why(turn))]
+        said = "; ".join(f"{model} ({why})" for model, why in chain)
+        if len(chain) == 1:
+            return f"The model declined this request: {_why(turn)}"
+        return f"Every model declined this request -- {said}"
+    if turn.declined:
+        said = "; ".join(f"{model} ({why})" for model, why in turn.declined)
+        return f"{said} declined this request; {turn.model} answered it instead."
+    return ""
 
 
 CANNOT_SEE = "cannot see images"

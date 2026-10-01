@@ -19,8 +19,18 @@ from .base import (
     ToolCall,
     ToolUseBlock,
     Turn,
+    refusal_line,
 )
-from .presets import FALLBACK_CONTEXT_WINDOW, FAMILIES, PRESETS, REYNOLDS, Preset, family_of, preset_for
+from .presets import (
+    FALLBACK_CONTEXT_WINDOW,
+    FAMILIES,
+    PRESETS,
+    REYNOLDS,
+    Preset,
+    fallbacks_for,
+    family_of,
+    preset_for,
+)
 
 __all__ = [
     "BadRequest",
@@ -37,10 +47,26 @@ __all__ = [
     "ToolCall",
     "ToolUseBlock",
     "Turn",
+    "fallback_models",
     "family_of",
     "make_provider",
     "preset_for",
+    "refusal_line",
 ]
+
+_FALLBACKS_OFF = frozenset({"0", "off", "none", "false", "no"})
+
+
+def fallback_models(cfg: Any) -> tuple[str, ...]:
+    """The fallback chain for this configuration: `cfg.fallback_models` when it names
+    one (`OPENREYNOLDS_FALLBACK_MODELS`, comma-separated; `0`/`off` for none at all),
+    otherwise the preset's (`presets.fallbacks_for`)."""
+    raw = str(getattr(cfg, "fallback_models", "") or "").strip()
+    if raw.lower() in _FALLBACKS_OFF:
+        return ()
+    if raw:
+        return tuple(m.strip() for m in raw.split(",") if m.strip())
+    return fallbacks_for(getattr(cfg, "provider", "") or "")
 
 
 def make_provider(
@@ -66,14 +92,20 @@ def make_provider(
         base_url = f"{cfg.foamd_url.rstrip('/')}/v1/llm"
         api_key = cfg.foamd_api_key
     seconds = timeout if timeout is not None else getattr(cfg, "llm_timeout_s", None)
+    provider: Provider
     if family == "openai-responses":
         from .responses_api import ResponsesProvider
 
-        return ResponsesProvider(api_key, base_url, seconds, default_headers)
-    if family == "openai":
+        provider = ResponsesProvider(api_key, base_url, seconds, default_headers)
+    elif family == "openai":
         from .openai_api import OpenAIProvider
 
-        return OpenAIProvider(api_key, base_url, seconds, default_headers)
-    from .anthropic_api import AnthropicProvider
+        provider = OpenAIProvider(api_key, base_url, seconds, default_headers)
+    else:
+        from .anthropic_api import AnthropicProvider
 
-    return AnthropicProvider(api_key, base_url, seconds, default_headers)
+        provider = AnthropicProvider(api_key, base_url, seconds, default_headers)
+    # A property of every provider built here -- the main loop's, the CAD desk's, the
+    # reviewer's, the front desk's -- so no request path is left without it.
+    provider.fallbacks = fallback_models(cfg)
+    return provider

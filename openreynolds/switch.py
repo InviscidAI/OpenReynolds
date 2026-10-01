@@ -60,6 +60,9 @@ def status_lines(loop: Any) -> list[str]:
     known = models_for(cfg.provider)
     if known:
         lines.append("known models here: " + ", ".join(known))
+    chain = [m for m in getattr(getattr(loop, "provider", None), "fallbacks", ()) if m != cfg.model]
+    if chain:
+        lines.append("if the model declines a request, it is retried on: " + ", ".join(chain))
     pending = getattr(loop, "pending_model", None)
     if pending is not None:
         lines.append(f"switching to {pending.provider}:{pending.model} when the next turn starts")
@@ -260,6 +263,11 @@ def apply(loop: Any) -> bool:
         for latch in ("lean", "legacy_max_tokens"):
             if getattr(loop.provider, latch, False):
                 setattr(loop.provider, latch, False)
+        # And the pin a safety refusal made (`Provider.with_fallback`): the person
+        # naming a model is asking for that model, not for where its refusals went.
+        pins = getattr(loop.provider, "pinned", None)
+        if isinstance(pins, dict):
+            pins.clear()
     loop.window = cfg.context_window or CONTEXT_WINDOW_TOKENS
     if model_changed:
         strip_thinking(loop.messages)

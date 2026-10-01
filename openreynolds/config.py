@@ -188,6 +188,12 @@ class Config:
     mesher_max_seconds: float = 0.0
     """Wall clock for one call; 0 takes the default (900 s).
     `OPENREYNOLDS_CAD_MAX_SECONDS`, or `OPENREYNOLDS_MESHER_MAX_SECONDS` as it was."""
+    fallback_models: str = ""
+    """The models a request the vendor's safety classifier declines is retried on,
+    comma-separated and in order; `0` or `off` for none. Empty takes the preset's
+    chain (`llm.presets.fallbacks_for`: the other model the service meters, on
+    `reynolds` and `anthropic`; nothing elsewhere). `OPENREYNOLDS_FALLBACK_MODELS`, or
+    the config file's `fallback_models`."""
     review_model: str = ""
     """The model the independent geometry reviewer (`cad/review.py`) looks with. Empty
     means the CAD desk's own model in a fresh thread -- still not the eyes that built
@@ -328,6 +334,7 @@ class Config:
             mesher_max_seconds=float(pick_renamed(
                 "OPENREYNOLDS_CAD_MAX_SECONDS", "cad_max_seconds",
                 "OPENREYNOLDS_MESHER_MAX_SECONDS", "mesher_max_seconds", 0) or 0),
+            fallback_models=pick("OPENREYNOLDS_FALLBACK_MODELS", "fallback_models"),
             review_model=pick("OPENREYNOLDS_REVIEW_MODEL", "review_model"),
             cad_review=str(pick("OPENREYNOLDS_CAD_REVIEW", "cad_review", "1"))
             .strip().lower() not in ("0", "false", "no", "off"),

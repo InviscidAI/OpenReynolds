@@ -220,13 +220,34 @@ class ResponsesProvider(Provider):
         max_tokens: int,
         listener: Listener,
     ) -> Turn:
+        return self.with_fallback(
+            model,
+            lambda asked: self._stream_model(
+                asked, system=system, messages=messages, tools=tools,
+                effort=effort, max_tokens=max_tokens, listener=listener,
+            ),
+        )
+
+    def _stream_model(
+        self,
+        model: str,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        effort: str,
+        max_tokens: int,
+        listener: Listener,
+    ) -> Turn:
         items = self.render(messages)
         transport = self._transport_errors()
         progress: dict[str, bool] = {}
         for attempt in (1, 2, 3):
             kwargs = self._kwargs(model, system, items, tools, effort, max_tokens)
             try:
-                return self._stream_once(kwargs, listener, progress)
+                turn = self._stream_once(kwargs, listener, progress)
+                turn.model = turn.model or model
+                return turn
             except transport as exc:
                 # A reset mid-stream used to end the whole session: nothing between here
                 # and the top of the loop caught it, so one dropped connection threw away

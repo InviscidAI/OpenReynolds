@@ -177,6 +177,152 @@ def test_anthropic_reports_the_system_role_refusal_for_the_loop_to_fold():
     assert provider.lean is False
 
 
+# -- a safety refusal falls back to the next model ------------------------------------
+
+
+def refusal(model, category="frontier_llm", explanation="This request was blocked"):
+    turn = message([], stop_reason="refusal")
+    turn.model = model
+    turn.stop_details = SimpleNamespace(type="refusal", category=category, explanation=explanation)
+    return turn
+
+
+def served(model, text="the mesh has 94,321 cells"):
+    turn = message([text_block(text)])
+    turn.model = model
+    return turn
+
+
+def ask(provider, model="claude-opus-5"):
+    return provider.stream(
+        model=model, system="s", messages=[{"role": "user", "content": "mesh it"}], tools=[],
+        effort="high", max_tokens=10, listener=Listener(),
+    )
+
+
+def test_a_refusal_is_retried_on_the_fallback_and_the_turn_says_who_answered():
+    """Anthropic's safety classifier answers 200 with `stop_reason: "refusal"`, and its
+    remedy is the same request on another Claude model. Live, 2026-10-01: a CFD study
+    was declined under the "reverse engineering or duplicating model outputs" rule
+    and the session stopped dead."""
+    provider = anthropic_provider([refusal("claude-opus-5"), served("claude-sonnet-5")])
+    provider.fallbacks = ("claude-sonnet-5", "claude-opus-5")
+
+    turn = ask(provider)
+
+    assert turn.stop_reason == "end_turn" and turn.text == "the mesh has 94,321 cells"
+    assert turn.model == "claude-sonnet-5"
+    assert turn.declined == [("claude-opus-5", "frontier_llm: This request was blocked")]
+    asked = [c["model"] for c in provider.client.messages.calls]
+    assert asked == ["claude-opus-5", "claude-sonnet-5"]
+    assert "claude-opus-5 (frontier_llm: This request was blocked) declined" in llm.refusal_line(turn)
+    assert "claude-sonnet-5 answered" in llm.refusal_line(turn)
+
+
+def test_the_model_that_answered_is_pinned_for_the_rest_of_the_provider():
+    """A refusal before any output is billed in some categories, and a desk running
+    its own thirty-step loop on the model that just declined would pay for thirty of
+    them. The vendor's advice is to stay on the model that accepted."""
+    provider = anthropic_provider(
+        [refusal("claude-opus-5"), served("claude-sonnet-5"), served("claude-sonnet-5", "and still is")]
+    )
+    provider.fallbacks = ("claude-sonnet-5",)
+
+    ask(provider)
+    again = ask(provider)
+
+    assert again.model == "claude-sonnet-5" and again.declined == []
+    asked = [c["model"] for c in provider.client.messages.calls]
+    assert asked == ["claude-opus-5", "claude-sonnet-5", "claude-sonnet-5"]
+    assert provider.pinned == {"claude-opus-5": "claude-sonnet-5"}
+
+
+def test_when_every_model_declines_the_last_refusal_comes_back_naming_the_others():
+    provider = anthropic_provider(
+        [refusal("claude-opus-5"), refusal("claude-sonnet-5", "general_harms", "declined")]
+    )
+    provider.fallbacks = ("claude-sonnet-5",)
+
+    turn = ask(provider)
+
+    assert turn.stop_reason == "refusal" and turn.model == "claude-sonnet-5"
+    assert turn.declined == [("claude-opus-5", "frontier_llm: This request was blocked")]
+    assert provider.pinned == {}
+    line = llm.refusal_line(turn)
+    assert line.startswith("Every model declined")
+    assert "claude-opus-5" in line and "claude-sonnet-5 (general_harms: declined)" in line
+
+
+def test_without_a_chain_a_refusal_is_final_and_reads_as_it_always_did():
+    provider = anthropic_provider([refusal("claude-opus-5")])
+    assert provider.fallbacks == ()
+
+    turn = ask(provider)
+
+    assert turn.stop_reason == "refusal" and turn.declined == []
+    assert len(provider.client.messages.calls) == 1
+    assert llm.refusal_line(turn) == (
+        "The model declined this request: frontier_llm: This request was blocked"
+    )
+
+
+def test_the_requested_model_is_never_its_own_fallback():
+    provider = anthropic_provider([refusal("claude-opus-5")])
+    provider.fallbacks = ("claude-opus-5",)
+    assert provider.chain("claude-opus-5") == ["claude-opus-5"]
+    ask(provider)
+    assert len(provider.client.messages.calls) == 1
+
+
+def test_complete_falls_back_too():
+    """The front desk's one-shot call is a request path as well."""
+    class Creating:
+        def __init__(self, answers):
+            self.answers = list(answers)
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.answers.pop(0)
+
+    provider = AnthropicProvider("k")
+    provider.client = SimpleNamespace(messages=Creating([refusal("claude-haiku-4-5"), served("claude-sonnet-5", " fine ")]))
+    provider.fallbacks = ("claude-sonnet-5",)
+
+    assert provider.complete(model="claude-haiku-4-5", system="s", prompt="p", max_tokens=5) == "fine"
+    assert [c["model"] for c in provider.client.messages.calls] == ["claude-haiku-4-5", "claude-sonnet-5"]
+
+
+def test_make_provider_hands_every_adapter_the_chain_for_its_configuration():
+    reynolds = llm.make_provider(cfg(provider="reynolds", llm_api_key="", foamd_url="https://api.example", foamd_api_key="k"))
+    assert reynolds.fallbacks == ("claude-sonnet-5", "claude-opus-5")
+    assert reynolds.chain("claude-opus-5") == ["claude-opus-5", "claude-sonnet-5"]
+    assert reynolds.chain("claude-sonnet-5") == ["claude-sonnet-5", "claude-opus-5"]
+
+    # The desk model is not a fallback for a study: its window would not hold the thread.
+    assert llm.make_provider(cfg()).fallbacks == ("claude-opus-5", "claude-sonnet-5")
+    assert "claude-haiku-4-5" not in llm.make_provider(cfg()).fallbacks
+
+    # A vendor we know one model id for gets no guessed second one.
+    assert llm.make_provider(cfg(provider="zai")).fallbacks == ()
+    assert llm.make_provider(cfg(provider="openai")).fallbacks == ()
+
+    # The configuration overrides the preset, and can switch the chain off.
+    named = llm.make_provider(cfg(fallback_models=" claude-sonnet-5 ,claude-haiku-4-5"))
+    assert named.fallbacks == ("claude-sonnet-5", "claude-haiku-4-5")
+    assert llm.make_provider(cfg(fallback_models="off")).fallbacks == ()
+    assert llm.make_provider(cfg(fallback_models="0")).fallbacks == ()
+
+
+def test_openai_content_filter_walks_the_chain_too():
+    provider = openai_provider([[chunk(finish="content_filter")], [chunk(content="ok"), chunk(finish="stop")]])
+    provider.fallbacks = ("gpt-5.2",)
+    turn = provider.stream(model="gpt-5", system="s", messages=[{"role": "user", "content": "x"}], tools=[], effort="", max_tokens=1, listener=Listener())
+    assert turn.text == "ok" and turn.model == "gpt-5.2"
+    assert turn.declined == [("gpt-5", "the endpoint's content filter")]
+    assert [c["model"] for c in provider.client.chat.completions.calls] == ["gpt-5", "gpt-5.2"]
+
+
 def test_anthropic_wraps_status_errors():
     class Down:
         def stream(self, **kwargs):

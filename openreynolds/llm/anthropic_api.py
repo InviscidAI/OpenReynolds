@@ -90,6 +90,26 @@ class AnthropicProvider(Provider):
         max_tokens: int,
         listener: Listener,
     ) -> Turn:
+        return self.with_fallback(
+            model,
+            lambda asked: self._stream_model(
+                asked, system=system, messages=messages, tools=tools,
+                effort=effort, max_tokens=max_tokens, listener=listener,
+            ),
+        )
+
+    def _stream_model(
+        self,
+        model: str,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        effort: str,
+        max_tokens: int,
+        listener: Listener,
+    ) -> Turn:
+        """One model, asked once -- twice when the first try is what teaches `lean`."""
         for attempt in (1, 2):
             kwargs: dict[str, Any] = dict(
                 model=model,
@@ -140,17 +160,30 @@ class AnthropicProvider(Provider):
                 stop=response.stop_reason,
                 **trace.usage(response),
             )
+        return self._turn(response, kwargs["model"])
+
+    def _turn(self, response: Any, asked: str) -> Turn:
         detail = getattr(response, "stop_details", None)
         return Turn(
             content=list(response.content),
             stop_reason=response.stop_reason or "end_turn",
             stop_explanation=getattr(detail, "explanation", None) or "",
+            stop_category=getattr(detail, "category", None) or "",
+            # The id asked for, not the dated one the response resolves it to: it is
+            # what the next request will name, and what a hosted allowlist knows.
+            model=asked,
             context_tokens=_context_tokens(getattr(response, "usage", None)),
             tokens=_token_classes(getattr(response, "usage", None)),
             provider=self.name,
         )
 
     def complete(self, *, model: str, system: str, prompt: str, max_tokens: int) -> str:
+        turn = self.with_fallback(
+            model, lambda asked: self._complete_model(asked, system, prompt, max_tokens),
+        )
+        return turn.text.strip()
+
+    def _complete_model(self, model: str, system: str, prompt: str, max_tokens: int) -> Turn:
         try:
             response = self.client.messages.create(
                 model=model,
@@ -162,7 +195,7 @@ class AnthropicProvider(Provider):
             raise ProviderError(_message(exc), exc.status_code) from exc
         except anthropic.APIError as exc:
             raise ProviderError(str(exc)) from exc
-        return "".join(b.text for b in response.content if b.type == "text").strip()
+        return self._turn(response, model)
 
     def probe(self, model: str, vision: bool = False) -> str:
         """Counting tokens validates the key, the endpoint and the model id in one
