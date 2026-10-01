@@ -735,6 +735,15 @@ def _location_finding(report: dict) -> preflight.Finding:
 
 def _width_finding(report: dict) -> preflight.Finding:
     field = report["width"]
+    if not field["draws"]:
+        # Asked for none, which is not the same as finding none: "the surface encloses
+        # nothing" would be a claim about a surface nobody sampled.
+        return preflight.Finding(
+            "min_width", "skipped",
+            "not measured: --width-samples 0",
+            "the width field was not asked for, so nothing is known about it either way.",
+            "run with --width-samples to measure it",
+        )
     if not field["samples"]:
         return preflight.Finding(
             "min_width", "skipped",
@@ -775,6 +784,13 @@ def _wall_finding(report: dict) -> preflight.Finding:
             "wall thickness is the width of material between two surfaces, and one "
             "shell has no material between anything. If these surfaces bound the part "
             "rather than the fluid, min_width above is the part's thinnest section.",
+        )
+    if not field["draws"]:
+        return preflight.Finding(
+            "min_wall_thickness", "skipped",
+            "not measured: --width-samples 0",
+            "wall thickness is read off the width field, which was not asked for.",
+            "run with --width-samples to measure it",
         )
     if field["min_wall_thickness"] is None:
         return preflight.Finding(

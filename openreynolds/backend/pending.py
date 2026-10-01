@@ -28,7 +28,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from .base import (
     WORKSPACE_ROOT,
@@ -39,6 +39,9 @@ from .base import (
     Stat,
     StoredListing,
 )
+
+if TYPE_CHECKING:
+    from .kernel import CellResult
 
 WAIT_CEILING_S = 600.0
 """The longest any one call waits for the workspace before giving up on it.
@@ -222,6 +225,29 @@ class PendingBackend(Backend):
 
     def job_kill(self, *args: Any, **kwargs: Any) -> JobStatus:
         return self.wait().job_kill(*args, **kwargs)
+
+    # The cell channel. These were missing, and a missing method here does not fail:
+    # it falls through to the `Backend` Protocol's own `...` body and returns None. So
+    # `kernel_start` "succeeded" with no kernel, the CAD desk's first `kernel_run`
+    # came back None, and every desk run in every hosted session since this stand-in
+    # arrived ended in `'NoneType' object has no attribute 'stdout'` (study
+    # 20260926-084752-7f81: three calls, three times). No wait is skipped for any of
+    # them: a kernel is the machine, and nothing about one can be answered without it.
+
+    def kernel_start(self, *args: Any, **kwargs: Any) -> str:
+        return self.wait().kernel_start(*args, **kwargs)
+
+    def kernel_run(self, *args: Any, **kwargs: Any) -> CellResult:
+        return self.wait().kernel_run(*args, **kwargs)
+
+    def kernel_poll(self, *args: Any, **kwargs: Any) -> CellResult:
+        return self.wait().kernel_poll(*args, **kwargs)
+
+    def kernel_interrupt(self, *args: Any, **kwargs: Any) -> None:
+        self.wait().kernel_interrupt(*args, **kwargs)
+
+    def kernel_restart(self, *args: Any, **kwargs: Any) -> None:
+        self.wait().kernel_restart(*args, **kwargs)
 
     def active_jobs(self) -> list[dict[str, Any]]:
         live = self.wait()
