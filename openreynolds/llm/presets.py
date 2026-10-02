@@ -44,11 +44,10 @@ PRICE_PER_MTOK: dict[str, dict[str, float]] = {
     "gpt-oss-120b": {"input": 0.15, "output": 0.60, "cache_read": 0.15, "cache_write": 0.0},
     "gpt-oss-120b-fast": {"input": 0.15, "output": 0.60, "cache_read": 0.15, "cache_write": 0.0},
     # OpenAI's own rates, standard tier. Chat Completions bills no cache write either.
-    # `gpt-5.6-sol` is priced here but is NOT reachable through this adapter: OpenAI
-    # refuses function tools together with a reasoning effort on /v1/chat/completions for
-    # every model above gpt-5.2, and points at /v1/responses, which `OpenAIProvider` does
-    # not speak. The rate is recorded so that the day the adapter learns that API, the
-    # model is not silently priced at zero.
+    # `gpt-5.6-sol` is reachable only through `openai-responses` (ResponsesProvider):
+    # OpenAI refuses function tools together with a reasoning effort on
+    # /v1/chat/completions for every model above gpt-5.2. Its cache write is left at 0
+    # as the sweeps priced it, though GPT-5.6 and later do bill one (see below).
     "gpt-5.6-sol": {"input": 4.00, "output": 20.00, "cache_read": 0.40, "cache_write": 0.0},
     # The Responses-API generation, list prices from OpenAI's pricing page (checked
     # 2026-10-02). These bill a cache write, at 1.25x input -- OpenAI does for GPT-5.6
@@ -249,7 +248,8 @@ def fallbacks_for(provider: str) -> tuple[str, ...]:
     them: a desk model is picked for being cheap and quick, not for holding a study's
     thread, and a 400 for an oversized request is a worse answer than the refusal it
     replaced. A preset with no list has no fallback, because guessing a second model id
-    at a vendor we know one id for is how a session ends on a 404 instead. `OPENREYNOLDS_FALLBACK_MODELS` names a chain of its own.
+    at a vendor we know one id for is how a session ends on a 404 instead.
+    `OPENREYNOLDS_FALLBACK_MODELS` names a chain of its own.
 
     The requested model is left in: `Provider.chain` takes it out at request time, so
     the same tuple serves whichever of the two is the session's model."""
