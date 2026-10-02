@@ -471,7 +471,7 @@ def measure_patches(entries: list[dict], surfaces: dict, bounds=None,
                 # impossible and was noticed and dismissed as cosmetic in a real run.
                 # The sign is fixed below by asking the mesh which side the fluid is
                 # on, which is a measurement rather than a convention.
-                normals = surface.extract_surface().compute_normals(
+                normals = surface.extract_surface(algorithm="dataset_surface").compute_normals(
                     cell_normals=True, point_normals=False, consistent_normals=True)
                 vectors = np.asarray(normals.cell_data["Normals"], dtype=float)
                 weight = areas / areas.sum() if areas.sum() and len(areas) == len(vectors) else None
