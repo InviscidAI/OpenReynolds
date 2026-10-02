@@ -134,9 +134,10 @@ def candidate(cfg: Any, provider: str, model: str, key: str) -> Any:
         # preset's model on a non-anthropic preset. That swap is for a provider named
         # on its own; a model named here is the opposite of that, and without this line
         # `/model claude-opus-5` on `reynolds` -- one of the two models that service
-        # meters -- quietly stayed on Sonnet, as did a resume restoring it. The model
-        # asked for wins, exactly as it does across providers below. Nothing about the
-        # desk was asked for, so it keeps the one the session already had.
+        # metered while it fronted Claude -- quietly stayed on Sonnet, as did a resume
+        # restoring it. The model asked for wins, exactly as it does across providers
+        # below. Nothing about the desk was asked for, so it keeps the one the session
+        # already had.
         new.model = model
         new.desk_model = cfg.desk_model
         if known:

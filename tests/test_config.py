@@ -201,13 +201,13 @@ def test_an_unknown_endpoint_gets_the_conservative_window(clean_env):
 
 
 def test_a_model_named_beside_a_preset_is_the_one_that_loads(clean_env, monkeypatch):
-    """`reynolds` runs Sonnet by default and meters Opus too, so asking for Opus on it
-    is an ordinary thing to do -- it is what the hosted app's chooser sends. The
-    preset swap ate it: every such session, new or resumed, came up on Sonnet while
-    the app's ledger row and model chooser said Opus."""
+    """`reynolds` runs gpt-6.1-sol by default and meters gpt-6-astra too, so asking for
+    the other on it is an ordinary thing to do -- it is what the hosted app's chooser
+    sends. The preset swap ate it (then for Opus over Sonnet): every such session, new
+    or resumed, came up on the default while the app's ledger row said otherwise."""
     monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "reynolds")
-    monkeypatch.setenv("OPENREYNOLDS_MODEL", "claude-opus-5")
-    assert Config.load().model == "claude-opus-5"
+    monkeypatch.setenv("OPENREYNOLDS_MODEL", "gpt-6-astra")
+    assert Config.load().model == "gpt-6-astra"
 
 
 def test_a_gateway_keeps_both_models_it_was_given(clean_env, monkeypatch):
@@ -234,9 +234,27 @@ def test_a_provider_named_on_its_own_still_arrives_at_its_presets_model(clean_en
     not be asked for another vendor's default."""
     monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "reynolds")
     cfg = Config.load()
-    assert (cfg.model, cfg.desk_model) == ("claude-sonnet-5", "claude-haiku-4-5")
+    assert (cfg.model, cfg.desk_model) == ("gpt-6.1-sol", "gpt-6-luna")
     monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "zai")
     assert Config.load().model == "glm-4.6"
+
+
+def test_a_reynolds_config_saved_when_it_fronted_claude_loads_onto_gpt(clean_env, monkeypatch):
+    """`openreynolds config --provider reynolds` used to save Claude's ids and its
+    million-token window. The GPT endpoint has none of those ids, and above 272K the
+    service is no longer priced, so neither survives the load."""
+    write_config(clean_env, provider="reynolds", foamd_api_key="k", model="claude-sonnet-5",
+                 desk_model="claude-haiku-4-5", context_window=1_000_000)
+    monkeypatch.setenv("OPENREYNOLDS_CAD_MODEL", "claude-opus-5")
+    cfg = Config.load()
+    assert (cfg.model, cfg.desk_model, cfg.mesher_model) == ("gpt-6.1-sol", "gpt-6-luna", "")
+    assert cfg.context_window == 272_000
+
+
+def test_a_smaller_window_named_for_reynolds_is_kept(clean_env, monkeypatch):
+    monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "reynolds")
+    monkeypatch.setenv("OPENREYNOLDS_CONTEXT_WINDOW", "150000")
+    assert Config.load().context_window == 150_000
 
 
 def test_the_provider_and_its_vendor_key_come_from_the_environment(clean_env, monkeypatch):

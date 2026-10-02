@@ -88,8 +88,10 @@ def make_provider(
         # The workspace service fronts the model: same address, same key, and the
         # tokens land on the account's ledger next to the compute. Always -- a model
         # key left in the config from a bring-your-own setup must not be sent to the
-        # service, which would (rightly) refuse it.
-        base_url = f"{cfg.foamd_url.rstrip('/')}/v1/llm"
+        # service, which would (rightly) refuse it. The OpenAI client appends
+        # `/responses`, so this is the prefix, and the key goes as a Bearer token,
+        # which the service takes as readily as its own header.
+        base_url = f"{cfg.foamd_url.rstrip('/')}/v1/llm/v1"
         api_key = cfg.foamd_api_key
     seconds = timeout if timeout is not None else getattr(cfg, "llm_timeout_s", None)
     provider: Provider

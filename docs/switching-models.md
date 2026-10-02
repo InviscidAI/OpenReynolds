@@ -18,7 +18,7 @@ Only a real preset name counts before a colon, because model ids have colons of 
 own: `/model qwen3:8b` is a model on the current provider.
 
 The known models are a convenience for completion, not a limit. For `reynolds` they are
-`claude-sonnet-5` and `claude-opus-5`; for `anthropic`, `claude-opus-5`,
+`gpt-6.1-sol` and `gpt-6-astra`; for `anthropic`, `claude-opus-5`,
 `claude-sonnet-5` and `claude-haiku-4-5`; every other preset offers its own default
 and desk model. `reynolds` does not offer its desk model, because the service meters
 only those two for the agent. Any id the provider answers to can be typed.
@@ -112,10 +112,16 @@ Two limits worth knowing:
   its own does not hold a resume to it: the recorded pair is restored over it. Name a
   model as well to move a study.
 
-A model id does not name a provider on its own -- `claude-opus-5` is valid on
-`anthropic` and on `reynolds`, and OpenRouter's ids look like Anthropic's -- so a study
-recorded before the provider was kept names a model and no provider, and starts on the
-configured model as it always did.
+A model id does not name a provider on its own -- `claude-opus-5` was valid on
+`anthropic` and on `reynolds` both, and OpenRouter's ids look like Anthropic's -- so a
+study recorded before the provider was kept names a model and no provider, and starts on
+the configured model as it always did.
+
+`reynolds` is the one provider whose list is closed, because it served Claude until
+2026-10 and serves GPT now. A study recorded on `reynolds` with a model the service no
+longer meters is not restored as recorded, which would be a 4xx on the first turn: it
+carries on on `reynolds` at its default, says so, and the record is rewritten. A config
+file saved then, with Claude's ids and window in it, loads the same way.
 
 ### The mesh desk and the front desk
 

@@ -29,10 +29,10 @@ from .capture import Capture
 from . import cad, commands, images, switch
 from . import convergence, modes
 from .approval import Approver
-from .llm.presets import EFFORTS, models_for
+from .llm.presets import EFFORTS, models_for, serves
 from .config import Config, config_path
 from .delivery import Gallery
-from .llm import PRESETS, ProviderError, make_provider, preset_for
+from .llm import PRESETS, REYNOLDS, ProviderError, make_provider, preset_for
 from .loop import Loop
 from . import video as video_mod
 from .desk import Concierge
@@ -577,7 +577,7 @@ def _print_settings(cfg: Config) -> None:
         ("service url", cfg.foamd_url),
         ("service key", _redact(cfg.foamd_api_key)),
         ("provider", cfg.provider),
-        ("model key", "via the service key" if cfg.provider == "reynolds" else _redact(cfg.llm_api_key)),
+        ("model key", "via the service key" if cfg.provider == REYNOLDS else _redact(cfg.llm_api_key)),
         ("model", cfg.model),
     ):
         console.print(f"  {name:14} {value or '[red]not set[/]'}")
@@ -1215,6 +1215,25 @@ def session(
     stored_model = (store.session.model or "").strip()
     stored_provider = (store.session.provider or "").strip()
     stored_base_url = (store.session.base_url or "").strip()
+    if (
+        resuming
+        and stored_model
+        and stored_provider
+        and not model_explicit
+        and not serves(stored_provider, stored_model)
+    ):
+        # A record no provider can honour any more: a study run on Reynolds' model
+        # while the service fronted Claude names `claude-opus-5`, and the GPT endpoint
+        # behind that name today has no such model. Restored as recorded, it is a 4xx on
+        # the first turn; refused as below, the study would keep a record nothing can
+        # serve and say so on every resume. So the study stays on Reynolds' model and
+        # moves to its default, and the record is rewritten with that pair.
+        retired = stored_model
+        stored_model = PRESETS[REYNOLDS].model  # `serves` is False only there
+        console.print(
+            f"[yellow]This study was last on {retired} ({stored_provider}), which "
+            f"{stored_provider} no longer serves, so it carries on on {stored_model}.[/]"
+        )
     restore_refused = False
     """Whether this run could not honour the pair the study recorded.
 

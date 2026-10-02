@@ -295,9 +295,10 @@ def test_complete_falls_back_too():
 
 def test_make_provider_hands_every_adapter_the_chain_for_its_configuration():
     reynolds = llm.make_provider(cfg(provider="reynolds", llm_api_key="", foamd_url="https://api.example", foamd_api_key="k"))
-    assert reynolds.fallbacks == ("claude-sonnet-5", "claude-opus-5")
-    assert reynolds.chain("claude-opus-5") == ["claude-opus-5", "claude-sonnet-5"]
-    assert reynolds.chain("claude-sonnet-5") == ["claude-sonnet-5", "claude-opus-5"]
+    assert reynolds.fallbacks == ("gpt-6.1-sol", "gpt-6-astra")
+    assert reynolds.chain("gpt-6-astra") == ["gpt-6-astra", "gpt-6.1-sol"]
+    assert reynolds.chain("gpt-6.1-sol") == ["gpt-6.1-sol", "gpt-6-astra"]
+    assert "gpt-6-luna" not in reynolds.fallbacks
 
     # The desk model is not a fallback for a study: its window would not hold the thread.
     assert llm.make_provider(cfg()).fallbacks == ("claude-opus-5", "claude-sonnet-5")
@@ -530,9 +531,11 @@ def test_openai_wraps_status_errors():
 
 
 def test_the_reynolds_preset_borrows_the_services_address_and_key():
+    """GPT over the Responses API, at the service's prefix: the OpenAI client appends
+    `/responses`, so `/v1/llm/v1` here is `/v1/llm/v1/responses` on the wire."""
     p = llm.make_provider(cfg(provider="reynolds", llm_api_key="", foamd_url="https://api.example/", foamd_api_key="of_live_k"))
-    assert isinstance(p, AnthropicProvider)
-    assert str(p.client.base_url).rstrip("/") == "https://api.example/v1/llm"
+    assert isinstance(p, ResponsesProvider)
+    assert str(p.client.base_url).rstrip("/") == "https://api.example/v1/llm/v1"
     assert p.client.api_key == "of_live_k"
     assert llm.PRESETS["reynolds"].needs_key is False
 
@@ -584,8 +587,9 @@ def test_openai_probe_with_vision_uses_a_data_uri_and_reads_the_refusal():
 def test_a_stray_model_key_never_reaches_the_service_under_reynolds():
     p = llm.make_provider(cfg(provider="reynolds", llm_api_key="sk-ant-left-over", llm_base_url="https://elsewhere.example",
                              foamd_url="https://api.example", foamd_api_key="of_live_k"))
+    assert isinstance(p, ResponsesProvider)
     assert p.client.api_key == "of_live_k"
-    assert str(p.client.base_url).rstrip("/") == "https://api.example/v1/llm"
+    assert str(p.client.base_url).rstrip("/") == "https://api.example/v1/llm/v1"
 
 
 
@@ -665,6 +669,40 @@ def test_responses_turn_reads_the_reasoning_summary_and_the_tool_call():
     assert turn.tokens == {"input": 60, "cache_read": 40, "cache_write": 0, "output": 20}
     assert turn.context_tokens == 120
     assert turn.raw[0]["encrypted_content"] == "gAAAA"
+
+
+def test_responses_counts_a_cache_write_apart_from_fresh_input():
+    """GPT-5.6 and later bill a cache write at 1.25x input, so it is its own class --
+    taken out of the uncached remainder, so the four still sum to the request."""
+    from openreynolds.llm.responses_api import _token_classes
+
+    usage = SimpleNamespace(input_tokens=100, output_tokens=20,
+                            input_tokens_details=SimpleNamespace(cached_tokens=40,
+                                                                 cache_write_tokens=50))
+    assert _token_classes(usage) == {"input": 10, "cache_read": 40, "cache_write": 50,
+                                     "output": 20}
+
+
+def test_responses_complete_asks_for_little_reasoning_and_drops_it_when_refused():
+    """The front desk's short answers: `max_output_tokens` counts the reasoning, so at a
+    default effort a sixty-token line is spent thinking and arrives empty."""
+    provider = ResponsesProvider("k")
+    sent = []
+
+    def create(**kwargs):
+        sent.append(kwargs)
+        if len(sent) == 1:
+            raise openai.BadRequestError(
+                "reasoning is not supported",
+                response=SimpleNamespace(status_code=400, headers={}, request=None),
+                body={"error": {"message": "reasoning.effort is not supported"}})
+        return SimpleNamespace(output_text=" busy meshing ")
+
+    provider.client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    assert provider.complete(model="gpt-6-luna", system="s", prompt="p", max_tokens=60) == "busy meshing"
+    assert sent[0]["reasoning"] == {"effort": "low"}
+    assert "reasoning" not in sent[1]
+    assert provider.lean
 
 
 def test_responses_running_out_of_room_is_max_tokens_not_end_turn():

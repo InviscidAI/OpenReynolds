@@ -132,12 +132,12 @@ def test_reynolds_needs_only_the_service_key(loop, models):
 
 def test_the_model_asked_for_survives_the_presets_default(loop, models):
     """`candidate` rebuilds the configuration with `replace`, which re-runs
-    `__post_init__` and its preset swap. On `reynolds` that turned the Opus a person
-    typed -- one of the two models that service meters -- straight back into Sonnet,
-    on `/model` and on every resume that went through here."""
+    `__post_init__` and its preset swap. On `reynolds` that turned the second model a
+    person typed (then Opus) straight back into the default, on `/model` and on every
+    resume that went through here."""
     cfg = Config(provider="reynolds", foamd_api_key="svc")
-    assert cfg.model == "claude-sonnet-5"  # nobody named one, so the preset's
-    assert switch.candidate(cfg, "reynolds", "claude-opus-5", "").model == "claude-opus-5"
+    assert cfg.model == "gpt-6.1-sol"  # nobody named one, so the preset's
+    assert switch.candidate(cfg, "reynolds", "gpt-6-astra", "").model == "gpt-6-astra"
 
 
 def test_a_same_provider_switch_leaves_the_desk_model_alone(loop, models):
@@ -328,7 +328,7 @@ def test_leaving_a_model_with_its_own_window_goes_back_to_the_providers(loop, mo
 def test_reynolds_offers_only_the_models_the_service_meters():
     from openreynolds.llm.presets import models_for
 
-    assert models_for("reynolds") == ("claude-sonnet-5", "claude-opus-5")
+    assert models_for("reynolds") == ("gpt-6.1-sol", "gpt-6-astra")
     assert "claude-haiku-4-5" in models_for("anthropic")
     assert models_for("openai") == ("gpt-5", "gpt-5-mini")
 
@@ -535,6 +535,40 @@ def test_a_refused_restore_leaves_the_study_the_pair_it_recorded(
     assert cfg.model == "claude-opus-5"  # this run fell back, having no key for openai
     session = Store(studies, "study-x").session
     assert (session.provider, session.model) == ("openai", "gpt-5")
+
+
+def test_a_reynolds_study_recorded_on_claude_carries_on_on_reynolds_default(
+    nobody_named_a_model, monkeypatch, tmp_path, capsys
+):
+    """The service fronted Claude until 2026-10 and fronts GPT now, so a study recorded
+    then names an id the endpoint behind `reynolds` no longer has. Restored, it is a 4xx
+    on the first turn; it stays on Reynolds' model, on its default, and says so."""
+    studies = _stored_study(tmp_path, "claude-opus-5", "reynolds")
+    cfg = _resume(monkeypatch, studies)  # configured for anthropic
+    assert (cfg.provider, cfg.model) == ("reynolds", "gpt-6.1-sol")
+    assert cfg.desk_model == "gpt-6-luna"
+    said = said_on_the_console(capsys)
+    assert "claude-opus-5" in said and "no longer serves" in said
+
+
+def test_a_retired_reynolds_record_is_rewritten_with_what_ran(
+    nobody_named_a_model, monkeypatch, tmp_path
+):
+    """Unlike a refused restore, nothing anywhere can honour this record, so keeping it
+    would only repeat the notice on every resume."""
+    from conftest import FakeBackend, reserved
+    from test_jsonview import FakeLoop
+
+    monkeypatch.setattr(cli.hosted, "reserve", reserved(FakeBackend()))
+    monkeypatch.setattr(cli, "Loop", FakeLoop)
+    studies = _stored_study(tmp_path, "claude-sonnet-5", "reynolds")
+    cfg = Config(foamd_url="u", foamd_api_key="k", provider="reynolds", studies_dir=studies,
+                 capture=False, desk=False, mesh_tool=False, mirror_interval_s=0.0)
+
+    cli.session(cfg, study_id="study-x", instance_id=None, one_shot="go", plain=True)
+
+    session = Store(studies, "study-x").session
+    assert (session.provider, session.model) == ("reynolds", "gpt-6.1-sol")
 
 
 # -- effort ----------------------------------------------------------------------

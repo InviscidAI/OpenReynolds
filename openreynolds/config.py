@@ -12,7 +12,7 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .llm.presets import FALLBACK_CONTEXT_WINDOW, preset_for
+from .llm.presets import FALLBACK_CONTEXT_WINDOW, REYNOLDS, preset_for, serves
 
 DEFAULT_FOAMD_URL = "https://api.tryreynolds.com"
 """Where the workspace service lives unless told otherwise. A key from
@@ -136,7 +136,7 @@ class Config:
     """Where the model client points. `None` means the preset's endpoint, or the
     vendor's default for a bare family.
 
-    The `reynolds` preset ignores whatever is here: the service's own `/v1/llm` is
+    The `reynolds` preset ignores whatever is here: the service's own `/v1/llm/v1` is
     derived from `foamd_url` at run time rather than stored, so moving the service
     moves the model with it and a stale URL in a config file cannot outlive it.
     """
@@ -168,7 +168,7 @@ class Config:
     desk_model: str = DEFAULT_DESK_MODEL
     mesher_model: str = ""
     """The model the CAD desk (`cad/`) builds geometry with. Empty means the preset's
-    CAD model (Opus 5 on `reynolds`), else the main model: building the shape is the
+    CAD model where it names one, else the main model: building the shape is the
     work, not the narration.
     `OPENREYNOLDS_CAD_MODEL`, or `OPENREYNOLDS_MESHER_MODEL` as it was."""
     mesher_effort: str = "high"
@@ -236,7 +236,7 @@ class Config:
         can be reached: a key is present, an explicit endpoint stands in for one, or
         the preset (a local model) needs none."""
         preset = preset_for(self.provider)
-        if preset is not None and preset.name == "reynolds":
+        if preset is not None and preset.name == REYNOLDS:
             # The service key is the model key; `missing()` already asks for it.
             return None
         if self.llm_api_key or self.llm_base_url:
@@ -360,14 +360,34 @@ class Config:
         # provider named on its own arrives with a model that provider serves. A model
         # named here is the opposite case, and the swap was eating it:
         # `OPENREYNOLDS_PROVIDER=reynolds` with `OPENREYNOLDS_MODEL=claude-opus-5` --
-        # one of the two models that service meters, and what the hosted app's chooser
-        # sends when someone picks Opus -- loaded as Sonnet, silently, on every new
+        # one of the two models that service metered while it fronted Claude, and what
+        # the hosted app's chooser sent for Opus -- loaded as Sonnet, silently, on every new
         # session as well as on every resume. The default is above; what was asked for
         # wins here.
         if named_model:
             cfg.model = named_model
         if named_desk:
             cfg.desk_model = named_desk
+        if preset is not None and preset.name == REYNOLDS:
+            # Until 2026-10 the service fronted Claude, and `openreynolds config` saved
+            # the preset's ids and its million-token window into the file, so a machine
+            # set up then still names `claude-sonnet-5` and 1,000,000 here. The GPT
+            # endpoint has none of those ids, and the window is where the service stops
+            # being priced (`presets.PRESETS`), so what the service cannot serve goes
+            # back to its default and the window can be made smaller but not larger.
+            # Explicit names included: the hosted runner names a model on every session,
+            # and one it still names from the old list is a 4xx on every turn, not a
+            # choice worth honouring.
+            if not serves(provider, cfg.model):
+                cfg.model = preset.model
+            if not serves(provider, cfg.desk_model):
+                cfg.desk_model = preset.desk_model
+            if cfg.mesher_model and not serves(provider, cfg.mesher_model):
+                cfg.mesher_model = preset.cad_model
+            if cfg.review_model and not serves(provider, cfg.review_model):
+                cfg.review_model = ""
+            cfg.context_window = min(cfg.context_window or preset.context_window,
+                                     preset.context_window)
         return cfg
 
     def save(self) -> Path:

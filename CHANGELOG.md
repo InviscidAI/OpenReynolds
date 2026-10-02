@@ -329,6 +329,20 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- **Reynolds' model is GPT over the Responses API.** The `reynolds` preset was Claude
+  over the Messages API at `{service}/v1/llm`; it is now family `openai-responses` at
+  `{service}/v1/llm/v1` (the client appends `/responses`), still with the service key
+  as the model key. The default is `gpt-6.1-sol`, `gpt-6-astra` is the other model the
+  service meters, and the front desk runs `gpt-6-luna`. The window is 272,000 tokens --
+  not the models' own, but where they start billing at a long-context rate the service
+  does not price -- so a thread is compacted before it gets there. The CAD desk builds
+  with the main model: no GPT at this version has been swept on it yet (the only one
+  measured is gpt-5.6-sol, 16/26 surviving the mesh vet), so that default is owed a
+  sweep. A config file or a study that still names a Claude id under `reynolds` loads,
+  or resumes, onto `gpt-6.1-sol` and says so, rather than sending the GPT endpoint a
+  model it does not have. Responses usage now counts a reported cache write as its own
+  class, and list prices for the three models are in `llm/presets.py`.
+
 - **The mesh desk builds in the background.** A `mesh` call used to run the desk on
   the loop's own thread and hold it for the whole build. Measured in production
   (study 20260920-161908-c7ef): one call held the agent for 402 s and some twenty-five

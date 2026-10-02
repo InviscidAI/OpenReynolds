@@ -50,6 +50,15 @@ PRICE_PER_MTOK: dict[str, dict[str, float]] = {
     # not speak. The rate is recorded so that the day the adapter learns that API, the
     # model is not silently priced at zero.
     "gpt-5.6-sol": {"input": 4.00, "output": 20.00, "cache_read": 0.40, "cache_write": 0.0},
+    # The Responses-API generation, list prices from OpenAI's pricing page (checked
+    # 2026-10-02). These bill a cache write, at 1.25x input -- OpenAI does for GPT-5.6
+    # and later; the gpt-5.6-sol row above predates knowing that and is left as the
+    # sweeps priced it -- and `responses_api._token_classes` reports the class when the
+    # usage carries it. These three are what `reynolds` serves; the service meters at
+    # its own rates, so these are what a run costs at list, not what the ledger says.
+    "gpt-6.1-sol": {"input": 2.00, "output": 10.00, "cache_read": 0.10, "cache_write": 2.50},
+    "gpt-6-astra": {"input": 10.00, "output": 50.00, "cache_read": 1.00, "cache_write": 12.50},
+    "gpt-6-luna": {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125},
     "gpt-5.2": {"input": 1.75, "output": 14.00, "cache_read": 0.175, "cache_write": 0.0},
     "gpt-5.1": {"input": 1.25, "output": 10.00, "cache_read": 0.125, "cache_write": 0.0},
 }
@@ -113,26 +122,31 @@ class Preset:
 
 
 REYNOLDS = "reynolds"
-"""The preset that needs no key of its own: the workspace service proxies Claude and
-meters the tokens to the account, so the service key is the model key. The endpoint is
-derived from the service URL at run time (`make_provider`), never stored."""
+"""The preset that needs no key of its own: the workspace service fronts OpenAI's GPT
+models over the Responses API and meters the tokens to the account, so the service key
+is the model key. The endpoint is derived from the service URL at run time
+(`make_provider`), never stored. Which cloud the service relays to is its business;
+the agent sees one OpenAI-shaped endpoint either way."""
 
 PRESETS: dict[str, Preset] = {
     p.name: p
     for p in (
         Preset(
-            # Sonnet 5 by default: a study is mostly tool calls and re-read context,
-            # where Sonnet's 2.5x lower price buys the same work; Opus 5 is a choice
-            # (`OPENREYNOLDS_MODEL=claude-opus-5`) for the hard, ambiguous ones.
-            REYNOLDS, "anthropic", None,
-            "claude-sonnet-5", "claude-haiku-4-5", 1_000_000,
-            "", "Reynolds' model: Claude through the workspace service, metered to your account.",
+            REYNOLDS, "openai-responses", None,
+            "gpt-6.1-sol", "gpt-6-luna",
+            # Not the model's own window. Above 272K input tokens these models bill at a
+            # long-context rate the service's rate table does not carry, so a thread is
+            # compacted before it crosses that line rather than metered at a price
+            # nobody wrote down.
+            272_000,
+            "", "Reynolds' model: GPT through the workspace service, metered to your account.",
             needs_key=False,
-            # But not for the CAD desk. On 8 build-up cases, one run each on the old gate
-            # and the new (2026-09-27), Sonnet 5 finished 0/16 in the desk's 30 steps and
-            # 7/16 given 50; Opus 5 finished 9/16 in 30, at $3.26 a finished case against
-            # Sonnet's $4.35 -- the cheaper token bought more turns and a longer thread.
-            cad_model="claude-opus-5",
+            # Empty: the CAD desk builds with the main model. That is a default, not a
+            # finding. The only GPT measured on the desk is gpt-5.6-sol (sweep
+            # `docs/cad-buildup/sweeps/core-gpt-5.6-sol-20260916-025729-2a7f`: 16/26
+            # survived the mesh vet, $11.29); gpt-6.1-sol has not been swept at all, and
+            # this is owed one before anyone trusts it.
+            cad_model="",
         ),
         Preset(
             "anthropic", "anthropic", None,
@@ -198,12 +212,12 @@ EFFORTS = ("low", "medium", "high")
 """The reasoning efforts a session can be set to (`--effort`, `/effort`).
 
 The same three the hosted app offers (`reynolds_app/sessions.py`). Sent as the
-Messages API's `output_config.effort` and as Chat Completions' `reasoning_effort`, both
-of which accept these words."""
+Messages API's `output_config.effort`, as Chat Completions' `reasoning_effort` and as
+the Responses API's `reasoning.effort`, all of which accept these words."""
 
 KNOWN_MODELS: dict[str, tuple[str, ...]] = {
     # The two the workspace service meters (`reynolds_app/sessions.py` REYNOLDS_MODELS).
-    REYNOLDS: ("claude-sonnet-5", "claude-opus-5"),
+    REYNOLDS: ("gpt-6.1-sol", "gpt-6-astra"),
     "anthropic": ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"),
 }
 """Models worth offering at `/model` beyond a preset's own two. Like the presets, a
@@ -230,12 +244,12 @@ def fallbacks_for(provider: str) -> tuple[str, ...]:
     """The models a refused request on `provider` is retried on, in order.
 
     Only the models the provider is known to serve (`KNOWN_MODELS`), so `reynolds` --
-    which meters exactly two -- falls from Opus to Sonnet and from Sonnet to Opus, and a
-    direct Anthropic key does the same. The desk model is never one of them: Haiku's
-    window would not hold a study's thread, and a 400 for an oversized request is a
-    worse answer than the refusal it replaced. A preset with no list has no fallback,
-    because guessing a second model id at a vendor we know one id for is how a session
-    ends on a 404 instead. `OPENREYNOLDS_FALLBACK_MODELS` names a chain of its own.
+    which meters exactly two -- falls from gpt-6.1-sol to gpt-6-astra and back, and a
+    direct Anthropic key falls between Opus and Sonnet. The desk model is never one of
+    them: a desk model is picked for being cheap and quick, not for holding a study's
+    thread, and a 400 for an oversized request is a worse answer than the refusal it
+    replaced. A preset with no list has no fallback, because guessing a second model id
+    at a vendor we know one id for is how a session ends on a 404 instead. `OPENREYNOLDS_FALLBACK_MODELS` names a chain of its own.
 
     The requested model is left in: `Provider.chain` takes it out at request time, so
     the same tuple serves whichever of the two is the session's model."""
@@ -261,6 +275,21 @@ def models_for(provider: str) -> tuple[str, ...]:
         if model not in out:
             out.append(model)
     return tuple(out)
+
+
+def serves(provider: str, model: str) -> bool:
+    """Whether `provider` can be asked for `model` at all, as far as this file knows.
+
+    True everywhere but `reynolds`: any id a vendor answers to can be typed, and the
+    probe is what decides. The workspace service is the exception because its list is
+    closed -- it meters its two models and its desk model, and nothing else is behind
+    it. That matters for what this machine remembers rather than what anyone types: a
+    config file or a study written when the service fronted Claude still names
+    `claude-sonnet-5`, and sent to the GPT endpoint that id is a 4xx on every turn."""
+    preset = preset_for(provider)
+    if preset is None or preset.name != REYNOLDS:
+        return True
+    return (model or "").strip() in (*models_for(provider), preset.desk_model)
 
 
 def preset_for(name: str) -> Preset | None:
