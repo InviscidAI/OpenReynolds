@@ -365,7 +365,7 @@ def desk(ctx, monkeypatch):
     from openreynolds.cad import agent
 
     recorder = Recorder()
-    monkeypatch.setattr(agent, "make_provider", lambda cfg: recorder)
+    monkeypatch.setattr(agent, "make_provider", lambda cfg, **kw: recorder)
     ctx.cad = agent.CadDesk(Config(), ctx.backend, ctx.store, HOME)
     return recorder
 

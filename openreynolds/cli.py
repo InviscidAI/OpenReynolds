@@ -29,7 +29,7 @@ from .capture import Capture
 from . import cad, commands, images, switch
 from . import convergence, modes
 from .approval import Approver
-from .llm.presets import EFFORTS, models_for, serves
+from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
 from .config import Config, config_path
 from .delivery import Gallery
 from .llm import PRESETS, REYNOLDS, ProviderError, make_provider, preset_for
@@ -366,6 +366,12 @@ def config_cmd(from_env: bool, key_file: Path | None, provider: str | None) -> N
                 "Model API key", default=cfg.llm_api_key or "", hide_input=True
             ).strip()
         cfg.model = click.prompt("Model", default=cfg.model).strip()
+        if chosen_preset is not None and chosen_preset.name == REYNOLDS:
+            # The service serves two families; the desk and the window follow the one
+            # the model just typed is in, or a Claude study is narrated by GPT's desk
+            # model through Claude's route and capped at GPT's window.
+            cfg.desk_model = desk_model_for(REYNOLDS, cfg.model)
+            cfg.context_window = context_window_for(cfg.model) or chosen_preset.context_window
     except (click.Abort, EOFError):
         # Some shells report a terminal and then deliver EOF, so isatty() alone cannot
         # tell whether prompting will work. Explain rather than dying on "Aborted!".
@@ -1223,13 +1229,13 @@ def session(
         and not serves(stored_provider, stored_model)
     ):
         # A record no provider can honour any more: a study run on Reynolds' model
-        # while the service fronted Claude names `claude-opus-5`, and the GPT endpoint
-        # behind that name today has no such model. Restored as recorded, it is a 4xx on
-        # the first turn; refused as below, the study would keep a record nothing can
-        # serve and say so on every resume. So the study stays on Reynolds' model and
-        # moves to its default, and the record is rewritten with that pair.
+        # before the 5.5 models names `claude-opus-5`, which the service no longer
+        # meters. Restored as recorded, it is a 4xx on the first turn; refused as below,
+        # the study would keep a record nothing can serve and say so on every resume.
+        # So the study stays on Reynolds' model -- on Claude's successor when it was on
+        # Claude, the default otherwise -- and the record is rewritten with that pair.
         retired = stored_model
-        stored_model = PRESETS[REYNOLDS].model  # `serves` is False only there
+        stored_model = successor(stored_provider, stored_model)
         console.print(
             f"[yellow]This study was last on {retired} ({stored_provider}), which "
             f"{stored_provider} no longer serves, so it carries on on {stored_model}.[/]"

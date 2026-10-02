@@ -21,13 +21,15 @@ from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
 from .config import CONTEXT_REFRESH_FRACTION, CONTEXT_WINDOW_TOKENS
-from .llm import ProviderError, make_provider
+from .llm import ProviderError, endpoint_key, make_provider
 from .llm.presets import (
     EFFORTS,
     FALLBACK_CONTEXT_WINDOW,
     PRESETS,
     REYNOLDS,
     context_window_for,
+    desk_model_for,
+    family_for,
     models_for,
     preset_for,
 )
@@ -137,9 +139,13 @@ def candidate(cfg: Any, provider: str, model: str, key: str) -> Any:
         # metered while it fronted Claude -- quietly stayed on Sonnet, as did a resume
         # restoring it. The model asked for wins, exactly as it does across providers
         # below. Nothing about the desk was asked for, so it keeps the one the session
-        # already had.
+        # already had -- unless, on `reynolds`, the model moved to the other family: the
+        # desk speaks the main model's API, so it takes that family's desk model.
         new.model = model
         new.desk_model = cfg.desk_model
+        if (preset is not None and preset.name == REYNOLDS
+                and family_for(provider, model) != family_for(provider, cfg.model)):
+            new.desk_model = desk_model_for(provider, model)
         if known:
             new.context_window = known
         elif context_window_for(cfg.model):
@@ -152,7 +158,7 @@ def candidate(cfg: Any, provider: str, model: str, key: str) -> Any:
     if known:
         new.context_window = known
     if preset is not None:
-        new.desk_model = preset.desk_model
+        new.desk_model = desk_model_for(provider, model)
     return new
 
 
@@ -239,8 +245,10 @@ def apply(loop: Any) -> bool:
         return False
     loop.pending_model = None
     cfg = loop.cfg
-    rebuild = (pending.provider, pending.llm_api_key, pending.llm_base_url) != (
-        cfg.provider, cfg.llm_api_key, cfg.llm_base_url)
+    # The provider, key and endpoint -- and the API family, which on `reynolds` the
+    # model decides: GPT and Claude are two clients there, at two routes of the same
+    # service, so a switch between them is a new client even with nothing else moved.
+    rebuild = endpoint_key(pending, pending.model) != endpoint_key(cfg, cfg.model)
     model_changed = pending.model != cfg.model
     cfg.provider = pending.provider
     cfg.model = pending.model

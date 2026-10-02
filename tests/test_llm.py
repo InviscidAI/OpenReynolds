@@ -315,6 +315,123 @@ def test_make_provider_hands_every_adapter_the_chain_for_its_configuration():
     assert llm.make_provider(cfg(fallback_models="0")).fallbacks == ()
 
 
+def _reynolds(**kw):
+    return cfg(provider="reynolds", llm_api_key="sk-ant-left-over",
+               llm_base_url="https://elsewhere.example", foamd_url="https://api.example/",
+               foamd_api_key="of_live_k", **kw)
+
+
+@pytest.mark.parametrize("model, adapter, route", [
+    ("gpt-6.1-sol", ResponsesProvider, "https://api.example/v1/llm/v1"),
+    ("gpt-6-astra", ResponsesProvider, "https://api.example/v1/llm/v1"),
+    ("gpt-6-luna", ResponsesProvider, "https://api.example/v1/llm/v1"),
+    ("claude-sonnet-5-5", AnthropicProvider, "https://api.example/v1/llm"),
+    ("claude-opus-5-5", AnthropicProvider, "https://api.example/v1/llm"),
+    ("claude-haiku-4-5", AnthropicProvider, "https://api.example/v1/llm"),
+])
+def test_reynolds_picks_the_api_by_the_model_not_the_preset(model, adapter, route):
+    """The service routes Claude over the Messages API at `/v1/llm` (the Anthropic
+    client appends `/v1/messages`) and GPT over the Responses API at `/v1/llm/v1`,
+    both on the service key and never on a model key left in the config."""
+    for p in (llm.make_provider(_reynolds(model=model)),
+              llm.make_provider(_reynolds(model="gpt-6.1-sol"), model=model)):
+        assert isinstance(p, adapter)
+        assert str(p.client.base_url).rstrip("/") == route
+        assert p.client.api_key == "of_live_k"
+
+
+def test_reynolds_falls_back_within_the_family_and_never_across():
+    gpt = llm.make_provider(_reynolds(model="gpt-6.1-sol"))
+    assert gpt.fallbacks == ("gpt-6.1-sol", "gpt-6-astra")
+    assert gpt.chain("gpt-6.1-sol") == ["gpt-6.1-sol", "gpt-6-astra"]
+    claude = llm.make_provider(_reynolds(model="claude-opus-5-5"))
+    assert claude.fallbacks == ("claude-sonnet-5-5", "claude-opus-5-5")
+    assert claude.chain("claude-opus-5-5") == ["claude-opus-5-5", "claude-sonnet-5-5"]
+    assert claude.chain("claude-sonnet-5-5") == ["claude-sonnet-5-5", "claude-opus-5-5"]
+    # The desk's provider is built for the desk model, and falls within its family too.
+    desk = llm.make_provider(_reynolds(model="claude-opus-5-5"), model="claude-haiku-4-5")
+    assert all(m.startswith("claude-") for m in desk.fallbacks)
+    # A named chain naming both families keeps the half this provider can send.
+    mixed = llm.make_provider(_reynolds(model="claude-sonnet-5-5",
+                                        fallback_models="gpt-6-astra,claude-opus-5-5"))
+    assert mixed.fallbacks == ("claude-opus-5-5",)
+
+
+# -- the Claude 5.5 request shape ----------------------------------------------------
+
+
+class _Creating:
+    def __init__(self, answer):
+        self.answer = answer
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.answer
+
+
+REFUSED_FIELDS = ("temperature", "top_p", "top_k", "tool_choice")
+
+
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5"])
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+def test_a_claude_5_5_turn_never_disables_thinking_or_forces_a_tool(model, effort):
+    """Opus 5.5 400s on `thinking: disabled` or a budget at every effort, Sonnet 5.5 on
+    `disabled`; both on forced `tool_choice` and on non-default sampling. Opus 5.5
+    defaults to `medium`, so the effort is always sent."""
+    provider = anthropic_provider([message([text_block("ok")])])
+    provider.stream(model=model, system="s", messages=thread(),
+                    tools=[{"name": "bash", "input_schema": {"type": "object"}}],
+                    effort=effort, max_tokens=64_000, listener=Listener())
+    sent = provider.client.messages.calls[0]
+    assert sent["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert sent["output_config"] == {"effort": effort}
+    assert not any(k in sent for k in REFUSED_FIELDS)
+    assert sent["messages"][-1]["role"] != "assistant"
+
+
+def test_a_lean_claude_5_5_turn_still_names_its_effort():
+    provider = anthropic_provider([message([text_block("ok")])])
+    provider.lean = True
+    provider.stream(model="claude-opus-5-5", system="s", messages=thread(), tools=[],
+                    effort="high", max_tokens=10, listener=Listener())
+    sent = provider.client.messages.calls[0]
+    assert sent["output_config"] == {"effort": "high"} and "thinking" not in sent
+    # An older model on a picky endpoint is still asked for nothing extra.
+    older = anthropic_provider([message([text_block("ok")])])
+    older.lean = True
+    older.stream(model="glm-4.6", system="s", messages=thread(), tools=[],
+                 effort="high", max_tokens=10, listener=Listener())
+    assert "output_config" not in older.client.messages.calls[0]
+
+
+@pytest.mark.parametrize("model, thinking, floor", [
+    ("claude-opus-5-5", None, 2_048),
+    ("claude-sonnet-5-5", {"type": "between_tools"}, 60),
+])
+def test_a_claude_5_5_short_answer_asks_for_little_thinking(model, thinking, floor):
+    """The front desk's line (and a fallback for it) is tool-less and short. Opus 5.5
+    cannot stop thinking, so it is asked for the least and given room for it; Sonnet
+    5.5 turns it off with `between_tools`, which takes no other field."""
+    provider = AnthropicProvider("k")
+    provider.client = SimpleNamespace(messages=_Creating(served(model, " busy ")))
+    assert provider.complete(model=model, system="s", prompt="p", max_tokens=60) == "busy"
+    sent = provider.client.messages.calls[0]
+    assert sent["output_config"] == {"effort": "low"}
+    assert sent.get("thinking") == thinking
+    assert sent["max_tokens"] == floor
+    assert not any(k in sent for k in REFUSED_FIELDS)
+
+
+def test_haiku_at_the_desk_is_asked_exactly_as_before():
+    provider = AnthropicProvider("k")
+    provider.client = SimpleNamespace(messages=_Creating(served("claude-haiku-4-5", "ok")))
+    provider.complete(model="claude-haiku-4-5", system="s", prompt="p", max_tokens=60)
+    sent = provider.client.messages.calls[0]
+    assert sent["max_tokens"] == 60
+    assert "thinking" not in sent and "output_config" not in sent
+
+
 def test_openai_content_filter_walks_the_chain_too():
     provider = openai_provider([[chunk(finish="content_filter")], [chunk(content="ok"), chunk(finish="stop")]])
     provider.fallbacks = ("gpt-5.2",)
@@ -833,3 +950,23 @@ def test_responses_gives_up_on_a_connection_that_keeps_dying(monkeypatch):
         provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
                         max_tokens=500, listener=Listener())
     assert len(calls) == 3
+
+
+def test_reynolds_maps_retired_ids_and_prices_what_it_serves():
+    from openreynolds.llm.presets import (KNOWN_MODELS, context_window_for, desk_model_for,
+                                          prices, successor)
+
+    assert successor("reynolds", "claude-sonnet-5") == "claude-sonnet-5-5"
+    assert successor("reynolds", "claude-opus-5") == "claude-opus-5-5"
+    assert successor("reynolds", "gpt-5.6-sol") == "gpt-6.1-sol"
+    assert successor("reynolds", "claude-opus-5-5") == "claude-opus-5-5"
+    assert successor("anthropic", "claude-opus-5") == "claude-opus-5"  # open list there
+    assert desk_model_for("reynolds", "claude-opus-5-5") == "claude-haiku-4-5"
+    assert desk_model_for("reynolds", "gpt-6-astra") == "gpt-6-luna"
+    for model in KNOWN_MODELS["reynolds"] + ("gpt-6-luna", "claude-haiku-4-5"):
+        assert prices(model) is not None, model
+        assert context_window_for(model), model
+    assert prices("claude-opus-5-5") == {"input": 4.00, "output": 20.00,
+                                         "cache_read": 0.20, "cache_write": 5.00}
+    assert prices("claude-sonnet-5-5") == {"input": 2.00, "output": 10.00,
+                                           "cache_read": 0.20, "cache_write": 2.50}

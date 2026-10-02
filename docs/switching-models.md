@@ -18,10 +18,32 @@ Only a real preset name counts before a colon, because model ids have colons of 
 own: `/model qwen3:8b` is a model on the current provider.
 
 The known models are a convenience for completion, not a limit. For `reynolds` they are
-`gpt-6.1-sol` and `gpt-6-astra`; for `anthropic`, `claude-opus-5`,
-`claude-sonnet-5` and `claude-haiku-4-5`; every other preset offers its own default
-and desk model. `reynolds` does not offer its desk model, because the service meters
-only those two for the agent. Any id the provider answers to can be typed.
+`gpt-6.1-sol` (the default), `gpt-6-astra`, `claude-sonnet-5-5` and `claude-opus-5-5`;
+for `anthropic`, `claude-opus-5`, `claude-sonnet-5` and `claude-haiku-4-5`; every other
+preset offers its own default and desk model. `reynolds` does not offer its desk models,
+because the service meters only those four for the agent. Any id the provider answers
+to can be typed.
+
+### Two families behind `reynolds`
+
+The workspace service serves GPT and Claude, and the model picks the API: a `claude-` id
+goes over Anthropic's Messages API at `{service}/v1/llm`, anything else over OpenAI's
+Responses API at `{service}/v1/llm/v1`, both on the service key (which cloud the service
+relays each to is its business). So `/model claude-opus-5-5` on a GPT session is a
+switch of client as well as of model, even though the provider, key and service are the
+same: the client is rebuilt at the next turn, the front desk moves from `gpt-6-luna` to
+`claude-haiku-4-5` (it always speaks the main model's family), and the window moves from
+GPT's 272,000 -- where those models start billing at a long-context rate the service
+does not price -- to Claude's 1,000,000. A switch within a family keeps the client.
+
+The thread carries over as it does between providers: each turn is replayed to the new
+API as its words and tool calls, and the earlier model's reasoning -- GPT's encrypted
+reasoning items, Claude's signed thinking blocks -- is dropped, because only the model
+that wrote it can read it. The CAD desk and its reviewer follow at their next call.
+
+A request a model's safety classifier declines is retried on the other model of the
+same family -- `gpt-6.1-sol` and `gpt-6-astra`, `claude-sonnet-5-5` and
+`claude-opus-5-5` -- and never across families.
 
 ### Checked before it is accepted
 
@@ -117,18 +139,20 @@ A model id does not name a provider on its own -- `claude-opus-5` was valid on
 study recorded before the provider was kept names a model and no provider, and starts on
 the configured model as it always did.
 
-`reynolds` is the one provider whose list is closed, because it served Claude until
-2026-10 and serves GPT now. A study recorded on `reynolds` with a model the service no
-longer meters is not restored as recorded, which would be a 4xx on the first turn: it
-carries on on `reynolds` at its default, says so, and the record is rewritten. A config
-file saved then, with Claude's ids and window in it, loads the same way.
+`reynolds` is the one provider whose list is closed, because it served Claude 5 until
+2026-10 and serves GPT and the Claude 5.5 models now. A study recorded on `reynolds`
+with a model the service no longer meters is not restored as recorded, which would be a
+4xx on the first turn: it carries on on `reynolds` -- `claude-sonnet-5` on
+`claude-sonnet-5-5` and `claude-opus-5` on `claude-opus-5-5`, because whoever chose
+Claude chose Claude, and anything else on the default -- says so, and the record is
+rewritten. A config file saved then loads the same way.
 
 ### The mesh desk and the front desk
 
 The mesh desk reads the model at each `mesh` call, so it follows the switch unless
 `OPENREYNOLDS_MESHER_MODEL` pins it. The front desk, which answers quickly while the
-agent works, rebuilds its client on a provider change and uses that preset's desk
-model.
+agent works, rebuilds its client on a provider change -- or on `reynolds`, a change of
+family -- and uses that provider's (or family's) desk model.
 
 ## /effort
 
@@ -158,14 +182,14 @@ default effort is `high`; the hosted app starts studies at `medium`.
 
 Under the composer, a model chooser and an effort chooser for the running session send
 `/model <id>` and `/effort <level>`. The models offered are the ones this account can
-use: for Reynolds' model, the two the service meters; for a key of your own, the models
+use: for Reynolds' model, the four the service meters; for a key of your own, the models
 that key was connected with, because a hosted session carries one provider's key. The
 top bar shows the model and effort as the session reports them.
 
 Resuming a study there reads the same record, and applies its own half of the gate: the
 key the resume is starting with must belong to the provider that served the model and to
 the same endpoint as the record, and must be able to answer to that id (Reynolds' model
-is metered rather than a key, so it serves only the two models the service prices; a key
+is metered rather than a key, so it serves only the four models the service prices; a key
 of your own serves any id its vendor answers to). A record with no endpoint is refused
 rather than guessed at. That is a narrower test than the terminal's: the app never
 switches provider to honour a record, because a hosted session carries one key. When it

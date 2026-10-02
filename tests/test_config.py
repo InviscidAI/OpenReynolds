@@ -239,16 +239,46 @@ def test_a_provider_named_on_its_own_still_arrives_at_its_presets_model(clean_en
     assert Config.load().model == "glm-4.6"
 
 
-def test_a_reynolds_config_saved_when_it_fronted_claude_loads_onto_gpt(clean_env, monkeypatch):
-    """`openreynolds config --provider reynolds` used to save Claude's ids and its
-    million-token window. The GPT endpoint has none of those ids, and above 272K the
-    service is no longer priced, so neither survives the load."""
+def test_a_reynolds_config_saved_on_claude_5_loads_onto_its_successor(clean_env, monkeypatch):
+    """`openreynolds config --provider reynolds` used to save Claude 5's ids. The
+    service meters the 5.5 models now; the person chose Claude, so they stay on it."""
     write_config(clean_env, provider="reynolds", foamd_api_key="k", model="claude-sonnet-5",
                  desk_model="claude-haiku-4-5", context_window=1_000_000)
     monkeypatch.setenv("OPENREYNOLDS_CAD_MODEL", "claude-opus-5")
     cfg = Config.load()
-    assert (cfg.model, cfg.desk_model, cfg.mesher_model) == ("gpt-6.1-sol", "gpt-6-luna", "")
+    assert (cfg.model, cfg.desk_model, cfg.mesher_model) == (
+        "claude-sonnet-5-5", "claude-haiku-4-5", "claude-opus-5-5")
+    assert cfg.context_window == 1_000_000
+
+
+def test_a_reynolds_config_with_an_unknown_model_loads_onto_the_default(clean_env):
+    """Anything the service does not meter and that has no successor goes to the
+    default, and the million-token window saved beside it does not survive: above 272K
+    GPT is no longer priced."""
+    write_config(clean_env, provider="reynolds", foamd_api_key="k", model="gpt-5.6-sol",
+                 desk_model="claude-haiku-4-5", context_window=1_000_000)
+    cfg = Config.load()
+    assert (cfg.model, cfg.desk_model) == ("gpt-6.1-sol", "gpt-6-luna")
     assert cfg.context_window == 272_000
+
+
+@pytest.mark.parametrize("model, desk, window", [
+    ("gpt-6.1-sol", "gpt-6-luna", 272_000),
+    ("gpt-6-astra", "gpt-6-luna", 272_000),
+    ("claude-sonnet-5-5", "claude-haiku-4-5", 1_000_000),
+    ("claude-opus-5-5", "claude-haiku-4-5", 1_000_000),
+])
+def test_the_reynolds_desk_and_window_follow_the_models_family(clean_env, monkeypatch,
+                                                              model, desk, window):
+    monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "reynolds")
+    monkeypatch.setenv("OPENREYNOLDS_MODEL", model)
+    cfg = Config.load()
+    assert (cfg.model, cfg.desk_model, cfg.context_window) == (model, desk, window)
+    # A desk named from the other family is not one this session can speak to.
+    monkeypatch.setenv("OPENREYNOLDS_DESK_MODEL", "gpt-6-luna" if desk != "gpt-6-luna"
+                       else "claude-haiku-4-5")
+    assert Config.load().desk_model == desk
+    assert Config(provider="reynolds", foamd_api_key="k", model=model).desk_model == desk
 
 
 def test_a_smaller_window_named_for_reynolds_is_kept(clean_env, monkeypatch):

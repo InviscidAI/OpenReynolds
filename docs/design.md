@@ -165,11 +165,12 @@ What exists today:
 - **Bring your own key** (the default, and the only mode for a self-hosted agent). The
   agent calls your provider directly with your key. The workspace service never sees it.
 - **The metered provider** (`OPENREYNOLDS_PROVIDER=reynolds`). The agent speaks the
-  OpenAI Responses API to `{service}/v1/llm/v1` with its *workspace* key as the model
-  key; the service swaps in the platform's own credential (Azure or Bedrock, which the
-  agent neither knows nor needs to), relays the request including streaming, and meters
-  the tokens into the same monthly budget as compute. No model key of your own. Until
-  2026-10 the same route carried Claude over the Messages API at `{service}/v1/llm`.
+  OpenAI Responses API to `{service}/v1/llm/v1` for GPT, or Anthropic's Messages API to
+  `{service}/v1/llm` for Claude -- the model picks which -- with its *workspace* key as
+  the model key; the service swaps in the platform's own credential (Azure for GPT,
+  Bedrock for Claude, which the agent neither knows nor needs to), relays the request
+  including streaming, and meters the tokens into the same monthly budget as compute.
+  No model key of your own.
 
 Neither is privileged in the code. `llm/presets.py` carries both, and `make_provider`
 cannot tell which it has.
