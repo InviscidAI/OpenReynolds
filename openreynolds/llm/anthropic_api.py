@@ -258,14 +258,16 @@ class AnthropicProvider(Provider):
     def probe(self, model: str, vision: bool = False) -> str:
         """Counting tokens validates the key, the endpoint and the model id in one
         free call -- on Anthropic, and with an image in the count it also proves the
-        model accepts pictures. A compatible vendor may not have the endpoint, in
-        which case the cheapest real request stands in."""
+        model accepts pictures. A compatible vendor may not have the endpoint, or the
+        key may not be allowed to use it (Bedrock counts on a separate service, under
+        its own IAM action), in which case the cheapest real request stands in: a
+        count is a convenience, and a key that can run the model can run the study."""
         messages = [{"role": "user", "content": _probe_content(vision)}]
         try:
             counted = self.client.messages.count_tokens(model=model, messages=messages)
             sees = " and can see images" if vision else ""
             return f"{model} reachable ({counted.input_tokens} tokens for a ping){sees}"
-        except anthropic.NotFoundError:
+        except (anthropic.NotFoundError, anthropic.PermissionDeniedError):
             pass
         except anthropic.BadRequestError as exc:
             if vision and _about_images(_message(exc)):

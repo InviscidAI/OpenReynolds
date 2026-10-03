@@ -685,6 +685,30 @@ def test_anthropic_probe_with_vision_sends_an_image_and_reads_the_refusal():
     assert "text-only" in str(refused.value)
 
 
+def test_anthropic_probe_falls_back_to_a_ping_when_counting_is_forbidden():
+    """Bedrock counts on Mantle under its own IAM action; a key without it can still
+    run the model, so the probe pings instead of refusing the key."""
+    import httpx
+
+    class Forbidden:
+        def __init__(self):
+            self.created = []
+
+        def count_tokens(self, **kwargs):
+            raise anthropic.PermissionDeniedError(
+                "not authorized to perform: bedrock-mantle:CountTokens",
+                response=httpx.Response(403, request=httpx.Request("POST", "http://u")), body=None)
+
+        def create(self, **kwargs):
+            self.created.append(kwargs)
+            return SimpleNamespace(content=[])
+
+    provider = AnthropicProvider("k")
+    provider.client = SimpleNamespace(messages=Forbidden())
+    assert "answered a ping" in provider.probe("claude-sonnet-5-5", vision=True)
+    assert provider.client.messages.created[0]["model"] == "claude-sonnet-5-5"
+
+
 def test_openai_probe_with_vision_uses_a_data_uri_and_reads_the_refusal():
     seeing = openai_provider([SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])])
     assert "can see images" in seeing.probe("gpt-5", vision=True)
