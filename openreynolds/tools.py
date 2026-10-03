@@ -886,6 +886,20 @@ def _written_run_shape(args: dict[str, Any]) -> str:
     return f" [{', '.join(parts)}]"
 
 
+def _whole_file(args: dict[str, Any], size: int) -> bool:
+    """Whether a read asks for all of the file rather than a window of it.
+
+    No offset and no limit is the plain case. But `offset: 0` with a limit at least the
+    file's size is the same request spelled out, and a model that fills in every
+    optional argument (GPT does; Claude leaves them out) spells it out every time --
+    which read a 250 KB render as 48 KB of PNG bytes, and the model reported the plot
+    "not visually inspected". A window that starts later, or stops short, is still
+    asking for bytes."""
+    offset = int(args.get("offset") or 0)
+    limit = args.get("limit")
+    return offset == 0 and (not limit or int(limit) >= size)
+
+
 def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, Any]]:
     path = args["path"]
     info = ctx.backend.stat(path, timeout=READ_TIMEOUT_S, max_attempts=READ_ATTEMPTS)
@@ -894,7 +908,7 @@ def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, A
         return f"{path} — directory, {len(info.entries)} entries\n\n{listing}"
 
     media = images.media_type(path)
-    if media is not None and not (args.get("offset") or args.get("limit")):
+    if media is not None and _whole_file(args, info.size):
         return _read_image(ctx, path, info, media)
 
     offset = max(0, int(args.get("offset") or 0))

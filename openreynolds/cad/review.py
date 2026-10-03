@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .. import images
-from ..llm import Listener, ProviderError, make_provider
+from ..llm import Listener, ProviderError, endpoint_key, make_provider
 from .check import VIEW_SCRIPTS, _json_in, staged
 
 
@@ -476,8 +476,21 @@ class Reviewer:
         interesting arm of the experiment; the same model in a fresh thread is the
         cheaper one, and still not the same eyes that built it."""
         self.effort = cfg.mesher_effort or "high"
-        self.provider = make_provider(cfg)
+        self.provider = make_provider(cfg, model=self.model)
+        self._built_for = (self.model, endpoint_key(cfg, self.model))
+        """The configured model and the endpoint `provider` was built for; see `_follow`."""
         self.enabled = True
+
+    def _follow(self) -> None:
+        """Pick up a mid-study `/model`, as the desk does (`CadDesk._follow`)."""
+        model = self.cfg.review_model or self.cfg.mesher_model or self.cfg.model
+        built = (model, endpoint_key(self.cfg, model))
+        if built == self._built_for:
+            return
+        self.model = model
+        if built[1] != self._built_for[1]:
+            self.provider = make_provider(self.cfg, model=model)
+        self._built_for = built
 
     # -- the look ----------------------------------------------------------------
 
@@ -485,6 +498,7 @@ class Reviewer:
                said: list[str] | None, summary: str, facts: dict[str, Any] | None,
                prior: Review | None = None) -> Review:
         """Render, ask, read. Never raises: every failure of its own is `skipped`."""
+        self._follow()
         started = time.monotonic()
         review = Review(round=(prior.round + 1) if prior else 1)
         try:

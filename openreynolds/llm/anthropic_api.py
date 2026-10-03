@@ -4,6 +4,19 @@ The Claude-only extras -- adaptive thinking, an effort setting, prompt caching -
 sent on the first try and dropped for the rest of the session the moment an endpoint
 rejects them, so a compatible vendor costs one failed request rather than a config
 flag someone has to know about.
+
+Claude's 5.5 generation (and Fable, Mythos) narrows what a request may say
+(`_always_thinks`): thinking cannot be disabled -- `{type: "disabled"}` and a
+`budget_tokens` are a 400 on Opus 5.5 at every effort, and `disabled` is a 400 on
+Sonnet 5.5, which turns thinking off with `{type: "between_tools"}` instead -- forced
+`tool_choice` (`any`, `tool`) is a 400, as are non-default sampling parameters and an
+assistant prefill, and Opus 5.5 defaults to `medium` effort. This module sends none of
+the refused fields to any model: thinking is adaptive, absent, or (Sonnet 5.5's short
+answers) `between_tools`; `tool_choice` is never sent, which is the API's `auto`;
+sampling is left at its defaults; and no request ends on an assistant turn. What it
+adds for these models is the effort on every request, because leaving it out is not
+neutral on Opus 5.5; and a short answer (`complete`, `probe`) asks for `low` effort --
+on Sonnet 5.5 with thinking only between tools -- so reasoning does not spend it.
 """
 
 from __future__ import annotations
@@ -25,6 +38,42 @@ from .base import (
     cannot_see,
     neutral_blocks,
 )
+
+
+_ALWAYS_THINKING = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-", "claude-mythos-")
+"""Ids (as prefixes, so a dated or suffixed variant matches) of models whose thinking
+cannot be turned off and that take an effort on every request."""
+
+COMPLETE_FLOOR_TOKENS = 2_048
+"""`max_tokens` for a short answer from a model that always thinks. The cap counts the
+thinking too, and a sixty-token budget is spent before a word of the answer."""
+
+
+def _always_thinks(model: str) -> bool:
+    name = (model or "").strip().lower()
+    return any(name.startswith(tag) for tag in _ALWAYS_THINKING)
+
+
+def _thinks_between_tools(model: str) -> bool:
+    """Whether `{type: "between_tools"}` -- thinking off but for tool rounds -- is
+    accepted. Sonnet 5.5 only; on Opus 5.5 effort is the one control."""
+    return (model or "").strip().lower().startswith("claude-sonnet-5-5")
+
+
+def _quiet(model: str, max_tokens: int) -> dict[str, Any]:
+    """The extras for a short, tool-less answer: nothing for a model that thinks only
+    when asked, the least effort (and on Sonnet 5.5 no thinking before the answer) and
+    room for what thinking remains for one that always thinks."""
+    if not _always_thinks(model):
+        return {"max_tokens": max_tokens}
+    extras: dict[str, Any] = {"output_config": {"effort": "low"}}
+    if _thinks_between_tools(model):
+        # Takes no other field, and is accepted at effort `high` or below.
+        extras["thinking"] = {"type": "between_tools"}
+        extras["max_tokens"] = max_tokens
+    else:
+        extras["max_tokens"] = max(max_tokens, COMPLETE_FLOOR_TOKENS)
+    return extras
 
 
 class AnthropicProvider(Provider):
@@ -118,12 +167,21 @@ class AnthropicProvider(Provider):
                 messages=self.render(messages),
                 tools=tools,
             )
+            always = _always_thinks(model)
             if not self.lean:
                 kwargs.update(
+                    # `summarized`, because these models default to `omitted`: the
+                    # thinking blocks would stream empty and the UI would show a pause.
                     thinking={"type": "adaptive", "display": "summarized"},
-                    output_config={"effort": effort},
+                    output_config={"effort": effort or "high"},
                     cache_control={"type": "ephemeral"},
                 )
+            elif always:
+                # Lean drops what a compatible endpoint refused, but on a model that
+                # always thinks the effort is not optional: left out, Opus 5.5 runs at
+                # `medium` rather than the effort the session asked for. Thinking is
+                # left out, which on these models is adaptive anyway.
+                kwargs["output_config"] = {"effort": effort or "high"}
             try:
                 return self._stream_once(kwargs, listener)
             except anthropic.BadRequestError as exc:
@@ -187,9 +245,9 @@ class AnthropicProvider(Provider):
         try:
             response = self.client.messages.create(
                 model=model,
-                max_tokens=max_tokens,
                 system=self._system(system),
                 messages=[{"role": "user", "content": prompt}],
+                **_quiet(model, max_tokens),
             )
         except anthropic.APIStatusError as exc:
             raise ProviderError(_message(exc), exc.status_code) from exc
@@ -200,14 +258,16 @@ class AnthropicProvider(Provider):
     def probe(self, model: str, vision: bool = False) -> str:
         """Counting tokens validates the key, the endpoint and the model id in one
         free call -- on Anthropic, and with an image in the count it also proves the
-        model accepts pictures. A compatible vendor may not have the endpoint, in
-        which case the cheapest real request stands in."""
+        model accepts pictures. A compatible vendor may not have the endpoint, or the
+        key may not be allowed to use it (Bedrock counts on a separate service, under
+        its own IAM action), in which case the cheapest real request stands in: a
+        count is a convenience, and a key that can run the model can run the study."""
         messages = [{"role": "user", "content": _probe_content(vision)}]
         try:
             counted = self.client.messages.count_tokens(model=model, messages=messages)
             sees = " and can see images" if vision else ""
             return f"{model} reachable ({counted.input_tokens} tokens for a ping){sees}"
-        except anthropic.NotFoundError:
+        except (anthropic.NotFoundError, anthropic.PermissionDeniedError):
             pass
         except anthropic.BadRequestError as exc:
             if vision and _about_images(_message(exc)):
@@ -219,7 +279,8 @@ class AnthropicProvider(Provider):
             raise ProviderError(str(exc)) from exc
         try:
             self.client.messages.create(
-                model=model, max_tokens=5, system=self._system("Reply with one word."), messages=messages
+                model=model, system=self._system("Reply with one word."), messages=messages,
+                **_quiet(model, 5),
             )
         except anthropic.BadRequestError as exc:
             if vision and _about_images(_message(exc)):

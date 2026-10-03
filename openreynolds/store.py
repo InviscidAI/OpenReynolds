@@ -46,8 +46,8 @@ class Session:
     provider: str = ""
     """Whose model that was (`llm/presets.py`). Empty on studies made before the
     provider was recorded, and a resume reads that as a model it cannot place: an id
-    does not name a provider on its own -- `claude-opus-5` is valid on `anthropic` and
-    on `reynolds` -- so those studies carry on on whatever the configuration says."""
+    does not name a provider on its own -- `claude-opus-5` was valid on `anthropic` and
+    on `reynolds` both -- so those studies carry on on whatever the configuration says."""
     base_url: str = ""
     """Where that model was served from: `llm_base_url` as configured, empty for the
     preset's own endpoint.

@@ -365,7 +365,7 @@ def desk(ctx, monkeypatch):
     from openreynolds.cad import agent
 
     recorder = Recorder()
-    monkeypatch.setattr(agent, "make_provider", lambda cfg: recorder)
+    monkeypatch.setattr(agent, "make_provider", lambda cfg, **kw: recorder)
     ctx.cad = agent.CadDesk(Config(), ctx.backend, ctx.store, HOME)
     return recorder
 
@@ -526,22 +526,21 @@ def test_none_of_these_are_persisted_and_that_has_not_changed(clean_env, monkeyp
     assert "mesher_model" not in written and "cad_model" not in written
 
 
-def test_the_hosted_desk_builds_with_opus_while_the_conversation_stays_on_sonnet(
-        clean_env, monkeypatch):
-    """What the hosted app exports for a default session: the Reynolds provider and
-    Sonnet. Sonnet finished none of 16 build-up runs in the desk's 30 steps; the desk
-    and its reviewer (which looks with the desk's model) take Opus."""
+def test_the_hosted_desk_builds_with_the_conversations_model(clean_env, monkeypatch):
+    """What the hosted app exports for a default session: the Reynolds provider and its
+    default GPT. No GPT has been swept on the desk at that version, so the preset names
+    no CAD model of its own and the desk builds with the main one."""
     monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "reynolds")
-    monkeypatch.setenv("OPENREYNOLDS_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("OPENREYNOLDS_MODEL", "gpt-6.1-sol")
     cfg = Config.load()
-    assert cfg.model == "claude-sonnet-5"
-    assert cfg.mesher_model == "claude-opus-5"
+    assert cfg.model == "gpt-6.1-sol"
+    assert cfg.mesher_model == ""
 
 
 def test_a_named_cad_model_still_wins_on_the_hosted_preset(clean_env, monkeypatch):
     monkeypatch.setenv("OPENREYNOLDS_PROVIDER", "reynolds")
-    monkeypatch.setenv("OPENREYNOLDS_CAD_MODEL", "claude-sonnet-5")
-    assert Config.load().mesher_model == "claude-sonnet-5"
+    monkeypatch.setenv("OPENREYNOLDS_CAD_MODEL", "gpt-6-astra")
+    assert Config.load().mesher_model == "gpt-6-astra"
 
 
 @pytest.mark.parametrize("provider", ["anthropic", "openai"])

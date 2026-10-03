@@ -34,7 +34,7 @@ import threading
 import time
 from typing import Any
 
-from .llm import ProviderError, make_provider
+from .llm import ProviderError, endpoint_key, make_provider
 from .view import desk_step_line
 
 DESK_SYSTEM = """\
@@ -90,11 +90,14 @@ class Concierge:
         self.cfg = cfg
         self.model = cfg.desk_model or "claude-haiku-4-5"
         # Short calls, but a stalled one must not wedge the desk thread forever.
-        self._provider = make_provider(cfg, timeout=min(60.0, cfg.llm_timeout_s or 60.0))
+        self._provider = make_provider(cfg, model=self.model,
+                                       timeout=min(60.0, cfg.llm_timeout_s or 60.0))
         self._endpoint = _endpoint(cfg)
-        """Which provider, key and endpoint `_provider` was built for. The config is the
-        session's own object, so a mid-study `/model` to another provider shows up here
-        and the desk follows it rather than calling a vendor the session has left."""
+        """Which provider, key, endpoint and API family `_provider` was built for. The
+        config is the session's own object, so a mid-study `/model` to another provider
+        -- or, on `reynolds`, to the other family, which brings its own desk model --
+        shows up here and the desk follows it rather than calling an API the session
+        has left."""
         self._system = DESK_SYSTEM
         self._q: queue.Queue[tuple[str, str] | None] = queue.Queue()
         self._busy = threading.Event()
@@ -188,8 +191,9 @@ class Concierge:
         if endpoint == self._endpoint:
             return
         self._endpoint = endpoint
-        self._provider = make_provider(self.cfg, timeout=min(60.0, self.cfg.llm_timeout_s or 60.0))
         self.model = self.cfg.desk_model or self.model
+        self._provider = make_provider(self.cfg, model=self.model,
+                                       timeout=min(60.0, self.cfg.llm_timeout_s or 60.0))
 
     def _call(self, system: str, prompt: str, max_tokens: int) -> str:
         self._follow()
@@ -269,7 +273,7 @@ def _render(content: Any) -> str:
 
 
 def _endpoint(cfg: Any) -> tuple:
-    return (cfg.provider, cfg.llm_api_key, cfg.llm_base_url)
+    return endpoint_key(cfg, cfg.desk_model or "claude-haiku-4-5")
 
 
 def _one_line(text: str) -> str:

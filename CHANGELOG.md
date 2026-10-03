@@ -329,6 +329,41 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- **Reynolds' model is GPT or Claude, and the model picks the API.** The `reynolds`
+  preset was Claude 5 over the Messages API at `{service}/v1/llm`. The service now
+  meters four models for a study, two per family: `gpt-6.1-sol` (the default) and
+  `gpt-6-astra` over the Responses API at `{service}/v1/llm/v1` (the client appends
+  `/responses`), and `claude-sonnet-5-5` and `claude-opus-5-5` over the Messages API at
+  `{service}/v1/llm` as before -- all on the service key as the model key, whatever
+  model key the config still holds. `make_provider` picks the adapter from the model,
+  not the preset (a `claude-` id is the Messages API), and each place that builds a
+  client builds it for the model it will ask: the loop, the CAD desk, its reviewer and
+  the front desk. The front desk speaks the main model's family -- `gpt-6-luna` for GPT,
+  `claude-haiku-4-5` for Claude -- and a `/model` between families on `reynolds`
+  rebuilds the client, moves the desk, and replays the thread through neutral blocks,
+  dropping the other family's reasoning. A refusal is retried on the other model of the
+  same family, never across. The window is the model's: 1,000,000 for the Claude 5.5
+  models, and 272,000 for GPT -- not those models' own, but where they start billing at
+  a long-context rate the service does not price -- so a GPT thread is compacted before
+  it gets there. The CAD desk builds with the main model. On GPT that is measured:
+  `gpt-6.1-sol`'s first corpus (`docs/cad-buildup/sweeps/core-gpt-6.1-sol-20261002-075149-9301`)
+  had 22 of 26 survive the vet, against 16 of 26 for gpt-5.6-sol. Neither Claude 5.5
+  model has been swept on the desk (Sonnet 5 finished 0 of 16 in its 30 steps). A
+  config file or a study that names `claude-sonnet-5` or `claude-opus-5` under
+  `reynolds` loads, or resumes, onto `claude-sonnet-5-5` or `claude-opus-5-5`, and any
+  other id the service does not meter onto `gpt-6.1-sol`, and says so.
+
+  The Messages adapter now sends Claude 5.5 only what it accepts. Thinking is adaptive
+  with `display: "summarized"` and the effort is sent on every turn, because Opus 5.5
+  cannot turn thinking off and defaults to `medium`; even on an endpoint that refused
+  the extras, a 5.5 model keeps its effort. The front desk's short answers ask a 5.5
+  model for `low` effort -- with `thinking: {type: "between_tools"}` on Sonnet 5.5, and
+  room for the thinking it cannot skip on Opus 5.5 -- rather than `thinking: disabled`,
+  which both refuse. No path sends a forced `tool_choice`, sampling parameters or a
+  prefill. Responses usage now counts a reported cache write as its own class, and list
+  prices for all seven models are in `llm/presets.py` (Claude's at Anthropic's list;
+  Bedrock bills at partner prices that may differ).
+
 - **The mesh desk builds in the background.** A `mesh` call used to run the desk on
   the loop's own thread and hold it for the whole build. Measured in production
   (study 20260920-161908-c7ef): one call held the agent for 402 s and some twenty-five
