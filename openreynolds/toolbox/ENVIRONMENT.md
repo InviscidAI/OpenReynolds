@@ -46,12 +46,15 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 - `mesh_look.py` in the toolbox draws any meshed case with one colour per patch and prints
   its cells, bounds, patch areas and normals and checkMesh's verdict — the fastest way to
   see whether a mesh is the shape that was meant and whether the inlet is the end you think.
-- `templates/` in the toolbox holds two working scripts, not snippets: `duct2d.py` (a
+- `templates/` in the toolbox holds working scripts, not snippets: `duct2d.py` (a
   closed planar outline meshed in quads, extruded one cell into hexahedra, converted with
-  `gmshToFoam` and retyped) and `body_in_box.py` (an OCC primitive cut out of a flow box,
-  meshed body-fitted with tetrahedra, converted and retyped). Both run `checkMesh` and end
-  with a `mesh_look.py` call. Copy one into a case directory, edit the two numbers marked
-  at the top, and run it — the whole 2D or 3D meshing recipe, gotchas included, rather
+  `gmshToFoam` and retyped), `body_in_box.py` (an OCC primitive cut out of a flow box,
+  meshed body-fitted with tetrahedra, converted and retyped), and `evaluate_steady.py`
+  (a cambered section over a ground plane, the `build.py` of a parametric round -- its
+  section comes from a `design_constants.py` beside it, and `--write-round DIR` writes
+  the round out with a sample `hooks.py` and `goal.lock.json`). All run `checkMesh` and
+  end with a `mesh_look.py` call. Copy one into a case directory, edit the two numbers
+  marked at the top, and run it — the whole meshing recipe, gotchas included, rather
   than a page to reconstruct from memory.
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
@@ -111,3 +114,71 @@ on `render.py --help` before rendering anything):
 A decomposed run's time steps live in `processorN/` (or `processors<N>/` with the collated
 handler) until `reconstructPar` puts them together; `reconstructPar -latestTime` reconstructs
 one time, and a series (an animation) needs `reconstructPar` without it, or `-time 'a:b'`.
+
+## A parametric study: the files two scripts agree on
+
+`parametric.py` builds, meshes, dresses, solves and scores one candidate; `score.py`
+writes its `metrics.json` and nothing else does. They meet on three files, and the
+keys below are the whole of what they read (`templates/evaluate_steady.py --write-round
+DIR` writes a sample of each):
+
+- `CANDIDATE_DIR/design_constants.py` -- the caller's numbers, one `NAME = <number>` per
+  line. The round's `build.py` begins with `from design_constants import *`; a `build.py`
+  without that line is refused.
+- `ROUND_DIR/hooks.py` (optional) -- `def case_args() -> list[str]` and imports, nothing
+  else; the flags it returns go to `case_gen.py` after the lock's and may not repeat one
+  of them.
+- `goal.lock.json` -- harness-owned, written once: `solver` (default `simpleFoam`);
+  `case_gen_args` (a list of `case_gen.py` flags: the physics); `body_patch` (where
+  forces are taken, passed as `--body`); `fidelity: {ranks, iters, window, cells: {min,
+  max}, yplus: {min, max}, reference}` (`iters` becomes `--iterations`, or `--end-time`
+  under `--study transient`; `window` is the tail fraction the coefficients are averaged
+  over, default 0.2; either side of a band may be left out; `reference` is a tag copied
+  through); `trim` (optional: `{variable, metric, target, tol, max_solves}`, the
+  fixed-lift secant over one design constant); `cases` and `derived` (optional: several
+  solves off one mesh, and arithmetic over their metrics — see below);
+  `template_version` (copied through).
+
+`metrics.json` carries, always: `label` (`ok`, `mesh`, `diverged`, `timeout`,
+`unconverged`, `yplus`, `cells`), `detail`, `fidelity`, `template_version`,
+`build_sha256`, `case_args`, `trim` (or null), `metrics` (`Cd`, `Cl`, `CmPitch` as
+tail means, and `dp` when the case was dressed with `--dp`), `window` (rows averaged),
+`converged`, `residual_shape`, `yplus` (`{min, max}` or null), `cells`, `wall_seconds`,
+`versions` (`foam`, `gmsh`, `build123d`).
+
+### A pressure drop, and several cases off one mesh
+
+An internal flow is judged by its pressure drop, which is not a force on a body and so
+is in none of the files above. `case_gen.py --dp` writes the two function objects it is
+— `surfaceFieldValue`, `areaAverage` of `p`, on the first inlet and the first outlet, at
+every iteration, into `postProcessing/pInlet/` and `postProcessing/pOutlet/` — and
+`score.py` reports `dp = p_inlet - p_outlet` as the mean over the same
+`fidelity.window` tail the coefficients use, formed per time step and not as the
+difference of two tail means. `p` is the solver's own field, so on `simpleFoam` the drop
+is kinematic (m²/s²); pascals are ρ times it, and a ratio of two drops is neither.
+
+Some questions are two solves of one geometry: a valve's diodicity is the reverse drop
+over the forward drop, at the same flow rate, on the same grid. The lock says so:
+
+- `cases` — `[{"name": "forward", "case_gen_args": ["--inlet", "west", "--outlet",
+  "east"]}, {"name": "reverse", "case_gen_args": ["--inlet", "east", "--outlet",
+  "west"]}]`. `parametric.py --mode solve` builds and meshes **once** in the candidate
+  directory, then runs `case_gen.py` and the solver per case in `CANDIDATE_DIR/<name>/`
+  with `constant/polyMesh` copied in, so the directions cannot differ by a mesh. A
+  case's flags go after the lock's `case_gen_args` and before `hooks.case_args()`, and
+  may not repeat a flag either of those sets: the patch flags append, so a repeat would
+  be two inlets rather than a swapped one, and it is refused before anything runs.
+  `--mode mesh` ignores `cases` — a probe meshes once and there is nothing per-case
+  about it. A lock cannot have both `cases` and a `trim`.
+- `derived` — `{"diodicity": "reverse.dp / forward.dp"}`. Arithmetic over metric names
+  and numbers: `+ - * /`, parentheses, nothing else. It is checked as a syntax tree and
+  refused otherwise, because the lock is data and an objective is not a place to run
+  code. A derived metric whose inputs are missing, or that divides by zero, is left out
+  rather than written.
+
+`score.py` then writes ONE `metrics.json` for the candidate: `metrics` carries each
+case's numbers namespaced (`forward.dp`, `reverse.Cd`) plus the derived ones, `cases`
+carries each case's own `label`, `detail`, `window`, `converged` and `case_args`, and
+the candidate's `label` is the **worst** of its cases' and its mesh's (`mesh`,
+`diverged`, `timeout`, `unconverged`, `yplus`, `cells`, `ok`, worst first) — so a
+diverged reverse solve is never averaged away by a converged forward one.

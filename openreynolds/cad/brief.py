@@ -138,7 +138,10 @@ ambient state is the thing being avoided.
 read in sequence:
 
 - put parameters in named constants at the top of the cell that first needs them \
-(`PLATE_L_M = 0.120`), not as bare numbers at the point of use;
+(`PLATE_L_M = 0.120`), not as bare numbers at the point of use; and when the case \
+directory holds a `design_constants.py`, `build.py` begins with `from design_constants \
+import *` and takes those parameters from there, because that file is how a parametric \
+study hands each candidate its numbers;
 - depend on nothing that is not bound by a cell that was accepted -- a name you tried out \
 in a cell that errored is still live in this kernel and is not in the script. A cell that \
 does is refused when you send it, which is the point at which you can still do something \
