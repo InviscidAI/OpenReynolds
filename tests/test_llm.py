@@ -688,7 +688,6 @@ def test_anthropic_probe_with_vision_sends_an_image_and_reads_the_refusal():
 def test_anthropic_probe_falls_back_to_a_ping_when_counting_is_forbidden():
     """Bedrock counts on Mantle under its own IAM action; a key without it can still
     run the model, so the probe pings instead of refusing the key."""
-    import httpx
 
     class Forbidden:
         def __init__(self):
@@ -697,7 +696,7 @@ def test_anthropic_probe_falls_back_to_a_ping_when_counting_is_forbidden():
         def count_tokens(self, **kwargs):
             raise anthropic.PermissionDeniedError(
                 "not authorized to perform: bedrock-mantle:CountTokens",
-                response=httpx.Response(403, request=httpx.Request("POST", "http://u")), body=None)
+                response=SimpleNamespace(status_code=403, headers={}, request=None), body=None)
 
         def create(self, **kwargs):
             self.created.append(kwargs)
