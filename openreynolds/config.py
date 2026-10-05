@@ -12,7 +12,17 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .llm.presets import FALLBACK_CONTEXT_WINDOW, preset_for
+from .llm.presets import (
+    FALLBACK_CONTEXT_WINDOW,
+    REYNOLDS,
+    REYNOLDS_SUCCESSORS,
+    context_window_for,
+    desk_model_for,
+    family_for,
+    preset_for,
+    serves,
+    successor,
+)
 
 DEFAULT_FOAMD_URL = "https://api.tryreynolds.com"
 """Where the workspace service lives unless told otherwise. A key from
@@ -136,9 +146,10 @@ class Config:
     """Where the model client points. `None` means the preset's endpoint, or the
     vendor's default for a bare family.
 
-    The `reynolds` preset ignores whatever is here: the service's own `/v1/llm` is
-    derived from `foamd_url` at run time rather than stored, so moving the service
-    moves the model with it and a stale URL in a config file cannot outlive it.
+    The `reynolds` preset ignores whatever is here: the service's own `/v1/llm` (Claude)
+    or `/v1/llm/v1` (GPT) is derived from `foamd_url` at run time rather than stored, so
+    moving the service moves the model with it and a stale URL in a config file cannot
+    outlive it.
     """
     context_window: int = 0
     """Tokens the model can hold in one thread; the loop refreshes at a fraction of it.
@@ -168,8 +179,9 @@ class Config:
     desk_model: str = DEFAULT_DESK_MODEL
     mesher_model: str = ""
     """The model the CAD desk (`cad/`) builds geometry with. Empty means the preset's
-    CAD model (Opus 5 on `reynolds`), else the main model: building the shape is the
-    work, not the narration.
+    CAD model where it names one, else the main model: building the shape is the
+    work, not the narration. On `reynolds` it may be either family; the desk's client
+    is built for whichever it is.
     `OPENREYNOLDS_CAD_MODEL`, or `OPENREYNOLDS_MESHER_MODEL` as it was."""
     mesher_effort: str = "high"
     """The effort the CAD desk reasons at, whatever the main loop's is. Placing an
@@ -191,8 +203,9 @@ class Config:
     fallback_models: str = ""
     """The models a request the vendor's safety classifier declines is retried on,
     comma-separated and in order; `0` or `off` for none. Empty takes the preset's
-    chain (`llm.presets.fallbacks_for`: the other model the service meters, on
-    `reynolds` and `anthropic`; nothing elsewhere). `OPENREYNOLDS_FALLBACK_MODELS`, or
+    chain (`llm.presets.fallbacks_for`: on `reynolds` the other model of the same
+    family the service meters, never the other family's; Opus and Sonnet on
+    `anthropic`; nothing elsewhere). `OPENREYNOLDS_FALLBACK_MODELS`, or
     the config file's `fallback_models`."""
     review_model: str = ""
     """The model the independent geometry reviewer (`cad/review.py`) looks with. Empty
@@ -221,6 +234,7 @@ class Config:
         # A preset's numbers apply when its endpoint is the one in use; an explicit
         # base URL pointing elsewhere is a vendor the table knows nothing about.
         at_preset = preset is not None and (not self.llm_base_url or self.llm_base_url == preset.base_url)
+        asked_window = self.context_window
         if not self.context_window:
             self.context_window = preset.context_window if at_preset else FALLBACK_CONTEXT_WINDOW
         if preset is not None and preset.name != "anthropic":
@@ -230,13 +244,27 @@ class Config:
                 self.desk_model = preset.desk_model
         if preset is not None and not self.mesher_model:
             self.mesher_model = preset.cad_model
+        if preset is not None and preset.name == REYNOLDS:
+            self._settle_reynolds(asked_window)
+
+    def _settle_reynolds(self, asked_window: int) -> None:
+        """On `reynolds`, the desk speaks the main model's family, and the window is the
+        model's own (`MODEL_CONTEXT_WINDOWS`: GPT's priced 272K, Claude's million),
+        made smaller by `asked_window` (0 for none) but never larger. A Claude study
+        narrated through the Responses API would need a second client and a second
+        route for no gain, and a GPT desk model sent to the Messages API is a 4xx on
+        every line."""
+        if family_for(self.provider, self.desk_model) != family_for(self.provider, self.model):
+            self.desk_model = desk_model_for(self.provider, self.model)
+        own = context_window_for(self.model) or self.context_window
+        self.context_window = min(asked_window or own, own)
 
     def model_key_missing(self) -> str | None:
         """The name of the model-key setting that is absent, or `None` when the model
         can be reached: a key is present, an explicit endpoint stands in for one, or
         the preset (a local model) needs none."""
         preset = preset_for(self.provider)
-        if preset is not None and preset.name == "reynolds":
+        if preset is not None and preset.name == REYNOLDS:
             # The service key is the model key; `missing()` already asks for it.
             return None
         if self.llm_api_key or self.llm_base_url:
@@ -360,14 +388,33 @@ class Config:
         # provider named on its own arrives with a model that provider serves. A model
         # named here is the opposite case, and the swap was eating it:
         # `OPENREYNOLDS_PROVIDER=reynolds` with `OPENREYNOLDS_MODEL=claude-opus-5` --
-        # one of the two models that service meters, and what the hosted app's chooser
-        # sends when someone picks Opus -- loaded as Sonnet, silently, on every new
+        # one of the two models that service metered while it fronted Claude, and what
+        # the hosted app's chooser sent for Opus -- loaded as Sonnet, silently, on every new
         # session as well as on every resume. The default is above; what was asked for
         # wins here.
         if named_model:
             cfg.model = named_model
         if named_desk:
             cfg.desk_model = named_desk
+        if preset is not None and preset.name == REYNOLDS:
+            # Until 2026-10 the service fronted Claude 5 alone, and `openreynolds config`
+            # saved the preset's ids into the file, so a machine set up then still names
+            # `claude-sonnet-5` here. The service now meters the 5.5 models instead, so
+            # a retired Claude id moves to its successor -- the person chose Claude, and
+            # stays on it -- and anything else it cannot serve goes to the default.
+            # Explicit names included: the hosted runner names a model on every session,
+            # and one it still names from the old list is a 4xx on every turn, not a
+            # choice worth honouring. The desk then follows the main model's family, and
+            # the window is that model's, made smaller but never larger
+            # (`_settle_reynolds`).
+            cfg.model = successor(provider, cfg.model)
+            if not serves(provider, cfg.desk_model):
+                cfg.desk_model = desk_model_for(provider, cfg.model)
+            if cfg.mesher_model and not serves(provider, cfg.mesher_model):
+                cfg.mesher_model = REYNOLDS_SUCCESSORS.get(cfg.mesher_model, preset.cad_model)
+            if cfg.review_model and not serves(provider, cfg.review_model):
+                cfg.review_model = REYNOLDS_SUCCESSORS.get(cfg.review_model, "")
+            cfg._settle_reynolds(int(window) if window else 0)
         return cfg
 
     def save(self) -> Path:

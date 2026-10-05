@@ -155,7 +155,7 @@ def test_the_desk_takes_the_path_from_its_backend_rather_than_from_the_constant(
     """The wiring, not just the two ends: `CadDesk` must read it off its backend."""
     from openreynolds.cad import agent as cadagent
 
-    monkeypatch.setattr(cadagent, "make_provider", lambda cfg: object())
+    monkeypatch.setattr(cadagent, "make_provider", lambda cfg, **kw: object())
 
     class _Cfg:
         model = "claude-sonnet-5"

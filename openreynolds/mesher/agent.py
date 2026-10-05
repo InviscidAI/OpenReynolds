@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .. import images
-from ..llm import Listener, ProviderError, make_provider
+from ..llm import Listener, ProviderError, endpoint_key, make_provider
 from .brief import MESH_DONE, remark_message, system_prompt, task_message
 from .check import LOOK, Check, verify
 
@@ -146,10 +146,10 @@ class Mesher:
         The same callable the main loop uses between its own tool calls. Held here as
         well because this desk holds the thread for minutes at a time, and a remark
         that waits that long is a remark that arrives after the thing it was about."""
-        self.provider = make_provider(cfg)
-        self._endpoint = (cfg.provider, cfg.llm_api_key, cfg.llm_base_url)
-        """What `provider` was built for; see `_follow`."""
         self.model = cfg.mesher_model or cfg.model
+        self.provider = make_provider(cfg, model=self.model)
+        self._endpoint = endpoint_key(cfg, self.model)
+        """What `provider` was built for; see `_follow`."""
         self.effort = cfg.mesher_effort or "high"
         self.max_steps = int(cfg.mesher_max_steps or MAX_STEPS)
         self.max_seconds = float(cfg.mesher_max_seconds or MAX_SECONDS)
@@ -160,10 +160,10 @@ class Mesher:
         """Pick up a mid-study `/model`: the model is read from the session's config at
         every run, and the client rebuilt only when the provider, key or endpoint moved."""
         self.model = self.cfg.mesher_model or self.cfg.model
-        endpoint = (self.cfg.provider, self.cfg.llm_api_key, self.cfg.llm_base_url)
+        endpoint = endpoint_key(self.cfg, self.model)
         if endpoint != self._endpoint:
             self._endpoint = endpoint
-            self.provider = make_provider(self.cfg)
+            self.provider = make_provider(self.cfg, model=self.model)
 
     def run(self, request: str, case: str | None = None) -> MeshResult:
         self._follow()

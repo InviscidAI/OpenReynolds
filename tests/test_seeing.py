@@ -82,6 +82,20 @@ def test_an_explicit_byte_window_still_reads_bytes(ctx):
     assert "bytes 0" in content
 
 
+def test_the_whole_file_asked_for_by_window_is_still_a_picture(ctx):
+    """GPT fills in optional arguments: `offset: 0` with a limit past the end is the
+    whole file, and the whole of a render is a picture, not its bytes."""
+    ctx.backend.files["/work/a.png"] = PNG
+    for args in ({"offset": 0, "limit": 1_000_000}, {"offset": 0, "limit": len(PNG)},
+                 {"limit": 1_000_000}, {"offset": 0}):
+        content, is_error = dispatch(ctx, "read_file", {"path": "/work/a.png", **args})
+        assert not is_error and isinstance(content, list), args
+        assert any(b["type"] == "image" for b in content), args
+    for args in ({"offset": 1, "limit": 1_000_000}, {"offset": 0, "limit": len(PNG) - 1}):
+        content, _ = dispatch(ctx, "read_file", {"path": "/work/a.png", **args})
+        assert isinstance(content, str), args
+
+
 def test_an_oversized_image_reports_its_size_rather_than_vanishing(ctx):
     """A picture that never arrives and a picture of nothing look the same from
     the inside, so the reason has to be said out loud."""
