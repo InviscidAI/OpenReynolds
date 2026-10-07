@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from . import convergence, images
-from . import trace
+from . import solvers, trace
 from .progress import case_dir_from_cmd, parse_control_dict, phase_from_cmd
 from .backend.base import (
     Backend,
@@ -168,6 +168,16 @@ class ToolContext:
     on_mode: Callable[[str], None] | None = None
     """Switches the session's mode (`Loop.set_mode`), for a checkpoint answered with
     "approve all"."""
+    solver: str = solvers.OPENFOAM
+    """This study's solver (`solvers.py`): `openfoam`, `felix`, or `auto` while the
+    agent has yet to choose. It decides the tool list (`tools_for`), how `job_start`
+    reads a launch, and the system prompt the loop sends. Set once: by the session
+    for a study whose solver is known, or by `choose_solver`."""
+    on_solver: Callable[[str], str] | None = None
+    """Told the solver the moment `choose_solver` fixes it, so the session can reserve
+    and start a workspace of that kind and open the platform's study with it. Returns
+    a sentence about what it set going, for the tool's result. None when the session
+    has nothing to start (a test, a solver given up front)."""
 
 
 def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
@@ -192,9 +202,17 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
         withheld.add("cad")
     if ctx.reviewer is None:
         withheld.add("mesh_review")
-    offered = TOOLS if not withheld else [
-        tool for tool in TOOLS if tool["name"] not in withheld
-    ]
+    solver = getattr(ctx, "solver", solvers.OPENFOAM)
+    if solver == solvers.AUTO:
+        # The solver is the first decision, and nothing that needs a machine can be
+        # served before it: no workspace exists until it has been made.
+        offered = [CHOOSE_SOLVER_TOOL]
+    elif solver == solvers.FELIX:
+        offered = FELIX_TOOLS
+    else:
+        offered = TOOLS if not withheld else [
+            tool for tool in TOOLS if tool["name"] not in withheld
+        ]
     if ctx.mode != "structured":
         return offered
     return sorted([*offered, CHECKPOINT_TOOL], key=lambda tool: tool["name"])
@@ -526,6 +544,118 @@ TOOLS: list[dict[str, Any]] = [
 
 TOOL_NAMES = frozenset(tool["name"] for tool in TOOLS)
 
+
+FELIX_FRESH_SHELL = (
+    "Each call runs in a fresh shell: `cwd` carries between calls, nothing else does "
+    "-- variables you export, files you source and shell options are gone by the next "
+    "one."
+)
+"""`FRESH_SHELL` for a Felix workspace, which has no OpenFOAM environment to load."""
+
+FELIX_ONLY = frozenset({"cad", "mesh_review"})
+"""Withheld from a Felix study: the CAD desk and the reviewer build and judge OpenFOAM
+meshes, and a Felix case needs a tagged `.vtu`."""
+
+
+def _felix_variant(tool: dict[str, Any]) -> dict[str, Any]:
+    """One of `TOOLS` as a Felix study is offered it."""
+    if tool["name"] == "bash":
+        return {**tool, "description": tool["description"].replace(
+            FRESH_SHELL, FELIX_FRESH_SHELL)}
+    if tool["name"] == "job_start":
+        return FELIX_JOB_START
+    return tool
+
+
+FELIX_JOB_START: dict[str, Any] = {
+    "name": "job_start",
+    "description": (
+        "Start a long command detached and return a job id immediately. The job "
+        "keeps running after your turn ends, and after this session closes. "
+        f"{FELIX_FRESH_SHELL} "
+        "Do not redirect stdout or stderr to a file: the detached job already "
+        "captures both, and `job_check` can only stream what the job captures. "
+        "Commands that pipe into `tee` or use `>`, `>>`, `2>&1` are refused. "
+        "A solve is `felix run <case> --gpu G [--wall S]`: it uploads the case, runs "
+        "it on one cloud GPU of type G (`felix gpus` lists them as JSON with "
+        "`usd_per_hour`), billed per second while it runs. This job's log is its "
+        "stderr: a `NOTE:` naming the solve, then the solver's lines as they are "
+        "written -- `ERROR:`, `WARNING:` and `NOTE:` lines and one `step=` record per "
+        "step. The results come back into `<case>/output/` (an earlier `output/` is "
+        "moved to `output.previous/`), and stdout is the solve's final status as JSON "
+        "(`state`, `gpu`, `billed_s`, `cost_usd`, `exit_code`, `error`). Exit 0: the "
+        "solve succeeded; 1: it failed, was killed, or was refused by the service "
+        "(one `ERROR:` line with the status, e.g. `402 budget_exhausted`); 2: refused "
+        "here before anything was sent, with one `ERROR:` line -- a case whose "
+        "`output.every` is 0 or unset (a solve writes snapshots so that it can be "
+        "continued), one missing `case.yaml` or its mesh, or one holding a symlink. "
+        "`--wall` caps the solve's wall time in seconds. `felix continue <case> --gpu "
+        "G [--wall S]` points `io.yaml`'s `warm_start` at the newest snapshot and sets "
+        "`nsteps` to the steps that remain, in place, and submits that. `job_kill` "
+        "stops a solve on its GPU too, and what it wrote so far still comes back."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "cmd": {"type": "string"},
+            "cwd": {
+                "type": "string",
+                "description": (
+                    "Directory to run in. Defaults to this study's own "
+                    "directory, which your briefing names."
+                ),
+            },
+            "name": {"type": "string", "description": "A label for your own reference."},
+            "kill_on": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Regexes matched against log lines. The first match terminates "
+                    "the job and the matching line is reported back. Optional."
+                ),
+            },
+        },
+        "required": ["cmd"],
+    },
+}
+"""`job_start` in a Felix study: what `felix run` is, with none of the OpenFOAM
+launch facts (ranks, collated files, the restart guard, the trapFpe banner) that
+`_job_start` does not apply to it."""
+
+FELIX_TOOLS: list[dict[str, Any]] = [
+    _felix_variant(tool) for tool in TOOLS if tool["name"] not in FELIX_ONLY
+]
+"""What a Felix study is offered, sorted by name like `TOOLS` and the same object every
+call, so the cache prefix does not move."""
+
+CHOOSE_SOLVER_TOOL: dict[str, Any] = {
+    "name": "choose_solver",
+    "description": (
+        "Fix this study's solver: `openfoam` (the OpenFOAM library on the workspace's "
+        "CPU cores) or `felix` (an incompressible GPU solver, each solve on a cloud "
+        "GPU). The choice holds for the whole study, resumes included, and decides "
+        "which kind of workspace the study gets: none is running until it is made, "
+        "and the chosen solver's workspace starts when it is. From your next step you "
+        "have that solver's tools and a description of its environment. Offered only "
+        "until it has been called."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "solver": {"type": "string", "enum": list(solvers.SOLVERS)},
+            "reason": {
+                "type": "string",
+                "description": "Why this solver, in a sentence the person can read.",
+            },
+        },
+        "required": ["solver", "reason"],
+    },
+}
+"""The one tool a study whose solver is the agent's to choose has, until it is used."""
+
+SOLVER_FIRST = frozenset({"choose_solver", "checkpoint"})
+"""The calls that can be served before the solver is chosen: neither needs a machine."""
+
 CHECKPOINT_TOOL: dict[str, Any] = {
     "name": "checkpoint",
     "description": (
@@ -616,6 +746,13 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any],
     handler = _HANDLERS.get(name)
     if handler is None:
         return f"No such tool: {name}", True
+    if getattr(ctx, "solver", solvers.OPENFOAM) == solvers.AUTO and name not in SOLVER_FIRST:
+        # Not offered before the choice (`tools_for`); asked for anyway, it would wait
+        # on a workspace that nobody has started.
+        return (
+            f"not run: {name} needs the workspace, and there is none until this "
+            "study's solver is chosen with choose_solver."
+        ), True
     # Read the clock only when something is listening: the handlers below time
     # themselves off the same `time.monotonic`, and tests drive that with a fake.
     started = time.monotonic() if trace.on else 0.0
@@ -1045,7 +1182,10 @@ def _stdio_redirected(cmd: str) -> bool:
 
 
 def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
-    refusal = _restart_guard(ctx, args)
+    felix = getattr(ctx, "solver", solvers.OPENFOAM) == solvers.FELIX
+    # The restart guard, the trapFpe check and the launch notes read OpenFOAM cases
+    # (controlDict, time directories, a mesher's dictionaries); a Felix solve has none.
+    refusal = None if felix else _restart_guard(ctx, args)
     if refusal:
         return refusal
     cmd = args["cmd"]
@@ -1057,6 +1197,12 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
         )
     trapfpe_banner = "trapFpe: Floating point exception trapping enabled"
     for pattern in args.get("kill_on") or []:
+        if felix:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                return f"not started: invalid kill_on regex {pattern!r}: {exc}"
+            continue
         try:
             matches_banner = re.search(pattern, trapfpe_banner)
         except re.error as exc:
@@ -1078,6 +1224,8 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
     )
     _announce_jobs(ctx)
     label = f" ({args['name']})" if args.get("name") else ""
+    if felix:
+        return f"started job {job_id}{label}"
     return f"started job {job_id}{label}{_solve_shape(ctx, args)}{_mesher_note(ctx, args)}"
 
 
@@ -1882,10 +2030,36 @@ def _checkpoint(ctx: ToolContext, args: dict[str, Any]) -> str:
     return f"The person did not approve the {stage} checkpoint and gave no reason."
 
 
+def _choose_solver(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """Fix the study's solver, once, and set its workspace going."""
+    if ctx.solver != solvers.AUTO:
+        return f"this study's solver is {ctx.solver}, and it does not change."
+    solver = solvers.normalize(str(args.get("solver") or ""))
+    if solver not in solvers.SOLVERS:
+        return (
+            f"not chosen: {args.get('solver')!r} is not a solver here; "
+            "the choice is felix or openfoam."
+        )
+    ctx.solver = solver
+    ctx.store.session.solver = solver
+    ctx.store.save()
+    tell = getattr(ctx.view, "solver", None)
+    if tell is not None:
+        tell(solver)
+    started = ctx.on_solver(solver) if ctx.on_solver is not None else ""
+    name = "Felix" if solver == solvers.FELIX else "OpenFOAM"
+    return (
+        f"solver: {solver}, for the whole study. {started or ''}".rstrip()
+        + f" From your next step you have the {name} tools and the description of "
+        "its workspace."
+    )
+
+
 _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "bash": _bash,
     "cad": _cad,
     "checkpoint": _checkpoint,
+    "choose_solver": _choose_solver,
     "fetch": _fetch,
     "job_check": _job_check,
     "job_kill": _job_kill,

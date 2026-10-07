@@ -237,6 +237,24 @@ PHASE_OF = {
 _TOKEN = re.compile(r"[A-Za-z0-9_./-]+")
 
 
+_FELIX_SOLVE = re.compile(r"(?:^|[;&|(]\s*|\s)felix\s+(?:run|continue)\b")
+
+
+def is_felix_solve(cmd: str) -> bool:
+    """Whether a job's command is a Felix solve: `felix run` or `felix continue`."""
+    return bool(_FELIX_SOLVE.search(cmd or ""))
+
+
+def felix_job_progress(record: Any, tail: str, log_size: int) -> JobProgress | None:
+    """What the bar shows for a Felix solve, read from the tail of its log.
+
+    The seam for the Felix log parser (felix-mode-acceptance.md, A4): `step=` records
+    for the step, time and health, and `ERROR:` / `WARNING:` lines. Until it lands
+    this answers None, and the job is shown the way any other command is."""
+    del record, tail, log_size
+    return None
+
+
 def phase_from_cmd(cmd: str) -> tuple[str, str]:
     """(phase, executable) for a shell command, from the last thing in it that this
     recognises. A chain like `blockMesh && simpleFoam` reads as solving: it is what
@@ -533,6 +551,10 @@ class Tracker:
                 )
             except BackendError:
                 tail = ""
+        if is_felix_solve(record.cmd):
+            felix = felix_job_progress(record, tail, size)
+            if felix is not None:
+                return felix
         facts = parse_log_tail(tail)
         phase, exe = phase_from_cmd(record.cmd)
         if facts.is_solver:
