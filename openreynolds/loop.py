@@ -604,7 +604,7 @@ class Loop:
 
         response = self.provider.stream(
             model=self.cfg.model,
-            system=system_prompt(),
+            system=system_prompt(getattr(self.ctx, "solver", "openfoam")),
             messages=self.messages,
             tools=tools_for(self.ctx),
             effort=self.cfg.effort,
